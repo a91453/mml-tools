@@ -57,6 +57,23 @@ test('complete DCR, owner consent, token exchange, and MML validation', async t 
   const response = await send(mcpRequest(grant.access_token)); assert.equal(response.status, 200);
   const data = await response.json(); assert.equal(data.result.structuredContent.technical_ok, true); assert.equal(data.result.structuredContent.pair_count, 15); assert.equal(data.result.structuredContent.gates.in_game_acceptance, 'PENDING');
 });
+test('login HTML preserves same-origin form Origin without leaking referrers cross-origin', async t => {
+  const send = setup(t), client = await register(send), response = await begin(send, client.client_id);
+  assert.equal(response.status, 200);
+  // HTML navigation-mode POST uses the document policy. no-referrer makes
+  // Origin null even for this same-origin form; Node fetch does not model it.
+  // https://fetch.spec.whatwg.org/#append-a-request-origin-header
+  assert.equal(response.headers.get('referrer-policy'), 'same-origin');
+  assert.equal(response.headers.get('cache-control'), 'no-store');
+  assert.match(response.headers.get('content-security-policy'), /form-action 'self'/);
+  assert.match(response.headers.get('content-security-policy'), /frame-ancestors 'none'/);
+  assert.match(response.headers.get('set-cookie'), /HttpOnly; Secure; SameSite=Lax/);
+  const html = await response.text();
+  assert.match(html, /<form method="post" action="\/oauth\/authorize">/);
+  assert.doesNotMatch(html, /<meta[^>]+name=["']referrer["']/i);
+  const metadata = await send(req('/.well-known/oauth-authorization-server'));
+  assert.equal(metadata.headers.get('referrer-policy'), 'no-referrer');
+});
 test('callbacks must be exact registered HTTPS addresses on approved hosts', async t => {
   const send = setup(t);
   for (const uri of ['https://evil.example/callback', 'http://chatgpt.com/callback', 'https://chatgpt.com.evil.example/callback', 'https://user:secret@chatgpt.com/callback', 'https://chatgpt.com/callback#fragment', 'https://chatgpt.com:8443/callback']) {
@@ -82,6 +99,28 @@ test('owner consent requires correct password, matching CSRF cookie and same ori
     [{ csrf, password, decision: 'allow' }, { origin }],
     [{ csrf, password, decision: 'allow' }, { cookie, origin: 'https://evil.example' }],
   ]) assert.equal((await send(form('/oauth/authorize', body, headers))).status, 403);
+});
+test('login still rejects missing, null, and foreign Origins with otherwise valid consent', async t => {
+  const send = setup(t), client = await register(send), response = await begin(send, client.client_id);
+  const cookie = response.headers.get('set-cookie').split(';')[0];
+  const csrf = /name="csrf" value="([^"]+)"/.exec(await response.text())[1];
+  const body = { csrf, password, decision: 'allow' };
+  for (const attemptedOrigin of [undefined, 'null', 'https://evil.example', 'https://mml.example.evil.example', 'http://mml.example', 'https://mml.example:8443']) {
+    const rejected = await send(form('/oauth/authorize', body, {
+      cookie, referer: origin + '/oauth/authorize', 'sec-fetch-site': 'same-origin',
+      'x-forwarded-host': 'mml.example',
+      ...(attemptedOrigin === undefined ? {} : { origin: attemptedOrigin }),
+    }));
+    assert.equal(rejected.status, 403);
+    assert.equal((await rejected.json()).error_description, 'Invalid form origin');
+  }
+  const accepted = await send(form('/oauth/authorize', body, { cookie, origin }));
+  assert.equal(accepted.status, 302);
+  assert.equal(accepted.headers.get('referrer-policy'), 'no-referrer');
+  const code = new URL(accepted.headers.get('location')).searchParams.get('code');
+  const exchanged = await exchange(send, client.client_id, code);
+  assert.equal(exchanged.status, 200);
+  assert.equal(exchanged.headers.get('referrer-policy'), 'no-referrer');
 });
 test('replaying an exchanged code revokes its token family', async t => {
   const send = setup(t), grant = await tokens(send);

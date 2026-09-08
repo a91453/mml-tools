@@ -5,11 +5,13 @@
   "workspaceId": "4632e2de-f6f6-41f0-b400-51196f390be8",
   "projectName": "mml-tools-allen",
   "serviceName": "mml-tools",
-  "status": "deployment-not-created-after-commit",
+  "status": "online-user-oauth-connection-pending",
   "githubSource": "a91453/mml-tools",
   "githubBranch": "main",
-  "githubCommitForDeploymentAttempt": "1c8963d29a124be5e0182f42ccf40e41b3b7e2d2",
-  "sourceConnected": false,
+  "lastObservedDeploymentCommit": "44514b46119b85ee98a78ab2dd548062278b53d1",
+  "lastObservedDeploymentId": "0bd1f4d7-3890-426c-b653-347f0cb5a2f4",
+  "lastObservedDeploymentStatus": "SUCCESS",
+  "sourceConnected": true,
   "publicOrigin": "https://mml-tools-production.up.railway.app",
   "authVariablesConfigured": true,
   "volumeStaged": false,
@@ -17,15 +19,18 @@
   "attemptedVolumeId": "640a4b53-1cab-4698-909c-0e2081259157",
   "volumeMountPath": "/data",
   "volumeConfigured": false,
-  "railwayDeploymentVerified": false,
+  "railwayDeploymentVerified": true,
   "chatgptConnectionVerified": false,
+  "authorizedProductionToolCallVerified": false,
   "deploymentWorkflowId": "commitChanges/6ea61da2-e814-46bf-8a38-192517092c09/58709a34-9098-47cb-bd6c-4fbe1ac8088c",
   "workflowRequestAccepted": true,
-  "deploymentRecordExists": false,
+  "deploymentRecordExists": true,
   "publicHealthcheck": {
-    "httpStatus": 404,
-    "railwayFallback": true,
-    "message": "Application not found"
+    "httpStatus": 200,
+    "railwayFallback": false,
+    "message": "ok"
   },
-  "blocker": "Commit request was accepted, but subsequent readback has no source, volume, deployment, build logs, or explicit approval error. Cause remains unconfirmed; inspect the Railway dashboard before retrying or creating replacement resources."
+  "unauthenticatedMcpHttpStatus": 401,
+  "historicalWorkflowNote": "The earlier accepted commitChanges request produced no deployment. The service has since been connected and deployed from GitHub through Railway.",
+  "pending": "Verify the login-page referrer-policy fix after deployment and complete the owner's actual ChatGPT OAuth and authorized tool checks. A persistent /data volume is still missing; redeployment loses OAuth client records without it."
 }

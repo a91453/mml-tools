@@ -1,6 +1,6 @@
 # Standalone MML OAuth service
 
-This deployment uses the same MML core and tools as the Sites workbench. It does not trust Sites identity headers. The original workbench remains a separate private browser application.
+This deployment uses the same MML core and tools as the Sites workbench. It does not trust Sites identity headers. The original workbench remains a separate browser application with its own Sites access policy.
 
 ## Required deployment settings
 
@@ -29,6 +29,14 @@ Only after a successful deploy and HTTPS verification:
 - OAuth resource: the same complete `/mcp` URL.
 
 Initial metadata and the password form are public; tool requests require an OAuth token. Registered callbacks are restricted to exact HTTPS URLs on `chatgpt.com` or `chat.openai.com`, with no custom ports or fragments. An additional client requires explicit configuration and tests for its callback host.
+
+### Login form origin compatibility
+
+Only the login HTML sends `Referrer-Policy: same-origin`. A normal browser form submission uses navigation mode; `no-referrer` on that document turns the POST's `Origin` into `null`, which the server correctly rejects as `Invalid form origin`. See the [Fetch Standard](https://fetch.spec.whatwg.org/#append-a-request-origin-header). Same-origin policy preserves the form's origin without sending referrers to other origins. Metadata, token responses, errors and authorization redirects retain `no-referrer`.
+
+Do not fix this by allowing `null`, missing or arbitrary Origins, by trusting proxy/Referer hints, or by removing the CSRF cookie and token checks. Node fetch tests that inject an Origin header do not emulate browser document-policy behavior; regression tests separately check the HTML policy and all Origin rejection cases.
+
+After an update, start a fresh connection flow from ChatGPT, not by resubmitting an old error page. Pending login forms expire after five minutes and are invalidated by a process restart. If no volume was mounted, a redeploy also loses registered OAuth clients: an `Unknown client` error requires a fresh DCR registration, normally by recreating the custom connection. Mount `/data` before relying on persistent authorizations.
 
 ## Authorization lifecycle
 

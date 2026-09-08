@@ -108,7 +108,11 @@ export function createAuth({ origin, ownerPassword, database, allowedRedirectHos
     const flowId = opaque(), csrf = opaque();
     flows.set(flowId, { clientId, redirect, challenge: params.get('code_challenge'), state, csrf, expires: now() + 300 });
     const html = `<!doctype html><html lang="zh-Hant"><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>MML 工具服務登入</title><style>body{font:17px system-ui,sans-serif;background:#101726;color:#edf2fc;margin:0;padding:32px 20px}main{max-width:440px;margin:5vh auto}p{line-height:1.7;color:#c1cbdc}label,input,button{display:block;box-sizing:border-box;width:100%}input{font:inherit;padding:14px;margin:10px 0 22px;border:1px solid #6d7d99;border-radius:8px}button{font:inherit;padding:15px;border:0;border-radius:8px;background:#70e2d0;color:#10241f}small{overflow-wrap:anywhere}a{color:#70e2d0}</style><main><h1>MML 工具服務</h1><p>允許「${escapeHtml(client.client_name)}」提交樂譜並取得技術檢查結果。服務不改寫或保存樂譜。</p><p><small>授權完成後返回：${escapeHtml(new URL(redirect).origin)}</small></p><form method="post" action="/oauth/authorize"><input type="hidden" name="csrf" value="${csrf}"><label for="password">服務登入密碼</label><input id="password" name="password" type="password" autocomplete="current-password" required maxlength="256"><button name="decision" value="allow">登入並允許</button></form><p><small>這是你在 Railway 設定的 MML 服務密碼。</small></p></main></html>`;
-    return new Response(html, { headers: { ...noCache, 'content-type': 'text/html; charset=utf-8', 'content-security-policy': "default-src 'none'; style-src 'unsafe-inline'; form-action 'self'; frame-ancestors 'none'; base-uri 'none'", 'set-cookie': `__Host-mml_flow=${flowId}; Path=/; HttpOnly; Secure; SameSite=Lax; Max-Age=300` } });
+    // no-referrer turns Origin into null for a browser's navigation-mode form
+    // POST, even to this same origin. Preserve that Origin on the login page
+    // while still suppressing cross-origin referrers. Keep the exact Origin,
+    // CSRF cookie and token checks below; never allow null/missing Origins.
+    return new Response(html, { headers: { ...noCache, 'referrer-policy': 'same-origin', 'content-type': 'text/html; charset=utf-8', 'content-security-policy': "default-src 'none'; style-src 'unsafe-inline'; form-action 'self'; frame-ancestors 'none'; base-uri 'none'", 'set-cookie': `__Host-mml_flow=${flowId}; Path=/; HttpOnly; Secure; SameSite=Lax; Max-Age=300` } });
   }
   async function finishFlow(request) {
     rate('login', 12);
