@@ -8,7 +8,7 @@ const manifest = JSON.parse(await readFile(resolve(root, '.openai/hosting.json')
 if (manifest.static) throw Error('MCP needs a Worker, not a static-only deployment');
 // ZIP source inputs are explicit: no credentials, songs, uploads or generated
 // Worker bundles. zip -X removes extra file metadata; no shell is involved.
-const sourceFiles = ['README.md', 'package.json', '.gitignore', '.dockerignore', '.openai/hosting.json', 'dist/index.html', 'dist/style.css', 'dist/core.js', 'dist/player.js', 'dist/app.js', 'server/mcp.mjs', 'server/worker.mjs', 'scripts/build.mjs', 'tests/core.test.mjs', 'tests/player.test.mjs', 'tests/mcp.test.mjs', 'tests/railway.test.mjs', 'railway.toml', 'railway/Dockerfile', 'railway/auth.mjs', 'railway/server.mjs', 'railway/README.md', 'railway/deployment-target.json'];
+const sourceFiles = ['README.md', 'package.json', '.gitignore', '.dockerignore', '.openai/hosting.json', 'dist/index.html', 'dist/style.css', 'dist/core.js', 'dist/player.js', 'dist/app.js', 'server/mcp.mjs', 'server/worker.mjs', 'scripts/build.mjs', 'tests/core.test.mjs', 'tests/player.test.mjs', 'tests/mcp.test.mjs', 'tests/railway.test.mjs', 'railway/service-settings.json', 'railway/Dockerfile', 'railway/auth.mjs', 'railway/server.mjs', 'railway/README.md', 'railway/deployment-target.json'];
 const zipBytes = execFileSync('zip', ['-X', '-q', '-', ...sourceFiles], { cwd: root, maxBuffer: 4 * 1024 * 1024 });
 await writeFile(resolve(root, 'dist/workbench-source.zip'), zipBytes);
 const assets = {};

@@ -12,6 +12,8 @@ This deployment uses the same MML core and tools as the Sites workbench. It does
 - `PORT`: Railway's supplied port, or 3000.
 - Healthcheck: `/healthz`.
 
+Configure these values through Railway service settings. `service-settings.json` is a non-executable reference snapshot, not a Railway Config as Code file. New services cannot opt into the deprecated `railway.toml` / `railway.json` mechanism; do not set a config-file override or point Nixpacks at such a file. See [Railway's migration notice](https://docs.railway.com/config-as-code). The source-controlled Dockerfile remains portable to other Docker-capable hosts.
+
 The official Node image runs as root so it can write the root-mounted Railway volume. The application sets a restrictive file creation mask. No request can select a file path, run a shell command, install packages, or access other services. A non-root deployment needs the volume's ownership configured separately.
 
 The image installs no npm packages and runs no package install scripts. Build from the root of the same source commit that passed the tests. A GitHub source must be explicitly selected for Railway's GitHub deployment tool; alternatively `railway up` requires its own authenticated CLI session.

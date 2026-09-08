@@ -6,7 +6,7 @@
 
 `railway/` 提供獨立的 Node HTTP 服務、單一擁有者 OAuth、Dockerfile 與部署說明；它沿用原有 MML 核心。此版本採用 OAuth DCR、公用客戶端與 PKCE S256，授權資料保存於獨立 SQLite volume，MML 不入庫。請依 `railway/README.md` 完成環境變數、持久磁碟及來源連接。
 
-目前已建立 Railway 私人專案與空白服務，精確目標記錄於 `railway/deployment-target.json`。本機 73 項測試通過，包括經由實際本機 HTTP 的 OAuth＋MCP 呼叫；這不是 Railway 正式部署、HTTPS 或 ChatGPT 連接成功的證明。正式來源及部署尚待完成，不可直接把未發布的 `/mcp` 路徑當作可用連接網址。
+私人 GitHub 程式庫為 `a91453/mml-tools`；Railway 精確目標與進度記錄於 `railway/deployment-target.json`。部署使用 Railway 服務設定及 `railway/Dockerfile`，不使用新服務已停用的 `railway.toml` 設定方式；`railway/service-settings.json` 保存不含密碼的設定參考。本機 73 項測試通過，包括經由實際本機 HTTP 的 OAuth＋MCP 呼叫；這不是 Railway 正式部署、HTTPS 或 ChatGPT 連接成功的證明。只有正式驗證成功後才能把 `/mcp` 提供為可用連接網址。
 
 ## MCP 工具服務
 
@@ -20,7 +20,7 @@
 
 `technical_ok` 和技術 PASS 不代表來源比對、聽驗、播放器回讀或遊戲驗收完成。MCP 首版沒有音訊播放與 MIDI／ABC 匯出工具；現有瀏覽器工作台仍提供這些功能。
 
-服務依賴 Sites 的私人存取閘道。Worker 僅在閘道提供可信身分標頭後接受 MCP 呼叫；不可將 Worker 直接放到會接受任意身分標頭的公開主機。遷移至其他主機時，必須替換驗證層。正式 MCP URL 與 OAuth resource 應由平台的 MCP 連線設定取得；本機路由測試不能證明使用者 OAuth 連接已完成。
+Sites 版本依賴 Sites 的私人存取閘道。Worker 僅在閘道提供可信身分標頭後接受 MCP 呼叫；不可將 Worker 直接放到會接受任意身分標頭的公開主機。Railway 版本則使用 `railway/server.mjs` 與自己的 OAuth，不信任 Sites 身分標頭。兩者的正式 MCP URL 與 OAuth resource 不可混用；本機路由測試不能證明使用者 OAuth 連接已完成。
 
 傳輸支援 2025-03-26、2025-06-18、2025-11-25 協定版本的此服務所需子集：initialize、ping、tools/list、tools/call、初始化與取消通知。不宣告資源、提示詞、工作排程、通知串流或工作階段能力。GET /mcp 回應 405 是預期行為；需 POST 才能進行協定測試。
 

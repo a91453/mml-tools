@@ -1,0 +1,41 @@
+{
+  "documentationOnly": true,
+  "configurationMethod": "Railway service settings (not deprecated Config as Code)",
+  "source": {
+    "repo": "a91453/mml-tools",
+    "branch": "main",
+    "rootDirectory": "."
+  },
+  "build": {
+    "dockerfilePath": "railway/Dockerfile",
+    "watchPatterns": [
+      "/dist/core.js",
+      "/server/mcp.mjs",
+      "/railway/auth.mjs",
+      "/railway/server.mjs",
+      "/railway/Dockerfile",
+      "/.dockerignore",
+      "/package.json"
+    ]
+  },
+  "deploy": {
+    "startCommand": "node railway/server.mjs",
+    "healthcheckPath": "/healthz",
+    "healthcheckTimeout": 60,
+    "restartPolicyType": "ON_FAILURE",
+    "restartPolicyMaxRetries": 3,
+    "numReplicas": 1
+  },
+  "volume": {
+    "mountPath": "/data",
+    "sizeMB": 512
+  },
+  "port": 3000,
+  "requiredVariables": [
+    "MML_AUTH_DB",
+    "MML_OWNER_PASSWORD",
+    "MML_PUBLIC_ORIGIN",
+    "NODE_ENV",
+    "PORT"
+  ]
+}
