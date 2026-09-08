@@ -8,8 +8,8 @@
   "status": "online-user-oauth-connection-pending",
   "githubSource": "a91453/mml-tools",
   "githubBranch": "main",
-  "lastObservedDeploymentCommit": "44514b46119b85ee98a78ab2dd548062278b53d1",
-  "lastObservedDeploymentId": "0bd1f4d7-3890-426c-b653-347f0cb5a2f4",
+  "lastObservedDeploymentCommit": "ca66a249c09e80a32fa7af88c05632f685c71913",
+  "lastObservedDeploymentId": "946c0178-f784-4886-b189-0324d87215a8",
   "lastObservedDeploymentStatus": "SUCCESS",
   "sourceConnected": true,
   "publicOrigin": "https://mml-tools-production.up.railway.app",
@@ -31,6 +31,18 @@
     "message": "ok"
   },
   "unauthenticatedMcpHttpStatus": 401,
+  "loginPolicyVerification": {
+    "checkedAt": "2026-09-08T23:18:06.567Z",
+    "loginHtmlHttpStatus": 200,
+    "referrerPolicy": "same-origin",
+    "sameOriginPostPassedOriginAndCsrfChecks": true,
+    "syntheticDeniedConsentError": "Permission not granted",
+    "nullOriginRejected": true,
+    "ownerPasswordSubmitted": false,
+    "realBrowserLoginVerified": false
+  },
+  "pendingVariableChangesObserved": 5,
+  "pendingVariableChangesAppliedByThisFix": false,
   "historicalWorkflowNote": "The earlier accepted commitChanges request produced no deployment. The service has since been connected and deployed from GitHub through Railway.",
-  "pending": "Verify the login-page referrer-policy fix after deployment and complete the owner's actual ChatGPT OAuth and authorized tool checks. A persistent /data volume is still missing; redeployment loses OAuth client records without it."
+  "pending": "The referrer-policy fix is deployed and HTTPS header/consent checks passed. Complete the owner's actual ChatGPT OAuth and authorized tool checks. A persistent /data volume is still missing; redeployment loses OAuth client records without it. Five pending variable changes were observed and left untouched."
 }

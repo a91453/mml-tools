@@ -10,7 +10,7 @@
 
 Railway 已於 2026-09-08 22:48 UTC 完成部署，GitHub 來源為 `a91453/mml-tools` 的 `main`。已觀察到 `/healthz` 200、OAuth metadata 200、未登入 `/mcp` 401；完整使用者 OAuth 與授權後工具呼叫仍需另外驗收。正式工具網址為 `https://mml-tools-production.up.railway.app/mcp`，採 OAuth DCR。較早的「Application not found」是歷史部署狀態，不是目前的登入錯誤原因。
 
-登入頁修正：只將 HTML 的 `Referrer-Policy` 設為 `same-origin`，避免一般表單送出被 `no-referrer` 轉成 `Origin: null`；保留嚴格來源、CSRF、密碼及 PKCE 檢查。更新必須部署到正式服務後才會生效；請從 ChatGPT 開始新的連接流程，不要重送舊登入頁。目前尚未觀察到 `/data` 持久磁碟，重新部署會遺失 OAuth 註冊及授權資料；需補上持久磁碟後才能依賴跨部署授權保存。
+登入頁修正：只將 HTML 的 `Referrer-Policy` 設為 `same-origin`，避免一般表單送出被 `no-referrer` 轉成 `Origin: null`；保留嚴格來源、CSRF、密碼及 PKCE 檢查。此修正已部署，2026-09-08 23:18 UTC 的正式 HTTPS 檢查確認登入頁政策正確、同來源請求通過來源及 CSRF 檢查、`null` 來源仍拒絕；合成檢查明確拒絕授權，沒有提交擁有者密碼，也不代表本人登入完成。請從 ChatGPT 開始新的連接流程，不要重送舊登入頁。目前尚未觀察到 `/data` 持久磁碟，重新部署會遺失 OAuth 註冊及授權資料；需補上持久磁碟後才能依賴跨部署授權保存。
 
 ## MCP 工具服務
 
