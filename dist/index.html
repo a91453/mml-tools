@@ -1,0 +1,39 @@
+<!doctype html>
+<html lang="zh-Hant">
+<head>
+  <meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="theme-color" content="#101726">
+  <meta name="description" content="瑪奇 Mobile 六軌 MML 檢查、預覽、原曲比對與事件匯出工作台。">
+  <title>MML Workbench｜六軌工作台</title>
+  <link rel="stylesheet" href="./style.css">
+</head>
+<body>
+  <header class="topbar"><div class="brand"><span class="brand-mark" aria-hidden="true">♮</span><div><strong>MML Workbench</strong><span>六軌工作台</span></div></div><span class="version">v0.1 · Strict Mobile</span></header>
+  <main>
+    <section class="transport-panel" aria-label="播放控制">
+      <div class="transport-title"><div><p class="eyebrow">工作中的樂譜</p><h1 id="song-title">內建示範</h1><p id="song-description">貼上你的 MML，檢查後載入播放器。</p></div><div class="time-display"><strong id="play-time">0:00.00</strong><span id="total-time">／ 0:00.00</span></div></div>
+      <div class="transport-actions"><button id="play" class="primary" disabled>▶ 播放</button><button id="stop" disabled>停止</button><label class="select-label">試聽層級<select id="layer"><option value="6">完整六軌</option><option value="3">單人核心 · 前三軌</option><option value="1">Melody</option><option value="4">前四軌</option><option value="5">前五軌</option></select></label><label class="master-label">預覽音量<input id="master" type="range" min="0" max="100" value="55"></label></div>
+      <label class="seek-label"><span class="sr-only">播放位置</span><input id="seek" type="range" min="0" max="1000" value="0" disabled></label>
+      <div class="loop-controls"><label><input id="loop-enabled" type="checkbox"> 循環片段</label><label>起拍 <input id="loop-start" type="number" min="0" step="0.25" value="0"></label><label>迄拍 <input id="loop-end" type="number" min="0" step="0.25" value="18"></label><span id="engine-label">尚未載入</span></div>
+    </section>
+    <div class="workspace-grid">
+      <section class="panel editor-panel"><div class="panel-heading"><h2>MML 原文</h2><div class="button-group"><button id="demo" class="quiet">載入示範</button><label class="file-button">開啟 TXT<input id="mml-file" type="file" accept=".txt,.mml,text/plain"></label></div></div>
+        <label for="mml" class="hint">單一 MML@ 字串，以五個逗號分隔六軌。</label><textarea id="mml" spellcheck="false" aria-describedby="editor-status"></textarea>
+        <div class="editor-footer"><span id="editor-status" class="hint">只在此頁處理；請匯出保存。</span><button id="validate" class="primary">檢查並載入</button></div>
+        <details class="settings"><summary>拍號與預覽設定</summary><div class="settings-grid"><label>拍號圖 · 每行「起拍 拍號」<textarea id="meter-map" rows="3" spellcheck="false">0 4/4
+8 2/4
+10 4/4</textarea></label><div><label>弱起長度（拍，可留白）<input id="pickup" type="text" inputmode="decimal" placeholder="例如 1 或 1/2"></label><label>末小節長度（拍，可留白）<input id="final-partial" type="text" inputmode="decimal" placeholder="依來源明確填寫"></label></div></div><p class="hint">拍號不會改動音符。遇到不完整小節，依來源填寫，工作台不自動補拍。</p><label class="block-label">鼓面對應（JSON，無鼓軌可留白）<textarea id="drum-profile" rows="2" spellcheck="false" placeholder='{"role":"Chord5","instrument":"Jazz Drum","evidence":"實測來源","mapping":{"...":36}}'></textarea></label><p class="hint">鼓面表需要實際遊戲證據；一般合成音色只用於預覽。</p></details>
+      </section>
+      <section class="panel validation-panel"><div class="panel-heading"><h2>驗證結果</h2><span id="validation-badge" class="badge neutral">尚未檢查</span></div><div id="metrics" class="metrics"></div><div id="gates" class="gates"></div><div id="issues" class="issues" aria-live="polite"></div></section>
+    </div>
+    <section class="panel score-panel"><div class="panel-heading"><h2>六軌與時間線</h2><span class="hint">1 個 Conductor ＋ 6 個演奏軌</span></div><div id="tracks" class="tracks"></div><div class="roll-wrap"><canvas id="piano-roll" height="230" aria-label="六軌音符時間線"></canvas></div><div id="map-summary" class="hint map-summary"></div></section>
+    <div class="workspace-grid bottom-grid">
+      <section class="panel"><div class="panel-heading"><h2>原曲 A/B</h2><label class="file-button">開啟音檔<input id="audio-file" type="file" accept="audio/*,video/mp4"></label></div><p id="audio-name" class="hint">加入你已取得的原曲音檔，對齊同一段落。</p><div class="audio-controls"><label>MML 第 0 拍對應音檔秒數<input id="audio-offset" type="number" step="0.001" value="0"></label><label>原曲有效終點（秒）<input id="audio-end" type="number" min="0" step="0.001" placeholder="依來源確認後填寫"></label><button id="switch-audio" disabled>切到原曲</button></div><audio id="source-audio" controls preload="metadata"></audio><p id="audio-timing" class="hint">有效終點需依來源判斷；不自動拿容器長度或裁尾來通過2%。</p></section>
+      <section class="panel"><div class="panel-heading"><h2>回讀與匯出</h2><span id="snapshot-badge" class="badge neutral">尚無回讀</span></div><p id="snapshot-summary" class="hint">載入後，從播放器獨立持有的事件與設定產生回讀。</p><div class="exports"><button id="export-mml" disabled>六軌 MML</button><button id="export-midi" disabled>Preview MIDI</button><button id="export-abc" disabled>完整 ABC</button><button id="export-report" disabled>驗證／回讀 JSON</button><button id="export-project" disabled>專案 JSON</button><label class="file-button">匯入專案<input id="project-file" type="file" accept=".json,application/json"></label></div><p class="hint">原曲檔案另外保留。匯出包含完整事件、工具版本與證據範圍。</p><a id="source-download" href="./workbench-source.zip" download>下載可修改的原始碼</a></section>
+    </div>
+    <footer>技術檢查、播放器回讀、原曲聽驗與 Mobile 實機驗收分別記錄。<span>播放音色：工作台合成器</span></footer>
+  </main>
+  <div id="toast" role="status" aria-live="polite"></div>
+  <script type="module" src="./app.js"></script>
+</body>
+</html>

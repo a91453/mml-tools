@@ -1,0 +1,15 @@
+{
+  "projectId": "62c1cafe-4886-40ad-b562-74ac43bdfad8",
+  "environmentId": "6ea61da2-e814-46bf-8a38-192517092c09",
+  "serviceId": "b43b70a2-bf0d-4c9c-850c-1e1044f59888",
+  "workspaceId": "4632e2de-f6f6-41f0-b400-51196f390be8",
+  "projectName": "mml-tools-allen",
+  "serviceName": "mml-tools",
+  "status": "awaiting-confirmed-source",
+  "githubSource": null,
+  "publicOrigin": null,
+  "authVariablesConfigured": false,
+  "volumeConfigured": false,
+  "railwayDeploymentVerified": false,
+  "chatgptConnectionVerified": false
+}

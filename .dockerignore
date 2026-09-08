@@ -1,0 +1,13 @@
+*
+!package.json
+!dist/
+dist/*
+!dist/core.js
+!server/
+server/*
+!server/mcp.mjs
+!railway/
+railway/*
+!railway/Dockerfile
+!railway/auth.mjs
+!railway/server.mjs

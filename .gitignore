@@ -1,0 +1,9 @@
+dist/server/
+dist/.openai/
+node_modules/
+.env
+.env.*
+!.env.example
+*.sqlite
+*.sqlite-shm
+*.sqlite-wal
