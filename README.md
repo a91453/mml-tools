@@ -8,6 +8,8 @@
 
 私人 GitHub 程式庫為 `a91453/mml-tools`；Railway 精確目標與進度記錄於 `railway/deployment-target.json`。部署使用 Railway 服務設定及 `railway/Dockerfile`，不使用新服務已停用的 `railway.toml` 設定方式；`railway/service-settings.json` 保存不含密碼的設定參考。本機 73 項測試通過，包括經由實際本機 HTTP 的 OAuth＋MCP 呼叫；這不是 Railway 正式部署、HTTPS 或 ChatGPT 連接成功的證明。只有正式驗證成功後才能把 `/mcp` 提供為可用連接網址。
 
+最近一次部署請求雖回傳已接受，正式回讀卻沒有來源連接、磁碟或部署紀錄；HTTPS `/healthz` 回傳 Railway 的 404「Application not found」。目前服務尚未上線，原因未確認，不能把它說成 GitHub 未授權、手機問題或使用者取消。請先查看 Railway 管理頁的來源／部署狀態，再決定後續操作；不要反覆新增替代服務或磁碟。
+
 ## MCP 工具服務
 
 新增 `POST /mcp`，使用無狀態 Streamable HTTP：

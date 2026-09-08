@@ -5,15 +5,27 @@
   "workspaceId": "4632e2de-f6f6-41f0-b400-51196f390be8",
   "projectName": "mml-tools-allen",
   "serviceName": "mml-tools",
-  "status": "staged-awaiting-deployment",
+  "status": "deployment-not-created-after-commit",
   "githubSource": "a91453/mml-tools",
   "githubBranch": "main",
+  "githubCommitForDeploymentAttempt": "1c8963d29a124be5e0182f42ccf40e41b3b7e2d2",
+  "sourceConnected": false,
   "publicOrigin": "https://mml-tools-production.up.railway.app",
   "authVariablesConfigured": true,
-  "volumeStaged": true,
-  "volumeId": "640a4b53-1cab-4698-909c-0e2081259157",
+  "volumeStaged": false,
+  "volumeId": null,
+  "attemptedVolumeId": "640a4b53-1cab-4698-909c-0e2081259157",
   "volumeMountPath": "/data",
   "volumeConfigured": false,
   "railwayDeploymentVerified": false,
-  "chatgptConnectionVerified": false
+  "chatgptConnectionVerified": false,
+  "deploymentWorkflowId": "commitChanges/6ea61da2-e814-46bf-8a38-192517092c09/58709a34-9098-47cb-bd6c-4fbe1ac8088c",
+  "workflowRequestAccepted": true,
+  "deploymentRecordExists": false,
+  "publicHealthcheck": {
+    "httpStatus": 404,
+    "railwayFallback": true,
+    "message": "Application not found"
+  },
+  "blocker": "Commit request was accepted, but subsequent readback has no source, volume, deployment, build logs, or explicit approval error. Cause remains unconfirmed; inspect the Railway dashboard before retrying or creating replacement resources."
 }
