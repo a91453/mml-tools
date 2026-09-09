@@ -8,17 +8,18 @@
   "status": "online-user-oauth-connection-pending",
   "githubSource": "a91453/mml-tools",
   "githubBranch": "main",
-  "lastObservedDeploymentCommit": "ca66a249c09e80a32fa7af88c05632f685c71913",
-  "lastObservedDeploymentId": "946c0178-f784-4886-b189-0324d87215a8",
+  "lastObservedDeploymentCommit": "b00d61e431c5027b050d54394b321bbd7080cc1a",
+  "lastObservedDeploymentId": "9722ca24-8a9b-4e93-a169-c350e2e1d4bf",
   "lastObservedDeploymentStatus": "SUCCESS",
   "sourceConnected": true,
   "publicOrigin": "https://mml-tools-production.up.railway.app",
   "authVariablesConfigured": true,
   "volumeStaged": false,
-  "volumeId": null,
+  "volumeId": "e90e0f81-854e-467c-9ab0-5be246118708",
+  "volumeSizeMB": 500,
   "attemptedVolumeId": "640a4b53-1cab-4698-909c-0e2081259157",
   "volumeMountPath": "/data",
-  "volumeConfigured": false,
+  "volumeConfigured": true,
   "railwayDeploymentVerified": true,
   "chatgptConnectionVerified": false,
   "authorizedProductionToolCallVerified": false,
@@ -44,5 +45,12 @@
   "pendingVariableChangesObserved": 5,
   "pendingVariableChangesAppliedByThisFix": false,
   "historicalWorkflowNote": "The earlier accepted commitChanges request produced no deployment. The service has since been connected and deployed from GitHub through Railway.",
-  "pending": "The referrer-policy fix is deployed and HTTPS header/consent checks passed. Complete the owner's actual ChatGPT OAuth and authorized tool checks. A persistent /data volume is still missing; redeployment loses OAuth client records without it. Five pending variable changes were observed and left untouched."
+  "consentRedirectObservation": {
+    "successfulConsentResponses": 2,
+    "successfulResponseStatus": 302,
+    "subsequentResubmissionStatus": 403,
+    "tokenExchangeObserved": false,
+    "browserCspBlockIsInference": true
+  },
+  "pending": "Deploy and verify the selected-callback CSP and HTTP 303 compatibility fix. Verify registration survives redeploy on the newly mounted /data volume, then complete the owner's actual ChatGPT return, token exchange and authorized tools. Pending variable changes are left untouched."
 }

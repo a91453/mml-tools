@@ -31,7 +31,7 @@ async function authorizedCode(send, clientId, usePassword = password) {
   const html = await response.text(), csrf = /name="csrf" value="([^"]+)"/.exec(html)?.[1];
   assert.ok(csrf);
   const login = await send(form('/oauth/authorize', { csrf, password: usePassword, decision: 'allow' }, { cookie, origin }));
-  assert.equal(login.status, 302);
+  assert.equal(login.status, 303);
   const location = new URL(login.headers.get('location'));
   assert.equal(location.origin + location.pathname, redirectUri); assert.equal(location.searchParams.get('state'), 'synthetic-state'); assert.equal(location.searchParams.get('iss'), origin);
   return location.searchParams.get('code');
@@ -82,6 +82,61 @@ test('callbacks must be exact registered HTTPS addresses on approved hosts', asy
   const client = await register(send);
   const response = await begin(send, client.client_id, { redirect_uri: redirectUri + '?changed=true' }); assert.equal(response.status, 400); assert.equal(response.headers.get('location'), null);
 });
+test('login CSP permits the selected registered callback origin and no unrelated destinations', async t => {
+  const send = setup(t);
+  const callbacks = [redirectUri + '?label=%3Bform-action%20*&next=https%3A%2F%2Fevil.example', 'https://chat.openai.com/connector_platform/oauth_redirect'];
+  const client = await register(send, { redirect_uris: callbacks });
+  for (const callback of callbacks) {
+    const response = await begin(send, client.client_id, { redirect_uri: callback });
+    assert.equal(response.status, 200);
+    const directives = new Map(response.headers.get('content-security-policy').split(';').map(part => {
+      const [name, ...values] = part.trim().split(/\s+/); return [name, values];
+    }));
+    assert.deepEqual(directives.get('form-action'), ["'self'", new URL(callback).origin]);
+    assert.deepEqual(directives.get('default-src'), ["'none'"]);
+    assert.deepEqual(directives.get('frame-ancestors'), ["'none'"]);
+    assert.equal(response.headers.get('referrer-policy'), 'same-origin');
+    assert.match(await response.text(), /<form method="post" action="\/oauth\/authorize">/);
+  }
+});
+test('completed consent uses 303, contains no credentials, and cannot be submitted twice', async t => {
+  const send = setup(t), client = await register(send), page = await begin(send, client.client_id);
+  const cookie = page.headers.get('set-cookie').split(';')[0];
+  const csrf = /name="csrf" value="([^"]+)"/.exec(await page.text())[1];
+  const body = { csrf, password, decision: 'allow' };
+  const response = await send(form('/oauth/authorize', body, { cookie, origin }));
+  assert.equal(response.status, 303);
+  const location = response.headers.get('location'), target = new URL(location);
+  assert.equal(target.origin + target.pathname, redirectUri);
+  for (const secret of [password, csrf, cookie.split('=')[1]]) assert.equal(location.includes(secret), false);
+  assert.equal(response.headers.get('referrer-policy'), 'no-referrer');
+  const repeated = await send(form('/oauth/authorize', body, { cookie, origin }));
+  assert.equal(repeated.status, 403);
+  assert.equal((await repeated.json()).error_description, 'Login request expired or invalid');
+  assert.equal(repeated.headers.get('location'), null);
+  assert.equal((await exchange(send, client.client_id, target.searchParams.get('code'))).status, 200);
+});
+test('expired browser login gives recovery instructions while API errors remain JSON', async t => {
+  let clock = 100000;
+  const send = setup(t, { now: () => clock }), client = await register(send), page = await begin(send, client.client_id);
+  const cookie = page.headers.get('set-cookie').split(';')[0];
+  const csrf = /name="csrf" value="([^"]+)"/.exec(await page.text())[1];
+  clock += 301;
+  for (const accept of ['text/html,application/xhtml+xml', 'application/json']) {
+    const response = await send(form('/oauth/authorize', { csrf, password, decision: 'allow' }, { cookie, origin, accept }));
+    assert.equal(response.status, 403);
+    assert.equal(response.headers.get('location'), null);
+    assert.equal(response.headers.get('cache-control'), 'no-store');
+    if (accept.startsWith('text/html')) {
+      assert.match(response.headers.get('content-type'), /^text\/html/);
+      const html = await response.text();
+      assert.match(html, /回到 ChatGPT/);
+      assert.match(html, /重新連線/);
+      for (const secret of [password, csrf, cookie.split('=')[1]]) assert.equal(html.includes(secret), false);
+      assert.doesNotMatch(html, /<form\b/);
+    } else assert.equal((await response.json()).error_description, 'Login request expired or invalid');
+  }
+});
 test('PKCE, scope, resource, and repeated parameters are checked', async t => {
   const send = setup(t), client = await register(send);
   for (const extra of [{ code_challenge_method: 'plain' }, { code_challenge: 'short' }, { scope: 'mml:write' }, { resource: 'https://another.example/mcp' }]) assert.equal((await begin(send, client.client_id, extra)).status, 400);
@@ -115,7 +170,7 @@ test('login still rejects missing, null, and foreign Origins with otherwise vali
     assert.equal((await rejected.json()).error_description, 'Invalid form origin');
   }
   const accepted = await send(form('/oauth/authorize', body, { cookie, origin }));
-  assert.equal(accepted.status, 302);
+  assert.equal(accepted.status, 303);
   assert.equal(accepted.headers.get('referrer-policy'), 'no-referrer');
   const code = new URL(accepted.headers.get('location')).searchParams.get('code');
   const exchanged = await exchange(send, client.client_id, code);

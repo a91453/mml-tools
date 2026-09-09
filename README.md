@@ -6,11 +6,13 @@
 
 `railway/` 提供獨立的 Node HTTP 服務、單一擁有者 OAuth、Dockerfile 與部署說明；它沿用原有 MML 核心。此版本採用 OAuth DCR、公用客戶端與 PKCE S256，授權資料保存於獨立 SQLite volume，MML 不入庫。請依 `railway/README.md` 完成環境變數、持久磁碟及來源連接。
 
-私人 GitHub 程式庫為 `a91453/mml-tools`；Railway 精確目標與進度記錄於 `railway/deployment-target.json`。部署使用 Railway 服務設定及 `railway/Dockerfile`，不使用新服務已停用的 `railway.toml` 設定方式；`railway/service-settings.json` 保存不含密碼的設定參考。本機 75 項測試通過，包括經由實際本機 HTTP 的 OAuth＋MCP 呼叫；本機測試、正式 HTTPS 檢查及使用者在 ChatGPT 的連接驗收分開記錄。
+私人 GitHub 程式庫為 `a91453/mml-tools`；Railway 精確目標與進度記錄於 `railway/deployment-target.json`。部署使用 Railway 服務設定及 `railway/Dockerfile`，不使用新服務已停用的 `railway.toml` 設定方式；`railway/service-settings.json` 保存不含密碼的設定參考。本機 78 項測試通過，包括經由實際本機 HTTP 的 OAuth＋MCP 呼叫；本機測試、正式 HTTPS 檢查及使用者在 ChatGPT 的連接驗收分開記錄。
 
 Railway 已於 2026-09-08 22:48 UTC 完成部署，GitHub 來源為 `a91453/mml-tools` 的 `main`。已觀察到 `/healthz` 200、OAuth metadata 200、未登入 `/mcp` 401；完整使用者 OAuth 與授權後工具呼叫仍需另外驗收。正式工具網址為 `https://mml-tools-production.up.railway.app/mcp`，採 OAuth DCR。較早的「Application not found」是歷史部署狀態，不是目前的登入錯誤原因。
 
-登入頁修正：只將 HTML 的 `Referrer-Policy` 設為 `same-origin`，避免一般表單送出被 `no-referrer` 轉成 `Origin: null`；保留嚴格來源、CSRF、密碼及 PKCE 檢查。此修正已部署，2026-09-08 23:18 UTC 的正式 HTTPS 檢查確認登入頁政策正確、同來源請求通過來源及 CSRF 檢查、`null` 來源仍拒絕；合成檢查明確拒絕授權，沒有提交擁有者密碼，也不代表本人登入完成。請從 ChatGPT 開始新的連接流程，不要重送舊登入頁。目前尚未觀察到 `/data` 持久磁碟，重新部署會遺失 OAuth 註冊及授權資料；需補上持久磁碟後才能依賴跨部署授權保存。
+登入頁修正：只將 HTML 的 `Referrer-Policy` 設為 `same-origin`，避免一般表單送出被 `no-referrer` 轉成 `Origin: null`；保留嚴格來源、CSRF、密碼及 PKCE 檢查。2026-09-08 23:18 UTC 的正式 HTTPS 檢查確認此政策已生效，同來源請求通過來源及 CSRF 檢查、`null` 來源仍拒絕。之後正式紀錄出現兩次登入成功回傳 302，接著重送 403，但尚無 token 交換；這不等於 ChatGPT 連接完成。
+
+本版另修正登入後回呼相容性：CSP 只開放本站與所選已註冊回呼來源，成功登入使用 303 返回 ChatGPT；已完成／逾時的瀏覽器表單改顯示重新連線說明，API 仍維持 JSON 拒絕。請只使用一個新開的登入頁，不要重送舊頁。Railway 已觀察到 `/data` 的 500 MB 持久磁碟；跨部署註冊保存與本人登入仍須依正式檢查結果確認。
 
 ## MCP 工具服務
 

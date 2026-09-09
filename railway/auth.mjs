@@ -12,6 +12,7 @@ const escapeHtml = value => String(value).replace(/[&<>"']/g, c => ({ '&': '&amp
 const noCache = { 'cache-control': 'no-store', pragma: 'no-cache', 'x-content-type-options': 'nosniff', 'referrer-policy': 'no-referrer' };
 const json = (value, status = 200, extra = {}) => Response.json(value, { status, headers: { ...noCache, ...extra } });
 const problem = (error, description, status = 400) => json({ error, error_description: description }, status);
+const expiredLoginPage = () => new Response(`<!doctype html><html lang="zh-Hant"><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>請重新連線｜MML 工具服務</title><style>body{font:17px system-ui,sans-serif;background:#101726;color:#edf2fc;margin:0;padding:32px 20px}main{max-width:440px;margin:5vh auto}p{line-height:1.7;color:#c1cbdc}</style><main><h1>請重新連線</h1><p>這個登入程序已結束、逾時，或與目前開啟的登入頁不相符。</p><p>請關閉此頁，回到 ChatGPT 按「重新連線」，再使用新開的登入頁。</p><p>請只保留一個登入頁，不要重新整理或再次送出舊表單。</p></main></html>`, { status: 403, headers: { ...noCache, 'content-type': 'text/html; charset=utf-8', 'content-security-policy': "default-src 'none'; style-src 'unsafe-inline'; form-action 'none'; frame-ancestors 'none'; base-uri 'none'" } });
 
 class OAuthFault extends Error {
   constructor(code, description, status = 400) { super(description); this.code = code; this.status = status; }
@@ -97,7 +98,8 @@ export function createAuth({ origin, ownerPassword, database, allowedRedirectHos
   function startFlow(params) {
     uniqueParams(params); rate('authorize', 60);
     const clientId = params.get('client_id'), client = clientFor(clientId), redirect = params.get('redirect_uri');
-    requireValue(client.redirect_uris.includes(redirect), 'invalid_request', 'Redirect URI is not registered');
+    requireValue(client.redirect_uris.includes(redirect) && redirectAllowed(redirect), 'invalid_request', 'Redirect URI is not registered');
+    const callbackOrigin = new URL(redirect).origin;
     requireValue(params.get('response_type') === 'code', 'unsupported_response_type', 'Only authorization code flow is supported');
     requireValue(params.get('code_challenge_method') === 'S256' && /^[A-Za-z0-9_-]{43}$/.test(params.get('code_challenge') ?? ''), 'invalid_request', 'PKCE S256 is required');
     checkResource(params.get('resource')); checkScope(params.get('scope'));
@@ -112,7 +114,10 @@ export function createAuth({ origin, ownerPassword, database, allowedRedirectHos
     // POST, even to this same origin. Preserve that Origin on the login page
     // while still suppressing cross-origin referrers. Keep the exact Origin,
     // CSRF cookie and token checks below; never allow null/missing Origins.
-    return new Response(html, { headers: { ...noCache, 'referrer-policy': 'same-origin', 'content-type': 'text/html; charset=utf-8', 'content-security-policy': "default-src 'none'; style-src 'unsafe-inline'; form-action 'self'; frame-ancestors 'none'; base-uri 'none'", 'set-cookie': `__Host-mml_flow=${flowId}; Path=/; HttpOnly; Secure; SameSite=Lax; Max-Age=300` } });
+    // Browsers may also enforce form-action on the post-consent redirect.
+    // Permit only self and this validated client's selected callback origin;
+    // never interpolate the raw callback URL or allow arbitrary destinations.
+    return new Response(html, { headers: { ...noCache, 'referrer-policy': 'same-origin', 'content-type': 'text/html; charset=utf-8', 'content-security-policy': `default-src 'none'; style-src 'unsafe-inline'; form-action 'self' ${callbackOrigin}; frame-ancestors 'none'; base-uri 'none'`, 'set-cookie': `__Host-mml_flow=${flowId}; Path=/; HttpOnly; Secure; SameSite=Lax; Max-Age=300` } });
   }
   async function finishFlow(request) {
     rate('login', 12);
@@ -134,7 +139,8 @@ export function createAuth({ origin, ownerPassword, database, allowedRedirectHos
     });
     const target = new URL(flow.redirect);
     target.searchParams.set('code', code); target.searchParams.set('state', flow.state); target.searchParams.set('iss', issuer);
-    return new Response(null, { status: 302, headers: { ...noCache, location: target.href, 'set-cookie': clearFlowCookie() } });
+    // RFC 9700 section 4.12: 303 explicitly turns the credential POST into GET.
+    return new Response(null, { status: 303, headers: { ...noCache, location: target.href, 'set-cookie': clearFlowCookie() } });
   }
   async function register(request) {
     rate('register', 12); store.prune();
@@ -212,7 +218,11 @@ export function createAuth({ origin, ownerPassword, database, allowedRedirectHos
         if (url.pathname === '/oauth/revoke' && request.method === 'POST') return await revoke(request);
         return null;
       } catch (error) {
-        if (error instanceof OAuthFault) return problem(error.code, error.message, error.status);
+        if (error instanceof OAuthFault) {
+          const acceptsHtml = (request.headers.get('accept') ?? '').split(',').some(value => value.trim().split(';')[0].toLowerCase() === 'text/html');
+          if (request.method === 'POST' && url.pathname === '/oauth/authorize' && error.message === 'Login request expired or invalid' && acceptsHtml) return expiredLoginPage();
+          return problem(error.code, error.message, error.status);
+        }
         if (error instanceof SyntaxError || error instanceof TypeError) return problem('invalid_request', 'Malformed request');
         // Never return or log token values, password input, database contents,
         // request headers or internal exceptions to clients.
