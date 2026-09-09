@@ -8,8 +8,8 @@
   "status": "online-user-oauth-connection-pending",
   "githubSource": "a91453/mml-tools",
   "githubBranch": "main",
-  "lastObservedDeploymentCommit": "b00d61e431c5027b050d54394b321bbd7080cc1a",
-  "lastObservedDeploymentId": "9722ca24-8a9b-4e93-a169-c350e2e1d4bf",
+  "lastObservedDeploymentCommit": "bb295358d9e68f38f24985b55b89a2f5527ca27d",
+  "lastObservedDeploymentId": "cf8c2277-40a3-4772-9b0a-5d5ee8b06cb9",
   "lastObservedDeploymentStatus": "SUCCESS",
   "sourceConnected": true,
   "publicOrigin": "https://mml-tools-production.up.railway.app",
@@ -44,6 +44,20 @@
   },
   "pendingVariableChangesObserved": 5,
   "pendingVariableChangesAppliedByThisFix": false,
+  "callbackPolicyVerification": {
+    "checkedAt": "2026-09-09T06:32:35.913Z",
+    "referrerPolicy": "same-origin",
+    "formAction": "form-action 'self' https://chatgpt.com",
+    "healthHttpStatus": 200,
+    "metadataHttpStatus": 200,
+    "unauthenticatedMcpHttpStatus": 401,
+    "preDeploymentRegistrationSurvived": true,
+    "sameOriginConsentGateReached": true,
+    "expiredBrowserRecoveryPageVerified": true,
+    "ownerPasswordSubmitted": false,
+    "ownerChatgptReturnVerified": false,
+    "authorizedProductionMcpVerified": false
+  },
   "historicalWorkflowNote": "The earlier accepted commitChanges request produced no deployment. The service has since been connected and deployed from GitHub through Railway.",
   "consentRedirectObservation": {
     "successfulConsentResponses": 2,
@@ -52,5 +66,5 @@
     "tokenExchangeObserved": false,
     "browserCspBlockIsInference": true
   },
-  "pending": "Deploy and verify the selected-callback CSP and HTTP 303 compatibility fix. Verify registration survives redeploy on the newly mounted /data volume, then complete the owner's actual ChatGPT return, token exchange and authorized tools. Pending variable changes are left untouched."
+  "pending": "Callback CSP/303/recovery fix is deployed; HTTPS policy, recovery page and predeployment client persistence checks passed. Complete the owner's actual ChatGPT return, token exchange and authorized tools. HTTP 303 was verified with synthetic local consent, not by submitting the owner's password in production. Pending variable changes remain untouched."
 }
