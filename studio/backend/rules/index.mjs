@@ -82,7 +82,9 @@ export const STUDIO_IMPLEMENTATION = Object.freeze({
   versionDriftReport: true,
   core3ContinuityGate: true,
   leadDemotionGate: true,
-  originalAudioAlignment: false,
+  // Python 3.12 worker: FFmpeg decode -> chroma -> DTW -> beat/time and Tempo-drift
+  // evidence, plus a Node bridge that attaches reports without mutating symbolic events.
+  originalAudioAlignment: true,
   crossSourceHarmonyArbitration: true,
 });
 
@@ -107,6 +109,9 @@ export function auditLegacyRuleDrift() {
   return Object.freeze(findings);
 }
 
+// These blockers describe whether the Studio implementation has the required
+// modules. An empty array never certifies a song. Song-specific readiness is
+// evaluated separately by backend/final/readiness.mjs.
 export function studioFinalBlockers() {
   const required = [
     ['musicXmlIngestion', 'MUSICXML_INGESTION_PENDING'],
@@ -122,6 +127,6 @@ export function studioFinalBlockers() {
 
 export function assertRulesReadyForFinal() {
   const blockers = studioFinalBlockers();
-  if (blockers.length) throw Error(`Studio Final Gate blocked: ${blockers.join(', ')}`);
+  if (blockers.length) throw Error(`Studio Final implementation blocked: ${blockers.join(', ')}`);
   return true;
 }
