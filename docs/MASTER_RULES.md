@@ -1,7 +1,7 @@
 # Mabinogi Mobile MML — Canonical Master Rules
 
-Version: 2026-09-13-draft2
-Status: CANONICAL CANDIDATE on `rules-canonical-20260913`
+Version: 2026-09-13-v1
+Status: PUBLISHED CANONICAL
 
 This document is the human-readable authority for project policy. Executable contracts, parsers, validators, Studio code, legacy skills, community posts, websites, and historical outputs MUST NOT silently redefine it.
 
