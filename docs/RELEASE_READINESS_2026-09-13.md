@@ -2,7 +2,7 @@
 
 Date: 2026-09-13
 Target: `studio-v1` → `main`
-Status: PRE-MERGE REVIEW IN PROGRESS
+Status: RELEASE REVIEW APPROVED; PUBLISHED CANONICAL v1 FINALIZED; PRE-MERGE CI REQUIRED
 
 ## Scope
 
@@ -29,6 +29,8 @@ Human-readable rule authority remains:
 - `docs/MOBILE_SYNTAX.md`
 - `docs/ACCEPTANCE_CRITERIA.md`
 - `docs/PENDING.md`
+
+The reviewed rule set is published as `2026-09-13-v1` with status `PUBLISHED CANONICAL`.
 
 `studio/backend/rules/index.mjs` implements that policy and explicitly does not define it.
 
@@ -100,15 +102,22 @@ These remain visible and must not be overstated:
 
 None of these items may be represented as completed capabilities.
 
+## Independent release review
+
+Grok's release-level adversarial review of PR #2 at pre-finalization head `7e9df8d` reported:
+
+`APPROVE_FOR_MAIN_RELEASE_FINALIZATION`
+
+No P0/P1 merge blocker was identified. The remaining P2/P3 items are tracked as non-blocking debt and were not folded into Canonical finalization.
+
 ## Merge gate
 
-PR #2 may move from Draft toward `main` only after:
+Canonical finalization is complete. PR #2 may move from Draft to Ready only after:
 
-1. current-head symbolic CI passes;
-2. current-head audio-worker CI passes;
-3. changed-file scope is rechecked to confirm no unintended production-route replacement;
-4. PR description is updated to current Canonical/audio/readiness status;
-5. independent release-level adversarial review reports no merge-blocking P0/P1 finding;
-6. Canonical candidate metadata is explicitly promoted/finalized only when the release decision is made.
+1. the post-finalization current-head symbolic CI passes;
+2. the post-finalization current-head audio-worker CI passes;
+3. the legacy production bundle build smoke test passes;
+4. the final diff is rechecked for production-route and rule-content drift;
+5. PR metadata is updated to the published Canonical v1 state.
 
-Until those conditions are met, PR #2 remains Draft and `main` remains unchanged.
+Even after PR #2 is marked Ready, merging into `main` remains a separate explicit action.
