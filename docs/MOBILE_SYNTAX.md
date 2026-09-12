@@ -1,7 +1,7 @@
 # Mobile Syntax Policy
 
-Version: 2026-09-13-draft2
-Status: CANONICAL CANDIDATE
+Version: 2026-09-13-v1
+Status: PUBLISHED CANONICAL
 
 This file separates documented game limits from project output policy.
 
