@@ -44,6 +44,45 @@ const jsonObject = (value, label) => {
   return structuredClone(value);
 };
 
+const normalizeRole = role => {
+  if (role !== null && !ROLES.includes(role)) throw Error(`event.role must be null or one of: ${ROLES.join(', ')}`);
+  return role;
+};
+
+const normalizeVoice = voice => {
+  if (voice !== null && typeof voice !== 'string' && !Number.isInteger(voice)) throw Error('event.voice must be null, string, or integer');
+  return voice;
+};
+
+const normalizeSpan = ({ id, start, end, sourceIds, sourceEventIds = [], role = null, voice = null, tags = [], metadata = {} }) => {
+  id = nonEmpty(id, 'event.id');
+  start = beat(start, 'event.start');
+  end = beat(end, 'event.end');
+  if (f(end).cmp(start) <= 0) throw Error('event.end must be greater than event.start');
+  sourceIds = uniqueStrings(sourceIds, 'event.sourceIds', { allowEmpty: false });
+  sourceEventIds = uniqueStrings(sourceEventIds, 'event.sourceEventIds');
+  tags = uniqueStrings(tags, 'event.tags');
+  return {
+    id,
+    start,
+    end,
+    sourceIds,
+    sourceEventIds,
+    role: normalizeRole(role),
+    voice: normalizeVoice(voice),
+    tags,
+    metadata: jsonObject(metadata, 'event.metadata'),
+  };
+};
+
+const normalizePoint = ({ id, beat: position, sourceIds, sourceEventIds = [], metadata = {} }, label) => ({
+  id: nonEmpty(id, `${label}.id`),
+  beat: beat(position, `${label}.beat`),
+  sourceIds: uniqueStrings(sourceIds, `${label}.sourceIds`, { allowEmpty: false }),
+  sourceEventIds: uniqueStrings(sourceEventIds, `${label}.sourceEventIds`),
+  metadata: jsonObject(metadata, `${label}.metadata`),
+});
+
 export function createSource({ id, label, kind, authority, sha256 = null, metadata = {} }) {
   id = nonEmpty(id, 'source.id');
   label = nonEmpty(label, 'source.label');
@@ -66,30 +105,53 @@ export function createCanonicalNoteEvent({
   tags = [],
   metadata = {},
 }) {
-  id = nonEmpty(id, 'event.id');
   if (!Number.isInteger(pitch) || pitch < 0 || pitch > 127) throw Error('event.pitch must be a MIDI integer from 0 to 127');
-  start = beat(start, 'event.start');
-  end = beat(end, 'event.end');
-  if (f(end).cmp(start) <= 0) throw Error('event.end must be greater than event.start');
-  sourceIds = uniqueStrings(sourceIds, 'event.sourceIds', { allowEmpty: false });
-  sourceEventIds = uniqueStrings(sourceEventIds, 'event.sourceEventIds');
-  if (role !== null && !ROLES.includes(role)) throw Error(`event.role must be null or one of: ${ROLES.join(', ')}`);
-  if (voice !== null && (typeof voice !== 'string' && !Number.isInteger(voice))) throw Error('event.voice must be null, string, or integer');
   if (volume !== null && (!Number.isInteger(volume) || volume < 0 || volume > 15)) throw Error('event.volume must be null or an integer from 0 to 15');
-  tags = uniqueStrings(tags, 'event.tags');
-  return Object.freeze({
-    id,
-    pitch,
-    start,
-    end,
-    sourceIds,
-    sourceEventIds,
-    role,
-    voice,
-    volume,
-    tags,
-    metadata: jsonObject(metadata, 'event.metadata'),
-  });
+  const span = normalizeSpan({ id, start, end, sourceIds, sourceEventIds, role, voice, tags, metadata });
+  return Object.freeze({ kind: 'note', ...span, pitch, volume });
+}
+
+export function createCanonicalRestEvent({
+  id,
+  start,
+  end,
+  sourceIds,
+  sourceEventIds = [],
+  role = null,
+  voice = null,
+  tags = [],
+  metadata = {},
+}) {
+  const span = normalizeSpan({ id, start, end, sourceIds, sourceEventIds, role, voice, tags, metadata });
+  return Object.freeze({ kind: 'rest', ...span });
+}
+
+export function createCanonicalTempoEvent({
+  id,
+  beat: position,
+  bpm,
+  sourceIds,
+  sourceEventIds = [],
+  metadata = {},
+}) {
+  if (typeof bpm !== 'number' || !Number.isFinite(bpm) || bpm <= 0 || bpm > 1000) throw Error('tempo.bpm must be a finite number from >0 to 1000');
+  const point = normalizePoint({ id, beat: position, sourceIds, sourceEventIds, metadata }, 'tempo');
+  return Object.freeze({ kind: 'tempo', ...point, bpm });
+}
+
+export function createCanonicalMeterEvent({
+  id,
+  beat: position,
+  numerator,
+  denominator,
+  sourceIds,
+  sourceEventIds = [],
+  metadata = {},
+}) {
+  if (!Number.isInteger(numerator) || numerator <= 0 || numerator > 255) throw Error('meter.numerator must be an integer from 1 to 255');
+  if (!Number.isInteger(denominator) || denominator <= 0 || denominator > 1024) throw Error('meter.denominator must be an integer from 1 to 1024');
+  const point = normalizePoint({ id, beat: position, sourceIds, sourceEventIds, metadata }, 'meter');
+  return Object.freeze({ kind: 'meter', ...point, numerator, denominator });
 }
 
 export function createArbitrationDecision({
@@ -110,10 +172,30 @@ export function createArbitrationDecision({
   return Object.freeze({ id, eventIds, action, status, reason, evidence, metadata: jsonObject(metadata, 'decision.metadata') });
 }
 
-export function createCanonicalProject({ id, title, sources, events, decisions = [], metadata = {} }) {
+function validateSourceBackedItems(items, sourceIds, label) {
+  const ids = new Set();
+  for (const item of items) {
+    if (!item || typeof item !== 'object') throw Error(`project.${label} contains an invalid item`);
+    if (ids.has(item.id)) throw Error(`duplicate ${label} id: ${item.id}`);
+    ids.add(item.id);
+    for (const sourceId of item.sourceIds ?? []) if (!sourceIds.has(sourceId)) throw Error(`${label} ${item.id} references unknown source: ${sourceId}`);
+  }
+  return ids;
+}
+
+export function createCanonicalProject({
+  id,
+  title,
+  sources,
+  events,
+  tempoEvents = [],
+  meterEvents = [],
+  decisions = [],
+  metadata = {},
+}) {
   id = nonEmpty(id, 'project.id');
   title = nonEmpty(title, 'project.title');
-  if (!Array.isArray(sources) || !Array.isArray(events) || !Array.isArray(decisions)) throw Error('project sources/events/decisions must be arrays');
+  if (![sources, events, tempoEvents, meterEvents, decisions].every(Array.isArray)) throw Error('project source/event/control/decision collections must be arrays');
 
   const sourceIds = new Set();
   for (const source of sources) {
@@ -122,13 +204,9 @@ export function createCanonicalProject({ id, title, sources, events, decisions =
     sourceIds.add(source.id);
   }
 
-  const eventIds = new Set();
-  for (const event of events) {
-    if (!event || typeof event !== 'object') throw Error('project.events contains an invalid event');
-    if (eventIds.has(event.id)) throw Error(`duplicate event id: ${event.id}`);
-    eventIds.add(event.id);
-    for (const sourceId of event.sourceIds ?? []) if (!sourceIds.has(sourceId)) throw Error(`event ${event.id} references unknown source: ${sourceId}`);
-  }
+  const eventIds = validateSourceBackedItems(events, sourceIds, 'events');
+  validateSourceBackedItems(tempoEvents, sourceIds, 'tempoEvents');
+  validateSourceBackedItems(meterEvents, sourceIds, 'meterEvents');
 
   const decisionIds = new Set();
   for (const decision of decisions) {
@@ -139,11 +217,13 @@ export function createCanonicalProject({ id, title, sources, events, decisions =
   }
 
   return Object.freeze({
-    schema: 'mabinogi-mobile-mml-studio/canonical-project@1',
+    schema: 'mabinogi-mobile-mml-studio/canonical-project@2',
     id,
     title,
     sources: [...sources],
     events: [...events],
+    tempoEvents: [...tempoEvents],
+    meterEvents: [...meterEvents],
     decisions: [...decisions],
     metadata: jsonObject(metadata, 'project.metadata'),
   });
