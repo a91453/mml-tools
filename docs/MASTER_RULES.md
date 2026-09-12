@@ -1,6 +1,6 @@
 # Mabinogi Mobile MML — Canonical Master Rules
 
-Version: 2026-09-13-draft1
+Version: 2026-09-13-draft2
 Status: CANONICAL CANDIDATE on `rules-canonical-20260913`
 
 This document is the human-readable authority for project policy. Executable contracts, parsers, validators, Studio code, legacy skills, community posts, websites, and historical outputs MUST NOT silently redefine it.
@@ -42,13 +42,26 @@ Do not improve metrics by erasing source-supported music.
 
 ## 3. Source-complete baseline first
 
-Before six-track reduction, preserve important source material in a traceable baseline: Lead/Top voice, core harmony, inner voices, bass, counter-lines, rhythmic/texture voices, tempo/meter/form, and source IDs.
+Before role cleanup or six-track reduction, preserve important source material in a traceable Source-Faithful Baseline: Lead/Top voice, core harmony, inner voices, bass, counter-lines, rhythmic/texture voices, tempo/meter/form, and source IDs.
 
-Every candidate SHOULD be diffable against:
-- Source-Faithful Baseline;
-- accepted previous version, if one exists.
+When a candidate performs any role move, cleanup, reduction or Mobile adaptation, a diff-capable Source-Faithful Baseline SHALL exist before that transformation is accepted.
+
+The baseline or equivalent event map MUST be able to enumerate at minimum:
+- T1/Lead removed events;
+- T1/Lead added events;
+- T1-to-other-track moves;
+- other-track-to-T1 promotions;
+- other meaningful role moves;
+- pitch/onset/duration changes;
+- prominence/volume changes when role or audibility is affected.
+
+Every candidate SHALL be diffed against:
+- the Source-Faithful Baseline;
+- the accepted previous version, if one exists.
 
 A role move, removed event, added event, pitch/onset/duration change, or prominence change must not be silent.
+
+A source inventory that cannot produce these event-level differences is not sufficient as the required baseline.
 
 ## 4. Melody / Lead policy
 
@@ -61,6 +74,8 @@ Forbidden inference shortcuts:
 - `not proven Vocal -> therefore Inner/Harmony`.
 
 Demoting a source-supported Lead requires positive role evidence and must preserve continuity and Core3 integrity.
+
+If the evidence for demotion conflicts or is incomplete, preserve the Source-Faithful Lead event and mark the decision `PENDING` rather than cleaning it away.
 
 ## 5. Core3 / Full6
 
@@ -107,7 +122,7 @@ General MIDI drum note numbers are not ordinary pitched Mobile MML notes. Drum s
 
 ## 9. Tempo / preview policy
 
-Final syntax limits are defined in `MOBILE_SYNTAX.md`.
+Final syntax and delivery synchronization policy are defined in `MOBILE_SYNTAX.md`.
 
 For verification previews:
 - use an independent Conductor where applicable;
@@ -137,7 +152,7 @@ Keep these separate:
 
 No lower layer may impersonate a higher layer.
 
-## 12. Canonical change control
+## 12. Canonical change control and regression claims
 
 Changes to these docs require:
 1. explicit rationale;
@@ -147,4 +162,6 @@ Changes to these docs require:
 
 Studio code implements Canonical rules; it does not define them.
 
-Historical named regressions such as Rashisa lead over-cleaning remain permanent evidence and should become fixtures when source assets are available.
+Historical named regressions such as Rashisa lead over-cleaning remain permanent evidence and SHOULD become reproducible fixtures when legally/source-permitted assets are available.
+
+Until a named regression fixture exists and is actually executed, a report MUST NOT claim that the named regression has passed. For Lead demotion scenarios without the required evidence, default to `FAIL` or `PENDING`, not silent cleanup.
