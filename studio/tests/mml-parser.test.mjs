@@ -13,7 +13,7 @@ import {
 
 const six = raw => `MML@${Array(6).fill(raw).join(',')};`;
 
-test('Studio parser accepts 64th-note notes, rests and L64', () => {
+test('Studio parser accepts plain 64th-note notes, rests and L64', () => {
   for (const raw of ['t120o4c64', 't120o4r64', 't120o4l64c']) {
     const parsed = parseTrack(raw, 'Melody');
     assert.deepEqual(parsed.errors, [], `${raw}: ${JSON.stringify(parsed.errors)}`);
@@ -26,7 +26,7 @@ test('Studio parser accepts T255 and rejects T256', () => {
 });
 
 test('Studio parser preserves strict canonical exclusions', () => {
-  for (const raw of ['t120o4c48', 't120o4c128', 't120o4c3.', 't120o4c6.', 't120o4c12.', 't120o4c24.', 't120o4c4..', 't120o4n60']) {
+  for (const raw of ['t120o4c48', 't120o4c128', 't120o4c64.', 't120o4r64.', 't120o4c3.', 't120o4c6.', 't120o4c12.', 't120o4c24.', 't120o4c4..', 't120o4n60']) {
     assert.ok(parseTrack(raw, 'Melody').errors.length, raw);
   }
 });
