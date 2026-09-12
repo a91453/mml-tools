@@ -2,6 +2,8 @@
 
 可自行修改的瑪奇 Mobile 六軌 MML 檢查與預覽工作台。網站核心 v0.1.0，工具服務 v0.2.0。
 
+> Studio v1 的來源、Published Canonical v1 文件與測試會與既有 Workbench 並存；**把 Studio 原始碼納入 `main` 不會自動切換正式 Railway/MCP 部署**。目前 production Railway/MCP 仍使用既有 Workbench 路徑。舊版工作基準凍結於 `legacy-v0.2.0`；規則權威請看 `docs/MASTER_RULES.md`、`docs/MOBILE_SYNTAX.md`、`docs/ACCEPTANCE_CRITERIA.md` 與 `studio/README.md`。
+
 ## 獨立主機部署
 
 `railway/` 提供獨立的 Node HTTP 服務、單一擁有者 OAuth、Dockerfile 與部署說明；它沿用原有 MML 核心。此版本採用 OAuth DCR、公用客戶端與 PKCE S256，授權資料保存於獨立 SQLite volume，MML 不入庫。請依 `railway/README.md` 完成環境變數、持久磁碟及來源連接。
@@ -44,12 +46,12 @@ Sites 版本依賴 Sites 的私人存取閘道。Worker 僅在閘道提供可信
 
 ## 可溯源驗證
 
-- `core.js`：BigInt有理數MML解析、Strict Mobile profile、拍號與小節、完整15對重疊區間、MIDI/ABC編碼與各自解碼、逐事件及控制資料比對。
+- `core.js`：BigInt有理數MML解析、舊 Workbench strict profile、拍號與小節、完整15對重疊區間、MIDI/ABC編碼與各自解碼、逐事件及控制資料比對。
 - `player.js`：從實際MIDI bytes解碼後持有自己的引擎資料；回讀匯出真正載入的資料及播放排程，保留session/hash/範圍。不会把來源預期值寫回去修成一致。
 - `app.js`：完整字串、原曲A/B、依版本失效的檢查結果、匯出與載入。
 - `tests/`：歷史事故反例；含錯誤音量、Program、拍號、事件、rest-tie、Nxx及混合拍號等。
 
-新工作台並未修改既有安裝版 `mabinogi-mobile-mml` 技能或Python驗證器。它是一個獨立且可匯出的實作。
+新 Studio 並未修改既有安裝版 `mabinogi-mobile-mml` 技能或 production Railway/MCP；它是一套額外的來源／仲裁／驗證架構。
 
 ## 驗收範圍
 
@@ -57,7 +59,7 @@ Sites 版本依賴 Sites 的私人存取閘道。Worker 僅在閘道提供可信
 
 原曲身份、有效區間、分層聽驗及遊戲驗收不會自動變成PASS。有效時長比較由使用者輸入的已確認範圍計算；不自動使用容器長度、不裁尾湊2%。
 
-來源可保留精確事件；Strict Mobile交付限制單獨施加。本版可直接解析的分母為1、2、3、4、6、8、12、16、24、32；拒絕Nxx、雙附點、附點三連音式寫法、48/64及更細時值。拒絕不等於自動重寫：輸出需依來源完成最小必要適配。
+**以下是 legacy Workbench v0.2.0 內建 strict profile 的歷史行為，不是目前 Canonical Studio 規則：**舊 parser 可直接解析的分母為1、2、3、4、6、8、12、16、24、32，並拒絕 Nxx、48/64 等。Current Canonical 規則以 `docs/MOBILE_SYNTAX.md` 為準：plain 64 可用、plain 1–64 非偏好值屬 caution、Nxx 為 opt-in-with-evidence；不要用舊 Workbench rejection 推論遊戲引擎不支援。
 
 ABC輸出使用L:1/4、K:C、完整展開、小節線、同音tie及明確拍號變化。與第三方播放器的方言相容性仍需在該播放器實際載入後驗證；不宣稱Midify已支援本版的混合拍號。
 
@@ -68,15 +70,16 @@ GM Program及CC7會被保留並逐事件核對。聽感採有限的程序合成�
 使用Node.js 22以上：
 
 ```sh
-node --test tests/*.test.mjs
+npm run test:legacy   # 只跑舊 Workbench regression
+npm test              # legacy + Studio symbolic regression
 ```
 
 網站原始頁面放於 `dist/`。以任一支援 ES Modules 的本機 HTTP 服務開啟；不要直接以 file:// 開啟。Web Audio 需使用者點擊播放及可用音訊 context。
 
-部署建置執行 `node scripts/build.mjs`，需要 Node.js 22 以上和 `zip`。建置將共用核心、MCP 服務及原有網站資產組成單一 Worker ESM，輸出到 `dist/server/index.js`，並複製部署設定到 `dist/.openai/hosting.json`。不需要安裝 npm 套件；也不會存取網路。
+既有 production 部署建置仍執行 `node scripts/build.mjs`，需要 Node.js 22 以上和 `zip`；它不會因 Studio source 進入 repo 就自動切換到 Studio。Studio Node 測試另需安裝 `package.json` 中的依賴，audio-worker 則使用 `studio/audio-worker/requirements.txt`。
 
 測試包含合成曲譜、MCP 握手與工具結果、參數和容量限制，以及缺少閘道身分時的拒絕處理。以合成身分標頭測試 Worker 僅驗證本機路由邏輯，不能當成正式 OAuth 或端到端連線驗證。
 
-既有測試使用合成音符及假的AudioContext驗證排程契約，未執行瀏覽器UI或真實音訊硬體驗收。手機／iPad首次播放、音訊中斷恢復、长曲與實際音色需使用者試聽後繼續校正。
+既有測試使用合成音符及假的AudioContext驗證排程契約，未執行瀏覽器UI或真實音訊硬體驗收。手機／iPad首次播放、音訊中斷恢復、長曲與實際音色需使用者試聽後繼續校正。
 
 原始碼下載包不包含任何使用者歌曲、音檔、登入資料或部署憑證。原始碼、事件格式與測試都可帶走；Sites上的原始碼亦已版本化。

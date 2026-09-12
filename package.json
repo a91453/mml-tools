@@ -1,1 +1,1 @@
-{"name":"mml-workbench","private":true,"version":"0.2.0","type":"module","scripts":{"test":"node --test tests/*.test.mjs","build":"node scripts/build.mjs"}}
+{"name":"mml-workbench","private":true,"version":"0.2.0","type":"module","dependencies":{"fast-xml-parser":"5.10.1"},"scripts":{"test":"node --test tests/*.test.mjs studio/tests/*.test.mjs","test:legacy":"node --test tests/*.test.mjs","test:studio":"node --test studio/tests/*.test.mjs","build":"node scripts/build.mjs"}}
