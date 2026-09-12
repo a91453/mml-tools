@@ -2,7 +2,7 @@ name: Studio CI
 
 on:
   push:
-    branches: [studio-v1]
+    branches: [studio-v1, main]
   pull_request:
   workflow_dispatch:
 
@@ -23,7 +23,7 @@ jobs:
         uses: actions/setup-node@v4
         with:
           node-version: '22'
-      - name: Install exact dependencies
+      - name: Install Node dependencies
         run: npm install --ignore-scripts --package-lock=false
       - name: Run legacy and Studio symbolic regressions
         run: npm test
