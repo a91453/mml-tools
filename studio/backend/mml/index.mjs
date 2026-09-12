@@ -26,6 +26,9 @@ export const MML_ENGINE_ADAPTER = Object.freeze({
   executableContract: '../rules/index.mjs',
   ingestParser: './parser.mjs#parseTrack',
   finalValidator: './parser.mjs#validateMML',
+  // Compatibility alias retained for existing callers/tests. Final policy is
+  // still applied by validateMML; this field identifies the owning module only.
+  finalParser: './parser.mjs',
   legacyImplementation: '../../../dist/core.js',
   legacyParserAllowedForFinalGate: false,
   reusableLegacyAreas: Object.freeze([
