@@ -67,31 +67,15 @@ Community guides report swallowed notes when the same pitch is played simultaneo
 
 This remains a review signal, not an automatic delete rule.
 
-## P12 — Studio documentation drift
-
-`docs/RULES_AUDIT_2026-09-13.md` states original-audio alignment as the remaining global implementation blocker, while `studio/backend/rules/index.mjs` currently has `STUDIO_IMPLEMENTATION.originalAudioAlignment = true`.
-
-Required action after Canonical review: update audit/status language and keep song-specific audio evidence requirements separate from module-existence readiness.
-
-## P13 — Studio parser policy drift
-
-Current `studio-v1` executable contract hard-rejects `48` and Final `Nxx`. Canonical candidate policy now requires review:
-- plain `48` = `FINAL_ALLOWED_WITH_CAUTION`, not officially illegal;
-- Nxx input capability must be preserved and Final use is opt-in/caution, not blanket engine rejection;
-- `64.` remains Final-forbidden even though engine capability is unresolved;
-- arbitrary 1–64 plain lengths are broader than the current Studio allowlist.
-
-Do not patch code until this Canonical branch passes review.
-
-## P14 — Historical regressions as fixtures
+## P12 — Historical regressions as fixtures
 
 Rashisa/らしさ lead over-cleaning and other named song regressions are documented conceptually but not all source assets are committed as reproducible fixtures.
 
-Required action: add legally usable/minimal synthetic or source-permitted regression fixtures before making Studio merge-readiness claims based on them.
+Required action: add legally usable/minimal synthetic or source-permitted regression fixtures before making claims that those named regressions themselves have passed.
 
 Until then, reports must use `FIXTURE_PENDING` rather than claiming the named regression passed.
 
-## P15 — Editor limits vs paste/playback parser limits
+## P13 — Editor limits vs paste/playback parser limits
 
 Official documentation confirms score-editor input limits such as Tempo 32–255 and note/rest length 1–64. It does not prove that every historical client/parser/playback path has exactly the same hidden acceptance boundary.
 
@@ -99,26 +83,36 @@ Project Final continues to obey the official editor limits regardless.
 
 Needed evidence: controlled paste/playback tests only if behavior outside the editor path matters.
 
-## P16 — Cross-role end-time / total-duration equality
+## P14 — Cross-role end-time / total-duration equality
 
 The project must distinguish meaningful source rests/endings from accidental track truncation. Exact requirements for all non-empty roles ending at identical time versus musically intentional shorter roles are not yet formalized as a single rule.
 
 Needed evidence: source-aware end-time comparison plus target-client synchronization tests. Do not pad meaningful silence merely to force numeric equality.
 
-## P17 — All 15 cross-track sustained same-pitch pairs
+## P15 — All 15 cross-track sustained same-pitch pairs
 
 For six roles there are 15 unordered role pairs. Current review tooling must demonstrate that sustained same-pitch overlap analysis actually covers all relevant pairs/windows; legacy text-only validation is insufficient proof.
 
 Needed evidence: regression tests that exercise all 15 pair combinations and distinguish musically justified doubling from collision-risk cases.
 
-## P18 — `r64` / 64th behavior across instruments
+## P16 — `r64` / 64th behavior across instruments
 
 Plain 64 is inside the official editor length range and appears in community works. Instrument-specific audibility/stability of very short notes/rests can still differ in practice.
 
 Needed evidence: representative target-client tests on relevant pitched/percussion instruments. This does not justify a blanket ban on plain 64.
 
-## P19 — Reduced one-/two-role performance quality
+## P17 — Reduced one-/two-role performance quality
 
 Core3 is the canonical single-player three-chord target. When only one or two roles are actually performed, the expected degradation policy and validation gate are not yet fully formalized.
 
 Needed evidence: song-level A/B and a project decision on what minimum musical completeness is expected for one-role and two-role situations. Do not weaken the Core3 gate while this remains pending.
+
+## Resolved implementation drift — not pending rules
+
+The following earlier audit items are now resolved in Studio code and are retained here only as history:
+
+- **Former Studio documentation/audio-status drift:** original-audio alignment is implemented; module readiness is separate from song-specific audio evidence.
+- **Former parser-policy drift:** ingest now preserves plain 1–64 caution values and Nxx; Final applies caution/opt-in policy instead of blanket input rejection.
+- **Former Lead-readiness bypass:** a baseline Lead removal/role move now requires a matching PASS demotion report instead of being treated as `N/A`.
+
+These resolved items MUST NOT be cited as current blockers or current parser behavior.
