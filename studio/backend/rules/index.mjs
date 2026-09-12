@@ -1,8 +1,8 @@
 import { parseTrack as legacyParseTrack } from '../../../dist/core.js';
 
 export const EFFECTIVE_RULESET = Object.freeze({
-  id: 'mabinogi-mobile-mml-canonical-draft2-alignment-2026-09-13',
-  status: 'implements-canonical-candidate',
+  id: 'mabinogi-mobile-mml-canonical-v1-2026-09-13',
+  status: 'implements-published-canonical',
   authority: Object.freeze({
     humanReadable: Object.freeze([
       'docs/MASTER_RULES.md',
