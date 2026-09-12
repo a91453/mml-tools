@@ -14,6 +14,7 @@ function project({
   audioEvidence = true,
   audioWarnings = [],
   pendingDecision = false,
+  removeLead = false,
 } = {}) {
   const source = createSource({
     id: 'official',
@@ -57,7 +58,7 @@ function project({
     id: 'song-1',
     title: 'Song 1',
     sources: [source],
-    events: [event],
+    events: removeLead ? [] : [event],
     decisions,
     metadata: {
       sourceComplete,
@@ -156,6 +157,27 @@ test('boolean-only baseline metadata cannot forge a PASS', () => {
   assert.equal(result.gates.baseline.status, 'PENDING');
   assert.deepEqual(result.gates.baseline.blockers, ['SOURCE_FAITHFUL_BASELINE_ARTIFACT_MISSING']);
   assert.ok(result.preGameBlocking.includes('baseline'));
+});
+
+test('baseline Lead removal without a matching demotion report blocks readiness', () => {
+  const result = evaluateProjectReadiness(readyInput({ project: project({ removeLead: true }) }));
+  assert.equal(result.gates.baseline.status, 'PASS');
+  assert.deepEqual(result.gates.baseline.leadEventDiff.removed, ['official:n1']);
+  assert.equal(result.gates.leadDemotion.status, 'PENDING');
+  assert.deepEqual(result.gates.leadDemotion.blockers, ['LEAD_DEMOTION_EVIDENCE_REQUIRED']);
+  assert.deepEqual(result.gates.leadDemotion.pendingEventIds, ['official:n1']);
+  assert.equal(result.candidateReady, false);
+  assert.ok(result.preGameBlocking.includes('leadDemotion'));
+});
+
+test('baseline Lead removal can pass only with a matching evidence-backed PASS report', () => {
+  const result = evaluateProjectReadiness(readyInput({
+    project: project({ removeLead: true }),
+    leadDemotionReports: [{ eventId: 'official:n1', status: 'PASS' }],
+  }));
+  assert.equal(result.gates.leadDemotion.status, 'PASS');
+  assert.deepEqual(result.gates.leadDemotion.requiredEventIds, ['official:n1']);
+  assert.equal(result.candidateReady, true);
 });
 
 test('technical validation failure blocks readiness even when musical gates pass', () => {
