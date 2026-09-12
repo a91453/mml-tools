@@ -1,7 +1,7 @@
 # Pending / In-Game Verification Register
 
-Version: 2026-09-13-draft2
-Status: CANONICAL CANDIDATE
+Version: 2026-09-13-v1
+Status: PUBLISHED CANONICAL
 
 Items here MUST NOT be promoted to confirmed engine behavior without new evidence.
 
