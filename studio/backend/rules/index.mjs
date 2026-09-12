@@ -20,7 +20,6 @@ export const EFFECTIVE_RULESET = Object.freeze({
     octaveMax: 8,
     volumeMin: 0,
     volumeMax: 15,
-    // 64/r64 are legal. Sub-1/64 timing remains outside the safe final grid.
     allowedLengthDenominators: Object.freeze([1, 2, 3, 4, 6, 8, 12, 16, 24, 32, 64]),
     shortestSafeDenominator: 64,
     rejectDenominators: Object.freeze([48, 128]),
@@ -70,6 +69,19 @@ export const EFFECTIVE_RULESET = Object.freeze({
   gates: Object.freeze(['technical', 'source', 'player-readback', 'original-audio-ab', 'mobile-adaptation', 'in-game']),
 });
 
+export const STUDIO_IMPLEMENTATION = Object.freeze({
+  currentRuleMmlParser: true,
+  exactRationalTiming: true,
+  crossTrackReview: true,
+  musicXmlIngestion: false,
+  sourceAwareMmlNormalization: false,
+  versionDriftReport: false,
+  core3ContinuityGate: false,
+  leadDemotionGate: false,
+  originalAudioAlignment: false,
+  crossSourceHarmonyArbitration: false,
+});
+
 export function auditLegacyRuleDrift() {
   const findings = [];
   const c64 = legacyParseTrack('t120o4c64', 'Melody');
@@ -91,11 +103,20 @@ export function auditLegacyRuleDrift() {
   return Object.freeze(findings);
 }
 
+export function studioFinalBlockers() {
+  const required = [
+    ['musicXmlIngestion', 'MUSICXML_INGESTION_PENDING'],
+    ['sourceAwareMmlNormalization', 'SOURCE_AWARE_MML_NORMALIZATION_PENDING'],
+    ['versionDriftReport', 'VERSION_DRIFT_REPORT_PENDING'],
+    ['core3ContinuityGate', 'CORE3_CONTINUITY_GATE_PENDING'],
+    ['leadDemotionGate', 'LEAD_DEMOTION_GATE_PENDING'],
+    ['crossSourceHarmonyArbitration', 'CROSS_SOURCE_HARMONY_PENDING'],
+  ];
+  return Object.freeze(required.filter(([key]) => !STUDIO_IMPLEMENTATION[key]).map(([, id]) => id));
+}
+
 export function assertRulesReadyForFinal() {
-  const drift = auditLegacyRuleDrift();
-  if (drift.length) {
-    const ids = drift.map(item => item.id).join(', ');
-    throw Error(`Studio Final Gate blocked: legacy rule drift unresolved (${ids})`);
-  }
+  const blockers = studioFinalBlockers();
+  if (blockers.length) throw Error(`Studio Final Gate blocked: ${blockers.join(', ')}`);
   return true;
 }
