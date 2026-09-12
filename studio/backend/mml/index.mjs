@@ -1,13 +1,21 @@
-// Studio v1 adapter for the proven Workbench MML engine.
+// Studio v1 compatibility adapter for the existing Workbench MML engine.
 //
-// Do not copy parser/validator logic into Studio while the legacy engine remains
-// authoritative. This adapter gives Studio a stable import path and lets us
-// replace the implementation later only after equivalent regression coverage.
+// IMPORTANT: dist/core.js is reusable implementation, not the Studio rules authority.
+// The legacy parser currently contains known rule drift (for example 64th-note
+// rejection and an obsolete Tempo ceiling). New Studio code must consult
+// ../rules/index.mjs before treating a legacy validation result as a Final gate.
+//
+// We deliberately keep the exports available while migration is incremental so
+// exact-rational parsing, MIDI/ABC readback, overlap analysis and regression work
+// are not thrown away. Rule truth lives in EFFECTIVE_RULESET.
 
 export * from '../../../dist/core.js';
 
 export const MML_ENGINE_ADAPTER = Object.freeze({
   name: 'legacy-workbench-core',
-  migrationStatus: 'authoritative-v1',
+  migrationStatus: 'compatibility-only-known-rule-drift',
+  rulesAuthority: false,
+  allowedForFinalGate: false,
   source: 'dist/core.js',
+  ruleContract: '../rules/index.mjs',
 });
