@@ -1,4 +1,5 @@
 import { studioFinalBlockers } from '../rules/index.mjs';
+import { compareCanonicalVersions } from '../compare/version-drift.mjs';
 
 const PASS_LIKE = new Set(['PASS', 'N/A']);
 
@@ -19,6 +20,58 @@ function audioGate(project, required) {
   const warnings = [...new Set(evidence.flatMap(item => Array.isArray(item.warnings) ? item.warnings : []))];
   if (warnings.length) return gate('PENDING', { blockers: ['AUDIO_ALIGNMENT_REVIEW_REQUIRED'], warnings });
   return gate('PASS', { evidenceCount: evidence.length });
+}
+
+function validBaselineSnapshot(snapshot) {
+  return snapshot
+    && typeof snapshot === 'object'
+    && typeof snapshot.id === 'string'
+    && snapshot.id.trim()
+    && Array.isArray(snapshot.sources)
+    && Array.isArray(snapshot.events)
+    && snapshot.events.length > 0;
+}
+
+function baselineGate(project) {
+  const baseline = project?.metadata?.sourceFaithfulBaseline;
+  if (!baseline || typeof baseline !== 'object') {
+    return gate('PENDING', { blockers: ['SOURCE_FAITHFUL_BASELINE_MISSING'] });
+  }
+
+  const snapshot = baseline.snapshot;
+  if (!validBaselineSnapshot(snapshot)) {
+    return gate('PENDING', { blockers: ['SOURCE_FAITHFUL_BASELINE_ARTIFACT_MISSING'] });
+  }
+
+  let eventDiff;
+  try {
+    eventDiff = compareCanonicalVersions(snapshot, project);
+  } catch (error) {
+    return gate('PENDING', {
+      blockers: ['SOURCE_FAITHFUL_BASELINE_DIFF_INVALID'],
+      error: error.message,
+    });
+  }
+
+  const leadAdded = eventDiff.notes.added.filter(event => event.role === 'Melody').map(event => event.id);
+  const leadRemoved = eventDiff.notes.removed.filter(event => event.role === 'Melody').map(event => event.id);
+  const leadModified = eventDiff.notes.modified
+    .filter(pair => pair.before?.role === 'Melody' || pair.after?.role === 'Melody')
+    .map(pair => ({ beforeId: pair.before?.id ?? null, afterId: pair.after?.id ?? null, changes: pair.changes }));
+  const leadRoleMoved = eventDiff.notes.roleMoved
+    .filter(pair => pair.before?.role === 'Melody' || pair.after?.role === 'Melody')
+    .map(pair => ({ beforeId: pair.before?.id ?? null, afterId: pair.after?.id ?? null, changes: pair.changes }));
+
+  return gate('PASS', {
+    baselineId: snapshot.id,
+    eventDiff,
+    leadEventDiff: Object.freeze({
+      added: Object.freeze(leadAdded),
+      removed: Object.freeze(leadRemoved),
+      modified: Object.freeze(leadModified),
+      roleMoved: Object.freeze(leadRoleMoved),
+    }),
+  });
 }
 
 function leadGate(reports) {
@@ -62,6 +115,7 @@ export function evaluateProjectReadiness({
     source: sourceComplete
       ? gate('PASS')
       : gate('PENDING', { blockers: ['SOURCE_COMPLETENESS_NOT_CONFIRMED'], incompleteInputs: project.metadata?.incompleteInputs ?? [] }),
+    baseline: baselineGate(project),
     technical: mmlValidation?.ok === true
       ? gate('PASS')
       : gate(mmlValidation ? 'FAIL' : 'NOT_RUN', { errors: mmlValidation?.errors ?? [] }),
@@ -80,6 +134,7 @@ export function evaluateProjectReadiness({
   const preGameGateNames = [
     'implementation',
     'source',
+    'baseline',
     'technical',
     'core3',
     'leadDemotion',
@@ -98,6 +153,6 @@ export function evaluateProjectReadiness({
     finalAccepted,
     preGameBlocking: Object.freeze(preGameBlocking),
     gates,
-    notice: 'Module availability never certifies a song. Candidate readiness requires song-specific source, audio, arbitration, technical and player evidence; finalAccepted additionally requires in-game acceptance.',
+    notice: 'Module availability never certifies a song. Candidate readiness requires source completeness plus a real Source-Faithful Baseline snapshot whose event-level diff is computed against the candidate, along with audio/arbitration/technical/player evidence. finalAccepted additionally requires in-game acceptance.',
   });
 }

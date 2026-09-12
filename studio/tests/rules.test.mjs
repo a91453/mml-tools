@@ -8,18 +8,41 @@ import {
   assertRulesReadyForFinal,
 } from '../backend/rules/index.mjs';
 
-test('effective Mobile rule contract uses current syntax boundaries', () => {
-  assert.equal(EFFECTIVE_RULESET.mobileSyntax.tempoMin, 32);
-  assert.equal(EFFECTIVE_RULESET.mobileSyntax.tempoMax, 255);
-  assert.equal(EFFECTIVE_RULESET.mobileSyntax.shortestSafeDenominator, 64);
-  assert.ok(EFFECTIVE_RULESET.mobileSyntax.allowedLengthDenominators.includes(64));
-  assert.equal(EFFECTIVE_RULESET.mobileSyntax.rejectNCommandInFinal, true);
+test('executable contract explicitly implements the Canonical candidate rather than defining it', () => {
+  assert.equal(EFFECTIVE_RULESET.status, 'implements-canonical-candidate');
+  assert.equal(EFFECTIVE_RULESET.authority.executableContractDefinesRules, false);
+  assert.ok(EFFECTIVE_RULESET.authority.humanReadable.includes('docs/MASTER_RULES.md'));
 });
 
-test('effective arrangement contract preserves Core3 and evidence-first lead role', () => {
+test('Mobile contract separates official ranges from preferred/caution Final policy', () => {
+  assert.equal(EFFECTIVE_RULESET.mobileSyntax.tempoMin, 32);
+  assert.equal(EFFECTIVE_RULESET.mobileSyntax.tempoMax, 255);
+  assert.equal(EFFECTIVE_RULESET.mobileSyntax.officialLengthMin, 1);
+  assert.equal(EFFECTIVE_RULESET.mobileSyntax.officialLengthMax, 64);
+  assert.equal(EFFECTIVE_RULESET.mobileSyntax.shortestSafeDenominator, 64);
+  assert.ok(EFFECTIVE_RULESET.mobileSyntax.preferredLengthDenominators.includes(64));
+  assert.equal(EFFECTIVE_RULESET.mobileSyntax.numericNoteInputSupported, true);
+  assert.equal(EFFECTIVE_RULESET.mobileSyntax.numericNoteFinalPolicy, 'opt-in-with-evidence');
+  assert.equal(EFFECTIVE_RULESET.mobileSyntax.numericNoteDefaultFinalAllowed, false);
+});
+
+test('Final synchronization policy is explicit while engine necessity remains pending', () => {
+  assert.equal(EFFECTIVE_RULESET.synchronization.sameInitialTempoOnEveryNonEmptyRole, true);
+  assert.equal(EFFECTIVE_RULESET.synchronization.duplicateFullTempoMapOnEveryNonEmptyRole, true);
+  assert.equal(EFFECTIVE_RULESET.synchronization.emptyRolesStayEmpty, true);
+  assert.equal(EFFECTIVE_RULESET.synchronization.engineNecessityStillPending, true);
+  assert.equal(EFFECTIVE_RULESET.synchronization.crossRoleEndTimeMismatch, 'review-warning');
+});
+
+test('arrangement contract preserves mandatory baseline, Core3 and evidence-first Lead role', () => {
+  assert.equal(EFFECTIVE_RULESET.sources.sourceFaithfulBaselineRequiredBeforeReduction, true);
+  assert.equal(EFFECTIVE_RULESET.sources.silentRoleMovesForbidden, true);
   assert.deepEqual(EFFECTIVE_RULESET.arrangement.core3, ['Melody', 'Chord1', 'Chord2']);
+  assert.match(EFFECTIVE_RULESET.arrangement.core3Meaning.Chord2, /Essential Inner/i);
   assert.equal(EFFECTIVE_RULESET.arrangement.leadIsNotVocalOnly, true);
   assert.equal(EFFECTIVE_RULESET.arrangement.leadDemotionRequiresPositiveEvidence, true);
+  assert.equal(EFFECTIVE_RULESET.arrangement.unresolvedLeadDemotion, 'FAIL_OR_PENDING');
+  assert.equal(EFFECTIVE_RULESET.arrangement.full6MustNotReduceCore3Completeness, true);
   assert.equal(EFFECTIVE_RULESET.arrangement.samePitchOverlapIsReviewNotAutoDelete, true);
   assert.equal(EFFECTIVE_RULESET.arrangement.simultaneousAttackDensityIsReviewNotAutoDelete, true);
 });
@@ -34,6 +57,7 @@ test('known legacy parser drift remains visible but is not the Studio parser', (
   const drift = auditLegacyRuleDrift();
   assert.ok(drift.some(item => item.id === 'LEGACY_REJECTS_64'));
   assert.ok(drift.some(item => item.id === 'LEGACY_ACCEPTS_T256_PLUS'));
+  assert.ok(drift.some(item => item.id === 'LEGACY_REJECTS_CAUTION_LENGTH_48'));
   assert.equal(STUDIO_IMPLEMENTATION.currentRuleMmlParser, true);
 });
 
@@ -58,5 +82,6 @@ test('module readiness does not imply any song-specific Final PASS', () => {
   assert.deepEqual(studioFinalBlockers(), []);
   assert.equal(EFFECTIVE_RULESET.gates.includes('original-audio-ab'), true);
   assert.equal(EFFECTIVE_RULESET.gates.includes('player-readback'), true);
+  assert.equal(EFFECTIVE_RULESET.gates.includes('regression'), true);
   assert.equal(EFFECTIVE_RULESET.gates.includes('in-game'), true);
 });

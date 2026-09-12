@@ -1,8 +1,18 @@
 import { parseTrack as legacyParseTrack } from '../../../dist/core.js';
 
 export const EFFECTIVE_RULESET = Object.freeze({
-  id: 'mabinogi-mobile-mml-studio-rules-2026-09-13',
-  status: 'effective',
+  id: 'mabinogi-mobile-mml-canonical-draft2-alignment-2026-09-13',
+  status: 'implements-canonical-candidate',
+  authority: Object.freeze({
+    humanReadable: Object.freeze([
+      'docs/MASTER_RULES.md',
+      'docs/SOURCE_POLICY.md',
+      'docs/MOBILE_SYNTAX.md',
+      'docs/ACCEPTANCE_CRITERIA.md',
+      'docs/PENDING.md',
+    ]),
+    executableContractDefinesRules: false,
+  }),
   principles: Object.freeze([
     'source-faithful-baseline-first',
     'source-complete-before-six-track-reduction',
@@ -16,20 +26,35 @@ export const EFFECTIVE_RULESET = Object.freeze({
     perTrackCharacterLimit: 2400,
     tempoMin: 32,
     tempoMax: 255,
+    officialLengthMin: 1,
+    officialLengthMax: 64,
+    preferredLengthDenominators: Object.freeze([1, 2, 4, 8, 16, 32, 64]),
+    cautionPlainLengthsWithinOfficialRange: true,
+    shortestSafeDenominator: 64,
+    preferredDottedBaseDenominators: Object.freeze([1, 2, 4, 8, 16, 32]),
+    rejectDottedBasesInFinal: Object.freeze([3, 6, 12, 24, 48, 64]),
+    rejectMultipleDots: true,
+    numericNoteInputSupported: true,
+    numericNoteMin: 0,
+    numericNoteMax: 107,
+    numericNoteFinalPolicy: 'opt-in-with-evidence',
+    numericNoteDefaultFinalAllowed: false,
+    rejectZeroDuration: true,
+    rejectTechnicalMicroGapsBelow64: true,
+    preserveMeaningfulRests: true,
+    octaveTokenRangeIsImplementationMapping: true,
     octaveMin: 0,
     octaveMax: 8,
     volumeMin: 0,
     volumeMax: 15,
-    allowedLengthDenominators: Object.freeze([1, 2, 3, 4, 6, 8, 12, 16, 24, 32, 64]),
-    shortestSafeDenominator: 64,
-    maxDottedBaseDenominator: 32,
-    rejectDenominators: Object.freeze([48, 128]),
-    rejectMultipleDots: true,
-    rejectDottedTripletShorthand: Object.freeze([3, 6, 12, 24, 48]),
-    rejectNCommandInFinal: true,
-    rejectZeroDuration: true,
-    rejectTechnicalMicroGapsBelow64: true,
-    preserveMeaningfulRests: true,
+  }),
+  synchronization: Object.freeze({
+    sameInitialTempoOnEveryNonEmptyRole: true,
+    duplicateFullTempoMapOnEveryNonEmptyRole: true,
+    emptyRolesStayEmpty: true,
+    policyClass: 'FINAL_CANONICAL_POLICY',
+    engineNecessityStillPending: true,
+    crossRoleEndTimeMismatch: 'review-warning',
   }),
   preview: Object.freeze({
     abcBaseLength: '1/4',
@@ -46,20 +71,28 @@ export const EFFECTIVE_RULESET = Object.freeze({
     supportingOnly: Object.freeze(['third-party-score', 'third-party-musicxml', 'third-party-midi', 'third-party-mml']),
     audioPurpose: Object.freeze(['foreground-background-role', 'articulation', 'sustain', 'prominence', 'tempo-drift', 'recording-structure']),
     symbolicPurpose: Object.freeze(['pitch', 'onset', 'duration', 'written-voicing', 'staff-voice', 'repeat-structure']),
+    sourceFaithfulBaselineRequiredBeforeReduction: true,
+    silentRoleMovesForbidden: true,
   }),
   arrangement: Object.freeze({
     leadRole: 'Melody',
     core3: Object.freeze(['Melody', 'Chord1', 'Chord2']),
-    core3Meaning: Object.freeze({ Melody: 'Lead', Chord1: 'Core Harmony', Chord2: 'Core Bass' }),
+    core3Meaning: Object.freeze({
+      Melody: 'Lead',
+      Chord1: 'Core Harmony / principal accompaniment / essential response',
+      Chord2: 'Core Bass skeleton + essential inner voice when required',
+    }),
     enrichment: Object.freeze(['Chord3', 'Chord4', 'Chord5']),
     leadIsNotVocalOnly: true,
     leadDemotionRequiresPositiveEvidence: true,
+    unresolvedLeadDemotion: 'FAIL_OR_PENDING',
     preserveSourceRoleUntilResolved: true,
     samePitchOverlapIsReviewNotAutoDelete: true,
     lowMidM2M7IsReviewNotAutoDelete: true,
     simultaneousAttackDensityIsReviewNotAutoDelete: true,
     continuityRepairRequiresSourceEvidence: true,
     doNotFillTrueRestsForStatistics: true,
+    full6MustNotReduceCore3Completeness: true,
   }),
   tools: Object.freeze({
     midify: 'N/A-by-default',
@@ -67,23 +100,18 @@ export const EFFECTIVE_RULESET = Object.freeze({
     selectedPlayerReadbackMustBeReal: true,
     noAppliedTrueEqualsPass: true,
   }),
-  gates: Object.freeze(['technical', 'source', 'player-readback', 'original-audio-ab', 'mobile-adaptation', 'in-game']),
+  gates: Object.freeze(['technical', 'source', 'player-readback', 'original-audio-ab', 'mobile-adaptation', 'regression', 'in-game']),
 });
 
 export const STUDIO_IMPLEMENTATION = Object.freeze({
   currentRuleMmlParser: true,
   exactRationalTiming: true,
   crossTrackReview: true,
-  // Supports score-partwise MusicXML with exact duration/divisions timing and
-  // explicit completeness flags. Repeats/navigation, grace realization,
-  // transposing parts, microtones and unpitched mapping remain fail-closed.
   musicXmlIngestion: true,
   sourceAwareMmlNormalization: true,
   versionDriftReport: true,
   core3ContinuityGate: true,
   leadDemotionGate: true,
-  // Python 3.12 worker: FFmpeg decode -> chroma -> DTW -> beat/time and Tempo-drift
-  // evidence, plus a Node bridge that attaches reports without mutating symbolic events.
   originalAudioAlignment: true,
   crossSourceHarmonyArbitration: true,
 });
@@ -104,6 +132,14 @@ export function auditLegacyRuleDrift() {
     severity: 'P0',
     expected: 'Tempo above 255 is rejected for Mobile final delivery',
     actual: 'legacy parser accepts T256',
+  }));
+
+  const c48 = legacyParseTrack('t120o4c48', 'Melody');
+  if (c48.errors.length) findings.push(Object.freeze({
+    id: 'LEGACY_REJECTS_CAUTION_LENGTH_48',
+    severity: 'P1',
+    expected: 'plain 48 is ingestible and Final-allowed only through the caution policy',
+    actual: c48.errors.map(error => error.message),
   }));
 
   return Object.freeze(findings);

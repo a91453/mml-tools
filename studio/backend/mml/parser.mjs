@@ -11,8 +11,9 @@ import { EFFECTIVE_RULESET } from '../rules/index.mjs';
 
 export const STUDIO_MML_PROFILE = EFFECTIVE_RULESET.id;
 const syntax = EFFECTIVE_RULESET.mobileSyntax;
-const allowedLengths = new Set(syntax.allowedLengthDenominators);
-const dottedTripletShorthand = new Set(syntax.rejectDottedTripletShorthand);
+const preferredLengths = new Set(syntax.preferredLengthDenominators);
+const preferredDottedBases = new Set(syntax.preferredDottedBaseDenominators);
+const forbiddenDottedBases = new Set(syntax.rejectDottedBasesInFinal);
 const noteBase = { c: 0, d: 2, e: 4, f: 5, g: 7, a: 9, b: 11 };
 
 const eq = (a, b) => f(a).cmp(b) === 0;
@@ -21,6 +22,18 @@ function controlsPush(list, event) {
   const last = list.at(-1);
   if (last && eq(last.beat, event.beat)) list[list.length - 1] = event;
   else if (!last || last.value !== event.value) list.push(event);
+}
+
+function inOfficialLengthRange(value) {
+  return Number.isSafeInteger(value)
+    && value >= syntax.officialLengthMin
+    && value <= syntax.officialLengthMax;
+}
+
+function evidenceIds(value) {
+  return Array.isArray(value)
+    ? value.filter(item => typeof item === 'string' && item.trim()).map(item => item.trim())
+    : [];
 }
 
 export function splitMML(raw) {
@@ -32,14 +45,24 @@ export function splitMML(raw) {
   return tracks;
 }
 
-export function parseTrack(raw, role) {
+export function parseTrack(raw, role, options = {}) {
   const errors = [];
+  const warnings = [];
   const events = [];
   const tempo = [];
   const controls = [{ beat: '0', controller: 7, value: 8 }];
-  const fail = (message, pos) => errors.push({ role, position: pos + 1, message });
+  const finalMode = options.mode === 'final';
+  const allowCautionLengths = options.allowCautionLengths === true;
+  const numericPitchOptIn = options.numericPitchOptIn === true;
+  const numericPitchEvidence = evidenceIds(options.numericPitchEvidence);
+  const fail = (message, pos, code) => errors.push({ role, position: pos + 1, message, ...(code ? { code } : {}) });
+  const warn = (message, pos, code) => warnings.push({ role, position: pos + 1, message, ...(code ? { code } : {}) });
 
-  if (raw.length > syntax.perTrackCharacterLimit) fail(`字數${raw.length}，超過${syntax.perTrackCharacterLimit}上限`, 0);
+  if (raw.length > syntax.perTrackCharacterLimit) {
+    const message = `字數${raw.length}，超過${syntax.perTrackCharacterLimit}上限`;
+    if (finalMode) fail(message, 0, 'TRACK_CHARACTER_LIMIT');
+    else warn(message, 0, 'TRACK_CHARACTER_LIMIT_SOURCE_ONLY');
+  }
   if (/\s/.test(raw)) fail('軌內含空白或換行，請保留純MML字串', raw.search(/\s/));
 
   let i = 0;
@@ -47,10 +70,56 @@ export function parseTrack(raw, role) {
   let octave = 4;
   let explicitOctave = false;
   let length = 4;
+  let lengthTrusted = true;
   let volume = 8;
   let pending = false;
   let lastWasNote = false;
   const text = raw.toLowerCase();
+
+  const validateLengthUse = (denominator, tokenStart, label) => {
+    if (!inOfficialLengthRange(denominator)) {
+      fail(`${label}${denominator}超出官方長度數值範圍${syntax.officialLengthMin}–${syntax.officialLengthMax}`, tokenStart, 'LENGTH_OUT_OF_RANGE');
+      return false;
+    }
+    if (!preferredLengths.has(denominator)) {
+      const message = `${label}${denominator}屬Final caution時值；需來源必要性與驗證`;
+      if (finalMode && !allowCautionLengths) fail(message, tokenStart, 'CAUTION_LENGTH_OPT_IN_REQUIRED');
+      else warn(message, tokenStart, 'CAUTION_LENGTH');
+    }
+    return true;
+  };
+
+  const validateDots = (denominator, dots, tokenStart) => {
+    if (!dots) return;
+    const multiple = dots > 1;
+    const forbiddenBase = forbiddenDottedBases.has(denominator) || !preferredDottedBases.has(denominator);
+    if (multiple || forbiddenBase) {
+      let finalMessage;
+      if (multiple) finalMessage = 'Final Canonical 不接受雙附點／多附點；需等值正規化';
+      else if (denominator === 64) finalMessage = 'Final Canonical 不接受64.；需等值正規化';
+      else finalMessage = `Final Canonical 不輸出${denominator}.；需等值正規化`;
+      if (finalMode) fail(finalMessage, tokenStart, 'FINAL_DOTTED_FORM_FORBIDDEN');
+      else warn(`來源含非Final Canonical形式${denominator}${'.'.repeat(dots)}；ingest保留原時值供比對，不視為來源非法`, tokenStart, 'NONCANONICAL_DOTTED_SOURCE_FORM');
+    }
+  };
+
+  const invalidateTieState = () => {
+    pending = false;
+    lastWasNote = false;
+  };
+
+  const appendNote = (pitch, duration, tokenStart) => {
+    const end = time.add(duration);
+    if (pending && events.length && events.at(-1).pitch === pitch && eq(events.at(-1).end, time)) {
+      events.at(-1).end = String(end);
+    } else {
+      if (pending) fail('延音音高不同或跨越空隙', tokenStart, 'TIE_PITCH_OR_GAP');
+      events.push({ pitch, start: String(time), end: String(end), volume });
+    }
+    pending = false;
+    lastWasNote = true;
+    time = end;
+  };
 
   while (i < text.length) {
     const start = i;
@@ -67,21 +136,28 @@ export function parseTrack(raw, role) {
       const value = Number(match[0]);
 
       if (ch === 't') {
-        if (value < syntax.tempoMin || value > syntax.tempoMax) fail(`T${value}超出${syntax.tempoMin}–${syntax.tempoMax}`, start);
+        if (value < syntax.tempoMin || value > syntax.tempoMax) fail(`T${value}超出${syntax.tempoMin}–${syntax.tempoMax}`, start, 'TEMPO_OUT_OF_RANGE');
         if (tempo.length && f(tempo.at(-1).beat).cmp(time) >= 0) fail('同一拍重複或倒序Tempo', start);
         tempo.push({ beat: String(time), bpm: value });
       }
       if (ch === 'o') {
         octave = value;
         explicitOctave = true;
-        if (value < syntax.octaveMin || value > syntax.octaveMax) fail(`O${value}超出${syntax.octaveMin}–${syntax.octaveMax}`, start);
+        if (value < syntax.octaveMin || value > syntax.octaveMax) {
+          fail(`O${value}超出目前實作映射O${syntax.octaveMin}–O${syntax.octaveMax}；此映射仍非Nexon官方措辭`, start, 'OCTAVE_IMPLEMENTATION_MAPPING');
+        }
       }
       if (ch === 'l') {
-        length = value;
-        if (!allowedLengths.has(value)) fail(`Strict Mobile不接受L${value}；最短安全邊界為1/${syntax.shortestSafeDenominator}`, start);
+        if (inOfficialLengthRange(value)) {
+          length = value;
+          lengthTrusted = true;
+        } else {
+          lengthTrusted = false;
+          fail(`L${value}超出官方長度數值範圍${syntax.officialLengthMin}–${syntax.officialLengthMax}；在下一個有效L前不以舊L偽造後續時值`, start, 'LENGTH_OUT_OF_RANGE');
+        }
       }
       if (ch === 'v') {
-        if (value < syntax.volumeMin || value > syntax.volumeMax) fail(`V${value}超出${syntax.volumeMin}–${syntax.volumeMax}`, start);
+        if (value < syntax.volumeMin || value > syntax.volumeMax) fail(`V${value}超出${syntax.volumeMin}–${syntax.volumeMax}`, start, 'VOLUME_OUT_OF_RANGE');
         else {
           volume = value;
           controlsPush(controls, { beat: String(time), controller: 7, value });
@@ -92,7 +168,9 @@ export function parseTrack(raw, role) {
 
     if (ch === '<' || ch === '>') {
       octave += ch === '>' ? 1 : -1;
-      if (octave < syntax.octaveMin || octave > syntax.octaveMax) fail(`八度超出O${syntax.octaveMin}–O${syntax.octaveMax}`, start);
+      if (octave < syntax.octaveMin || octave > syntax.octaveMax) {
+        fail(`八度超出目前實作映射O${syntax.octaveMin}–O${syntax.octaveMax}`, start, 'OCTAVE_IMPLEMENTATION_MAPPING');
+      }
       continue;
     }
 
@@ -104,9 +182,33 @@ export function parseTrack(raw, role) {
 
     if (ch === 'n') {
       const match = /^\d+/.exec(text.slice(i));
-      if (match) i += match[0].length;
-      fail('Final Canonical 不使用Nxx；請改用音名與明確八度', start);
-      pending = false;
+      if (!match) {
+        fail('Nxx缺少數值', start, 'NUMERIC_NOTE_MISSING_VALUE');
+        invalidateTieState();
+        continue;
+      }
+      i += match[0].length;
+      const pitch = Number(match[0]);
+      if (!Number.isSafeInteger(pitch) || pitch < syntax.numericNoteMin || pitch > syntax.numericNoteMax) {
+        fail(`N${match[0]}超出目前官方pitch數值範圍${syntax.numericNoteMin}–${syntax.numericNoteMax}`, start, 'NUMERIC_NOTE_OUT_OF_RANGE');
+        invalidateTieState();
+        continue;
+      }
+      if (!lengthTrusted) {
+        fail('前一個L值無效，Nxx時值不可推定；需先提供有效L1–L64', start, 'DEFAULT_LENGTH_INVALID');
+        invalidateTieState();
+        continue;
+      }
+      if (!validateLengthUse(length, start, 'Nxx使用L')) {
+        invalidateTieState();
+        continue;
+      }
+      const duration = new F(4, length);
+      const message = 'Nxx屬Final caution語法；預設改用一般音名，保留需song/project opt-in與round-trip/in-game證據';
+      if (finalMode && !numericPitchOptIn) fail(message, start, 'NUMERIC_NOTE_OPT_IN_REQUIRED');
+      else if (finalMode && !numericPitchEvidence.length) fail('Nxx已opt-in但缺少round-trip／實機證據引用', start, 'NUMERIC_NOTE_EVIDENCE_REQUIRED');
+      else warn(message, start, 'NUMERIC_NOTE_CAUTION');
+      appendNote(pitch, duration, start);
       continue;
     }
 
@@ -118,7 +220,12 @@ export function parseTrack(raw, role) {
       }
 
       const match = /^\d+/.exec(text.slice(i));
-      let denominator = match ? Number(match[0]) : length;
+      if (!match && !lengthTrusted) {
+        fail('前一個L值無效，省略分母的音符／休止時值不可推定；需先提供有效L1–L64或明確分母', start, 'DEFAULT_LENGTH_INVALID');
+        invalidateTieState();
+        continue;
+      }
+      const denominator = match ? Number(match[0]) : length;
       if (match) i += match[0].length;
 
       let dots = 0;
@@ -127,16 +234,12 @@ export function parseTrack(raw, role) {
         i++;
       }
 
-      if (!Number.isSafeInteger(denominator) || denominator <= 0) {
-        fail('時值分母必須為正整數', start);
-        denominator = 4;
-      } else if (!allowedLengths.has(denominator)) {
-        fail(`Strict Mobile不接受${ch}${denominator}；允許分母為${[...allowedLengths].join('/')}，最短安全邊界為1/${syntax.shortestSafeDenominator}`, start);
+      const lengthOk = validateLengthUse(denominator, start, ch);
+      validateDots(denominator, dots, start);
+      if (!lengthOk) {
+        invalidateTieState();
+        continue;
       }
-
-      if (syntax.rejectMultipleDots && dots > 1) fail('不接受雙附點／多附點', start);
-      if (dots && dottedTripletShorthand.has(denominator)) fail(`不接受附點三連音式時值${denominator}.，需等值正規化`, start);
-      if (dots && denominator > syntax.maxDottedBaseDenominator) fail(`不接受${denominator}.；附點會超出1/${syntax.shortestSafeDenominator}安全時間格`, start);
 
       const dotFactor = dots
         ? new F(2n ** BigInt(Math.min(dots, 8) + 1) - 1n, 2n ** BigInt(Math.min(dots, 8)))
@@ -148,31 +251,26 @@ export function parseTrack(raw, role) {
         if (pending) fail('延音不能接到休止', start);
         pending = false;
         lastWasNote = false;
+        time = end;
       } else {
         if (!explicitOctave) fail('首音前必須明確設定O八度', start);
         const pitch = 12 * (octave + 1) + noteBase[ch] + accidental;
-        if (pitch < 0 || pitch > 127) fail('音高超出MIDI 0–127', start);
-
-        if (pending && events.length && events.at(-1).pitch === pitch && eq(events.at(-1).end, time)) {
-          events.at(-1).end = String(end);
-        } else {
-          if (pending) fail('延音音高不同或跨越空隙', start);
-          events.push({ pitch, start: String(time), end: String(end), volume });
+        if (pitch < 0 || pitch > 127) fail('音高超出目前MIDI預覽映射0–127', start);
+        if (pitch > syntax.numericNoteMax) {
+          warn(`具名音高目前映射為${pitch}，超出官方pitch 0–${syntax.numericNoteMax}；O令牌映射仍屬實作/PENDING，需人工與實機確認`, start, 'NAMED_NOTE_ABOVE_OFFICIAL_PITCH_RANGE');
         }
-        pending = false;
-        lastWasNote = true;
-      }
 
-      time = end;
+        appendNote(pitch, duration, start);
+      }
       continue;
     }
 
     fail(`無法辨識字元「${ch}」`, start);
-    pending = false;
+    invalidateTieState();
   }
 
   if (pending) fail('軌尾有未完成延音', Math.max(0, text.length - 1));
-  if (raw && (!tempo.length || !eq(tempo[0].beat, 0))) fail('非空軌必須在第0拍設定Tempo', 0);
+  if (finalMode && raw && (!tempo.length || !eq(tempo[0].beat, 0))) fail('非空軌必須在第0拍設定Tempo', 0, 'INITIAL_TEMPO_REQUIRED');
 
   return {
     role,
@@ -183,6 +281,7 @@ export function parseTrack(raw, role) {
     controls,
     tempo,
     errors,
+    warnings,
     empty: raw.length === 0,
   };
 }
@@ -198,8 +297,17 @@ export function validateMML(raw, settings = {}) {
     return { ok: false, errors: [{ message: error.message }], warnings };
   }
 
-  const tracks = strings.map((track, index) => parseTrack(track, ROLES[index]));
+  const validationMode = settings.validationMode === 'ingest' ? 'ingest' : 'final';
+  const numericPitchEvidence = evidenceIds(settings.numericPitchEvidence);
+  const trackOptions = {
+    mode: validationMode,
+    allowCautionLengths: settings.cautionLengthOptIn === true,
+    numericPitchOptIn: settings.numericPitchOptIn === true,
+    numericPitchEvidence,
+  };
+  const tracks = strings.map((track, index) => parseTrack(track, ROLES[index], trackOptions));
   errors.push(...tracks.flatMap(track => track.errors));
+  warnings.push(...tracks.flatMap(track => track.warnings));
   const active = tracks.filter(track => !track.empty);
   let tempo = [];
   let total = '0';
@@ -210,10 +318,31 @@ export function validateMML(raw, settings = {}) {
   if (!active.length) errors.push({ message: '六軌皆空，無法建立預覽' });
   if (active.length) {
     tempo = active[0].tempo;
+    let longest = f(active[0].total);
     total = active[0].total;
     for (const track of active) {
-      if (!eq(track.total, total)) errors.push({ role: track.role, message: `總拍長${track.total}不等於${total}` });
-      if (JSON.stringify(track.tempo) !== JSON.stringify(tempo)) errors.push({ role: track.role, message: 'Tempo Map與其他非空軌不同' });
+      if (f(track.total).cmp(longest) > 0) {
+        longest = f(track.total);
+        total = track.total;
+      }
+      if (JSON.stringify(track.tempo) !== JSON.stringify(tempo)) {
+        const finding = {
+          role: track.role,
+          message: 'Tempo Map與其他非空軌不同；Final policy要求每個非空軌在相同音樂位置複製完整Tempo Map',
+          code: 'TEMPO_MAP_MISMATCH',
+        };
+        if (validationMode === 'final') errors.push(finding);
+        else warnings.push(finding);
+      }
+    }
+    for (const track of active) {
+      if (!eq(track.total, total)) {
+        warnings.push({
+          role: track.role,
+          message: `總拍長${track.total}不等於最長非空軌${total}；依PENDING P16僅列Review，不自動補休止或判FAIL`,
+          code: 'CROSS_ROLE_END_TIME_REVIEW',
+        });
+      }
     }
   }
 
@@ -244,7 +373,7 @@ export function validateMML(raw, settings = {}) {
   if (programs.some(program => !Number.isInteger(program) || program < 0 || program > 127)) errors.push({ message: 'MIDI Program需為0–127整數' });
 
   const song = {
-    version: 'studio-v1',
+    version: 'studio-v1-canonical-alignment',
     profile: STUDIO_MML_PROFILE,
     title: settings.title || '未命名樂譜',
     tracks,
@@ -254,6 +383,12 @@ export function validateMML(raw, settings = {}) {
     bars,
     drums,
     programs,
+    validationMode,
+    policyOptIns: Object.freeze({
+      cautionLengthOptIn: settings.cautionLengthOptIn === true,
+      numericPitchOptIn: settings.numericPitchOptIn === true,
+      numericPitchEvidence: Object.freeze([...numericPitchEvidence]),
+    }),
   };
 
   if (!errors.length) {

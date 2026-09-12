@@ -54,6 +54,9 @@ export function normalizeMMLSource(raw, options = {}) {
 
   if (!['current-mml', 'historical-mml'].includes(kind)) throw Error('MML source kind must be current-mml or historical-mml');
 
+  // Source ingestion is deliberately broader than Final validation. It keeps
+  // caution forms such as plain non-preferred 1–64 lengths and Nxx as evidence,
+  // then records warnings instead of erasing the source event identity.
   const validation = validateMML(raw, {
     meterText,
     pickup,
@@ -61,8 +64,16 @@ export function normalizeMMLSource(raw, options = {}) {
     programs,
     drumText,
     title: label,
+    validationMode: 'ingest',
   });
   if (!validation.song) throw Error(validation.errors?.[0]?.message ?? 'MML could not be parsed');
+
+  const perTrackTempoMaps = validation.song.tracks
+    .filter(track => !track.empty)
+    .map(track => ({
+      role: track.role,
+      tempo: track.tempo.map(event => ({ beat: event.beat, bpm: event.bpm })),
+    }));
 
   const source = createSource({
     id: sourceId,
@@ -73,9 +84,14 @@ export function normalizeMMLSource(raw, options = {}) {
     metadata: {
       format: 'MML',
       profile: validation.song.profile,
+      validationMode: validation.song.validationMode,
       technicalOk: validation.ok,
       errors: validation.errors,
       warnings: validation.warnings,
+      // Preserve every non-empty role's source Tempo map. Canonical tempoEvents
+      // below still use one representative map, but mismatched source evidence is
+      // never discarded during ingest.
+      perTrackTempoMaps,
     },
   });
 
@@ -124,7 +140,10 @@ export function normalizeMMLSource(raw, options = {}) {
     bpm: tempo.bpm,
     sourceIds: [sourceId],
     sourceEventIds: [`track:${firstActiveTrack.role}/tempo:${index + 1}`],
-    metadata: { canonicalTrack: firstActiveTrack.role },
+    metadata: {
+      canonicalTrack: firstActiveTrack.role,
+      allSourceTrackTempoMapsPreservedIn: 'source.metadata.perTrackTempoMaps',
+    },
   }));
   const meterEvents = meterEventsFromSettings(sourceId, meterText);
 
@@ -148,7 +167,7 @@ export function mmlFragmentToProject(fragment, options = {}) {
     tempoEvents: [...fragment.tempoEvents],
     meterEvents: [...fragment.meterEvents],
     metadata: {
-      ingestion: 'mml-source-v1',
+      ingestion: 'mml-source-v2-canonical-alignment',
       sourceComplete: fragment.complete,
       technicalOk: fragment.validation.ok,
       errors: [...fragment.validation.errors],
