@@ -121,9 +121,9 @@ Published Canonical metadata was finalized without changing the reviewed musical
 
 ## Current-head verification
 
-Current head: `042326e7e02006258955dd369979d82c7e25f426`.
+Current head: `ecf54bb085729c0cf41b363e625b5894aca582b6`.
 
-Studio CI #120, run `34725633280`, completed successfully on this exact head:
+Studio CI #122, run `34725697103`, completed successfully on this exact head:
 
 - symbolic regressions: **SUCCESS**;
 - legacy production bundle build: **SUCCESS**;
