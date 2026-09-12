@@ -69,7 +69,8 @@ test('source ingestion preserves caution plain lengths and Nxx instead of losing
     label: 'Nxx source',
     kind: 'historical-mml',
     meterText: '0 4/4',
-    finalPartial: '1/4',
+    // Nxx uses the current default L4 here, which is one quarter-note beat.
+    finalPartial: '1',
   });
   assert.equal(numeric.complete, true, JSON.stringify(numeric.validation.errors));
   assert.equal(numeric.events.find(event => event.kind === 'note' && event.role === 'Melody').pitch, 60);
