@@ -2,6 +2,8 @@
 
 可自行修改的瑪奇 Mobile 六軌 MML 檢查與預覽工作台。網站核心 v0.1.0，工具服務 v0.2.0。
 
+> Studio v1 development lives on the separate `studio-v1` branch and is intentionally not merged into this production Workbench yet. The working legacy baseline is frozen as `legacy-v0.2.0`. See `studio/README.md`, `docs/RULES_AUDIT_2026-09-13.md`, and `docs/STUDIO_MIGRATION.md` on `studio-v1` for the new source-aware architecture. Production Railway/MCP behavior remains the legacy Workbench until a later explicit migration decision.
+
 ## 獨立主機部署
 
 `railway/` 提供獨立的 Node HTTP 服務、單一擁有者 OAuth、Dockerfile 與部署說明；它沿用原有 MML 核心。此版本採用 OAuth DCR、公用客戶端與 PKCE S256，授權資料保存於獨立 SQLite volume，MML 不入庫。請依 `railway/README.md` 完成環境變數、持久磁碟及來源連接。
