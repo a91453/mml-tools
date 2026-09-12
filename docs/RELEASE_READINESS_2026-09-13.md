@@ -2,7 +2,7 @@
 
 Date: 2026-09-13
 Target: `studio-v1` → `main`
-Status: RELEASE REVIEW APPROVED; PUBLISHED CANONICAL v1 FINALIZED; PRE-MERGE CI REQUIRED
+Status: READY FOR REVIEW — PUBLISHED CANONICAL v1 + CURRENT-HEAD CI VERIFIED
 
 ## Scope
 
@@ -110,14 +110,34 @@ Grok's release-level adversarial review of PR #2 at pre-finalization head `7e9df
 
 No P0/P1 merge blocker was identified. The remaining P2/P3 items are tracked as non-blocking debt and were not folded into Canonical finalization.
 
+## Canonical finalization
+
+Published Canonical metadata was finalized without changing the reviewed musical policy:
+
+- Canonical version: `2026-09-13-v1`;
+- Canonical status: `PUBLISHED CANONICAL`;
+- executable contract: `implements-published-canonical`;
+- finalization diff was limited to governance/status metadata, corresponding documentation, and contract-test wording.
+
+## Current-head verification
+
+Current head: `0380f2af5907ee3558a7cea4cca0edd6afadbc21`.
+
+Studio CI #118, run `34725564943`, completed successfully on this head:
+
+- symbolic regressions: **SUCCESS**;
+- legacy production bundle build: **SUCCESS**;
+- audio-worker regressions: **SUCCESS**.
+
+The final `main...studio-v1` diff was rechecked and still contains no `server/`, `railway/`, or legacy `dist/` runtime modifications.
+
 ## Merge gate
 
-Canonical finalization is complete. PR #2 may move from Draft to Ready only after:
+All conditions required to move PR #2 from Draft to Ready are satisfied:
 
-1. the post-finalization current-head symbolic CI passes;
-2. the post-finalization current-head audio-worker CI passes;
-3. the legacy production bundle build smoke test passes;
-4. the final diff is rechecked for production-route and rule-content drift;
-5. PR metadata is updated to the published Canonical v1 state.
+1. independent release-level review found no P0/P1 blocker;
+2. Published Canonical v1 metadata is finalized;
+3. current-head symbolic/audio/build CI is green;
+4. final production-boundary diff is clean.
 
-Even after PR #2 is marked Ready, merging into `main` remains a separate explicit action.
+PR #2 may be marked Ready for Review. Merging into `main` remains a separate explicit action.
