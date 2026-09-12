@@ -121,7 +121,11 @@ Published Canonical metadata was finalized without changing the reviewed musical
 
 ## Current-head verification
 
-Current head verification is recorded in the PR metadata and CI checks. Symbolic regressions, the legacy production bundle build, and audio-worker regressions must all be green on the exact PR head before merge.
+The exact current PR head must have all three Studio CI checks green before merge:
+
+- symbolic regressions;
+- legacy production bundle build;
+- audio-worker regressions.
 
 The final `main...studio-v1` diff was rechecked and contains no `server/`, `railway/`, or legacy `dist/` runtime modifications.
 
