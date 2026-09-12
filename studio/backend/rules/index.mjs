@@ -74,9 +74,12 @@ export const STUDIO_IMPLEMENTATION = Object.freeze({
   currentRuleMmlParser: true,
   exactRationalTiming: true,
   crossTrackReview: true,
-  musicXmlIngestion: false,
-  sourceAwareMmlNormalization: false,
-  versionDriftReport: false,
+  // Supports score-partwise MusicXML with exact duration/divisions timing and
+  // explicit completeness flags. Repeats/navigation, grace realization,
+  // transposing parts, microtones and unpitched mapping remain fail-closed.
+  musicXmlIngestion: true,
+  sourceAwareMmlNormalization: true,
+  versionDriftReport: true,
   core3ContinuityGate: false,
   leadDemotionGate: false,
   originalAudioAlignment: false,
