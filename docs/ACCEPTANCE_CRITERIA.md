@@ -1,7 +1,7 @@
 # Acceptance Criteria
 
-Version: 2026-09-13-draft2
-Status: CANONICAL CANDIDATE
+Version: 2026-09-13-v1
+Status: PUBLISHED CANONICAL
 
 A Mabinogi Mobile MML candidate becomes final only by passing layered gates. Passing one layer does not imply the next.
 
