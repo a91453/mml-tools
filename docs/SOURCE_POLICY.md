@@ -1,6 +1,6 @@
 # Source Policy
 
-Version: 2026-09-13-draft1
+Version: 2026-09-13-draft2
 Status: CANONICAL CANDIDATE
 
 This document defines what each source is allowed to prove. Sources are complementary, not interchangeable.
@@ -44,10 +44,15 @@ Useful for:
 
 It does not automatically override official symbolic or original-audio evidence.
 
-### D. Existing project MML / accepted prior versions
-Historical evidence and regression baseline.
+### D1. Accepted prior project versions
+Historical/regression evidence with known practical value.
 
-An accepted version is strong evidence of practical success, but it is not proof that every note/role is source-perfect. A newer candidate must still explain meaningful drift.
+An accepted version is strong evidence of prior practical success, but it is not proof that every note/role is source-perfect. A newer candidate must still explain meaningful drift and must not remove an accepted strength without stronger evidence.
+
+### D2. Unverified project/tool outputs
+Examples: draft MML, converter exports, preview files, old files named Final/Ultimate, parser dumps.
+
+These are comparison candidates only. They do not inherit the authority of an accepted prior merely because they exist in the project or have a newer timestamp.
 
 ### E. In-game evidence
 User-provided game behavior, screenshots, error text, or controlled A/B are authoritative for the tested client/version and exact condition.
@@ -72,9 +77,18 @@ When sources disagree, record:
 
 ## 3. Source-complete preservation
 
-Before reduction to six tracks, preserve all musically important source roles. Early deletion is forbidden when it would make later arbitration impossible.
+Before role cleanup or reduction to six tracks, preserve all musically important source roles. Early deletion is forbidden when it would make later arbitration impossible.
 
-The Source-Faithful Baseline should retain traceable IDs for important Lead, harmony, bass, counter, texture and form events.
+A Source-Faithful Baseline SHALL exist before any role move, cleanup, six-track reduction, or Mobile adaptation is accepted.
+
+The baseline/equivalent event map MUST retain traceable IDs sufficient to diff at least:
+- Lead/T1 added, removed and moved events;
+- other meaningful role moves;
+- pitch/onset/duration changes;
+- prominence/volume changes when relevant;
+- important harmony, bass, counter, texture and form events.
+
+A non-diffable prose inventory is not an equivalent baseline.
 
 ## 4. Lead-role arbitration
 
