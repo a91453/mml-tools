@@ -1,6 +1,10 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { ingestMusicXML, musicXMLFragmentToProject } from '../backend/score/musicxml.mjs';
+import {
+  ingestMusicXML,
+  musicXMLFragmentToProject,
+  detectUnexpandedNavigation,
+} from '../backend/score/index.mjs';
 
 const SIMPLE_SCORE = `<?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE score-partwise PUBLIC "-//Recordare//DTD MusicXML 4.0 Partwise//EN" "http://www.musicxml.org/dtds/partwise.dtd">
@@ -85,7 +89,7 @@ test('MusicXML imports chord, rest, forward, meter and tempo with exact provenan
     [68, '3', '4', false],
   ]);
   assert.deepEqual(rests.map(event => [event.start, event.end]), [['1', '2']]);
-  assert.equal(notes[0].metadata.voice ?? notes[0].voice, '1');
+  assert.equal(notes[0].voice, '1');
   assert.ok(notes[0].sourceEventIds[0].startsWith('part:P1/measure:1/note:'));
 
   assert.deepEqual(fragment.tempoEvents.map(event => [event.beat, event.bpm]), [['0', 120]]);
@@ -117,6 +121,22 @@ test('unsupported symbolic constructs are surfaced instead of silently invented'
   assert.ok(codes.has('GRACE_NOTE'));
   assert.ok(codes.has('MICROTONAL_PITCH'));
   assert.equal(fragment.events.length, 0);
+});
+
+test('repeat and navigation markers force incomplete status until playback-order expansion exists', () => {
+  const xml = `<?xml version="1.0"?><score-partwise version="4.0">
+    <part-list><score-part id="P1"><part-name>Piano</part-name></score-part></part-list>
+    <part id="P1"><measure number="1">
+      <attributes><divisions>4</divisions></attributes>
+      <note><pitch><step>C</step><octave>4</octave></pitch><duration>4</duration><voice>1</voice></note>
+      <barline location="right"><repeat direction="backward"/></barline>
+    </measure></part>
+  </score-partwise>`;
+  assert.ok(detectUnexpandedNavigation(xml).some(item => item.code === 'REPEAT_BARLINE'));
+  const fragment = ingestMusicXML(xml, { sourceId: 'repeat', label: 'Repeat fixture' });
+  assert.equal(fragment.complete, false);
+  assert.ok(fragment.unsupported.some(item => item.code === 'REPEAT_BARLINE'));
+  assert.equal(fragment.events.filter(event => event.kind === 'note').length, 1);
 });
 
 test('MusicXML rejects timewise scores and entity-bearing DTD subsets', () => {
