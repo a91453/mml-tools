@@ -37,11 +37,21 @@ test('known legacy parser drift remains visible but is not the Studio parser', (
   assert.equal(STUDIO_IMPLEMENTATION.currentRuleMmlParser, true);
 });
 
-test('Studio Final Gate stays blocked only for still-unimplemented musical/source gates', () => {
+test('tested ingestion, MML normalization and version drift milestones are active', () => {
+  assert.equal(STUDIO_IMPLEMENTATION.musicXmlIngestion, true);
+  assert.equal(STUDIO_IMPLEMENTATION.sourceAwareMmlNormalization, true);
+  assert.equal(STUDIO_IMPLEMENTATION.versionDriftReport, true);
+});
+
+test('Studio Final Gate stays blocked for still-unimplemented musical and audio gates', () => {
   const blockers = studioFinalBlockers();
-  assert.ok(blockers.includes('MUSICXML_INGESTION_PENDING'));
-  assert.ok(blockers.includes('VERSION_DRIFT_REPORT_PENDING'));
+  assert.ok(!blockers.includes('MUSICXML_INGESTION_PENDING'));
+  assert.ok(!blockers.includes('SOURCE_AWARE_MML_NORMALIZATION_PENDING'));
+  assert.ok(!blockers.includes('VERSION_DRIFT_REPORT_PENDING'));
   assert.ok(blockers.includes('CORE3_CONTINUITY_GATE_PENDING'));
+  assert.ok(blockers.includes('LEAD_DEMOTION_GATE_PENDING'));
+  assert.ok(blockers.includes('ORIGINAL_AUDIO_ALIGNMENT_PENDING'));
+  assert.ok(blockers.includes('CROSS_SOURCE_HARMONY_PENDING'));
   assert.ok(!blockers.some(id => id.includes('LEGACY')));
   assert.throws(() => assertRulesReadyForFinal(), /Studio Final Gate blocked/);
 });
