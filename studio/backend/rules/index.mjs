@@ -80,10 +80,10 @@ export const STUDIO_IMPLEMENTATION = Object.freeze({
   musicXmlIngestion: true,
   sourceAwareMmlNormalization: true,
   versionDriftReport: true,
-  core3ContinuityGate: false,
-  leadDemotionGate: false,
+  core3ContinuityGate: true,
+  leadDemotionGate: true,
   originalAudioAlignment: false,
-  crossSourceHarmonyArbitration: false,
+  crossSourceHarmonyArbitration: true,
 });
 
 export function auditLegacyRuleDrift() {
