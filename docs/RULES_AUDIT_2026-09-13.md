@@ -2,7 +2,7 @@
 
 Date: 2026-09-13
 Branch: `studio-v1`
-Status: refreshed after Canonical Draft2 + Studio alignment merges
+Status: refreshed against Published Canonical v1 + Studio alignment
 
 ## Authority decision
 
