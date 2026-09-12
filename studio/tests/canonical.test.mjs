@@ -9,8 +9,10 @@ import {
   createCanonicalProject,
 } from '../backend/canonical/index.mjs';
 
-test('Studio MML adapter keeps the legacy rational engine available', () => {
-  assert.equal(MML_ENGINE_ADAPTER.source, 'dist/core.js');
+test('Studio MML facade owns parsing while retaining legacy rational implementation', () => {
+  assert.equal(MML_ENGINE_ADAPTER.finalParser, './parser.mjs');
+  assert.equal(MML_ENGINE_ADAPTER.legacyParserAllowedForFinalGate, false);
+  assert.ok(MML_ENGINE_ADAPTER.reusableLegacyAreas.includes('exact-rational-arithmetic'));
   assert.equal(f('1/3').add('2/3').toString(), '1');
 });
 
