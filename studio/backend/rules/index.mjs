@@ -114,6 +114,7 @@ export function studioFinalBlockers() {
     ['versionDriftReport', 'VERSION_DRIFT_REPORT_PENDING'],
     ['core3ContinuityGate', 'CORE3_CONTINUITY_GATE_PENDING'],
     ['leadDemotionGate', 'LEAD_DEMOTION_GATE_PENDING'],
+    ['originalAudioAlignment', 'ORIGINAL_AUDIO_ALIGNMENT_PENDING'],
     ['crossSourceHarmonyArbitration', 'CROSS_SOURCE_HARMONY_PENDING'],
   ];
   return Object.freeze(required.filter(([key]) => !STUDIO_IMPLEMENTATION[key]).map(([, id]) => id));
