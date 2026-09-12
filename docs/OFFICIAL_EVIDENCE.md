@@ -1,9 +1,9 @@
 # Official & Community Evidence Index
 
-Version: 2026-09-13-draft2
+Version: 2026-09-13-v1
 Status: CANONICAL SUPPORTING EVIDENCE
 
-This file records evidence used by the Canonical candidate. It is not itself a rule override.
+This file records evidence used by the published Canonical rules. It is not itself a rule override.
 
 Current official pages below were re-opened and verified on 2026-09-13 from the Nexon Mabinogi Mobile site.
 
