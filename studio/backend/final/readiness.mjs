@@ -74,9 +74,35 @@ function baselineGate(project) {
   });
 }
 
-function leadGate(reports) {
+function leadGate(reports, leadEventDiff = null) {
   if (!Array.isArray(reports)) throw Error('leadDemotionReports must be an array');
+
   const relevant = reports.filter(report => report?.status !== 'N/A');
+  const requiredEventIds = new Set();
+  for (const id of leadEventDiff?.removed ?? []) {
+    if (typeof id === 'string' && id) requiredEventIds.add(id);
+  }
+  for (const move of leadEventDiff?.roleMoved ?? []) {
+    const id = move?.beforeId ?? move?.afterId;
+    if (typeof id === 'string' && id) requiredEventIds.add(id);
+  }
+
+  if (requiredEventIds.size) {
+    const byEventId = new Map(
+      relevant
+        .filter(report => typeof report?.eventId === 'string' && report.eventId)
+        .map(report => [report.eventId, report]),
+    );
+    const pendingEventIds = [...requiredEventIds].filter(id => byEventId.get(id)?.status !== 'PASS');
+    if (pendingEventIds.length) {
+      return gate('PENDING', {
+        blockers: ['LEAD_DEMOTION_EVIDENCE_REQUIRED'],
+        pendingEventIds,
+      });
+    }
+    return gate('PASS', { reviewed: requiredEventIds.size, requiredEventIds: [...requiredEventIds] });
+  }
+
   if (!relevant.length) return gate('N/A', { reason: 'No Lead demotion requires arbitration.' });
   const pending = relevant.filter(report => report.status !== 'PASS');
   return pending.length
@@ -107,6 +133,11 @@ export function evaluateProjectReadiness({
   const implementationBlockers = studioFinalBlockers();
   const pendingDecisions = (project.decisions ?? []).filter(decision => decision.status === 'pending');
   const sourceComplete = project.metadata?.sourceComplete === true;
+  const baseline = baselineGate(project);
+  const leadDemotion = leadGate(
+    leadDemotionReports,
+    baseline.status === 'PASS' ? baseline.leadEventDiff : null,
+  );
 
   const gates = Object.freeze({
     implementation: implementationBlockers.length
@@ -115,12 +146,12 @@ export function evaluateProjectReadiness({
     source: sourceComplete
       ? gate('PASS')
       : gate('PENDING', { blockers: ['SOURCE_COMPLETENESS_NOT_CONFIRMED'], incompleteInputs: project.metadata?.incompleteInputs ?? [] }),
-    baseline: baselineGate(project),
+    baseline,
     technical: mmlValidation?.ok === true
       ? gate('PASS')
       : gate(mmlValidation ? 'FAIL' : 'NOT_RUN', { errors: mmlValidation?.errors ?? [] }),
     core3: gate(normalizeStatus(core3Report, 'NOT_RUN'), { blockers: core3Report?.blockers ?? [] }),
-    leadDemotion: leadGate(leadDemotionReports),
+    leadDemotion,
     crossSourceHarmony: gate(normalizeStatus(harmonyReport, 'NOT_RUN'), { unresolvedCount: harmonyReport?.unresolvedCount ?? null }),
     versionDrift: versionGate(lineageReport, versionDriftReviewed),
     originalAudio: audioGate(project, originalAudioRequired),
@@ -153,6 +184,6 @@ export function evaluateProjectReadiness({
     finalAccepted,
     preGameBlocking: Object.freeze(preGameBlocking),
     gates,
-    notice: 'Module availability never certifies a song. Candidate readiness requires source completeness plus a real Source-Faithful Baseline snapshot whose event-level diff is computed against the candidate, along with audio/arbitration/technical/player evidence. finalAccepted additionally requires in-game acceptance.',
+    notice: 'Module availability never certifies a song. Candidate readiness requires source completeness plus a real Source-Faithful Baseline snapshot whose event-level diff is computed against the candidate, evidence-backed review of any Lead removals/role moves, and audio/arbitration/technical/player evidence. finalAccepted additionally requires in-game acceptance.',
   });
 }
