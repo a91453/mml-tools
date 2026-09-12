@@ -7,7 +7,9 @@ Branch: `studio-v1`
 
 The existing Workbench implementation is reusable **implementation**, but it is not the rules authority for Studio v1.
 
-`legacy-v0.2.0` and `main` remain untouched. Studio rules are now centralized in `studio/backend/rules/index.mjs` and the Studio Final Gate is deliberately blocked while known P0 legacy drift remains.
+`legacy-v0.2.0` and `main` remain untouched. Studio rules are centralized in `studio/backend/rules/index.mjs`. The current-rule Studio parser now lives in `studio/backend/mml/parser.mjs`; legacy `dist/core.js` remains available only for reusable implementation such as exact-rational arithmetic, meter/bar building, overlap review and preview codecs.
+
+Studio Final remains blocked, but no longer because it depends on the legacy parser. It is blocked for the still-unimplemented source/musical gates listed below.
 
 ## Important scope finding
 
@@ -15,15 +17,15 @@ The existing Workbench implementation is reusable **implementation**, but it is 
 
 Therefore no Studio code may infer that the GitHub `skills/` directory is the complete rule truth.
 
-## P0 conflicts found
+## P0 conflicts found in the legacy Workbench
 
-| Area | Legacy Workbench | Effective Studio rule | Action |
+| Area | Legacy Workbench | Effective Studio rule | Current Studio action |
 |---|---|---|---|
-| 64th note/rest | `c64`, `r64`, `L64` are rejected | 1/64 is a legal Mobile boundary; sub-1/64 technical timing remains rejected | Block legacy validator as Final authority; migrate parser/profile |
-| Tempo ceiling | accepts through T320 | Mobile final range is T32–T255 | Block legacy validator as Final authority; migrate parser/profile |
-| Error text | says `48/64` are both unavailable | 64 is legal; 48 remains outside the current safe canonical output set | replace during parser migration |
-| Tests | regression test expects `c64/r64/L64` rejection | tests must expect 64 acceptance after migration | old test remains historical until parser migration; Studio drift test prevents accidental Final use |
-| Profile identity | `mobile-strict-2026-09-08` | effective rules changed after 2026-09-08 | legacy profile cannot certify current Final output |
+| 64th note/rest | `c64`, `r64`, `L64` are rejected | 1/64 is a legal Mobile boundary; sub-1/64 technical timing remains rejected | Studio parser accepts 64; legacy parser retained only as historical compatibility evidence |
+| Tempo ceiling | accepts through T320 | Mobile final range is T32–T255 | Studio parser accepts T255 and rejects T256+ |
+| Error text | says `48/64` are both unavailable | 64 is legal; 48 remains outside the current safe canonical output set | corrected in Studio parser |
+| Tests | legacy regression expects `c64/r64/L64` rejection | Studio regression expects 64 acceptance | both retained intentionally: legacy proves drift exists; Studio proves current behavior |
+| Profile identity | `mobile-strict-2026-09-08` | effective rules changed after 2026-09-08 | Studio uses dated `mabinogi-mobile-mml-studio-rules-2026-09-13` profile |
 
 Current external evidence used for the syntax boundary:
 - Nexon community score-making guide: 1/64 editing and examples containing `r64`/`l64`; explains Mobile recognition down to 64th-note resolution: https://mabinogimobile.nexon.com/Community/Tip/3137150
@@ -39,6 +41,7 @@ Current external evidence used for the syntax boundary:
 - Double/multiple dotted final syntax rejection should stay.
 - Dotted-triplet shorthand (`3.`, `6.`, `12.`, `24.`, `48.`) remains rejected in the current canonical final profile.
 - `Nxx` remains excluded from the user's Final Canonical output. Do not reintroduce it merely because third-party Mobile tools can support N notation.
+- Studio Final validation requires a source-confirmed meter map; it does not silently assume 4/4.
 
 ### Mobile structure
 - Six fixed output slots remain Melody + Chord1–Chord5.
@@ -79,6 +82,19 @@ Current external evidence used for the syntax boundary:
 - ABC `L:1/4` is a preview/verification convention, **not** a rule that the musical source or final MML must be written with L4.
 - Preview should use a separate Conductor, full expansion, exact bar/tie reconstruction, Tempo Map agreement and the 2% duration sanity check.
 
+## Parser migration status
+
+Implemented on `studio-v1`:
+- current-rule MML parser separate from the legacy parser;
+- `c64`, `r64`, `L64` acceptance;
+- T32–T255 range with T256+ rejection;
+- current canonical exclusions retained for 48/128, multiple dots, dotted-triplet shorthand and `Nxx`;
+- source-confirmed meter required for Studio Final validation;
+- regression coverage for syntax boundaries and 1/64 MIDI/ABC preview round-trips;
+- GitHub Actions Studio CI added so legacy and Studio tests run together.
+
+The legacy parser is intentionally **not edited** on this branch. Its old behavior is retained as a historical regression reference and cannot certify Studio Final output.
+
 ## Not yet implemented — must not be claimed as PASS
 
 - MusicXML → Canonical IR ingestion.
@@ -88,9 +104,8 @@ Current external evidence used for the syntax boundary:
 - Lead Demotion Gate as executable code.
 - original-audio alignment / Tempo drift analysis.
 - cross-source harmony arbitration.
-- final 1/64-aware replacement of the legacy parser profile.
 
-Until the legacy syntax drift is migrated, `assertRulesReadyForFinal()` intentionally throws and Studio must not label a generated score Final.
+`assertRulesReadyForFinal()` intentionally throws while those source/musical gates remain incomplete. Legacy parser drift is audited separately and is no longer the active Studio parser blocker.
 
 ## No automatic rule promotion
 
