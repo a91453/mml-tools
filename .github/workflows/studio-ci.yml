@@ -19,5 +19,7 @@ jobs:
         uses: actions/setup-node@v4
         with:
           node-version: '22'
+      - name: Install exact dependencies
+        run: npm install --ignore-scripts --package-lock=false
       - name: Run legacy and Studio regression tests
         run: npm test
