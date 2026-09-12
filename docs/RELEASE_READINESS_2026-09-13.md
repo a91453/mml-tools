@@ -117,13 +117,13 @@ Published Canonical metadata was finalized without changing the reviewed musical
 - Canonical version: `2026-09-13-v1`;
 - Canonical status: `PUBLISHED CANONICAL`;
 - executable contract: `implements-published-canonical`;
-- finalization diff was limited to governance/status metadata, corresponding documentation, and contract-test wording.
+- finalization changes were limited to governance/status metadata, corresponding documentation, and contract-test wording.
 
 ## Current-head verification
 
-Current head: `0380f2af5907ee3558a7cea4cca0edd6afadbc21`.
+Current head: `042326e7e02006258955dd369979d82c7e25f426`.
 
-Studio CI #118, run `34725564943`, completed successfully on this head:
+Studio CI #120, run `34725633280`, completed successfully on this exact head:
 
 - symbolic regressions: **SUCCESS**;
 - legacy production bundle build: **SUCCESS**;
