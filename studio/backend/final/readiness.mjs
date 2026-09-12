@@ -21,6 +21,21 @@ function audioGate(project, required) {
   return gate('PASS', { evidenceCount: evidence.length });
 }
 
+function baselineGate(project) {
+  const baseline = project?.metadata?.sourceFaithfulBaseline;
+  if (!baseline || typeof baseline !== 'object') {
+    return gate('PENDING', { blockers: ['SOURCE_FAITHFUL_BASELINE_MISSING'] });
+  }
+  if (baseline.diffable !== true || baseline.eventDiffAvailable !== true) {
+    return gate('PENDING', { blockers: ['SOURCE_FAITHFUL_BASELINE_NOT_DIFFABLE'] });
+  }
+  return gate('PASS', {
+    baselineId: baseline.id ?? null,
+    diffable: true,
+    eventDiffAvailable: true,
+  });
+}
+
 function leadGate(reports) {
   if (!Array.isArray(reports)) throw Error('leadDemotionReports must be an array');
   const relevant = reports.filter(report => report?.status !== 'N/A');
@@ -62,6 +77,7 @@ export function evaluateProjectReadiness({
     source: sourceComplete
       ? gate('PASS')
       : gate('PENDING', { blockers: ['SOURCE_COMPLETENESS_NOT_CONFIRMED'], incompleteInputs: project.metadata?.incompleteInputs ?? [] }),
+    baseline: baselineGate(project),
     technical: mmlValidation?.ok === true
       ? gate('PASS')
       : gate(mmlValidation ? 'FAIL' : 'NOT_RUN', { errors: mmlValidation?.errors ?? [] }),
@@ -80,6 +96,7 @@ export function evaluateProjectReadiness({
   const preGameGateNames = [
     'implementation',
     'source',
+    'baseline',
     'technical',
     'core3',
     'leadDemotion',
@@ -98,6 +115,6 @@ export function evaluateProjectReadiness({
     finalAccepted,
     preGameBlocking: Object.freeze(preGameBlocking),
     gates,
-    notice: 'Module availability never certifies a song. Candidate readiness requires song-specific source, audio, arbitration, technical and player evidence; finalAccepted additionally requires in-game acceptance.',
+    notice: 'Module availability never certifies a song. Candidate readiness requires song-specific source completeness, a diffable Source-Faithful Baseline, audio/arbitration/technical/player evidence, and finalAccepted additionally requires in-game acceptance.',
   });
 }

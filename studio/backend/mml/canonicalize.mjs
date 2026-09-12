@@ -54,6 +54,9 @@ export function normalizeMMLSource(raw, options = {}) {
 
   if (!['current-mml', 'historical-mml'].includes(kind)) throw Error('MML source kind must be current-mml or historical-mml');
 
+  // Source ingestion is deliberately broader than Final validation. It keeps
+  // caution forms such as plain non-preferred 1–64 lengths and Nxx as evidence,
+  // then records warnings instead of erasing the source event identity.
   const validation = validateMML(raw, {
     meterText,
     pickup,
@@ -61,6 +64,7 @@ export function normalizeMMLSource(raw, options = {}) {
     programs,
     drumText,
     title: label,
+    validationMode: 'ingest',
   });
   if (!validation.song) throw Error(validation.errors?.[0]?.message ?? 'MML could not be parsed');
 
@@ -73,6 +77,7 @@ export function normalizeMMLSource(raw, options = {}) {
     metadata: {
       format: 'MML',
       profile: validation.song.profile,
+      validationMode: validation.song.validationMode,
       technicalOk: validation.ok,
       errors: validation.errors,
       warnings: validation.warnings,
@@ -148,7 +153,7 @@ export function mmlFragmentToProject(fragment, options = {}) {
     tempoEvents: [...fragment.tempoEvents],
     meterEvents: [...fragment.meterEvents],
     metadata: {
-      ingestion: 'mml-source-v1',
+      ingestion: 'mml-source-v2-canonical-alignment',
       sourceComplete: fragment.complete,
       technicalOk: fragment.validation.ok,
       errors: [...fragment.validation.errors],

@@ -53,6 +53,29 @@ test('historical MML stays a distinct evidence source rather than replacing the 
   assert.deepEqual(current.events[0].sourceIds, ['current']);
 });
 
+test('source ingestion preserves caution plain lengths and Nxx instead of losing evidence', () => {
+  const cautionLength = normalizeMMLSource(six('t120o4c48'), {
+    sourceId: 'c48-source',
+    label: 'C48 source',
+    kind: 'historical-mml',
+    meterText: '0 4/4',
+    finalPartial: '1/12',
+  });
+  assert.equal(cautionLength.complete, true, JSON.stringify(cautionLength.validation.errors));
+  assert.ok(cautionLength.validation.warnings.some(item => item.code === 'CAUTION_LENGTH'));
+
+  const numeric = normalizeMMLSource(six('t120n60'), {
+    sourceId: 'n-source',
+    label: 'Nxx source',
+    kind: 'historical-mml',
+    meterText: '0 4/4',
+    finalPartial: '1/4',
+  });
+  assert.equal(numeric.complete, true, JSON.stringify(numeric.validation.errors));
+  assert.equal(numeric.events.find(event => event.kind === 'note' && event.role === 'Melody').pitch, 60);
+  assert.ok(numeric.validation.warnings.some(item => item.code === 'NUMERIC_NOTE_CAUTION'));
+});
+
 test('technically invalid historical MML is retained as incomplete evidence, never silently certified', () => {
   const fragment = normalizeMMLSource(six('t256o4c1'), {
     sourceId: 'legacy-bad-tempo',

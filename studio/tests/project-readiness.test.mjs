@@ -10,6 +10,7 @@ import { evaluateProjectReadiness } from '../backend/final/readiness.mjs';
 
 function project({
   sourceComplete = true,
+  baseline = true,
   audioEvidence = true,
   audioWarnings = [],
   pendingDecision = false,
@@ -47,6 +48,13 @@ function project({
     decisions,
     metadata: {
       sourceComplete,
+      ...(baseline ? {
+        sourceFaithfulBaseline: {
+          id: 'baseline:source-faithful',
+          diffable: true,
+          eventDiffAvailable: true,
+        },
+      } : {}),
       ...(audioEvidence ? {
         audioAlignmentEvidence: [{
           sourceId: 'original-audio',
@@ -80,6 +88,7 @@ test('candidate readiness can pass before in-game acceptance, but finalAccepted 
   assert.equal(result.finalAccepted, false);
   assert.deepEqual(result.preGameBlocking, []);
   assert.equal(result.gates.implementation.status, 'PASS');
+  assert.equal(result.gates.baseline.status, 'PASS');
   assert.equal(result.gates.inGameAcceptance.status, 'PENDING');
 });
 
@@ -120,6 +129,14 @@ test('source completeness is a hard per-song readiness condition', () => {
   assert.equal(result.candidateReady, false);
   assert.equal(result.gates.source.status, 'PENDING');
   assert.ok(result.gates.source.blockers.includes('SOURCE_COMPLETENESS_NOT_CONFIRMED'));
+});
+
+test('diffable Source-Faithful Baseline is mandatory before candidate readiness', () => {
+  const result = evaluateProjectReadiness(readyInput({ project: project({ baseline: false }) }));
+  assert.equal(result.candidateReady, false);
+  assert.equal(result.gates.baseline.status, 'PENDING');
+  assert.deepEqual(result.gates.baseline.blockers, ['SOURCE_FAITHFUL_BASELINE_MISSING']);
+  assert.ok(result.preGameBlocking.includes('baseline'));
 });
 
 test('technical validation failure blocks readiness even when musical gates pass', () => {
