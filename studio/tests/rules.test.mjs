@@ -37,19 +37,26 @@ test('known legacy parser drift remains visible but is not the Studio parser', (
   assert.equal(STUDIO_IMPLEMENTATION.currentRuleMmlParser, true);
 });
 
-test('tested symbolic ingestion and arbitration milestones are active', () => {
+test('tested symbolic, arbitration and original-audio modules are active', () => {
   assert.equal(STUDIO_IMPLEMENTATION.musicXmlIngestion, true);
   assert.equal(STUDIO_IMPLEMENTATION.sourceAwareMmlNormalization, true);
   assert.equal(STUDIO_IMPLEMENTATION.versionDriftReport, true);
   assert.equal(STUDIO_IMPLEMENTATION.core3ContinuityGate, true);
   assert.equal(STUDIO_IMPLEMENTATION.leadDemotionGate, true);
+  assert.equal(STUDIO_IMPLEMENTATION.originalAudioAlignment, true);
   assert.equal(STUDIO_IMPLEMENTATION.crossSourceHarmonyArbitration, true);
 });
 
-test('Studio Final Gate remains blocked until original-audio alignment is implemented', () => {
+test('implementation-level Final blockers are empty after all required modules are implemented', () => {
   const blockers = studioFinalBlockers();
-  assert.deepEqual(blockers, ['ORIGINAL_AUDIO_ALIGNMENT_PENDING']);
-  assert.equal(STUDIO_IMPLEMENTATION.originalAudioAlignment, false);
+  assert.deepEqual(blockers, []);
   assert.ok(!blockers.some(id => id.includes('LEGACY')));
-  assert.throws(() => assertRulesReadyForFinal(), /ORIGINAL_AUDIO_ALIGNMENT_PENDING/);
+  assert.equal(assertRulesReadyForFinal(), true);
+});
+
+test('module readiness does not imply any song-specific Final PASS', () => {
+  assert.deepEqual(studioFinalBlockers(), []);
+  assert.equal(EFFECTIVE_RULESET.gates.includes('original-audio-ab'), true);
+  assert.equal(EFFECTIVE_RULESET.gates.includes('player-readback'), true);
+  assert.equal(EFFECTIVE_RULESET.gates.includes('in-game'), true);
 });
