@@ -136,6 +136,7 @@ export function parseTrack(raw, role) {
 
       if (syntax.rejectMultipleDots && dots > 1) fail('不接受雙附點／多附點', start);
       if (dots && dottedTripletShorthand.has(denominator)) fail(`不接受附點三連音式時值${denominator}.，需等值正規化`, start);
+      if (dots && denominator > syntax.maxDottedBaseDenominator) fail(`不接受${denominator}.；附點會超出1/${syntax.shortestSafeDenominator}安全時間格`, start);
 
       const dotFactor = dots
         ? new F(2n ** BigInt(Math.min(dots, 8) + 1) - 1n, 2n ** BigInt(Math.min(dots, 8)))
