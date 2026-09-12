@@ -2,162 +2,123 @@
 
 Date: 2026-09-13
 Branch: `studio-v1`
+Status: refreshed after Canonical Draft2 + Studio alignment merges
 
-## Decision
+## Authority decision
 
-The existing Workbench remains useful **implementation**, but it is not the rules authority for Studio v1.
+The human-readable rule authority is the reviewed Canonical document set:
 
-`legacy-v0.2.0` and `main` remain untouched. Studio rules are centralized in `studio/backend/rules/index.mjs`; current-rule parsing lives in `studio/backend/mml/parser.mjs`. Legacy `dist/core.js` remains reusable for exact-rational arithmetic, meter/bar construction, cross-track review and MIDI/ABC preview codecs, but its legacy parser/profile cannot certify Studio Final output.
+- `docs/MASTER_RULES.md`
+- `docs/SOURCE_POLICY.md`
+- `docs/MOBILE_SYNTAX.md`
+- `docs/ACCEPTANCE_CRITERIA.md`
+- `docs/PENDING.md`
 
-The symbolic/source arbitration pipeline is now implemented and covered by the combined legacy + Studio regression suite. The only global Studio Final implementation blocker is currently **original-audio alignment**. Individual source files can still be incomplete when they contain unsupported constructs such as unexpanded MusicXML repeats/navigation, grace realization, transposing-part concert pitch, microtones or unpitched mapping.
+`studio/backend/rules/index.mjs` implements those documents; it does not define or override them. Legacy `dist/core.js`, old tests, community posts, websites and the 2026-09-02 Grok Skill are evidence/reference layers only.
 
-## Important scope finding
+The working legacy Workbench remains useful implementation and deployment compatibility. Studio v1 is additive and does not replace the current Railway/MCP production route in this PR.
 
-`skills/mabinogi-mobile-mml/` in this repository is **not a complete current SKILL/master-rules package**. It contains the 2026-09-10 Lead Role patch and its master-rules extension. Those files are useful version-controlled rule extensions, but they must not be treated as the complete installed ChatGPT skill/master rule truth.
+## Official / project-policy separation
 
-Studio therefore uses a dated, executable Rule Contract rather than assuming the repository `skills/` directory is complete.
+Current official evidence recorded in `docs/OFFICIAL_EVIDENCE.md` supports:
 
-## P0 conflicts found in the legacy Workbench
+- up to 6 composition roles;
+- up to 2,400 MML characters per role;
+- Tempo editor range 32–255;
+- note/rest numeric length range 1–64;
+- Volume 0–15;
+- documented pitch range 0–107;
+- 3-harmony instruments capable of up to 3 simultaneous notes.
 
-| Area | Legacy Workbench | Effective Studio rule | Current Studio action |
-|---|---|---|---|
-| 64th note/rest | `c64`, `r64`, `L64` rejected | plain 1/64 is a legal Mobile boundary | Studio parser accepts plain 64; legacy behavior remains only as drift evidence |
-| dotted 64 | legacy rule was not expressed as the current safe-grid boundary | `64.` introduces a sub-1/64 component | Studio rejects dotted 64 |
-| Tempo ceiling | accepts through T320 | Mobile final range T32–T255 | Studio accepts T255 and rejects T256+ |
-| Error text/tests | encoded old 64th rejection | current rule distinguishes legal 64 from unsafe finer timing | Studio tests cover the current boundary; legacy tests remain historical evidence |
-| Profile identity | `mobile-strict-2026-09-08` | rules changed after 2026-09-08 | Studio uses `mabinogi-mobile-mml-studio-rules-2026-09-13` |
+Project Final policy is intentionally separate from those official limits. In particular:
 
-External evidence recorded during the audit:
-- Nexon community score-making guide documents 1/64 editing and examples using `r64` / `l64`: https://mabinogimobile.nexon.com/Community/Tip/3137150
-- Nexon community MML basics documents Tempo 32–255: https://mabinogimobile.nexon.com/Community/Art/3113735
-- Current official composition guide documents up to six harmonies and 2,400 MML characters per harmony: https://mabinogimobile.nexon.com/Info/Guide/2751071
+- plain `64` is accepted;
+- arbitrary plain 1–64 lengths are ingestible; non-preferred values are Final caution, not engine-illegal;
+- plain `48` is `FINAL_ALLOWED_WITH_CAUTION`;
+- `Nxx` is preserved at ingest and is Final opt-in-with-evidence, not blanket engine rejection;
+- `64.`, fragile dotted forms, multiple dots and technical sub-1/64 micro-gaps remain Final-forbidden by project policy;
+- `O0–O8` is an implementation mapping, not Nexon wording.
 
-## Effective rules that remain preserved
+## Musical / arbitration rules preserved
 
-### Exact timing / final syntax
-- BigInt rational timing remains canonical for symbolic time.
-- Exact event start/end comparison is retained.
-- Zero/invalid durations are rejected.
-- Plain 1/64 note/rest/default length is accepted.
-- Timing below the 1/64 safe grid is not emitted as Final Canonical syntax.
-- Double/multiple dots remain rejected.
-- Dotted-triplet shorthand (`3.`, `6.`, `12.`, `24.`, `48.`) remains rejected in the current final profile.
-- `Nxx` remains excluded from the user's Final Canonical output.
-- Studio Final validation requires a source-confirmed meter map; it never silently assumes 4/4.
+- Melody/T1 is Lead Role, not Vocal-only.
+- Source-Faithful Baseline is mandatory before role cleanup, six-track reduction or Mobile adaptation.
+- Baseline/candidate event differences must remain auditable.
+- Chord2 is the Core Bass skeleton **plus essential inner support when required**; it is not Bass-only.
+- Core3 must remain independently musical; Chord3–Chord5 are enrichment by default and may not damage Core3.
+- `not proven Vocal` is never positive Lead-demotion evidence.
+- A source reference proves provenance, not harmonic compatibility.
+- Same-pitch overlap, low/mid m2/M7 and cross-source m9 are review signals, not automatic deletion commands.
+- Natural rests are not filled for continuity statistics.
+- Theory/statistical cleanup is last and may not erase source-supported material.
 
-### Mobile structure
-- Six output roles remain Melody + Chord1–Chord5.
-- Core3 is Melody / Chord1 / Chord2.
-- Chord3–Chord5 are enrichment by default.
-- Per-track 2,400-character limit remains enforced.
-- O0–O8 and V0–V15 checks remain active.
-- Drum conversion requires an evidence-backed Mobile drum-face mapping.
+## Legacy Workbench drift retained as regression evidence
 
-### Validation semantics
-- Technical PASS is not source/audio/player/game PASS.
-- Real loaded-player readback cannot be replaced by expected values.
-- Same-pitch overlap is a review signal, not an automatic deletion command.
-- Low/mid m2/M7 and cross-source m9 conflicts require review/arbitration, not automatic deletion.
-- Five-/six-track simultaneous attacks are not automatic failures when musically/source supported.
-- Natural source rests must not be filled to improve continuity statistics.
-- A source reference proves provenance, not cross-source compatibility.
+Known legacy behavior intentionally remains visible rather than being silently rewritten:
 
-## Current effective musical hierarchy
+- legacy parser rejects plain 64;
+- legacy parser accepts Tempo above the current Final 255 ceiling;
+- legacy parser rejects caution values such as plain 48;
+- historical Workbench strict-profile tests therefore do not define current Canonical rules.
 
-1. Preserve source-complete material before six-track reduction.
-2. Build a Source-Faithful Baseline with traceable source IDs.
-3. Keep symbolic truth and audio truth separate:
-   - official/credible score, MusicXML and accepted MIDI: exact symbolic event evidence;
-   - original official audio: actual role, prominence, sustain, articulation, recording structure and tempo-drift evidence;
-   - third-party score/MIDI/MML: supporting arrangement evidence, not automatic pitch truth.
-4. Arbitrate Lead role before cleanup. Melody/T1 is **Lead**, not Vocal-only.
-5. Core3 must remain independently musical:
-   - Melody = Lead
-   - Chord1 = Core Harmony / essential inner voice / response
-   - Chord2 = Core Bass / low-voice skeleton
-6. Chord3–Chord5 enrich Full6 and must not damage Core3.
-7. Apply Mobile minimal adaptation only after source reconciliation.
-8. Theory/statistical cleanup is last and may not erase source-supported material.
-9. Every candidate must diff against the source-faithful baseline and accepted prior version so version drift remains visible.
+Studio tests must keep distinguishing historical regression evidence from current Studio behavior.
 
-## Implemented and regression-tested on `studio-v1`
+## Current implementation status
 
-### Current-rule MML parsing
-- independent current-rule parser;
-- plain `c64`, `r64`, `L64` acceptance;
-- dotted `64.` rejection at the sub-1/64 boundary;
-- T32–T255 with T256+ rejection;
-- 48/128, multiple dots, dotted-triplet shorthand and `Nxx` canonical exclusions;
-- source-confirmed meter requirement;
-- 1/64 MIDI/ABC preview round-trip coverage.
+Implemented and regression-tested on `studio-v1`:
 
-### Canonical Music IR
-- source records with authority and provenance;
-- exact note and rest events;
-- tempo and meter events;
-- decisions kept separate from source events;
-- strict source/event reference validation.
+- current MML ingest + Final validation split;
+- exact rational timing;
+- Canonical Music IR with provenance;
+- MusicXML ingestion with fail-closed unsupported constructs;
+- current/historical MML normalization;
+- version-drift reporting;
+- Core3 Continuity Gate;
+- evidence-first Lead Demotion Gate;
+- cross-source harmony arbitration;
+- Source-Faithful Baseline readiness gate with computed event diff;
+- original-audio alignment worker + Node evidence bridge;
+- per-song Project Readiness;
+- combined legacy + Studio symbolic regressions;
+- Python audio-worker regressions with FFmpeg.
 
-### MusicXML ingestion
-- score-partwise ingestion with exact `<divisions>` timing;
-- chords, rests, `backup`, `forward`, voice/staff, ties/lyrics metadata;
-- meter and tempo extraction;
-- metronome tempo normalization;
-- source-event provenance;
-- fail-closed unsupported reporting.
+`studioFinalBlockers()` currently has no module-level blockers. This **does not** certify any song.
 
-MusicXML repeat/navigation markers (repeat, ending/volta, segno, coda, D.C., D.S., To Coda, Fine) force `complete=false` until canonical playback-order expansion is implemented. Grace realization, transposing-part concert pitch, microtones and unpitched mapping also remain source-specific unsupported cases rather than being guessed.
+## Per-song readiness remains mandatory
 
-### Current / historical MML normalization
-- each version remains an independent evidence source;
-- technically invalid historical MML can be retained as incomplete evidence rather than silently dropped/certified;
-- expanded notes become canonical events;
-- meaningful silence gaps become explicit inferred-rest evidence;
-- Tempo and caller-confirmed meter maps are preserved.
+A candidate still needs its own evidence/gates, including:
 
-### Version drift
-- reports note add/remove/modify, pure role moves, rest changes and Tempo changes;
-- compares source baseline → accepted previous → candidate;
-- increasing divergence is only a review trigger, never a quality verdict.
+- source completeness;
+- real Source-Faithful Baseline snapshot and event diff;
+- Strict Mobile technical validation;
+- Core3 review;
+- evidence-backed review of Lead removals/role moves;
+- cross-source harmony arbitration;
+- version-drift review when required;
+- original-audio evidence when required;
+- actual player readback;
+- no pending arbitration decisions.
 
-### Core3 Continuity Gate
-- checks source-relative Core3 removals/modifications/role moves;
-- detects source-supported Lead gaps;
-- an approved demotion cannot hide a resulting Lead gap;
-- true sparse/rest passages are preserved;
-- register jumps are diagnostic only.
+`candidateReady=true` is not `finalAccepted=true`. Explicit in-game acceptance is still required for Final acceptance.
 
-### Lead Demotion Gate
-- `not proven Vocal` is never positive demotion evidence;
-- requires source identity, section role, positive destination reason, continuity check and Core3 check;
-- accepts structured score/audio role evidence;
-- conflicting lead evidence keeps the decision `PENDING`;
-- instrumental Lead windows receive extra caution rather than a Vocal-absence penalty.
+## Known non-blocking debt
 
-### Cross-source Harmony Gate
-- reviews overlapping disjoint-source same-pitch doubling;
-- reviews m2/M7/m9 cross-source risk;
-- identifies T4–T6 enrichment conflicts that threaten Core3;
-- accepts explicit evidence-backed arbitration decisions without mutating source events;
-- compatible cross-source material is left alone.
+The following remain visible and must not be overclaimed:
 
-## Current global Final blocker
-
-`assertRulesReadyForFinal()` currently blocks on:
-
-- `ORIGINAL_AUDIO_ALIGNMENT_PENDING`
-
-The audio layer must not overwrite symbolic truth. Its job is to align recording time to canonical beat time and provide evidence for actual arrangement role, prominence, sustain, articulation, recording structure and Tempo drift.
-
-A song-specific source may still remain `PENDING/UNSUPPORTED` even after the global audio implementation exists. The system must never convert an unsupported source construct into PASS merely because the global module exists.
+- caution-length opt-in is currently candidate-level rather than a per-token evidence schema;
+- exact O-token ↔ official 0–107 edge mapping remains pending;
+- baseline snapshot provenance/deep-freeze workflow can be hardened further;
+- a generic technical micro-gap analyzer is not yet complete;
+- not every historical named-song regression has a committed reproducible fixture;
+- the iPhone/iPad Studio UI and production Studio deployment are not implemented.
 
 ## Tool / preview scope
 
-- Midify is not a Studio Final Gate; it is N/A by default.
-- If a player is used, only actual loaded-engine/readback state is evidence.
-- ABC `L:1/4` is a preview/verification convention, not a requirement for source or final MML notation.
-- Preview should use a separate Conductor, full expansion, exact bar/tie reconstruction, Tempo Map agreement and the 2% duration sanity check.
+- Midify is N/A by default and is not a Final Gate.
+- Only actual loaded player/readback state counts as player evidence.
+- ABC `L:1/4` is a preview convention only.
+- Preview uses a separate Conductor, full expansion, exact bars/ties, Tempo-map agreement and the 2% duration sanity check.
 
 ## No automatic rule promotion
 
-A website, third-party editor, old report, old song or historical test is evidence only. It does not silently become a master rule. Rule changes require an explicit dated contract update plus regression coverage.
+A website, third-party editor, old report, old song, old test or executable implementation cannot silently become a master rule. Canonical changes require explicit human rule review plus regression alignment.
