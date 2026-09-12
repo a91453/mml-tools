@@ -1,6 +1,6 @@
 # Mobile Syntax Policy
 
-Version: 2026-09-13-draft1
+Version: 2026-09-13-draft2
 Status: CANONICAL CANDIDATE
 
 This file separates documented game limits from project output policy.
@@ -10,7 +10,7 @@ This file separates documented game limits from project output policy.
 - `OFFICIAL_CONFIRMED`: explicitly documented by Nexon.
 - `COMMUNITY_VERIFIED`: observed in published community works/guides; not official spec.
 - `FINAL_PREFERRED`: preferred canonical output form for stability/readability.
-- `FINAL_ALLOWED_WITH_CAUTION`: may be usable, but requires stronger validation.
+- `FINAL_ALLOWED_WITH_CAUTION`: usable only under explicit project conditions and stronger validation.
 - `FINAL_FORBIDDEN`: project policy forbids it in final delivery even if the engine may parse it.
 - `PENDING_IN_GAME`: unresolved engine/client behavior.
 
@@ -19,13 +19,13 @@ This file separates documented game limits from project output policy.
 From Nexon official guide/update material:
 - maximum composition roles: 6 (base 3, expandable to 6);
 - per-role MML text: 2,400 characters;
-- Tempo input range: 32–255;
+- Tempo editor input range: 32–255;
 - note/rest length numeric range: 1–64;
 - Volume range: 0–15;
 - pitch range: 0–107;
 - instruments include 1-chord and up-to-3-chord instruments.
 
-These are game/documented limits, not arrangement-role definitions.
+These are documented editor/game limits, not arrangement-role definitions and not proof of every hidden playback/parser boundary outside the documented editing path.
 
 ## 3. Length denominators
 
@@ -33,42 +33,57 @@ The official update says note/rest length is limited to the numeric range `1–6
 
 Therefore:
 - plain lengths within 1–64 MUST NOT be labeled engine-illegal solely because they are non-power-of-two;
-- plain `64` is explicitly within the official range and MUST NOT be globally rejected;
-- `48` MUST NOT be described as an official engine prohibition without further evidence.
+- plain `64` is within the official range and MUST NOT be globally rejected;
+- plain `48` MUST NOT be described as an official engine prohibition.
 
 Community evidence shows both practices:
 - some guides recommend 2/4/8/16/32/64 for drift/tool stability;
-- published works can contain other values and numeric-note commands.
+- published works use other values and numeric-note commands.
 
-Canonical policy:
-- `FINAL_PREFERRED`: simple stable lengths, especially 2/4/8/16/32/64 when musically exact enough;
-- `FINAL_ALLOWED_WITH_CAUTION`: other plain integer lengths 1–64 when source timing requires them and validation confirms no drift/regression;
+Canonical Final labels:
+- `FINAL_PREFERRED`: simple stable lengths, especially 1/2/4/8/16/32/64 when they reproduce the intended rhythm exactly;
+- `FINAL_ALLOWED_WITH_CAUTION`: other plain integer lengths 1–64, including `48`, when source timing requires them and validation confirms no drift/regression;
 - never rewrite a source-supported rhythm merely to satisfy a preferred-denominator statistic.
 
-## 4. Dots and microtiming
+Code and validators MUST distinguish `engine/editor accepted range` from `project Final preference`.
 
-Single-dot notation on ordinary supported values is allowed when it represents the intended rhythm and stays inside the supported timing model.
+## 4. Dots, safe timing grid and microtiming
 
-`FINAL_FORBIDDEN`:
+Project safe timing resolution for Final Canonical decomposition is **1/64**. This is a `FINAL_CANONICAL_POLICY`, not a claim that the engine cannot internally parse finer timing.
+
+Canonical single-dot policy:
+- `FINAL_PREFERRED`: ordinary single-dot shorthand on bases `1, 2, 4, 8, 16, 32` when it preserves the intended rhythm;
+- `FINAL_FORBIDDEN`: `64.`;
+- `FINAL_FORBIDDEN`: dotted non-preferred/fragile bases, including `3.`, `6.`, `12.`, `24.`, `48.`;
+- other dotted bases outside the preferred set MUST NOT be emitted in Final Canonical output; rewrite them to an exact canonical note/tie/rest decomposition.
+
+Also `FINAL_FORBIDDEN`:
 - multiple-dot shorthand such as `1..`, `2..`, `4..`, `8..`;
-- dotted-triplet-like shorthand previously known to cause fragile/non-canonical output, including `3.`, `6.`, `12.`, `24.`, `48.` unless future in-game evidence explicitly promotes a specific form;
 - zero-duration events;
-- technical micro-gaps below the project's safe timing resolution when they have no musical meaning.
+- technical micro-gaps or decomposition components finer than 1/64 when they have no source-supported musical meaning.
 
-Preferred rewrite: exact equivalent canonical note/tie/rest decomposition that preserves timing and attacks.
+Preferred rewrite: exact equivalent canonical note/tie/rest decomposition that preserves event timing and attack identity. The engine capability of forbidden dotted forms remains a separate `PENDING_IN_GAME` question.
 
 ## 5. Numeric note command (`Nxx` / `nNN`)
 
 Community works demonstrate real use of numeric-note commands, so the project MUST NOT claim that the Mobile parser categorically lacks Nxx support.
 
-However, engine capability and final-output policy are separate questions.
+Engine capability and final-output policy are separate questions.
 
-Current policy:
-- parser capability: `COMMUNITY_VERIFIED`, exact range/client guarantees still not official;
-- Final Canonical output: avoid Nxx by default when ordinary pitch notation can represent the same music cleanly;
-- use Nxx only after explicit project decision and in-game/round-trip validation for the target piece.
+Current labels:
+- parser/input capability: `COMMUNITY_VERIFIED`; exact official range/client guarantees remain undocumented;
+- Final Canonical output: `FINAL_ALLOWED_WITH_CAUTION` only.
 
-Do not convert every Nxx source event automatically; preserve event identity in IR first.
+Default Final behavior:
+- preserve Nxx event identity when ingesting historical/community/source MML;
+- normalize to ordinary pitch notation when it can represent the same event cleanly;
+- retain Nxx in paste-ready Final only when the song/project manifest explicitly enables numeric-pitch output **and** target-piece round-trip or in-game validation supports it.
+
+Therefore:
+- an input parser MUST NOT hard-reject Nxx merely because the default Final emitter avoids it;
+- a strict Final validator MAY reject Nxx when the explicit numeric-pitch opt-in/evidence is absent.
+
+Do not convert every Nxx source event before event identity is preserved in IR.
 
 ## 6. Pitch / octave
 
@@ -76,17 +91,23 @@ Official evidence currently states pitch range `0–107`, not a canonical `O0–
 
 Therefore any octave-token range in code is an implementation mapping and MUST be verified against the 0–107 pitch model. Do not cite `O0–O8` as Nexon's official wording unless separately documented.
 
-## 7. Tempo
+## 7. Tempo and synchronization-safe delivery policy
 
-`T32–T255` is `OFFICIAL_CONFIRMED` for score editor input.
+`T32–T255` is `OFFICIAL_CONFIRMED` for score-editor input and is the project's Final numeric Tempo range.
 
 Multiple/mid-track Tempo commands are not automatically illegal, but have practical drift/history risk and require:
 - exact Tempo Map agreement across source, preview and candidate;
-- source-confirmed locations;
+- source-confirmed change locations;
 - actual player/readback when a player is used;
 - song-specific timing validation.
 
-Whether every non-empty track must duplicate the entire Tempo Map is `PENDING_IN_GAME`; until resolved, use the project's synchronization-safe policy for delivery and document it as policy, not official engine law.
+Until controlled in-game tests prove a weaker requirement, `FINAL_CANONICAL_POLICY` for delivery is:
+1. every non-empty role starts with the same initial Tempo value;
+2. when Tempo changes during the song, every non-empty role carries the same complete Tempo Map at the same musical positions;
+3. fully empty roles remain empty and are not given filler Tempo/rests solely for validators;
+4. this duplication rule is a synchronization-safe project policy, **not** an official claim that the engine technically requires Tempo on every role.
+
+Whether the client would remain synchronized with only one role carrying mid-song Tempo changes remains `PENDING_IN_GAME`.
 
 ## 8. Tie / attack semantics
 
@@ -102,18 +123,20 @@ Exact client counter semantics versus Python/JavaScript string length remain `PE
 
 ## 10. Empty roles
 
-Empty-role behavior and whether Tempo must be present on an empty role remain implementation/client details. Do not invent filler rests solely to satisfy validators.
+Empty roles remain empty by default. Do not invent filler rests or Tempo solely to satisfy validators.
+
+Exact client behavior around empty harmony slots remains `PENDING_IN_GAME`.
 
 ## 11. Final canonicalization
 
 Before user delivery:
 1. preserve source attacks/rests;
 2. remove shell/Markdown/track-label contamination;
-3. enforce official numeric limits;
-4. apply this project's forbidden-fragile syntax rules;
+3. enforce `OFFICIAL_GAME_LIMIT` numeric ranges separately from project Final policy;
+4. apply the explicit `FINAL_FORBIDDEN` / `FINAL_ALLOWED_WITH_CAUTION` rules above;
 5. ensure no zero duration or non-musical technical micro-gap remains;
 6. verify each role independently against the 2,400-character limit;
-7. verify Tempo/meter/time alignment;
+7. verify synchronization-safe Tempo policy, meter and time alignment;
 8. keep a reversible mapping from canonical output to source events/decisions.
 
 Technical syntax PASS does not certify musical correctness or in-game acceptance.
