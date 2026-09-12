@@ -8,8 +8,8 @@ import {
   assertRulesReadyForFinal,
 } from '../backend/rules/index.mjs';
 
-test('executable contract explicitly implements the Canonical candidate rather than defining it', () => {
-  assert.equal(EFFECTIVE_RULESET.status, 'implements-canonical-candidate');
+test('executable contract explicitly implements the published Canonical rules rather than defining them', () => {
+  assert.equal(EFFECTIVE_RULESET.status, 'implements-published-canonical');
   assert.equal(EFFECTIVE_RULESET.authority.executableContractDefinesRules, false);
   assert.ok(EFFECTIVE_RULESET.authority.humanReadable.includes('docs/MASTER_RULES.md'));
 });
