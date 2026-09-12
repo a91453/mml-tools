@@ -2,120 +2,125 @@
 
 Frozen legacy baseline: `legacy-v0.2.0` at commit `b48a3a3abc9f8617f50bc28cfddd3424e8230f70`.
 
-This migration remains additive. Studio v1 does not delete, move or silently rewrite the working legacy engine while the new architecture is being proven.
+Current Studio branch: `studio-v1`.
 
-## Inventory decision
+This migration remains additive. Studio source, tests and Canonical documents coexist with the legacy Workbench; the current Railway/MCP production route is not replaced by this migration PR.
 
-### Reuse as implementation, not rule authority
+## Rule authority
+
+Human-readable project policy lives in the reviewed Canonical documents under `docs/`:
+
+- `MASTER_RULES.md`
+- `SOURCE_POLICY.md`
+- `MOBILE_SYNTAX.md`
+- `ACCEPTANCE_CRITERIA.md`
+- `PENDING.md`
+
+`studio/backend/rules/index.mjs` implements that policy. It does not define or override it.
+
+The repository `skills/mabinogi-mobile-mml/` directory remains a partial dated extension set and is not the complete current rule truth. The 2026-09-02 local Grok Skill remains `LEGACY_REFERENCE` until a later loader migration.
+
+## Legacy compatibility boundary
+
+### Reused implementation / regression evidence
 
 - `dist/core.js`
-  - BigInt rational beat math
-  - meter/bar construction
-  - cross-track review
-  - MIDI/ABC encode/readback utilities
 - `tests/core.test.mjs`
 - `tests/player.test.mjs`
 
-The legacy MML parser and `mobile-strict-2026-09-08` profile are **not** Studio rule authority because the audit found known rule drift (notably 64th-note rejection and the obsolete Tempo ceiling). Studio uses its own dated parser/rule contract and reuses only proven implementation pieces.
+Useful pieces include exact rational timing, meter/bar construction, cross-track review and preview codecs. The legacy parser/profile is not current Studio rule authority.
 
-### Keep as compatibility / deployment layer
+### Existing production compatibility layer
 
 - `dist/app.js`, `dist/player.js`, `dist/index.html`, `dist/style.css`
 - `server/mcp.mjs`, `server/worker.mjs`
 - `railway/`
-- `tests/mcp.test.mjs`, `tests/railway.test.mjs`
+- legacy MCP/Railway tests
 
-These remain available for the current Workbench/MCP deployment. Studio work has not changed the production Railway/MCP route.
-
-### Keep as partial version-controlled rule extensions
-
-- `skills/mabinogi-mobile-mml/`
-
-This directory is not a complete current SKILL/master package. It currently stores the 2026-09-10 Lead Role rule extensions. Studio therefore does not treat the directory as complete rule truth.
-
-### Treat as generated / legacy packaging
-
-- `dist/workbench-source.zip`
-- generated deployment bundles under `dist/`
-
-New Studio domain logic belongs under `studio/`, not generated bundles.
+PR #2 does not replace those production routes. A future Studio deployment requires a separate explicit deployment decision.
 
 ## Current Studio layers
 
 ```text
 studio/
   backend/
-    rules/          # dated effective rule contract + implementation blockers
+    rules/          # executable contract implementing Canonical docs
     canonical/      # source-traceable Canonical Music IR
-    mml/            # current-rule parser + MML source canonicalization
-    score/          # MusicXML ingestion + fail-closed completeness detection
+    mml/            # ingest parser + Final validator + source normalization
+    score/          # MusicXML ingestion + fail-closed completeness
     compare/        # deterministic version/source drift
     arbitration/    # Core3, Lead Demotion, cross-source harmony gates
-  web/              # iPhone/iPad-first UI (not yet implemented)
-  tests/            # Studio regression tests
+    final/           # per-song readiness evaluation
+    audio/           # Node bridge for audio-alignment evidence
+  audio-worker/      # Python/FFmpeg original-audio alignment
+  web/               # iPhone/iPad-first UI scaffold only
+  tests/             # Studio regressions
 ```
 
-## Source hierarchy
+## Implemented + regression-tested
 
-Studio keeps these layers separate:
+1. Frozen legacy baseline and additive Studio branch.
+2. Reviewed Canonical Draft2 document set.
+3. Executable Rule Contract aligned to Canonical policy.
+4. Ingest vs Final MML validation split.
+5. Plain 64 support and 1–64 caution handling without blanket engine-illegal claims.
+6. Nxx ingest preservation with opt-in/evidence Final policy.
+7. Canonical source/event/control/decision IR with exact rational timing.
+8. score-partwise MusicXML ingestion with provenance and explicit unsupported cases.
+9. Current/historical MML → Canonical evidence normalization.
+10. Deterministic source/version drift reporting.
+11. Source-relative Core3 Continuity Gate.
+12. Evidence-first Lead Demotion Gate.
+13. Cross-source harmony arbitration.
+14. Source-Faithful Baseline readiness gate with runtime event diff.
+15. Original-audio alignment worker and Node evidence bridge.
+16. Per-song Project Readiness with implementation/source/baseline/technical/Core3/Lead/harmony/version/audio/player/pending-decision gates.
+17. Pull-request + `studio-v1` CI covering Node symbolic and Python audio-worker regressions.
 
-1. immutable source files and source-derived facts;
-2. source-complete canonical representation;
-3. explicit arbitration decisions with reasons/evidence;
-4. Mabinogi Mobile adaptations;
-5. final MML output and reverse validation.
+There is currently **no module-level Studio Final implementation blocker**. This is not a song-level PASS.
 
-A final MML event must never become the only surviving record of why a note exists.
+## Song-specific completeness still matters
 
-## Milestone status
+Implemented modules do not make every source or song complete. Examples that remain explicit `PENDING/UNSUPPORTED` when encountered include:
 
-### Complete + regression-tested
-
-1. Freeze legacy and create `studio-v1` development branch.
-2. Dated effective Rule Contract independent of the legacy parser profile.
-3. Current-rule MML parser (64th-note boundary, T32–T255, explicit meter).
-4. Canonical source/event/control/decision IR with exact rational timing.
-5. score-partwise MusicXML ingestion with source provenance and fail-closed unsupported reporting.
-6. Current and historical MML → Canonical evidence normalization.
-7. Deterministic source/version drift reporting.
-8. Source-relative Core3 Continuity Gate.
-9. Evidence-first Lead Demotion Gate.
-10. Cross-source harmony conflict/arbitration gate.
-11. Combined legacy + Studio CI on every `studio-v1` push.
-
-### Global implementation blocker
-
-12. Original-audio alignment / Tempo-drift evidence.
-
-### After audio foundation
-
-13. iPhone/iPad-first upload/report Web UI.
-14. Cloud deployment for Studio without replacing the existing production MCP until independently accepted.
-15. Optional heavier audio source-separation/transcription helpers only if the lightweight alignment layer proves insufficient.
-
-## Source-specific completeness caveat
-
-`musicXmlIngestion=true` means the ingestion module exists and is tested; it does **not** mean every MusicXML file is automatically complete.
-
-The current importer deliberately returns `complete=false` for unsupported constructs including:
-- unexpanded repeat/volta/navigation flow;
+- unexpanded MusicXML repeat/volta/navigation flow;
 - grace-note realization;
 - transposing-part concert pitch;
 - microtonal pitch;
-- unpitched/percussion mapping.
+- unpitched/percussion mapping;
+- missing/weak audio evidence when audio is required;
+- missing player readback;
+- unresolved Lead/Core3/harmony arbitration;
+- unresolved version drift;
+- missing in-game acceptance.
 
-Those cases remain explicit `PENDING/UNSUPPORTED` evidence instead of being guessed.
+## Known non-blocking engineering debt
+
+- caution-length opt-in is candidate-level rather than per-token;
+- O-token edge mapping versus official 0–107 remains pending;
+- baseline snapshot provenance/deep-freeze can be hardened further;
+- generic technical micro-gap detection is not complete;
+- not all named historical regressions have committed fixtures;
+- iPhone/iPad Studio Web UI is still a scaffold;
+- Studio cloud deployment is not wired to production.
+
+These items must remain visible; they must not be described as completed capabilities.
 
 ## Migration safety rules
 
-- do not delete legacy tests;
-- do not replace `dist/core.js` in-place merely to make Studio rules pass;
-- do not change the production Railway/MCP route merely to serve Studio;
-- do not merge `studio-v1` into `main` while the PR is still intentionally Draft;
-- do not mark a module PASS before its regression tests pass in the combined suite;
-- do not let a global module flag turn song-specific unsupported evidence into PASS;
-- do not let audio evidence overwrite symbolic source truth.
+- do not delete legacy tests merely because Studio tests pass;
+- do not replace `dist/core.js` in place to force current rules;
+- do not let legacy tests become Canonical authority;
+- do not change the production Railway/MCP route merely because Studio source enters `main`;
+- do not let a module-ready flag certify a song;
+- do not let audio evidence overwrite symbolic source truth;
+- do not let a Full6 improvement reduce Core3 completeness;
+- do not accept an unexplained Lead removal/role move as `N/A`.
 
-## Next engineering milestone
+## Next engineering milestones
 
-Build original-audio alignment as a separate cloud-side worker boundary. The first audio milestone is **not** full Audio-to-MIDI or Demucs. It should decode user-provided M4A/FLAC/WAV, derive alignment features, map recording seconds to canonical beat time, and emit Tempo/structure/role evidence with confidence and traceability. Heavy separation can remain a later optional worker.
+1. Complete release-level review of PR #2 before any merge to `main`.
+2. After an independently approved main merge, migrate the old local skill into a thin loader/reference model rather than another rule authority.
+3. Build the iPhone/iPad-first upload/report UI on top of the existing backend gates.
+4. Plan Studio cloud deployment separately from the current legacy Railway/MCP production route.
+5. Add source-permitted/minimal regression fixtures for important historical song failures.
