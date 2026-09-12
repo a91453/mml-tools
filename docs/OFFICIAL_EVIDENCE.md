@@ -1,9 +1,11 @@
 # Official & Community Evidence Index
 
-Version: 2026-09-13-draft1
+Version: 2026-09-13-draft2
 Status: CANONICAL SUPPORTING EVIDENCE
 
 This file records evidence used by the Canonical candidate. It is not itself a rule override.
+
+Current official pages below were re-opened and verified on 2026-09-13 from the Nexon Mabinogi Mobile site.
 
 ## A. Official Nexon evidence
 
@@ -11,10 +13,11 @@ This file records evidence used by the Canonical candidate. It is not itself a r
 URL: https://mabinogimobile.nexon.com/Info/Guide/2751071
 Current guide states:
 - composition starts with 3 harmonies/roles and can expand to a maximum of 6;
-- each harmony/role accepts up to 2,400 MML text characters;
-- guide notes its game-state basis as 2025-12-18.
+- each harmony/role accepts up to 2,400 MML text characters.
 
 Evidence class: `OFFICIAL_CONFIRMED`.
+
+Scope note: this confirms the documented composition/editor limit. It does not define this project's Lead/Harmony/Bass role semantics.
 
 ### A2 — 2025-10-30 Update Notes
 URL: https://mabinogimobile.nexon.com/News/Update/3201526
@@ -27,7 +30,9 @@ Composition section states the score editor was changed so that:
 
 Evidence class: `OFFICIAL_CONFIRMED`.
 
-Important interpretation: `length 1–64` is a numeric range statement. It does not, by itself, prove that only powers of two are accepted.
+Important interpretation:
+- `length 1–64` is a numeric-range statement and does not, by itself, prove that only powers of two are accepted;
+- these are documented editor limits and should not be overclaimed as proof of every hidden historical paste/playback parser boundary outside the documented editing path.
 
 ### A3 — Instrument Performance Guide
 URL: https://mabinogimobile.nexon.com/Info/Guide/2751072
@@ -69,6 +74,7 @@ Project implication: these examples are sufficient to reject blanket statements 
 4. Tool behavior must not be confused with engine behavior.
 5. In-game evidence on the target client remains necessary for unresolved edge semantics.
 6. Project Final policy may intentionally be stricter than the engine for stability/auditability, but must be labeled as policy.
+7. An official editor limit is authoritative for this project's Final numeric range unless superseded, but it should not be reworded as an untested claim about every hidden parser/playback path.
 
 ## D. Known corrections caused by this evidence
 
@@ -78,3 +84,4 @@ Project implication: these examples are sufficient to reject blanket statements 
 - `48` cannot be called officially illegal solely because an older Studio contract rejected it.
 - Nxx cannot be called categorically unsupported based only on the old Final profile.
 - `O0–O8` is not currently supported as Nexon's official wording; official wording is pitch 0–107.
+- Three-chord instrument capability supports a three-role performance target but does not make `Chord2 = Bass-only` an official rule.
