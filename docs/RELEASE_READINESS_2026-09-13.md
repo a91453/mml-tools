@@ -121,19 +121,13 @@ Published Canonical metadata was finalized without changing the reviewed musical
 
 ## Current-head verification
 
-Current head: `ecf54bb085729c0cf41b363e625b5894aca582b6`.
+Current head verification is recorded in the PR metadata and CI checks. Symbolic regressions, the legacy production bundle build, and audio-worker regressions must all be green on the exact PR head before merge.
 
-Studio CI #122, run `34725697103`, completed successfully on this exact head:
-
-- symbolic regressions: **SUCCESS**;
-- legacy production bundle build: **SUCCESS**;
-- audio-worker regressions: **SUCCESS**.
-
-The final `main...studio-v1` diff was rechecked and still contains no `server/`, `railway/`, or legacy `dist/` runtime modifications.
+The final `main...studio-v1` diff was rechecked and contains no `server/`, `railway/`, or legacy `dist/` runtime modifications.
 
 ## Merge gate
 
-All conditions required to move PR #2 from Draft to Ready are satisfied:
+All conditions required to move PR #2 from Draft to Ready are satisfied once the exact current head is green:
 
 1. independent release-level review found no P0/P1 blocker;
 2. Published Canonical v1 metadata is finalized;
