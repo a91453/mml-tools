@@ -1,15 +1,20 @@
 # Mabinogi Mobile MML Studio
 
-Studio is the source-aware orchestration layer being built beside the existing MML Workbench. Its purpose is to remove repetitive verification work while keeping every musical decision traceable to evidence.
+Studio is the source-aware orchestration layer built beside the existing MML Workbench. Its purpose is to reduce repetitive verification work while keeping every musical decision traceable to evidence.
+
+## Rule authority
+
+Human-readable rules live in the reviewed Canonical documents under `docs/`. `studio/backend/rules/index.mjs` implements those rules; it is not an independent rule authority.
 
 ## Core principles
 
 - Preserve source facts before six-track reduction.
 - Use exact rational beat positions; floating point is never canonical symbolic time.
-- Never silently mutate a source event.
+- Never silently mutate or discard a source event to satisfy Final policy.
 - Keep source truth, arbitration, Mobile adaptation and final MML as separate layers.
-- Melody/T1 is the perceptual Lead role, not a Vocal-only channel.
-- Core3 (Lead + Core Harmony + Core Bass) and Full6 enrichment are separate gates.
+- Melody/T1 is Lead Role, not a Vocal-only channel.
+- Core3 is Lead + Core Harmony + Core Bass skeleton/essential inner support; Chord2 is not Bass-only.
+- Full6 enrichment must not reduce Core3 completeness.
 - Natural source rests remain rests; continuity statistics do not justify filling them.
 - Cross-source provenance does not prove harmonic compatibility.
 - Audio evidence supplements symbolic truth; it does not overwrite it.
@@ -19,37 +24,41 @@ Studio is the source-aware orchestration layer being built beside the existing M
 ```text
 studio/
   backend/
-    rules/          effective dated rule contract and Final blockers
+    rules/          executable contract implementing Canonical docs
     canonical/      source-traceable Canonical Music IR
-    mml/            current-rule MML parser and source normalization
+    mml/            ingest parser, Final validator, source normalization
     score/          MusicXML ingestion and source completeness checks
     compare/        deterministic version/source drift reports
     arbitration/    Core3, Lead Demotion and cross-source harmony gates
-  web/              future iPhone/iPad-first UI
-  tests/            Studio regression tests
+    final/           per-song readiness evaluation
+    audio/           Node audio-evidence bridge
+  audio-worker/      Python/FFmpeg original-audio alignment
+  web/               future iPhone/iPad-first UI
+  tests/             Studio regression tests
 ```
 
-## Implemented symbolic pipeline
+## Implemented pipeline
 
 The following are implemented and covered by the combined legacy + Studio CI suite:
 
-- current Mobile parser profile with plain 1/64 support and T32–T255;
+- current MML ingest and Final validation split;
+- plain 1/64 support and 1–64 caution handling;
+- Nxx ingest preservation with opt-in/evidence Final policy;
 - Canonical Music IR with note/rest/Tempo/meter provenance;
 - score-partwise MusicXML ingestion;
 - fail-closed handling of unsupported MusicXML constructs;
 - Current/Historical MML → Canonical evidence normalization;
 - source/previous/candidate version-drift reporting;
+- Source-Faithful Baseline with runtime event diff;
 - source-relative Core3 Continuity Gate;
 - evidence-first Lead Demotion Gate;
-- cross-source same-pitch / m2 / M7 / m9 harmony arbitration.
+- cross-source same-pitch / m2 / M7 / m9 harmony arbitration;
+- original-audio alignment worker and Node evidence bridge;
+- per-song Project Readiness.
 
-MusicXML ingestion being implemented does not mean every source file is complete. Repeat/navigation flow, grace realization, transposing-part concert pitch, microtones and unpitched mapping currently remain explicit unsupported/PENDING cases instead of being guessed.
+There is currently **no module-level Studio implementation blocker**. That does not certify any song. Every song still needs its own source, baseline, technical, Core3, Lead, harmony, version, audio, player and in-game evidence as applicable.
 
-## Current global blocker
-
-`ORIGINAL_AUDIO_ALIGNMENT_PENDING`
-
-The next module must accept user-provided original audio and create traceable evidence mapping recording seconds ↔ canonical beat time. Its first job is alignment, Tempo drift and structure/role evidence — **not** blind whole-song Audio-to-MIDI transcription.
+MusicXML ingestion being implemented does not mean every file is complete. Repeat/navigation flow, grace realization, transposing-part concert pitch, microtones and unpitched mapping remain explicit unsupported/PENDING cases when encountered.
 
 ## Intended input set
 
@@ -58,11 +67,11 @@ The next module must accept user-provided original audio and create traceable ev
 - third-party MuseScore export as supporting evidence;
 - current six-track MML;
 - historical MML versions;
-- original M4A/FLAC/WAV for the audio evidence layer.
+- original M4A/FLAC/WAV for audio evidence.
 
 ## Intended user-facing result
 
-The phone/iPad UI should eventually answer questions such as:
+The future phone/iPad UI should answer questions such as:
 
 - Which current notes differ from the trusted symbolic source?
 - Which changes are new relative to the last accepted version?
@@ -71,6 +80,8 @@ The phone/iPad UI should eventually answer questions such as:
 - Are Chord3–Chord5 additions colliding with Core3?
 - Which conflicts have explicit evidence-backed arbitration?
 - Where does the original recording disagree in timing/structure/foreground role?
-- Does the final MML still pass the current Mobile technical profile?
+- Does the final MML still pass the current Mobile technical policy?
 
-See `docs/RULES_AUDIT_2026-09-13.md` and `docs/STUDIO_MIGRATION.md` for the current authoritative migration/audit status.
+The UI is not yet implemented beyond the scaffold, and Studio has not replaced the current production Railway/MCP route.
+
+See `docs/MASTER_RULES.md`, `docs/MOBILE_SYNTAX.md`, `docs/ACCEPTANCE_CRITERIA.md`, `docs/RULES_AUDIT_2026-09-13.md` and `docs/STUDIO_MIGRATION.md` for current policy/status.
