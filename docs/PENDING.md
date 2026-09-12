@@ -1,6 +1,6 @@
 # Pending / In-Game Verification Register
 
-Version: 2026-09-13-draft1
+Version: 2026-09-13-draft2
 Status: CANONICAL CANDIDATE
 
 Items here MUST NOT be promoted to confirmed engine behavior without new evidence.
@@ -13,17 +13,19 @@ Needed evidence: controlled strings near the boundary on the target client.
 
 ## P2 — Tempo map duplication across roles
 
-Official documentation confirms Tempo input range and notes improved consistency of tempo commands, but does not state that every non-empty role must duplicate the entire Tempo Map.
+Official documentation confirms Tempo input range and notes improved consistency of Tempo commands, but does not state that every non-empty role must duplicate the entire Tempo Map.
 
-Current delivery may use a synchronization-safe duplication policy, but it must be labeled project policy.
+Current Final delivery policy is defined in `MOBILE_SYNTAX.md`: every non-empty role carries the same initial Tempo and, for variable-Tempo songs, the same complete Tempo Map at the same musical positions. This is a synchronization-safe project policy, not an official engine-law claim.
 
-Needed evidence: controlled multi-role tests with mid-song Tempo changes.
+Needed evidence: controlled multi-role tests with mid-song Tempo changes to determine whether a weaker rule is safe.
 
 ## P3 — Numeric-note (`Nxx`) exact guarantees
 
 Community works demonstrate use, so parser capability is not reasonably described as absent. Official range/semantics and target-client edge behavior remain undocumented.
 
-Needed evidence: controlled Nxx range tests and round-trip/readback on target client.
+Current Final label is `FINAL_ALLOWED_WITH_CAUTION`: ordinary notation is the default output; paste-ready Nxx requires explicit project opt-in plus target-piece round-trip or in-game support.
+
+Needed evidence: controlled Nxx range tests and round-trip/readback on the target client.
 
 ## P4 — Arbitrary 1–64 length behavior
 
@@ -35,9 +37,9 @@ Until then, distinguish `engine/editor range` from `Final preferred timing forms
 
 ## P5 — Dotted edge forms
 
-Single-dot common forms are widely used, but exact acceptance/stability of fragile forms such as `3.`, `6.`, `12.`, `24.`, `48.`, `64.` and multiple dots is not established by official specification.
+Common binary-base single dots are supported as project Final syntax, but exact engine acceptance/stability of fragile forms such as `3.`, `6.`, `12.`, `24.`, `48.`, `64.` and multiple dots is not established by official specification.
 
-Project Final forbids fragile forms pending evidence.
+Project Final policy is already single-valued: dotted fragile/non-preferred forms listed in `MOBILE_SYNTAX.md`, including `64.`, are not emitted in Final Canonical output pending stronger evidence. Engine capability remains a separate question.
 
 ## P6 — Octave token mapping
 
@@ -45,7 +47,7 @@ Official documentation states pitch range 0–107. The exact canonical relation 
 
 ## P7 — Empty-role behavior
 
-Whether empty roles need any Tempo/rest filler and how the client treats fully empty harmony slots should be confirmed rather than assumed.
+Project Final policy leaves fully empty roles empty. Whether the client technically requires/ignores Tempo or rest filler in an empty harmony slot should be confirmed rather than assumed.
 
 ## P8 — Regional/client differences
 
@@ -73,15 +75,50 @@ Required action after Canonical review: update audit/status language and keep so
 
 ## P13 — Studio parser policy drift
 
-Current `studio-v1` executable contract hard-rejects `48` and Final `Nxx`. New evidence requires review:
-- `48` must not be claimed officially illegal merely from the old contract;
-- Nxx community parser capability must be acknowledged;
-- final-policy decisions must follow accepted Canonical docs.
+Current `studio-v1` executable contract hard-rejects `48` and Final `Nxx`. Canonical candidate policy now requires review:
+- plain `48` = `FINAL_ALLOWED_WITH_CAUTION`, not officially illegal;
+- Nxx input capability must be preserved and Final use is opt-in/caution, not blanket engine rejection;
+- `64.` remains Final-forbidden even though engine capability is unresolved;
+- arbitrary 1–64 plain lengths are broader than the current Studio allowlist.
 
-Do not patch code until this Canonical branch is reviewed.
+Do not patch code until this Canonical branch passes review.
 
 ## P14 — Historical regressions as fixtures
 
 Rashisa/らしさ lead over-cleaning and other named song regressions are documented conceptually but not all source assets are committed as reproducible fixtures.
 
-Required action: add legally usable/minimal synthetic or source-permitted regression fixtures before making Studio merge readiness claims based on them.
+Required action: add legally usable/minimal synthetic or source-permitted regression fixtures before making Studio merge-readiness claims based on them.
+
+Until then, reports must use `FIXTURE_PENDING` rather than claiming the named regression passed.
+
+## P15 — Editor limits vs paste/playback parser limits
+
+Official documentation confirms score-editor input limits such as Tempo 32–255 and note/rest length 1–64. It does not prove that every historical client/parser/playback path has exactly the same hidden acceptance boundary.
+
+Project Final continues to obey the official editor limits regardless.
+
+Needed evidence: controlled paste/playback tests only if behavior outside the editor path matters.
+
+## P16 — Cross-role end-time / total-duration equality
+
+The project must distinguish meaningful source rests/endings from accidental track truncation. Exact requirements for all non-empty roles ending at identical time versus musically intentional shorter roles are not yet formalized as a single rule.
+
+Needed evidence: source-aware end-time comparison plus target-client synchronization tests. Do not pad meaningful silence merely to force numeric equality.
+
+## P17 — All 15 cross-track sustained same-pitch pairs
+
+For six roles there are 15 unordered role pairs. Current review tooling must demonstrate that sustained same-pitch overlap analysis actually covers all relevant pairs/windows; legacy text-only validation is insufficient proof.
+
+Needed evidence: regression tests that exercise all 15 pair combinations and distinguish musically justified doubling from collision-risk cases.
+
+## P18 — `r64` / 64th behavior across instruments
+
+Plain 64 is inside the official editor length range and appears in community works. Instrument-specific audibility/stability of very short notes/rests can still differ in practice.
+
+Needed evidence: representative target-client tests on relevant pitched/percussion instruments. This does not justify a blanket ban on plain 64.
+
+## P19 — Reduced one-/two-role performance quality
+
+Core3 is the canonical single-player three-chord target. When only one or two roles are actually performed, the expected degradation policy and validation gate are not yet fully formalized.
+
+Needed evidence: song-level A/B and a project decision on what minimum musical completeness is expected for one-role and two-role situations. Do not weaken the Core3 gate while this remains pending.
