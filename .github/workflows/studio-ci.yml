@@ -27,6 +27,8 @@ jobs:
         run: npm install --ignore-scripts --package-lock=false
       - name: Run legacy and Studio symbolic regressions
         run: npm test
+      - name: Build legacy production bundle
+        run: npm run build
 
   audio-worker:
     runs-on: ubuntu-latest
