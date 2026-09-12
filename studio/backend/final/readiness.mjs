@@ -1,4 +1,5 @@
 import { studioFinalBlockers } from '../rules/index.mjs';
+import { compareCanonicalVersions } from '../compare/version-drift.mjs';
 
 const PASS_LIKE = new Set(['PASS', 'N/A']);
 
@@ -21,18 +22,55 @@ function audioGate(project, required) {
   return gate('PASS', { evidenceCount: evidence.length });
 }
 
+function validBaselineSnapshot(snapshot) {
+  return snapshot
+    && typeof snapshot === 'object'
+    && typeof snapshot.id === 'string'
+    && snapshot.id.trim()
+    && Array.isArray(snapshot.sources)
+    && Array.isArray(snapshot.events)
+    && snapshot.events.length > 0;
+}
+
 function baselineGate(project) {
   const baseline = project?.metadata?.sourceFaithfulBaseline;
   if (!baseline || typeof baseline !== 'object') {
     return gate('PENDING', { blockers: ['SOURCE_FAITHFUL_BASELINE_MISSING'] });
   }
-  if (baseline.diffable !== true || baseline.eventDiffAvailable !== true) {
-    return gate('PENDING', { blockers: ['SOURCE_FAITHFUL_BASELINE_NOT_DIFFABLE'] });
+
+  const snapshot = baseline.snapshot;
+  if (!validBaselineSnapshot(snapshot)) {
+    return gate('PENDING', { blockers: ['SOURCE_FAITHFUL_BASELINE_ARTIFACT_MISSING'] });
   }
+
+  let eventDiff;
+  try {
+    eventDiff = compareCanonicalVersions(snapshot, project);
+  } catch (error) {
+    return gate('PENDING', {
+      blockers: ['SOURCE_FAITHFUL_BASELINE_DIFF_INVALID'],
+      error: error.message,
+    });
+  }
+
+  const leadAdded = eventDiff.notes.added.filter(event => event.role === 'Melody').map(event => event.id);
+  const leadRemoved = eventDiff.notes.removed.filter(event => event.role === 'Melody').map(event => event.id);
+  const leadModified = eventDiff.notes.modified
+    .filter(pair => pair.before?.role === 'Melody' || pair.after?.role === 'Melody')
+    .map(pair => ({ beforeId: pair.before?.id ?? null, afterId: pair.after?.id ?? null, changes: pair.changes }));
+  const leadRoleMoved = eventDiff.notes.roleMoved
+    .filter(pair => pair.before?.role === 'Melody' || pair.after?.role === 'Melody')
+    .map(pair => ({ beforeId: pair.before?.id ?? null, afterId: pair.after?.id ?? null, changes: pair.changes }));
+
   return gate('PASS', {
-    baselineId: baseline.id ?? null,
-    diffable: true,
-    eventDiffAvailable: true,
+    baselineId: snapshot.id,
+    eventDiff,
+    leadEventDiff: Object.freeze({
+      added: Object.freeze(leadAdded),
+      removed: Object.freeze(leadRemoved),
+      modified: Object.freeze(leadModified),
+      roleMoved: Object.freeze(leadRoleMoved),
+    }),
   });
 }
 
@@ -115,6 +153,6 @@ export function evaluateProjectReadiness({
     finalAccepted,
     preGameBlocking: Object.freeze(preGameBlocking),
     gates,
-    notice: 'Module availability never certifies a song. Candidate readiness requires song-specific source completeness, a diffable Source-Faithful Baseline, audio/arbitration/technical/player evidence, and finalAccepted additionally requires in-game acceptance.',
+    notice: 'Module availability never certifies a song. Candidate readiness requires source completeness plus a real Source-Faithful Baseline snapshot whose event-level diff is computed against the candidate, along with audio/arbitration/technical/player evidence. finalAccepted additionally requires in-game acceptance.',
   });
 }

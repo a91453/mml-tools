@@ -10,6 +10,9 @@ import {
 } from '../backend/canonical/index.mjs';
 
 test('Studio MML facade owns parsing while retaining legacy rational implementation', () => {
+  assert.equal(MML_ENGINE_ADAPTER.bareParseTrackMode, 'ingest');
+  assert.equal(MML_ENGINE_ADAPTER.ingestParser, './parser.mjs#parseTrack');
+  assert.equal(MML_ENGINE_ADAPTER.finalValidator, './parser.mjs#validateMML');
   assert.equal(MML_ENGINE_ADAPTER.finalParser, './parser.mjs');
   assert.equal(MML_ENGINE_ADAPTER.legacyParserAllowedForFinalGate, false);
   assert.ok(MML_ENGINE_ADAPTER.reusableLegacyAreas.includes('exact-rational-arithmetic'));

@@ -10,7 +10,7 @@ import { evaluateProjectReadiness } from '../backend/final/readiness.mjs';
 
 function project({
   sourceComplete = true,
-  baseline = true,
+  baseline = 'snapshot',
   audioEvidence = true,
   audioWarnings = [],
   pendingDecision = false,
@@ -29,6 +29,13 @@ function project({
     sourceIds: ['official'],
     role: 'Melody',
   });
+  const baselineProject = createCanonicalProject({
+    id: 'baseline:source-faithful',
+    title: 'Source-Faithful Baseline',
+    sources: [source],
+    events: [event],
+    metadata: { sourceComplete: true, baselineKind: 'source-faithful' },
+  });
   const decisions = pendingDecision
     ? [createArbitrationDecision({
         id: 'decision:1',
@@ -40,6 +47,12 @@ function project({
       })]
     : [];
 
+  const baselineMetadata = baseline === 'snapshot'
+    ? { sourceFaithfulBaseline: { snapshot: baselineProject } }
+    : baseline === 'flags-only'
+      ? { sourceFaithfulBaseline: { id: 'fake', diffable: true, eventDiffAvailable: true } }
+      : {};
+
   return createCanonicalProject({
     id: 'song-1',
     title: 'Song 1',
@@ -48,13 +61,7 @@ function project({
     decisions,
     metadata: {
       sourceComplete,
-      ...(baseline ? {
-        sourceFaithfulBaseline: {
-          id: 'baseline:source-faithful',
-          diffable: true,
-          eventDiffAvailable: true,
-        },
-      } : {}),
+      ...baselineMetadata,
       ...(audioEvidence ? {
         audioAlignmentEvidence: [{
           sourceId: 'original-audio',
@@ -89,6 +96,10 @@ test('candidate readiness can pass before in-game acceptance, but finalAccepted 
   assert.deepEqual(result.preGameBlocking, []);
   assert.equal(result.gates.implementation.status, 'PASS');
   assert.equal(result.gates.baseline.status, 'PASS');
+  assert.equal(result.gates.baseline.baselineId, 'baseline:source-faithful');
+  assert.equal(result.gates.baseline.eventDiff.structurallyIdentical, true);
+  assert.deepEqual(result.gates.baseline.leadEventDiff.added, []);
+  assert.deepEqual(result.gates.baseline.leadEventDiff.removed, []);
   assert.equal(result.gates.inGameAcceptance.status, 'PENDING');
 });
 
@@ -131,11 +142,19 @@ test('source completeness is a hard per-song readiness condition', () => {
   assert.ok(result.gates.source.blockers.includes('SOURCE_COMPLETENESS_NOT_CONFIRMED'));
 });
 
-test('diffable Source-Faithful Baseline is mandatory before candidate readiness', () => {
+test('Source-Faithful Baseline snapshot is mandatory before candidate readiness', () => {
   const result = evaluateProjectReadiness(readyInput({ project: project({ baseline: false }) }));
   assert.equal(result.candidateReady, false);
   assert.equal(result.gates.baseline.status, 'PENDING');
   assert.deepEqual(result.gates.baseline.blockers, ['SOURCE_FAITHFUL_BASELINE_MISSING']);
+  assert.ok(result.preGameBlocking.includes('baseline'));
+});
+
+test('boolean-only baseline metadata cannot forge a PASS', () => {
+  const result = evaluateProjectReadiness(readyInput({ project: project({ baseline: 'flags-only' }) }));
+  assert.equal(result.candidateReady, false);
+  assert.equal(result.gates.baseline.status, 'PENDING');
+  assert.deepEqual(result.gates.baseline.blockers, ['SOURCE_FAITHFUL_BASELINE_ARTIFACT_MISSING']);
   assert.ok(result.preGameBlocking.includes('baseline'));
 });
 

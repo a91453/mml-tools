@@ -48,6 +48,7 @@ export function parseTrack(raw, role, options = {}) {
   const finalMode = options.mode === 'final';
   const allowCautionLengths = options.allowCautionLengths === true;
   const numericPitchOptIn = options.numericPitchOptIn === true;
+  const numericPitchEvidencePresent = options.numericPitchEvidencePresent === true;
   const fail = (message, pos, code) => errors.push({ role, position: pos + 1, message, ...(code ? { code } : {}) });
   const warn = (message, pos, code) => warnings.push({ role, position: pos + 1, message, ...(code ? { code } : {}) });
 
@@ -63,6 +64,7 @@ export function parseTrack(raw, role, options = {}) {
   let octave = 4;
   let explicitOctave = false;
   let length = 4;
+  let lengthTrusted = true;
   let volume = 8;
   let pending = false;
   let lastWasNote = false;
@@ -71,13 +73,14 @@ export function parseTrack(raw, role, options = {}) {
   const validateLengthUse = (denominator, tokenStart, label) => {
     if (!inOfficialLengthRange(denominator)) {
       fail(`${label}${denominator}超出官方長度數值範圍${syntax.officialLengthMin}–${syntax.officialLengthMax}`, tokenStart, 'LENGTH_OUT_OF_RANGE');
-      return;
+      return false;
     }
     if (!preferredLengths.has(denominator)) {
       const message = `${label}${denominator}屬Final caution時值；需來源必要性與驗證`;
       if (finalMode && !allowCautionLengths) fail(message, tokenStart, 'CAUTION_LENGTH_OPT_IN_REQUIRED');
       else warn(message, tokenStart, 'CAUTION_LENGTH');
     }
+    return true;
   };
 
   const validateDots = (denominator, dots, tokenStart) => {
@@ -85,13 +88,18 @@ export function parseTrack(raw, role, options = {}) {
     const multiple = dots > 1;
     const forbiddenBase = forbiddenDottedBases.has(denominator) || !preferredDottedBases.has(denominator);
     if (multiple || forbiddenBase) {
-      let message;
-      if (multiple) message = 'Final Canonical 不接受雙附點／多附點；需等值正規化';
-      else if (denominator === 64) message = 'Final Canonical 不接受64.；需等值正規化';
-      else message = `Final Canonical 不輸出${denominator}.；需等值正規化`;
-      if (finalMode) fail(message, tokenStart, 'FINAL_DOTTED_FORM_FORBIDDEN');
-      else warn(message, tokenStart, 'NONCANONICAL_DOTTED_SOURCE_FORM');
+      let finalMessage;
+      if (multiple) finalMessage = 'Final Canonical 不接受雙附點／多附點；需等值正規化';
+      else if (denominator === 64) finalMessage = 'Final Canonical 不接受64.；需等值正規化';
+      else finalMessage = `Final Canonical 不輸出${denominator}.；需等值正規化`;
+      if (finalMode) fail(finalMessage, tokenStart, 'FINAL_DOTTED_FORM_FORBIDDEN');
+      else warn(`來源含非Final Canonical形式${denominator}${'.'.repeat(dots)}；ingest保留原時值供比對，不視為來源非法`, tokenStart, 'NONCANONICAL_DOTTED_SOURCE_FORM');
     }
+  };
+
+  const invalidateTieState = () => {
+    pending = false;
+    lastWasNote = false;
   };
 
   const appendNote = (pitch, duration, tokenStart) => {
@@ -134,8 +142,13 @@ export function parseTrack(raw, role, options = {}) {
         }
       }
       if (ch === 'l') {
-        length = value;
-        if (!inOfficialLengthRange(value)) fail(`L${value}超出官方長度數值範圍${syntax.officialLengthMin}–${syntax.officialLengthMax}`, start, 'LENGTH_OUT_OF_RANGE');
+        if (inOfficialLengthRange(value)) {
+          length = value;
+          lengthTrusted = true;
+        } else {
+          lengthTrusted = false;
+          fail(`L${value}超出官方長度數值範圍${syntax.officialLengthMin}–${syntax.officialLengthMax}；在下一個有效L前不以舊L偽造後續時值`, start, 'LENGTH_OUT_OF_RANGE');
+        }
       }
       if (ch === 'v') {
         if (value < syntax.volumeMin || value > syntax.volumeMax) fail(`V${value}超出${syntax.volumeMin}–${syntax.volumeMax}`, start, 'VOLUME_OUT_OF_RANGE');
@@ -165,20 +178,29 @@ export function parseTrack(raw, role, options = {}) {
       const match = /^\d+/.exec(text.slice(i));
       if (!match) {
         fail('Nxx缺少數值', start, 'NUMERIC_NOTE_MISSING_VALUE');
-        pending = false;
+        invalidateTieState();
         continue;
       }
       i += match[0].length;
       const pitch = Number(match[0]);
       if (!Number.isSafeInteger(pitch) || pitch < syntax.numericNoteMin || pitch > syntax.numericNoteMax) {
         fail(`N${match[0]}超出目前官方pitch數值範圍${syntax.numericNoteMin}–${syntax.numericNoteMax}`, start, 'NUMERIC_NOTE_OUT_OF_RANGE');
-        pending = false;
+        invalidateTieState();
         continue;
       }
-      validateLengthUse(length, start, 'Nxx使用L');
+      if (!lengthTrusted) {
+        fail('前一個L值無效，Nxx時值不可推定；需先提供有效L1–L64', start, 'DEFAULT_LENGTH_INVALID');
+        invalidateTieState();
+        continue;
+      }
+      if (!validateLengthUse(length, start, 'Nxx使用L')) {
+        invalidateTieState();
+        continue;
+      }
       const duration = new F(4, length);
       const message = 'Nxx屬Final caution語法；預設改用一般音名，保留需song/project opt-in與round-trip/in-game證據';
       if (finalMode && !numericPitchOptIn) fail(message, start, 'NUMERIC_NOTE_OPT_IN_REQUIRED');
+      else if (finalMode && !numericPitchEvidencePresent) fail('Nxx已opt-in但缺少round-trip／實機證據引用', start, 'NUMERIC_NOTE_EVIDENCE_REQUIRED');
       else warn(message, start, 'NUMERIC_NOTE_CAUTION');
       appendNote(pitch, duration, start);
       continue;
@@ -192,7 +214,12 @@ export function parseTrack(raw, role, options = {}) {
       }
 
       const match = /^\d+/.exec(text.slice(i));
-      let denominator = match ? Number(match[0]) : length;
+      if (!match && !lengthTrusted) {
+        fail('前一個L值無效，省略分母的音符／休止時值不可推定；需先提供有效L1–L64或明確分母', start, 'DEFAULT_LENGTH_INVALID');
+        invalidateTieState();
+        continue;
+      }
+      const denominator = match ? Number(match[0]) : length;
       if (match) i += match[0].length;
 
       let dots = 0;
@@ -201,11 +228,11 @@ export function parseTrack(raw, role, options = {}) {
         i++;
       }
 
-      validateLengthUse(denominator, start, ch);
+      const lengthOk = validateLengthUse(denominator, start, ch);
       validateDots(denominator, dots, start);
-
-      if (!Number.isSafeInteger(denominator) || denominator <= 0) {
-        denominator = 4;
+      if (!lengthOk) {
+        invalidateTieState();
+        continue;
       }
 
       const dotFactor = dots
@@ -223,6 +250,9 @@ export function parseTrack(raw, role, options = {}) {
         if (!explicitOctave) fail('首音前必須明確設定O八度', start);
         const pitch = 12 * (octave + 1) + noteBase[ch] + accidental;
         if (pitch < 0 || pitch > 127) fail('音高超出目前MIDI預覽映射0–127', start);
+        if (pitch > syntax.numericNoteMax) {
+          warn(`具名音高目前映射為${pitch}，超出官方pitch 0–${syntax.numericNoteMax}；O令牌映射仍屬實作/PENDING，需人工與實機確認`, start, 'NAMED_NOTE_ABOVE_OFFICIAL_PITCH_RANGE');
+        }
 
         appendNote(pitch, duration, start);
       }
@@ -230,7 +260,7 @@ export function parseTrack(raw, role, options = {}) {
     }
 
     fail(`無法辨識字元「${ch}」`, start);
-    pending = false;
+    invalidateTieState();
   }
 
   if (pending) fail('軌尾有未完成延音', Math.max(0, text.length - 1));
@@ -262,10 +292,14 @@ export function validateMML(raw, settings = {}) {
   }
 
   const validationMode = settings.validationMode === 'ingest' ? 'ingest' : 'final';
+  const numericPitchEvidence = Array.isArray(settings.numericPitchEvidence)
+    ? settings.numericPitchEvidence.filter(item => typeof item === 'string' && item.trim())
+    : [];
   const trackOptions = {
     mode: validationMode,
     allowCautionLengths: settings.cautionLengthOptIn === true,
     numericPitchOptIn: settings.numericPitchOptIn === true,
+    numericPitchEvidencePresent: numericPitchEvidence.length > 0,
   };
   const tracks = strings.map((track, index) => parseTrack(track, ROLES[index], trackOptions));
   errors.push(...tracks.flatMap(track => track.errors));
@@ -349,6 +383,7 @@ export function validateMML(raw, settings = {}) {
     policyOptIns: Object.freeze({
       cautionLengthOptIn: settings.cautionLengthOptIn === true,
       numericPitchOptIn: settings.numericPitchOptIn === true,
+      numericPitchEvidence: Object.freeze([...numericPitchEvidence]),
     }),
   };
 

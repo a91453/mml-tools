@@ -29,6 +29,7 @@ test('current MML normalizes expanded notes and meaningful silence into Canonica
   assert.ok(melodyRests.every(event => event.tags.includes('inferred-silence')));
 
   assert.deepEqual(fragment.tempoEvents.map(event => [event.beat, event.bpm]), [['0', 120]]);
+  assert.equal(fragment.source.metadata.perTrackTempoMaps.length, 6);
   assert.deepEqual(fragment.meterEvents.map(event => [event.beat, event.numerator, event.denominator]), [['0', 4, 4]]);
 
   const project = mmlFragmentToProject(fragment, { id: 'candidate-project' });
@@ -69,12 +70,29 @@ test('source ingestion preserves caution plain lengths and Nxx instead of losing
     label: 'Nxx source',
     kind: 'historical-mml',
     meterText: '0 4/4',
-    // Nxx uses the current default L4 here, which is one quarter-note beat.
     finalPartial: '1',
   });
   assert.equal(numeric.complete, true, JSON.stringify(numeric.validation.errors));
   assert.equal(numeric.events.find(event => event.kind === 'note' && event.role === 'Melody').pitch, 60);
   assert.ok(numeric.validation.warnings.some(item => item.code === 'NUMERIC_NOTE_CAUTION'));
+});
+
+test('ingest preserves every non-empty role Tempo map as source evidence', () => {
+  const fragment = normalizeMMLSource('MML@t120o4c1,t130o4c1,,,,;', {
+    sourceId: 'tempo-mismatch',
+    label: 'Tempo mismatch source',
+    kind: 'historical-mml',
+    meterText: '0 4/4',
+  });
+
+  assert.equal(fragment.complete, true, JSON.stringify(fragment.validation.errors));
+  assert.ok(fragment.validation.warnings.some(item => item.code === 'TEMPO_MAP_MISMATCH'));
+  assert.deepEqual(fragment.source.metadata.perTrackTempoMaps, [
+    { role: 'Melody', tempo: [{ beat: '0', bpm: 120 }] },
+    { role: 'Chord1', tempo: [{ beat: '0', bpm: 130 }] },
+  ]);
+  assert.deepEqual(fragment.tempoEvents.map(event => [event.beat, event.bpm]), [['0', 120]]);
+  assert.equal(fragment.tempoEvents[0].metadata.allSourceTrackTempoMapsPreservedIn, 'source.metadata.perTrackTempoMaps');
 });
 
 test('technically invalid historical MML is retained as incomplete evidence, never silently certified', () => {
@@ -88,6 +106,18 @@ test('technically invalid historical MML is retained as incomplete evidence, nev
   assert.equal(fragment.source.metadata.technicalOk, false);
   assert.ok(fragment.validation.errors.some(error => /T256/.test(error.message)));
   assert.equal(fragment.events.filter(event => event.kind === 'note').length, 6);
+});
+
+test('invalid source length never becomes a fabricated Canonical event', () => {
+  const fragment = normalizeMMLSource(six('t120o4c0'), {
+    sourceId: 'invalid-length',
+    label: 'Invalid length source',
+    kind: 'historical-mml',
+    meterText: '0 4/4',
+  });
+  assert.equal(fragment.complete, false);
+  assert.equal(fragment.events.filter(event => event.kind === 'note').length, 0);
+  assert.ok(fragment.validation.errors.some(error => error.code === 'LENGTH_OUT_OF_RANGE'));
 });
 
 test('missing meter keeps MML evidence but marks the source incomplete', () => {

@@ -68,6 +68,13 @@ export function normalizeMMLSource(raw, options = {}) {
   });
   if (!validation.song) throw Error(validation.errors?.[0]?.message ?? 'MML could not be parsed');
 
+  const perTrackTempoMaps = validation.song.tracks
+    .filter(track => !track.empty)
+    .map(track => ({
+      role: track.role,
+      tempo: track.tempo.map(event => ({ beat: event.beat, bpm: event.bpm })),
+    }));
+
   const source = createSource({
     id: sourceId,
     label,
@@ -81,6 +88,10 @@ export function normalizeMMLSource(raw, options = {}) {
       technicalOk: validation.ok,
       errors: validation.errors,
       warnings: validation.warnings,
+      // Preserve every non-empty role's source Tempo map. Canonical tempoEvents
+      // below still use one representative map, but mismatched source evidence is
+      // never discarded during ingest.
+      perTrackTempoMaps,
     },
   });
 
@@ -129,7 +140,10 @@ export function normalizeMMLSource(raw, options = {}) {
     bpm: tempo.bpm,
     sourceIds: [sourceId],
     sourceEventIds: [`track:${firstActiveTrack.role}/tempo:${index + 1}`],
-    metadata: { canonicalTrack: firstActiveTrack.role },
+    metadata: {
+      canonicalTrack: firstActiveTrack.role,
+      allSourceTrackTempoMapsPreservedIn: 'source.metadata.perTrackTempoMaps',
+    },
   }));
   const meterEvents = meterEventsFromSettings(sourceId, meterText);
 

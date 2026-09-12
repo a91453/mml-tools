@@ -24,10 +24,11 @@ export const MML_ENGINE_ADAPTER = Object.freeze({
     '../../../docs/PENDING.md',
   ]),
   executableContract: '../rules/index.mjs',
+  bareParseTrackMode: 'ingest',
   ingestParser: './parser.mjs#parseTrack',
   finalValidator: './parser.mjs#validateMML',
-  // Compatibility alias retained for existing callers/tests. Final policy is
-  // still applied by validateMML; this field identifies the owning module only.
+  // Compatibility alias retained for existing callers/tests. This points to the
+  // owning module only; it is not permission to treat bare parseTrack() as Final.
   finalParser: './parser.mjs',
   legacyImplementation: '../../../dist/core.js',
   legacyParserAllowedForFinalGate: false,
