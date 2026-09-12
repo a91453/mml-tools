@@ -64,7 +64,7 @@ test('Nxx is preserved at ingest and Final requires both opt-in and evidence', (
   const allowed = parseTrack('t120n60', 'Melody', {
     mode: 'final',
     numericPitchOptIn: true,
-    numericPitchEvidencePresent: true,
+    numericPitchEvidence: ['fixture:direct-parser-roundtrip'],
   });
   assert.deepEqual(allowed.errors, []);
   assert.equal(allowed.events[0].pitch, 60);

@@ -30,6 +30,12 @@ function inOfficialLengthRange(value) {
     && value <= syntax.officialLengthMax;
 }
 
+function evidenceIds(value) {
+  return Array.isArray(value)
+    ? value.filter(item => typeof item === 'string' && item.trim()).map(item => item.trim())
+    : [];
+}
+
 export function splitMML(raw) {
   if (typeof raw !== 'string' || raw.length > 40000) throw Error('請提供40,000字以內的MML');
   const text = raw.trim();
@@ -48,7 +54,7 @@ export function parseTrack(raw, role, options = {}) {
   const finalMode = options.mode === 'final';
   const allowCautionLengths = options.allowCautionLengths === true;
   const numericPitchOptIn = options.numericPitchOptIn === true;
-  const numericPitchEvidencePresent = options.numericPitchEvidencePresent === true;
+  const numericPitchEvidence = evidenceIds(options.numericPitchEvidence);
   const fail = (message, pos, code) => errors.push({ role, position: pos + 1, message, ...(code ? { code } : {}) });
   const warn = (message, pos, code) => warnings.push({ role, position: pos + 1, message, ...(code ? { code } : {}) });
 
@@ -200,7 +206,7 @@ export function parseTrack(raw, role, options = {}) {
       const duration = new F(4, length);
       const message = 'Nxx屬Final caution語法；預設改用一般音名，保留需song/project opt-in與round-trip/in-game證據';
       if (finalMode && !numericPitchOptIn) fail(message, start, 'NUMERIC_NOTE_OPT_IN_REQUIRED');
-      else if (finalMode && !numericPitchEvidencePresent) fail('Nxx已opt-in但缺少round-trip／實機證據引用', start, 'NUMERIC_NOTE_EVIDENCE_REQUIRED');
+      else if (finalMode && !numericPitchEvidence.length) fail('Nxx已opt-in但缺少round-trip／實機證據引用', start, 'NUMERIC_NOTE_EVIDENCE_REQUIRED');
       else warn(message, start, 'NUMERIC_NOTE_CAUTION');
       appendNote(pitch, duration, start);
       continue;
@@ -292,14 +298,12 @@ export function validateMML(raw, settings = {}) {
   }
 
   const validationMode = settings.validationMode === 'ingest' ? 'ingest' : 'final';
-  const numericPitchEvidence = Array.isArray(settings.numericPitchEvidence)
-    ? settings.numericPitchEvidence.filter(item => typeof item === 'string' && item.trim())
-    : [];
+  const numericPitchEvidence = evidenceIds(settings.numericPitchEvidence);
   const trackOptions = {
     mode: validationMode,
     allowCautionLengths: settings.cautionLengthOptIn === true,
     numericPitchOptIn: settings.numericPitchOptIn === true,
-    numericPitchEvidencePresent: numericPitchEvidence.length > 0,
+    numericPitchEvidence,
   };
   const tracks = strings.map((track, index) => parseTrack(track, ROLES[index], trackOptions));
   errors.push(...tracks.flatMap(track => track.errors));
