@@ -3,8 +3,11 @@ name: Studio CI
 on:
   push:
     branches: [studio-v1]
-  pull_request:
-    branches: [main]
+  workflow_dispatch:
+
+concurrency:
+  group: studio-ci-${{ github.ref }}
+  cancel-in-progress: true
 
 permissions:
   contents: read
