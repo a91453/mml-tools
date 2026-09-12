@@ -2,7 +2,7 @@
 
 可自行修改的瑪奇 Mobile 六軌 MML 檢查與預覽工作台。網站核心 v0.1.0，工具服務 v0.2.0。
 
-> Studio v1 的來源、Canonical 文件與測試目前與既有 Workbench 並存於 `studio-v1`，PR #2 僅把這套來源架構納入版本控制；**不會因此自動切換正式 Railway/MCP 部署**。目前 production Railway/MCP 仍使用既有 Workbench 路徑。舊版工作基準凍結於 `legacy-v0.2.0`；新的規則權威請看 `docs/MASTER_RULES.md`、`docs/MOBILE_SYNTAX.md`、`docs/ACCEPTANCE_CRITERIA.md` 與 `studio/README.md`。
+> Studio v1 的來源、Published Canonical v1 文件與測試會與既有 Workbench 並存；**把 Studio 原始碼納入 `main` 不會自動切換正式 Railway/MCP 部署**。目前 production Railway/MCP 仍使用既有 Workbench 路徑。舊版工作基準凍結於 `legacy-v0.2.0`；規則權威請看 `docs/MASTER_RULES.md`、`docs/MOBILE_SYNTAX.md`、`docs/ACCEPTANCE_CRITERIA.md` 與 `studio/README.md`。
 
 ## 獨立主機部署
 
