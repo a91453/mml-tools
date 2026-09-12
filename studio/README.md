@@ -1,52 +1,76 @@
 # Mabinogi Mobile MML Studio
 
-Studio is the new orchestration layer built on top of the proven MML Workbench core.
+Studio is the source-aware orchestration layer being built beside the existing MML Workbench. Its purpose is to remove repetitive verification work while keeping every musical decision traceable to evidence.
 
-The first goal is not automatic arranging. It is to remove repetitive verification work while keeping every musical decision traceable to a source.
-
-## Principles
+## Core principles
 
 - Preserve source facts before six-track reduction.
-- Use exact rational beat positions; no floating-point timing as canonical truth.
+- Use exact rational beat positions; floating point is never canonical symbolic time.
 - Never silently mutate a source event.
-- Record every arbitration as an explicit decision with reason/evidence.
-- Keep source truth, Mobile adaptation, and final MML as separate layers.
-- Reuse the legacy Strict Mobile validator until Studio has equivalent regression coverage.
-- Core3 (Lead + Core Harmony + Core Bass) and Full6 are separate gates.
+- Keep source truth, arbitration, Mobile adaptation and final MML as separate layers.
+- Melody/T1 is the perceptual Lead role, not a Vocal-only channel.
+- Core3 (Lead + Core Harmony + Core Bass) and Full6 enrichment are separate gates.
+- Natural source rests remain rests; continuity statistics do not justify filling them.
+- Cross-source provenance does not prove harmonic compatibility.
+- Audio evidence supplements symbolic truth; it does not overwrite it.
 
 ## Current layout
 
 ```text
 studio/
   backend/
-    canonical/      Canonical Music IR
-    mml/            adapter to the legacy validated MML engine
-    score/          MusicXML/MIDI import contract
-    compare/        source/version comparison contract
-    arbitration/    conflict decision contract
+    rules/          effective dated rule contract and Final blockers
+    canonical/      source-traceable Canonical Music IR
+    mml/            current-rule MML parser and source normalization
+    score/          MusicXML ingestion and source completeness checks
+    compare/        deterministic version/source drift reports
+    arbitration/    Core3, Lead Demotion and cross-source harmony gates
   web/              future iPhone/iPad-first UI
   tests/            Studio regression tests
 ```
 
-## V1 input target
+## Implemented symbolic pipeline
 
-- trusted/official MusicXML
-- trusted/official MIDI when available
-- third-party MuseScore export as supporting source
-- current six-track MML
-- historical MML versions
+The following are implemented and covered by the combined legacy + Studio CI suite:
 
-Original audio is intentionally a later milestone. Symbolic source comparison must be stable before audio evidence is allowed to influence arbitration.
+- current Mobile parser profile with plain 1/64 support and T32–T255;
+- Canonical Music IR with note/rest/Tempo/meter provenance;
+- score-partwise MusicXML ingestion;
+- fail-closed handling of unsupported MusicXML constructs;
+- Current/Historical MML → Canonical evidence normalization;
+- source/previous/candidate version-drift reporting;
+- source-relative Core3 Continuity Gate;
+- evidence-first Lead Demotion Gate;
+- cross-source same-pitch / m2 / M7 / m9 harmony arbitration.
 
-## V1 output target
+MusicXML ingestion being implemented does not mean every source file is complete. Repeat/navigation flow, grace realization, transposing-part concert pitch, microtones and unpitched mapping currently remain explicit unsupported/PENDING cases instead of being guessed.
 
-A report that can answer:
+## Current global blocker
 
-- Which current notes differ from the trusted score?
-- Which edits are new relative to historical accepted versions?
-- Did a later revision drift farther from source truth?
-- Did a role move break T1 continuity or Core3 completeness?
-- Which differences are deliberate Mobile adaptations and which are unexplained?
-- Does the final six-track string still pass Strict Mobile technical validation?
+`ORIGINAL_AUDIO_ALIGNMENT_PENDING`
 
-See `docs/STUDIO_MIGRATION.md` for migration status and keep/defer decisions.
+The next module must accept user-provided original audio and create traceable evidence mapping recording seconds ↔ canonical beat time. Its first job is alignment, Tempo drift and structure/role evidence — **not** blind whole-song Audio-to-MIDI transcription.
+
+## Intended input set
+
+- official/trusted MusicXML or score export;
+- trusted/official MIDI when available;
+- third-party MuseScore export as supporting evidence;
+- current six-track MML;
+- historical MML versions;
+- original M4A/FLAC/WAV for the audio evidence layer.
+
+## Intended user-facing result
+
+The phone/iPad UI should eventually answer questions such as:
+
+- Which current notes differ from the trusted symbolic source?
+- Which changes are new relative to the last accepted version?
+- Did a later candidate drift farther from the source baseline?
+- Did a role move create a false Lead gap or damage Core3?
+- Are Chord3–Chord5 additions colliding with Core3?
+- Which conflicts have explicit evidence-backed arbitration?
+- Where does the original recording disagree in timing/structure/foreground role?
+- Does the final MML still pass the current Mobile technical profile?
+
+See `docs/RULES_AUDIT_2026-09-13.md` and `docs/STUDIO_MIGRATION.md` for the current authoritative migration/audit status.
