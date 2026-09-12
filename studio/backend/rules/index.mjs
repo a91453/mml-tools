@@ -22,6 +22,7 @@ export const EFFECTIVE_RULESET = Object.freeze({
     volumeMax: 15,
     allowedLengthDenominators: Object.freeze([1, 2, 3, 4, 6, 8, 12, 16, 24, 32, 64]),
     shortestSafeDenominator: 64,
+    maxDottedBaseDenominator: 32,
     rejectDenominators: Object.freeze([48, 128]),
     rejectMultipleDots: true,
     rejectDottedTripletShorthand: Object.freeze([3, 6, 12, 24, 48]),
