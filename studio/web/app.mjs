@@ -17,7 +17,7 @@ const { call } = createWorkerClient({ spawn: () => new Worker(new URL('./worker.
 let messageTimer;
 function message(value, persistent = false) { clearTimeout(messageTimer); $('#message').textContent = value; if (!persistent) messageTimer = setTimeout(() => { $('#message').textContent = ''; }, 7000); }
 // aria-busy is this app's only settled/unsettled signal, so it has to cover a
-// commit whoever started it. Boot commits outside run(), and without this its
+// commit whoever started it. Without this a boot commit's
 // ANALYSIS_RUNNING placeholder renders a CANDIDATE badge while the app claims
 // to be idle: a restored VALIDATED/IN_GAME_ACCEPTED project reads as demoted
 // until the real analysis lands. It is also what run() serializes against, so
@@ -36,10 +36,11 @@ function markBusy(active) {
 // actions (reviews, arbitration, Lead demotion, acceptance) attach to that exact
 // revision, so if it moved while they waited they are refused rather than
 // silently re-pointed at whatever replaced it. Intake actions carry their own
-// captured content and invalidate on their own, so they stay valid whatever
-// happened first -- and they are the ones that must not be lost.
-function run(fn, { revisionBound = true } = {}) {
-  const task = { fn, revisionBound, revision: workspace?.revision };
+// captured content and invalidate on their own, so they stay valid across
+// revisions of the same project. Only explicit project navigation is unbound
+// from the project ID; equal revision numbers never identify equal projects.
+function run(fn, { revisionBound = true, projectBound = true } = {}) {
+  const task = { fn, revisionBound, projectBound, projectId: workspace?.id, revision: workspace?.revision };
   if (!busy) return drain(task);
   queued.enqueue(task);
   return message('目前步驟完成後會依序執行剛才的操作');
@@ -48,7 +49,7 @@ async function drain(task) {
   markBusy(true);
   try {
     while (task) {
-      if (task.revisionBound && task.revision !== workspace?.revision) message('來源或設定已變更，剛才的操作未套用，請依目前內容重新確認', true);
+      if ((task.projectBound && task.projectId !== workspace?.id) || (task.revisionBound && task.revision !== workspace?.revision)) message('專案、來源或設定已變更，剛才的操作未套用，請依目前內容重新確認', true);
       else try { await task.fn(); } catch (error) { message(error.message, true); }
       task = queued.dequeue();
     }
@@ -71,7 +72,7 @@ async function commit(next) {
     next.canonicalKey=canonicalKey;
     // Analyze before replacing a displayed result. A thrown analysis never leaves
     // the previous green gates associated with edited data.
-    workspace = next; report = { state: 'CANDIDATE', gates: { analysis: { status: 'PENDING', reason: 'ANALYSIS_RUNNING' } }, blockers: ['analysis'], tracks: null };
+    workspace = { ...next, savedAt: null }; report = { state: 'CANDIDATE', gates: { analysis: { status: 'PENDING', reason: 'ANALYSIS_RUNNING' } }, blockers: ['analysis'], tracks: null };
     render();
     try { report = await call('analyzeWorkspace', workspace); }
     // aria-busy is about to go false, so what stays on screen has to be a
@@ -118,9 +119,9 @@ function render() {
     <details class="card"><summary>Published Canonical 與建置身分</summary><p class="meta">本機使用建置時由 Published main 取得並核驗的完整固定快照。離線模式不宣稱已確認最新 main。</p>${json(identity.metadata)}${json(identity.provenance)}${identity.documents.map(d=>`<details><summary>${esc(d.path)} · ${esc(d.authority)}</summary><a href="${esc(d.url)}" target="_blank" rel="noopener">GitHub 固定快照</a><pre>${esc(d.content)}</pre></details>`).join('')}</details>`;
   bind();
 }
-async function putSource(slot, name, content) {
+async function putSource(slot, name, content, authority = 'supporting') {
   if (slot === 'delivery') { const next = await call('invalidate',workspace); next.deliveryMml = content; await commit(next); return; }
-  const asset = await call('intake', { name, content, id: crypto.randomUUID(), meterText: workspace.settings.meterText, authority: $('#authority')?.value });
+  const asset = await call('intake', { name, content, id: crypto.randomUUID(), meterText: workspace.settings.meterText, authority });
   const next = await call('invalidate',workspace); next.assets[slot] = asset;
   await commit(next);
 }
@@ -134,32 +135,35 @@ function bind() {
     if(settings.meterText!==workspace.settings.meterText) for(const [slot,a] of Object.entries(next.assets)) if(a.format==='MML') next.assets[slot]=await call('intake',{name:a.name,content:a.content,id:a.project.sources[0].id,meterText:settings.meterText});
     await commit(next);
   },{revisionBound:false}); };
-  document.querySelectorAll('[data-intake]').forEach(input=>input.onchange=()=>{const file=input.files[0];if(file)run(async()=>{if(file.size>4194304)throw Error('UNSUPPORTED: symbolic file exceeds 4 MiB');await putSource(input.dataset.intake,file.name,await file.text());},{revisionBound:false});});
+  document.querySelectorAll('[data-intake]').forEach(input=>input.onchange=()=>{const file=input.files[0],authority=$('#authority').value;if(file)run(async()=>{if(file.size>4194304)throw Error('UNSUPPORTED: symbolic file exceeds 4 MiB');await putSource(input.dataset.intake,file.name,await file.text(),authority);},{revisionBound:false});});
   document.querySelectorAll('[data-download-ir]').forEach(button=>button.onclick=()=>{const asset=workspace.assets[button.dataset.downloadIr];download('canonical-project.json',JSON.stringify(asset.project,null,2));});
-  $('#paste').onsubmit=event=>{event.preventDefault();const data=Object.fromEntries(new FormData(event.target));run(()=>putSource(data.slot,data.name,data.content),{revisionBound:false});};
+  $('#paste').onsubmit=event=>{event.preventDefault();const data=Object.fromEntries(new FormData(event.target)),authority=$('#authority').value;run(()=>putSource(data.slot,data.name,data.content,authority),{revisionBound:false});};
   $('#review-form').onsubmit=event=>{event.preventDefault();const data=Object.fromEntries(new FormData(event.target));run(async()=>commit(await call('recordReview',workspace,data.name,data.note,data.evidence)));};
-  document.querySelectorAll('[data-harmony]').forEach(form=>form.onsubmit=event=>{event.preventDefault();const data=Object.fromEntries(new FormData(form));run(async()=>{
-    if(!data.reason?.trim()||!data.evidence?.trim())throw Error('每個仲裁需要理由與證據');const conflict=report.harmony.conflicts[Number(form.dataset.harmony)];
+  document.querySelectorAll('[data-harmony]').forEach(form=>form.onsubmit=event=>{event.preventDefault();const data=Object.fromEntries(new FormData(form)),conflict=report.harmony.conflicts[Number(form.dataset.harmony)];run(async()=>{
+    if(!data.reason?.trim()||!data.evidence?.trim())throw Error('每個仲裁需要理由與證據');
     const next=structuredClone(workspace);next.acceptance=null;next.harmonyDecisions=next.harmonyDecisions.filter(d=>d.id!==conflict.id);next.harmonyDecisions.push({id:conflict.id,eventIds:[conflict.leftEventId,conflict.rightEventId],action:data.action,status:data.action==='keep'?'accepted':'pending',reason:data.reason,evidence:[data.evidence],revision:workspace.revision});await commit(next);
   });});
-  document.querySelectorAll('[data-core3]').forEach(form=>form.onsubmit=event=>{event.preventDefault();const data=Object.fromEntries(new FormData(form));run(async()=>{
-    if(!data.reason?.trim()||!data.evidence?.trim())throw Error('需要變動理由與證據');const change=report.core3.unapproved[Number(form.dataset.core3)];const next=structuredClone(workspace);next.acceptance=null;next.core3Approvals.push({eventId:change.eventId,type:change.type,reason:data.reason,evidence:[data.evidence],revision:workspace.revision});await commit(next);
+  document.querySelectorAll('[data-core3]').forEach(form=>form.onsubmit=event=>{event.preventDefault();const data=Object.fromEntries(new FormData(form)),change=report.core3.unapproved[Number(form.dataset.core3)];run(async()=>{
+    if(!data.reason?.trim()||!data.evidence?.trim())throw Error('需要變動理由與證據');const next=structuredClone(workspace);next.acceptance=null;next.core3Approvals.push({eventId:change.eventId,type:change.type,reason:data.reason,evidence:[data.evidence],revision:workspace.revision});await commit(next);
   });});
-  document.querySelectorAll('[data-imported-decision]').forEach(form=>form.onsubmit=event=>{event.preventDefault();const data=Object.fromEntries(new FormData(form));run(async()=>{
-    if(!data.reason?.trim()||!data.evidence?.trim())throw Error('需要本輪保留理由與證據');const original=report.importedDecisions[Number(form.dataset.importedDecision)];const next=structuredClone(workspace);next.acceptance=null;next.harmonyDecisions=next.harmonyDecisions.filter(d=>d.id!==original.id);next.harmonyDecisions.push({...original,action:'keep',status:'accepted',reason:data.reason,evidence:[data.evidence],revision:workspace.revision});await commit(next);
+  document.querySelectorAll('[data-imported-decision]').forEach(form=>form.onsubmit=event=>{event.preventDefault();const data=Object.fromEntries(new FormData(form)),original=report.importedDecisions[Number(form.dataset.importedDecision)];run(async()=>{
+    if(!data.reason?.trim()||!data.evidence?.trim())throw Error('需要本輪保留理由與證據');const next=structuredClone(workspace);next.acceptance=null;next.harmonyDecisions=next.harmonyDecisions.filter(d=>d.id!==original.id);next.harmonyDecisions.push({...original,action:'keep',status:'accepted',reason:data.reason,evidence:[data.evidence],revision:workspace.revision});await commit(next);
   });});
   $('#lead-form').onsubmit=event=>{event.preventDefault();const d=Object.fromEntries(new FormData(event.target));run(async()=>{
     if(![...roles.slice(1),'omitted'].includes(d.destinationRole))throw Error('目標角色必須為 Chord1–Chord5 或 omitted');const event=workspace.assets.baseline?.project.events.find(e=>e.id===d.eventId&&e.role==='Melody');if(!event)throw Error('找不到基準 Melody event');
     const next=structuredClone(workspace);next.acceptance=null;next.leadEvidence=next.leadEvidence.filter(e=>e.eventId!==event.id);next.leadEvidence.push({eventId:event.id,destinationRole:d.destinationRole,sourceIdentity:{sourceId:event.sourceIds[0],sourceEventId:event.sourceEventIds[0]},sectionRole:d.sectionRole,scoreEvidence:{availability:d.scoreCitation?'available':'unavailable',classification:d.scoreClass,citation:d.scoreCitation},audioEvidence:{availability:d.audioCitation?'available':'unavailable',classification:d.audioClass,citation:d.audioCitation},positiveReason:d.positiveReason,continuity:{checked:d.continuity==='checked',createsLeadGap:d.continuity==='checked'?false:null,replacementEventIds:[]},core3:{checked:d.continuity==='checked',status:d.continuity==='checked'?'PASS':'PENDING'},revision:workspace.revision});await commit(next);
   });};
   $('#audio-file').onchange=()=>{const file=$('#audio-file').files[0]??null;run(async()=>{audioFile=file;const next=await call('invalidate',workspace);next.settings.audioRequired='yes';await commit(next);},{revisionBound:false});};
-  $('#request-audio').onclick=()=>run(async()=>{
-    const endpoint=$('#audio-endpoint').value,token=$('#audio-token').value;const revision=workspace.revision,projectId=workspace.id;
+  $('#request-audio').onclick=()=>{
+    const endpoint=$('#audio-endpoint').value,token=$('#audio-token').value,file=audioFile;
+    return run(async()=>{
+    const revision=workspace.revision,projectId=workspace.id;
     const {requestAudioAlignment,verifyAudioBinding}=await import('./audio-client.mjs');uploadController=new AbortController();$('#cancel-audio').disabled=false;$('#audio-progress').textContent='Audio Alignment 執行中…';
     const timeout=setTimeout(()=>uploadController?.abort(),180000);
-    try{const alignment=await requestAudioAlignment({requested:true,file:audioFile,project:workspace.assets.candidate.project,endpoint,token,signal:uploadController.signal});if(workspace.id!==projectId||workspace.revision!==revision)throw Error('專案已變更，丟棄過期音訊報告');const next=structuredClone(workspace);next.audio={revision,report:alignment,projectIdentity:await verifyAudioBinding(alignment,workspace.assets.candidate.project)};delete next.reviews.audio;next.acceptance=null;await commit(next);}
+    try{const alignment=await requestAudioAlignment({requested:true,file,project:workspace.assets.candidate.project,endpoint,token,signal:uploadController.signal});if(workspace.id!==projectId||workspace.revision!==revision)throw Error('專案已變更，丟棄過期音訊報告');const next=structuredClone(workspace);next.audio={revision,report:alignment,projectIdentity:await verifyAudioBinding(alignment,workspace.assets.candidate.project)};delete next.reviews.audio;next.acceptance=null;await commit(next);}
     finally{clearTimeout(timeout);uploadController=null;$('#audio-progress').textContent='';$('#cancel-audio').disabled=true;}
-  });
+    });
+  };
   $('#cancel-audio').onclick=()=>uploadController?.abort();
   $('#audio-report').onchange=()=>{const file=$('#audio-report').files[0];if(file)run(async()=>{if(file.size>4194304)throw Error('Report exceeds 4 MiB');const next=structuredClone(workspace);const alignment=JSON.parse(await file.text());const {verifyAudioBinding}=await import('./audio-client.mjs');next.audio={revision:workspace.revision,report:alignment,projectIdentity:await verifyAudioBinding(alignment,workspace.assets.candidate.project)};delete next.reviews.audio;next.acceptance=null;await commit(next);});};
   $('#copy-mml').onclick=()=>copyText(report.rawMml);
@@ -169,16 +173,16 @@ function bind() {
   $('#acceptance').onsubmit=event=>{event.preventDefault();const data=Object.fromEntries(new FormData(event.target));run(async()=>commit(await call('recordAcceptance',workspace,data)));};
 }
 
-$('#new-project').onclick=()=>run(async()=>{audioFile=null;await commit(await call('newWorkspace'));},{revisionBound:false});
-$('#projects').onchange=()=>run(async()=>{audioFile=null;workspace=projects.find(p=>p.id===$('#projects').value);await commit(workspace);},{revisionBound:false});
+$('#new-project').onclick=()=>run(async()=>{audioFile=null;await commit(await call('newWorkspace'));},{revisionBound:false,projectBound:false});
+$('#projects').onchange=()=>{const id=$('#projects').value;run(async()=>{const selected=projects.find(p=>p.id===id);if(!selected)throw Error('找不到選取的專案，請重新開啟');audioFile=null;await commit(selected);},{revisionBound:false,projectBound:false});};
 $('#export-project').onclick=()=>{if(workspace)download('mml-studio-project.json',JSON.stringify({...workspace,canonical:identity.metadata},null,2));};
-$('#restore-project').onchange=()=>{const file=$('#restore-project').files[0];if(file)run(async()=>{if(file.size>16*1048576)throw Error('Project backup exceeds 16 MiB');audioFile=null;await commit(await call('importWorkspace',await file.text()));message('已匯入；先前審核保留為歷史，本輪需要重新審核。');},{revisionBound:false});};
+$('#restore-project').onchange=()=>{const file=$('#restore-project').files[0];if(file)run(async()=>{if(file.size>16*1048576)throw Error('Project backup exceeds 16 MiB');audioFile=null;await commit(await call('importWorkspace',await file.text()));message('已匯入；先前審核保留為歷史，本輪需要重新審核。');},{revisionBound:false,projectBound:false});};
 function network(){ $('#network').textContent=navigator.onLine?'本地執行 · Online':'本地執行 · Offline'; }
 addEventListener('online',network);addEventListener('offline',network);network();
 try {
   identity=await call('identity');
   try { projects=await listProjects(); } catch(error){message(error.message,true);}
   workspace=projects[0]??await call('newWorkspace');
-  $('#boot').hidden=true;$('#app').hidden=false;await commit(workspace);
+  $('#boot').hidden=true;$('#app').hidden=false;await run(()=>commit(workspace),{revisionBound:false});
   if('serviceWorker' in navigator) navigator.serviceWorker.register('./sw.js',{scope:'./'}).then(reg=>{reg.addEventListener('updatefound',()=>message('新版離線資源下載中；關閉所有 Studio 分頁後再開啟可套用。'));}).catch(()=>message('離線資源尚未安裝，請保持連線並重試。',true));
 } catch(error){$('#boot').textContent=error.message;$('#boot').className='boot-error';$('#boot').hidden=false;$('#app').hidden=true;}

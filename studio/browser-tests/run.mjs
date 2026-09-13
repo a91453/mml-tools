@@ -2,6 +2,7 @@ import { chromium, webkit } from 'playwright';
 import assert from 'node:assert/strict';
 import { mkdir, writeFile } from 'node:fs/promises';
 import { serveStudio } from '../../scripts/serve-studio-web.mjs';
+import { installWorkerControls, runAuditChecks } from './audit.mjs';
 
 let server=null;
 const results=[];
@@ -38,6 +39,7 @@ try {
           try{sessionStorage.setItem('settledWhileRunning',String(Number(sessionStorage.getItem('settledWhileRunning')||0)+1));}catch{}
         }).observe(document,{subtree:true,childList:true,attributes:true,attributeFilter:['aria-busy']});
       });
+      await installWorkerControls(page);
       const idle=()=>page.waitForFunction(()=>document.querySelector('#app')?.getAttribute('aria-busy')!=='true'&&document.querySelector('#app h1'));
       const file=async(slot,content,name)=>{await page.locator(`[data-intake="${slot}"]`).setInputFiles({name,mimeType:'text/plain',buffer:Buffer.from(content)});await page.waitForFunction(name=>document.querySelector('#intake')?.textContent.includes(name),name);await idle();};
       await page.goto(base);await page.locator('#app h1').waitFor();await idle();
@@ -113,7 +115,7 @@ try {
       await page.locator('#copy-mml').click();assert.equal(await page.evaluate(()=>window.copied),mml);
       assert.ok(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth+1),'No horizontal viewport overflow');
       await page.screenshot({path:new URL(`${profile.name}-reviewed.png`,out).pathname,fullPage:true});
-      // Boot commits outside run(). If it does not announce aria-busy, its
+      // Boot must announce aria-busy; otherwise its
       // ANALYSIS_RUNNING placeholder is indistinguishable from a settled result:
       // a restored VALIDATED/IN_GAME_ACCEPTED project reads as demoted to
       // CANDIDATE until the real analysis lands, and idle() has nothing to wait
@@ -122,15 +124,16 @@ try {
       await page.reload();await page.locator('#app h1').waitFor();await idle();
       assert.equal(await page.evaluate(()=>window.bootAnnouncedBusy),true,'boot analysis must announce aria-busy before showing a state');
       assert.equal(await page.locator('.hero .badge').textContent(),'IN_GAME_ACCEPTED');
+      await runAuditChecks({page,idle,file,mml});
       // A revision change invalidates all reviews/acceptance before re-analysis.
       await file('candidate',mml.replace('o4c1','o4d1'),'changed.mml');assert.equal(await page.locator('.hero .badge').textContent(),'CANDIDATE');
       await page.locator('#audio-file').setInputFiles({name:'original.wav',mimeType:'audio/wav',buffer:Buffer.from('synthetic audio')});
       await page.locator('#audio-file-status').filter({hasText:'尚未上傳'}).waitFor();
       // The status line renders before the audio invalidation commit settles, and
-      // an intake fired while #app is aria-busy is dropped by design; wait it out.
+      // subsequent assertions need the audio invalidation commit to settle.
       await idle();
       assert.ok(requests.every(r=>r.method==='GET'&&r.url.startsWith(base)),'Symbolic intake and audio selection cause no upload or external request');
-      await file('baseline',mxml,'repeat.musicxml');assert.ok((await page.locator('#gates').textContent()).includes('UNSUPPORTED'));
+      await file('baseline',mxml.replace('<score-partwise>','<score-partwise xmlns:m="urn:fixture">').replace('<repeat ', '<m:repeat '),'repeat.musicxml');assert.ok((await page.locator('#gates').textContent()).includes('UNSUPPORTED'));
       // Service worker must cache the actual module graph for offline restart.
       await page.evaluate(()=>navigator.serviceWorker.ready);
       await page.waitForFunction(()=>navigator.serviceWorker.controller!==null);
@@ -142,7 +145,7 @@ try {
       assert.ok((await page.locator('#gates').textContent()).includes('UNSUPPORTED'));
       assert.equal(await page.evaluate(()=>Number(sessionStorage.getItem('settledWhileRunning')||0)),0,'aria-busy must never go false with a gate still reading ANALYSIS_RUNNING');
       assert.deepEqual(errors,[]);
-      results.push({profile:profile.name,status:'PASS',checks:['Files picker','local MML/MusicXML','full review workflow','state separation','exact clipboard payload','IndexedDB reload','boot busy signal','busy-window two-waiter FIFO','settled state never ANALYSIS_RUNNING','revision invalidation','unsupported fail closed','no implicit uploads','responsive layout','offline module graph']});
+      results.push({profile:profile.name,status:'PASS',checks:['Files picker','local MML/MusicXML','full review workflow','state separation','exact clipboard payload','IndexedDB reload','boot busy signal','busy-window two-waiter FIFO','boot waiter drain','project-scoped queue','stable Core3 evidence IDs','Worker failure and recovery','unsaved failure state','IndexedDB stale-token rejection','Final pitch boundary','settled state never ANALYSIS_RUNNING','revision invalidation','unsupported fail closed','no implicit uploads','responsive layout','offline module graph']});
     } catch(error) {
       failed=true;results.push({profile:profile.name,status:'FAIL',error:error.stack,consoleErrors:errors});
       if(page)await page.screenshot({path:new URL(`${profile.name}-failure.png`,out).pathname,fullPage:true}).catch(()=>{});
