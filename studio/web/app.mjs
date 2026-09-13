@@ -9,7 +9,7 @@ const options = (values, selected) => values.map(([value, label]) => `<option va
 const roles = ['Melody', 'Chord1', 'Chord2', 'Chord3', 'Chord4', 'Chord5'];
 const reviewLabels = { source: '來源完整與可追溯', version: 'Version Drift／已接受版本', lead: 'Lead 樂句、休止與接棒', core3: 'Core3 單人完整性', full6: 'Full6 和聲、重疊與密度', tempo: 'Tempo、拍號與時間範圍', audio: '原曲音訊證據', adaptation: 'Mobile 最小適配', regression: '回歸與已接受優點' };
 const gateLabels = { implementation: '分析模組', source: '來源完整性', baseline: '來源基準', technical: 'MML 技術語法', core3: 'Core3', leadDemotion: 'Lead 降級證據', crossSourceHarmony: '跨來源和聲', versionDrift: '版本差異', originalAudio: '原曲音訊', playerReadback: '播放器實際回讀', pendingDecisions: '待決仲裁', intake: '版本／音樂範圍', lead: 'Lead 審核', full6: 'Full6 審核', tempo: 'Tempo／時值審核', adaptation: 'Mobile 適配', regression: '回歸審核', deliveryIdentity: '交付事件一致性' };
-let workspace, report, identity, projects = [], audioFile = null, uploadController = null, busy = false, sequence = 0;
+let workspace, report, identity, projects = [], audioFile = null, uploadController = null, busy = 0, sequence = 0;
 const pending = new Map();
 const worker = new Worker(new URL('./worker.mjs', import.meta.url), { type: 'module' });
 worker.onmessage = ({ data }) => {
@@ -28,11 +28,20 @@ function call(action, ...args) {
 }
 let messageTimer;
 function message(value, persistent = false) { clearTimeout(messageTimer); $('#message').textContent = value; if (!persistent) messageTimer = setTimeout(() => { $('#message').textContent = ''; }, 7000); }
+// aria-busy is this app's only settled/unsettled signal, so it has to cover a
+// commit whoever started it. Boot commits outside run(), and without this its
+// ANALYSIS_RUNNING placeholder renders a CANDIDATE badge while the app claims
+// to be idle: a restored VALIDATED/IN_GAME_ACCEPTED project reads as demoted
+// until the real analysis lands, and an action taken in that window is lost.
+function markBusy(active) {
+  busy += active ? 1 : -1;
+  $('#app').setAttribute('aria-busy', busy > 0 ? 'true' : 'false');
+}
 async function run(fn) {
-  if (busy) return;
-  busy = true; $('#app').setAttribute('aria-busy', 'true');
+  if (busy) return message('本機分析進行中，請待目前步驟完成後再試一次');
+  markBusy(true);
   try { await fn(); } catch (error) { message(error.message, true); }
-  finally { busy = false; $('#app').setAttribute('aria-busy', 'false'); }
+  finally { markBusy(false); }
 }
 function download(name, value, type = 'application/json') {
   const url = URL.createObjectURL(new Blob([value], { type }));
@@ -44,18 +53,21 @@ async function refreshProjects() {
   $('#projects').innerHTML = options(projects.map(p => [p.id, p.title]), workspace?.id);
 }
 async function commit(next) {
-  const canonicalKey=JSON.stringify(identity.metadata);
-  if(next.savedAt && next.canonicalKey!==canonicalKey)next=await call('invalidate',next);
-  next.canonicalKey=canonicalKey;
-  // Analyze before replacing a displayed result. A thrown analysis never leaves
-  // the previous green gates associated with edited data.
-  workspace = next; report = { state: 'CANDIDATE', gates: { analysis: { status: 'PENDING', reason: 'ANALYSIS_RUNNING' } }, blockers: ['analysis'], tracks: null };
-  render();
-  try { report = await call('analyzeWorkspace', workspace); }
-  catch (error) { render(); throw error; }
-  try { workspace = await saveProject(workspace); await refreshProjects(); }
-  catch (error) { workspace.savedAt=null;await refreshProjects().catch(()=>{});message(`尚未儲存：${error.message}。可先匯出專案備份。`, true); }
-  render();
+  markBusy(true);
+  try {
+    const canonicalKey=JSON.stringify(identity.metadata);
+    if(next.savedAt && next.canonicalKey!==canonicalKey)next=await call('invalidate',next);
+    next.canonicalKey=canonicalKey;
+    // Analyze before replacing a displayed result. A thrown analysis never leaves
+    // the previous green gates associated with edited data.
+    workspace = next; report = { state: 'CANDIDATE', gates: { analysis: { status: 'PENDING', reason: 'ANALYSIS_RUNNING' } }, blockers: ['analysis'], tracks: null };
+    render();
+    try { report = await call('analyzeWorkspace', workspace); }
+    catch (error) { render(); throw error; }
+    try { workspace = await saveProject(workspace); await refreshProjects(); }
+    catch (error) { workspace.savedAt=null;await refreshProjects().catch(()=>{});message(`尚未儲存：${error.message}。可先匯出專案備份。`, true); }
+    render();
+  } finally { markBusy(false); }
 }
 const input = (name, label, value, attrs = '') => `<label>${esc(label)}<input name="${name}" value="${esc(value)}" ${attrs}></label>`;
 function intakeCard(slot, title, hint) {

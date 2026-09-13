@@ -62,7 +62,15 @@ try {
       await page.locator('#copy-mml').click();assert.equal(await page.evaluate(()=>window.copied),mml);
       assert.ok(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth+1),'No horizontal viewport overflow');
       await page.screenshot({path:new URL(`${profile.name}-reviewed.png`,out).pathname,fullPage:true});
-      await page.reload();await page.locator('#app h1').waitFor();await idle();assert.equal(await page.locator('.hero .badge').textContent(),'IN_GAME_ACCEPTED');
+      // Boot commits outside run(). If it does not announce aria-busy, its
+      // ANALYSIS_RUNNING placeholder is indistinguishable from a settled result:
+      // a restored VALIDATED/IN_GAME_ACCEPTED project reads as demoted to
+      // CANDIDATE until the real analysis lands, and idle() has nothing to wait
+      // on. Record the transition rather than racing it.
+      await page.addInitScript(()=>{window.bootAnnouncedBusy=false;new MutationObserver(()=>{if(document.querySelector('#app')?.getAttribute('aria-busy')==='true')window.bootAnnouncedBusy=true;}).observe(document,{subtree:true,attributes:true,attributeFilter:['aria-busy']});});
+      await page.reload();await page.locator('#app h1').waitFor();await idle();
+      assert.equal(await page.evaluate(()=>window.bootAnnouncedBusy),true,'boot analysis must announce aria-busy before showing a state');
+      assert.equal(await page.locator('.hero .badge').textContent(),'IN_GAME_ACCEPTED');
       // A revision change invalidates all reviews/acceptance before re-analysis.
       await file('candidate',mml.replace('o4c1','o4d1'),'changed.mml');assert.equal(await page.locator('.hero .badge').textContent(),'CANDIDATE');
       await page.locator('#audio-file').setInputFiles({name:'original.wav',mimeType:'audio/wav',buffer:Buffer.from('synthetic audio')});
@@ -82,7 +90,7 @@ try {
       assert.equal(await page.locator('.hero .badge').textContent(),'CANDIDATE');
       assert.ok((await page.locator('#gates').textContent()).includes('UNSUPPORTED'));
       assert.deepEqual(errors,[]);
-      results.push({profile:profile.name,status:'PASS',checks:['Files picker','local MML/MusicXML','full review workflow','state separation','exact clipboard payload','IndexedDB reload','revision invalidation','unsupported fail closed','no implicit uploads','responsive layout','offline module graph']});
+      results.push({profile:profile.name,status:'PASS',checks:['Files picker','local MML/MusicXML','full review workflow','state separation','exact clipboard payload','IndexedDB reload','boot busy signal','revision invalidation','unsupported fail closed','no implicit uploads','responsive layout','offline module graph']});
     } catch(error) {
       failed=true;results.push({profile:profile.name,status:'FAIL',error:error.stack,consoleErrors:errors});
       if(page)await page.screenshot({path:new URL(`${profile.name}-failure.png`,out).pathname,fullPage:true}).catch(()=>{});
