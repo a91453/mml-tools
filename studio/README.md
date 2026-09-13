@@ -4,26 +4,27 @@ Studio is the source-aware orchestration layer built beside the existing MML Wor
 
 ## Rule authority
 
-Human-readable rules live in the reviewed Canonical documents under `docs/`. `studio/backend/rules/index.mjs` implements those rules; it is not an independent rule authority.
+Start only at [docs/CANONICAL_MANIFEST.md](../docs/CANONICAL_MANIFEST.md), then
+load its pinned Published Canonical human-readable rules. This README and
+`studio/backend/rules/index.mjs` describe/implement the system; neither defines
+rules. The authority map is derived from the Manifest, with inventory and
+supporting evidence separate from rule sources.
 
-## Core principles
-
-- Preserve source facts before six-track reduction.
-- Use exact rational beat positions; floating point is never canonical symbolic time.
-- Never silently mutate or discard a source event to satisfy Final policy.
-- Keep source truth, arbitration, Mobile adaptation and final MML as separate layers.
-- Melody/T1 is Lead Role, not a Vocal-only channel.
-- Core3 is Lead + Core Harmony + Core Bass skeleton/essential inner support; Chord2 is not Bass-only.
-- Full6 enrichment must not reduce Core3 completeness.
-- Natural source rests remain rests; continuity statistics do not justify filling them.
-- Cross-source provenance does not prove harmonic compatibility.
-- Audio evidence supplements symbolic truth; it does not overwrite it.
+After refreshing `origin/main`, run `npm run canonical:bootstrap` from the
+repository root to read the Manifest, documents and Git provenance.
+`npm run canonical:bootstrap -- --summary` checks identity without displaying
+the document text. The loader performs no network fetch and requires the
+published main ref and snapshot history. Studio's contract/parser imports fail
+with `CANONICAL_NOT_LOADED` if loading fails; they never substitute a local Skill,
+standalone Master, an unmerged PR Manifest, or the legacy parser as rule authority.
+An archive without Git provenance is insufficient for this Bootstrap.
 
 ## Current layout
 
 ```text
 studio/
   backend/
+    bootstrap/      Manifest discovery and pinned published-document loading
     rules/          executable contract implementing Canonical docs
     canonical/      source-traceable Canonical Music IR
     mml/            ingest parser, Final validator, source normalization
@@ -84,4 +85,9 @@ The future phone/iPad UI should answer questions such as:
 
 The UI is not yet implemented beyond the scaffold, and Studio has not replaced the current production Railway/MCP route.
 
-See `docs/MASTER_RULES.md`, `docs/MOBILE_SYNTAX.md`, `docs/ACCEPTANCE_CRITERIA.md`, `docs/RULES_AUDIT_2026-09-13.md` and `docs/STUDIO_MIGRATION.md` for current policy/status.
+Use the Manifest for current policy discovery. `docs/RULES_AUDIT_2026-09-13.md`,
+`docs/STUDIO_MIGRATION.md`, and `docs/RELEASE_READINESS_2026-09-13.md` are dated
+historical/status records, not alternate rule-loading entry points. Their
+pre-Bootstrap descriptions are retained as history. References to a song
+`candidate` or `candidateReady` describe musical artifacts/readiness, not a
+candidate Canonical rules release.

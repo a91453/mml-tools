@@ -2,8 +2,11 @@
 //
 // Exact-rational timing, MIDI/ABC codecs, overlap analysis and other proven
 // Workbench helpers remain reusable from dist/core.js. Canonical policy is
-// defined by the human-readable docs; parser.mjs implements ingest parsing plus
+// discovered only through docs/CANONICAL_MANIFEST.md and defined by its pinned
+// published human-readable rules; parser.mjs implements ingest parsing plus
 // Final validation without allowing the legacy profile to silently redefine rules.
+
+import { EFFECTIVE_RULESET } from '../rules/index.mjs';
 
 export * from '../../../dist/core.js';
 export {
@@ -14,15 +17,11 @@ export {
 } from './parser.mjs';
 
 export const MML_ENGINE_ADAPTER = Object.freeze({
-  name: 'studio-v1-with-canonical-draft2-alignment',
-  migrationStatus: 'canonical-candidate-alignment-active',
-  rulesAuthority: Object.freeze([
-    '../../../docs/MASTER_RULES.md',
-    '../../../docs/SOURCE_POLICY.md',
-    '../../../docs/MOBILE_SYNTAX.md',
-    '../../../docs/ACCEPTANCE_CRITERIA.md',
-    '../../../docs/PENDING.md',
-  ]),
+  name: 'studio-v1-with-published-canonical-manifest',
+  migrationStatus: 'published-canonical-manifest-active',
+  rulesEntryPoint: EFFECTIVE_RULESET.authority.entryPoint,
+  canonical: EFFECTIVE_RULESET.canonical,
+  rulesAuthority: EFFECTIVE_RULESET.authority.humanReadable,
   executableContract: '../rules/index.mjs',
   bareParseTrackMode: 'ingest',
   ingestParser: './parser.mjs#parseTrack',

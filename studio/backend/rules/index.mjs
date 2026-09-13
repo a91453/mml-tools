@@ -1,18 +1,15 @@
 import { parseTrack as legacyParseTrack } from '../../../dist/core.js';
+import { loadPublishedCanonical } from '../bootstrap/index.mjs';
+
+// An executable implementation must opt into a new release explicitly; reading
+// a newer repository HEAD must never relabel these unchanged policy values.
+export const PUBLISHED_CANONICAL = loadPublishedCanonical({ supportedCanonicalVersion: '2026-09-13-v1' });
 
 export const EFFECTIVE_RULESET = Object.freeze({
   id: 'mabinogi-mobile-mml-canonical-v1-2026-09-13',
   status: 'implements-published-canonical',
-  authority: Object.freeze({
-    humanReadable: Object.freeze([
-      'docs/MASTER_RULES.md',
-      'docs/SOURCE_POLICY.md',
-      'docs/MOBILE_SYNTAX.md',
-      'docs/ACCEPTANCE_CRITERIA.md',
-      'docs/PENDING.md',
-    ]),
-    executableContractDefinesRules: false,
-  }),
+  canonical: PUBLISHED_CANONICAL.metadata,
+  authority: PUBLISHED_CANONICAL.authority,
   principles: Object.freeze([
     'source-faithful-baseline-first',
     'source-complete-before-six-track-reduction',

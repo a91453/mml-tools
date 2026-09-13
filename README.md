@@ -2,7 +2,9 @@
 
 可自行修改的瑪奇 Mobile 六軌 MML 檢查與預覽工作台。網站核心 v0.1.0，工具服務 v0.2.0。
 
-> Studio v1 的來源、Published Canonical v1 文件與測試會與既有 Workbench 並存；**把 Studio 原始碼納入 `main` 不會自動切換正式 Railway/MCP 部署**。目前 production Railway/MCP 仍使用既有 Workbench 路徑。舊版工作基準凍結於 `legacy-v0.2.0`；規則權威請看 `docs/MASTER_RULES.md`、`docs/MOBILE_SYNTAX.md`、`docs/ACCEPTANCE_CRITERIA.md` 與 `studio/README.md`。
+> Studio v1 的來源、Published Canonical v1 文件與測試會與既有 Workbench 並存；**把 Studio 原始碼納入 `main` 不會自動切換正式 Railway/MCP 部署**。目前 production Railway/MCP 仍使用既有 Workbench 路徑。舊版工作基準凍結於 `legacy-v0.2.0`。唯一規則載入入口是 [docs/CANONICAL_MANIFEST.md](docs/CANONICAL_MANIFEST.md)，再依其快照與 authority map 載入 Published Canonical；本 README、Workbench 與舊 Skill 均不是規則權威。
+
+Studio／repository Skill 共用 Manifest Bootstrap。更新本機 `origin/main` 後，執行 `npm run canonical:bootstrap` 取得 Manifest、固定快照文件與 Git 身份；只有要核對身份時才使用 `-- --summary`。載入失敗回報 `CANONICAL_NOT_LOADED`，不得退回舊 Skill／Master／patch。操作方式見 [studio/README.md](studio/README.md)。
 
 ## 獨立主機部署
 
