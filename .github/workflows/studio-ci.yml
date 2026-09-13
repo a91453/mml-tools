@@ -28,6 +28,8 @@ jobs:
           node-version: '22'
       - name: Install Node dependencies
         run: npm install --ignore-scripts --package-lock=false
+      - name: Verify published Canonical Bootstrap
+        run: npm run canonical:bootstrap -- --summary
       - name: Run legacy and Studio symbolic regressions
         run: npm test
       - name: Build legacy production bundle

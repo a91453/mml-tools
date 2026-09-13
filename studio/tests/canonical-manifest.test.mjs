@@ -6,6 +6,7 @@ import { tmpdir } from 'node:os';
 import { resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { EFFECTIVE_RULESET } from '../backend/rules/index.mjs';
+import { parseCanonicalManifest } from '../backend/bootstrap/index.mjs';
 
 const root = fileURLToPath(new URL('../../', import.meta.url));
 const manifestPath = 'docs/CANONICAL_MANIFEST.md';
@@ -23,27 +24,8 @@ const expectedAuthority = new Map([
   ['tests/', 'VERIFIER'],
 ]);
 
-function metadata(text) {
-  const block = text.match(/^---\n([\s\S]*?)\n---\n/);
-  assert.ok(block, 'Manifest requires a metadata header');
-  const entries = block[1].split('\n').map(line => {
-    const match = line.match(/^([a-z_]+): ([A-Za-z0-9-]+)$/);
-    assert.ok(match, `Invalid metadata line: ${line}`);
-    return [match[1], match[2]];
-  });
-  assert.equal(new Set(entries.map(([key]) => key)).size, entries.length, 'No duplicate metadata keys');
-  return Object.fromEntries(entries);
-}
-
-function authorityRows(text) {
-  const block = text.match(/<!-- authority-map:start -->\n([\s\S]*?)\n<!-- authority-map:end -->/);
-  assert.ok(block, 'Manifest requires its explicit authority map');
-  return block[1].split('\n').slice(2).map(line => {
-    const match = line.match(/^\| \[([^\]]+)\]\(([^)]+)\) \| `([A-Z_]+)` \| [^|]+ \|$/);
-    assert.ok(match, `Invalid authority row: ${line}`);
-    return { path: match[1], url: match[2], authority: match[3] };
-  });
-}
+const metadata = text => parseCanonicalManifest(text).metadata;
+const authorityRows = text => parseCanonicalManifest(text).entries;
 
 test('Manifest pins the published v1 release and stores no dynamic Git identities', () => {
   assert.deepEqual(metadata(manifest), {

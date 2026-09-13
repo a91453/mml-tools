@@ -1,17 +1,16 @@
-# mabinogi-mobile-mml rule sources
+# mabinogi-mobile-mml Bootstrap
 
-This directory stores GitHub-side normative rule extensions for the user's Mabinogi Mobile MML workflow.
+[SKILL.md](SKILL.md) is a thin workflow consumer. Every Mabinogi Mobile MML task
+starts at [docs/CANONICAL_MANIFEST.md](../../docs/CANONICAL_MANIFEST.md), then loads
+the Published Canonical from the Manifest's pinned snapshot. This directory is
+not a rule authority and contains no independent Canonical rule copy.
 
-Important: the `mml-tools` repository previously did **not** contain the installed ChatGPT `mabinogi-mobile-mml` SKILL or its complete `references/master-rules.md`; the repository README explicitly described the workbench as independent from that installed skill.
+The shared loader is `studio/backend/bootstrap/index.mjs`; invoke it with
+`node scripts/bootstrap-canonical.mjs` in a refreshed repository checkout.
+Loading failure is `CANONICAL_NOT_LOADED`, with no legacy fallback.
 
-Therefore:
-- files in `patches/` are merge-ready SKILL-level rules;
-- files in `references/` are merge-ready Master Rules extensions;
-- these files are the version-controlled source for future automated review/merge;
-- they must not be treated as proof that an external/installed ChatGPT skill package has already been overwritten.
+The former 2026-09-10 Lead Role extensions are preserved verbatim in
+[the historical archive](../../docs/history/lead-role-2026-09-10/README.md).
+They are not current instructions or an alternate load path.
 
-Current normative addition:
-- `patches/2026-09-10-lead-role.md`
-- `references/2026-09-10-lead-role-master-rules.md`
-
-Core safeguard: `T1 = Lead Role`, not `Vocal-only`; neither `highest Piano note -> Vocal` nor `not proven Vocal -> Inner/Harmony` is valid without positive source-role evidence.
+This repository change does not install or overwrite an external ChatGPT Skill.
