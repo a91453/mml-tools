@@ -3,6 +3,7 @@ dist/.openai/
 node_modules/
 studio/web-build/
 studio/browser-results/
+__pycache__/
 .env
 .env.*
 !.env.example

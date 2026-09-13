@@ -86,6 +86,7 @@ export function recordReview(workspace, name, note, evidence) {
   if (!REVIEW_NAMES.includes(name) || !text(note) || !text(evidence)) throw Error('請填寫審核結論及來源／段落證據');
   const next = copy(workspace);
   next.reviews[name] = { revision: workspace.revision, note: note.trim(), evidence: evidence.trim(), at: new Date().toISOString() };
+  next.acceptance = null;
   return next;
 }
 
@@ -102,7 +103,8 @@ export function analyzeWorkspace(w) {
   const baseline = w.assets.baseline ? readCanonical(w.assets.baseline.project) : null;
   const previous = w.assets.previous ? readCanonical(w.assets.previous.project) : null;
   let project = cleanMetadata(candidate);
-  const decisions = (w.harmonyDecisions ?? []).filter(d => d.revision === w.revision).map(d => createArbitrationDecision(d));
+  const localDecisions = (w.harmonyDecisions ?? []).filter(d => d.revision === w.revision).map(d => createArbitrationDecision(d));
+  const decisions = [...candidate.decisions.filter(d => !localDecisions.some(local => local.id === d.id)).map(d => createArbitrationDecision({ ...d, status: 'pending' })), ...localDecisions];
   project = createCanonicalProject({ ...project, decisions, metadata: {
     sourceComplete: !hasUnsupported(asset) && !hasUnsupported(w.assets.baseline) && reviewed(w, 'source'),
     ...(baseline ? { sourceFaithfulBaseline: { snapshot: cleanMetadata(baseline) } } : {}),
@@ -137,6 +139,7 @@ export function analyzeWorkspace(w) {
   gates.intake = text(w.title) && text(w.settings.recording) && w.settings.offset !== '' && w.settings.end !== '' && Number.isFinite(Number(w.settings.offset)) && Number(w.settings.offset) >= 0 && Number(w.settings.end) > Number(w.settings.offset)
     ? pass('VERSION_AND_RANGE_RECORDED') : pending('RECORDING_VERSION_AND_RANGE_REQUIRED');
   gates.source = hasUnsupported(asset) || hasUnsupported(w.assets.baseline) ? { status: asset.unsupported?.length || w.assets.baseline?.unsupported?.length ? 'UNSUPPORTED' : 'PENDING', reason: 'SOURCE_INCOMPLETE_OR_UNSUPPORTED' } : reviewGate(w, 'source');
+  if (w.assets.previous && hasUnsupported(w.assets.previous)) gates.previousSource = pending('PREVIOUS_SOURCE_INCOMPLETE');
   gates.lead = reviewGate(w, 'lead');
   gates.core3 = good(gates.core3) ? reviewGate(w, 'core3') : gates.core3;
   gates.full6 = reviewGate(w, 'full6');
@@ -151,10 +154,10 @@ export function analyzeWorkspace(w) {
   const blockers = Object.keys(gates).filter(name => !good(gates[name]));
   const validated = blockers.length === 0;
   const acceptance = w.acceptance;
-  const accepted = validated && acceptance?.revision === w.revision && acceptance.exactMml === rawMml && acceptance.outcome === 'accepted' && ['client', 'instrument', 'evidence', 'at'].every(k => text(acceptance[k]));
+  const accepted = validated && acceptance?.revision === w.revision && acceptance.exactMml === rawMml?.trim() && acceptance.outcome === 'accepted' && ['client', 'instrument', 'evidence', 'at'].every(k => text(acceptance[k]));
   return { state: accepted ? 'IN_GAME_ACCEPTED' : validated ? 'VALIDATED' : 'CANDIDATE', gates, blockers, technical, core3, harmony, lineage, leadReports, readiness,
     tracks: technical?.ok && deliveryMatches ? splitMML(rawMml) : null, rawMml: technical?.ok && deliveryMatches ? rawMml.trim() : null,
-    historicalRegression: 'FIXTURE_PENDING', audioError };
+    historicalRegression: 'FIXTURE_PENDING', audioError, importedDecisions: candidate.decisions };
 }
 
 export function recordAcceptance(w, details) {
