@@ -9,12 +9,11 @@ const RISK_INTERVALS = new Map([
 ]);
 
 const noteEvents = project => (project?.events ?? []).filter(event => event.kind === 'note');
-const overlap = (a, b) => f(a.start).cmp(b.end) < 0 && f(b.start).cmp(a.end) < 0;
 const maxF = (a, b) => f(a).cmp(b) >= 0 ? f(a) : f(b);
 const minF = (a, b) => f(a).cmp(b) <= 0 ? f(a) : f(b);
-const disjointSources = (a, b) => {
-  const left = new Set(a.sourceIds ?? []);
-  return (b.sourceIds ?? []).every(sourceId => !left.has(sourceId));
+const disjointSets = (left, right) => {
+  for (const sourceId of right) if (left.has(sourceId)) return false;
+  return true;
 };
 
 function sourceAuthorityMap(project) {
@@ -68,12 +67,23 @@ export function analyzeCrossSourceHarmony(project, options = {}) {
   const notes = noteEvents(project);
   const authorities = sourceAuthorityMap(project);
   const conflicts = [];
+  // Every pair of note events is reviewed, so each per-pair test has to stay
+  // cheap. Parse each event's exact beat span and source set once here instead
+  // of rebuilding both for every candidate pair, and reject on integer pitch
+  // distance before touching rationals. The reviewed pairs, the conflicts and
+  // their order are exactly the same; only the work per rejected pair changes.
+  const starts = notes.map(event => f(event.start));
+  const ends = notes.map(event => f(event.end));
+  const sourceSets = notes.map(event => new Set(event.sourceIds ?? []));
 
   for (let i = 0; i < notes.length; i++) {
+    const left = notes[i], leftStart = starts[i], leftEnd = ends[i], leftSources = sourceSets[i];
     for (let j = i + 1; j < notes.length; j++) {
-      const left = notes[i], right = notes[j];
-      if (!overlap(left, right) || !disjointSources(left, right)) continue;
+      const right = notes[j];
       const distance = Math.abs(left.pitch - right.pitch);
+      if (distance !== 0 && !RISK_INTERVALS.has(distance)) continue;
+      if (leftStart.cmp(ends[j]) >= 0 || starts[j].cmp(leftEnd) >= 0) continue;
+      if (!disjointSets(leftSources, sourceSets[j])) continue;
 
       if (distance === 0) {
         conflicts.push(makeConflict(project, authorities, 'cross-source-same-pitch', left, right, {
