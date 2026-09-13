@@ -51,30 +51,46 @@ try {
       await page.locator('[name="audioRequired"]').selectOption('no');
       await page.locator('[name="preview"]').selectOption('none');
       await page.getByRole('button',{name:'儲存專案設定',exact:true}).click();await page.locator('h1').filter({hasText:'Studio browser fixture'}).waitFor();await idle();
-      // Serialization: a file picked while a commit is in flight must still be
-      // applied. The input it came from is replaced by the next render, so a
-      // dropped change leaves the user nothing to retry -- the choice is gone.
-      // Arm the baseline pick to fire exactly on the aria-busy transition
-      // instead of racing it, so this proves the queue rather than the timing.
+      // Serialization: while the candidate commit owns one busy window, fire two
+      // distinct file choices in a deterministic order. Both change events must
+      // observe aria-busy=true and both must survive the render that replaces the
+      // inputs. A child-list observer records when each queued file first becomes
+      // visible, making FIFO an integration assertion rather than just final-state
+      // membership. The old single-slot implementation rejects the second waiter.
       await page.evaluate(content=>{
-        window.queuedIntake={armed:true,fired:false};
+        const names=['queued-baseline.mml','queued-previous.mml'];
+        window.queuedIntake={armed:true,fired:[],busyAtDispatch:[],appliedOrder:[]};
+        const recordApplied=()=>{
+          const text=document.querySelector('#intake')?.textContent??'';
+          for(const name of names) if(text.includes(name)&&!window.queuedIntake.appliedOrder.includes(name)) window.queuedIntake.appliedOrder.push(name);
+        };
+        new MutationObserver(recordApplied).observe(document,{subtree:true,childList:true});
         new MutationObserver(()=>{
-          const input=document.querySelector('[data-intake="baseline"]');
-          if(!window.queuedIntake.armed||!input||document.querySelector('#app')?.getAttribute('aria-busy')!=='true')return;
+          if(!window.queuedIntake.armed||document.querySelector('#app')?.getAttribute('aria-busy')!=='true')return;
+          const actions=[['baseline',names[0]],['previous',names[1]]];
+          const inputs=actions.map(([slot])=>document.querySelector(`[data-intake="${slot}"]`));
+          if(inputs.some(input=>!input))return;
           window.queuedIntake.armed=false;
-          const transfer=new DataTransfer();
-          transfer.items.add(new File([content],'queued-baseline.mml',{type:'text/plain'}));
-          input.files=transfer.files;
-          input.dispatchEvent(new Event('change'));
-          window.queuedIntake.fired=true;
+          actions.forEach(([slot,name],index)=>{
+            window.queuedIntake.busyAtDispatch.push(document.querySelector('#app')?.getAttribute('aria-busy')==='true');
+            const transfer=new DataTransfer();
+            transfer.items.add(new File([content],name,{type:'text/plain'}));
+            inputs[index].files=transfer.files;
+            inputs[index].dispatchEvent(new Event('change'));
+            window.queuedIntake.fired.push(`${slot}:${name}`);
+          });
         }).observe(document,{subtree:true,attributes:true,attributeFilter:['aria-busy']});
       },mml);
       await page.locator('[data-intake="candidate"]').setInputFiles({name:'candidate.mml',mimeType:'text/plain',buffer:Buffer.from(mml)});
-      await page.waitForFunction(()=>window.queuedIntake?.fired===true);
+      await page.waitForFunction(()=>window.queuedIntake?.fired.length===2);
+      assert.deepEqual(await page.evaluate(()=>window.queuedIntake.busyAtDispatch),[true,true],'both waiter file actions must be dispatched inside the same busy window');
+      assert.deepEqual(await page.evaluate(()=>window.queuedIntake.fired),['baseline:queued-baseline.mml','previous:queued-previous.mml'],'waiter actions must enter serialization in the intended order');
       await idle();
-      const intakeText=await page.locator('#intake').textContent();
-      assert.ok(intakeText.includes('candidate.mml'),'the in-flight intake still applies');
-      assert.ok(intakeText.includes('queued-baseline.mml'),'a file chosen during a busy commit is applied, not dropped');
+      assert.deepEqual(await page.evaluate(()=>window.queuedIntake.appliedOrder),['queued-baseline.mml','queued-previous.mml'],'queued intake actions must be applied in FIFO order');
+      const intakeCards=page.locator('#intake .intake-grid .card');
+      assert.equal(await intakeCards.nth(0).locator('strong').textContent(),'candidate.mml','the in-flight intake still applies');
+      assert.equal(await intakeCards.nth(1).locator('strong').textContent(),'queued-baseline.mml','the first waiter is applied to the baseline slot');
+      assert.equal(await intakeCards.nth(2).locator('strong').textContent(),'queued-previous.mml','the second waiter is applied to the previous slot instead of being dropped');
       assert.equal(await page.locator('#copy-mml').isEnabled(),true);
       assert.equal(await page.locator('.hero .badge').textContent(),'CANDIDATE');
       assert.equal(await page.locator('#track-3').inputValue(),'');
@@ -126,7 +142,7 @@ try {
       assert.ok((await page.locator('#gates').textContent()).includes('UNSUPPORTED'));
       assert.equal(await page.evaluate(()=>Number(sessionStorage.getItem('settledWhileRunning')||0)),0,'aria-busy must never go false with a gate still reading ANALYSIS_RUNNING');
       assert.deepEqual(errors,[]);
-      results.push({profile:profile.name,status:'PASS',checks:['Files picker','local MML/MusicXML','full review workflow','state separation','exact clipboard payload','IndexedDB reload','boot busy signal','busy-window intake queued not dropped','settled state never ANALYSIS_RUNNING','revision invalidation','unsupported fail closed','no implicit uploads','responsive layout','offline module graph']});
+      results.push({profile:profile.name,status:'PASS',checks:['Files picker','local MML/MusicXML','full review workflow','state separation','exact clipboard payload','IndexedDB reload','boot busy signal','busy-window two-waiter FIFO','settled state never ANALYSIS_RUNNING','revision invalidation','unsupported fail closed','no implicit uploads','responsive layout','offline module graph']});
     } catch(error) {
       failed=true;results.push({profile:profile.name,status:'FAIL',error:error.stack,consoleErrors:errors});
       if(page)await page.screenshot({path:new URL(`${profile.name}-failure.png`,out).pathname,fullPage:true}).catch(()=>{});
