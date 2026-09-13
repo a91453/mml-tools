@@ -56,11 +56,17 @@ test('missing meter and mismatched delivery cannot be copied as verified MML', (
   assert.equal(analyzeWorkspace(w).tracks, null);
 });
 test('browser package validates exact published bytes and fails closed on corruption', async () => {
-  const bundle = loadPublishedCanonical();
-  const digest = createHash('sha256').update(JSON.stringify(bundle)).digest('hex');
+  // The browser receives the shipped runtime bundle, which excludes the dynamic
+  // Git provenance the build records in build.json instead.
+  const { provenance, ...bundle } = loadPublishedCanonical();
+  const digestOf = value => createHash('sha256').update(JSON.stringify(value)).digest('hex');
+  const digest = digestOf(bundle);
   await verifyCanonicalPackage(bundle, digest);
   await assert.rejects(verifyCanonicalPackage({ ...bundle, documents: [] }, digest), /CANONICAL_NOT_LOADED/);
   await assert.rejects(verifyCanonicalPackage(bundle, null), /CANONICAL_NOT_LOADED/);
+  // Provenance inside the hashed bundle is what made buildId unreproducible.
+  const contaminated = { ...bundle, provenance };
+  await assert.rejects(verifyCanonicalPackage(contaminated, digestOf(contaminated)), /CANONICAL_NOT_LOADED/);
 });
 
 test('manual reviews cannot validate or expose delivery with an unverified high named pitch', () => {

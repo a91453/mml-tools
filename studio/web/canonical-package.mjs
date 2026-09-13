@@ -7,8 +7,13 @@ export async function verifyCanonicalPackage(bundle, expectedDigest, cryptoApi =
   const digest = [...new Uint8Array(await cryptoApi.subtle.digest('SHA-256', bytes))].map(n => n.toString(16).padStart(2, '0')).join('');
   if (digest !== expectedDigest || bundle.status !== 'CANONICAL_LOADED') fail();
   if (bundle.metadata?.canonical_status !== 'PUBLISHED' || bundle.documents?.length !== 6) fail();
-  const ids = [bundle.metadata.rules_snapshot_sha, bundle.provenance?.manifest_commit, bundle.provenance?.published_main_head, bundle.provenance?.repository_head];
-  if (ids.some(id => !/^[a-f0-9]{40}$/.test(id ?? ''))) fail();
+  // Dynamic Git provenance must not reach the hashed runtime bundle, or buildId
+  // stops being reproducible. Reject it here and validate stable identity only.
+  if (bundle.provenance !== undefined) fail();
+  if (!/^[a-f0-9]{40}$/.test(bundle.metadata.rules_snapshot_sha ?? '')) fail();
+  if (!/^\d{4}-\d{2}-\d{2}-v\d+$/.test(bundle.metadata.canonical_version ?? '')) fail();
+  if (!String(bundle.metadata.manifest_version ?? '').startsWith(`${bundle.metadata.canonical_version}-manifest`)) fail();
+  if (!Array.isArray(bundle.authority?.map) || bundle.authority.map.length < bundle.documents.length) fail();
   for (const doc of bundle.documents) {
     if (!doc.content?.includes(`Version: ${bundle.metadata.canonical_version}`) || !doc.url?.includes(`/${bundle.metadata.rules_snapshot_sha}/`)) fail();
   }

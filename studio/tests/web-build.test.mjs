@@ -25,5 +25,7 @@ test('built offline engine preserves native parser/IR behavior and complete asse
     assert.ok(sw.includes(`./${path}`),`Offline asset missing: ${path}`);
     if(/\.m?js$/.test(path))assert.doesNotMatch(bytes.toString(),/from ['"]node:/);
   }
-  assert.notEqual(canonical.metadata.rules_snapshot_sha,canonical.provenance.published_main_head);
+  // Dynamic Git provenance is audit-only and must stay out of the hashed bundle.
+  assert.equal(canonical.provenance,undefined);
+  assert.notEqual(build.release.canonical.rules_snapshot_sha,build.audit.published_main_head);
 });
