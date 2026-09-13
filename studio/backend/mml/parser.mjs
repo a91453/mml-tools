@@ -258,6 +258,10 @@ export function parseTrack(raw, role, options = {}) {
         if (pitch < 0 || pitch > 127) fail('音高超出目前MIDI預覽映射0–127', start);
         if (pitch > syntax.numericNoteMax) {
           warn(`具名音高目前映射為${pitch}，超出官方pitch 0–${syntax.numericNoteMax}；O令牌映射仍屬實作/PENDING，需人工與實機確認`, start, 'NAMED_NOTE_ABOVE_OFFICIAL_PITCH_RANGE');
+          // Preserve source identity during ingest, but an unverified mapping
+          // cannot satisfy the Published Canonical Final numeric-range gate.
+          // This is a delivery restriction, not a claim about the game parser.
+          if (finalMode) fail(`Final 交付無法確認具名音高${pitch}符合pitch 0–${syntax.numericNoteMax}；保留來源供審核，不自動改音`, start, 'NAMED_NOTE_FINAL_RANGE_UNVERIFIED');
         }
 
         appendNote(pitch, duration, start);

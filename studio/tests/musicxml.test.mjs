@@ -150,6 +150,17 @@ test('MusicXML rejects timewise scores and entity-bearing DTD subsets', () => {
   );
 });
 
+test('namespace-prefixed navigation cannot be reported as a complete source', () => {
+  for (const [tag, code] of [['repeat', 'REPEAT_BARLINE'], ['ending', 'VOLTA_ENDING'], ['segno', 'SEGNO'], ['coda', 'CODA']]) {
+    const xml = SIMPLE_SCORE.replace('<score-partwise version="4.0">', '<score-partwise version="4.0" xmlns:m="urn:fixture">')
+      .replace('</measure>', `<barline><m:${tag}/></barline></measure>`);
+    const fragment = ingestMusicXML(xml);
+    assert.equal(fragment.complete, false, tag);
+    assert.ok(fragment.unsupported.some(item => item.code === code), tag);
+    assert.deepEqual(fragment.events, ingestMusicXML(SIMPLE_SCORE).events, 'unsupported detection preserves written events');
+  }
+});
+
 test('metronome half=60 is normalized to quarter-note BPM 120', () => {
   const xml = `<?xml version="1.0"?><score-partwise version="4.0">
     <part-list><score-part id="P1"><part-name>Piano</part-name></score-part></part-list>

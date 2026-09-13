@@ -1,0 +1,27 @@
+<!doctype html>
+<html lang="zh-Hant">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <meta name="theme-color" content="#122a32">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-status-bar-style" content="default">
+  <meta name="description" content="在 iPhone 與 iPad 本地整理、比對與審核 Mabinogi Mobile 六軌 MML。">
+  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self' data:; connect-src 'self' https:; worker-src 'self'; object-src 'none'; base-uri 'self'; form-action 'none'">
+  <title>MML Studio</title>
+  <link rel="manifest" href="./manifest.webmanifest">
+  <link rel="icon" href="./icon.svg" type="image/svg+xml">
+  <link rel="apple-touch-icon" href="./apple-touch-icon.png">
+  <link rel="stylesheet" href="./style.css">
+</head>
+<body>
+  <a href="#main" class="skip">跳至專案</a>
+  <header class="topbar"><a class="brand" href="#main"><img src="./icon.svg" alt="" width="36" height="36"><span>MML <strong>Studio</strong><small>MABINOGI MOBILE</small></span></a><span class="local-pill" id="network">本地工作空間</span></header>
+  <div class="layout">
+    <aside><p class="eyebrow">YOUR WORKSPACE</p><label for="projects">專案</label><select id="projects" aria-label="開啟專案"></select><button id="new-project" class="secondary">＋ 新增專案</button><nav aria-label="工作流程"><a href="#intake">01　來源</a><a href="#gates">02　分析 Gate</a><a href="#review">03　比對與審核</a><a href="#audio">04　音訊證據</a><a href="#delivery">05　交付</a></nav><p class="aside-note">MusicXML、MML 與審核在此裝置執行。</p><button id="export-project" class="quiet">匯出專案備份</button><label class="file-button quiet">匯入專案備份<input id="restore-project" type="file" accept=".json,application/json"></label><details class="install"><summary>加入主畫面</summary><p>在 Safari 開啟，點「分享」→「加入主畫面」。首次載入完成後可離線開啟；檔案保存在本機，請定期匯出備份。</p></details></aside>
+    <main id="main"><div id="boot" role="status">正在核對 Published Canonical…</div><div id="app" hidden></div></main>
+  </div>
+  <div id="message" role="status" aria-live="polite"></div>
+  <script type="module" src="./studio/web/app.mjs"></script>
+</body>
+</html>

@@ -101,3 +101,54 @@ test('notes supported by the same source do not become cross-source conflicts', 
   assert.equal(report.status, 'PASS');
   assert.equal(report.conflictCount, 0);
 });
+
+// Every pair of note events is reviewed, so a song-length project decides
+// whether the phone workflow is usable at all: the local Worker analysis is
+// bounded by a timeout, and losing it discards the imported sources. Six
+// overlapping roles at song length also keep the same-source and interval
+// rejection paths on the hot path rather than short-circuiting immediately.
+test('a song-length six-role project is reviewed pair-by-pair without losing conflicts or stalling the local Worker', () => {
+  const ROLES = ['Melody', 'Chord1', 'Chord2', 'Chord3', 'Chord4', 'Chord5'];
+  const [official, thirdparty] = sources();
+  const events = [];
+  for (let bar = 0; bar < 1000; bar++) {
+    for (let role = 0; role < ROLES.length; role++) {
+      // Sustained, heavily overlapping roles, and same-source neighbours at the
+      // reviewed distances (0/1/11/13) that must never become cross-source conflicts.
+      events.push(note(`official:${bar}:${role}`, 'official', ROLES[role], 48 + role * 11, String(bar), String(bar + 3)));
+    }
+  }
+  const planted = [
+    ['Chord1', 'Chord4', 60, 60, 'cross-source-same-pitch', 'P1'],
+    ['Melody', 'Chord3', 72, 73, 'cross-source-dissonance', 'm2'],
+    ['Chord2', 'Chord5', 55, 66, 'cross-source-dissonance', 'M7'],
+    ['Chord2', 'Chord3', 50, 63, 'cross-source-dissonance', 'm9'],
+  ];
+  planted.forEach(([leftRole, rightRole, leftPitch, rightPitch], index) => {
+    // Past the sustained material, so the expected conflict set is exactly the
+    // planted pairs and not incidental neighbours of the background roles.
+    const at = 2000 + index * 10;
+    events.push(note(`official:planted:${index}`, 'official', leftRole, leftPitch, String(at), String(at + 2)));
+    events.push(note(`thirdparty:planted:${index}`, 'thirdparty', rightRole, rightPitch, String(at), String(at + 2)));
+  });
+  const project = createCanonicalProject({
+    id: 'song-length', title: 'Song length', sources: [official, thirdparty], events,
+  });
+
+  const started = process.hrtime.bigint();
+  const report = analyzeCrossSourceHarmony(project);
+  const elapsedMs = Number(process.hrtime.bigint() - started) / 1e6;
+
+  assert.equal(project.events.length, 6008);
+  assert.equal(report.conflictCount, planted.length, 'only genuine cross-source pairs are reported');
+  assert.deepEqual(
+    report.conflicts.map(conflict => [conflict.kind, conflict.intervalName]),
+    planted.map(([, , , , kind, intervalName]) => [kind, intervalName]),
+  );
+  assert.deepEqual(
+    report.conflicts.map(conflict => [conflict.leftEventId, conflict.rightEventId]),
+    planted.map((_, index) => [`official:planted:${index}`, `thirdparty:planted:${index}`]),
+  );
+  assert.equal(report.unresolvedCount, planted.length);
+  assert.ok(elapsedMs < 5000, `cross-source review of a song-length project took ${elapsedMs.toFixed(0)}ms`);
+});

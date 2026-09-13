@@ -1,16 +1,146 @@
-# Studio Web UI
+# Studio Web / PWA v1
 
-Target device: iPad Pro / iPhone Safari first.
+Status: implementation on `studio-web-v1`; no production deployment.
+This document describes the UI implementation, not Canonical rules.
+Rule loading starts only at Published main's
+[Canonical Manifest](../../docs/CANONICAL_MANIFEST.md).
 
-The UI should stay thin. Heavy parsing/comparison belongs in backend modules; the browser surface should mainly upload sources, show reports, and record arbitration choices.
+## Everyday use on iPhone / iPad
 
-Planned V1 screens:
+Open the separately hosted HTTPS Studio build in Safari. Use Share → Add to Home
+Screen to install. No terminal is needed for project work. Hosting is an operator
+step; this branch does not deploy a site or change Railway/MCP.
 
-1. Song project / source upload
-2. Source identity + priority confirmation
-3. Current-vs-history divergence report
-4. Conflict review with source traceability
-5. Core3 / Full6 technical gates
-6. Final MML export
+1. Create a project. Record the song/recording version, effective start/end seconds,
+   source-confirmed meter map, original-audio applicability and preview usage.
+2. Use Files to select the candidate, Source-Faithful Baseline and accepted previous
+   version (when available). Paste is also supported. MML remains derived evidence;
+   MusicXML defaults to supporting unless the user confirms official symbolic authority.
+3. Inspect source authority, completeness, warnings and unsupported constructs.
+   Read the Analysis Gate dashboard and event-level Version Drift tables.
+4. Review Lead/Core3 continuity, the 15 cross-track pair report, density and
+   cross-source Harmony. Record reasons and exact source/section evidence.
+   Keep decisions can be reviewed locally. Omit/move/octave/redistribution proposals
+   remain pending until the symbolic candidate is actually edited and re-imported.
+5. Complete each applicable musical review. Technical PASS alone leaves the song
+   Candidate. Unknown statuses remain PENDING; unsupported inputs remain blocked.
+6. Copy the complete MML@ or individual roles, and export the six-role text,
+   Canonical IR, analysis report or portable project backup.
+7. Only after every necessary non-game gate passes does the state become Validated.
+   Explicit client/region/version, instrument setup and user evidence tied to the
+   exact pasted MML are required for In-game Accepted.
 
-Do not make the UI itself the canonical store of musical truth. Project JSON must remain exportable and source-linked.
+Projects persist in IndexedDB after transaction completion. Storage failures remain
+visible and portable export stays available. Concurrent tabs use optimistic save
+tokens to avoid silently overwriting each other. Export backups regularly: Safari
+can evict local data. Backup imports preserve old reviews as history and require
+new review; they cannot import a ready-made acceptance claim.
+
+Files and review actions are serialized in FIFO order, including during boot.
+Pending evidence stays bound to its project and revision; choosing a different
+project cannot transfer queued reviews or source files to it.
+
+Any source/settings/delivery revision clears its previous reviews and acceptance.
+Changing the pinned Canonical identity also invalidates saved reviews, including
+when switching between local projects. Imported IR is reconstructed using the
+existing Canonical constructors; embedded PASS/audio/acceptance metadata is not
+readiness evidence. Imported accepted arbitration decisions need fresh review.
+
+## Local / cloud boundary
+
+| Capability | Execution / data movement |
+| --- | --- |
+| MusicXML, MML and Canonical IR intake | Local module Web Worker; original bytes never uploaded |
+| Version Drift, Lead, Core3, Harmony, Readiness | Existing Studio modules in the local Worker |
+| Project/source files and review records | IndexedDB; user-initiated file exports |
+| M4A/FLAC/WAV selection | Local only; selection does not start a request |
+| Audio Alignment | Explicit button sends the selected audio and a minimal derived event/tempo projection |
+| Audio report | Evidence only, with audio SHA-256 and exact derived-project SHA-256 binding; never edits symbolic events |
+
+There is no default cloud endpoint or telemetry. Optional audio setup requires an
+operator-provided HTTPS endpoint and session-only token. The token is never saved
+in a project. Requests omit cookies, forbid redirects and are not cached. Selecting
+audio invalidates older applicability/review state. Cancellation stops browser
+upload/waiting; an already-running remote alignment may continue until its host's
+job timeout. No automatic retry uploads occur.
+
+The optional `studio/audio-worker/mml_audio_worker/http_server.py` adapter wraps
+the existing audio implementation. It accepts only `POST /align`, a configured
+exact HTTPS Origin and bearer token, with 4 MiB project / 64 MiB audio limits.
+Payload framing is UTF-8 minimal project JSON followed by audio bytes;
+`X-Project-Bytes` identifies the boundary and `X-Audio-Format` is `m4a|flac|wav`.
+The adapter attaches `symbolic.web_project_sha256` to its report and removes temp
+files on completion/failure. Existing CLI reports without this binding remain
+unverified in Web v1. An operator must supply HTTPS termination, private token
+distribution, workload timeouts and resource limits before exposing this optional
+service. This PR supplies no deployment credentials or production wiring.
+
+## Build and CI (developer / operator only)
+
+From a Git checkout with refreshed `origin/main` and the complete rules snapshot:
+
+```sh
+npm install --ignore-scripts --package-lock=false
+npm run canonical:bootstrap -- --summary
+npm test
+npm run build:studio-web
+npm run preview:studio-web
+```
+
+The static artifact is `studio/web-build/`, separate from the legacy `dist/`
+production bundle. Serve it over HTTPS (localhost is sufficient for development).
+Deploy the whole directory atomically at a path with a trailing slash, use correct
+JavaScript MIME types and serve `sw.js` without a long HTTP cache lifetime. No SPA
+fallback, server runtime, CDN or external script dependency is required.
+
+The build invokes the existing Git Bootstrap, copies the unchanged analysis
+modules and the installed fast-xml-parser browser distribution, and replaces only
+the Node/Git environment loader. It packages all six Manifest-indexed documents,
+their authority labels, rules snapshot, Manifest commit, Published main HEAD,
+working HEAD and actual PR source HEAD when CI supplies it. Web initialization
+checks package integrity and runtime identity before analyzing files. A missing
+or inconsistent snapshot is `CANONICAL_NOT_LOADED`, never a legacy fallback.
+Offline status means a verified **build-time** Published snapshot; it does not
+claim a live check of the newest main.
+
+The service worker precaches the complete native-module graph under a build hash.
+It does not skip waiting while an existing Studio session is open, preventing a
+mixed-version review. Source uploads, credentials and audio POSTs are never cached.
+
+Browser regressions are committed under `studio/browser-tests/run.mjs`:
+
+```sh
+npx playwright install --with-deps chromium webkit
+npm run build:studio-web
+npm run test:studio-web
+```
+
+CI covers iPhone-size WebKit, iPad-size WebKit and desktop Chromium, with screenshots
+and JSON results. It exercises Files intake, review/state transitions, exact copy
+payloads, local persistence, unsupported handling, no implicit upload, viewport
+overflow and offline restart. OS clipboard permission, actual Safari Files provider
+behavior, Home Screen lifecycle and Mabinogi acceptance still require real devices.
+
+## Explicit v1 limits
+
+- Uncompressed score-partwise MusicXML, complete six-slot MML and Canonical IR @2
+  are supported. Compressed MXL, raw MIDI intake and unrecognized IR schemas are
+  unsupported in this Web intake.
+- Existing MusicXML limitations (repeat/navigation expansion, grace realization,
+  transposing parts, microtones, unpitched mapping) stay visible and block promotion.
+- No automatic MusicXML/IR arrangement, role assignment, six-track reduction or
+  note rewriting is added. A supplied delivery MML must match candidate events and
+  meter before copy is enabled. Caution-length/Nxx opt-ins are not exposed in v1;
+  no implicit opt-in is granted. Named notes whose current mapping lies above
+  pitch 107 remain source evidence but cannot pass Final delivery while unverified.
+- The built-in Core3 continuity report is only a source-relative diagnostic.
+  Musical Core3/Lead/Full6 completeness requires separate explicit review.
+- This v1 does not implement a verification player. If one was used, the actual
+  readback gate remains PENDING. Only explicitly declaring that no preview/player
+  was used, with the Tempo review, makes that conditional gate N/A.
+- Named historical-song regressions without reproducible fixtures remain
+  `FIXTURE_PENDING`. Synthetic tests never certify those songs.
+
+The [final pre-PR audit](../../docs/STUDIO_WEB_V1_FINAL_AUDIT.md) records evidenced
+findings and their tests. [Draft PR #7](https://github.com/a91453/mml-tools/pull/7)
+pins the latest reviewed branch HEAD and CI runs.

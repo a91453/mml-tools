@@ -4,10 +4,12 @@ import {
 } from './musicxml.mjs';
 
 const NAVIGATION_MARKERS = Object.freeze([
-  ['REPEAT_BARLINE', /<repeat\b/i],
-  ['VOLTA_ENDING', /<ending\b/i],
-  ['SEGNO', /<segno\b/i],
-  ['CODA', /<coda\b/i],
+  // The existing XML reader removes namespace prefixes. The unsupported guard
+  // must see those same local names; no navigation is expanded or newly supported.
+  ['REPEAT_BARLINE', /<(?:[^<>\s/:]+:)?repeat\b/i],
+  ['VOLTA_ENDING', /<(?:[^<>\s/:]+:)?ending\b/i],
+  ['SEGNO', /<(?:[^<>\s/:]+:)?segno\b/i],
+  ['CODA', /<(?:[^<>\s/:]+:)?coda\b/i],
   ['DA_CAPO', /\bdacapo\s*=/i],
   ['DAL_SEGNO', /\bdalsegno\s*=/i],
   ['TO_CODA', /\btocoda\s*=/i],
