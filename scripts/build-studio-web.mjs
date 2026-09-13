@@ -3,6 +3,7 @@ import { resolve, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { createHash } from 'node:crypto';
 import { loadPublishedCanonical } from '../studio/backend/bootstrap/index.mjs';
+import { SERVICE_WORKER_ASSET, byPath, computeBuildId, computeCacheId, readServiceWorkerTemplate, renderServiceWorker } from './studio-artifact-identity.mjs';
 
 const root = fileURLToPath(new URL('../', import.meta.url));
 // Overridable so verification can build into an isolated directory without
@@ -56,23 +57,19 @@ await inventory();
 const runtimeFiles = files.sort();
 const runtimeHashes = await Promise.all(runtimeFiles.map(async path => [path, digest(await readFile(resolve(out, path)))]));
 
-// Stage A - cache identity. A Service Worker cannot contain its own hash, so
-// deriving its cache name from the final buildId would need buildId -> sw.js ->
-// buildId. Derive it instead from the runtime assets plus the SW template: it
-// moves whenever either moves, with no cycle.
-const swTemplate = await readFile(resolve(root, 'studio/web/sw.js'), 'utf8').catch(error => { if (error.code === 'ENOENT') return ''; throw error; });
-const cacheId = digest(JSON.stringify([runtimeHashes, digest(swTemplate)]));
-// The Service Worker is not precached by itself; the browser fetches it directly.
-if (swTemplate) await put('sw.js', swTemplate.replace('__CACHE_NAME__', `mml-studio-v1-${cacheId}`).replace('__PRECACHE__', JSON.stringify(['./', ...runtimeFiles.map(path => `./${path}`), './build.json'])));
+// Stage A - cache identity, shared with the artifact verifier so the two
+// cannot drift. See scripts/studio-artifact-identity.mjs for why it is derived
+// from the template rather than from the final buildId.
+const swTemplate = await readServiceWorkerTemplate(root);
+const cacheId = computeCacheId(runtimeHashes, swTemplate);
+// The worker does not precache itself; the browser fetches that script directly.
+if (swTemplate) await put(SERVICE_WORKER_ASSET, renderServiceWorker(swTemplate, cacheId, runtimeFiles));
 
-// Stage B - release identity. The generated Service Worker is executable code
-// that controls interception, offline serving and the cached runtime graph, so
-// the artifact manifest and buildId must cover it. Anything left out of the
-// manifest can be swapped or deleted without changing the declared identity.
+// Stage B - release identity over the complete manifest, worker included.
 const hashes = swTemplate
-  ? [...runtimeHashes, ['sw.js', digest(await readFile(resolve(out, 'sw.js')))]].sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0))
-  : runtimeHashes;
-const buildId = digest(JSON.stringify(hashes));
+  ? [...runtimeHashes, [SERVICE_WORKER_ASSET, digest(await readFile(resolve(out, SERVICE_WORKER_ASSET)))]].sort(byPath)
+  : [...runtimeHashes].sort(byPath);
+const buildId = computeBuildId(hashes);
 const audit = { note: 'Dynamic Git and build provenance. Audit only: excluded from hashed runtime assets and from buildId.', source_sha: provenance.repository_head, ...provenance };
 // Stable release identity defines the artifact; audit provenance never does.
 await put('build.json', JSON.stringify({

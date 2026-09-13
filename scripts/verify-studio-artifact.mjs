@@ -11,12 +11,13 @@ import { readFile, readdir } from 'node:fs/promises';
 import { resolve } from 'node:path';
 import { createHash } from 'node:crypto';
 import { assertStableCanonicalPackage } from '../studio/web/canonical-contract.mjs';
+import { BUILD_MANIFEST, SERVICE_WORKER_ASSET, byPath, computeBuildId, computeCacheId, readServiceWorkerTemplate, renderServiceWorker } from './studio-artifact-identity.mjs';
 
 // build.json is the sidecar that carries the manifest, so it cannot be inside
 // it. Everything else, the generated Service Worker included, must be covered:
 // a file outside the manifest can be replaced or deleted without changing the
 // declared identity.
-export const UNHASHED = Object.freeze(['build.json']);
+export const UNHASHED = Object.freeze([BUILD_MANIFEST]);
 
 // Read the Canonical payload the artifact actually ships, without executing any
 // artifact JavaScript. The build emits each copy as one deterministic line.
@@ -49,7 +50,7 @@ async function walk(dir, base = '') {
 }
 
 // `expected` optionally pins the identity a deployment was authorised to serve.
-export async function verifyStudioArtifact(dir, expected = {}) {
+export async function verifyStudioArtifact(dir, expected = {}, { serviceWorkerTemplate = null } = {}) {
   let build;
   try { build = JSON.parse(await readFile(resolve(dir, 'build.json'), 'utf8')); }
   catch { throw new ArtifactNotVerifiedError('build.json is missing or unreadable'); }
@@ -86,8 +87,7 @@ export async function verifyStudioArtifact(dir, expected = {}) {
 
   // buildId must be reproducible from the manifest it ships with, so a tampered
   // manifest cannot be laundered by rewriting the declared buildId to match.
-  const ordered = [...manifest.entries()].sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0));
-  need(digest(JSON.stringify(ordered)) === build.buildId, 'Declared buildId does not match the asset manifest');
+  need(computeBuildId([...manifest.entries()]) === build.buildId, 'Declared buildId does not match the asset manifest');
 
   const present = new Set(await walk(dir));
   for (const name of UNHASHED) present.delete(name);
@@ -130,12 +130,18 @@ export async function verifyStudioArtifact(dir, expected = {}) {
     need(bundle.metadata[key] === value, `Shipped Canonical ${key} disagrees with build.json release identity`);
   }
 
-  // The Service Worker's cache identity must be the one the build declared.
-  if (manifest.has('sw.js')) {
-    need(/^[a-f0-9]{64}$/.test(build.release.cacheId ?? ''), 'build.json declares no valid cacheId for the Service Worker');
-    const worker = await readFile(resolve(dir, 'sw.js'), 'utf8');
-    need(worker.includes(`mml-studio-v1-${build.release.cacheId}`), 'Service Worker cache identity disagrees with release.cacheId');
-  }
+  // The Service Worker is mandatory executable runtime code, so it is rebuilt
+  // rather than pattern-matched. The template comes from this repository, never
+  // from the artifact: an artifact that supplies its own template can always
+  // recompute a cacheId that agrees with itself.
+  need(manifest.has(SERVICE_WORKER_ASSET), `Artifact declares no ${SERVICE_WORKER_ASSET}; it is a mandatory runtime asset`);
+  need(/^[a-f0-9]{64}$/.test(build.release.cacheId ?? ''), 'build.json declares no valid cacheId for the Service Worker');
+  const template = serviceWorkerTemplate ?? await readServiceWorkerTemplate();
+  need(template, 'No trusted Service Worker template is available to verify against');
+  const runtimeHashes = [...manifest.entries()].filter(([path]) => path !== SERVICE_WORKER_ASSET).sort(byPath);
+  need(build.release.cacheId === computeCacheId(runtimeHashes, template), 'release.cacheId does not match the trusted Service Worker template and the runtime assets');
+  const expectedWorker = renderServiceWorker(template, build.release.cacheId, runtimeHashes.map(([path]) => path));
+  need(await readFile(resolve(dir, SERVICE_WORKER_ASSET), 'utf8') === expectedWorker, 'Shipped Service Worker is not the deterministic render of the trusted template');
 
   return { buildId: build.buildId, release: build.release, audit: build.audit, assetCount: manifest.size };
 }

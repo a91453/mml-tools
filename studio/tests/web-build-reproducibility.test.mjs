@@ -13,6 +13,7 @@ import { fileURLToPath } from 'node:url';
 import { createHash } from 'node:crypto';
 import { readdir } from 'node:fs/promises';
 import { verifyStudioArtifact } from '../../scripts/verify-studio-artifact.mjs';
+import { computeCacheId, readServiceWorkerTemplate, renderServiceWorker } from '../../scripts/studio-artifact-identity.mjs';
 import { verifyCanonicalPackage } from '../web/canonical-package.mjs';
 
 const root = fileURLToPath(new URL('../../', import.meta.url));
@@ -284,12 +285,12 @@ test('the release manifest covers the generated Service Worker', async t => {
   await rm(resolve(deleted, 'sw.js'));
   await rejects(deleted, /Asset declared in build\.json is missing: sw\.js/);
 
-  // Re-signing a swapped worker still fails: its cache identity no longer
-  // matches the declared cacheId.
+  // Re-signing a swapped worker still fails: it is not the deterministic render
+  // of the trusted template.
   const laundered = await copyOf();
   await writeFile(resolve(laundered, 'sw.js'), "self.addEventListener('fetch',e=>e.respondWith(new Response('hostile')));\n");
   await resign(laundered);
-  await rejects(laundered, /Service Worker cache identity disagrees with release\.cacheId/);
+  await rejects(laundered, /not the deterministic render of the trusted template/);
 });
 
 test('changing the Service Worker template changes cacheId and buildId', async t => {
@@ -375,4 +376,72 @@ test('a verified artifact also satisfies the browser Canonical package contract'
   const accepted = await verifyCanonicalPackage(JSON.parse(json), sha256(json));
   assert.equal(accepted.status, 'CANONICAL_LOADED');
   assert.equal(accepted.metadata.rules_snapshot_sha, manifest.release.rules_snapshot_sha);
+});
+
+
+// --- A Service Worker is executable code, so the verifier rebuilds it from the
+// --- repository's own template instead of pattern-matching the shipped bytes.
+// --- Every exploit below re-signs the artifact so it is internally consistent.
+
+const HOSTILE = "self.addEventListener('fetch',e=>e.respondWith(new Response('pwned')));\n";
+
+test('a swapped Service Worker cannot be laundered by re-signing the artifact', async t => {
+  const { out, manifest } = await build(t);
+  const cacheId = manifest.release.cacheId;
+  const copyOf = async () => {
+    const dir = await scratch();
+    t.after(() => rm(dir, { recursive: true, force: true }));
+    await cp(out, dir, { recursive: true });
+    return dir;
+  };
+
+  // A: hostile worker that keeps the genuine cache name string.
+  const kept = await copyOf();
+  await writeFile(resolve(kept, 'sw.js'), `const CACHE='mml-studio-v1-${cacheId}';\n${HOSTILE}`);
+  await resign(kept);
+  await rejects(kept, /not the deterministic render of the trusted template/);
+
+  // B: hostile worker carrying the cache name only inside a comment.
+  const commented = await copyOf();
+  await writeFile(resolve(commented, 'sw.js'), `// mml-studio-v1-${cacheId}\n${HOSTILE}`);
+  await resign(commented);
+  await rejects(commented, /not the deterministic render of the trusted template/);
+
+  // C: worker deleted and removed from the manifest entirely.
+  const dropped = await copyOf();
+  await rm(resolve(dropped, 'sw.js'));
+  await resign(dropped);
+  await rejects(dropped, /mandatory runtime asset/);
+
+  // D: attacker supplies their own template and recomputes cacheId from it, so
+  // the artifact is self-consistent. Only the trusted template catches this.
+  const forged = await copyOf();
+  const hostileTemplate = `const CACHE='__CACHE_NAME__';const ASSETS=__PRECACHE__;${HOSTILE}`;
+  const runtime = (await walkArtifact(forged)).filter(path => path !== 'build.json' && path !== 'sw.js').sort();
+  const runtimeHashes = await Promise.all(runtime.map(async path => [path, sha256(await readFile(resolve(forged, path)))]));
+  const forgedCacheId = sha256(JSON.stringify([runtimeHashes, sha256(hostileTemplate)]));
+  await writeFile(resolve(forged, 'sw.js'), hostileTemplate
+    .replace('__CACHE_NAME__', `mml-studio-v1-${forgedCacheId}`)
+    .replace('__PRECACHE__', JSON.stringify(['./', ...runtime.map(path => `./${path}`), './build.json'])));
+  await resign(forged, { cacheId: forgedCacheId });
+  await rejects(forged, /release\.cacheId does not match the trusted Service Worker template/);
+
+  // The genuine artifact still verifies.
+  await assert.doesNotReject(() => verifyStudioArtifact(out));
+});
+
+test('the shipped Service Worker is exactly the trusted template rendered with the declared cacheId', async t => {
+  const { out, manifest } = await build(t);
+  const template = await readServiceWorkerTemplate();
+  const runtimeFiles = manifest.files.filter(([path]) => path !== 'sw.js');
+  assert.equal(computeCacheId(runtimeFiles, template), manifest.release.cacheId);
+  assert.equal(
+    await readFile(resolve(out, 'sw.js'), 'utf8'),
+    renderServiceWorker(template, manifest.release.cacheId, runtimeFiles.map(([path]) => path)),
+  );
+  // A template the artifact could have supplied must not satisfy the verifier.
+  await assert.rejects(
+    () => verifyStudioArtifact(out, {}, { serviceWorkerTemplate: `// forged\n${HOSTILE}` }),
+    /release\.cacheId does not match the trusted Service Worker template/,
+  );
 });
