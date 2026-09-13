@@ -196,6 +196,18 @@ test('named-note mapping above official pitch 107 is visible as a warning, not m
   assert.ok(parsed.warnings.some(item => item.code === 'NAMED_NOTE_ABOVE_OFFICIAL_PITCH_RANGE'));
 });
 
+test('Final blocks unverified named-note mappings above 107 while ingest preserves them', () => {
+  const raw = six('t120o8c1');
+  const ingest = validateMML(raw, { meterText: '0 4/4', validationMode: 'ingest' });
+  assert.equal(ingest.ok, true);
+  assert.equal(ingest.song.tracks[0].events[0].pitch, 108);
+  const final = validateMML(raw, { meterText: '0 4/4' });
+  assert.equal(final.ok, false);
+  assert.ok(final.errors.some(item => item.code === 'NAMED_NOTE_FINAL_RANGE_UNVERIFIED'));
+  assert.equal(final.song.tracks[0].events[0].pitch, 108, 'validation never rewrites the source pitch');
+  assert.equal(validateMML(six('t120o7b1'), { meterText: '0 4/4' }).ok, true, 'mapped pitch 107 remains allowed');
+});
+
 test('1/64 events survive MIDI and ABC preview round trips', () => {
   const result = validateMML(six('t120o4c64r64c32'), {
     meterText: '0 4/4',

@@ -62,3 +62,18 @@ test('browser package validates exact published bytes and fails closed on corrup
   await assert.rejects(verifyCanonicalPackage({ ...bundle, documents: [] }, digest), /CANONICAL_NOT_LOADED/);
   await assert.rejects(verifyCanonicalPackage(bundle, null), /CANONICAL_NOT_LOADED/);
 });
+
+test('manual reviews cannot validate or expose delivery with an unverified high named pitch', () => {
+  let w = workspace();
+  for (const slot of ['candidate', 'baseline']) w.assets[slot] = intake({
+    name: `${slot}.mml`, id: slot, meterText: w.settings.meterText,
+    content: mml.replace('o4c1', 'o8c1'),
+  });
+  for (const name of REVIEW_NAMES) w = recordReview(w, name, 'reviewed', 'fixture');
+  const r = analyzeWorkspace(w);
+  assert.equal(r.state, 'CANDIDATE');
+  assert.equal(r.gates.technical.status, 'FAIL');
+  assert.equal(r.rawMml, null);
+  assert.equal(r.tracks, null);
+  assert.throws(() => recordAcceptance(w, { client: 'fixture', instrument: 'piano', evidence: 'fixture' }));
+});
