@@ -40,6 +40,16 @@ New code consists of the touch-first UI, IndexedDB project storage, module Worke
 offline build/package verification, PWA resources, explicit audio client and a
 small optional authenticated HTTP adapter around the existing Python worker.
 
+One reused module was changed rather than only wired up. Cross-source harmony
+review compares every pair of note events, and its per-pair test was rebuilding
+exact-rational beat values and source sets; at song length that alone exceeded
+the Worker call timeout the UI enforces, so a normal-length song could not be
+analysed on the target device. The per-pair test now reuses values parsed once
+and is ordered cheapest-first. The reviewed pairs, reported conflicts, their
+fields and their order are unchanged, verified against the previous
+implementation over randomised multi-source fixtures. No Canonical rule,
+threshold or reviewed interval was touched.
+
 ## Validation completed in the development session
 
 - 201 Node tests passed, including all 190 existing main tests.
@@ -53,25 +63,35 @@ small optional authenticated HTTP adapter around the existing Python worker.
   artifact is included in the branch diff.
 - Syntax and whitespace checks passed.
 
+## CI verification since that session
+
+The three items this record previously listed as unrun have now run. Studio CI
+run 145 on branch HEAD `33cf6900f8454e4b822811dcfdc3731303760f27` completed with
+all three jobs successful:
+
+| Job | Covers | Result |
+| --- | --- | --- |
+| `symbolic` | Canonical Bootstrap, Node regressions, Studio PWA build, legacy build | success |
+| `audio-worker` | native FFmpeg/librosa alignment regressions on Python 3.12 | success |
+| `studio-web` | iPhone-size WebKit, iPad-size WebKit and desktop Chromium user flows | success |
+
+The `studio-web` job runs all three browser profiles in one job, so the profile
+names are its results, not separate jobs. Screenshots and `results.json` are
+uploaded as run artifacts. Later branch commits re-run the same three jobs; a
+green run certifies the commit it ran on, never a later one.
+
 ## Verification still outstanding
 
-- Complete GitHub Actions on the final branch HEAD. At the time of this record,
-  GitHub reported no Actions runs/check-runs for the pushed branch checkpoints.
-  The connected GitHub tools do not expose workflow dispatch. A successful main
-  run is not claimed as success for this branch.
-- The new iPhone-size/iPad-size WebKit and Chromium browser suite is committed
-  to CI, but has not yet run. Local browser download was blocked by network
-  timeouts, and the cloud browser could not reach the local preview. Screenshots,
-  touch layout, IndexedDB and offline restart are not yet visually verified.
-- Full native audio regressions must run in CI. The restored local audio venv
-  exited with signal 135; this is not reported as a passing audio suite.
 - Real iPhone/iPad Safari Files providers, Home Screen lifecycle, storage eviction,
   clipboard permission/fallback, and actual Mabinogi client playback/acceptance.
+  CI exercises WebKit at iPhone/iPad viewport size, which is not a real device.
 - A separately configured HTTPS Audio Worker integration with real source audio.
+  CI covers the HTTP adapter boundary with an injected aligner only.
+- Named historical-song regressions remain `FIXTURE_PENDING`. A green CI run
+  never certifies those songs.
 
-The requested order is full CI success before opening a Draft PR. Until that
-gate is satisfied or the user explicitly authorizes opening a Draft to trigger
-PR CI, do not claim a Draft PR exists or that this implementation is release-ready.
+Passing CI is a `TECHNICAL_PASS` for the implementation, not song acceptance and
+not release readiness. Do not claim a Draft PR exists unless one has been opened.
 
 Usage, local/cloud behavior and supported/unsupported paths are documented in
 [studio/web/README.md](../studio/web/README.md).
