@@ -7,6 +7,7 @@ The existing alignment function remains the only audio implementation.
 from __future__ import annotations
 
 import hmac
+import hashlib
 import json
 import os
 import tempfile
@@ -90,6 +91,7 @@ def create_server(address, *, token, allowed_origin, aligner=None):
                             output.write(chunk)
                             remaining -= len(chunk)
                     report = aligner(path, project)
+                    report['symbolic']['web_project_sha256'] = hashlib.sha256(raw).hexdigest()
                 self.respond(200, report)
             except Exception:
                 self.respond(422, {'error': 'alignment failed; symbolic truth unchanged'})

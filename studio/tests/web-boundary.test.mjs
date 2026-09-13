@@ -1,7 +1,8 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { requestAudioAlignment } from '../web/audio-client.mjs';
+import { requestAudioAlignment, verifyAudioBinding } from '../web/audio-client.mjs';
 import { newWorkspace, intake, analyzeWorkspace, recordReview, REVIEW_NAMES } from '../web/model.mjs';
+import { alignmentProjectText, sha256 } from '../web/audio-payload.mjs';
 
 const mml='MML@t120o4c1,t120o3e1,t120o2c1,,,;';
 const project = intake({name:'local-only.mml',content:mml,id:'source',meterText:'0 4/4'}).project;
@@ -15,6 +16,7 @@ test('explicit audio payload excludes source text and validates audio identity w
   const before=JSON.stringify(project);const file=new File(['test'],'original.wav');
   const sha=[...new Uint8Array(await crypto.subtle.digest('SHA-256',await file.arrayBuffer()))].map(n=>n.toString(16).padStart(2,'0')).join('');
   const report={schema:'mabinogi-mobile-mml-studio/audio-alignment@1',audio:{sha256:sha},symbolic:{project_id:project.id},evidence_policy:{changes_symbolic_truth:false},alignment:{control_points:[{beat:0,seconds:0},{beat:4,seconds:2}],metrics:{confidence:1,score_frame_coverage:1,audio_frame_coverage:1}}};
+  report.symbolic.web_project_sha256=await sha256(new TextEncoder().encode(alignmentProjectText(project)));
   const fetcher=async(url,options)=>{
     assert.equal(options.credentials,'omit');assert.equal(options.redirect,'error');assert.equal(options.method,'POST');
     const bytes=new Uint8Array(await options.body.arrayBuffer());const size=Number(options.headers['X-Project-Bytes']);const payload=new TextDecoder().decode(bytes.slice(0,size));
@@ -34,4 +36,12 @@ test('imported accepted decisions remain pending until reviewed in this revision
   for(const name of REVIEW_NAMES)w=recordReview(w,name,'reviewed','synthetic source');
   assert.equal(analyzeWorkspace(w).gates.pendingDecisions.status,'PENDING');
   assert.equal(analyzeWorkspace(w).state,'CANDIDATE');
+});
+test('matching project ID alone cannot attach a stale audio report',async()=>{
+  const report={schema:'mabinogi-mobile-mml-studio/audio-alignment@1',audio:{sha256:'1'.repeat(64)},symbolic:{project_id:project.id},evidence_policy:{changes_symbolic_truth:false},alignment:{control_points:[{beat:0,seconds:0},{beat:4,seconds:2}],metrics:{confidence:1,score_frame_coverage:1,audio_frame_coverage:1}}};
+  await assert.rejects(verifyAudioBinding(report,project),/AUDIO_SYMBOLIC_IDENTITY_UNVERIFIED/);
+  report.symbolic.web_project_sha256=await sha256(new TextEncoder().encode(alignmentProjectText(project)));
+  await verifyAudioBinding(report,project);
+  const changed=structuredClone(project);changed.events[0].pitch++;
+  await assert.rejects(verifyAudioBinding(report,changed),/AUDIO_SYMBOLIC_IDENTITY_UNVERIFIED/);
 });

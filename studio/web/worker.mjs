@@ -5,6 +5,8 @@ let model, initializationError;
 try {
   await verifyCanonicalPackage(canonical, canonicalDigest);
   model = await import('./model.mjs');
+  const { PUBLISHED_CANONICAL } = await import('../backend/rules/index.mjs');
+  if (JSON.stringify(PUBLISHED_CANONICAL) !== JSON.stringify(canonical)) throw Error('Runtime Canonical differs from verified package');
 } catch (error) { initializationError = `CANONICAL_NOT_LOADED: ${error.message}`; }
 self.onmessage = async ({ data }) => {
   try {

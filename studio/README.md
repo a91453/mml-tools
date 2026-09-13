@@ -34,7 +34,8 @@ studio/
     final/           per-song readiness evaluation
     audio/           Node audio-evidence bridge
   audio-worker/      Python/FFmpeg original-audio alignment
-  web/               future iPhone/iPad-first UI
+  web/               local-first iPhone/iPad UI and PWA sources
+  browser-tests/     WebKit and Chromium user-flow regressions
   tests/             Studio regression tests
 ```
 
@@ -72,7 +73,7 @@ MusicXML ingestion being implemented does not mean every file is complete. Repea
 
 ## Intended user-facing result
 
-The future phone/iPad UI should answer questions such as:
+The phone/iPad UI presents evidence for questions such as:
 
 - Which current notes differ from the trusted symbolic source?
 - Which changes are new relative to the last accepted version?
@@ -83,7 +84,10 @@ The future phone/iPad UI should answer questions such as:
 - Where does the original recording disagree in timing/structure/foreground role?
 - Does the final MML still pass the current Mobile technical policy?
 
-The UI is not yet implemented beyond the scaffold, and Studio has not replaced the current production Railway/MCP route.
+The local-first UI/PWA is implemented under `studio/web/`; see its
+[usage, local/cloud boundary and v1 limitations](web/README.md).
+Build it separately with `npm run build:studio-web`. Studio has not replaced the
+current production Railway/MCP route, and this branch performs no deployment.
 
 Use the Manifest for current policy discovery. `docs/RULES_AUDIT_2026-09-13.md`,
 `docs/STUDIO_MIGRATION.md`, and `docs/RELEASE_READINESS_2026-09-13.md` are dated

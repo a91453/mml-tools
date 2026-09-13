@@ -8,6 +8,7 @@ import { evaluateLeadDemotion } from '../backend/arbitration/lead-demotion.mjs';
 import { analyzeCrossSourceHarmony } from '../backend/arbitration/harmony.mjs';
 import { evaluateProjectReadiness } from '../backend/final/readiness.mjs';
 import { attachAudioAlignmentEvidence } from '../backend/audio/index.mjs';
+import { alignmentProjectText } from './audio-payload.mjs';
 
 export const WORKSPACE_SCHEMA = 'mml-studio-web/workspace@1';
 export const MAX_TEXT_BYTES = 4 * 1024 * 1024;
@@ -78,6 +79,7 @@ export function importWorkspace(raw) {
   }
   // Portable backups cannot attest who accepted an exact client test. Preserve
   // their old reviews as history, require a fresh review in this workspace.
+  if (typeof input.deliveryMml === 'string' && input.deliveryMml.length <= 40000) clean.deliveryMml = input.deliveryMml;
   clean.importedHistory = { reviews: input.reviews, acceptance: input.acceptance, audio: input.audio };
   return clean;
 }
@@ -111,7 +113,10 @@ export function analyzeWorkspace(w) {
   } });
   let audioError = null;
   if (w.audio?.revision === w.revision) {
-    try { project = attachAudioAlignmentEvidence(project, w.audio.report); }
+    try {
+      if (w.audio.projectIdentity !== alignmentProjectText(candidate)) throw Error('AUDIO_SYMBOLIC_IDENTITY_UNVERIFIED');
+      project = attachAudioAlignmentEvidence(project, w.audio.report);
+    }
     catch (error) { audioError = error.message; }
   }
   const rawMml = asset.format === 'MML' ? asset.content : w.deliveryMml;
@@ -129,6 +134,10 @@ export function analyzeWorkspace(w) {
   const leadReports = (w.leadEvidence ?? []).filter(e => e.revision === w.revision).map(e => {
     const event = baseline?.events.find(event => event.id === e.eventId);
     if (!event) throw Error('Lead evidence references an unknown baseline event');
+    const move = lineage.sourceToCandidate.notes.roleMoved.find(pair => pair.before.id === event.id);
+    const removed = lineage.sourceToCandidate.notes.removed.some(item => item.id === event.id);
+    const destination = move?.after.role ?? (removed ? 'omitted' : null);
+    if (destination !== e.destinationRole) return { status: 'PENDING', eventId: event.id, blockers: ['LEAD_DESTINATION_DOES_NOT_MATCH_CANDIDATE'] };
     return evaluateLeadDemotion({ ...e, event });
   });
   const audioPresent = Object.values(w.assets).some(a => a.project.sources.some(s => s.kind === 'original-audio')) || Boolean(w.audio);
