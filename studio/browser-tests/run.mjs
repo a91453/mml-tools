@@ -3,8 +3,7 @@ import assert from 'node:assert/strict';
 import { mkdir, writeFile } from 'node:fs/promises';
 import { serveStudio } from '../../scripts/serve-studio-web.mjs';
 
-const server=await serveStudio({port:0});
-const base=`http://127.0.0.1:${server.address().port}`;
+let server=null;
 const results=[];
 const mml='MML@t120o4c1,t120o3e1,t120o2c1,,,;';
 const mxml='<score-partwise><part-list><score-part id="P1"><part-name>Piano</part-name></score-part></part-list><part id="P1"><measure number="1"><attributes><divisions>1</divisions><time><beats>4</beats><beat-type>4</beat-type></time></attributes><note><pitch><step>C</step><octave>4</octave></pitch><duration>4</duration></note><barline><repeat direction="backward"/></barline></measure></part></score-partwise>';
@@ -19,6 +18,10 @@ try {
   ]) {
     let browser,page,context;
     const errors=[],requests=[];
+    // One origin per profile, so the offline restart can be proven by killing
+    // the server rather than by a browser offline emulation.
+    server=await serveStudio({port:0});
+    const base=`http://127.0.0.1:${server.address().port}`;
     try {
       browser=await profile.engine.launch();
       context=await browser.newContext({viewport:profile.viewport,isMobile:profile.isMobile,hasTouch:profile.hasTouch});
@@ -72,7 +75,10 @@ try {
       // Service worker must cache the actual module graph for offline restart.
       await page.evaluate(()=>navigator.serviceWorker.ready);
       await page.waitForFunction(()=>navigator.serviceWorker.controller!==null);
-      await context.setOffline(true);await page.reload();await page.locator('#app h1').waitFor();await idle();
+      // Take the origin away instead of emulating offline: whatever renders now
+      // was served by the service worker out of its own cache.
+      server.closeAllConnections();await new Promise(closed=>server.close(closed));
+      await page.reload();await page.locator('#app h1').waitFor();await idle();
       assert.equal(await page.locator('.hero .badge').textContent(),'CANDIDATE');
       assert.ok((await page.locator('#gates').textContent()).includes('UNSUPPORTED'));
       assert.deepEqual(errors,[]);
@@ -80,9 +86,9 @@ try {
     } catch(error) {
       failed=true;results.push({profile:profile.name,status:'FAIL',error:error.stack,consoleErrors:errors});
       if(page)await page.screenshot({path:new URL(`${profile.name}-failure.png`,out).pathname,fullPage:true}).catch(()=>{});
-    } finally {if(browser)await browser.close();}
+    } finally {if(browser)await browser.close();if(server.listening){server.closeAllConnections();server.close();}}
   }
-} finally {server.close();}
+} finally {if(server?.listening){server.closeAllConnections();server.close();}}
 await writeFile(new URL('results.json',out),JSON.stringify(results,null,2));
 console.log(JSON.stringify(results,null,2));
 if(failed)process.exitCode=1;
