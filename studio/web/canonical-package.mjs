@@ -1,21 +1,15 @@
 // A browser consumes a build-time verified Published main snapshot. This is
 // integrity/provenance validation, never a second musical rule definition.
+import { assertStableCanonicalPackage } from './canonical-contract.mjs';
+
 export async function verifyCanonicalPackage(bundle, expectedDigest, cryptoApi = globalThis.crypto) {
   const fail = () => { throw Error('CANONICAL_NOT_LOADED'); };
   if (!bundle || !cryptoApi?.subtle || !/^[a-f0-9]{64}$/.test(expectedDigest ?? '')) fail();
   const bytes = new TextEncoder().encode(JSON.stringify(bundle));
   const digest = [...new Uint8Array(await cryptoApi.subtle.digest('SHA-256', bytes))].map(n => n.toString(16).padStart(2, '0')).join('');
   if (digest !== expectedDigest || bundle.status !== 'CANONICAL_LOADED') fail();
-  if (bundle.metadata?.canonical_status !== 'PUBLISHED' || bundle.documents?.length !== 6) fail();
-  // Dynamic Git provenance must not reach the hashed runtime bundle, or buildId
-  // stops being reproducible. Reject it here and validate stable identity only.
-  if (bundle.provenance !== undefined) fail();
-  if (!/^[a-f0-9]{40}$/.test(bundle.metadata.rules_snapshot_sha ?? '')) fail();
-  if (!/^\d{4}-\d{2}-\d{2}-v\d+$/.test(bundle.metadata.canonical_version ?? '')) fail();
-  if (!String(bundle.metadata.manifest_version ?? '').startsWith(`${bundle.metadata.canonical_version}-manifest`)) fail();
-  if (!Array.isArray(bundle.authority?.map) || bundle.authority.map.length < bundle.documents.length) fail();
-  for (const doc of bundle.documents) {
-    if (!doc.content?.includes(`Version: ${bundle.metadata.canonical_version}`) || !doc.url?.includes(`/${bundle.metadata.rules_snapshot_sha}/`)) fail();
-  }
+  // Structural invariants are shared with the Node artifact verifier so the two
+  // cannot drift; only the byte-digest check below is environment-specific.
+  assertStableCanonicalPackage(bundle);
   return bundle;
 }

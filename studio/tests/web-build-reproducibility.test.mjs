@@ -10,7 +10,10 @@ import { readFile, writeFile, mkdtemp, rm, cp, appendFile } from 'node:fs/promis
 import { tmpdir } from 'node:os';
 import { resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { createHash } from 'node:crypto';
+import { readdir } from 'node:fs/promises';
 import { verifyStudioArtifact } from '../../scripts/verify-studio-artifact.mjs';
+import { verifyCanonicalPackage } from '../web/canonical-package.mjs';
 
 const root = fileURLToPath(new URL('../../', import.meta.url));
 // commit-tree needs a committer identity that a bare CI runner may not have.
@@ -208,4 +211,168 @@ test('repeating a build reproduces the same buildId and byte-identical hashed as
     rules_snapshot_sha: first.manifest.release.rules_snapshot_sha,
   });
   assert.equal(verified.assetCount, first.manifest.files.length);
+});
+
+
+// --- Release identity must cover the Service Worker and the shipped Canonical
+// --- payload. Hash self-consistency alone let a re-signed artifact through.
+
+const PUBLISHED = 'studio/web/published.mjs';
+const BOOTSTRAP = 'studio/backend/bootstrap/index.mjs';
+const PAYLOAD = /^export const canonical = (\{.*\});$/m;
+const sha256 = value => createHash('sha256').update(value).digest('hex');
+
+async function walkArtifact(dir, base = '') {
+  const found = [];
+  for (const entry of await readdir(resolve(dir, base), { withFileTypes: true })) {
+    const path = base ? `${base}/${entry.name}` : entry.name;
+    if (entry.isDirectory()) found.push(...await walkArtifact(dir, path));
+    else found.push(path);
+  }
+  return found;
+}
+
+// Re-sign an artifact the way a careful attacker would: every asset hash, the
+// buildId and the declared digests are made internally consistent again.
+async function resign(dir, patch = {}) {
+  const files = (await walkArtifact(dir)).filter(path => path !== 'build.json').sort();
+  const hashes = await Promise.all(files.map(async path => [path, sha256(await readFile(resolve(dir, path)))]));
+  const build = JSON.parse(await readFile(resolve(dir, 'build.json'), 'utf8'));
+  build.files = hashes;
+  build.buildId = sha256(JSON.stringify(hashes));
+  Object.assign(build.release, patch);
+  await writeFile(resolve(dir, 'build.json'), JSON.stringify(build, null, 2));
+  return build;
+}
+
+const readPayload = async dir => PAYLOAD.exec(await readFile(resolve(dir, PUBLISHED), 'utf8'))[1];
+const writePublished = (dir, json) => writeFile(resolve(dir, PUBLISHED), `export const canonical = ${json};\nexport const canonicalDigest = '${sha256(json)}';\n`);
+async function writeBootstrap(dir, json) {
+  const text = await readFile(resolve(dir, BOOTSTRAP), 'utf8');
+  await writeFile(resolve(dir, BOOTSTRAP), text.replace(/^const loaded = .*;$/m, `const loaded = ${json};`));
+}
+
+function rejects(dir, pattern, expected) {
+  return assert.rejects(() => verifyStudioArtifact(dir, expected), error => {
+    assert.equal(error.code, 'ARTIFACT_NOT_VERIFIED');
+    assert.match(error.message, pattern);
+    return true;
+  });
+}
+
+test('the release manifest covers the generated Service Worker', async t => {
+  const { out, manifest } = await build(t);
+  assert.ok(manifest.files.some(([path]) => path === 'sw.js'), 'sw.js must be in the asset manifest');
+  assert.match(manifest.release.cacheId ?? '', /^[a-f0-9]{64}$/);
+  const worker = await readFile(resolve(out, 'sw.js'), 'utf8');
+  assert.ok(worker.includes(`mml-studio-v1-${manifest.release.cacheId}`), 'cache name must be derived from cacheId');
+  assert.ok(!worker.includes(manifest.buildId), 'the worker must not embed buildId, which would be circular');
+  await assert.doesNotReject(() => verifyStudioArtifact(out));
+
+  const copyOf = async () => {
+    const dir = await scratch();
+    t.after(() => rm(dir, { recursive: true, force: true }));
+    await cp(out, dir, { recursive: true });
+    return dir;
+  };
+
+  const replaced = await copyOf();
+  await writeFile(resolve(replaced, 'sw.js'), "self.addEventListener('fetch',e=>e.respondWith(new Response('hostile')));\n");
+  await rejects(replaced, /Asset hash mismatch: sw\.js/);
+
+  const deleted = await copyOf();
+  await rm(resolve(deleted, 'sw.js'));
+  await rejects(deleted, /Asset declared in build\.json is missing: sw\.js/);
+
+  // Re-signing a swapped worker still fails: its cache identity no longer
+  // matches the declared cacheId.
+  const laundered = await copyOf();
+  await writeFile(resolve(laundered, 'sw.js'), "self.addEventListener('fetch',e=>e.respondWith(new Response('hostile')));\n");
+  await resign(laundered);
+  await rejects(laundered, /Service Worker cache identity disagrees with release\.cacheId/);
+});
+
+test('changing the Service Worker template changes cacheId and buildId', async t => {
+  const before = await build(t);
+  const path = resolve(root, 'studio/web/sw.js');
+  const original = await readFile(path);
+  try {
+    await appendFile(path, '\n// reproducibility probe\n');
+    const after = await build(t);
+    assert.notEqual(after.manifest.release.cacheId, before.manifest.release.cacheId);
+    assert.notEqual(after.summary.buildId, before.summary.buildId);
+  } finally { await writeFile(path, original); }
+});
+
+test('repeating a build reproduces the same cacheId and the same Service Worker bytes', async t => {
+  const first = await build(t);
+  const second = await build(t);
+  assert.equal(second.manifest.release.cacheId, first.manifest.release.cacheId);
+  assert.equal(second.summary.buildId, first.summary.buildId);
+  assert.deepEqual(await readFile(resolve(second.out, 'sw.js')), await readFile(resolve(first.out, 'sw.js')));
+});
+
+test('the verifier rejects a Canonical payload the browser would refuse to boot', async t => {
+  const { out } = await build(t);
+  const copyOf = async () => {
+    const dir = await scratch();
+    t.after(() => rm(dir, { recursive: true, force: true }));
+    await cp(out, dir, { recursive: true });
+    return dir;
+  };
+
+  const wrong = await copyOf();
+  await resign(wrong, { runtimeBundleDigest: '0'.repeat(64) });
+  await rejects(wrong, /runtimeBundleDigest does not match/);
+
+  const missing = await copyOf();
+  const missingBuild = JSON.parse(await readFile(resolve(missing, 'build.json'), 'utf8'));
+  delete missingBuild.release.runtimeBundleDigest;
+  await writeFile(resolve(missing, 'build.json'), JSON.stringify(missingBuild, null, 2));
+  await rejects(missing, /runtimeBundleDigest does not match/);
+
+  // Dynamic provenance reintroduced and every affected digest recomputed.
+  const contaminated = await copyOf();
+  const bundle = JSON.parse(await readPayload(contaminated));
+  bundle.provenance = { manifest_commit: '0'.repeat(40), repository_head: '1'.repeat(40), pr_head: null, published_main_head: '2'.repeat(40) };
+  const contaminatedJson = JSON.stringify(bundle);
+  await writePublished(contaminated, contaminatedJson);
+  await writeBootstrap(contaminated, contaminatedJson);
+  await resign(contaminated, { runtimeBundleDigest: sha256(contaminatedJson) });
+  await rejects(contaminated, /carries dynamic Git provenance/);
+  // The browser rejects the same bytes; verifier and runtime now agree.
+  await assert.rejects(() => verifyCanonicalPackage(bundle, sha256(contaminatedJson)), /CANONICAL_NOT_LOADED/);
+
+  // Shipped Canonical identity disagreeing with the declared release identity.
+  const relabelled = await copyOf();
+  const drifted = JSON.parse(await readPayload(relabelled));
+  drifted.metadata.manifest_version = '2026-09-13-v1-manifest99';
+  const driftedJson = JSON.stringify(drifted);
+  await writePublished(relabelled, driftedJson);
+  await writeBootstrap(relabelled, driftedJson);
+  await resign(relabelled, { runtimeBundleDigest: sha256(driftedJson) });
+  await rejects(relabelled, /Shipped Canonical manifest_version disagrees/);
+
+  // Only one of the two embedded copies swapped, everything else re-signed.
+  const divergent = await copyOf();
+  const second = JSON.parse(await readPayload(divergent));
+  second.metadata.manifest_version = '2026-09-13-v1-manifest99';
+  await writeBootstrap(divergent, JSON.stringify(second));
+  await resign(divergent);
+  await rejects(divergent, /Embedded Canonical bundles disagree/);
+});
+
+test('a verified artifact also satisfies the browser Canonical package contract', async t => {
+  const { out, manifest } = await build(t);
+  const verified = await verifyStudioArtifact(out, {
+    canonical_version: '2026-09-13-v1',
+    rules_snapshot_sha: manifest.release.rules_snapshot_sha,
+  });
+  assert.equal(verified.buildId, manifest.buildId);
+
+  const json = await readPayload(out);
+  assert.equal(sha256(json), manifest.release.runtimeBundleDigest);
+  const accepted = await verifyCanonicalPackage(JSON.parse(json), sha256(json));
+  assert.equal(accepted.status, 'CANONICAL_LOADED');
+  assert.equal(accepted.metadata.rules_snapshot_sha, manifest.release.rules_snapshot_sha);
 });

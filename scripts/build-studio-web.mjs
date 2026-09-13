@@ -53,16 +53,32 @@ async function inventory(dir = '') {
   }
 }
 await inventory();
-const hashes = await Promise.all(files.sort().map(async path => [path, digest(await readFile(resolve(out, path)))]));
+const runtimeFiles = files.sort();
+const runtimeHashes = await Promise.all(runtimeFiles.map(async path => [path, digest(await readFile(resolve(out, path)))]));
+
+// Stage A - cache identity. A Service Worker cannot contain its own hash, so
+// deriving its cache name from the final buildId would need buildId -> sw.js ->
+// buildId. Derive it instead from the runtime assets plus the SW template: it
+// moves whenever either moves, with no cycle.
+const swTemplate = await readFile(resolve(root, 'studio/web/sw.js'), 'utf8').catch(error => { if (error.code === 'ENOENT') return ''; throw error; });
+const cacheId = digest(JSON.stringify([runtimeHashes, digest(swTemplate)]));
+// The Service Worker is not precached by itself; the browser fetches it directly.
+if (swTemplate) await put('sw.js', swTemplate.replace('__CACHE_NAME__', `mml-studio-v1-${cacheId}`).replace('__PRECACHE__', JSON.stringify(['./', ...runtimeFiles.map(path => `./${path}`), './build.json'])));
+
+// Stage B - release identity. The generated Service Worker is executable code
+// that controls interception, offline serving and the cached runtime graph, so
+// the artifact manifest and buildId must cover it. Anything left out of the
+// manifest can be swapped or deleted without changing the declared identity.
+const hashes = swTemplate
+  ? [...runtimeHashes, ['sw.js', digest(await readFile(resolve(out, 'sw.js')))]].sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0))
+  : runtimeHashes;
 const buildId = digest(JSON.stringify(hashes));
 const audit = { note: 'Dynamic Git and build provenance. Audit only: excluded from hashed runtime assets and from buildId.', source_sha: provenance.repository_head, ...provenance };
 // Stable release identity defines the artifact; audit provenance never does.
 await put('build.json', JSON.stringify({
   buildId,
-  release: { canonical: canonical.metadata, rules_snapshot_sha: canonical.metadata.rules_snapshot_sha, runtimeBundleDigest: digest(data) },
+  release: { canonical: canonical.metadata, rules_snapshot_sha: canonical.metadata.rules_snapshot_sha, runtimeBundleDigest: digest(data), cacheId },
   audit,
   files: hashes,
 }, null, 2));
-const sw = await readFile(resolve(root, 'studio/web/sw.js'), 'utf8').catch(error => { if (error.code === 'ENOENT') return ''; throw error; });
-if (sw) await put('sw.js', sw.replace('__CACHE_NAME__', `mml-studio-v1-${buildId}`).replace('__PRECACHE__', JSON.stringify(['./', ...files.map(path => `./${path}`), './build.json'])));
-console.log(JSON.stringify({ output: 'studio/web-build', buildId, canonical: canonical.metadata, audit, assetCount: files.length }));
+console.log(JSON.stringify({ output: 'studio/web-build', buildId, cacheId, canonical: canonical.metadata, audit, assetCount: hashes.length }));

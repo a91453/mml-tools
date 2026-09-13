@@ -10,9 +10,20 @@
 import { readFile, readdir } from 'node:fs/promises';
 import { resolve } from 'node:path';
 import { createHash } from 'node:crypto';
+import { assertStableCanonicalPackage } from '../studio/web/canonical-contract.mjs';
 
-// Written after the asset inventory, so they are deliberately not hashed.
-export const UNHASHED = Object.freeze(['build.json', 'sw.js']);
+// build.json is the sidecar that carries the manifest, so it cannot be inside
+// it. Everything else, the generated Service Worker included, must be covered:
+// a file outside the manifest can be replaced or deleted without changing the
+// declared identity.
+export const UNHASHED = Object.freeze(['build.json']);
+
+// Read the Canonical payload the artifact actually ships, without executing any
+// artifact JavaScript. The build emits each copy as one deterministic line.
+const EMBEDDED = Object.freeze([
+  ['studio/web/published.mjs', /^export const canonical = (\{.*\});$/m],
+  ['studio/backend/bootstrap/index.mjs', /^const loaded = (\{.*\});$/m],
+]);
 const SHA256 = /^[a-f0-9]{64}$/;
 const SHA1 = /^[a-f0-9]{40}$/;
 
@@ -86,6 +97,44 @@ export async function verifyStudioArtifact(dir, expected = {}) {
   for (const [path, hash] of manifest) {
     const actual = digest(await readFile(resolve(dir, path)));
     need(actual === hash, `Asset hash mismatch: ${path}`);
+  }
+
+  // Hash self-consistency only proves the artifact matches its own manifest. A
+  // consistently re-signed artifact can still ship a Canonical payload the
+  // browser will refuse to boot, so check the shipped bytes semantically too.
+  const payloads = new Map();
+  for (const [path, pattern] of EMBEDDED) {
+    need(manifest.has(path), `Embedded Canonical bundle is missing: ${path}`);
+    const matched = pattern.exec(await readFile(resolve(dir, path), 'utf8'));
+    need(matched, `Embedded Canonical bundle is not in the expected generated form: ${path}`);
+    payloads.set(path, matched[1]);
+  }
+  const [[primaryPath, primary], ...duplicates] = [...payloads];
+  for (const [path, payload] of duplicates) {
+    need(payload === primary, `Embedded Canonical bundles disagree: ${path} differs from ${primaryPath}`);
+  }
+
+  need(digest(primary) === build.release.runtimeBundleDigest, 'release.runtimeBundleDigest does not match the shipped Canonical runtime bundle');
+
+  const published = await readFile(resolve(dir, 'studio/web/published.mjs'), 'utf8');
+  const declaredDigest = /^export const canonicalDigest = '([a-f0-9]{64})';$/m.exec(published);
+  need(declaredDigest, 'Shipped Canonical bundle declares no runtime digest');
+  need(declaredDigest[1] === build.release.runtimeBundleDigest, 'Shipped Canonical digest disagrees with release.runtimeBundleDigest');
+
+  let bundle;
+  try { bundle = JSON.parse(primary); } catch { throw new ArtifactNotVerifiedError('Embedded Canonical bundle is not valid JSON'); }
+  // The browser applies this same contract, so it cannot boot what this rejects.
+  try { assertStableCanonicalPackage(bundle); }
+  catch (error) { throw new ArtifactNotVerifiedError(`Shipped Canonical bundle fails the runtime contract: ${error.message}`); }
+  for (const [key, value] of Object.entries(canonical)) {
+    need(bundle.metadata[key] === value, `Shipped Canonical ${key} disagrees with build.json release identity`);
+  }
+
+  // The Service Worker's cache identity must be the one the build declared.
+  if (manifest.has('sw.js')) {
+    need(/^[a-f0-9]{64}$/.test(build.release.cacheId ?? ''), 'build.json declares no valid cacheId for the Service Worker');
+    const worker = await readFile(resolve(dir, 'sw.js'), 'utf8');
+    need(worker.includes(`mml-studio-v1-${build.release.cacheId}`), 'Service Worker cache identity disagrees with release.cacheId');
   }
 
   return { buildId: build.buildId, release: build.release, audit: build.audit, assetCount: manifest.size };
