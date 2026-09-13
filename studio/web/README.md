@@ -36,6 +36,10 @@ tokens to avoid silently overwriting each other. Export backups regularly: Safar
 can evict local data. Backup imports preserve old reviews as history and require
 new review; they cannot import a ready-made acceptance claim.
 
+Files and review actions are serialized in FIFO order, including during boot.
+Pending evidence stays bound to its project and revision; choosing a different
+project cannot transfer queued reviews or source files to it.
+
 Any source/settings/delivery revision clears its previous reviews and acceptance.
 Changing the pinned Canonical identity also invalidates saved reviews, including
 when switching between local projects. Imported IR is reconstructed using the
@@ -127,7 +131,8 @@ behavior, Home Screen lifecycle and Mabinogi acceptance still require real devic
 - No automatic MusicXML/IR arrangement, role assignment, six-track reduction or
   note rewriting is added. A supplied delivery MML must match candidate events and
   meter before copy is enabled. Caution-length/Nxx opt-ins are not exposed in v1;
-  no implicit opt-in is granted.
+  no implicit opt-in is granted. Named notes whose current mapping lies above
+  pitch 107 remain source evidence but cannot pass Final delivery while unverified.
 - The built-in Core3 continuity report is only a source-relative diagnostic.
   Musical Core3/Lead/Full6 completeness requires separate explicit review.
 - This v1 does not implement a verification player. If one was used, the actual
@@ -135,3 +140,7 @@ behavior, Home Screen lifecycle and Mabinogi acceptance still require real devic
   was used, with the Tempo review, makes that conditional gate N/A.
 - Named historical-song regressions without reproducible fixtures remain
   `FIXTURE_PENDING`. Synthetic tests never certify those songs.
+
+The [final pre-PR audit](../../docs/STUDIO_WEB_V1_FINAL_AUDIT.md) records evidenced
+findings and their tests. [Draft PR #7](https://github.com/a91453/mml-tools/pull/7)
+pins the latest reviewed branch HEAD and CI runs.

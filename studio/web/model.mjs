@@ -14,6 +14,7 @@ export const WORKSPACE_SCHEMA = 'mml-studio-web/workspace@1';
 export const MAX_TEXT_BYTES = 4 * 1024 * 1024;
 export const REVIEW_NAMES = ['source', 'version', 'lead', 'core3', 'full6', 'tempo', 'audio', 'adaptation', 'regression'];
 const text = value => typeof value === 'string' && value.trim().length > 0;
+const finiteNumber = value => (typeof value === 'number' || text(value)) && Number.isFinite(Number(value));
 const copy = value => structuredClone(value);
 const pending = reason => ({ status: 'PENDING', reason });
 const pass = reason => ({ status: 'PASS', reason });
@@ -145,7 +146,7 @@ export function analyzeWorkspace(w) {
   const readiness = evaluateProjectReadiness({ project, mmlValidation: technical, core3Report: core3, harmonyReport: harmony, leadDemotionReports: leadReports, lineageReport: lineage, versionDriftReviewed: reviewed(w, 'version'), originalAudioRequired: audioRequired, playerReadback: w.settings.preview === 'none' && reviewed(w, 'tempo') ? 'N/A' : 'PENDING' });
   const gates = { ...readiness.gates };
   delete gates.inGameAcceptance;
-  gates.intake = text(w.title) && text(w.settings.recording) && w.settings.offset !== '' && w.settings.end !== '' && Number.isFinite(Number(w.settings.offset)) && Number(w.settings.offset) >= 0 && Number(w.settings.end) > Number(w.settings.offset)
+  gates.intake = text(w.title) && text(w.settings.recording) && finiteNumber(w.settings.offset) && finiteNumber(w.settings.end) && Number(w.settings.offset) >= 0 && Number(w.settings.end) > Number(w.settings.offset)
     ? pass('VERSION_AND_RANGE_RECORDED') : pending('RECORDING_VERSION_AND_RANGE_REQUIRED');
   gates.source = hasUnsupported(asset) || hasUnsupported(w.assets.baseline) ? { status: asset.unsupported?.length || w.assets.baseline?.unsupported?.length ? 'UNSUPPORTED' : 'PENDING', reason: 'SOURCE_INCOMPLETE_OR_UNSUPPORTED' } : reviewGate(w, 'source');
   if (w.assets.previous && hasUnsupported(w.assets.previous)) gates.previousSource = pending('PREVIOUS_SOURCE_INCOMPLETE');

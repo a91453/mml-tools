@@ -2,6 +2,11 @@
 
 Status: implementation evidence only; not a Canonical rule authority.
 
+This record retains earlier-session checkpoints. See the
+[final pre-PR audit](STUDIO_WEB_V1_FINAL_AUDIT.md) and
+[Draft PR #7](https://github.com/a91453/mml-tools/pull/7) for final findings,
+checkpoint identities, exact-HEAD CI and device limitations.
+
 Branch: `studio-web-v1`. Created from Published main
 `cbbe14986e483f4158570cc873b7e1ce2b214408`.
 No merge, production deployment, Railway/MCP switch or Canonical rule edit.
@@ -91,7 +96,7 @@ green run certifies the commit it ran on, never a later one.
   never certifies those songs.
 
 Passing CI is a `TECHNICAL_PASS` for the implementation, not song acceptance and
-not release readiness. Do not claim a Draft PR exists unless one has been opened.
+not release readiness. Draft PR #7 is open; it remains draft and unmerged.
 
 Usage, local/cloud behavior and supported/unsupported paths are documented in
 [studio/web/README.md](../studio/web/README.md).

@@ -77,3 +77,14 @@ test('manual reviews cannot validate or expose delivery with an unverified high 
   assert.equal(r.tracks, null);
   assert.throws(() => recordAcceptance(w, { client: 'fixture', instrument: 'piano', evidence: 'fixture' }));
 });
+
+test('restored unknown or non-finite music ranges cannot pass intake even after review', () => {
+  let w = workspace();
+  for (const name of REVIEW_NAMES) w = recordReview(w, name, 'reviewed', 'fixture');
+  for (const range of [{ end: 'Infinity' }, { end: Infinity }, { offset: null }, { offset: ' ' }, { offset: false }]) {
+    const r = analyzeWorkspace({ ...w, settings: { ...w.settings, ...range } });
+    assert.equal(r.gates.intake.status, 'PENDING', JSON.stringify(range));
+    assert.equal(r.state, 'CANDIDATE');
+  }
+  assert.equal(analyzeWorkspace(w).gates.intake.status, 'PASS');
+});
