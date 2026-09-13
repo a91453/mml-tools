@@ -1,5 +1,6 @@
 import { listProjects, saveProject } from './storage.mjs';
 import { createWorkerClient } from './worker-client.mjs';
+import { createTaskQueue } from './task-queue.mjs';
 
 const $ = selector => document.querySelector(selector);
 const esc = value => String(value ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
@@ -10,7 +11,8 @@ const options = (values, selected) => values.map(([value, label]) => `<option va
 const roles = ['Melody', 'Chord1', 'Chord2', 'Chord3', 'Chord4', 'Chord5'];
 const reviewLabels = { source: '來源完整與可追溯', version: 'Version Drift／已接受版本', lead: 'Lead 樂句、休止與接棒', core3: 'Core3 單人完整性', full6: 'Full6 和聲、重疊與密度', tempo: 'Tempo、拍號與時間範圍', audio: '原曲音訊證據', adaptation: 'Mobile 最小適配', regression: '回歸與已接受優點' };
 const gateLabels = { implementation: '分析模組', source: '來源完整性', baseline: '來源基準', technical: 'MML 技術語法', core3: 'Core3', leadDemotion: 'Lead 降級證據', crossSourceHarmony: '跨來源和聲', versionDrift: '版本差異', originalAudio: '原曲音訊', playerReadback: '播放器實際回讀', pendingDecisions: '待決仲裁', intake: '版本／音樂範圍', lead: 'Lead 審核', full6: 'Full6 審核', tempo: 'Tempo／時值審核', adaptation: 'Mobile 適配', regression: '回歸審核', deliveryIdentity: '交付事件一致性' };
-let workspace, report, identity, projects = [], audioFile = null, uploadController = null, busy = 0, queued = null;
+let workspace, report, identity, projects = [], audioFile = null, uploadController = null, busy = 0;
+const queued = createTaskQueue();
 const { call } = createWorkerClient({ spawn: () => new Worker(new URL('./worker.mjs', import.meta.url), { type: 'module' }) });
 let messageTimer;
 function message(value, persistent = false) { clearTimeout(messageTimer); $('#message').textContent = value; if (!persistent) messageTimer = setTimeout(() => { $('#message').textContent = ''; }, 7000); }
@@ -27,7 +29,8 @@ function markBusy(active) {
 // A Files/input action is a choice the user already made through a native
 // picker, and the input it came from is replaced by the next render, so dropping
 // it while a commit is in flight loses that choice with nothing left to retry.
-// Serialize instead: hold one action and run it when the current one settles.
+// Serialize instead: retain every action in FIFO order and run them when the
+// current one settles.
 //
 // A held action was chosen against the revision that was on screen. Evidence
 // actions (reviews, arbitration, Lead demotion, acceptance) attach to that exact
@@ -38,9 +41,8 @@ function markBusy(active) {
 function run(fn, { revisionBound = true } = {}) {
   const task = { fn, revisionBound, revision: workspace?.revision };
   if (!busy) return drain(task);
-  if (queued) return message('已有一個待處理動作，請待目前步驟完成後再試一次', true);
-  queued = task;
-  return message('目前步驟完成後會接續執行剛才的操作');
+  queued.enqueue(task);
+  return message('目前步驟完成後會依序執行剛才的操作');
 }
 async function drain(task) {
   markBusy(true);
@@ -48,7 +50,7 @@ async function drain(task) {
     while (task) {
       if (task.revisionBound && task.revision !== workspace?.revision) message('來源或設定已變更，剛才的操作未套用，請依目前內容重新確認', true);
       else try { await task.fn(); } catch (error) { message(error.message, true); }
-      task = queued; queued = null;
+      task = queued.dequeue();
     }
   } finally { markBusy(false); }
 }
