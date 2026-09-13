@@ -1,4 +1,5 @@
 import { listProjects, saveProject } from './storage.mjs';
+import { createWorkerClient } from './worker-client.mjs';
 
 const $ = selector => document.querySelector(selector);
 const esc = value => String(value ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
@@ -9,39 +10,47 @@ const options = (values, selected) => values.map(([value, label]) => `<option va
 const roles = ['Melody', 'Chord1', 'Chord2', 'Chord3', 'Chord4', 'Chord5'];
 const reviewLabels = { source: '來源完整與可追溯', version: 'Version Drift／已接受版本', lead: 'Lead 樂句、休止與接棒', core3: 'Core3 單人完整性', full6: 'Full6 和聲、重疊與密度', tempo: 'Tempo、拍號與時間範圍', audio: '原曲音訊證據', adaptation: 'Mobile 最小適配', regression: '回歸與已接受優點' };
 const gateLabels = { implementation: '分析模組', source: '來源完整性', baseline: '來源基準', technical: 'MML 技術語法', core3: 'Core3', leadDemotion: 'Lead 降級證據', crossSourceHarmony: '跨來源和聲', versionDrift: '版本差異', originalAudio: '原曲音訊', playerReadback: '播放器實際回讀', pendingDecisions: '待決仲裁', intake: '版本／音樂範圍', lead: 'Lead 審核', full6: 'Full6 審核', tempo: 'Tempo／時值審核', adaptation: 'Mobile 適配', regression: '回歸審核', deliveryIdentity: '交付事件一致性' };
-let workspace, report, identity, projects = [], audioFile = null, uploadController = null, busy = 0, sequence = 0;
-const pending = new Map();
-const worker = new Worker(new URL('./worker.mjs', import.meta.url), { type: 'module' });
-worker.onmessage = ({ data }) => {
-  const request = pending.get(data.id);
-  if (!request) return;
-  clearTimeout(request.timer); pending.delete(data.id);
-  data.error ? request.reject(Error(data.error)) : request.resolve(data.result);
-};
-worker.onerror = () => { for (const request of pending.values()) { clearTimeout(request.timer); request.reject(Error('本機分析 Worker 無法啟動，請重新開啟；未完成的 Gate 保持 PENDING')); } pending.clear(); };
-function call(action, ...args) {
-  return new Promise((resolve, reject) => {
-    const id = ++sequence;
-    const timer = setTimeout(() => { pending.delete(id); reject(Error('本機分析逾時，未完成的 Gate 保持 PENDING')); }, 45000);
-    pending.set(id, { resolve, reject, timer }); worker.postMessage({ id, action, args });
-  });
-}
+let workspace, report, identity, projects = [], audioFile = null, uploadController = null, busy = 0, queued = null;
+const { call } = createWorkerClient({ spawn: () => new Worker(new URL('./worker.mjs', import.meta.url), { type: 'module' }) });
 let messageTimer;
 function message(value, persistent = false) { clearTimeout(messageTimer); $('#message').textContent = value; if (!persistent) messageTimer = setTimeout(() => { $('#message').textContent = ''; }, 7000); }
 // aria-busy is this app's only settled/unsettled signal, so it has to cover a
 // commit whoever started it. Boot commits outside run(), and without this its
 // ANALYSIS_RUNNING placeholder renders a CANDIDATE badge while the app claims
 // to be idle: a restored VALIDATED/IN_GAME_ACCEPTED project reads as demoted
-// until the real analysis lands, and an action taken in that window is lost.
+// until the real analysis lands. It is also what run() serializes against, so
+// an action taken during boot is held rather than racing that first analysis.
 function markBusy(active) {
   busy += active ? 1 : -1;
   $('#app').setAttribute('aria-busy', busy > 0 ? 'true' : 'false');
 }
-async function run(fn) {
-  if (busy) return message('本機分析進行中，請待目前步驟完成後再試一次');
+// A Files/input action is a choice the user already made through a native
+// picker, and the input it came from is replaced by the next render, so dropping
+// it while a commit is in flight loses that choice with nothing left to retry.
+// Serialize instead: hold one action and run it when the current one settles.
+//
+// A held action was chosen against the revision that was on screen. Evidence
+// actions (reviews, arbitration, Lead demotion, acceptance) attach to that exact
+// revision, so if it moved while they waited they are refused rather than
+// silently re-pointed at whatever replaced it. Intake actions carry their own
+// captured content and invalidate on their own, so they stay valid whatever
+// happened first -- and they are the ones that must not be lost.
+function run(fn, { revisionBound = true } = {}) {
+  const task = { fn, revisionBound, revision: workspace?.revision };
+  if (!busy) return drain(task);
+  if (queued) return message('已有一個待處理動作，請待目前步驟完成後再試一次', true);
+  queued = task;
+  return message('目前步驟完成後會接續執行剛才的操作');
+}
+async function drain(task) {
   markBusy(true);
-  try { await fn(); } catch (error) { message(error.message, true); }
-  finally { markBusy(false); }
+  try {
+    while (task) {
+      if (task.revisionBound && task.revision !== workspace?.revision) message('來源或設定已變更，剛才的操作未套用，請依目前內容重新確認', true);
+      else try { await task.fn(); } catch (error) { message(error.message, true); }
+      task = queued; queued = null;
+    }
+  } finally { markBusy(false); }
 }
 function download(name, value, type = 'application/json') {
   const url = URL.createObjectURL(new Blob([value], { type }));
@@ -63,7 +72,11 @@ async function commit(next) {
     workspace = next; report = { state: 'CANDIDATE', gates: { analysis: { status: 'PENDING', reason: 'ANALYSIS_RUNNING' } }, blockers: ['analysis'], tracks: null };
     render();
     try { report = await call('analyzeWorkspace', workspace); }
-    catch (error) { render(); throw error; }
+    // aria-busy is about to go false, so what stays on screen has to be a
+    // settled verdict. Leaving the ANALYSIS_RUNNING placeholder would claim an
+    // analysis is still running while the app reports itself idle, and no
+    // further render is coming to correct it.
+    catch (error) { report = { state: 'CANDIDATE', gates: { analysis: { status: 'PENDING', reason: `ANALYSIS_FAILED: ${error.message}` } }, blockers: ['analysis'], tracks: null }; render(); throw error; }
     try { workspace = await saveProject(workspace); await refreshProjects(); }
     catch (error) { workspace.savedAt=null;await refreshProjects().catch(()=>{});message(`尚未儲存：${error.message}。可先匯出專案備份。`, true); }
     render();
@@ -118,10 +131,10 @@ function bind() {
     const next=await call('invalidate',workspace); next.title=data.title; const {title,...settings}=data; next.settings=settings;
     if(settings.meterText!==workspace.settings.meterText) for(const [slot,a] of Object.entries(next.assets)) if(a.format==='MML') next.assets[slot]=await call('intake',{name:a.name,content:a.content,id:a.project.sources[0].id,meterText:settings.meterText});
     await commit(next);
-  }); };
-  document.querySelectorAll('[data-intake]').forEach(input=>input.onchange=()=>{const file=input.files[0];if(file)run(async()=>{if(file.size>4194304)throw Error('UNSUPPORTED: symbolic file exceeds 4 MiB');await putSource(input.dataset.intake,file.name,await file.text());});});
+  },{revisionBound:false}); };
+  document.querySelectorAll('[data-intake]').forEach(input=>input.onchange=()=>{const file=input.files[0];if(file)run(async()=>{if(file.size>4194304)throw Error('UNSUPPORTED: symbolic file exceeds 4 MiB');await putSource(input.dataset.intake,file.name,await file.text());},{revisionBound:false});});
   document.querySelectorAll('[data-download-ir]').forEach(button=>button.onclick=()=>{const asset=workspace.assets[button.dataset.downloadIr];download('canonical-project.json',JSON.stringify(asset.project,null,2));});
-  $('#paste').onsubmit=event=>{event.preventDefault();const data=Object.fromEntries(new FormData(event.target));run(()=>putSource(data.slot,data.name,data.content));};
+  $('#paste').onsubmit=event=>{event.preventDefault();const data=Object.fromEntries(new FormData(event.target));run(()=>putSource(data.slot,data.name,data.content),{revisionBound:false});};
   $('#review-form').onsubmit=event=>{event.preventDefault();const data=Object.fromEntries(new FormData(event.target));run(async()=>commit(await call('recordReview',workspace,data.name,data.note,data.evidence)));};
   document.querySelectorAll('[data-harmony]').forEach(form=>form.onsubmit=event=>{event.preventDefault();const data=Object.fromEntries(new FormData(form));run(async()=>{
     if(!data.reason?.trim()||!data.evidence?.trim())throw Error('每個仲裁需要理由與證據');const conflict=report.harmony.conflicts[Number(form.dataset.harmony)];
@@ -137,7 +150,7 @@ function bind() {
     if(![...roles.slice(1),'omitted'].includes(d.destinationRole))throw Error('目標角色必須為 Chord1–Chord5 或 omitted');const event=workspace.assets.baseline?.project.events.find(e=>e.id===d.eventId&&e.role==='Melody');if(!event)throw Error('找不到基準 Melody event');
     const next=structuredClone(workspace);next.acceptance=null;next.leadEvidence=next.leadEvidence.filter(e=>e.eventId!==event.id);next.leadEvidence.push({eventId:event.id,destinationRole:d.destinationRole,sourceIdentity:{sourceId:event.sourceIds[0],sourceEventId:event.sourceEventIds[0]},sectionRole:d.sectionRole,scoreEvidence:{availability:d.scoreCitation?'available':'unavailable',classification:d.scoreClass,citation:d.scoreCitation},audioEvidence:{availability:d.audioCitation?'available':'unavailable',classification:d.audioClass,citation:d.audioCitation},positiveReason:d.positiveReason,continuity:{checked:d.continuity==='checked',createsLeadGap:d.continuity==='checked'?false:null,replacementEventIds:[]},core3:{checked:d.continuity==='checked',status:d.continuity==='checked'?'PASS':'PENDING'},revision:workspace.revision});await commit(next);
   });};
-  $('#audio-file').onchange=()=>{const file=$('#audio-file').files[0]??null;run(async()=>{audioFile=file;const next=await call('invalidate',workspace);next.settings.audioRequired='yes';await commit(next);});};
+  $('#audio-file').onchange=()=>{const file=$('#audio-file').files[0]??null;run(async()=>{audioFile=file;const next=await call('invalidate',workspace);next.settings.audioRequired='yes';await commit(next);},{revisionBound:false});};
   $('#request-audio').onclick=()=>run(async()=>{
     const endpoint=$('#audio-endpoint').value,token=$('#audio-token').value;const revision=workspace.revision,projectId=workspace.id;
     const {requestAudioAlignment,verifyAudioBinding}=await import('./audio-client.mjs');uploadController=new AbortController();$('#cancel-audio').disabled=false;$('#audio-progress').textContent='Audio Alignment 執行中…';
@@ -154,10 +167,10 @@ function bind() {
   $('#acceptance').onsubmit=event=>{event.preventDefault();const data=Object.fromEntries(new FormData(event.target));run(async()=>commit(await call('recordAcceptance',workspace,data)));};
 }
 
-$('#new-project').onclick=()=>run(async()=>{audioFile=null;await commit(await call('newWorkspace'));});
-$('#projects').onchange=()=>run(async()=>{audioFile=null;workspace=projects.find(p=>p.id===$('#projects').value);await commit(workspace);});
+$('#new-project').onclick=()=>run(async()=>{audioFile=null;await commit(await call('newWorkspace'));},{revisionBound:false});
+$('#projects').onchange=()=>run(async()=>{audioFile=null;workspace=projects.find(p=>p.id===$('#projects').value);await commit(workspace);},{revisionBound:false});
 $('#export-project').onclick=()=>{if(workspace)download('mml-studio-project.json',JSON.stringify({...workspace,canonical:identity.metadata},null,2));};
-$('#restore-project').onchange=()=>{const file=$('#restore-project').files[0];if(file)run(async()=>{if(file.size>16*1048576)throw Error('Project backup exceeds 16 MiB');audioFile=null;await commit(await call('importWorkspace',await file.text()));message('已匯入；先前審核保留為歷史，本輪需要重新審核。');});};
+$('#restore-project').onchange=()=>{const file=$('#restore-project').files[0];if(file)run(async()=>{if(file.size>16*1048576)throw Error('Project backup exceeds 16 MiB');audioFile=null;await commit(await call('importWorkspace',await file.text()));message('已匯入；先前審核保留為歷史，本輪需要重新審核。');},{revisionBound:false});};
 function network(){ $('#network').textContent=navigator.onLine?'本地執行 · Online':'本地執行 · Offline'; }
 addEventListener('online',network);addEventListener('offline',network);network();
 try {

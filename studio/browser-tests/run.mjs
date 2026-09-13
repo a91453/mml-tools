@@ -26,6 +26,18 @@ try {
       browser=await profile.engine.launch();
       context=await browser.newContext({viewport:profile.viewport,isMobile:profile.isMobile,hasTouch:profile.hasTouch});
       page=await context.newPage();page.on('pageerror',e=>errors.push(e.message));page.on('request',r=>requests.push({url:r.url(),method:r.method()}));
+      // aria-busy false is a claim that what is on screen is settled, so a gate
+      // still reading ANALYSIS_RUNNING at that moment is the app contradicting
+      // itself -- a failed or abandoned analysis leaving its placeholder behind
+      // with no further render coming. Watch for it across the whole run, over
+      // reloads, rather than at one assertion point.
+      await page.addInitScript(()=>{
+        new MutationObserver(()=>{
+          const app=document.querySelector('#app');
+          if(!app||app.getAttribute('aria-busy')==='true'||!app.textContent.includes('ANALYSIS_RUNNING'))return;
+          try{sessionStorage.setItem('settledWhileRunning',String(Number(sessionStorage.getItem('settledWhileRunning')||0)+1));}catch{}
+        }).observe(document,{subtree:true,childList:true,attributes:true,attributeFilter:['aria-busy']});
+      });
       const idle=()=>page.waitForFunction(()=>document.querySelector('#app')?.getAttribute('aria-busy')!=='true'&&document.querySelector('#app h1'));
       const file=async(slot,content,name)=>{await page.locator(`[data-intake="${slot}"]`).setInputFiles({name,mimeType:'text/plain',buffer:Buffer.from(content)});await page.waitForFunction(name=>document.querySelector('#intake')?.textContent.includes(name),name);await idle();};
       await page.goto(base);await page.locator('#app h1').waitFor();await idle();
@@ -39,7 +51,30 @@ try {
       await page.locator('[name="audioRequired"]').selectOption('no');
       await page.locator('[name="preview"]').selectOption('none');
       await page.getByRole('button',{name:'儲存專案設定',exact:true}).click();await page.locator('h1').filter({hasText:'Studio browser fixture'}).waitFor();await idle();
-      await file('candidate',mml,'candidate.mml');await file('baseline',mml,'baseline.mml');
+      // Serialization: a file picked while a commit is in flight must still be
+      // applied. The input it came from is replaced by the next render, so a
+      // dropped change leaves the user nothing to retry -- the choice is gone.
+      // Arm the baseline pick to fire exactly on the aria-busy transition
+      // instead of racing it, so this proves the queue rather than the timing.
+      await page.evaluate(content=>{
+        window.queuedIntake={armed:true,fired:false};
+        new MutationObserver(()=>{
+          const input=document.querySelector('[data-intake="baseline"]');
+          if(!window.queuedIntake.armed||!input||document.querySelector('#app')?.getAttribute('aria-busy')!=='true')return;
+          window.queuedIntake.armed=false;
+          const transfer=new DataTransfer();
+          transfer.items.add(new File([content],'queued-baseline.mml',{type:'text/plain'}));
+          input.files=transfer.files;
+          input.dispatchEvent(new Event('change'));
+          window.queuedIntake.fired=true;
+        }).observe(document,{subtree:true,attributes:true,attributeFilter:['aria-busy']});
+      },mml);
+      await page.locator('[data-intake="candidate"]').setInputFiles({name:'candidate.mml',mimeType:'text/plain',buffer:Buffer.from(mml)});
+      await page.waitForFunction(()=>window.queuedIntake?.fired===true);
+      await idle();
+      const intakeText=await page.locator('#intake').textContent();
+      assert.ok(intakeText.includes('candidate.mml'),'the in-flight intake still applies');
+      assert.ok(intakeText.includes('queued-baseline.mml'),'a file chosen during a busy commit is applied, not dropped');
       assert.equal(await page.locator('#copy-mml').isEnabled(),true);
       assert.equal(await page.locator('.hero .badge').textContent(),'CANDIDATE');
       assert.equal(await page.locator('#track-3').inputValue(),'');
@@ -89,8 +124,9 @@ try {
       await page.reload();await page.locator('#app h1').waitFor();await idle();
       assert.equal(await page.locator('.hero .badge').textContent(),'CANDIDATE');
       assert.ok((await page.locator('#gates').textContent()).includes('UNSUPPORTED'));
+      assert.equal(await page.evaluate(()=>Number(sessionStorage.getItem('settledWhileRunning')||0)),0,'aria-busy must never go false with a gate still reading ANALYSIS_RUNNING');
       assert.deepEqual(errors,[]);
-      results.push({profile:profile.name,status:'PASS',checks:['Files picker','local MML/MusicXML','full review workflow','state separation','exact clipboard payload','IndexedDB reload','boot busy signal','revision invalidation','unsupported fail closed','no implicit uploads','responsive layout','offline module graph']});
+      results.push({profile:profile.name,status:'PASS',checks:['Files picker','local MML/MusicXML','full review workflow','state separation','exact clipboard payload','IndexedDB reload','boot busy signal','busy-window intake queued not dropped','settled state never ANALYSIS_RUNNING','revision invalidation','unsupported fail closed','no implicit uploads','responsive layout','offline module graph']});
     } catch(error) {
       failed=true;results.push({profile:profile.name,status:'FAIL',error:error.stack,consoleErrors:errors});
       if(page)await page.screenshot({path:new URL(`${profile.name}-failure.png`,out).pathname,fullPage:true}).catch(()=>{});

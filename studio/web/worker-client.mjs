@@ -1,0 +1,63 @@
+// The analysis Worker owns one computation at a time and dispatches messages in
+// order. A request that times out or dies is therefore not just a failed
+// request: its computation still owns the Worker, so every later request queues
+// behind work nobody is waiting for and times out in turn. Recovery has to
+// replace the instance, not only reject the caller.
+//
+// Replacing it is also what keeps the failure fail-closed. A fresh Worker
+// re-verifies the published Canonical package before it answers anything, so a
+// recovered session cannot answer from a half-initialised runtime; and while no
+// Worker can be started, every call rejects instead of hanging, which leaves the
+// gates that depend on it PENDING rather than silently unevaluated.
+export const WORKER_TIMEOUT = '本機分析逾時，未完成的 Gate 保持 PENDING';
+export const WORKER_UNAVAILABLE = '本機分析 Worker 無法啟動，請重新開啟；未完成的 Gate 保持 PENDING';
+export const WORKER_GIVEN_UP = '本機分析 Worker 反覆失敗，請重新開啟頁面；未完成的 Gate 保持 PENDING';
+
+export function createWorkerClient({ spawn, timeoutMs = 45000, maxRestarts = 3 } = {}) {
+  if (typeof spawn !== 'function') throw Error('worker client requires a spawn function');
+  const pending = new Map();
+  let worker = null, sequence = 0, restarts = 0, givenUp = false;
+
+  function attach() {
+    const instance = spawn();
+    instance.onmessage = ({ data }) => {
+      const request = pending.get(data?.id);
+      if (!request) return;
+      clearTimeout(request.timer);
+      pending.delete(data.id);
+      // Only an answered request proves this instance is healthy, so the restart
+      // budget is spent by consecutive failures and reset by real progress.
+      restarts = 0;
+      data.error ? request.reject(Error(data.error)) : request.resolve(data.result);
+    };
+    instance.onerror = () => recycle(WORKER_UNAVAILABLE);
+    return instance;
+  }
+
+  function recycle(reason) {
+    const dying = worker;
+    worker = null;
+    try { dying?.terminate?.(); } catch { /* already gone; the replacement is what matters */ }
+    // Nothing in flight can still be answered: the instance that owned those ids
+    // is gone, and ids are not replayed onto its replacement.
+    for (const request of pending.values()) { clearTimeout(request.timer); request.reject(Error(reason)); }
+    pending.clear();
+    if (++restarts > maxRestarts) { givenUp = true; return; }
+    worker = attach();
+  }
+
+  return {
+    call(action, ...args) {
+      return new Promise((resolve, reject) => {
+        if (givenUp) return reject(Error(WORKER_GIVEN_UP));
+        if (!worker) worker = attach();
+        const id = ++sequence;
+        const timer = setTimeout(() => recycle(WORKER_TIMEOUT), timeoutMs);
+        pending.set(id, { resolve, reject, timer });
+        try { worker.postMessage({ id, action, args }); }
+        catch (error) { clearTimeout(timer); pending.delete(id); recycle(WORKER_UNAVAILABLE); reject(error); }
+      });
+    },
+    get state() { return { pending: pending.size, restarts, givenUp, running: Boolean(worker) }; },
+  };
+}
