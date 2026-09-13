@@ -64,6 +64,9 @@ try {
       await file('candidate',mml.replace('o4c1','o4d1'),'changed.mml');assert.equal(await page.locator('.hero .badge').textContent(),'CANDIDATE');
       await page.locator('#audio-file').setInputFiles({name:'original.wav',mimeType:'audio/wav',buffer:Buffer.from('synthetic audio')});
       await page.locator('#audio-file-status').filter({hasText:'尚未上傳'}).waitFor();
+      // The status line renders before the audio invalidation commit settles, and
+      // an intake fired while #app is aria-busy is dropped by design; wait it out.
+      await idle();
       assert.ok(requests.every(r=>r.method==='GET'&&r.url.startsWith(base)),'Symbolic intake and audio selection cause no upload or external request');
       await file('baseline',mxml,'repeat.musicxml');assert.ok((await page.locator('#gates').textContent()).includes('UNSUPPORTED'));
       // Service worker must cache the actual module graph for offline restart.
