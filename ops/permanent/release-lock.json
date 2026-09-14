@@ -1,0 +1,37 @@
+{
+  "schema": "studio-durable-release-v1",
+  "repository": "a91453/mml-tools",
+  "tag": "studio-v1-durable-5769e76849e5",
+  "sourceSha": "5769e76849e5ef8dad03b4080050cafcf1c2eabe",
+  "buildId": "34c67a4a1284eee1243ee51858096660c16cbf22cf0347e139abb15f2dc3e258",
+  "cacheId": "1e78713ad6bb57aff5dd5c4ef2cf841aa01f9c550471fe9aa4f216ed51596a92",
+  "canonical": {
+    "canonical_version": "2026-09-13-v1",
+    "canonical_status": "PUBLISHED",
+    "manifest_version": "2026-09-13-v1-manifest1",
+    "rules_snapshot_sha": "0a172900a01fdf39c2e9e84cf176961320b779ea"
+  },
+  "manifestCommit": "5e7666b850a37f1c85ee2dd8cd0f4fac037a9e14",
+  "runtimeBundleDigest": "ee3a94907f5a91aa7dea06c120448132dd834652059b4b2fc93dbd6623648424",
+  "buildJsonSha256": "d5ecaffc0da494325d127f9f9fe06998b93cb53254c6bbfcae8f69ad8b0324bc",
+  "assetCount": 34,
+  "artifact": {
+    "filename": "mml-studio-34c67a4a1284eee1243ee51858096660c16cbf22cf0347e139abb15f2dc3e258.zip",
+    "sha256": "ff464a35b00bb490cef3873e191b6dd870cdc6b5a10699badcb3788607f24088",
+    "bytes": 391839,
+    "objectKey": "releases/studio-v1-durable-5769e76849e5/ff464a35b00bb490cef3873e191b6dd870cdc6b5a10699badcb3788607f24088/mml-studio-34c67a4a1284eee1243ee51858096660c16cbf22cf0347e139abb15f2dc3e258.zip"
+  },
+  "trust": {
+    "filename": "studio-trust-5769e76849e5ef8dad03b4080050cafcf1c2eabe.zip",
+    "sha256": "2bfa4aa942bff469ffec254cd4e5b187c241484067ecbb5fdc31e004a350a499",
+    "bytes": 16928,
+    "sourceSha": "5769e76849e5ef8dad03b4080050cafcf1c2eabe",
+    "files": {
+      "scripts/studio-artifact-identity.mjs": "05720058074423e445186b42ddc1b5c3ef6bf9953c4ff59d1fbb8a642db451f6",
+      "scripts/verify-studio-artifact.mjs": "4945f3353cfdf311c7103a02d2c2a1f475a9647441b2b6d944b3d3ea718349f2",
+      "studio/web/canonical-contract.mjs": "1de173bdef33c70c92568dfb461ecc27427f45bade3dd7264cfa5e499389e7f4",
+      "studio/web/sw.js": "e7e44e5784d0f9e9112487a0ba27c7dc29e15f7dfe20ffc3dabee473629cf513"
+    },
+    "objectKey": "releases/studio-v1-durable-5769e76849e5/2bfa4aa942bff469ffec254cd4e5b187c241484067ecbb5fdc31e004a350a499/studio-trust-5769e76849e5ef8dad03b4080050cafcf1c2eabe.zip"
+  }
+}
