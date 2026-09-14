@@ -1,0 +1,25 @@
+{
+  "id": "/ja/",
+  "name": "マビノギモバイル 4ML Editor",
+  "short_name": "4ML Editor",
+  "description": "マビノギモバイル MML 楽譜エディター。作譜・試聴・書き出し、オフラインでも使えます。",
+  "lang": "ja",
+  "start_url": "/ja/",
+  "scope": "/",
+  "display": "standalone",
+  "display_override": ["standalone", "minimal-ui"],
+  "background_color": "#0d1a1b",
+  "theme_color": "#122325",
+  "categories": ["music", "utilities"],
+  "icons": [
+    {"src": "/img/icon-192-v1.png", "sizes": "192x192", "type": "image/png", "purpose": "any"},
+    {"src": "/img/icon-512-v1.png", "sizes": "512x512", "type": "image/png", "purpose": "any"},
+    {"src": "/img/icon-maskable-512-v1.png", "sizes": "512x512", "type": "image/png", "purpose": "maskable"}
+  ],
+  "shortcuts": [
+    {"name": "エディター入門", "url": "/ja/guide/editor"},
+    {"name": "MML 文法", "url": "/ja/guide/mml"},
+    {"name": "よくある質問", "url": "/ja/faq"}
+  ],
+  "dir": "ltr"
+}

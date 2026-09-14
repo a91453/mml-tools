@@ -1,0 +1,25 @@
+{
+  "id": "/ko/",
+  "name": "마비노기 모바일 4ML Editor",
+  "short_name": "4ML Editor",
+  "description": "마비노기 모바일 MML 악보 편집기. 작성·미리듣기·내보내기, 오프라인에서도 사용할 수 있습니다.",
+  "lang": "ko",
+  "start_url": "/ko/",
+  "scope": "/",
+  "display": "standalone",
+  "display_override": ["standalone", "minimal-ui"],
+  "background_color": "#0d1a1b",
+  "theme_color": "#122325",
+  "categories": ["music", "utilities"],
+  "icons": [
+    {"src": "/img/icon-192-v1.png", "sizes": "192x192", "type": "image/png", "purpose": "any"},
+    {"src": "/img/icon-512-v1.png", "sizes": "512x512", "type": "image/png", "purpose": "any"},
+    {"src": "/img/icon-maskable-512-v1.png", "sizes": "512x512", "type": "image/png", "purpose": "maskable"}
+  ],
+  "shortcuts": [
+    {"name": "편집기 입문", "url": "/ko/guide/editor"},
+    {"name": "MML 문법", "url": "/ko/guide/mml"},
+    {"name": "자주 묻는 질문", "url": "/ko/faq"}
+  ],
+  "dir": "ltr"
+}

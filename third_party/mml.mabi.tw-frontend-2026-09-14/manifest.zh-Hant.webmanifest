@@ -1,0 +1,25 @@
+{
+  "id": "/",
+  "name": "瑪奇M 4ML Editor",
+  "short_name": "4ML Editor",
+  "description": "瑪奇M MML 樂譜編輯器。畫譜、試聽、匯出，離線也能用。",
+  "lang": "zh-Hant",
+  "start_url": "/",
+  "scope": "/",
+  "display": "standalone",
+  "display_override": ["standalone", "minimal-ui"],
+  "background_color": "#0d1a1b",
+  "theme_color": "#122325",
+  "categories": ["music", "utilities"],
+  "icons": [
+    {"src": "/img/icon-192-v1.png", "sizes": "192x192", "type": "image/png", "purpose": "any"},
+    {"src": "/img/icon-512-v1.png", "sizes": "512x512", "type": "image/png", "purpose": "any"},
+    {"src": "/img/icon-maskable-512-v1.png", "sizes": "512x512", "type": "image/png", "purpose": "maskable"}
+  ],
+  "shortcuts": [
+    {"name": "編輯器入門", "url": "/guide/editor"},
+    {"name": "MML 教學", "url": "/guide/mml"},
+    {"name": "常見問題", "url": "/faq"}
+  ],
+  "dir": "ltr"
+}
