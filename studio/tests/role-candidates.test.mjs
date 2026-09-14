@@ -9,6 +9,7 @@ import {
   ENRICHMENT_ROLE_NAMES,
 } from '../backend/arrangement/index.mjs';
 import { f } from '../backend/mml/index.mjs';
+import { readFileSync } from 'node:fs';
 
 // ─── fixture helpers ────────────────────────────────────────────────────────
 
@@ -43,6 +44,27 @@ const line = (prefix, pitches, voice, from = 0, extra = {}) => pitches.map((pitc
 // independent line no matter how high it sits.
 const block = (prefix, pitches, voice, start, end, extra = {}) => pitches.map((pitch, index) =>
   note(`${prefix}${index + 1}`, pitch, String(start), String(end), voice, extra));
+
+const MELODY_VOICE = 'track:0/channel:0';
+const HARMONY_VOICE = 'track:1/channel:1';
+const BASS_VOICE = 'track:2/channel:2';
+
+// Bare MIDI carries no role metadata, so a polyphonic accompaniment voice leaves
+// Core3 PENDING by design: nothing establishes which of its simultaneous lanes
+// is the principal harmony, nor that the others are droppable. The fail-closed
+// fixtures below are the regression for that. Where a fixture's subject is
+// something else entirely, this supplies the score's own role evidence so the
+// Core3 question is settled and the subject under test is isolated.
+const scoredHarmony = (siblings = [['#1', 'Chord3']], voice = HARMONY_VOICE) => ({
+  sourceRoleEvidence: [
+    { laneId: `lane:${voice}#0`, role: 'Chord1', citation: 'fixture:score accompaniment, principal part' },
+    ...siblings.map(([suffix, role]) => ({
+      laneId: `lane:${voice}${suffix}`,
+      role,
+      citation: `fixture:score accompaniment, inner part ${suffix} marked non-core`,
+    })),
+  ],
+});
 
 const laneOf = (candidate, laneId) => candidate.lanes.find(lane => lane.id === laneId);
 const diagnostic = (candidate, code) => candidate.diagnostics.find(item => item.code === code);
@@ -106,10 +128,6 @@ function run(events, options) {
 
 // ─── 1. obvious monophonic Lead + harmony + bass ─────────────────────────────
 
-const MELODY_VOICE = 'track:0/channel:0';
-const HARMONY_VOICE = 'track:1/channel:1';
-const BASS_VOICE = 'track:2/channel:2';
-
 const obviousEvents = [
   ...line('m', [72, 74, 76, 72], MELODY_VOICE),
   ...block('ha', [60, 64, 67], HARMONY_VOICE, 0, 2),
@@ -117,9 +135,14 @@ const obviousEvents = [
   ...line('b', [48, 50, 43, 45], BASS_VOICE),
 ];
 
+// The accompaniment is a block triad, so G11-B yields three simultaneous lanes
+// from one source voice. With the score's own role evidence supplied, which lane
+// is principal and which are inner colour is settled, and Core3 can be complete.
+const obviousScored = scoredHarmony([['#1', 'Chord3'], ['#2', 'Chord4']]);
+
 test('fixture 1: Lead + harmony + bass yields a Core3 candidate that explains its own completeness', () => {
-  const candidate = run(obviousEvents);
-  assertOrderIndependent(obviousEvents);
+  const candidate = run(obviousEvents, obviousScored);
+  assertOrderIndependent(obviousEvents, obviousScored);
 
   assert.equal(candidate.roles.Melody.status, 'ASSIGNED');
   assert.deepEqual([...candidate.roles.Melody.laneIds], [`lane:${MELODY_VOICE}#0`]);
@@ -146,7 +169,7 @@ test('fixture 1: Lead + harmony + bass yields a Core3 candidate that explains it
 });
 
 test('fixture 1: the walking bass keeps its Lead evidence instead of having it erased', () => {
-  const candidate = run(obviousEvents);
+  const candidate = run(obviousEvents, obviousScored);
   const bass = laneOf(candidate, `lane:${BASS_VOICE}#0`);
   // MASTER_RULES.md §8: a numerical score must never be improved by erasing
   // Lead evidence. The bass is assigned Chord2 on a stronger tier while its
@@ -176,8 +199,8 @@ const enrichedEvents = [
 ];
 
 test('fixture 2: six roles fill with Core3 complete on its own and Full6 explaining each addition', () => {
-  const candidate = run(enrichedEvents);
-  assertOrderIndependent(enrichedEvents);
+  const candidate = run(enrichedEvents, scoredHarmony());
+  assertOrderIndependent(enrichedEvents, scoredHarmony());
 
   for (const role of SIX_ROLES) assert.equal(candidate.roles[role].status, 'ASSIGNED', `${role} must carry a lane`);
   assert.equal(candidate.core3.status, 'COMPLETE');
@@ -198,7 +221,7 @@ test('fixture 2: six roles fill with Core3 complete on its own and Full6 explain
 });
 
 test('fixture 2: Core3 is evaluable without reading any Full6 field', () => {
-  const candidate = run(enrichedEvents);
+  const candidate = run(enrichedEvents, scoredHarmony());
   const core3LaneIds = new Set(CORE3_ROLE_NAMES.flatMap(role => candidate.roles[role].laneIds));
   const enrichmentLaneIds = ENRICHMENT_ROLE_NAMES.flatMap(role => candidate.roles[role].laneIds);
   for (const laneId of enrichmentLaneIds) assert.equal(core3LaneIds.has(laneId), false);
@@ -222,8 +245,8 @@ const handOffEvents = [
 ];
 
 test('fixture 3: an instrumental answer continues Melody instead of creating a false gap', () => {
-  const candidate = run(handOffEvents);
-  assertOrderIndependent(handOffEvents);
+  const candidate = run(handOffEvents, scoredHarmony());
+  assertOrderIndependent(handOffEvents, scoredHarmony());
 
   assert.equal(candidate.roles.Melody.status, 'ASSIGNED');
   assert.equal(candidate.roles.Melody.laneIds.length, 2, 'both the vocal lane and the instrumental answer carry Melody');
@@ -288,8 +311,8 @@ const essentialInnerEvents = [
 ];
 
 test('fixture 5: Chord2 carries the bass skeleton plus essential inner support, not Bass-only', () => {
-  const candidate = run(essentialInnerEvents);
-  assertOrderIndependent(essentialInnerEvents);
+  const candidate = run(essentialInnerEvents, scoredHarmony());
+  assertOrderIndependent(essentialInnerEvents, scoredHarmony());
 
   const chord2 = candidate.roles.Chord2.laneIds;
   assert.ok(chord2.length >= 2, 'Chord2 must be able to hold more than the bass skeleton');
@@ -584,8 +607,8 @@ const tripletEvents = [
 ];
 
 test('fixture 12: exact rational timing survives, and no decision reads a float', () => {
-  const candidate = run(tripletEvents);
-  assertOrderIndependent(tripletEvents);
+  const candidate = run(tripletEvents, scoredHarmony());
+  assertOrderIndependent(tripletEvents, scoredHarmony());
 
   // 1/3 must still be 1/3 in the candidate, never 0.3333333333333333.
   const serialized = JSON.stringify(candidate);
@@ -683,8 +706,8 @@ const percussionEvents = [
 ];
 
 test('fixture 15: percussion and unsupported material never become a pitched role', () => {
-  const candidate = run(percussionEvents);
-  assertOrderIndependent(percussionEvents);
+  const candidate = run(percussionEvents, scoredHarmony());
+  assertOrderIndependent(percussionEvents, scoredHarmony());
 
   const retained = candidate.unsupportedSourceMaterial.map(item => item.eventId);
   assert.deepEqual(retained, ['d1', 'd2', 'x1']);
@@ -737,7 +760,7 @@ test('fixture 17: Full6 may not hide an incomplete Core3', () => {
   // The inner voice that is the only accompaniment across beats 2-4 is pinned
   // into Chord3 instead of Core3.
   const innerLaneId = 'lane:track:6/channel:6#0';
-  const candidate = run(essentialInnerEvents, { roleOverrides: { [innerLaneId]: 'Chord3' } });
+  const candidate = run(essentialInnerEvents, { ...scoredHarmony(), roleOverrides: { [innerLaneId]: 'Chord3' } });
 
   assert.ok(candidate.roles.Chord3.laneIds.includes(innerLaneId));
   assert.ok(candidate.core3.essentialEventIds.length, 'the essential events are still identified');
@@ -775,8 +798,8 @@ const redundantEvents = [
 ];
 
 test('fixture 18: a duplicating enrichment lane is reported as duplication, not as a benefit', () => {
-  const candidate = run(redundantEvents);
-  assertOrderIndependent(redundantEvents);
+  const candidate = run(redundantEvents, scoredHarmony());
+  assertOrderIndependent(redundantEvents, scoredHarmony());
 
   const dupLaneId = 'lane:track:7/channel:7#0';
   const entry = candidate.full6.enrichmentRationale.find(item => item.laneId === dupLaneId);
@@ -815,7 +838,10 @@ const usefulEnrichmentEvents = [
 // part is the Lead, so the counter-line can be read as enrichment rather than as
 // a rival Lead. Trusted symbolic role evidence requires a citation.
 const leadDeclared = {
-  sourceRoleEvidence: [{ sourceVoice: MELODY_VOICE, role: 'Melody', citation: 'fixture:score P1 voice 1' }],
+  sourceRoleEvidence: [
+    { sourceVoice: MELODY_VOICE, role: 'Melody', citation: 'fixture:score P1 voice 1' },
+    ...scoredHarmony().sourceRoleEvidence,
+  ],
 };
 
 test('fixture 19: source-supported counter-line is distinguished from duplication', () => {
@@ -1144,4 +1170,315 @@ test('an empty or wholly unsupported project fails closed instead of inventing a
   assert.equal(drumsOnly.unsupportedSourceMaterial.length, 1);
   assert.equal(drumsOnly.core3.status, 'INCOMPLETE');
   assert.equal(drumsOnly.coverage.complete, true);
+});
+
+// ═══════════════════════════════════════════════════════════════════════════
+// Checkpoint 2 — fail closed on unresolved core harmony
+// ═══════════════════════════════════════════════════════════════════════════
+//
+// Checkpoint 1 could return core3.status === 'COMPLETE' in two situations where
+// the evidence did not support it:
+//
+//   * a long sustained pad won the Chord1 coverage ranking and was then reported
+//     as positively established principal harmony;
+//   * a sibling lane of a Core3 source voice, sounding concurrently with Core3,
+//     was left outside Core3 and treated as optional enrichment purely because
+//     it did not fill a silence.
+//
+// Both are corrected below. Candidate ranking still happens; it just no longer
+// masquerades as functional evidence.
+
+// ─── adversarial fixture A — long pad vs. true principal harmony ────────────
+
+const PAD_VOICE = 'track:3/channel:3';
+
+// The pad sounds for eight lane-beats in total; the real accompaniment for four.
+// A duration ranking prefers the pad. Musical evidence does not.
+const padVsHarmonyEvents = [
+  ...line('m', [72, 74, 76, 72], MELODY_VOICE),
+  ...line('b', [48, 50, 43, 45], BASS_VOICE),
+  note('pa', 55, '0', '4', PAD_VOICE),
+  note('pb', 59, '0', '4', PAD_VOICE),
+  ...line('h', [60, 64, 60, 64], HARMONY_VOICE),
+];
+
+test('A: a longer pad cannot outrank trusted principal-harmony evidence', () => {
+  const evidenced = {
+    sourceRoleEvidence: [
+      { sourceVoice: HARMONY_VOICE, role: 'Chord1', citation: 'fixture:score accompaniment staff' },
+      { sourceVoice: PAD_VOICE, role: 'Chord3', citation: 'fixture:score pad staff marked texture' },
+    ],
+  };
+  const candidate = run(padVsHarmonyEvents, evidenced);
+  assertOrderIndependent(padVsHarmonyEvents, evidenced);
+
+  const voiceSounding = voice => candidate.lanes
+    .filter(lane => lane.sourceVoice === voice)
+    .reduce((total, lane) => total.add(lane.metrics.soundingTime), f(0));
+  assert.ok(voiceSounding(PAD_VOICE).cmp(voiceSounding(HARMONY_VOICE)) > 0,
+    'the pad source voice really does out-sound the accompaniment that a coverage ranking would compare it against');
+
+  // Evidence wins; duration does not get a vote.
+  assert.deepEqual([...candidate.roles.Chord1.laneIds], [`lane:${HARMONY_VOICE}#0`]);
+  assert.equal(candidate.core3.functions.principalHarmony.status, 'PRESENT');
+  assert.equal(candidate.core3.functions.principalHarmony.evidenceStrength, 'POSITIVE');
+  assert.equal(candidate.core3.functions.principalHarmony.evidenceTierName, 'DECLARED_SOURCE_ROLE');
+  assert.ok(candidate.core3.rationale.some(item => item.code === 'PRINCIPAL_HARMONY_PRESENT'));
+
+  // The pad is not deleted; it is enrichment, on its own evidence.
+  for (const laneId of [`lane:${PAD_VOICE}#0`, `lane:${PAD_VOICE}#1`]) {
+    assert.equal(candidate.lanes.some(lane => lane.id === laneId), true);
+    assert.equal(candidate.roles.Chord1.laneIds.includes(laneId), false);
+  }
+  assert.equal(candidate.core3.status, 'COMPLETE');
+});
+
+test('B: without distinguishing evidence a candidate is still offered, but Core3 stays PENDING', () => {
+  const candidate = run(padVsHarmonyEvents);
+  assertOrderIndependent(padVsHarmonyEvents);
+
+  // A useful, deterministic candidate is still produced.
+  assert.equal(candidate.roles.Chord1.status, 'ASSIGNED');
+  assert.equal(candidate.roles.Chord1.laneIds.length, 1);
+  assert.equal(candidate.roles.Chord1.evidenceTierName, 'BEST_AVAILABLE_COVERAGE_CANDIDATE');
+  assert.ok(candidate.roles.Chord1.reasons.includes('BEST_AVAILABLE_COVERAGE_CANDIDATE'));
+
+  // But it is a candidate, not an established function.
+  const principal = candidate.core3.functions.principalHarmony;
+  assert.equal(principal.status, 'CANDIDATE_ONLY');
+  assert.equal(principal.satisfied, false);
+  assert.equal(principal.evidenceStrength, 'HEURISTIC_CANDIDATE');
+  assert.deepEqual([...principal.unevidencedLaneIds], [...candidate.roles.Chord1.laneIds]);
+  assert.equal(principal.measurement.establishesPrincipalHarmony, false);
+  assert.ok(candidate.core3.rationale.some(item => item.code === 'PRINCIPAL_HARMONY_CANDIDATE_ONLY'));
+
+  // Unproven is not the same as absent, and neither is COMPLETE.
+  assert.equal(candidate.core3.status, 'PENDING');
+  assert.ok(candidate.core3.unprovenFunctions.includes('principal-harmony'));
+  assert.equal(candidate.core3.absentFunctions.includes('principal-harmony'), false);
+  assert.ok(candidate.core3.missingFunctions.includes('principal-harmony'),
+    'missingFunctions stays the superset of everything unsatisfied');
+});
+
+// ─── adversarial fixture B — concurrent omitted inner voice, no silence ─────
+
+// One accompaniment source voice, three simultaneous lanes. Core3 sounds
+// continuously throughout, so no silence-gap analysis can reach the two lanes
+// left outside it.
+const concurrentInnerEvents = [
+  ...line('m', [72, 74, 76, 72], MELODY_VOICE),
+  ...line('b', [48, 50, 43, 45], BASS_VOICE),
+  ...block('ha', [60, 64, 67], HARMONY_VOICE, 0, 2),
+  ...block('hb', [59, 62, 67], HARMONY_VOICE, 2, 4),
+];
+
+const innerSiblingIds = [`lane:${HARMONY_VOICE}#1`, `lane:${HARMONY_VOICE}#2`];
+
+test('C/D/E: a concurrent omitted sibling blocks COMPLETE without a silence gap, and is not moved', () => {
+  const candidate = run(concurrentInnerEvents);
+  assertOrderIndependent(concurrentInnerEvents);
+
+  // D: there is genuinely no silence anywhere for a gap analysis to find.
+  assert.deepEqual([...candidate.core3.sourceCoverage.uncoveredSoundingWindows], []);
+  assert.deepEqual([...candidate.core3.sourceCoverage.unaccompaniedSoundingWindows], []);
+  assert.deepEqual([...candidate.core3.functions.essentialInnerSupport.essentialLaneIds], [],
+    'the silence-gap test proves nothing essential here — that is the point');
+  assert.equal(candidate.core3.functions.essentialInnerSupport.status, 'NOT_REQUIRED');
+
+  // ...and Core3 is still not complete, because the concurrent siblings are
+  // neither proven essential nor proven optional.
+  assert.equal(candidate.core3.status, 'PENDING');
+  assert.equal(candidate.core3.functions.concurrentHarmonyResolution.satisfied, false);
+  assert.equal(candidate.core3.functions.concurrentHarmonyResolution.status, 'UNRESOLVED');
+  assert.deepEqual([...candidate.core3.functions.concurrentHarmonyResolution.unresolvedLaneIds], innerSiblingIds);
+  assert.ok(candidate.core3.unprovenFunctions.includes('concurrent-harmony-resolution'));
+  assert.equal(candidate.core3.identityMayDependOnEnrichment, true);
+  assert.equal(candidate.core3.identityDependsOnEnrichment, false,
+    'unresolved is not the same as a proven dependency');
+  assert.ok(candidate.core3.rationale.some(item => item.code === 'UNRESOLVED_CORE_HARMONY_SIBLING'));
+  assert.ok(candidate.core3.conflicts.some(item => item.code === 'UNRESOLVED_CORE_HARMONY_SIBLING'));
+
+  // C: the siblings are still there, whole, with their provenance.
+  for (const laneId of innerSiblingIds) {
+    const lane = laneOf(candidate, laneId);
+    assert.ok(lane, `${laneId} must still exist`);
+    assert.ok(lane.eventIds.length);
+    assert.ok(lane.sourceEventIds.length);
+    for (const id of lane.eventIds) assert.equal(ledgerFor(candidate, id).length, 1);
+  }
+
+  // E: the interlock reports uncertainty; it does not assign.
+  for (const laneId of innerSiblingIds) {
+    assert.equal(candidate.roles.Chord2.laneIds.includes(laneId), false,
+      'an unresolved sibling must not be shoved into Chord2');
+    assert.equal(CORE3_ROLE_NAMES.includes(laneOf(candidate, laneId).candidateRole), false);
+  }
+  const reported = diagnostic(candidate, 'UNRESOLVED_CORE_HARMONY_SIBLING');
+  assert.ok(reported);
+  assert.equal(reported.deleted, false);
+  assert.equal(reported.movedToChord2, false);
+  assert.deepEqual([...reported.laneIds], innerSiblingIds);
+  for (const entry of reported.siblings) {
+    assert.deepEqual([...entry.core3SiblingLaneIds], [`lane:${HARMONY_VOICE}#0`]);
+    assert.deepEqual([...entry.core3SiblingRoles], ['Chord1']);
+    assert.ok(entry.resolvedBy.includes('Chord3'));
+  }
+});
+
+test('G: Full6 does not launder an unresolved Core3 dependency as harmless enrichment', () => {
+  const candidate = run(concurrentInnerEvents);
+
+  assert.equal(candidate.full6.status, 'CORE3_DEPENDENCY');
+  assert.deepEqual([...candidate.full6.core3DependencyLaneIds], innerSiblingIds);
+  for (const laneId of innerSiblingIds) {
+    const entry = candidate.full6.enrichmentRationale.find(item => item.laneId === laneId);
+    assert.ok(entry, 'the sibling still holds its enrichment slot and is still described');
+    assert.equal(entry.useful, false, 'it may not be reported as useful while Core3 may need it');
+    assert.equal(entry.core3DependencyUnresolved, true);
+    assert.equal(entry.core3IntegrityIfRemoved, 'UNRESOLVED');
+    assert.equal(entry.removingLeavesCore3Intact, false,
+      'that field asserts *established* intact, which this is not');
+    assert.equal(entry.essential, false, 'nor is it claimed proven essential');
+    assert.ok(entry.addedFunctions.length, 'its musical contribution is still described');
+  }
+  for (const role of ['Chord3', 'Chord4']) {
+    assert.equal(candidate.full6.roleContributions[role].status, 'CORE3_DEPENDENCY_UNRESOLVED');
+  }
+});
+
+test('F: positive evidence that the sibling is optional removes the uncertainty', () => {
+  const evidenced = {
+    sourceRoleEvidence: [
+      { laneId: `lane:${HARMONY_VOICE}#0`, role: 'Chord1', citation: 'fixture:score accompaniment, upper part' },
+      { laneId: innerSiblingIds[0], role: 'Chord3', citation: 'fixture:score inner part marked optional' },
+      { laneId: innerSiblingIds[1], role: 'Chord4', citation: 'fixture:score inner part marked optional' },
+    ],
+  };
+  const candidate = run(concurrentInnerEvents, evidenced);
+  assertOrderIndependent(concurrentInnerEvents, evidenced);
+
+  assert.equal(candidate.core3.status, 'COMPLETE');
+  assert.equal(candidate.core3.functions.concurrentHarmonyResolution.status, 'RESOLVED');
+  assert.deepEqual([...candidate.core3.functions.concurrentHarmonyResolution.unresolvedLaneIds], []);
+  assert.equal(candidate.core3.functions.principalHarmony.status, 'PRESENT');
+  assert.equal(candidate.core3.identityMayDependOnEnrichment, false);
+  assert.equal(diagnostic(candidate, 'UNRESOLVED_CORE_HARMONY_SIBLING'), undefined);
+
+  // The siblings are still outside Core3 — now on evidence, not on assumption.
+  assert.equal(candidate.full6.status, 'USEFUL');
+  for (const laneId of innerSiblingIds) {
+    const entry = candidate.full6.enrichmentRationale.find(item => item.laneId === laneId);
+    assert.equal(entry.core3DependencyUnresolved, false);
+    assert.equal(entry.core3IntegrityIfRemoved, 'INTACT');
+    assert.equal(entry.removingLeavesCore3Intact, true);
+  }
+});
+
+test('the interlock is scoped to Core3 source voices, not to every omitted lane', () => {
+  // The counter-line fixture keeps its own source voice, so it is not a sibling
+  // of any Core3 lane and must not trip the interlock. Making every omitted
+  // lane unresolved would make the candidate useless.
+  const candidate = run(usefulEnrichmentEvents, leadDeclared);
+  assert.equal(candidate.core3.functions.concurrentHarmonyResolution.status, 'RESOLVED');
+  assert.equal(candidate.core3.status, 'COMPLETE');
+  assert.equal(candidate.full6.status, 'USEFUL');
+  const counter = candidate.full6.enrichmentRationale.find(item => item.laneId === 'lane:track:7/channel:7#0');
+  assert.equal(counter.useful, true);
+  assert.equal(counter.core3IntegrityIfRemoved, 'INTACT');
+});
+
+test('an unresolved sibling is reported as unresolved, never as proven essential', () => {
+  const candidate = run(concurrentInnerEvents);
+  // Same source voice is not proof of harmonic necessity, so the sibling must
+  // not be listed among the lanes the silence-gap test proved essential.
+  for (const laneId of innerSiblingIds) {
+    assert.equal(candidate.core3.essentialEventIds.length, 0);
+    assert.equal(candidate.core3.functions.essentialInnerSupport.essentialLaneIds.includes(laneId), false);
+    assert.equal(candidate.core3.functions.essentialInnerSupport.misplacedLaneIds.includes(laneId), false);
+  }
+  assert.equal(candidate.core3.functions.essentialInnerSupport.satisfied, true,
+    'the known-essential question is answered; the concurrent one is separate');
+});
+
+test('M: the G11 roadmap names only A, B and C', () => {
+  const files = [
+    'studio/backend/arrangement/role-candidates.mjs',
+    'studio/backend/arrangement/index.mjs',
+    'studio/tests/role-candidates.test.mjs',
+    'docs/G11C_CANDIDATE_ARRANGEMENT.md',
+  ];
+  for (const file of files) {
+    const text = readFileSync(new URL(`../../${file}`, import.meta.url), 'utf8');
+    assert.equal(/G11[-_ ]?D/i.test(text), false,
+      `${file} names a fourth numbered G11 stage; this project defines G11-A, G11-B and G11-C only, `
+      + 'and later verification/player work is unnamed and out of scope here');
+  }
+});
+
+test('checkpoint 2 capability claims are declared factually', () => {
+  assert.equal(ROLE_CANDIDATE_STATUS.principalHarmonyRequiresPositiveEvidence, true);
+  assert.equal(ROLE_CANDIDATE_STATUS.concurrentHarmonySiblingInterlock, true);
+  assert.equal(ROLE_CANDIDATE_STATUS.core3FailsClosedOnUnprovenFunction, true);
+  assert.equal(ROLE_CANDIDATE_STATUS.coverageRankingEstablishesPrincipalHarmony, false);
+  assert.equal(ROLE_CANDIDATE_STATUS.silenceGapIsCompleteEssentialDefinition, false);
+  assert.equal(ROLE_CANDIDATE_STATUS.unresolvedSiblingForcedIntoChord2, false);
+});
+
+test('a source that declares its whole accompaniment as Chord1 gets Chord1', () => {
+  // Declared lanes are co-assignees, not rivals: the overlap contest exists to
+  // stop an arbitrary pick between plausible candidates, and there is nothing to
+  // pick when the source names the role for all of them. Without this, failing
+  // closed would deadlock the very evidence that is supposed to resolve it.
+  const declaredEvents = [
+    ...line('m', [72, 74, 76, 72], MELODY_VOICE, 0, { role: 'Melody' }),
+    ...block('ha', [60, 64], HARMONY_VOICE, 0, 2, { role: 'Chord1' }),
+    ...block('hb', [59, 62], HARMONY_VOICE, 2, 4, { role: 'Chord1' }),
+    ...line('b', [48, 50, 43, 45], BASS_VOICE, 0, { role: 'Chord2' }),
+  ];
+  const candidate = run(declaredEvents);
+  assertOrderIndependent(declaredEvents);
+
+  assert.equal(candidate.roles.Chord1.status, 'ASSIGNED');
+  assert.equal(candidate.roles.Chord1.laneIds.length, 2, 'both declared lanes carry Chord1');
+  assert.equal(candidate.core3.functions.principalHarmony.status, 'PRESENT');
+  assert.equal(candidate.core3.functions.principalHarmony.evidenceStrength, 'POSITIVE');
+  assert.equal(candidate.core3.functions.concurrentHarmonyResolution.status, 'RESOLVED',
+    'no sibling is left outside Core3, so nothing is unresolved');
+  assert.equal(candidate.core3.status, 'COMPLETE');
+  for (const entry of candidate.ledger) assert.equal(entry.decision, ROLE_DECISIONS.KEEP_ROLE);
+});
+
+test('failing closed does not make candidate suggestion useless', () => {
+  // The bare-MIDI triad is PENDING, but the candidate is still fully formed:
+  // every role is populated, every lane is placed and described, and the reason
+  // Core3 cannot be called complete is named rather than hidden.
+  const candidate = run(concurrentInnerEvents);
+  assert.equal(candidate.core3.status, 'PENDING');
+  for (const role of ['Melody', 'Chord1', 'Chord2', 'Chord3', 'Chord4']) {
+    assert.equal(candidate.roles[role].status, 'ASSIGNED', `${role} still receives a candidate lane`);
+    assert.ok(candidate.roles[role].eventIds.length);
+  }
+  assert.equal(candidate.coverage.complete, true);
+  assert.equal(candidate.unassigned.length, 0, 'nothing is dropped to avoid a verdict');
+  assert.equal(candidate.pending.length, 0, 'no role decision is abandoned');
+  assert.ok(candidate.core3.rationale.length >= 5, 'the reasoning is still reported in full');
+  for (const entry of candidate.full6.enrichmentRationale) {
+    assert.ok(entry.addedFunctions.length, 'each enrichment lane still says what it adds');
+  }
+});
+
+test('an absence is only called proven while no role decision is still open', () => {
+  // Chord1 reads as empty here only because both of its candidate lanes are
+  // locked in the unresolved Lead contest. Reporting that as a deficiency would
+  // be a verdict the evidence has not earned.
+  const contested = run(twoLeadEvents);
+  assert.equal(contested.core3.status, 'PENDING');
+  assert.equal(contested.core3.absenceProven, false);
+  assert.ok(contested.core3.absentFunctions.includes('principal-harmony'));
+
+  // With nothing open, the same absence is a real deficiency.
+  const settled = run([...line('m', [72, 74, 76, 72], MELODY_VOICE), ...line('b', [48, 50, 43, 45], BASS_VOICE)]);
+  assert.equal(settled.core3.status, 'INCOMPLETE');
+  assert.equal(settled.core3.absenceProven, true);
+  assert.ok(settled.core3.absentFunctions.includes('principal-harmony'));
 });

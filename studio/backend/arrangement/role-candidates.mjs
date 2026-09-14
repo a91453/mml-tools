@@ -911,37 +911,30 @@ function assignRoles(state) {
 
   // 3. Chord1 principal harmony / accompaniment / essential response.
   //
-  //    Declared source-role evidence decides outright. Otherwise the *source
-  //    voice* with the greatest source-supported harmonic coverage is chosen
-  //    first, and only then its principal lane. Choosing at voice level keeps
-  //    the ordinary "one accompaniment voice, several lanes" case from looking
-  //    like a tie between three members of the same chord.
+  //    Declared source-role evidence decides outright *and* positively
+  //    establishes the function. Otherwise the source voice with the greatest
+  //    source-supported harmonic coverage is ranked first, and only then its
+  //    principal lane -- but that ranking produces a *candidate*, never proof.
+  //    Total sounding time, attack count, register and density cannot establish
+  //    principal harmony: a long sustained pad outlasts the real accompaniment
+  //    without being it. Choosing at voice level keeps the ordinary "one
+  //    accompaniment voice, several lanes" case from looking like a tie between
+  //    three members of the same chord.
   const chord1Pinned = [...assignment.entries()].some(([, role]) => role === 'Chord1');
   if (!chord1Pinned) {
-    const declared = lanes.filter(available).filter(lane => lane.roleSupport.Chord1.tier === 1)
-      .map(lane => ({ lane, tier: 1, tierName: lane.roleSupport.Chord1.tierName }));
+    const declared = lanes.filter(available).filter(lane => lane.roleSupport.Chord1.tier === 1);
     if (declared.length) {
-      const picked = selectWithinTier(declared);
-      if (picked.status === 'ASSIGNED') {
-        for (const item of picked.selected) assignment.set(item.lane.id, 'Chord1');
-        meta('Chord1', {
-          status: 'ASSIGNED', tier: 1, tierName: 'DECLARED_SOURCE_ROLE',
-          reasons: ['PRINCIPAL_HARMONY_DECLARED'],
-          evidenceIds: picked.selected.flatMap(item => item.lane.roleSupport.Chord1.evidenceIds).sort(cmpStr),
-        });
-      } else {
-        meta('Chord1', {
-          status: 'PENDING', tier: 1, reasons: ['COMPETING_HARMONY_CANDIDATES'],
-          competingLaneIds: picked.competing.map(item => item.lane.id).sort(cmpStr),
-        });
-        for (const item of picked.competing) {
-          markPending({
-            laneId: item.lane.id, proposedRole: 'Chord1', blockers: ['COMPETING_HARMONY_CANDIDATES'],
-            competingLaneIds: picked.competing.filter(other => other !== item).map(other => other.lane.id).sort(cmpStr),
-            evidenceIds: item.lane.roleSupport.Chord1.evidenceIds,
-          });
-        }
-      }
+      // Declared lanes are co-assignees, not rivals. The overlap contest exists
+      // to stop the implementation arbitrarily picking one of several plausible
+      // candidates; when the source names the role for all of them there is
+      // nothing to pick between, and a role holds zero or more lanes. Declaring
+      // a whole accompaniment staff as Chord1 must yield Chord1, not a deadlock.
+      for (const lane of declared) assignment.set(lane.id, 'Chord1');
+      meta('Chord1', {
+        status: 'ASSIGNED', tier: 1, tierName: 'DECLARED_SOURCE_ROLE',
+        reasons: ['PRINCIPAL_HARMONY_DECLARED'],
+        evidenceIds: declared.flatMap(lane => lane.roleSupport.Chord1.evidenceIds).sort(cmpStr),
+      });
     } else {
       const pool = lanes.filter(available);
       const voices = new Map();
@@ -988,10 +981,10 @@ function assignRoles(state) {
         }
         for (const lane of selected) assignment.set(lane.id, 'Chord1');
         meta('Chord1', {
-          status: 'ASSIGNED', tier: 2, tierName: 'PRINCIPAL_HARMONY_COVERAGE',
+          status: 'ASSIGNED', tier: 2, tierName: 'BEST_AVAILABLE_COVERAGE_CANDIDATE',
           reasons: registerDecided
-            ? ['PRINCIPAL_HARMONY_COVERAGE', 'TIE_BROKEN_BY_REGISTER_WITHIN_SOURCE_VOICE']
-            : ['PRINCIPAL_HARMONY_COVERAGE'],
+            ? ['BEST_AVAILABLE_COVERAGE_CANDIDATE', 'TIE_BROKEN_BY_REGISTER_WITHIN_SOURCE_VOICE']
+            : ['BEST_AVAILABLE_COVERAGE_CANDIDATE'],
           evidenceIds: [],
         });
         state.chord1Measurement = Object.freeze({
@@ -1001,7 +994,8 @@ function assignRoles(state) {
           laneIdsInVoice: voice.lanes.map(lane => lane.id).sort(cmpStr),
           principalLaneId: principal.id,
           tieBrokenByRegisterWithinSourceVoice: registerDecided,
-          notice: 'Register is used only to order lanes inside one already-identified accompaniment voice. It never establishes the voice’s function and never selects Melody or Chord2.',
+          establishesPrincipalHarmony: false,
+          notice: 'Deterministic ranking only. Coverage, attack count, register and density rank candidates; none of them establishes that this voice IS the principal harmony. Register is used only to order lanes inside one already-ranked accompaniment voice, and never selects Melody or Chord2.',
         });
       }
     }
@@ -1286,6 +1280,63 @@ function denseAttackSignals(entries) {
     .sort((a, b) => cmpB(a.at, b.at));
 }
 
+// Concurrent harmony/inner siblings left outside Core3.
+//
+// A silence gap is one way to prove a lane is essential; it is not the
+// definition of essential inner support. A polyphonic accompaniment source voice
+// decomposes into several simultaneous G11-B lanes: one may be selected into
+// Core3 while a sibling of the *same source voice*, sounding at the same time,
+// is left outside. Core3 never falls silent, so no gap analysis sees it -- and
+// yet that sibling may carry harmonic identity a complete one-player
+// arrangement needs (MASTER_RULES.md §5, ACCEPTANCE_CRITERIA.md Gate 4).
+//
+// Absence of evidence that the sibling is essential is NOT evidence that it is
+// optional, so this is reported as unresolved rather than decided either way.
+// It is an uncertainty interlock, not an assignment rule: the sibling is not
+// moved, merged or deleted, and it is not forced into Chord2. Only positive
+// evidence -- a declared source role or a cited trusted symbolic role naming an
+// enrichment role -- establishes it as optional and clears the blocker.
+function unresolvedHarmonySiblings(lanes, assignment, pendingLaneIds) {
+  const core3ByVoice = new Map();
+  for (const lane of lanes) {
+    if (!CORE3_ROLE_NAMES.includes(assignment.get(lane.id))) continue;
+    const voiceKey = String(lane.sourceVoice ?? 'voice:null');
+    if (!core3ByVoice.has(voiceKey)) core3ByVoice.set(voiceKey, []);
+    core3ByVoice.get(voiceKey).push(lane);
+  }
+
+  const unresolved = [];
+  for (const lane of lanes) {
+    const role = assignment.get(lane.id) ?? null;
+    if (CORE3_ROLE_NAMES.includes(role)) continue;
+    // A lane already blocking the candidate needs no second blocker.
+    if (pendingLaneIds.has(lane.id)) continue;
+
+    const siblings = (core3ByVoice.get(String(lane.sourceVoice ?? 'voice:null')) ?? [])
+      .filter(sibling => lanesOverlap(sibling, lane));
+    if (!siblings.length) continue;
+
+    const optionalEvidence = ENRICHMENT_ROLE_NAMES
+      .filter(enrichmentRole => lane.roleSupport[enrichmentRole].tier === 1)
+      .flatMap(enrichmentRole => lane.roleSupport[enrichmentRole].evidenceIds);
+    if (optionalEvidence.length) continue;
+
+    unresolved.push({
+      laneId: lane.id,
+      sourceVoice: lane.sourceVoice,
+      candidateRole: role,
+      core3SiblingLaneIds: siblings.map(sibling => sibling.id).sort(cmpStr),
+      core3SiblingRoles: [...new Set(siblings.map(sibling => assignment.get(sibling.id)))]
+        .sort((a, b) => SIX_ROLES.indexOf(a) - SIX_ROLES.indexOf(b)),
+      eventIds: [...lane.eventIds],
+      blocker: 'UNRESOLVED_CORE_HARMONY_SIBLING',
+      resolvedBy: 'A declared source role or a cited trusted symbolic role naming Chord3, Chord4 or Chord5 for this lane.',
+      notice: 'Sounds concurrently with Core3 material from the same source voice and is outside Core3. Nothing establishes it as optional enrichment, so Core3 completeness stays unresolved. The lane is preserved and is not moved into Chord2.',
+    });
+  }
+  return unresolved.sort((a, b) => cmpStr(a.laneId, b.laneId));
+}
+
 // ─── Core3 completeness ─────────────────────────────────────────────────────
 //
 // ACCEPTANCE_CRITERIA.md Gate 4. Three non-empty roles is NOT completeness:
@@ -1336,13 +1387,25 @@ function evaluateCore3(context) {
     notice: 'Bass function is measured over the sounding grid. Chord2 is never hardened into Bass-only.',
   };
 
+  // Having a Chord1 candidate is not the same as having established principal
+  // harmony. Only a declared source role or a cited trusted symbolic role does
+  // that; a coverage/attack ranking picks the best available candidate and says
+  // so. `CANDIDATE_ONLY` keeps the proposal useful without overclaiming.
+  const chord1PositivelyEvidenced = chord1Lanes.length > 0
+    && chord1Lanes.every(lane => lane.roleSupport.Chord1.tier === 1);
   const principalHarmony = {
-    satisfied: chord1Meta.status === 'ASSIGNED' && chord1Lanes.length > 0,
-    status: chord1Meta.status === 'PENDING' ? 'PENDING' : chord1Lanes.length ? 'PRESENT' : 'ABSENT',
+    satisfied: chord1Meta.status === 'ASSIGNED' && chord1PositivelyEvidenced,
+    status: chord1Meta.status === 'PENDING' ? 'PENDING'
+      : !chord1Lanes.length ? 'ABSENT'
+        : chord1PositivelyEvidenced ? 'PRESENT' : 'CANDIDATE_ONLY',
+    evidenceStrength: chord1Lanes.length ? (chord1PositivelyEvidenced ? 'POSITIVE' : 'HEURISTIC_CANDIDATE') : 'NONE',
     laneIds: chord1Lanes.map(lane => lane.id).sort(cmpStr),
+    unevidencedLaneIds: chord1Lanes.filter(lane => lane.roleSupport.Chord1.tier !== 1)
+      .map(lane => lane.id).sort(cmpStr),
     evidenceTier: chord1Meta.tier ?? null,
     evidenceTierName: chord1Meta.tierName ?? null,
     measurement: context.chord1Measurement ?? null,
+    notice: 'Total sounding time, attack count, register and density rank Chord1 candidates. They never, on their own, establish that a source voice is the principal harmony (MASTER_RULES.md §5, ACCEPTANCE_CRITERIA.md Gate 4).',
   };
 
   const misplacedEssential = classification.essentialLaneIds.filter(laneId => {
@@ -1352,13 +1415,28 @@ function evaluateCore3(context) {
   const essentialEventIds = [...new Set(classification.essentialLaneIds
     .flatMap(laneId => laneById.get(laneId)?.eventIds ?? []))].sort(cmpStr);
 
+  const unresolvedSiblings = context.unresolvedSiblings ?? [];
+  const unresolvedSiblingLaneIds = unresolvedSiblings.map(item => item.laneId);
+
+  // Two separate questions, deliberately not collapsed into one slot:
+  //   * essentialInnerSupport - is material we have *proven* essential inside
+  //     Core3? Proven by the silence-gap test.
+  //   * concurrentHarmonyResolution - is there material we can prove neither
+  //     essential nor optional? Unresolved is not a synonym for either.
   const essentialInnerSupport = {
     satisfied: misplacedEssential.length === 0,
     status: misplacedEssential.length ? 'MISPLACED' : classification.promotedToChord2.length ? 'PRESENT' : 'NOT_REQUIRED',
     essentialLaneIds: [...classification.essentialLaneIds],
     promotedToChord2: [...classification.promotedToChord2],
     misplacedLaneIds: misplacedEssential,
-    notice: 'Essential = the lane sounds while Core3 is silent. Such material belongs to Core3 (MASTER_RULES.md §5); leaving it in Chord3-Chord5 does not make Core3 complete.',
+    notice: 'A lane sounding while Core3 is silent is proven essential and belongs to Core3 (MASTER_RULES.md §5). That silence-gap test is one positive route to essentiality, not the definition of it.',
+  };
+
+  const concurrentHarmonyResolution = {
+    satisfied: unresolvedSiblings.length === 0,
+    status: unresolvedSiblings.length ? 'UNRESOLVED' : 'RESOLVED',
+    unresolvedLaneIds: [...unresolvedSiblingLaneIds],
+    notice: 'Material from a Core3 source voice that sounds concurrently with Core3 and sits outside it. Core3 never falls silent there, so the silence-gap test cannot reach it. Absence of evidence that it is essential is not evidence that it is optional, so Core3 completeness stays unresolved until a declared or cited source role settles it.',
   };
 
   const core3EventIds = [...new Set(CORE3_ROLE_NAMES.flatMap(idsFor))].sort(cmpStr);
@@ -1374,12 +1452,28 @@ function evaluateCore3(context) {
     notice: 'Coverage is diagnostic, never an optimization target (ACCEPTANCE_CRITERIA.md Gate 4). A true source rest is not a gap; these windows are reported, never filled.',
   };
 
-  const functions = { leadContinuity, principalHarmony, bassSkeleton, essentialInnerSupport };
+  const functions = { leadContinuity, principalHarmony, bassSkeleton, essentialInnerSupport, concurrentHarmonyResolution };
+
+  // `missingFunctions` keeps its checkpoint-1 meaning: every Core3 function that
+  // is not satisfied. It is then split by *why*. A function positively absent
+  // from the candidate is a deficiency (INCOMPLETE); a function that merely
+  // cannot be proven from the available evidence is unresolved (PENDING).
+  // Collapsing the two would let "we could not tell" read as a verdict.
+  const unproven = new Set(['PENDING', 'CANDIDATE_ONLY', 'UNRESOLVED']);
   const missingFunctions = [];
-  if (!leadContinuity.satisfied) missingFunctions.push('lead-continuity');
-  if (!principalHarmony.satisfied) missingFunctions.push('principal-harmony');
-  if (!bassSkeleton.satisfied) missingFunctions.push('bass-skeleton');
-  if (!essentialInnerSupport.satisfied) missingFunctions.push('essential-inner-support');
+  const unprovenFunctions = [];
+  const absentFunctions = [];
+  for (const [name, entry] of [
+    ['lead-continuity', leadContinuity],
+    ['principal-harmony', principalHarmony],
+    ['bass-skeleton', bassSkeleton],
+    ['essential-inner-support', essentialInnerSupport],
+    ['concurrent-harmony-resolution', concurrentHarmonyResolution],
+  ]) {
+    if (entry.satisfied) continue;
+    missingFunctions.push(name);
+    (unproven.has(entry.status) ? unprovenFunctions : absentFunctions).push(name);
+  }
 
   const conflicts = [];
   for (const role of CORE3_ROLE_NAMES) {
@@ -1387,19 +1481,35 @@ function evaluateCore3(context) {
     if (entry?.competingLaneIds?.length) conflicts.push({ role, code: entry.reasons.at(-1) ?? 'COMPETING_CANDIDATES', laneIds: [...entry.competingLaneIds] });
   }
   if (misplacedEssential.length) conflicts.push({ role: 'Chord2', code: 'ESSENTIAL_MATERIAL_OUTSIDE_CORE3', laneIds: misplacedEssential });
+  if (unresolvedSiblings.length) conflicts.push({
+    role: 'Chord1',
+    code: 'UNRESOLVED_CORE_HARMONY_SIBLING',
+    laneIds: [...unresolvedSiblingLaneIds],
+  });
 
   const pending = pendingLanes
     .filter(item => CORE3_ROLE_NAMES.includes(item.proposedRole))
     .map(item => ({ ...item, eventIds: laneById.get(item.laneId)?.eventIds ?? [] }))
     .sort((a, b) => cmpStr(a.laneId, b.laneId));
 
-  const anyPending = pending.length > 0
+  const decisionsOpen = pending.length > 0
     || CORE3_ROLE_NAMES.some(role => (roleMeta.get(role)?.status ?? 'EMPTY') === 'PENDING');
   const identityDependsOnEnrichment = misplacedEssential.length > 0;
+  const identityMayDependOnEnrichment = unresolvedSiblings.length > 0;
 
+  // A function is only *proven* absent while no role decision is still open:
+  // Chord1 can read as empty simply because both of its candidates are locked in
+  // an unresolved Lead contest, and calling that a deficiency would report a
+  // verdict we have not earned.
+  const provenAbsent = decisionsOpen ? [] : absentFunctions;
+
+  // Fail closed. COMPLETE requires Lead continuity, positively supported
+  // principal harmony, a measured or declared bass skeleton, every known
+  // essential lane inside Core3, no unresolved possible-essential material, and
+  // no open role conflict. Anything short of that is PENDING or INCOMPLETE.
   let status;
-  if (anyPending) status = 'PENDING';
-  else if (missingFunctions.length || identityDependsOnEnrichment) status = 'INCOMPLETE';
+  if (identityDependsOnEnrichment || provenAbsent.length) status = 'INCOMPLETE';
+  else if (decisionsOpen || unprovenFunctions.length || absentFunctions.length || identityMayDependOnEnrichment) status = 'PENDING';
   else status = 'COMPLETE';
 
   const rationale = [];
@@ -1415,10 +1525,14 @@ function evaluateCore3(context) {
     laneIds: leadContinuity.laneIds,
   });
   rationale.push({
-    code: principalHarmony.satisfied ? 'PRINCIPAL_HARMONY_PRESENT' : 'PRINCIPAL_HARMONY_MISSING',
+    code: principalHarmony.satisfied ? 'PRINCIPAL_HARMONY_PRESENT'
+      : principalHarmony.status === 'CANDIDATE_ONLY' ? 'PRINCIPAL_HARMONY_CANDIDATE_ONLY'
+        : 'PRINCIPAL_HARMONY_MISSING',
     detail: principalHarmony.satisfied
-      ? 'Chord1 supplies the principal accompaniment / essential response for the selected source voice.'
-      : `Chord1 is ${principalHarmony.status}: ${(chord1Meta.reasons ?? []).join(', ') || 'no harmony candidate'}.`,
+      ? 'Chord1 supplies the principal accompaniment / essential response, positively evidenced by a declared or cited source role.'
+      : principalHarmony.status === 'CANDIDATE_ONLY'
+        ? 'Chord1 holds the best available candidate, ranked by source-supported coverage. Coverage, attack count, register and density do not establish principal harmony, so the function stays unresolved rather than satisfied.'
+        : `Chord1 is ${principalHarmony.status}: ${(chord1Meta.reasons ?? []).join(', ') || 'no harmony candidate'}.`,
     laneIds: principalHarmony.laneIds,
   });
   rationale.push({
@@ -1439,6 +1553,11 @@ function evaluateCore3(context) {
       : 'Material that sounds while Core3 is silent is currently outside Core3. Core3 cannot be reported complete while its musical identity depends on Chord3-Chord5 or on unassigned material.',
     laneIds: essentialInnerSupport.misplacedLaneIds,
   });
+  if (unresolvedSiblings.length) rationale.push({
+    code: 'UNRESOLVED_CORE_HARMONY_SIBLING',
+    detail: 'Material from a source voice that also supplies Core3 sounds concurrently with it and sits outside Core3. Core3 never falls silent there, so no gap analysis reaches it, and nothing establishes the material as optional enrichment. Core3 completeness stays unresolved; the lanes are preserved and are not moved into Chord2.',
+    laneIds: [...unresolvedSiblingLaneIds],
+  });
   if (classification.gapsAfter.length) rationale.push({
     code: 'CORE3_SILENT_WHILE_SOURCE_SOUNDS',
     detail: 'There are windows where the source sounds and no Core3 role does. These are reported, never filled with invented material.',
@@ -1453,7 +1572,17 @@ function evaluateCore3(context) {
     essentialEventIds: Object.freeze(essentialEventIds),
     sourceCoverage: Object.freeze(sourceCoverage),
     identityDependsOnEnrichment,
+    identityMayDependOnEnrichment,
     missingFunctions: Object.freeze(missingFunctions),
+    absentFunctions: Object.freeze(absentFunctions),
+    absenceProven: !decisionsOpen,
+    unprovenFunctions: Object.freeze(unprovenFunctions),
+    unresolvedHarmony: Object.freeze(unresolvedSiblings.map(item => Object.freeze({
+      ...item,
+      core3SiblingLaneIds: Object.freeze([...item.core3SiblingLaneIds]),
+      core3SiblingRoles: Object.freeze([...item.core3SiblingRoles]),
+      eventIds: Object.freeze([...item.eventIds]),
+    }))),
     conflicts: Object.freeze(conflicts),
     pending: Object.freeze(pending),
     notice: 'Core3 completeness requires evidenced musical function. Three non-empty roles are never sufficient, and this is a candidate-stage reading, not ACCEPTANCE_CRITERIA.md Gate 4 acceptance.',
@@ -1469,6 +1598,7 @@ function evaluateCore3(context) {
 function evaluateFull6(context) {
   const { lanes, assignment, classification, core3 } = context;
   const byLaneId = new Map(classification.analyses.map(analysis => [analysis.lane.id, analysis]));
+  const unresolvedLaneIds = new Set((context.unresolvedSiblings ?? []).map(item => item.laneId));
 
   const roleContributions = {};
   const rationale = [];
@@ -1486,14 +1616,22 @@ function evaluateFull6(context) {
       const functions = analysis?.addedFunctions ?? [];
       for (const name of functions) addedFunctions.add(name);
       for (const risk of analysis?.duplicationRisks ?? []) duplicationRisks.push({ role, laneId: lane.id, ...risk });
+      const unresolved = unresolvedLaneIds.has(lane.id);
+      const essential = analysis?.essential ?? false;
+      // Enrichment means optional-but-useful *after* Core3 integrity. A lane
+      // Core3 may actually require is never reported as harmless: `useful` is
+      // withheld while the dependency is unresolved, and the tri-state below
+      // keeps "not established as intact" distinct from "proven to break Core3".
       const entry = {
         role,
         laneId: lane.id,
         sourceVoice: lane.sourceVoice,
         eventIds: lane.eventIds,
         addedFunctions: functions,
-        useful: analysis?.useful ?? false,
-        essential: analysis?.essential ?? false,
+        useful: (analysis?.useful ?? false) && !unresolved && !essential,
+        essential,
+        core3DependencyUnresolved: unresolved,
+        core3IntegrityIfRemoved: essential ? 'DEPENDS' : unresolved ? 'UNRESOLVED' : 'INTACT',
         duplicationRisks: analysis?.duplicationRisks ?? [],
         duplicationRatio: analysis?.duplicationRatio ?? '0',
         measurement: {
@@ -1505,8 +1643,10 @@ function evaluateFull6(context) {
           independentAttacks: analysis?.independentAttacks ?? 0,
         },
         // An enrichment lane that is essential is precisely the failure Gate 4
-        // guards against: removing it would take musical identity with it.
-        removingLeavesCore3Intact: !(analysis?.essential ?? false),
+        // guards against: removing it would take musical identity with it. An
+        // unresolved one is not established as safe to remove either, so this
+        // stays false there too -- it asserts "established intact", nothing less.
+        removingLeavesCore3Intact: !essential && !unresolved,
       };
       rationale.push(entry);
       return entry;
@@ -1514,7 +1654,8 @@ function evaluateFull6(context) {
     roleContributions[role] = Object.freeze({
       role,
       status: entries.some(entry => entry.essential) ? 'ESSENTIAL_MATERIAL_MISPLACED'
-        : entries.some(entry => entry.useful) ? 'USEFUL' : 'REVIEW',
+        : entries.some(entry => entry.core3DependencyUnresolved) ? 'CORE3_DEPENDENCY_UNRESOLVED'
+          : entries.some(entry => entry.useful) ? 'USEFUL' : 'REVIEW',
       laneIds: Object.freeze(roleLanes.map(lane => lane.id).sort(cmpStr)),
       addedFunctions: Object.freeze([...new Set(entries.flatMap(entry => entry.addedFunctions))].sort(cmpStr)),
       entries: Object.freeze(entries.map(entry => Object.freeze(entry))),
@@ -1525,7 +1666,7 @@ function evaluateFull6(context) {
   const conflictSignals = context.enrichmentConflictSignals;
   let status;
   if (!used.length) status = 'NONE';
-  else if (used.some(role => roleContributions[role].status === 'ESSENTIAL_MATERIAL_MISPLACED')) status = 'CORE3_DEPENDENCY';
+  else if (used.some(role => ['ESSENTIAL_MATERIAL_MISPLACED', 'CORE3_DEPENDENCY_UNRESOLVED'].includes(roleContributions[role].status))) status = 'CORE3_DEPENDENCY';
   else if (core3.status === 'PENDING') status = 'PENDING';
   else if (used.every(role => roleContributions[role].status === 'USEFUL') && !duplicationRisks.length) status = 'USEFUL';
   else status = 'REVIEW';
@@ -1539,10 +1680,11 @@ function evaluateFull6(context) {
     addedFunctions: Object.freeze([...addedFunctions].sort(cmpStr)),
     duplicationRisks: Object.freeze(duplicationRisks.sort((a, b) => cmpStr(a.laneId, b.laneId) || cmpStr(a.code, b.code))),
     conflictSignals: Object.freeze(conflictSignals),
+    core3DependencyLaneIds: Object.freeze([...unresolvedLaneIds].sort(cmpStr)),
     pending: Object.freeze(context.pendingLanes
       .filter(item => ENRICHMENT_ROLE_NAMES.includes(item.proposedRole))
       .sort((a, b) => cmpStr(a.laneId, b.laneId))),
-    notice: 'Full6 enrichment is reported separately from Core3. Chord3-Chord5 may not be used to hide an incomplete Core3, and a non-empty enrichment role is not by itself a benefit.',
+    notice: 'Full6 enrichment is reported separately from Core3. Chord3-Chord5 may not be used to hide an incomplete or unresolved Core3, and a non-empty enrichment role is not by itself a benefit. Enrichment means optional-but-useful after Core3 integrity, never material Core3 may still require.',
   });
 }
 
@@ -2025,12 +2167,27 @@ export function suggestRoleCandidates(project, options = {}) {
     notice: 'Every source note event is either represented in one or more candidate roles with provenance, or explicitly present as pending / unassigned / unsupported evidence.',
   });
 
+  const unresolvedSiblings = unresolvedHarmonySiblings(lanes, assignment, pendingLaneIds);
+  if (unresolvedSiblings.length) add('UNRESOLVED_CORE_HARMONY_SIBLING', {
+    deleted: false,
+    movedToChord2: false,
+    laneIds: Object.freeze(unresolvedSiblings.map(item => item.laneId)),
+    siblings: Object.freeze(unresolvedSiblings.map(item => Object.freeze({
+      ...item,
+      core3SiblingLaneIds: Object.freeze([...item.core3SiblingLaneIds]),
+      core3SiblingRoles: Object.freeze([...item.core3SiblingRoles]),
+      eventIds: Object.freeze([...item.eventIds]),
+    }))),
+    notice: 'Concurrent material from a Core3 source voice that is not established as optional enrichment. An uncertainty interlock, not an assignment rule: nothing is moved, merged or deleted.',
+  });
+
   const core3 = evaluateCore3({
     lanes, assignment, roleMeta, classification, pendingLanes, noteById,
     allNotes: notes, chord1Measurement: state.chord1Measurement ?? null,
+    unresolvedSiblings,
   });
   const full6 = evaluateFull6({
-    lanes, assignment, classification, core3, pendingLanes,
+    lanes, assignment, classification, core3, pendingLanes, unresolvedSiblings,
     enrichmentConflictSignals: Object.freeze(diagnostics
       .filter(item => ['SIMULTANEOUS_SAME_PITCH_DOUBLING', 'SUSTAINED_SAME_PITCH_OVERLAP', 'ROLE_DUPLICATION', 'DENSE_SIMULTANEOUS_ATTACKS', 'LOW_MID_CLOSE_INTERVAL'].includes(item.code))
       .map(item => item.code)
@@ -2134,6 +2291,14 @@ export const ROLE_CANDIDATE_STATUS = Object.freeze({
   crossRoleReviewSignals: true,
   declaredCandidateDuplication: true,
   leadDemotionInterlock: true,
+  principalHarmonyRequiresPositiveEvidence: true,
+  concurrentHarmonySiblingInterlock: true,
+  core3FailsClosedOnUnprovenFunction: true,
+
+  // Coverage, attack count, register and density rank candidates only.
+  coverageRankingEstablishesPrincipalHarmony: false,
+  silenceGapIsCompleteEssentialDefinition: false,
+  unresolvedSiblingForcedIntoChord2: false,
 
   // Not done here, by decision.
   sourceEventDeletion: false,
