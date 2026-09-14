@@ -1,0 +1,55 @@
+{
+  "id": "/en/",
+  "name": "Mabinogi Mobile 4ML Editor",
+  "short_name": "4ML Editor",
+  "description": "Mabinogi Mobile MML score editor. Write, preview and export \u2014 works offline.",
+  "lang": "en",
+  "start_url": "/en/",
+  "scope": "/",
+  "display": "standalone",
+  "display_override": [
+    "standalone",
+    "minimal-ui"
+  ],
+  "background_color": "#0d1a1b",
+  "theme_color": "#122325",
+  "categories": [
+    "music",
+    "utilities"
+  ],
+  "icons": [
+    {
+      "src": "/img/icon-192-v1.png",
+      "sizes": "192x192",
+      "type": "image/png",
+      "purpose": "any"
+    },
+    {
+      "src": "/img/icon-512-v1.png",
+      "sizes": "512x512",
+      "type": "image/png",
+      "purpose": "any"
+    },
+    {
+      "src": "/img/icon-maskable-512-v1.png",
+      "sizes": "512x512",
+      "type": "image/png",
+      "purpose": "maskable"
+    }
+  ],
+  "shortcuts": [
+    {
+      "name": "Editor quick start",
+      "url": "/en/guide/editor"
+    },
+    {
+      "name": "MML syntax",
+      "url": "/en/guide/mml"
+    },
+    {
+      "name": "FAQ",
+      "url": "/en/faq"
+    }
+  ],
+  "dir": "ltr"
+}
