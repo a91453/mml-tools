@@ -218,3 +218,92 @@ test('1/64 events survive MIDI and ABC preview round trips', () => {
   assert.ok(compareMidi(song, readMidi(writeMidi(song))).ok);
   assert.ok(compareMidi(song, readABC(writeABC(song), { finalPartial: '1/4' })).ok);
 });
+
+// G1 — MASTER_RULES §7 and MOBILE_SYNTAX §8 make tie/attack identity a Canonical
+// guarantee: `&` continues the same pitch only, and a repeated attack must never
+// be folded into one sustain. Both directions were previously unasserted, so
+// deleting the guard left the suite green.
+test('a tie may only continue the same pitch and never spans a rest', () => {
+  const different = parseTrack('t120o4c4&d4', 'Melody');
+  assert.ok(different.errors.some(item => item.code === 'TIE_PITCH_OR_GAP'), JSON.stringify(different.errors));
+
+  const overRest = parseTrack('t120o4c4&r4', 'Melody');
+  assert.ok(overRest.errors.length, 'a tie into a rest is not a continuation');
+
+  const unfinished = parseTrack('t120o4c4&', 'Melody');
+  assert.ok(unfinished.errors.length, 'a track may not end on an unresolved tie');
+});
+
+test('a same-pitch tie joins one event while a repeated attack stays two attacks', () => {
+  const tied = parseTrack('t120o4c4&c4', 'Melody');
+  assert.deepEqual(tied.errors, [], JSON.stringify(tied.errors));
+  assert.equal(tied.events.length, 1, 'a legitimate tie is one sustained event');
+  assert.equal(tied.events[0].start, '0');
+  assert.equal(tied.events[0].end, '2', 'the tie sustains across both quarter-note beats');
+
+  const repeated = parseTrack('t120o4c4c4', 'Melody');
+  assert.deepEqual(repeated.errors, [], JSON.stringify(repeated.errors));
+  assert.equal(repeated.events.length, 2, 'adjacent repeated attacks must not become one sustain');
+  assert.deepEqual(repeated.events.map(event => [event.start, event.end]), [['0', '1'], ['1', '2']]);
+});
+
+// G2 — MOBILE_SYNTAX §7 clause 1 is a FINAL_CANONICAL_POLICY: every non-empty role
+// starts with the same initial Tempo. P2 keeps the engine-law question open, so this
+// asserts the project's delivery policy only, not an engine requirement.
+test('Final requires an initial Tempo on every non-empty role while ingest still reviews it', () => {
+  const missing = parseTrack('o4c4', 'Melody', { mode: 'final' });
+  assert.ok(missing.errors.some(item => item.code === 'INITIAL_TEMPO_REQUIRED'), JSON.stringify(missing.errors));
+
+  const late = parseTrack('o4c4t120c4', 'Melody', { mode: 'final' });
+  assert.ok(late.errors.some(item => item.code === 'INITIAL_TEMPO_REQUIRED'), 'a Tempo after beat 0 is not an initial Tempo');
+
+  assert.deepEqual(parseTrack('t120o4c4', 'Melody', { mode: 'final' }).errors, []);
+  assert.ok(!parseTrack('o4c4', 'Melody').errors.some(item => item.code === 'INITIAL_TEMPO_REQUIRED'),
+    'ingest keeps the source event instead of failing closed on delivery policy');
+  assert.deepEqual(parseTrack('', 'Chord5', { mode: 'final' }).errors, [], 'an empty role stays empty and gets no filler Tempo');
+});
+
+// G3 — MOBILE_SYNTAX §2 documents the 2,400 limit and §11.6 requires each role to be
+// checked independently. P1 leaves exact client counter semantics unverified, so this
+// asserts the project validator's own raw-length enforcement and claims no client
+// equivalence.
+test('Final enforces the 2,400-character per-role limit that ingest only reports', () => {
+  const body = 'o4'.concat('c4'.repeat(1300));
+  const raw = `t120${body}`;
+  assert.ok(raw.length > 2400, `fixture must cross the limit, got ${raw.length}`);
+
+  const final = parseTrack(raw, 'Melody', { mode: 'final' });
+  assert.ok(final.errors.some(item => item.code === 'TRACK_CHARACTER_LIMIT'), JSON.stringify(final.errors.slice(0, 3)));
+  assert.equal(final.characters, raw.length, 'the validator reports the raw count it actually measured');
+
+  const ingest = parseTrack(raw, 'Melody');
+  assert.ok(ingest.warnings.some(item => item.code === 'TRACK_CHARACTER_LIMIT_SOURCE_ONLY'));
+  assert.ok(!ingest.errors.some(item => item.code === 'TRACK_CHARACTER_LIMIT'), 'oversized source evidence is retained at ingest');
+
+  const withinLimit = `t120o4${'c4'.repeat(1100)}`;
+  assert.ok(withinLimit.length < 2400);
+  assert.deepEqual(parseTrack(withinLimit, 'Melody', { mode: 'final' }).errors, []);
+});
+
+// G4 — MOBILE_SYNTAX §6 and P6 keep O-token range an implementation mapping against
+// official pitch 0–107, not Nexon wording. The guard must stay, and must stay labelled
+// as an implementation mapping.
+test('octave bounds fail closed as an implementation mapping, not as an official rule', () => {
+  for (const raw of ['t120o9c4', 't120o4>>>>>c4']) {
+    const parsed = parseTrack(raw, 'Melody', { mode: 'final' });
+    const finding = parsed.errors.find(item => item.code === 'OCTAVE_IMPLEMENTATION_MAPPING');
+    assert.ok(finding, `${raw}: ${JSON.stringify(parsed.errors)}`);
+    assert.match(finding.message, /實作映射/, 'the bound is reported as the current implementation mapping');
+  }
+  assert.match(
+    parseTrack('t120o9c4', 'Melody', { mode: 'final' }).errors.find(item => item.code === 'OCTAVE_IMPLEMENTATION_MAPPING').message,
+    /非Nexon官方措辭/,
+    'the explicit O-token bound still disclaims official wording, per MOBILE_SYNTAX §6 and P6',
+  );
+  // O8 is inside the octave mapping even though O8 C resolves to pitch 108: the
+  // octave-token bound and the official pitch 0-107 range stay separate checks.
+  const edge = parseTrack('t120o8c4', 'Melody', { mode: 'final' });
+  assert.ok(!edge.errors.some(item => item.code === 'OCTAVE_IMPLEMENTATION_MAPPING'), JSON.stringify(edge.errors));
+  assert.ok(edge.errors.some(item => item.code === 'NAMED_NOTE_FINAL_RANGE_UNVERIFIED'));
+  assert.deepEqual(parseTrack('t120o7b4', 'Melody', { mode: 'final' }).errors, [], 'mapped pitch 107 stays allowed');
+});

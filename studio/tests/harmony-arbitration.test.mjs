@@ -152,3 +152,145 @@ test('a song-length six-role project is reviewed pair-by-pair without losing con
   assert.equal(report.unresolvedCount, planted.length);
   assert.ok(elapsedMs < 5000, `cross-source review of a song-length project took ${elapsedMs.toFixed(0)}ms`);
 });
+
+const SIX_ROLES = ['Melody', 'Chord1', 'Chord2', 'Chord3', 'Chord4', 'Chord5'];
+
+function unorderedRolePairs() {
+  const pairs = [];
+  for (let i = 0; i < SIX_ROLES.length; i++) {
+    for (let j = i + 1; j < SIX_ROLES.length; j++) pairs.push([SIX_ROLES[i], SIX_ROLES[j]]);
+  }
+  return pairs;
+}
+
+const pairKey = (left, right) => [left, right].sort().join('|');
+
+// G5 — Gate 5 asks whether Chord3-Chord5 enrichment damages Core3, so the reported
+// core3Threat flag has to actually discriminate. Forcing it to a constant previously
+// left the suite green. Representative pairs only: the per-pair matrix is the
+// helper's own behaviour, not a Canonical contract.
+test('core3Threat discriminates Core3-versus-enrichment from same-tier conflicts', () => {
+  const conflictFor = (leftRole, rightRole) => {
+    const [official, thirdparty] = sources();
+    const project = createCanonicalProject({
+      id: `threat-${leftRole}-${rightRole}`, title: 'Threat', sources: [official, thirdparty],
+      events: [note('official:n1', 'official', leftRole, 60), note('thirdparty:n1', 'thirdparty', rightRole, 60)],
+    });
+    const report = analyzeCrossSourceHarmony(project);
+    assert.equal(report.conflictCount, 1, `${leftRole}/${rightRole} must still be reviewed`);
+    return report;
+  };
+
+  const crossTier = conflictFor('Melody', 'Chord3');
+  assert.equal(crossTier.conflicts[0].core3Threat, true);
+  assert.equal(crossTier.core3ThreatCount, 1);
+
+  for (const [leftRole, rightRole] of [['Melody', 'Chord1'], ['Chord3', 'Chord4']]) {
+    const sameTier = conflictFor(leftRole, rightRole);
+    assert.equal(sameTier.conflicts[0].core3Threat, false, `${leftRole}/${rightRole} is not a Core3-versus-enrichment threat`);
+    assert.equal(sameTier.core3ThreatCount, 0);
+    // Not a Core3 threat is still a reviewable conflict: MASTER_RULES §6 keeps
+    // same-pitch overlap a review signal rather than a deletion target.
+    assert.equal(sameTier.status, 'PENDING');
+    assert.equal(sameTier.unresolvedCount, 1);
+  }
+});
+
+// G6 — MASTER_RULES §6 names low/mid m2 and M7 compression as a review dimension.
+// The boundary itself is an implementation option, so this asserts that the
+// classification responds to the configured ceiling rather than fixing 71 as a rule.
+test('register risk separates low-mid from upper and follows the configured ceiling', () => {
+  const project = (id, leftPitch, rightPitch) => {
+    const [official, thirdparty] = sources();
+    return createCanonicalProject({
+      id, title: id, sources: [official, thirdparty],
+      events: [note('official:n1', 'official', 'Chord1', leftPitch), note('thirdparty:n1', 'thirdparty', 'Chord3', rightPitch)],
+    });
+  };
+
+  // Same-pitch and dissonance conflicts are built on separate paths, so both
+  // classify register risk independently.
+  assert.equal(analyzeCrossSourceHarmony(project('low', 60, 61)).conflicts[0].registerRisk, 'low-mid');
+  assert.equal(analyzeCrossSourceHarmony(project('high', 80, 81)).conflicts[0].registerRisk, 'upper');
+  assert.equal(analyzeCrossSourceHarmony(project('low-unison', 60, 60)).conflicts[0].registerRisk, 'low-mid');
+  assert.equal(analyzeCrossSourceHarmony(project('high-unison', 80, 80)).conflicts[0].registerRisk, 'upper');
+  assert.equal(
+    analyzeCrossSourceHarmony(project('high-unison', 80, 80), { lowMidCeiling: 90 }).conflicts[0].registerRisk,
+    'low-mid',
+    'the configured ceiling applies to same-pitch conflicts too',
+  );
+
+  const raised = analyzeCrossSourceHarmony(project('high', 80, 81), { lowMidCeiling: 90 });
+  assert.equal(raised.conflicts[0].registerRisk, 'low-mid', 'the ceiling is a configurable review threshold');
+  assert.equal(raised.policy.lowMidCeiling, 90, 'the report states the threshold it applied');
+  assert.equal(analyzeCrossSourceHarmony(project('low', 60, 61)).policy.lowMidCeiling, 71);
+});
+
+// G7 — PENDING P15 asks for evidence that all 15 unordered role pairs are actually
+// exercised, and that justified doubling is distinguishable from collision risk.
+// Each pair gets its own time window so the expected conflict set is exactly one per
+// pair. This asserts coverage and the keep/omit decision contract, and deliberately
+// does not assert any per-pair threat classification.
+test('all 15 unordered role pairs are exercised for sustained same-pitch overlap', () => {
+  const pairs = unorderedRolePairs();
+  assert.equal(pairs.length, 15, 'six roles form 15 unordered pairs');
+
+  const [official, thirdparty] = sources();
+  const events = [];
+  pairs.forEach(([leftRole, rightRole], index) => {
+    const start = index * 10;
+    events.push(note(`official:pair${index}`, 'official', leftRole, 60, String(start), String(start + 4)));
+    events.push(note(`thirdparty:pair${index}`, 'thirdparty', rightRole, 60, String(start + 1), String(start + 4)));
+  });
+  const project = createCanonicalProject({ id: 'all-pairs', title: 'All pairs', sources: [official, thirdparty], events });
+  const report = analyzeCrossSourceHarmony(project);
+
+  assert.equal(report.conflictCount, 15, 'one sustained same-pitch conflict per role pair');
+  assert.deepEqual(
+    [...new Set(report.conflicts.map(conflict => pairKey(conflict.leftRole, conflict.rightRole)))].sort(),
+    pairs.map(([leftRole, rightRole]) => pairKey(leftRole, rightRole)).sort(),
+    'every unordered role pair is represented exactly once',
+  );
+  for (const conflict of report.conflicts) {
+    assert.equal(conflict.kind, 'cross-source-same-pitch');
+    assert.notEqual(conflict.start, conflict.end, 'the reported window is the sustained overlap');
+  }
+  assert.equal(report.unresolvedCount, 15, 'unreviewed overlap stays collision-risk, not silently accepted');
+  assert.equal(report.status, 'PENDING');
+});
+
+test('an evidence-backed decision separates justified doubling from collision risk on every pair', () => {
+  const pairs = unorderedRolePairs();
+  const [official, thirdparty] = sources();
+  const events = [];
+  const decisions = [];
+  pairs.forEach(([leftRole, rightRole], index) => {
+    const start = index * 10;
+    const left = note(`official:pair${index}`, 'official', leftRole, 60, String(start), String(start + 4));
+    const right = note(`thirdparty:pair${index}`, 'thirdparty', rightRole, 60, String(start + 1), String(start + 4));
+    events.push(left, right);
+    // Every pair but the last is justified doubling; the last stays unresolved so
+    // the gate cannot pass on a blanket approval.
+    if (index < pairs.length - 1) {
+      decisions.push(createArbitrationDecision({
+        id: `decision-${index}`,
+        eventIds: [left.id, right.id],
+        action: 'keep',
+        status: 'accepted',
+        reason: `${leftRole}/${rightRole} doubling is source-supported reinforcement.`,
+        evidence: ['official-score:doubling', 'thirdparty-score:doubling'],
+      }));
+    }
+  });
+  const project = createCanonicalProject({
+    id: 'justified', title: 'Justified', sources: [official, thirdparty], events, decisions,
+  });
+  const report = analyzeCrossSourceHarmony(project);
+
+  assert.equal(report.conflictCount, 15);
+  assert.equal(report.conflicts.filter(conflict => conflict.resolved).length, 14, 'justified doubling is resolved by evidence');
+  assert.equal(report.unresolvedCount, 1, 'the undecided pair remains collision-risk');
+  assert.equal(report.status, 'PENDING', 'one unresolved pair still blocks the gate');
+  assert.equal(project.events.length, 30, 'arbitration never adds or deletes source events');
+  assert.ok(project.events.every(event => event.pitch === 60), 'arbitration never rewrites source pitch');
+});
