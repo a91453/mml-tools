@@ -2,12 +2,14 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import {
   TIMING_ORIGINS,
-  TIMING_ARTIFACT_KINDS,
+  TIMING_COMPONENTS,
   createTimingProvenance,
 } from '../backend/canonical/timing.mjs';
 import { normalizeMMLSource, mmlFragmentToProject } from '../backend/mml/canonicalize.mjs';
 import { ingestMusicXML, musicXMLFragmentToProject } from '../backend/score/index.mjs';
 import { mergeCanonicalProjects } from '../backend/canonical/merge.mjs';
+import { evaluateProjectReadiness } from '../backend/final/readiness.mjs';
+import { validateMML } from '../backend/mml/parser.mjs';
 import { f } from '../backend/mml/index.mjs';
 import { readCanonical } from '../web/model.mjs';
 
@@ -32,113 +34,143 @@ const mml = (raw, options = {}) => normalizeMMLSource(six(raw), {
   sourceId: 'mml', label: 'MML fixture', kind: 'current-mml', meterText: '0 4/4', ...options,
 });
 const score = (options = {}) => ingestMusicXML(SCORE, { sourceId: 'xml', label: 'Score fixture', ...options });
-const timings = events => events.map(event => event.metadata.timing);
+const origins = timing => TIMING_COMPONENTS.map(name => timing[name].origin);
 
 // ---------------------------------------------------------------------------
 // Provenance record shape. These values are descriptive only: the record says
-// how a time value came to exist, never what it means. C1 adds no classifier.
+// how each time value came to exist, never what it means. C1 adds no classifier.
 // ---------------------------------------------------------------------------
 
-test('timing provenance keeps three distinct factual origins', () => {
+test('timing provenance is recorded per component, never as one event-wide origin', () => {
   assert.deepEqual([...TIMING_ORIGINS], ['source-notated', 'source-derived', 'tool-derived']);
-  for (const origin of TIMING_ORIGINS) {
-    assert.equal(createTimingProvenance({ origin, adapter: 'x' }).origin, origin);
+  assert.deepEqual([...TIMING_COMPONENTS], ['start', 'duration', 'end']);
+
+  const record = createTimingProvenance({
+    adapter: 'x',
+    start: { origin: 'source-derived' },
+    duration: { origin: 'source-notated', unit: '1/16', writtenForm: 'quarter.' },
+    end: { origin: 'source-derived' },
+  });
+  assert.deepEqual(origins(record), ['source-derived', 'source-notated', 'source-derived']);
+  assert.equal(record.duration.unit, '1/16');
+  assert.equal(record.duration.writtenForm, 'quarter.');
+  // A coarse event-level origin is not accepted in place of the components.
+  assert.equal(record.origin, undefined);
+  assert.throws(() => createTimingProvenance({ adapter: 'x', origin: 'source-notated' }), /timing.start must be an object/);
+});
+
+test('every component must be stated explicitly and independently', () => {
+  const full = { start: { origin: 'source-derived' }, duration: { origin: 'source-derived' }, end: { origin: 'source-derived' } };
+  for (const missing of TIMING_COMPONENTS) {
+    const partial = { ...full, [missing]: undefined };
+    assert.throws(() => createTimingProvenance({ adapter: 'x', ...partial }), new RegExp(`timing.${missing} must be an object`));
   }
-  assert.throws(() => createTimingProvenance({ origin: 'guessed', adapter: 'x' }), /unsupported timing.origin/);
-  assert.throws(() => createTimingProvenance({ origin: 'source-notated', adapter: '  ' }), /adapter must be a non-empty string/);
+  assert.throws(() => createTimingProvenance({ adapter: 'x', ...full, start: { origin: 'guessed' } }), /unsupported timing.start.origin/);
+  assert.throws(() => createTimingProvenance({ adapter: ' ', ...full }), /adapter must be a non-empty string/);
+
+  // Components are deliberately not ranked against one another: a format that
+  // notates absolute endpoints yields notated start and end with a derived
+  // duration, and no cross-component rule may reject that.
+  const endpoints = createTimingProvenance({
+    adapter: 'x',
+    start: { origin: 'source-notated' },
+    duration: { origin: 'source-derived' },
+    end: { origin: 'source-notated' },
+  });
+  assert.deepEqual(origins(endpoints), ['source-notated', 'source-derived', 'source-notated']);
 });
 
 test('an unclaimed quantum or written form stays null rather than being invented', () => {
-  const bare = createTimingProvenance({ origin: 'source-derived', adapter: 'x' });
-  assert.equal(bare.unit, null);
-  assert.equal(bare.writtenForm, null);
-  assert.equal(bare.artifact, null);
-
-  const stated = createTimingProvenance({ origin: 'source-notated', adapter: 'x', unit: '1/16', writtenForm: 'eighth.' });
-  assert.equal(stated.unit, '1/16');
-  assert.equal(stated.writtenForm, 'eighth.');
-  assert.throws(() => createTimingProvenance({ origin: 'source-notated', adapter: 'x', unit: '0' }), /unit must be > 0/);
-});
-
-test('an artifact attestation must be affirmed literally by the module that produced it', () => {
-  const attested = createTimingProvenance({
-    origin: 'tool-derived',
-    adapter: 'synthetic-producer',
-    artifact: { kind: 'decomposition-residue', producedBy: 'synthetic-producer', inputUnit: '1/64', carriesNoMusicalMeaning: true },
+  const bare = createTimingProvenance({
+    adapter: 'x',
+    start: { origin: 'source-derived' },
+    duration: { origin: 'source-derived' },
+    end: { origin: 'source-derived' },
   });
-  assert.equal(attested.artifact.kind, 'decomposition-residue');
-  assert.equal(attested.artifact.carriesNoMusicalMeaning, true);
-  assert.ok(TIMING_ARTIFACT_KINDS.includes(attested.artifact.kind));
-
-  const base = { kind: 'decomposition-residue', producedBy: 'synthetic-producer', inputUnit: '1/64' };
-  // Absence is never consent, and a merely truthy value is not an affirmation.
-  for (const carriesNoMusicalMeaning of [undefined, null, false, 'true', 1]) {
-    assert.throws(
-      () => createTimingProvenance({ origin: 'tool-derived', adapter: 'synthetic-producer', artifact: { ...base, carriesNoMusicalMeaning } }),
-      /carriesNoMusicalMeaning must be literally true/,
-    );
+  for (const name of TIMING_COMPONENTS) {
+    assert.equal(bare[name].unit, null);
+    assert.equal(bare[name].writtenForm, null);
   }
-  // No module may retro-label an interval it merely carried.
-  assert.throws(
-    () => createTimingProvenance({ origin: 'tool-derived', adapter: 'other-module', artifact: { ...base, carriesNoMusicalMeaning: true } }),
-    /producedBy must be the attesting adapter/,
-  );
-  assert.throws(
-    () => createTimingProvenance({ origin: 'tool-derived', adapter: 'synthetic-producer', artifact: { ...base, kind: 'looks-quantized', carriesNoMusicalMeaning: true } }),
-    /unsupported timing.artifact.kind/,
-  );
+  assert.throws(() => createTimingProvenance({
+    adapter: 'x',
+    start: { origin: 'source-derived' },
+    duration: { origin: 'source-notated', unit: '0' },
+    end: { origin: 'source-derived' },
+  }), /timing.duration.unit must be > 0/);
 });
 
 // ---------------------------------------------------------------------------
 // Ingest adapters.
 // ---------------------------------------------------------------------------
 
-test('MML ingest records derived provenance without claiming a notated symbol', () => {
-  const fragment = mml('t120o4c4r4d4');
-  const notes = fragment.events.filter(event => event.kind === 'note');
-  const rests = fragment.events.filter(event => event.kind === 'rest');
-  assert.ok(notes.length && rests.length);
-
-  for (const timing of timings([...notes, ...rests])) {
-    // Onsets are positional and a tie chain collapses several written tokens
-    // into one event, so this adapter cannot attest a single notated symbol.
-    assert.equal(timing.origin, 'source-derived');
-    assert.equal(timing.adapter, MML_ADAPTER);
-    assert.equal(timing.unit, null);
-    assert.equal(timing.writtenForm, null);
-    assert.equal(timing.artifact, null);
-  }
-  // Reconstructed silence keeps its existing inference marker alongside timing.
-  assert.equal(rests[0].metadata.inference, 'gap-between-expanded-note-events');
-  assert.ok(rests[0].tags.includes('inferred-silence'));
-});
-
-test('MusicXML ingest reports the notated duration and the quantum the file encodes on', () => {
+test('MusicXML notates only the duration; onset and end are reported as derived', () => {
   const fragment = score();
   const note = fragment.events.find(event => event.kind === 'note');
   const rest = fragment.events.find(event => event.kind === 'rest');
 
-  for (const timing of timings([note, rest])) {
-    assert.equal(timing.origin, 'source-notated');
+  for (const event of [note, rest]) {
+    const timing = event.metadata.timing;
     assert.equal(timing.adapter, MUSICXML_ADAPTER);
+    // The onset is positional — accumulated through the measure cursor,
+    // backup / forward and measure extents — so it is never notated.
+    assert.equal(timing.start.origin, 'source-derived');
+    // The length is read literally from <duration> against <divisions>.
+    assert.equal(timing.duration.origin, 'source-notated');
+    // The end follows from a derived onset, so it cannot claim to be notated.
+    assert.equal(timing.end.origin, 'source-derived');
     // <divisions>4</divisions> ⇒ one division is a 1/16 whole note.
-    assert.equal(timing.unit, '1/16');
-    assert.equal(timing.artifact, null);
+    assert.equal(timing.duration.unit, '1/16');
+    // Only the notated component carries the quantum and the written form.
+    assert.equal(timing.start.unit, null);
+    assert.equal(timing.end.unit, null);
+    assert.equal(timing.start.writtenForm, null);
+    assert.equal(timing.end.writtenForm, null);
   }
-  assert.equal(note.metadata.timing.writtenForm, 'quarter.');
-  assert.equal(rest.metadata.timing.writtenForm, 'eighth');
+  assert.equal(note.metadata.timing.duration.writtenForm, 'quarter.');
+  assert.equal(rest.metadata.timing.duration.writtenForm, 'eighth');
   // A note without <type> claims no written form rather than guessing one.
-  assert.equal(fragment.events.filter(event => event.kind === 'note').at(-1).metadata.timing.writtenForm, null);
+  assert.equal(fragment.events.filter(event => event.kind === 'note').at(-1).metadata.timing.duration.writtenForm, null);
 });
 
-test('no production ingest path emits an artifact attestation', () => {
+test('MML stays conservative: no component claims a token-level fact the adapter lost', () => {
+  const fragment = mml('t120o4c4&c4r4d4');
+  const notes = fragment.events.filter(event => event.kind === 'note');
+  const rests = fragment.events.filter(event => event.kind === 'rest');
+  assert.ok(notes.length && rests.length);
+
+  for (const event of [...notes, ...rests]) {
+    const timing = event.metadata.timing;
+    assert.equal(timing.adapter, MML_ADAPTER);
+    // Onsets are positional, a tie chain collapses several written tokens into
+    // one event, and silence is reconstructed from the absence of notes.
+    assert.deepEqual(origins(timing), ['source-derived', 'source-derived', 'source-derived']);
+    for (const name of TIMING_COMPONENTS) {
+      assert.equal(timing[name].unit, null);
+      assert.equal(timing[name].writtenForm, null);
+    }
+  }
+  // The tie really does collapse two written tokens into one two-beat event,
+  // which is why the duration component must not be called notated.
+  const tied = notes.find(event => event.role === 'Melody');
+  assert.deepEqual([tied.start, tied.end], ['0', '2']);
+  assert.equal(rests[0].metadata.inference, 'gap-between-expanded-note-events');
+  assert.ok(rests[0].tags.includes('inferred-silence'));
+});
+
+test('no artifact attestation or micro-timing verdict exists anywhere in C1', () => {
   const events = [...mml('t120o4c64r64c32', { finalPartial: '1/4' }).events, ...score().events];
   assert.ok(events.length);
-  assert.deepEqual(events.filter(event => event.metadata.timing?.artifact !== null), []);
-  // Nothing in C1 may classify an interval in either direction.
   const text = JSON.stringify(events);
-  for (const token of ['SOURCE_SUPPORTED', 'TECHNICAL_RESIDUE', 'carriesNoMusicalMeaning', 'verdict']) {
+  // Attestation is deferred to C2, which must first define interval identity:
+  // a gap belongs to a pair of events and has no home on a single event.
+  for (const token of ['artifact', 'carriesNoMusicalMeaning', 'SOURCE_SUPPORTED', 'TECHNICAL_RESIDUE', 'verdict', 'classification']) {
     assert.equal(text.includes(token), false, `C1 must not emit ${token}`);
+  }
+  for (const event of events) {
+    assert.deepEqual(Object.keys(event.metadata.timing).sort(), ['adapter', 'duration', 'end', 'start']);
+    for (const name of TIMING_COMPONENTS) {
+      assert.deepEqual(Object.keys(event.metadata.timing[name]).sort(), ['origin', 'unit', 'writtenForm']);
+    }
   }
 });
 
@@ -172,7 +204,23 @@ test('exactly 1/64 keeps its existing expansion and gains no classification', ()
     ['rest', '1/16', '1/8'],
     ['note', '1/8', '1/4'],
   ]);
-  assert.ok(melody.every(event => event.metadata.timing.origin === 'source-derived'));
+  assert.ok(melody.every(event => origins(event.metadata.timing).every(origin => origin === 'source-derived')));
+});
+
+test('readiness and gate results are unchanged by the presence of timing provenance', () => {
+  const raw = six('t120o4c4r4d4');
+  const project = mmlFragmentToProject(mml('t120o4c4r4d4'), { id: 'readiness' });
+  const stripped = JSON.parse(JSON.stringify(project));
+  for (const event of stripped.events) delete event.metadata.timing;
+
+  const evaluate = input => evaluateProjectReadiness({
+    project: input,
+    mmlValidation: validateMML(raw, { meterText: '0 4/4' }),
+    core3Report: null,
+    harmonyReport: null,
+  });
+  assert.equal(JSON.stringify(evaluate(project)), JSON.stringify(evaluate(stripped)));
+  assert.equal(evaluate(project).candidateReady, false);
 });
 
 test('merge carries timing metadata through byte-identically and relabels nothing', () => {
@@ -186,17 +234,17 @@ test('merge carries timing metadata through byte-identically and relabels nothin
   for (const event of merged.events) {
     assert.equal(JSON.stringify(event.metadata.timing), before.get(event.id), `merge altered timing for ${event.id}`);
     // Carried-through source events are never restamped as tooling output.
-    assert.notEqual(event.metadata.timing.origin, 'tool-derived');
+    assert.equal(origins(event.metadata.timing).includes('tool-derived'), false);
   }
 });
 
-test('import preserves timing metadata instead of stripping or relabelling it', () => {
+test('import preserves refined provenance instead of stripping or relabelling it', () => {
   const project = mmlFragmentToProject(mml('t120o4c4r4d4'), { id: 'imported' });
   const restored = readCanonical(JSON.parse(JSON.stringify(project)));
   assert.equal(restored.events.length, project.events.length);
   for (const [index, event] of restored.events.entries()) {
     assert.deepEqual(event.metadata.timing, project.events[index].metadata.timing);
-    assert.equal(event.metadata.timing.origin, 'source-derived');
+    assert.deepEqual(origins(event.metadata.timing), ['source-derived', 'source-derived', 'source-derived']);
   }
 });
 

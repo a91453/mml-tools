@@ -14,18 +14,21 @@ const maxF = (a, b) => f(a).cmp(b) >= 0 ? f(a) : f(b);
 
 const MML_ADAPTER = 'studio/backend/mml/canonicalize.mjs';
 
-// MML time values are positional: every onset is an accumulation of preceding
-// token durations, and a tie chain collapses several written tokens into one
-// event. This adapter receives expanded start/end pairs rather than the tokens,
-// so it cannot truthfully attest that any single event equals one notated
-// symbol, and silence spans are reconstructed from the absence of notes. It
-// records only what it knows by construction — these values came from notated
-// MML rather than from tooling — and leaves unit/writtenForm unclaimed.
-//
-// No artifact attestation is emitted: nothing in this path creates a
-// meaning-free value by construction. A reconstructed silence span may well be
-// a written musical rest, so calling it residue here would be a guess.
-const MML_TIMING = createTimingProvenance({ origin: 'source-derived', adapter: MML_ADAPTER });
+// Every MML component is derived, including duration. Onsets are positional
+// accumulations of preceding token durations; a tie chain collapses several
+// written tokens into one event, so an event's length need not equal any single
+// written denominator; and silence spans are reconstructed from the absence of
+// notes. This adapter receives expanded start/end pairs rather than the tokens,
+// so it cannot preserve the token-level fact that would justify calling any
+// component notated. It records only what it knows by construction — these
+// values came from notated MML rather than from tooling — and claims no unit or
+// written form.
+const MML_TIMING = createTimingProvenance({
+  adapter: MML_ADAPTER,
+  start: { origin: 'source-derived' },
+  duration: { origin: 'source-derived' },
+  end: { origin: 'source-derived' },
+});
 
 function silenceSpans(track) {
   const spans = [];

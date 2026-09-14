@@ -368,21 +368,22 @@ export function ingestMusicXML(xml, options = {}) {
             dots: dotCount,
             durationDivisions: durationValue,
             divisions,
-            // The duration is read literally from <duration> against the
-            // <divisions> in force, so this event's length is notated. The onset
-            // is positional — accumulated through the measure cursor, backup /
-            // forward and measure extents — which is why `unit` reports the
-            // quantum the file encodes on rather than an onset claim.
-            //
-            // No artifact attestation is emitted: this adapter only reads, it
-            // never creates a meaning-free value by construction.
+            // Only the length is notated here. It is read literally from
+            // <duration> against the <divisions> in force. The onset is
+            // positional — accumulated through the measure cursor, backup /
+            // forward and measure extents — and the end follows from that
+            // onset, so neither may claim to be notated.
             timing: createTimingProvenance({
-              origin: 'source-notated',
               adapter: MUSICXML_ADAPTER,
-              // <divisions> counts divisions per quarter note, so one division
-              // is 1/(4 × divisions) of a whole note.
-              unit: new F(1, divisions).div(4),
-              writtenForm: type ? `${type}${'.'.repeat(dotCount)}` : null,
+              start: { origin: 'source-derived' },
+              duration: {
+                origin: 'source-notated',
+                // <divisions> counts divisions per quarter note, so one
+                // division is 1/(4 × divisions) of a whole note.
+                unit: new F(1, divisions).div(4),
+                writtenForm: type ? `${type}${'.'.repeat(dotCount)}` : null,
+              },
+              end: { origin: 'source-derived' },
             }),
           },
         };

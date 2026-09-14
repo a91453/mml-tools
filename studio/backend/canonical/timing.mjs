@@ -1,15 +1,37 @@
 // Factual timing provenance for Canonical events.
 //
 // This module records *how a time value came to exist*, never what it means.
-// `origin` is descriptive: it says which module produced a start/end pair and
-// from what, so a later reviewer can tell a notated symbol apart from an adapter
+// `origin` is descriptive: it says which module produced a value and from what,
+// so a later reviewer can tell a notated symbol apart from an adapter
 // reconstruction apart from tooling output. It is not a verdict. Nothing here
 // classifies an interval as musical or technical, and no consumer may read a
 // classification out of these values alone.
 //
+// Provenance is recorded per component — start, duration, end — because they
+// are not established the same way. A MusicXML note's length is read literally
+// from <duration> against <divisions>, while its onset is positional, so a
+// single event-level origin would overstate what the file actually notates.
+// Components are independently factual and are deliberately not ranked against
+// each other: a format that notates absolute endpoints (MIDI note-on/note-off)
+// legitimately yields notated start and end with a derived duration, which any
+// cross-component rule would wrongly reject.
+//
 // It defines no Canonical rule and does not change the Canonical IR schema: the
 // record lives inside the existing free-form `event.metadata` object, so a
 // project written before this module remains valid and simply carries none.
+//
+// Deferred to C2 — technical-artifact attestation. A module that creates a
+// meaning-free value may eventually need to say so, but such an attestation is
+// only unambiguous once C2 defines interval identity: an inter-event gap
+// belongs to a *pair* of events and has no home on a single event's metadata,
+// so a field added here could not express it. It is therefore not implemented
+// in C1 rather than half-implemented. When C2 adds it, it must carry an
+// explicit target (duration / start / end / a named gap), and it must keep both
+// guards this module was reviewed with: the attesting module has to be the one
+// that produced the value, and the no-musical-meaning claim has to be affirmed
+// literally — never inferred from a duration threshold, a statistical or
+// quantization-looking pattern, a source type, or the fact that some tool
+// touched the value.
 import { f } from '../mml/index.mjs';
 
 export const TIMING_ORIGINS = Object.freeze([
@@ -21,11 +43,7 @@ export const TIMING_ORIGINS = Object.freeze([
   'tool-derived',
 ]);
 
-export const TIMING_ARTIFACT_KINDS = Object.freeze([
-  'quantization-residue',
-  'decomposition-residue',
-  'synthetic-spacing',
-]);
+export const TIMING_COMPONENTS = Object.freeze(['start', 'duration', 'end']);
 
 const nonEmpty = (value, label) => {
   if (typeof value !== 'string' || !value.trim()) throw Error(`${label} must be a non-empty string`);
@@ -40,40 +58,25 @@ const positiveRational = (value, label) => {
   return result.toString();
 };
 
-// An artifact attestation is the only way a module may state that a time value
-// it created carries no musical meaning. It must be affirmed by construction —
-// from the module's own transformation semantics — never inferred from a
-// duration threshold, a statistical or quantization-looking pattern, a source
-// type, or the fact that some tool touched the value. A module that cannot
-// affirm it mechanically leaves this absent, and the interval stays unclassified.
-function normalizeArtifact(artifact, adapter) {
-  if (artifact === null || artifact === undefined) return null;
-  if (typeof artifact !== 'object' || Array.isArray(artifact)) throw Error('timing.artifact must be null or an object');
-  if (!TIMING_ARTIFACT_KINDS.includes(artifact.kind)) throw Error(`unsupported timing.artifact.kind: ${artifact.kind}`);
-  const producedBy = nonEmpty(artifact.producedBy, 'timing.artifact.producedBy');
-  // A module may attest only to residue it created itself. Nothing may
-  // retro-label an interval it merely carried, copied, merged or re-validated.
-  if (producedBy !== adapter) throw Error('timing.artifact.producedBy must be the attesting adapter');
-  // Absence is never consent: the attestation has to be affirmed literally.
-  if (artifact.carriesNoMusicalMeaning !== true) throw Error('timing.artifact.carriesNoMusicalMeaning must be literally true');
+function normalizeComponent(value, label) {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) throw Error(`${label} must be an object`);
+  if (!TIMING_ORIGINS.includes(value.origin)) throw Error(`unsupported ${label}.origin: ${value.origin}`);
   return Object.freeze({
-    kind: artifact.kind,
-    producedBy,
-    inputUnit: positiveRational(artifact.inputUnit, 'timing.artifact.inputUnit'),
-    carriesNoMusicalMeaning: true,
+    origin: value.origin,
+    // Exact rational in whole-note units: the quantum this component was
+    // encoded on. `null` when the adapter cannot truthfully state one.
+    unit: value.unit === null || value.unit === undefined ? null : positiveRational(value.unit, `${label}.unit`),
+    writtenForm: value.writtenForm === null || value.writtenForm === undefined ? null : nonEmpty(value.writtenForm, `${label}.writtenForm`),
   });
 }
 
-export function createTimingProvenance({ origin, adapter, unit = null, writtenForm = null, artifact = null }) {
-  if (!TIMING_ORIGINS.includes(origin)) throw Error(`unsupported timing.origin: ${origin}`);
-  adapter = nonEmpty(adapter, 'timing.adapter');
+// Every component must be stated explicitly. There is no default: an adapter
+// that has not decided how a component came to exist has not finished reading.
+export function createTimingProvenance({ adapter, start, duration, end }) {
   return Object.freeze({
-    origin,
-    adapter,
-    // Exact rational in whole-note units: the quantum the source encoded on.
-    // `null` when the adapter cannot truthfully state one.
-    unit: unit === null ? null : positiveRational(unit, 'timing.unit'),
-    writtenForm: writtenForm === null ? null : nonEmpty(writtenForm, 'timing.writtenForm'),
-    artifact: normalizeArtifact(artifact, adapter),
+    adapter: nonEmpty(adapter, 'timing.adapter'),
+    start: normalizeComponent(start, 'timing.start'),
+    duration: normalizeComponent(duration, 'timing.duration'),
+    end: normalizeComponent(end, 'timing.end'),
   });
 }
