@@ -1482,3 +1482,198 @@ test('an absence is only called proven while no role decision is still open', ()
   assert.equal(settled.core3.absenceProven, true);
   assert.ok(settled.core3.absentFunctions.includes('principal-harmony'));
 });
+
+// ═══════════════════════════════════════════════════════════════════════════
+// Core3 is a three-role musical unit
+// ═══════════════════════════════════════════════════════════════════════════
+//
+// Core3 is Melody + Chord1 + Chord2 evaluated as one musically complete
+// single-player arrangement. It is NOT Melody + Chord2 with Chord1 as an
+// optional middle layer. The three roles carry distinct required functions and
+// no ranking among them, so a strong Lead and a strong bass never compensate for
+// an unresolved or missing principal harmony.
+
+const ACC_A = 'track:3/channel:3';
+const ACC_B = 'track:4/channel:4';
+
+// Clear Lead, clear bass, and two equally plausible accompaniments from two
+// different sources. Nothing in the material settles which carries the
+// principal harmony.
+const crossSourceHarmonyEvents = [
+  ...line('m', [72, 74, 76, 72], MELODY_VOICE, 0, { sourceId: 'official-score' }),
+  ...line('b', [48, 50, 43, 45], BASS_VOICE, 0, { sourceId: 'official-score' }),
+  ...line('a', [60, 64, 60, 64], ACC_A, 0, { sourceId: 'official-midi' }),
+  ...line('c', [62, 65, 62, 65], ACC_B, 0, { sourceId: 'third-party-midi' }),
+];
+
+const crossSourceArbitrated = {
+  sourceRoleEvidence: [
+    { sourceVoice: ACC_A, role: 'Chord1', citation: 'fixture:official-midi accompaniment staff' },
+    { sourceVoice: ACC_B, role: 'Chord3', citation: 'fixture:third-party alternate voicing, secondary' },
+  ],
+};
+
+test('Core3: a perfect Melody and bass do not compensate for unresolved cross-source Chord1', () => {
+  const candidate = run(crossSourceHarmonyEvents);
+  assertOrderIndependent(crossSourceHarmonyEvents);
+
+  // Melody and Chord2 are each fully and positively satisfied.
+  assert.equal(candidate.core3.functions.leadContinuity.satisfied, true);
+  assert.equal(candidate.roles.Melody.status, 'ASSIGNED');
+  assert.equal(candidate.core3.functions.bassSkeleton.satisfied, true);
+  assert.equal(candidate.roles.Chord2.status, 'ASSIGNED');
+
+  // Chord1 is not, and that alone blocks the whole unit.
+  assert.equal(candidate.core3.functions.principalHarmony.satisfied, false);
+  assert.equal(candidate.core3.status, 'PENDING');
+  assert.ok(candidate.core3.missingFunctions.includes('principal-harmony'));
+  assert.ok(candidate.core3.unprovenFunctions.includes('principal-harmony'));
+
+  // The cross-source disagreement is recorded with its exact source ids, and the
+  // arbitration decision is PENDING rather than absent (SOURCE_POLICY.md §2, §5).
+  const crossSource = diagnostic(candidate, 'UNRESOLVED_CROSS_SOURCE_HARMONY');
+  assert.ok(crossSource, 'a cross-source harmony conflict must be reported, not silently ranked away');
+  assert.equal(crossSource.deleted, false);
+  assert.equal(crossSource.decision, 'PENDING');
+  assert.deepEqual([...crossSource.candidateSourceIds], ['official-midi', 'third-party-midi']);
+  assert.equal(crossSource.candidateVoices.length, 2);
+  for (const voice of crossSource.candidateVoices) {
+    assert.ok(voice.sourceIds.length, 'each candidate voice names the source behind it');
+    assert.ok(voice.laneIds.length);
+  }
+  const arbitration = candidate.core3.functions.principalHarmony.arbitration;
+  assert.equal(arbitration.crossSource, true);
+  assert.equal(arbitration.decision, 'PENDING');
+  assert.equal(arbitration.disagreement, 'COMPETING_PRINCIPAL_HARMONY_CANDIDATES');
+
+  // Neither accompaniment is deleted, and neither is quietly absorbed by Chord2
+  // to make the candidate pass.
+  for (const voice of [ACC_A, ACC_B]) {
+    const lane = laneOf(candidate, `lane:${voice}#0`);
+    assert.ok(lane, `${voice} must survive an unresolved arbitration`);
+    assert.ok(lane.eventIds.length);
+    assert.equal(candidate.roles.Chord2.laneIds.includes(lane.id), false,
+      'Chord2 must not absorb the principal-harmony responsibility to force a pass');
+  }
+  assert.deepEqual([...candidate.roles.Chord2.laneIds], [`lane:${BASS_VOICE}#0`]);
+  assert.equal(candidate.coverage.complete, true);
+});
+
+test('Core3: explicit Chord1 arbitration lets the same material reach COMPLETE', () => {
+  const candidate = run(crossSourceHarmonyEvents, crossSourceArbitrated);
+  assertOrderIndependent(crossSourceHarmonyEvents, crossSourceArbitrated);
+
+  assert.equal(candidate.core3.functions.principalHarmony.satisfied, true);
+  assert.equal(candidate.core3.functions.principalHarmony.status, 'PRESENT');
+  assert.deepEqual([...candidate.roles.Chord1.laneIds], [`lane:${ACC_A}#0`]);
+  assert.equal(candidate.core3.status, 'COMPLETE');
+  assert.equal(diagnostic(candidate, 'UNRESOLVED_CROSS_SOURCE_HARMONY'), undefined);
+
+  // The losing candidate is redistributed to enrichment on evidence, not dropped.
+  const other = laneOf(candidate, `lane:${ACC_B}#0`);
+  assert.ok(ENRICHMENT_ROLE_NAMES.includes(other.candidateRole));
+  assert.ok(other.eventIds.every(id => ledgerFor(candidate, id).length === 1));
+});
+
+test('Core3: each of the three functions independently blocks COMPLETE', () => {
+  // The same three-role backbone, degraded one function at a time. No pair of
+  // satisfied functions may ever stand in for the missing third.
+  const backbone = [
+    ...line('m', [72, 74, 76, 72], MELODY_VOICE, 0, { role: 'Melody' }),
+    ...line('h', [60, 64, 60, 64], HARMONY_VOICE, 0, { role: 'Chord1' }),
+    ...line('b', [48, 50, 43, 45], BASS_VOICE, 0, { role: 'Chord2' }),
+  ];
+  const whole = run(backbone);
+  assert.equal(whole.core3.status, 'COMPLETE', 'the intact three-role unit is the control');
+
+  const withoutLead = run(backbone.filter(event => !event.id.startsWith('m')));
+  assert.equal(withoutLead.core3.status !== 'COMPLETE', true);
+  assert.ok(withoutLead.core3.missingFunctions.includes('lead-continuity'));
+
+  const withoutHarmony = run(backbone.filter(event => !event.id.startsWith('h')));
+  assert.equal(withoutHarmony.core3.status !== 'COMPLETE', true);
+  assert.ok(withoutHarmony.core3.missingFunctions.includes('principal-harmony'),
+    'Melody + Chord2 alone is not Core3');
+  assert.equal(withoutHarmony.core3.functions.leadContinuity.satisfied, true);
+  assert.equal(withoutHarmony.core3.functions.bassSkeleton.satisfied, true);
+
+  const withoutBass = run(backbone.filter(event => !event.id.startsWith('b')));
+  assert.equal(withoutBass.core3.status !== 'COMPLETE', true);
+  assert.ok(withoutBass.core3.missingFunctions.includes('bass-skeleton'));
+});
+
+test('Core3: Chord3-Chord5 cannot compensate for an unresolved Chord1', () => {
+  // Pile enrichment onto the unresolved cross-source candidate. Full6 material
+  // must not move the Core3 verdict at all.
+  const enriched = [
+    ...crossSourceHarmonyEvents,
+    note('e1', 55, '0', '2', 'track:5/channel:5', { sourceId: 'official-midi' }),
+    note('e2', 57, '2', '4', 'track:5/channel:5', { sourceId: 'official-midi' }),
+    note('e3', 79, '0', '2', 'track:6/channel:6', { sourceId: 'official-midi' }),
+    note('e4', 77, '2', '4', 'track:6/channel:6', { sourceId: 'official-midi' }),
+  ];
+  const candidate = run(enriched);
+  assert.ok(candidate.full6.rolesUsed.length >= 2, 'enrichment roles really are populated');
+  assert.equal(candidate.core3.status, 'PENDING');
+  assert.equal(candidate.core3.functions.principalHarmony.satisfied, false);
+  assert.ok(candidate.core3.missingFunctions.includes('principal-harmony'));
+});
+
+test('Core3: the report states the three-role architecture and ranks no role above another', () => {
+  const candidate = run(crossSourceHarmonyEvents);
+  const architecture = candidate.core3.architecture;
+  assert.equal(architecture.unit, 'Core3');
+  assert.deepEqual([...architecture.roles], ['Melody', 'Chord1', 'Chord2']);
+  assert.deepEqual([...architecture.roles], [...CORE3_ROLE_NAMES]);
+  assert.equal(architecture.priorityAmongRoles, 'NONE');
+  assert.equal(architecture.allThreeRequiredForComplete, true);
+  for (const role of CORE3_ROLE_NAMES) {
+    assert.ok(architecture.requiredFunctions[role], `${role} must declare its required function`);
+  }
+  assert.ok(architecture.requiredFunctions.Chord1.includes('principal accompaniment'));
+  assert.ok(architecture.requiredFunctions.Chord2.includes('essential inner support'));
+  assert.ok(architecture.evaluationQuestion.includes('Melody + Chord1 + Chord2'));
+
+  // Every Core3 function is evaluated; none is skipped because another passed.
+  for (const name of ['leadContinuity', 'principalHarmony', 'bassSkeleton', 'essentialInnerSupport', 'concurrentHarmonyResolution']) {
+    assert.ok(candidate.core3.functions[name], `${name} must always be reported`);
+    assert.equal(typeof candidate.core3.functions[name].satisfied, 'boolean');
+  }
+});
+
+test('Core3: a derived signal never promotes a lane out of its declared role', () => {
+  // A walking bass declared Chord2 also satisfies the derived tier-3 Lead
+  // measurement. Letting the heuristic win promoted it to Melody and left
+  // Chord2 empty, dismantling the three-role unit and inventing a Lead the
+  // source never claimed — the mirror of the demotion the Lead interlock
+  // already refuses (MASTER_RULES.md §0, §4).
+  const events = [
+    ...line('h', [60, 64, 60, 64], HARMONY_VOICE, 0, { role: 'Chord1' }),
+    ...line('b', [48, 50, 43, 45], BASS_VOICE, 0, { role: 'Chord2' }),
+  ];
+  const candidate = run(events);
+  assertOrderIndependent(events);
+
+  const bass = laneOf(candidate, `lane:${BASS_VOICE}#0`);
+  assert.equal(bass.roleSupport.Melody.tier, 3, 'the derived Lead signal is still present');
+  assert.equal(bass.roleSupport.Chord2.tier, 1, 'and is outranked by the declared role');
+  assert.equal(bass.candidateRole, 'Chord2');
+
+  assert.deepEqual([...candidate.roles.Chord2.laneIds], [`lane:${BASS_VOICE}#0`]);
+  assert.deepEqual([...candidate.roles.Melody.laneIds], []);
+  assert.equal(candidate.core3.functions.leadContinuity.status, 'ABSENT');
+  assert.equal(candidate.core3.status, 'INCOMPLETE');
+  assert.deepEqual([...candidate.core3.missingFunctions], ['lead-continuity']);
+  for (const entry of candidate.ledger) {
+    assert.equal(entry.decision, ROLE_DECISIONS.KEEP_ROLE, 'no lane is moved off its declared role');
+  }
+});
+
+test('Core3: a resolved Chord1 arbitration states why, not only that it resolved', () => {
+  const candidate = run(crossSourceHarmonyEvents, crossSourceArbitrated);
+  const arbitration = candidate.core3.functions.principalHarmony.arbitration;
+  assert.equal(arbitration.decision, 'RESOLVED_BY_DECLARED_SOURCE_ROLE');
+  assert.equal(arbitration.disagreement, null);
+  assert.deepEqual([...arbitration.candidateSourceIds], ['official-midi']);
+  assert.equal(arbitration.candidateVoices[0].sourceVoice, ACC_A);
+});

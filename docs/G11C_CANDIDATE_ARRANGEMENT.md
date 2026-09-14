@@ -141,6 +141,49 @@ disagreement is reported as `CONFLICTING_ROLE_EVIDENCE`.
 
 ## 6. Core3 logic
 
+### Core3 is a three-role musical unit
+
+Core3 is **Melody + Chord1 + Chord2 evaluated as one musically complete
+single-player three-role arrangement**. It is *not* Melody + Chord2 with Chord1
+as an optional middle layer. The three roles carry distinct required functions
+inside the same completeness target, with **no priority among them**:
+
+| Role | Required function |
+| --- | --- |
+| Melody | source-supported Lead continuity |
+| Chord1 | Core Harmony / principal accompaniment / essential response |
+| Chord2 | Core Bass skeleton **plus** any essential inner support required for one-player completeness |
+
+All three must be positively resolved before `core3.status = COMPLETE`.
+Therefore:
+
+- unresolved Chord1 cross-source arbitration **blocks** Core3 `COMPLETE`;
+- a strong Melody and a strong bass do **not** compensate for an unresolved or
+  missing Chord1;
+- Chord2 must not absorb Chord1's principal-harmony responsibility to make Core3
+  pass;
+- Chord3–Chord5 must not compensate for a weak or unresolved Chord1;
+- candidate ranking preserves the three-role architecture rather than optimizing
+  Lead + bass coverage alone.
+
+The question the candidate answers is *"do Melody + Chord1 + Chord2 together form
+the best source-supported single-player musical backbone?"* — never *"are Melody
+and bass good enough, with something placed in Chord1?"*
+
+This creates no Canonical priority among the three roles. It is the same
+implementer-side reading of `MASTER_RULES.md` §5 and `ACCEPTANCE_CRITERIA.md`
+Gate 4 used throughout. The invariant is stated in the output itself as
+`core3.architecture`, with `priorityAmongRoles: 'NONE'` and
+`allThreeRequiredForComplete: true`.
+
+**The internal assignment sequence is a dependency order, not a priority order.**
+Roles are processed Melody → Chord2 skeleton → Chord1 → essential inner support
+because essentiality can only be measured once the roles it is measured against
+exist. That sequence asserts nothing about musical importance, and no step may
+be read as "Lead and bass are the real backbone, harmony is optional support".
+
+### Assignment
+
 Assignment order follows the Canonical hierarchy: Lead, then bass skeleton, then
 principal harmony, then essential inner support.
 
@@ -200,6 +243,24 @@ principal harmony, then essential inner support.
   trusted symbolic role naming Chord3, Chord4 or Chord5 for that lane. The
   interlock is scoped by provenance to siblings of Core3 source voices, so a
   counter-line in its own source voice never trips it.
+
+**A declared source role outranks every derived measurement** (`MASTER_RULES.md`
+§0). A lane whose source names it `Chord2` is not eligible for Melody just
+because the derived contour measurement likes it, and a lane named `Chord1` is
+not pulled into Chord2 because it happens to sit at the harmonic floor. Such a
+promotion is an unevidenced role move — the mirror of the demotion the Lead
+interlock refuses — and it quietly dismantles the three-role unit by leaving a
+declared role empty. A lane carrying a declared role is only eligible for a role
+its own source evidence names.
+
+**Cross-source Chord1 arbitration.** When the accompaniment candidates come from
+more than one source, `principalHarmony.arbitration` records the exact source ids
+behind each candidate voice, the type of disagreement, and the decision —
+`PENDING`, or `RESOLVED_BY_DECLARED_SOURCE_ROLE` (`SOURCE_POLICY.md` §2, §5). A
+coverage ranking may still propose a winner, but an unresolved cross-source
+arbitration is reported as `UNRESOLVED_CROSS_SOURCE_HARMONY` and Core3 cannot be
+complete. A losing accompaniment from another source is never allowed to vanish
+into enrichment with nothing in the report saying an arbitration was left open.
 
 **Lead-demotion interlock.** A lane carrying a declared source Lead cannot be
 moved off Melody here, not even by an explicit caller override. The move is
@@ -286,6 +347,7 @@ All non-destructive, all carrying `deleted: false`:
 low/mid boundary), `COMPETING_LEAD_CANDIDATES`, `COMPETING_BASS_CANDIDATES`,
 `COMPETING_HARMONY_CANDIDATES`, `CONFLICTING_ROLE_EVIDENCE`,
 `SOURCE_LANE_OVERFLOW`, `UNRESOLVED_CORE_HARMONY_SIBLING`,
+`UNRESOLVED_CROSS_SOURCE_HARMONY`,
 `ESSENTIAL_MATERIAL_IN_ENRICHMENT`,
 `ESSENTIAL_MATERIAL_UNASSIGNED`, `LANE_PACKING_IS_NOT_CONTINUITY`,
 `UNSUPPORTED_SOURCE_MATERIAL_RETAINED`, `ROLE_ASSIGNMENT_PENDING`,
@@ -351,6 +413,13 @@ evidence, which reaches `COMPLETE`; proof that the interlock is scoped to Core3
 source voices rather than every omitted lane; proof that an unresolved sibling is
 never reported as proven essential; and a scan asserting the G11 roadmap names
 only A, B and C.
+
+The Core3 three-role invariant adds: a clear Melody and clear bass with an
+unresolved cross-source Chord1, which must stay `PENDING`; the same material
+after explicit Chord1 arbitration, which reaches `COMPLETE`; a matrix degrading
+each of the three functions in turn, none of which may be covered by the other
+two; enrichment piled onto an unresolved Chord1, which must not move the verdict;
+and a declared `Chord2` lane that a derived Lead signal must not promote.
 
 Performance is asserted as a **work shape**, matching the repository's existing
 convention in `micro-timing-performance.test.mjs` — one sweep over the exact

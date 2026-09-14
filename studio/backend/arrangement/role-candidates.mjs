@@ -773,6 +773,13 @@ function enrichmentAgainstCore3(lane, laneIndex, intervals, core3LaneIndices) {
 // (MASTER_RULES.md §2): source completeness -> Lead continuity -> Core3
 // completeness -> Full6 enrichment. Nothing is optimized across all six roles
 // at once, because doing so lets a Full6 metric pay for a weaker Core3.
+//
+// Inside Core3 the Melody -> Chord2 -> Chord1 -> essential-support sequence is a
+// *dependency* order, not a priority order: essentiality can only be measured
+// once the roles it is measured against exist. It asserts nothing about musical
+// importance. Core3 is Melody + Chord1 + Chord2 evaluated as one unit, and all
+// three functions must be positively resolved before it can be called complete
+// -- a strong Lead and a strong bass never pay for an unresolved Chord1.
 
 function assignRoles(state) {
   const { lanes, pinned } = state;
@@ -819,6 +826,17 @@ function assignRoles(state) {
   }
   const isFree = lane => !pinned.has(lane.id) && !assignment.has(lane.id) && !pendingLaneIds.has(lane.id);
 
+  // A declared source role outranks every derived measurement (MASTER_RULES.md
+  // §0). A lane whose source names it Chord2 must not be promoted to Lead
+  // because a contour heuristic likes it, and a lane named Chord1 must not be
+  // pulled into Chord2 because it happens to sit at the harmonic floor: that is
+  // an unevidenced role move, the mirror of the demotion the Lead interlock
+  // already refuses, and it quietly dismantles the three-role Core3 unit by
+  // leaving a declared role empty. Such a lane is only eligible for a role its
+  // own source evidence names.
+  const declaredElsewhere = (lane, role) => lane.roleSupport[role].tier !== 1
+    && SIX_ROLES.some(other => other !== role && lane.roleSupport[other].tier === 1);
+
   // 1. Lead / Melody.
   const melodyPinned = [...assignment.entries()].some(([, role]) => role === 'Melody');
   if (blockedLeadLaneIds.size) {
@@ -830,7 +848,7 @@ function assignRoles(state) {
   } else if (!melodyPinned) {
     const candidates = lanes
       .filter(isFree)
-      .filter(lane => lane.roleSupport.Melody.tier !== null)
+      .filter(lane => lane.roleSupport.Melody.tier !== null && !declaredElsewhere(lane, 'Melody'))
       .map(lane => ({ lane, tier: lane.roleSupport.Melody.tier, tierName: lane.roleSupport.Melody.tierName }));
     const picked = selectWithinTier(candidates);
     if (picked.status === 'ASSIGNED') {
@@ -875,7 +893,7 @@ function assignRoles(state) {
   if (!chord2Pinned) {
     const candidates = lanes
       .filter(available)
-      .filter(lane => lane.roleSupport.Chord2.tier !== null)
+      .filter(lane => lane.roleSupport.Chord2.tier !== null && !declaredElsewhere(lane, 'Chord2'))
       .map(lane => ({ lane, tier: lane.roleSupport.Chord2.tier, tierName: lane.roleSupport.Chord2.tierName }));
     const picked = selectWithinTier(candidates);
     if (picked.status === 'ASSIGNED') {
@@ -930,13 +948,33 @@ function assignRoles(state) {
       // nothing to pick between, and a role holds zero or more lanes. Declaring
       // a whole accompaniment staff as Chord1 must yield Chord1, not a deadlock.
       for (const lane of declared) assignment.set(lane.id, 'Chord1');
+      // SOURCE_POLICY.md §5: the report must state why, for the resolved case
+      // as well as the open one.
+      state.chord1Arbitration = Object.freeze({
+        crossSource: new Set(declared.flatMap(lane => lane.sourceIds)).size > 1,
+        candidateSourceIds: Object.freeze([...new Set(declared.flatMap(lane => lane.sourceIds))].sort(cmpStr)),
+        candidateVoices: Object.freeze([...new Set(declared.map(lane => String(lane.sourceVoice ?? 'voice:null')))]
+          .sort(cmpStr)
+          .map(voiceKey => Object.freeze({
+            sourceVoice: voiceKey,
+            sourceIds: Object.freeze([...new Set(declared
+              .filter(lane => String(lane.sourceVoice ?? 'voice:null') === voiceKey)
+              .flatMap(lane => lane.sourceIds))].sort(cmpStr)),
+            laneIds: Object.freeze(declared
+              .filter(lane => String(lane.sourceVoice ?? 'voice:null') === voiceKey)
+              .map(lane => lane.id).sort(cmpStr)),
+          }))),
+        disagreement: null,
+        decision: 'RESOLVED_BY_DECLARED_SOURCE_ROLE',
+        notice: 'Principal harmony is settled by a declared source role or a cited trusted symbolic role, not by a coverage ranking.',
+      });
       meta('Chord1', {
         status: 'ASSIGNED', tier: 1, tierName: 'DECLARED_SOURCE_ROLE',
         reasons: ['PRINCIPAL_HARMONY_DECLARED'],
         evidenceIds: declared.flatMap(lane => lane.roleSupport.Chord1.evidenceIds).sort(cmpStr),
       });
     } else {
-      const pool = lanes.filter(available);
+      const pool = lanes.filter(available).filter(lane => !declaredElsewhere(lane, 'Chord1'));
       const voices = new Map();
       for (const lane of pool) {
         const voiceKey = String(lane.sourceVoice ?? 'voice:null');
@@ -946,8 +984,28 @@ function assignRoles(state) {
         entry.sounding = entry.sounding.add(lane.metrics.soundingTime);
         entry.attacks += lane.metrics.attackCount;
       }
+      for (const entry of voices.values()) {
+        entry.sourceIds = [...new Set(entry.lanes.flatMap(lane => lane.sourceIds))].sort(cmpStr);
+      }
       const ranked = [...voices.values()].sort((a, b) =>
         b.sounding.cmp(a.sounding) || b.attacks - a.attacks || cmpStr(a.voiceKey, b.voiceKey));
+      const candidateSourceIds = [...new Set(ranked.flatMap(entry => entry.sourceIds))].sort(cmpStr);
+      const crossSource = candidateSourceIds.length > 1;
+      const describeVoice = entry => Object.freeze({
+        sourceVoice: entry.voiceKey,
+        sourceIds: Object.freeze([...entry.sourceIds]),
+        harmonicCoverage: key(entry.sounding),
+        attackCount: entry.attacks,
+        laneIds: Object.freeze(entry.lanes.map(lane => lane.id).sort(cmpStr)),
+      });
+      state.chord1Arbitration = Object.freeze({
+        crossSource,
+        candidateSourceIds: Object.freeze(candidateSourceIds),
+        candidateVoices: Object.freeze(ranked.map(describeVoice)),
+        disagreement: ranked.length > 1 ? 'COMPETING_PRINCIPAL_HARMONY_CANDIDATES' : null,
+        decision: 'PENDING',
+        notice: 'Ranked candidates for principal harmony, with the exact source ids behind each. Ranking is not arbitration: the decision stays PENDING until a declared or cited source role settles which voice is the principal harmony (SOURCE_POLICY.md §2, §5).',
+      });
       if (!ranked.length) {
         meta('Chord1', { status: 'EMPTY', reasons: ['NO_HARMONY_CANDIDATE_LANE'] });
       } else if (ranked.length > 1
@@ -955,15 +1013,21 @@ function assignRoles(state) {
         && ranked[0].attacks === ranked[1].attacks) {
         const tied = ranked.filter(entry =>
           entry.sounding.cmp(ranked[0].sounding) === 0 && entry.attacks === ranked[0].attacks);
-        const tiedLaneIds = tied.flatMap(entry => entry.lanes.map(lane => lane.id)).sort(cmpStr);
+        const tiedLanes = new Map(tied.flatMap(entry => entry.lanes).map(lane => [lane.id, lane]));
+        const tiedLaneIds = [...tiedLanes.keys()].sort(cmpStr);
         meta('Chord1', {
-          status: 'PENDING', tier: 2, reasons: ['COMPETING_HARMONY_CANDIDATES'],
+          status: 'PENDING', tier: 2,
+          reasons: crossSource
+            ? ['COMPETING_HARMONY_CANDIDATES', 'UNRESOLVED_CROSS_SOURCE_HARMONY']
+            : ['COMPETING_HARMONY_CANDIDATES'],
           competingLaneIds: tiedLaneIds,
         });
         for (const laneId of tiedLaneIds) {
           markPending({
             laneId, proposedRole: 'Chord1', blockers: ['COMPETING_HARMONY_CANDIDATES'],
             competingLaneIds: tiedLaneIds.filter(other => other !== laneId), evidenceIds: [],
+            sourceIds: [...(tiedLanes.get(laneId)?.sourceIds ?? [])],
+            crossSource,
           });
         }
       } else {
@@ -1405,6 +1469,7 @@ function evaluateCore3(context) {
     evidenceTier: chord1Meta.tier ?? null,
     evidenceTierName: chord1Meta.tierName ?? null,
     measurement: context.chord1Measurement ?? null,
+    arbitration: context.chord1Arbitration ?? null,
     notice: 'Total sounding time, attack count, register and density rank Chord1 candidates. They never, on their own, establish that a source voice is the principal harmony (MASTER_RULES.md §5, ACCEPTANCE_CRITERIA.md Gate 4).',
   };
 
@@ -1567,6 +1632,27 @@ function evaluateCore3(context) {
   return Object.freeze({
     status,
     canonicallyCompleteGate: 'CORE3',
+    // Core3 is one musically complete single-player three-role arrangement, not
+    // Melody + Chord2 with Chord1 as an optional middle layer. The three roles
+    // carry distinct required functions inside the same completeness target and
+    // no ranking among them: a strong Lead and a strong bass never compensate
+    // for an unresolved or missing principal harmony, Chord2 must not absorb
+    // Chord1's responsibility to make the candidate pass, and Chord3-Chord5
+    // cannot stand in for a weak Chord1. The pipeline's internal processing
+    // sequence is a dependency order only and carries no musical priority.
+    architecture: Object.freeze({
+      unit: 'Core3',
+      roles: Object.freeze([...CORE3_ROLE_NAMES]),
+      requiredFunctions: Object.freeze({
+        Melody: 'source-supported Lead continuity',
+        Chord1: 'Core Harmony / principal accompaniment / essential response',
+        Chord2: 'Core Bass skeleton plus any essential inner support required for one-player completeness',
+      }),
+      priorityAmongRoles: 'NONE',
+      allThreeRequiredForComplete: true,
+      evaluationQuestion: 'Do Melody + Chord1 + Chord2 together form the best source-supported single-player musical backbone?',
+      notice: 'MASTER_RULES.md §5 and ACCEPTANCE_CRITERIA.md Gate 4. The internal assignment sequence is a dependency order, never a statement that Lead and bass are the real backbone and harmony is optional support.',
+    }),
     functions: Object.freeze(functions),
     rationale: Object.freeze(rationale),
     essentialEventIds: Object.freeze(essentialEventIds),
@@ -2167,6 +2253,20 @@ export function suggestRoleCandidates(project, options = {}) {
     notice: 'Every source note event is either represented in one or more candidate roles with provenance, or explicitly present as pending / unassigned / unsupported evidence.',
   });
 
+  const chord1Arbitration = state.chord1Arbitration ?? null;
+  const chord1Evidenced = roles => roles.every(lane => lane.roleSupport.Chord1.tier === 1);
+  const chord1Lanes = lanes.filter(lane => assignment.get(lane.id) === 'Chord1');
+  if (chord1Arbitration?.crossSource
+    && !(chord1Lanes.length && chord1Evidenced(chord1Lanes))) add('UNRESOLVED_CROSS_SOURCE_HARMONY', {
+    deleted: false,
+    decision: 'PENDING',
+    disagreement: chord1Arbitration.disagreement,
+    candidateSourceIds: Object.freeze([...chord1Arbitration.candidateSourceIds]),
+    candidateVoices: Object.freeze([...chord1Arbitration.candidateVoices]),
+    selectedLaneIds: Object.freeze(chord1Lanes.map(lane => lane.id).sort(cmpStr)),
+    notice: 'Accompaniment candidates for Chord1 come from more than one source and nothing settles which carries the principal harmony. A coverage ranking may propose one, but the cross-source arbitration stays PENDING and Core3 cannot be complete (SOURCE_POLICY.md §5, MASTER_RULES.md §6).',
+  });
+
   const unresolvedSiblings = unresolvedHarmonySiblings(lanes, assignment, pendingLaneIds);
   if (unresolvedSiblings.length) add('UNRESOLVED_CORE_HARMONY_SIBLING', {
     deleted: false,
@@ -2184,6 +2284,7 @@ export function suggestRoleCandidates(project, options = {}) {
   const core3 = evaluateCore3({
     lanes, assignment, roleMeta, classification, pendingLanes, noteById,
     allNotes: notes, chord1Measurement: state.chord1Measurement ?? null,
+    chord1Arbitration: state.chord1Arbitration ?? null,
     unresolvedSiblings,
   });
   const full6 = evaluateFull6({
@@ -2255,6 +2356,8 @@ export function suggestRoleCandidates(project, options = {}) {
       competingLaneIds: Object.freeze([...item.competingLaneIds]),
       evidenceIds: Object.freeze([...item.evidenceIds]),
       eventIds: Object.freeze([...(laneById.get(item.laneId)?.eventIds ?? [])]),
+      sourceIds: Object.freeze([...(item.sourceIds ?? laneById.get(item.laneId)?.sourceIds ?? [])]),
+      crossSource: item.crossSource ?? false,
       gate: item.gate ?? null,
       notice: 'Evidence is insufficient or conflicting. The source events are preserved and the role decision stays open.',
     }))),
