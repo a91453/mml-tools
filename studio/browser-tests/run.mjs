@@ -104,6 +104,15 @@ try {
         await page.locator('.review-log').filter({hasText:`Reviewed ${name}`}).waitFor();await idle();
       }
       assert.equal(await page.locator('.hero .badge').textContent(),'VALIDATED');
+      // G10 C2B: the source-aware micro-timing gate is user-facing, so it must
+      // render as its own card with an honest badge and its structured
+      // diagnostics -- never silently omitted, and never folded into the MML
+      // technical gate, which answers a different question.
+      const microTiming=page.locator('#gates .gate').filter({hasText:'來源感知微時值'});
+      assert.equal(await microTiming.count(),1,'the source-aware micro-timing gate must be rendered');
+      assert.equal(await page.locator('#gates .gate').filter({hasText:'MML 技術語法'}).count(),1,'the MML technical gate stays a separate card');
+      assert.equal(await microTiming.locator('.badge').textContent(),'PASS','this fixture has no sub-grid interval');
+      for(const field of ['candidateCount','sourceSupportedCount','technicalResidueCount','unknownCount','unresolvedStreamIssueCount']) assert.ok((await microTiming.textContent()).includes(field),`the micro-timing gate must surface ${field}`);
       await page.getByText('記錄 In-game Accepted',{exact:true}).click();
       await page.locator('#acceptance [name="client"]').fill('Synthetic controlled test only');
       await page.locator('#acceptance [name="instrument"]').fill('three-role piano');
@@ -145,7 +154,7 @@ try {
       assert.ok((await page.locator('#gates').textContent()).includes('UNSUPPORTED'));
       assert.equal(await page.evaluate(()=>Number(sessionStorage.getItem('settledWhileRunning')||0)),0,'aria-busy must never go false with a gate still reading ANALYSIS_RUNNING');
       assert.deepEqual(errors,[]);
-      results.push({profile:profile.name,status:'PASS',checks:['Files picker','local MML/MusicXML','full review workflow','state separation','exact clipboard payload','IndexedDB reload','boot busy signal','busy-window two-waiter FIFO','boot waiter drain','project-scoped queue','stable Core3 evidence IDs','Worker failure and recovery','unsaved failure state','IndexedDB stale-token rejection','Final pitch boundary','settled state never ANALYSIS_RUNNING','revision invalidation','unsupported fail closed','no implicit uploads','responsive layout','offline module graph']});
+      results.push({profile:profile.name,status:'PASS',checks:['Files picker','local MML/MusicXML','full review workflow','state separation','exact clipboard payload','IndexedDB reload','boot busy signal','busy-window two-waiter FIFO','boot waiter drain','project-scoped queue','stable Core3 evidence IDs','Worker failure and recovery','unsaved failure state','IndexedDB stale-token rejection','Final pitch boundary','settled state never ANALYSIS_RUNNING','source-aware micro-timing gate visible','revision invalidation','unsupported fail closed','no implicit uploads','responsive layout','offline module graph']});
     } catch(error) {
       failed=true;results.push({profile:profile.name,status:'FAIL',error:error.stack,consoleErrors:errors});
       if(page)await page.screenshot({path:new URL(`${profile.name}-failure.png`,out).pathname,fullPage:true}).catch(()=>{});

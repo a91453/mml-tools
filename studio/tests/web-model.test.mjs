@@ -94,3 +94,101 @@ test('restored unknown or non-finite music ranges cannot pass intake even after 
   }
   assert.equal(analyzeWorkspace(w).gates.intake.status, 'PASS');
 });
+
+// G10 C2B. The web layer must surface the real backend micro-timing result and
+// must not re-decide sub-grid meaning for itself.
+const SUB_GRID_END = '1/17';
+function canonicalIr({ events, decisions = [] }) {
+  return JSON.stringify({
+    schema: 'mabinogi-mobile-mml-studio/canonical-project@2',
+    id: 'micro-timing-fixture',
+    title: 'Micro-timing fixture',
+    sources: [{ id: 'official', label: 'Official score', kind: 'official-musicxml', authority: 'primary-symbolic', sha256: null, metadata: {} }],
+    events,
+    tempoEvents: [],
+    meterEvents: [],
+    decisions,
+    metadata: { sourceComplete: true },
+  });
+}
+function irNote({ id, start, end, role = 'Melody', pitch = 60 }) {
+  return { kind: 'note', id, pitch, start, end, role, voice: null, volume: null, sourceIds: ['official'], sourceEventIds: [`${id}/official`], tags: [], metadata: {} };
+}
+function irWorkspace(content) {
+  const w = newWorkspace();
+  w.title = 'Micro-timing fixture';
+  w.settings = { meterText: '0 4/4', recording: 'synthetic version 1', offset: '0', end: '2', audioRequired: 'no', preview: 'none' };
+  for (const slot of ['candidate', 'baseline']) w.assets[slot] = intake({ name: `${slot}.json`, content, id: slot, meterText: w.settings.meterText });
+  return w;
+}
+
+test('the web report surfaces the backend micro-timing gate rather than its own verdict', () => {
+  const report = analyzeWorkspace(workspace());
+  assert.equal(Object.hasOwn(report.gates, 'microTiming'), true);
+  // Identity, not a copy: the web layer passes the analyzed backend result
+  // through untouched instead of reimplementing classification.
+  assert.equal(report.gates.microTiming, report.readiness.gates.microTiming);
+  assert.equal(report.gates.microTiming.status, 'PASS');
+  assert.equal(report.gates.microTiming.finalRepresentable, null);
+  assert.ok(!report.blockers.includes('microTiming'));
+});
+
+test('a sub-grid candidate blocks the web workspace even after every human review', () => {
+  let w = irWorkspace(canonicalIr({ events: [irNote({ id: 'micro', start: '0', end: SUB_GRID_END })] }));
+  for (const name of REVIEW_NAMES) w = recordReview(w, name, 'reviewed', 'fixture');
+  const report = analyzeWorkspace(w);
+  assert.equal(report.gates.microTiming.status, 'PENDING');
+  assert.equal(report.gates.microTiming.candidateCount, 1);
+  assert.equal(report.gates.microTiming.unknownCount, 1);
+  assert.ok(report.blockers.includes('microTiming'));
+  assert.equal(report.state, 'CANDIDATE');
+});
+
+test('an imported accepted micro-timing keep cannot grant a web micro-timing PASS', () => {
+  const event = irNote({ id: 'micro', start: '0', end: SUB_GRID_END });
+  let w = irWorkspace(canonicalIr({
+    events: [event],
+    decisions: [{
+      id: 'imported:keep',
+      eventIds: ['micro'],
+      action: 'micro-timing:keep-as-source-supported',
+      status: 'accepted',
+      reason: 'Imported claim of source support',
+      evidence: ['imported evidence string'],
+      metadata: {
+        intervalIdentity: { type: 'event-duration', eventId: 'micro', start: '0', end: SUB_GRID_END, length: SUB_GRID_END },
+        evidenceSourceIds: ['official'],
+      },
+    }],
+  }));
+  for (const name of REVIEW_NAMES) w = recordReview(w, name, 'reviewed', 'fixture');
+  const report = analyzeWorkspace(w);
+  assert.equal(report.gates.microTiming.status, 'PENDING');
+  assert.equal(report.gates.microTiming.sourceSupportedCount, 0);
+  assert.equal(report.state, 'CANDIDATE');
+  assert.ok(report.blockers.includes('microTiming'));
+});
+
+test('an unresolved role-null stream blocks the web workspace with its own reason', () => {
+  let w = irWorkspace(canonicalIr({
+    events: [
+      irNote({ id: 'null-a', start: '0', end: '1', role: null }),
+      irNote({ id: 'null-b', start: '18/17', end: '2', role: null, pitch: 64 }),
+    ],
+  }));
+  for (const name of REVIEW_NAMES) w = recordReview(w, name, 'reviewed', 'fixture');
+  const report = analyzeWorkspace(w);
+  assert.equal(report.gates.microTiming.status, 'PENDING');
+  assert.deepEqual(report.gates.microTiming.blockers, ['MICRO_TIMING_STREAM_IDENTITY_UNRESOLVED']);
+  assert.equal(report.gates.microTiming.unresolvedStreamIssueCount, 1);
+  assert.equal(report.state, 'CANDIDATE');
+});
+
+test('the web micro-timing gate keeps a Canonical status and is never rewritten to UNKNOWN', () => {
+  let w = irWorkspace(canonicalIr({ events: [irNote({ id: 'plain', start: '0', end: '1' })] }));
+  for (const name of REVIEW_NAMES) w = recordReview(w, name, 'reviewed', 'fixture');
+  const report = analyzeWorkspace(w);
+  assert.ok(['PASS', 'FAIL', 'PENDING'].includes(report.gates.microTiming.status));
+  assert.equal(report.gates.microTiming.status, 'PASS');
+  assert.equal(report.gates.microTiming, report.readiness.gates.microTiming);
+});
