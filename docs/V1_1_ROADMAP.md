@@ -25,7 +25,9 @@ document or implementation behaviour was used as a rule substitute.
 
 ## Classification vocabulary
 
-**Status** — `RESOLVED` (closed by merged work), `OPEN`, `NO_ACTION_REQUIRED`.
+**Status** — `RESOLVED` (closed by merged work), `OPEN`, `NO_ACTION_REQUIRED`,
+and `PARTIALLY RESOLVED` for an umbrella item whose parts are split (see M3).
+An umbrella row carries no blocker class of its own; its sub-items do.
 
 **Blocker class** — what the item is actually waiting on:
 
@@ -210,7 +212,7 @@ lockfile, "so transitive install reproducibility can be hardened later."
 **Why open.** Deliberately deferred rather than overlooked. It interacts with the
 durable release path, which pins byte-reproducible artifacts
 (`ops/permanent/release-lock.json`, `buildId`), so the lockfile posture and the
-release-workflow intent (M3) should be decided together.
+release-workflow intent (M3b) should be decided together.
 
 **Canonical impact.** `NONE`.
 
@@ -232,7 +234,9 @@ Items surfaced by the same reconstruction that do not carry a G identifier.
 | --- | --- | --- | --- | --- |
 | M1 | Durable roadmap register | `RESOLVED` by this document | `DOCUMENTATION_ONLY` | `NONE` |
 | M2 | Current-facing documentation drift | `NO_ACTION_REQUIRED` (verified) | — | `NONE` |
-| M3 | Durable bootstrap CI topology / main coverage | `OPEN` | `NEEDS_PROJECT_DECISION` + `IMPLEMENTATION_WORK` | `NONE` |
+| M3 | Durable release / bootstrap CI topology (umbrella) | `PARTIALLY RESOLVED` | see M3a / M3b | `NONE` |
+| M3a | Durable bootstrap push coverage on `main` | `RESOLVED` in PR #11 | — | `NONE` |
+| M3b | Historical release workflow re-runnability | `OPEN` | `NEEDS_PROJECT_DECISION` | `NONE` |
 | M4 | Governance / branch protection | `OPEN` | `OWNER_ACTION_REQUIRED` | `NONE` |
 | M5 | Song History / Regression Evidence structure | `OPEN` | `NEEDS_PROJECT_DECISION` | Undecided — see M5 |
 
@@ -273,33 +277,56 @@ Dated audit and checkpoint records (`RELEASE_READINESS_2026-09-13.md`,
 `STUDIO_WEB_V1_IMPLEMENTATION.md`) are historical by construction. Their
 then-accurate figures are not drift and MUST NOT be rewritten.
 
-### M3 — Durable bootstrap CI topology / main coverage · `OPEN`
+### M3 — Durable release / bootstrap CI topology · umbrella
 
-**Evidence.** `.github/workflows/studio-durable-bootstrap-ci.yml` triggers on
-`push: branches: [studio-permanent-durable-migration]`. That branch no longer
-exists on origin (remote heads are `main`, `chore/v1.1-gap-audit-regression`,
-`chatgpt/lead-role-20260910`, `legacy-v0.2.0`), so the push trigger is dead, and
-`main` was never in the list. Its `pull_request` trigger survives but is
-path-filtered to `ops/permanent/**`. Run history confirms the workflow has 5
-total runs, all on the deleted branch, and has never run on `main`.
+Tracked as an umbrella with two independent parts. **M3a is resolved in PR #11.
+M3b remains open and is a project decision, not implementation work.**
 
-`.github/workflows/studio-durable-release.yml` carries the same dead push
-branch, a `concurrency` group hardcoded to `studio-durable-release-5769e76849e5`,
-and a first step asserting
-`test "$(git rev-parse origin/main)" = 5769e76849e5ef8dad03b4080050cafcf1c2eabe`.
-Published main is now `4487aac`, so that assertion is false and a
-`workflow_dispatch` run fails immediately.
+#### M3a — Durable bootstrap push coverage on `main` · `RESOLVED` in PR #11
 
-**Consequence.** `ops/permanent/**` has no push-CI coverage on main, and the
-durable release path is inoperable as written.
+**Pre-PR state — reconstruction evidence, no longer current.** Before PR #11,
+`.github/workflows/studio-durable-bootstrap-ci.yml` declared
+`push: branches: [studio-permanent-durable-migration]`. That branch had been
+deleted after PR #9 merged (remote heads were `main`,
+`chore/v1.1-gap-audit-regression`, `chatgpt/lead-role-20260910` and
+`legacy-v0.2.0`), so the push trigger was dead, and `main` was never in the list.
+Run history showed 5 total runs, all on the deleted branch, and none on `main`.
+The consequence at that time: `ops/permanent/**` changes merged to `main`
+received no durable bootstrap push-CI coverage.
 
-**Decision required before repair.** Is `studio-durable-release.yml` intended as
-a one-shot archival record of the `5769e76` release — in which case the pin is
-correct and should be documented as deliberate — or as a re-runnable release
-path, in which case the SHA guard must be parameterized? The two readings imply
-opposite fixes.
+**Resolution in PR #11.** The obsolete branch target is replaced with `main`, so
+the deleted-branch push target no longer appears in the workflow. Path filters,
+`pull_request` behavior, `permissions`, job name, `runs-on` and all four steps are
+unchanged; a parsed before/after comparison differs in exactly one key,
+`on.push.branches`.
 
-**Canonical impact.** `NONE`.
+**Status.** No implementation work remains for M3a. Because the trigger is scoped
+to `main`, the restored coverage exercises itself on the merge commit rather than
+on the PR branch.
+
+#### M3b — Historical release workflow re-runnability · `OPEN` · `NEEDS_PROJECT_DECISION`
+
+`.github/workflows/studio-durable-release.yml` is **unchanged by PR #11** and is
+currently treated as a **pinned historical release publisher**, not a generic
+current-main release workflow. Evidence for that reading: a pinned source SHA,
+pinned `buildId` / `release-lock.json` verification, explicit
+publish-without-replacing-historical-assets behavior, and
+`ops/permanent/build_function.py` rendering with `trustSourceSha 5769e76849e5…`,
+pinned by construction and independent of current `main`.
+
+Under that interpretation, its pinned first step — asserting that `origin/main`
+equals `5769e76849e5ef8dad03b4080050cafcf1c2eabe`, which no longer holds now that
+published main is `4487aac` — is deliberate pinning rather than a defect, and its
+`concurrency` group hardcoded to `studio-durable-release-5769e76849e5` is
+consistent with that reading.
+
+**Open question.** Should a pinned historical release publisher remain manually
+re-runnable at all? If yes, the pinned guard needs an explicit re-run story; if
+no, the workflow should record that it is archival. This is a project decision,
+not implementation work. While it stands: nothing is parameterized, no pinned
+SHA, `buildId` or `release-lock.json` is touched, and no release is published.
+
+**Canonical impact.** `NONE` for both parts.
 
 ### M4 — Governance / branch protection · `OPEN`
 
@@ -363,7 +390,7 @@ change is asserted to be required.
 
 ## Dependencies
 
-- **G13 depends on M3.** The lockfile posture and the durable release intent both
+- **G13 depends on M3b.** The lockfile posture and the durable release intent both
   govern reproducibility; deciding them separately risks contradictory pins.
 - **G8 depends on M5/D3.** The legal/licensing gate for committable source
   material is the same decision in both items.
@@ -383,10 +410,10 @@ Sequenced so that no PR mixes a decision-bearing change with a mechanical one.
 
 | PR | Contents | Prerequisite |
 | --- | --- | --- |
-| **A — documentation** | This register; any verified current-facing doc fix | None. Checkpoint A. |
-| **B — CI topology** | Restore `ops/permanent/**` push coverage on main; resolve the `studio-durable-release.yml` pin per M3 | M3 decision |
+| **A — documentation + CI topology** | This register; restore `ops/permanent/**` push coverage on `main` (M3a) | None. This is PR #11. |
+| **B — release semantics** | Resolve `studio-durable-release.yml` re-runnability per M3b | M3b decision |
 | **C — G10 enforcement** | Source-aware micro-gap enforcement with mutation-verified regressions, design reviewed first | G10 design review |
-| **D — G12 / G13** | Artifact strategy and lockfile posture together | G12 + G13 decisions, after M3 |
+| **D — G12 / G13** | Artifact strategy and lockfile posture together | G12 + G13 decisions, after M3b |
 | **E — M5 groundwork** | Song History structure documentation only, no schema | D1–D8 decisions |
 
 G8 and G9 receive no PR row: neither is unblocked, and G9 is `ROADMAP_ONLY`.
