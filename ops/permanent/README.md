@@ -1,5 +1,8 @@
 # Studio v1 durable deployment
 
+Production migration passed. See [MIGRATION_RESULT.md](MIGRATION_RESULT.md) for
+the deployed identity, Railway deployment IDs, HTTP verification and rollback proof.
+
 This is deployment operations material, not Canonical policy or a Studio feature release.
 Published Canonical remains `2026-09-13-v1` / `PUBLISHED`, with Manifest revision
 `2026-09-13-v1-manifest1`, rules snapshot `0a172900a01fdf39c2e9e84cf176961320b779ea`,
