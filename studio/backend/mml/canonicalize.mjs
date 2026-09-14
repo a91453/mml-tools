@@ -8,8 +8,27 @@ import {
   createCanonicalMeterEvent,
   createCanonicalProject,
 } from '../canonical/index.mjs';
+import { createTimingProvenance } from '../canonical/timing.mjs';
 
 const maxF = (a, b) => f(a).cmp(b) >= 0 ? f(a) : f(b);
+
+const MML_ADAPTER = 'studio/backend/mml/canonicalize.mjs';
+
+// Every MML component is derived, including duration. Onsets are positional
+// accumulations of preceding token durations; a tie chain collapses several
+// written tokens into one event, so an event's length need not equal any single
+// written denominator; and silence spans are reconstructed from the absence of
+// notes. This adapter receives expanded start/end pairs rather than the tokens,
+// so it cannot preserve the token-level fact that would justify calling any
+// component notated. It records only what it knows by construction — these
+// values came from notated MML rather than from tooling — and claims no unit or
+// written form.
+const MML_TIMING = createTimingProvenance({
+  adapter: MML_ADAPTER,
+  start: { origin: 'source-derived' },
+  duration: { origin: 'source-derived' },
+  end: { origin: 'source-derived' },
+});
 
 function silenceSpans(track) {
   const spans = [];
@@ -112,7 +131,7 @@ export function normalizeMMLSource(raw, options = {}) {
         sourceIds: [sourceId],
         sourceEventIds: [`track:${role}/note:${eventIndex + 1}`],
         tags: ['mml-source', kind],
-        metadata: { trackIndex: trackIndex + 1, characters: track.characters },
+        metadata: { trackIndex: trackIndex + 1, characters: track.characters, timing: MML_TIMING },
       }));
     }
 
@@ -128,7 +147,7 @@ export function normalizeMMLSource(raw, options = {}) {
         sourceIds: [sourceId],
         sourceEventIds: [`track:${role}/silence:${restIndex + 1}`],
         tags: ['mml-source', 'inferred-silence', kind],
-        metadata: { trackIndex: trackIndex + 1, inference: 'gap-between-expanded-note-events' },
+        metadata: { trackIndex: trackIndex + 1, inference: 'gap-between-expanded-note-events', timing: MML_TIMING },
       }));
     }
   }
