@@ -116,8 +116,9 @@ arrangement work.
 | --- | --- |
 | `studio/backend/source/midi-file.mjs` | Lossless SMF decoder. Records every chunk and event, interprets none. |
 | `studio/backend/source/midi.mjs` | Projects the decoded evidence into Canonical IR with per-event provenance. |
+| `studio/backend/source/sha256.mjs` | Synchronous SHA-256 for source identity; no dependency, runs in Node and the browser. |
 | `studio/backend/source/index.mjs` | Facade plus `MIDI_INGESTION_STATUS`, a factual capability record. |
-| `studio/tests/midi-intake.test.mjs` | 21 fixture tests built from raw bytes. |
+| `studio/tests/midi-intake.test.mjs` | 39 fixture tests built from raw bytes. |
 
 The existing `readMidi` in `dist/core.js` was examined and deliberately **not**
 extended. It requires Type 1, exactly 7 tracks and PPQ timing, and throws on
@@ -136,6 +137,21 @@ their raw bytes**, and the caller decides what they mean.
 Every Canonical note carries `sourceEventIds` pointing at the exact raw note-on
 and note-off indices it came from, so the baseline is diffable at event level
 as Gate 2 requires.
+
+### Verification status
+
+The Node suites, the Canonical bootstrap/provenance checks and both builds run
+here and pass. The **browser suite (`npm run test:studio-web`) cannot run in
+this container** and is therefore verified only by GitHub CI on the exact head:
+
+- `webkit-2336` is not installed at all, so the iPhone/iPad profiles cannot launch;
+- the pinned Playwright (1.62.1) expects `chromium_headless_shell-1234` while the
+  image provides `-1194`.
+
+Both are launch failures that occur before any test body executes. No browser
+was downloaded and no environment change was made to work around them — CI's
+browser job runs `npx playwright install --with-deps chromium webkit` and
+covers this. A browser-suite pass is **not** claimed from this container.
 
 ## 5. Behaviors reproduced by fixtures
 
