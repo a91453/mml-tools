@@ -111,6 +111,10 @@ export const STUDIO_IMPLEMENTATION = Object.freeze({
   leadDemotionGate: true,
   originalAudioAlignment: true,
   crossSourceHarmonyArbitration: true,
+  // G10 C2B: the source-aware micro-timing readiness gate exists as a module.
+  // This is an IMPLEMENTER signal only. It defines no Canonical rule and never
+  // certifies that any song's sub-1/64 timing is source-supported.
+  sourceAwareMicroTimingGate: true,
 });
 
 export function auditLegacyRuleDrift() {
@@ -142,20 +146,27 @@ export function auditLegacyRuleDrift() {
   return Object.freeze(findings);
 }
 
+export const STUDIO_FINAL_MODULE_BLOCKERS = Object.freeze([
+  Object.freeze(['musicXmlIngestion', 'MUSICXML_INGESTION_PENDING']),
+  Object.freeze(['sourceAwareMmlNormalization', 'SOURCE_AWARE_MML_NORMALIZATION_PENDING']),
+  Object.freeze(['versionDriftReport', 'VERSION_DRIFT_REPORT_PENDING']),
+  Object.freeze(['core3ContinuityGate', 'CORE3_CONTINUITY_GATE_PENDING']),
+  Object.freeze(['leadDemotionGate', 'LEAD_DEMOTION_GATE_PENDING']),
+  Object.freeze(['originalAudioAlignment', 'ORIGINAL_AUDIO_ALIGNMENT_PENDING']),
+  Object.freeze(['crossSourceHarmonyArbitration', 'CROSS_SOURCE_HARMONY_PENDING']),
+  Object.freeze(['sourceAwareMicroTimingGate', 'SOURCE_AWARE_MICRO_TIMING_GATE_PENDING']),
+]);
+
 // These blockers describe whether the Studio implementation has the required
 // modules. An empty array never certifies a song. Song-specific readiness is
 // evaluated separately by backend/final/readiness.mjs.
-export function studioFinalBlockers() {
-  const required = [
-    ['musicXmlIngestion', 'MUSICXML_INGESTION_PENDING'],
-    ['sourceAwareMmlNormalization', 'SOURCE_AWARE_MML_NORMALIZATION_PENDING'],
-    ['versionDriftReport', 'VERSION_DRIFT_REPORT_PENDING'],
-    ['core3ContinuityGate', 'CORE3_CONTINUITY_GATE_PENDING'],
-    ['leadDemotionGate', 'LEAD_DEMOTION_GATE_PENDING'],
-    ['originalAudioAlignment', 'ORIGINAL_AUDIO_ALIGNMENT_PENDING'],
-    ['crossSourceHarmonyArbitration', 'CROSS_SOURCE_HARMONY_PENDING'],
-  ];
-  return Object.freeze(required.filter(([key]) => !STUDIO_IMPLEMENTATION[key]).map(([, id]) => id));
+//
+// `implementation` is an injection point for regressions that need to observe a
+// removed or disabled capability. Production callers pass nothing.
+export function studioFinalBlockers(implementation = STUDIO_IMPLEMENTATION) {
+  return Object.freeze(
+    STUDIO_FINAL_MODULE_BLOCKERS.filter(([key]) => !implementation?.[key]).map(([, id]) => id),
+  );
 }
 
 export function assertRulesReadyForFinal() {
