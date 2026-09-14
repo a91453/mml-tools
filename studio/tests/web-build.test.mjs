@@ -18,12 +18,18 @@ test('built offline engine preserves native parser/IR behavior and complete asse
   const {canonical,canonicalDigest}=await import('../web-build/studio/web/published.mjs');
   assert.equal(createHash('sha256').update(JSON.stringify(canonical)).digest('hex'),canonicalDigest);
   const build=JSON.parse(await readFile(new URL('../web-build/build.json',import.meta.url)));
+  // Executable Service Worker code must be inside the release identity.
+  assert.ok(build.files.some(([path])=>path==='sw.js'),'sw.js must be covered by the asset manifest');
   const sw=await readFile(new URL('../web-build/sw.js',import.meta.url),'utf8');
   for(const [path,hash] of build.files){
     const bytes=await readFile(new URL(`../web-build/${path}`,import.meta.url));
     assert.equal(createHash('sha256').update(bytes).digest('hex'),hash,path);
-    assert.ok(sw.includes(`./${path}`),`Offline asset missing: ${path}`);
+    // The Service Worker is covered by the release manifest but does not
+    // precache itself: the browser fetches the worker script directly.
+    if(path!=='sw.js')assert.ok(sw.includes(`./${path}`),`Offline asset missing: ${path}`);
     if(/\.m?js$/.test(path))assert.doesNotMatch(bytes.toString(),/from ['"]node:/);
   }
-  assert.notEqual(canonical.metadata.rules_snapshot_sha,canonical.provenance.published_main_head);
+  // Dynamic Git provenance is audit-only and must stay out of the hashed bundle.
+  assert.equal(canonical.provenance,undefined);
+  assert.notEqual(build.release.canonical.rules_snapshot_sha,build.audit.published_main_head);
 });

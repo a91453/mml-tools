@@ -3,9 +3,12 @@ import { resolve, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { createHash } from 'node:crypto';
 import { loadPublishedCanonical } from '../studio/backend/bootstrap/index.mjs';
+import { SERVICE_WORKER_ASSET, byPath, computeBuildId, computeCacheId, readServiceWorkerTemplate, renderServiceWorker } from './studio-artifact-identity.mjs';
 
 const root = fileURLToPath(new URL('../', import.meta.url));
-const out = resolve(root, 'studio/web-build');
+// Overridable so verification can build into an isolated directory without
+// racing the default output another test or deployment step is using.
+const out = resolve(root, process.env.STUDIO_WEB_BUILD_OUT ?? 'studio/web-build');
 const prHead = process.env.GITHUB_EVENT_NAME === 'pull_request'
   ? JSON.parse(await readFile(process.env.GITHUB_EVENT_PATH, 'utf8')).pull_request.head.sha : null;
 // Fail before producing any output if published discovery/history is missing.
@@ -24,7 +27,12 @@ await copyModules('studio/backend');
 await copyModules('studio/web');
 await put('dist/core.js', await readFile(resolve(root, 'dist/core.js')));
 // Preserve all engine modules. Only replace the environment-specific Git loader.
-const data = JSON.stringify(canonical);
+// Dynamic Git provenance (repository_head / published_main_head / pr_head and
+// the Manifest commit) is audit metadata, not runtime content. Embedding it in
+// hashed assets made buildId move whenever main advanced, even with identical
+// sources and an unchanged Canonical release. It ships in build.json instead.
+const { provenance, ...runtimeCanonical } = canonical;
+const data = JSON.stringify(runtimeCanonical);
 await put('studio/backend/bootstrap/index.mjs', `const loaded = ${data};\nfunction freeze(x){for(const v of Object.values(x))if(v&&typeof v==='object')freeze(v);return Object.freeze(x)}\nfreeze(loaded);\nexport function loadPublishedCanonical({supportedCanonicalVersion=null}={}){if(supportedCanonicalVersion&&supportedCanonicalVersion!==loaded.metadata.canonical_version)throw Error('CANONICAL_NOT_LOADED');return loaded}\n`);
 await put('studio/web/published.mjs', `export const canonical = ${data};\nexport const canonicalDigest = '${digest(data)}';\n`);
 const parserDir = dirname(dirname(fileURLToPath(import.meta.resolve('fast-xml-parser'))));
@@ -46,9 +54,28 @@ async function inventory(dir = '') {
   }
 }
 await inventory();
-const hashes = await Promise.all(files.sort().map(async path => [path, digest(await readFile(resolve(out, path)))]));
-const buildId = digest(JSON.stringify(hashes));
-await put('build.json', JSON.stringify({ buildId, canonical: canonical.metadata, provenance: canonical.provenance, files: hashes }, null, 2));
-const sw = await readFile(resolve(root, 'studio/web/sw.js'), 'utf8').catch(error => { if (error.code === 'ENOENT') return ''; throw error; });
-if (sw) await put('sw.js', sw.replace('__CACHE_NAME__', `mml-studio-v1-${buildId}`).replace('__PRECACHE__', JSON.stringify(['./', ...files.map(path => `./${path}`), './build.json'])));
-console.log(JSON.stringify({ output: 'studio/web-build', buildId, canonical: canonical.metadata, provenance: canonical.provenance, assetCount: files.length }));
+const runtimeFiles = files.sort();
+const runtimeHashes = await Promise.all(runtimeFiles.map(async path => [path, digest(await readFile(resolve(out, path)))]));
+
+// Stage A - cache identity, shared with the artifact verifier so the two
+// cannot drift. See scripts/studio-artifact-identity.mjs for why it is derived
+// from the template rather than from the final buildId.
+const swTemplate = await readServiceWorkerTemplate(root);
+const cacheId = computeCacheId(runtimeHashes, swTemplate);
+// The worker does not precache itself; the browser fetches that script directly.
+if (swTemplate) await put(SERVICE_WORKER_ASSET, renderServiceWorker(swTemplate, cacheId, runtimeFiles));
+
+// Stage B - release identity over the complete manifest, worker included.
+const hashes = swTemplate
+  ? [...runtimeHashes, [SERVICE_WORKER_ASSET, digest(await readFile(resolve(out, SERVICE_WORKER_ASSET)))]].sort(byPath)
+  : [...runtimeHashes].sort(byPath);
+const buildId = computeBuildId(hashes);
+const audit = { note: 'Dynamic Git and build provenance. Audit only: excluded from hashed runtime assets and from buildId.', source_sha: provenance.repository_head, ...provenance };
+// Stable release identity defines the artifact; audit provenance never does.
+await put('build.json', JSON.stringify({
+  buildId,
+  release: { canonical: canonical.metadata, rules_snapshot_sha: canonical.metadata.rules_snapshot_sha, runtimeBundleDigest: digest(data), cacheId },
+  audit,
+  files: hashes,
+}, null, 2));
+console.log(JSON.stringify({ output: 'studio/web-build', buildId, cacheId, canonical: canonical.metadata, audit, assetCount: hashes.length }));
