@@ -1,0 +1,274 @@
+{
+  "deploymentId": "055831dd-85ec-48ab-a4ef-994746267a43",
+  "logs": {
+    "deploy": [
+      {
+        "attributes": [
+          {
+            "key": "level",
+            "value": "\"info\""
+          }
+        ],
+        "message": "Mounting volume on: /var/lib/containers/railwayapp/bind-mounts/61698c16-20f5-4ccc-9734-d29a2d6e1977/vol_ph61rwe5mb6rp77i",
+        "severity": "info",
+        "timestamp": "2026-09-14T01:08:01.704798071Z"
+      },
+      {
+        "attributes": [
+          {
+            "key": "level",
+            "value": "\"info\""
+          }
+        ],
+        "message": "Analyzing index.tsx",
+        "severity": "info",
+        "timestamp": "2026-09-14T01:08:02.691900111Z"
+      },
+      {
+        "attributes": [
+          {
+            "key": "level",
+            "value": "\"info\""
+          }
+        ],
+        "message": "Analyzed index.tsx in 49ms",
+        "severity": "info",
+        "timestamp": "2026-09-14T01:08:02.691906497Z"
+      },
+      {
+        "attributes": [
+          {
+            "key": "level",
+            "value": "\"info\""
+          },
+          {
+            "key": "source",
+            "value": "{\"dependencies\":{},\"type\":\"module\"}"
+          }
+        ],
+        "message": "Generated package.json",
+        "severity": "info",
+        "timestamp": "2026-09-14T01:08:02.691913317Z"
+      },
+      {
+        "attributes": [
+          {
+            "key": "level",
+            "value": "\"info\""
+          }
+        ],
+        "message": "Installing dependencies",
+        "severity": "info",
+        "timestamp": "2026-09-14T01:08:02.691920896Z"
+      },
+      {
+        "attributes": [
+          {
+            "key": "level",
+            "value": "\"info\""
+          }
+        ],
+        "message": "No dependencies found, skipping bun install",
+        "severity": "info",
+        "timestamp": "2026-09-14T01:08:02.691928462Z"
+      },
+      {
+        "attributes": [
+          {
+            "key": "level",
+            "value": "\"info\""
+          }
+        ],
+        "message": "bun run index.tsx",
+        "severity": "info",
+        "timestamp": "2026-09-14T01:08:02.691935853Z"
+      },
+      {
+        "attributes": [
+          {
+            "key": "level",
+            "value": "\"info\""
+          },
+          {
+            "key": "event",
+            "value": "\"TRUSTED_SOURCE_VERIFIED\""
+          },
+          {
+            "key": "time",
+            "value": "\"2026-09-14T01:08:01.985Z\""
+          },
+          {
+            "key": "sourceSha",
+            "value": "\"5769e76849e5ef8dad03b4080050cafcf1c2eabe\""
+          },
+          {
+            "key": "sha256",
+            "value": "\"2bfa4aa942bff469ffec254cd4e5b187c241484067ecbb5fdc31e004a350a499\""
+          }
+        ],
+        "message": "",
+        "severity": "info",
+        "timestamp": "2026-09-14T01:08:02.691947029Z"
+      },
+      {
+        "attributes": [
+          {
+            "key": "level",
+            "value": "\"info\""
+          },
+          {
+            "key": "event",
+            "value": "\"ARTIFACT_VERIFIED\""
+          },
+          {
+            "key": "time",
+            "value": "\"2026-09-14T01:08:02.059Z\""
+          },
+          {
+            "key": "buildId",
+            "value": "\"34c67a4a1284eee1243ee51858096660c16cbf22cf0347e139abb15f2dc3e258\""
+          },
+          {
+            "key": "cacheId",
+            "value": "\"1e78713ad6bb57aff5dd5c4ef2cf841aa01f9c550471fe9aa4f216ed51596a92\""
+          },
+          {
+            "key": "sourceSha",
+            "value": "\"5769e76849e5ef8dad03b4080050cafcf1c2eabe\""
+          },
+          {
+            "key": "assetCount",
+            "value": "34"
+          },
+          {
+            "key": "canonical",
+            "value": "{\"canonical_version\":\"2026-09-13-v1\",\"canonical_status\":\"PUBLISHED\",\"manifest_version\":\"2026-09-13-v1-manifest1\",\"rules_snapshot_sha\":\"0a172900a01fdf39c2e9e84cf176961320b779ea\"}"
+          }
+        ],
+        "message": "",
+        "severity": "info",
+        "timestamp": "2026-09-14T01:08:02.691953496Z"
+      },
+      {
+        "attributes": [
+          {
+            "key": "level",
+            "value": "\"info\""
+          },
+          {
+            "key": "event",
+            "value": "\"VALIDATED_CACHE_STARTUP\""
+          },
+          {
+            "key": "time",
+            "value": "\"2026-09-14T01:08:02.059Z\""
+          },
+          {
+            "key": "buildId",
+            "value": "\"34c67a4a1284eee1243ee51858096660c16cbf22cf0347e139abb15f2dc3e258\""
+          },
+          {
+            "key": "refetch",
+            "value": "false"
+          }
+        ],
+        "message": "",
+        "severity": "info",
+        "timestamp": "2026-09-14T01:08:02.691960764Z"
+      },
+      {
+        "attributes": [
+          {
+            "key": "level",
+            "value": "\"info\""
+          },
+          {
+            "key": "event",
+            "value": "\"READY_MARKER_WRITTEN_AFTER_VERIFICATION\""
+          },
+          {
+            "key": "time",
+            "value": "\"2026-09-14T01:08:02.088Z\""
+          },
+          {
+            "key": "buildId",
+            "value": "\"34c67a4a1284eee1243ee51858096660c16cbf22cf0347e139abb15f2dc3e258\""
+          },
+          {
+            "key": "cacheId",
+            "value": "\"1e78713ad6bb57aff5dd5c4ef2cf841aa01f9c550471fe9aa4f216ed51596a92\""
+          },
+          {
+            "key": "sourceSha",
+            "value": "\"5769e76849e5ef8dad03b4080050cafcf1c2eabe\""
+          },
+          {
+            "key": "canonical",
+            "value": "{\"canonical_version\":\"2026-09-13-v1\",\"canonical_status\":\"PUBLISHED\",\"manifest_version\":\"2026-09-13-v1-manifest1\",\"rules_snapshot_sha\":\"0a172900a01fdf39c2e9e84cf176961320b779ea\"}"
+          },
+          {
+            "key": "zipSha256",
+            "value": "\"ff464a35b00bb490cef3873e191b6dd870cdc6b5a10699badcb3788607f24088\""
+          },
+          {
+            "key": "trustSourceSha",
+            "value": "\"5769e76849e5ef8dad03b4080050cafcf1c2eabe\""
+          }
+        ],
+        "message": "",
+        "severity": "info",
+        "timestamp": "2026-09-14T01:08:02.691967360Z"
+      },
+      {
+        "attributes": [
+          {
+            "key": "level",
+            "value": "\"info\""
+          },
+          {
+            "key": "event",
+            "value": "\"SERVER_STARTED\""
+          },
+          {
+            "key": "time",
+            "value": "\"2026-09-14T01:08:02.095Z\""
+          },
+          {
+            "key": "port",
+            "value": "8080"
+          },
+          {
+            "key": "bootstrap",
+            "value": "\"cache\""
+          },
+          {
+            "key": "buildId",
+            "value": "\"34c67a4a1284eee1243ee51858096660c16cbf22cf0347e139abb15f2dc3e258\""
+          },
+          {
+            "key": "cacheId",
+            "value": "\"1e78713ad6bb57aff5dd5c4ef2cf841aa01f9c550471fe9aa4f216ed51596a92\""
+          }
+        ],
+        "message": "",
+        "severity": "info",
+        "timestamp": "2026-09-14T01:08:02.692793047Z"
+      },
+      {
+        "attributes": [
+          {
+            "key": "level",
+            "value": "\"info\""
+          }
+        ],
+        "message": "Starting Container",
+        "severity": "info",
+        "timestamp": "2026-09-14T01:08:02.900266681Z"
+      }
+    ],
+    "deploymentId": "055831dd-85ec-48ab-a4ef-994746267a43",
+    "environmentId": "00c16c1a-f210-44a0-944f-9722c4b1a0f4",
+    "serviceId": "2343a428-d442-4c3d-99cc-a3c2d690578d",
+    "status": "SUCCESS"
+  }
+}

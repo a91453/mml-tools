@@ -1,0 +1,10 @@
+{
+  "deployment": "228033e5-9b58-45ea-bebd-7b8f4dfb91b4",
+  "serviceId": "2343a428-d442-4c3d-99cc-a3c2d690578d",
+  "asset": "studio/web/app.mjs",
+  "readyMarkerPresent": true,
+  "result": "ARTIFACT_NOT_VERIFIED: Asset hash mismatch: studio/web/app.mjs",
+  "serverStarted": false,
+  "refetch": false,
+  "productionTouched": false
+}

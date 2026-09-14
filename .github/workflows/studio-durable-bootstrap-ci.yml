@@ -1,0 +1,21 @@
+name: Studio durable bootstrap CI
+on:
+  push:
+    branches: [studio-permanent-durable-migration]
+    paths: [ops/permanent/**, .github/workflows/studio-durable-bootstrap-ci.yml]
+  pull_request:
+    paths: [ops/permanent/**, .github/workflows/studio-durable-bootstrap-ci.yml]
+permissions:
+  contents: read
+jobs:
+  migration:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: Verify cold cache, offline cached restart, corruption and durable recovery
+        run: RELEASE_TEST_ASSETS=ops/permanent/assets node --test ops/permanent/bootstrap.test.mjs
+      - name: Render the pinned Railway bootstrap
+        run: python ops/permanent/build_function.py ops/permanent/assets /tmp/studio-durable-function.ts

@@ -1,0 +1,15 @@
+{
+  "status": "ready",
+  "bootstrap": "cache",
+  "buildId": "34c67a4a1284eee1243ee51858096660c16cbf22cf0347e139abb15f2dc3e258",
+  "cacheId": "1e78713ad6bb57aff5dd5c4ef2cf841aa01f9c550471fe9aa4f216ed51596a92",
+  "sourceSha": "5769e76849e5ef8dad03b4080050cafcf1c2eabe",
+  "canonical": {
+    "canonical_version": "2026-09-13-v1",
+    "canonical_status": "PUBLISHED",
+    "manifest_version": "2026-09-13-v1-manifest1",
+    "rules_snapshot_sha": "0a172900a01fdf39c2e9e84cf176961320b779ea"
+  },
+  "zipSha256": "ff464a35b00bb490cef3873e191b6dd870cdc6b5a10699badcb3788607f24088",
+  "trustSourceSha": "5769e76849e5ef8dad03b4080050cafcf1c2eabe"
+}
