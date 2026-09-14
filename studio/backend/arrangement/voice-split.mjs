@@ -9,17 +9,42 @@
 // atomic sounding slices -> continuity matching -> chain packing. Source-event
 // identity is a hard continuity constraint; pitch distance is used only for
 // unmatched replacements at an adjacent boundary.
+//
+// Determinism contract (checkpoint 2):
+//   * input events are re-sorted by (start, -pitch, id) before anything else,
+//     so caller array order can never change the result;
+//   * every ordering / matching decision is made on exact rationals or on
+//     integers, never on a float derived from a beat;
+//   * no decision reads Map or Object enumeration order.
 
 import { f } from '../mml/index.mjs';
 
+const ZERO = f(0);
+
 const cmpBeat = (a, b) => f(a).cmp(b);
 const beatKey = value => f(value).toString();
-const durationNumber = (start, end) => f(end).sub(start).num();
+const cmpId = (a, b) => (a < b ? -1 : a > b ? 1 : 0);
+const subBeat = (a, b) => f(a).sub(b);
+const absF = value => (value.cmp(ZERO) < 0 ? ZERO.sub(value) : value);
+
+// Exact duration-weighted pitch. Lane ordering and lane affinity are decided
+// with this rational, never with its float projection; `num()` is exposed only
+// as a presentation field.
+function weightedPitch(spans, fallbackPitch = 0) {
+  let sum = ZERO;
+  let weight = ZERO;
+  for (const span of spans) {
+    const duration = subBeat(span.end, span.start);
+    sum = sum.add(duration.mul(span.pitch));
+    weight = weight.add(duration);
+  }
+  return weight.cmp(ZERO) > 0 ? sum.div(weight) : f(fallbackPitch);
+}
 
 const eventSort = (a, b) =>
   cmpBeat(a.start, b.start)
   || b.pitch - a.pitch
-  || (a.id < b.id ? -1 : a.id > b.id ? 1 : 0);
+  || cmpId(a.id, b.id);
 
 function validateNote(event, index) {
   if (!event || event.kind !== 'note') throw Error(`events[${index}] must be a Canonical note event`);
@@ -49,26 +74,27 @@ function makeBoundaries(notes) {
   return [...values.values()].sort(cmpBeat);
 }
 
-function activeAt(notes, beat) {
-  return notes
-    .filter(note => cmpBeat(note.start, beat) <= 0 && cmpBeat(note.end, beat) > 0)
-    .sort((a, b) => b.pitch - a.pitch || (a.id < b.id ? -1 : a.id > b.id ? 1 : 0));
-}
-
+// Atomic sounding slices, built by a sweep over the exact boundary list. A
+// boundary region with nothing sounding is skipped, which is what later makes a
+// real silence visible as a continuity break rather than an assumed sustain.
+// `notes` arrives sorted by (start, -pitch, id), so the sweep cursor is exact.
 function buildSlices(notes) {
   const boundaries = makeBoundaries(notes);
   const slices = [];
+  let cursor = 0;
+  let sounding = [];
   for (let i = 0; i + 1 < boundaries.length; i++) {
     const start = boundaries[i];
     const end = boundaries[i + 1];
     if (cmpBeat(end, start) <= 0) continue;
-    const active = activeAt(notes, start);
-    if (!active.length) continue;
+    while (cursor < notes.length && cmpBeat(notes[cursor].start, start) <= 0) sounding.push(notes[cursor++]);
+    sounding = sounding.filter(note => cmpBeat(note.end, start) > 0);
+    if (!sounding.length) continue;
     slices.push({
       index: slices.length,
       start: beatKey(start),
       end: beatKey(end),
-      active,
+      active: [...sounding].sort((a, b) => b.pitch - a.pitch || cmpId(a.id, b.id)),
     });
   }
   return slices;
@@ -76,7 +102,8 @@ function buildSlices(notes) {
 
 // Minimum-cost assignment for the unmatched portion of one adjacent boundary.
 // Rows may outnumber columns; in that case the matrix is transposed and mapped
-// back. Cost is semitone distance with deterministic column-order tie breaking.
+// back. The matrix is integer-only, so the assignment is a pure function of the
+// two slices.
 function hungarian(cost) {
   const rows = cost.length;
   const cols = rows ? cost[0].length : 0;
@@ -142,6 +169,21 @@ function hungarian(cost) {
   return result;
 }
 
+// Cost for one candidate replacement pair.
+//
+// `distance * stride + column` keeps semitone distance strictly dominant: an
+// assignment uses min(rows, cols) pairs contributing at most `cols - 1` each, so
+// the whole tie-break term stays below `stride` and can never outweigh a single
+// semitone. When there are more candidates than rows, equal-distance assignments
+// deterministically prefer the lowest column indices (the higher-pitched
+// candidates, since a slice is ordered by descending pitch); when every column is
+// used the term is constant and the matrix alone decides. Either way the matrix
+// is integral, so nothing depends on float rounding or on hash iteration order.
+function replacementCost(distance, column, rows, cols) {
+  const stride = rows * cols + 1;
+  return distance * stride + column;
+}
+
 function connectSlices(previous, next) {
   const mapping = new Array(previous.active.length).fill(-1);
   const nextTaken = new Set();
@@ -167,9 +209,10 @@ function connectSlices(previous, next) {
 
   if (!previousOpen.length || !nextOpen.length) return mapping;
 
-  const scale = 1_000_000;
-  const costs = previousOpen.map((left, r) => nextOpen.map((right, c) =>
-    Math.abs(left.note.pitch - right.note.pitch) * scale + c * 1000 + r));
+  const rows = previousOpen.length;
+  const cols = nextOpen.length;
+  const costs = previousOpen.map(left => nextOpen.map((right, column) =>
+    replacementCost(Math.abs(left.note.pitch - right.note.pitch), column, rows, cols)));
   const assignment = hungarian(costs);
   assignment.forEach((targetIndex, row) => {
     if (targetIndex >= 0) mapping[previousOpen[row].index] = nextOpen[targetIndex].index;
@@ -183,6 +226,7 @@ function makeNodes(slices) {
     sliceIndex: slice.index,
     rank,
     note,
+    pitch: note.pitch,
     start: slice.start,
     end: slice.end,
   })));
@@ -208,8 +252,11 @@ function buildChains(slices) {
     if (ra !== rb) parent.set(rb, ra);
   };
 
-  nodes.flat().forEach(node => parent.set(node.id, node.id));
+  const flat = nodes.flat();
+  flat.forEach(node => parent.set(node.id, node.id));
 
+  // Only slices that physically touch may be connected. A real silence between
+  // two sounding regions is a continuity break, never an assumed sustain.
   for (let i = 0; i + 1 < slices.length; i++) {
     const previous = slices[i];
     const next = slices[i + 1];
@@ -221,33 +268,35 @@ function buildChains(slices) {
   }
 
   const grouped = new Map();
-  for (const node of nodes.flat()) {
+  for (const node of flat) {
     const root = find(node.id);
     if (!grouped.has(root)) grouped.set(root, []);
     grouped.get(root).push(node);
   }
 
-  const chains = [...grouped.values()].map((chainNodes, index) => {
+  const chains = [...grouped.values()].map(chainNodes => {
     chainNodes.sort((a, b) => cmpBeat(a.start, b.start) || a.rank - b.rank);
-    const weighted = chainNodes.reduce((acc, node) => {
-      const weight = durationNumber(node.start, node.end);
-      return { sum: acc.sum + node.note.pitch * weight, weight: acc.weight + weight };
-    }, { sum: 0, weight: 0 });
     return {
-      id: `chain:${index}`,
+      id: '',
       start: chainNodes[0].start,
       end: chainNodes.at(-1).end,
-      pitch: weighted.weight ? weighted.sum / weighted.weight : chainNodes[0].note.pitch,
+      pitch: weightedPitch(chainNodes, chainNodes[0].note.pitch),
       nodes: chainNodes,
     };
   });
 
-  chains.sort((a, b) => cmpBeat(a.start, b.start) || b.pitch - a.pitch || (a.id < b.id ? -1 : 1));
+  chains.sort((a, b) =>
+    cmpBeat(a.start, b.start)
+    || b.pitch.cmp(a.pitch)
+    || cmpId(a.nodes[0].note.id, b.nodes[0].note.id));
   chains.forEach((chain, index) => { chain.id = `chain:${index}`; });
   return chains;
 }
 
-function coalesceChain(chain) {
+// One chain -> emitted spans. Adjacent nodes that carry the same source event
+// are re-joined into the original span; a source event that could not be
+// represented contiguously keeps every fragment instead of losing one.
+function chainSpans(chain) {
   const spans = [];
   for (const node of chain.nodes) {
     const last = spans.at(-1);
@@ -257,20 +306,26 @@ function coalesceChain(chain) {
     }
     spans.push({
       eventId: node.note.id,
+      chainId: chain.id,
       pitch: node.note.pitch,
       start: node.start,
       end: node.end,
+      eventStart: beatKey(node.note.start),
+      eventEnd: beatKey(node.note.end),
       sourceIds: [...(node.note.sourceIds ?? [])],
       sourceEventIds: [...(node.note.sourceEventIds ?? [])],
       sourceVoice: node.note.voice ?? null,
       sourceRole: node.note.role ?? null,
     });
   }
+  for (const span of spans) {
+    span.fragment = !(cmpBeat(span.start, span.eventStart) === 0 && cmpBeat(span.end, span.eventEnd) === 0);
+  }
   return spans;
 }
 
-function packChains(chains, maxPolyphony) {
-  const lanes = Array.from({ length: maxPolyphony }, (_, index) => ({
+function packChains(chains, laneCapacity) {
+  const lanes = Array.from({ length: laneCapacity }, (_, index) => ({
     index,
     availableAt: null,
     pitch: null,
@@ -281,10 +336,8 @@ function packChains(chains, maxPolyphony) {
     let best = null;
     for (const lane of lanes) {
       if (lane.availableAt !== null && cmpBeat(lane.availableAt, chain.start) > 0) continue;
-      const distance = lane.pitch === null ? 0 : Math.abs(lane.pitch - chain.pitch);
-      if (!best || distance < best.distance || (distance === best.distance && lane.index < best.lane.index)) {
-        best = { lane, distance };
-      }
+      const distance = lane.pitch === null ? ZERO : absF(lane.pitch.sub(chain.pitch));
+      if (!best || distance.cmp(best.distance) < 0) best = { lane, distance };
     }
     if (!best) throw Error('voice decomposition invariant failed: no non-overlapping lane available');
     best.lane.chains.push(chain);
@@ -292,50 +345,279 @@ function packChains(chains, maxPolyphony) {
     best.lane.pitch = chain.pitch;
   }
 
-  const result = lanes
+  const filled = lanes
     .filter(lane => lane.chains.length)
     .map(lane => {
-      const notes = lane.chains.flatMap(coalesceChain);
-      const weight = notes.reduce((acc, note) => {
-        const duration = durationNumber(note.start, note.end);
-        return { sum: acc.sum + note.pitch * duration, duration: acc.duration + duration };
-      }, { sum: 0, duration: 0 });
+      const notes = lane.chains.flatMap(chainSpans);
+      const segments = lane.chains.map(chain => ({
+        chainId: chain.id,
+        start: chain.start,
+        end: chain.end,
+      }));
+      // Continuity graph: a junction between two chains parked in the same lane
+      // records whether the lane was reused across real silence. Lane adjacency
+      // is a packing fact, not evidence of one continuous voice.
+      const junctions = [];
+      for (let i = 0; i + 1 < lane.chains.length; i++) {
+        const before = lane.chains[i];
+        const after = lane.chains[i + 1];
+        junctions.push({
+          previousChainId: before.id,
+          nextChainId: after.id,
+          from: before.end,
+          to: after.start,
+          silence: cmpBeat(before.end, after.start) !== 0,
+        });
+      }
       return {
         index: lane.index,
-        averagePitch: weight.duration ? weight.sum / weight.duration : 0,
+        pitch: weightedPitch(notes),
         chainIds: lane.chains.map(chain => chain.id),
+        segments,
+        junctions,
         notes,
       };
-    })
-    .sort((a, b) => b.averagePitch - a.averagePitch || a.index - b.index);
+    });
 
-  result.forEach((lane, index) => { lane.index = index; });
-  return result;
+  filled.sort((a, b) => b.pitch.cmp(a.pitch) || a.index - b.index);
+  return filled.map((lane, index) => ({
+    index,
+    averagePitch: lane.pitch.num(),
+    averagePitchExact: lane.pitch.toString(),
+    chainIds: lane.chainIds,
+    segments: lane.segments,
+    junctions: lane.junctions,
+    notes: lane.notes,
+  }));
 }
 
-function findUnisonGroups(notes) {
+// ─── diagnostics ────────────────────────────────────────────────────────────
+
+// Same onset + same pitch from two distinct Canonical events. Kept as two
+// events: collapsing them here would destroy provenance that later cross-source
+// arbitration needs.
+function findSimultaneousUnisons(notes) {
   const groups = new Map();
   for (const note of notes) {
-    const key = `${beatKey(note.start)}:${note.pitch}`;
-    if (!groups.has(key)) groups.set(key, []);
-    groups.get(key).push(note.id);
+    const key = `${beatKey(note.start)}|${note.pitch}`;
+    if (!groups.has(key)) groups.set(key, { start: beatKey(note.start), pitch: note.pitch, eventIds: [] });
+    groups.get(key).eventIds.push(note.id);
   }
-  return [...groups.entries()]
-    .filter(([, ids]) => ids.length > 1)
-    .map(([key, eventIds]) => {
-      const split = key.lastIndexOf(':');
-      return { start: key.slice(0, split), pitch: Number(key.slice(split + 1)), eventIds };
-    });
+  return [...groups.values()]
+    .filter(group => group.eventIds.length > 1)
+    .map(group => ({ ...group, eventIds: [...group.eventIds].sort(cmpId) }))
+    .sort((a, b) => cmpBeat(a.start, b.start) || a.pitch - b.pitch);
 }
+
+// Notes bucketed by pitch, each bucket still ordered by (start, id). Same-pitch
+// questions are the only ones these two scans ask, so bucketing keeps them
+// linear in the number of reported pairs instead of quadratic in the score.
+function pitchBuckets(notes) {
+  const buckets = new Map();
+  for (const note of notes) {
+    if (!buckets.has(note.pitch)) buckets.set(note.pitch, []);
+    buckets.get(note.pitch).push(note);
+  }
+  return [...buckets.entries()].sort((a, b) => a[0] - b[0]).map(([, list]) => list);
+}
+
+// Same pitch, different onsets, overlapping in time. A review signal under the
+// Canonical cross-source arbitration rules, never an automatic deletion.
+function findOverlappingSamePitch(notes) {
+  const found = [];
+  for (const bucket of pitchBuckets(notes)) {
+    for (let i = 0; i < bucket.length; i++) {
+      const a = bucket[i];
+      for (let j = i + 1; j < bucket.length; j++) {
+        const b = bucket[j];
+        if (cmpBeat(b.start, a.end) >= 0) break;
+        if (cmpBeat(a.start, b.start) === 0) continue;
+        const [left, right] = cmpId(a.id, b.id) <= 0 ? [a, b] : [b, a];
+        found.push({
+          pitch: a.pitch,
+          eventIds: [left.id, right.id],
+          from: beatKey(cmpBeat(a.start, b.start) >= 0 ? a.start : b.start),
+          to: beatKey(cmpBeat(a.end, b.end) <= 0 ? a.end : b.end),
+        });
+      }
+    }
+  }
+  return found.sort((a, b) =>
+    cmpBeat(a.from, b.from) || a.pitch - b.pitch || cmpId(a.eventIds[0], b.eventIds[0]));
+}
+
+// Same pitch, end == next start. Canonical forbids silently turning an adjacent
+// repeated attack into one sustain, so the pair is reported with `tieForbidden`.
+// A successor always starts strictly later than its predecessor, so one forward
+// scan per bucket sees every pair.
+function findAdjacentRepeatedAttacks(notes) {
+  const found = [];
+  for (const bucket of pitchBuckets(notes)) {
+    for (let i = 0; i < bucket.length; i++) {
+      const a = bucket[i];
+      for (let j = i + 1; j < bucket.length; j++) {
+        const b = bucket[j];
+        const order = cmpBeat(b.start, a.end);
+        if (order > 0) break;
+        if (order !== 0) continue;
+        found.push({
+          pitch: a.pitch,
+          eventIds: [a.id, b.id],
+          at: beatKey(a.end),
+          tieForbidden: true,
+        });
+      }
+    }
+  }
+  return found.sort((a, b) =>
+    cmpBeat(a.at, b.at) || a.pitch - b.pitch || cmpId(a.eventIds[0], b.eventIds[0]));
+}
+
+// Exact, event-level coverage audit. `complete` means every input event is
+// represented once, with its original span fully covered and nothing invented.
+function auditCoverage(notes, lanes) {
+  const byEvent = new Map(notes.map(note => [note.id, []]));
+  const unknownEventIds = [];
+  lanes.forEach(lane => {
+    lane.notes.forEach(span => {
+      const bucket = byEvent.get(span.eventId);
+      if (!bucket) {
+        unknownEventIds.push(span.eventId);
+        return;
+      }
+      bucket.push({ laneIndex: lane.index, start: span.start, end: span.end, pitch: span.pitch });
+    });
+  });
+
+  const missingEventIds = [];
+  const fragmentedEventIds = [];
+  const splitAcrossLanes = [];
+  const spanMismatchEventIds = [];
+  const pitchMismatchEventIds = [];
+
+  for (const note of notes) {
+    const spans = byEvent.get(note.id);
+    if (!spans.length) {
+      missingEventIds.push(note.id);
+      continue;
+    }
+    const laneIndices = [...new Set(spans.map(span => span.laneIndex))].sort((a, b) => a - b);
+    if (laneIndices.length > 1) splitAcrossLanes.push({ eventId: note.id, laneIndices });
+    if (spans.some(span => span.pitch !== note.pitch)) pitchMismatchEventIds.push(note.id);
+
+    const ordered = [...spans].sort((a, b) => cmpBeat(a.start, b.start) || a.laneIndex - b.laneIndex);
+    let covered = ZERO;
+    for (const span of ordered) covered = covered.add(subBeat(span.end, span.start));
+    const expected = subBeat(note.end, note.start);
+    const startsMatch = cmpBeat(ordered[0].start, note.start) === 0;
+    const endsMatch = cmpBeat(ordered.at(-1).end, note.end) === 0;
+    if (covered.cmp(expected) !== 0 || !startsMatch || !endsMatch) spanMismatchEventIds.push(note.id);
+    if (ordered.length > 1) fragmentedEventIds.push(note.id);
+  }
+
+  return {
+    missingEventIds,
+    unknownEventIds: [...new Set(unknownEventIds)].sort(cmpId),
+    fragmentedEventIds,
+    splitAcrossLanes,
+    spanMismatchEventIds,
+    pitchMismatchEventIds,
+  };
+}
+
+function buildDiagnostics(notes, lanes, coverage, laneTarget) {
+  const diagnostics = [];
+
+  const unisons = findSimultaneousUnisons(notes);
+  if (unisons.length) diagnostics.push({
+    code: 'SIMULTANEOUS_UNISONS_PRESERVED',
+    merged: false,
+    groups: unisons,
+  });
+
+  const overlaps = findOverlappingSamePitch(notes);
+  if (overlaps.length) diagnostics.push({
+    code: 'OVERLAPPING_SAME_PITCH_EVENTS',
+    merged: false,
+    pairs: overlaps,
+  });
+
+  const repeats = findAdjacentRepeatedAttacks(notes);
+  if (repeats.length) diagnostics.push({
+    code: 'ADJACENT_REPEATED_ATTACKS',
+    tiedIntoSustain: false,
+    pairs: repeats,
+  });
+
+  const silenceReuse = lanes
+    .map(lane => ({
+      laneIndex: lane.index,
+      junctions: lane.junctions.filter(junction => junction.silence),
+    }))
+    .filter(entry => entry.junctions.length);
+  if (silenceReuse.length) diagnostics.push({
+    code: 'LANE_REUSED_ACROSS_SILENCE',
+    continuousVoiceAsserted: false,
+    lanes: silenceReuse,
+  });
+
+  if (coverage.fragmentedEventIds.length) diagnostics.push({
+    code: 'EVENT_REPRESENTED_AS_FRAGMENTS',
+    eventIds: [...coverage.fragmentedEventIds].sort(cmpId),
+  });
+
+  if (laneTarget !== null && lanes.length > laneTarget) diagnostics.push({
+    code: 'LANE_COUNT_EXCEEDS_TARGET',
+    laneCount: lanes.length,
+    laneTarget,
+    reductionApplied: false,
+  });
+
+  const broken = coverage.missingEventIds.length
+    || coverage.unknownEventIds.length
+    || coverage.splitAcrossLanes.length
+    || coverage.spanMismatchEventIds.length
+    || coverage.pitchMismatchEventIds.length;
+  if (broken) diagnostics.push({
+    code: 'SOURCE_COVERAGE_MISMATCH',
+    missingEventIds: [...coverage.missingEventIds].sort(cmpId),
+    unknownEventIds: coverage.unknownEventIds,
+    splitAcrossLanes: coverage.splitAcrossLanes,
+    spanMismatchEventIds: [...coverage.spanMismatchEventIds].sort(cmpId),
+    pitchMismatchEventIds: [...coverage.pitchMismatchEventIds].sort(cmpId),
+  });
+
+  return diagnostics.sort((a, b) => cmpId(a.code, b.code));
+}
+
+// ─── entry points ───────────────────────────────────────────────────────────
+
+const deepFreezeLane = lane => Object.freeze({
+  ...lane,
+  chainIds: Object.freeze([...lane.chainIds]),
+  segments: Object.freeze(lane.segments.map(segment => Object.freeze({ ...segment }))),
+  junctions: Object.freeze(lane.junctions.map(junction => Object.freeze({ ...junction }))),
+  notes: Object.freeze(lane.notes.map(note => Object.freeze({
+    ...note,
+    sourceIds: Object.freeze([...note.sourceIds]),
+    sourceEventIds: Object.freeze([...note.sourceEventIds]),
+  }))),
+});
 
 export function splitCanonicalVoice(events, options = {}) {
   const notes = normalizeNotes(events);
+  const laneTarget = options.laneTarget ?? null;
+  if (laneTarget !== null && (!Number.isInteger(laneTarget) || laneTarget < 1)) {
+    throw Error('options.laneTarget must be a positive integer when provided');
+  }
+
   if (!notes.length) {
     return Object.freeze({
-      schema: 'mabinogi-mobile-mml-studio/voice-decomposition@1',
+      schema: 'mabinogi-mobile-mml-studio/voice-decomposition@2',
       sourceVoice: options.sourceVoice ?? null,
       complete: true,
       maxPolyphony: 0,
+      laneTarget,
       lanes: Object.freeze([]),
       diagnostics: Object.freeze([]),
       inputEventIds: Object.freeze([]),
@@ -352,45 +634,29 @@ export function splitCanonicalVoice(events, options = {}) {
   const maxPolyphony = Math.max(0, ...slices.map(slice => slice.active.length));
   const chains = buildChains(slices);
   const lanes = packChains(chains, maxPolyphony);
-  const outputEventIds = lanes.flatMap(lane => lane.notes.map(note => note.eventId));
-  const inputEventIds = notes.map(note => note.id);
-  const inputSet = new Set(inputEventIds);
-  const outputSet = new Set(outputEventIds);
-  const missingEventIds = inputEventIds.filter(id => !outputSet.has(id));
-  const unknownEventIds = outputEventIds.filter(id => !inputSet.has(id));
+  const coverage = auditCoverage(notes, lanes);
+  const diagnostics = buildDiagnostics(notes, lanes, coverage, laneTarget);
 
-  const diagnostics = [];
-  const unisons = findUnisonGroups(notes);
-  if (unisons.length) diagnostics.push({
-    code: 'SIMULTANEOUS_UNISONS_PRESERVED',
-    groups: unisons,
-  });
-  if (missingEventIds.length || unknownEventIds.length) diagnostics.push({
-    code: 'SOURCE_COVERAGE_MISMATCH',
-    missingEventIds,
-    unknownEventIds,
-  });
+  const complete = !coverage.missingEventIds.length
+    && !coverage.unknownEventIds.length
+    && !coverage.splitAcrossLanes.length
+    && !coverage.spanMismatchEventIds.length
+    && !coverage.pitchMismatchEventIds.length;
 
   return Object.freeze({
-    schema: 'mabinogi-mobile-mml-studio/voice-decomposition@1',
+    schema: 'mabinogi-mobile-mml-studio/voice-decomposition@2',
     sourceVoice: options.sourceVoice ?? (voices.size === 1 ? [...voices][0] : null),
-    complete: missingEventIds.length === 0 && unknownEventIds.length === 0,
+    complete,
     maxPolyphony,
-    lanes: Object.freeze(lanes.map(lane => Object.freeze({
-      ...lane,
-      chainIds: Object.freeze([...lane.chainIds]),
-      notes: Object.freeze(lane.notes.map(note => Object.freeze({ ...note,
-        sourceIds: Object.freeze([...note.sourceIds]),
-        sourceEventIds: Object.freeze([...note.sourceEventIds]),
-      }))),
-    }))),
+    laneTarget,
+    lanes: Object.freeze(lanes.map(deepFreezeLane)),
     diagnostics: Object.freeze(diagnostics.map(item => Object.freeze(item))),
-    inputEventIds: Object.freeze(inputEventIds),
-    outputEventIds: Object.freeze(outputEventIds),
+    inputEventIds: Object.freeze(notes.map(note => note.id)),
+    outputEventIds: Object.freeze(lanes.flatMap(lane => lane.notes.map(note => note.eventId))),
   });
 }
 
-export function splitProjectSourceVoices(project) {
+export function splitProjectSourceVoices(project, options = {}) {
   if (!project || !Array.isArray(project.events)) throw Error('project.events must be an array');
   const groups = new Map();
   for (const event of project.events) {
@@ -400,20 +666,28 @@ export function splitProjectSourceVoices(project) {
     groups.get(key).push(event);
   }
   return Object.freeze([...groups.entries()]
-    .sort(([a], [b]) => a < b ? -1 : a > b ? 1 : 0)
-    .map(([voice, events]) => splitCanonicalVoice(events, { sourceVoice: voice })));
+    .sort(([a], [b]) => cmpId(a, b))
+    .map(([voice, events]) => splitCanonicalVoice(events, { ...options, sourceVoice: voice })));
 }
 
 export const VOICE_SPLIT_STATUS = Object.freeze({
   sourceEventCoverage: 'lossless',
   exactCanonicalTiming: true,
+  floatFreeOrdering: true,
+  inputOrderIndependent: true,
   sustainedEventContinuityHardConstraint: true,
   replacementPitchDistanceMatching: true,
+  silenceBreaksContinuityGraph: true,
+  fragmentProvenanceRetained: true,
   simultaneousUnisonMerge: false,
+  overlappingSamePitchMerge: false,
+  repeatedAttackTied: false,
   quantization: false,
   durationRewrite: false,
   eventDeletion: false,
+  laneCapReduction: false,
   roleAssignment: false,
   sixTrackReduction: false,
   mobileAdaptation: false,
+  referenceStatus: 'MML_MABI_REFERENCE_NOT_VERIFIED',
 });
