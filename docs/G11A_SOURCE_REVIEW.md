@@ -139,7 +139,7 @@ as Gate 2 requires.
 
 ## 5. Behaviors reproduced by fixtures
 
-All 21 fixtures are synthetic, byte-level, and reproducible. Sources are the
+All 39 fixtures are synthetic, byte-level, and reproducible. Sources are the
 SMF specification and the Canonical rules — **not** observed `mml.mabi.tw`
 behavior, which was unavailable.
 
@@ -165,6 +165,14 @@ behavior, which was unavailable.
 | Multi-track identity | Track and channel kept distinct, unmerged |
 | Real-file round-trip | MML → MIDI → IR preserves every note, onset and endpoint exactly |
 | Determinism | Two ingests of the same bytes are identical |
+| Program at note onset | A note keeps the program in force when struck, not the channel's last |
+| Program after release | A later program change never rewrites a finished note |
+| Program across tracks | Two tracks on the same channel do not share program state |
+| Unrepresentable event | Pitch > 127, out-of-range BPM and meter are refused, not clamped |
+| Mixed valid/invalid file | One bad event never removes the file's other evidence |
+| Unknown chunk / stray bytes | Raw body and trailing bytes kept verbatim |
+| Format above 2 | Refused — undefined by the spec, track relationship unknown |
+| Source identity | `sha256` matches the platform digest and is deterministic |
 
 ## 6. Behaviors intentionally implemented differently
 
@@ -178,6 +186,10 @@ traceable to a Canonical rule — not gaps.
 | Quantize onsets to a grid | Never | `MASTER_RULES.md` §2 — would erase source-supported timing |
 | Emit rests for gaps between notes | Never | A gap is not an asserted notated rest; §7 protects meaningful rests |
 | Drop or clamp zero-length notes | Recorded as unsupported | `MOBILE_SYNTAX.md` §4 forbids zero-duration; widening invents data |
+| Clamp an out-of-range tempo or meter to the nearest legal value | Recorded as unsupported with the source value | Clamping states a tempo/meter the source never gave |
+| Mask a corrupt pitch byte to 7 bits | Recorded as unsupported | Masking silently invents a different pitch |
+| Abort the import on one unrepresentable event | Event refused, rest of the file projected | Gate 2 needs the surviving evidence |
+| Leave `source.sha256` unset | Computed from the parsed bytes | An absent digest makes later provenance claims unverifiable |
 | Drop unmatched note-ons/offs silently | Recorded with raw indices | Gate 2 needs the anomaly visible |
 | Map GM drum numbers as pitches | Refused; held as evidence | `MASTER_RULES.md` §8 — drum numbers are kit selectors |
 | Throw on the first unknown meta event | Record and continue | Evidence preservation over strictness |

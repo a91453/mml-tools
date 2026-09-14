@@ -31,7 +31,8 @@ import {
   createCanonicalProject,
 } from '../canonical/index.mjs';
 import { createTimingProvenance } from '../canonical/timing.mjs';
-import { decodeMidiFile } from './midi-file.mjs';
+import { decodeMidiFile, toBytes } from './midi-file.mjs';
+import { sha256Hex } from './sha256.mjs';
 
 const MIDI_ADAPTER = 'studio/backend/source/midi.mjs';
 
@@ -45,6 +46,33 @@ const PERCUSSION_CHANNEL = 9;
 const SUSTAIN_CONTROLLERS = Object.freeze({ 64: 'sustain', 66: 'sostenuto', 67: 'softPedal' });
 
 const eventRef = (trackIndex, eventIndex) => `track:${trackIndex}/event:${eventIndex}`;
+
+// Canonical event ranges, restated here so this adapter can decide *before*
+// calling a constructor whether the source value is representable. Duplicating
+// the bounds is deliberate: it lets a rejection carry a specific code and the
+// offending value instead of a constructor's generic message.
+const CANONICAL_LIMITS = Object.freeze({
+  pitch: { min: 0, max: 127 },
+  bpm: { min: 0, max: 1000 },          // min exclusive
+  meterNumerator: { min: 1, max: 255 },
+  meterDenominator: { min: 1, max: 1024 },
+});
+
+// Every Canonical event is created through this. A single event the schema
+// cannot represent must never destroy the whole ingest: the file's remaining
+// evidence is exactly what `ACCEPTANCE_CRITERIA.md` Gate 2 needs, and losing
+// all of it to one malformed byte would be the silent data loss this adapter
+// exists to prevent. A constructor that throws anyway — a range this module
+// failed to anticipate — is caught rather than propagated, so the guarantee
+// does not depend on the explicit checks being exhaustive.
+function project(create, descriptor, unsupported) {
+  try {
+    return create();
+  } catch (error) {
+    unsupported.push({ ...descriptor, code: descriptor.code ?? 'CANONICAL_SCHEMA_REJECTED', message: error.message });
+    return null;
+  }
+}
 
 function collectTiming(decoded, warnings, unsupported) {
   const tempoPoints = [];
@@ -109,7 +137,9 @@ function matchNotes(track, state) {
 
   for (const event of track.events) {
     if (event.kind === 'channel' && event.messageType === 'programChange') {
-      state.programs.set(event.channel, { program: event.program, sourceEventId: eventRef(track.index, event.eventIndex) });
+      const record = { program: event.program, sourceEventId: eventRef(track.index, event.eventIndex), tick: event.tick, channel: event.channel };
+      state.programs.set(event.channel, record);
+      state.programChanges.push(record);
       continue;
     }
     if (event.kind === 'channel' && event.messageType === 'controlChange' && SUSTAIN_CONTROLLERS[event.controller]) {
@@ -139,7 +169,11 @@ function matchNotes(track, state) {
     if (!isRelease) {
       if (!active.has(id)) active.set(id, []);
       const queue = active.get(id);
-      queue.push(event);
+      // The program in force is captured here, at the attack. Reading it when
+      // the note is released instead would let a later program change rewrite
+      // the provenance of a note that already finished sounding, and would
+      // give every note on the channel the file's last program.
+      queue.push({ event, program: state.programs.get(event.channel) ?? null });
       if (queue.length > 1) {
         state.warnings.push({
           code: 'RESTRUCK_BEFORE_RELEASE',
@@ -147,7 +181,7 @@ function matchNotes(track, state) {
           channel: event.channel,
           noteNumber: event.noteNumber,
           depth: queue.length,
-          sourceEventIds: queue.map(pending => eventRef(track.index, pending.eventIndex)),
+          sourceEventIds: queue.map(pending => eventRef(track.index, pending.event.eventIndex)),
         });
       }
       continue;
@@ -165,9 +199,9 @@ function matchNotes(track, state) {
       });
       continue;
     }
-    const onEvent = queue.shift();
+    const pending = queue.shift();
     if (!queue.length) active.delete(id);
-    matched.push({ on: onEvent, off: event });
+    matched.push({ on: pending.event, off: event, program: pending.program });
   }
 
   for (const [id, queue] of active) {
@@ -178,8 +212,8 @@ function matchNotes(track, state) {
         trackIndex: track.index,
         channel,
         noteNumber,
-        tick: pending.tick,
-        sourceEventIds: [eventRef(track.index, pending.eventIndex)],
+        tick: pending.event.tick,
+        sourceEventIds: [eventRef(track.index, pending.event.eventIndex)],
       });
     }
   }
@@ -187,7 +221,8 @@ function matchNotes(track, state) {
 }
 
 export function ingestMIDI(input, options = {}) {
-  const decoded = decodeMidiFile(input);
+  const bytes = toBytes(input);
+  const decoded = decodeMidiFile(bytes);
   const warnings = [];
   const unsupported = [];
 
@@ -209,7 +244,11 @@ export function ingestMIDI(input, options = {}) {
     label: options.label ?? 'MIDI source',
     kind,
     authority: options.authority ?? (kind === 'official-midi' ? 'primary-symbolic' : 'supporting'),
-    sha256: options.sha256 ?? null,
+    // Identity is computed from the bytes actually parsed. A source record
+    // that could carry a digest and does not makes later provenance claims
+    // unverifiable, so this defaults to the real hash rather than to null; an
+    // explicit option still wins for a caller that already has one.
+    sha256: options.sha256 ?? sha256Hex(bytes),
     metadata: {
       adapter: MIDI_ADAPTER,
       format: decoded.format,
@@ -220,11 +259,18 @@ export function ingestMIDI(input, options = {}) {
     },
   });
 
-  if (decoded.format === 2) {
-    // Format 2 tracks are independent sequences, not concurrent parts. Laying
-    // them on one timeline would assert a musical relationship the file does
-    // not state, so no events are projected.
-    unsupported.push({ code: 'FORMAT_2_INDEPENDENT_SEQUENCES', format: 2, trackCount: decoded.tracks.length });
+  // Only formats 0 and 1 define tracks that share one timeline. Format 2's
+  // tracks are independent sequences, and a format above 2 is undefined by the
+  // SMF specification — its track relationship is unknown, not assumed to be
+  // concurrent. Treating either as format 0/1 would assert a musical
+  // relationship the file does not state, so neither projects any event.
+  const knownConcurrentFormat = decoded.format === 0 || decoded.format === 1;
+  if (!knownConcurrentFormat) {
+    unsupported.push({
+      code: decoded.format === 2 ? 'FORMAT_2_INDEPENDENT_SEQUENCES' : 'UNKNOWN_SMF_FORMAT',
+      format: decoded.format,
+      trackCount: decoded.tracks.length,
+    });
   }
 
   const usableDivision = decoded.division.type === 'ppq' && decoded.division.ticksPerQuarter > 0;
@@ -235,7 +281,7 @@ export function ingestMIDI(input, options = {}) {
     });
   }
 
-  const projectEvents = decoded.format !== 2 && usableDivision;
+  const projectEvents = knownConcurrentFormat && usableDivision;
   const ppq = decoded.division.ticksPerQuarter;
   // One Canonical beat is one quarter note, matching the MusicXML adapter,
   // where a <duration> is read against <divisions> per quarter.
@@ -253,41 +299,83 @@ export function ingestMIDI(input, options = {}) {
 
   if (projectEvents) {
     for (const point of tempoPoints) {
-      tempoEvents.push(createCanonicalTempoEvent({
+      const sourceEventIds = [eventRef(point.trackIndex, point.eventIndex)];
+      // 60,000,000 microseconds per minute. Kept as a float because BPM is a
+      // rate, not a position; the exact source integer is preserved in
+      // metadata so nothing depends on this rounding.
+      const bpm = 60000000 / point.microsecondsPerQuarter;
+      if (!Number.isFinite(bpm) || bpm <= CANONICAL_LIMITS.bpm.min || bpm > CANONICAL_LIMITS.bpm.max) {
+        // A legal SMF tempo can sit outside the Canonical BPM range. Clamping
+        // it would invent a tempo the source never stated, so the source value
+        // is recorded and no tempo event is produced for it.
+        unsupported.push({
+          code: 'TEMPO_OUT_OF_CANONICAL_RANGE',
+          trackIndex: point.trackIndex,
+          tick: point.tick,
+          microsecondsPerQuarter: point.microsecondsPerQuarter,
+          bpm,
+          limit: CANONICAL_LIMITS.bpm,
+          sourceEventIds,
+        });
+        continue;
+      }
+      const event = project(() => createCanonicalTempoEvent({
         id: `${source.id}:tempo:${point.trackIndex}:${point.eventIndex}`,
         beat: String(toBeat(point.tick)),
-        // 60,000,000 microseconds per minute. Kept as a float because BPM is a
-        // rate, not a position; the exact source integer is preserved in
-        // metadata so nothing depends on this rounding.
-        bpm: 60000000 / point.microsecondsPerQuarter,
+        bpm,
         sourceIds: [source.id],
-        sourceEventIds: [eventRef(point.trackIndex, point.eventIndex)],
+        sourceEventIds,
         metadata: { tick: point.tick, microsecondsPerQuarter: point.microsecondsPerQuarter, trackIndex: point.trackIndex },
-      }));
+      }), { trackIndex: point.trackIndex, tick: point.tick, sourceEventIds, target: 'tempo' }, unsupported);
+      if (event) tempoEvents.push(event);
     }
     for (const point of meterPoints) {
-      meterEvents.push(createCanonicalMeterEvent({
+      const sourceEventIds = [eventRef(point.trackIndex, point.eventIndex)];
+      const { numerator, denominator } = point;
+      const inRange = (value, limit) => Number.isInteger(value) && value >= limit.min && value <= limit.max;
+      if (!inRange(numerator, CANONICAL_LIMITS.meterNumerator) || !inRange(denominator, CANONICAL_LIMITS.meterDenominator)) {
+        // A time signature byte pair can encode a numerator of 0 or a
+        // denominator of 2^255. Neither is representable, and substituting a
+        // plausible meter would be a repair the source does not support.
+        unsupported.push({
+          code: 'METER_OUT_OF_CANONICAL_RANGE',
+          trackIndex: point.trackIndex,
+          tick: point.tick,
+          numerator,
+          denominator,
+          limit: { numerator: CANONICAL_LIMITS.meterNumerator, denominator: CANONICAL_LIMITS.meterDenominator },
+          sourceEventIds,
+        });
+        continue;
+      }
+      const event = project(() => createCanonicalMeterEvent({
         id: `${source.id}:meter:${point.trackIndex}:${point.eventIndex}`,
         beat: String(toBeat(point.tick)),
-        numerator: point.numerator,
-        denominator: point.denominator,
+        numerator,
+        denominator,
         sourceIds: [source.id],
-        sourceEventIds: [eventRef(point.trackIndex, point.eventIndex)],
+        sourceEventIds,
         metadata: {
           tick: point.tick,
           trackIndex: point.trackIndex,
           clocksPerClick: point.clocksPerClick,
           thirtySecondsPerQuarter: point.thirtySecondsPerQuarter,
         },
-      }));
+      }), { trackIndex: point.trackIndex, tick: point.tick, sourceEventIds, target: 'meter' }, unsupported);
+      if (event) meterEvents.push(event);
     }
   }
 
   for (const track of decoded.tracks) {
+    // Per-track state. Program and pedal state are deliberately not shared
+    // across tracks: in a format 1 file two tracks may use the same channel
+    // number for unrelated parts, so letting one track's program changes reach
+    // another would attribute an instrument the file never gave that note.
     const state = {
       warnings,
       unsupported,
       programs: new Map(),
+      programChanges: [],
       pedalEvents: [],
       trackName: null,
     };
@@ -297,7 +385,7 @@ export function ingestMIDI(input, options = {}) {
     let noteCount = 0;
     let percussionCount = 0;
 
-    for (const { on, off } of matched) {
+    for (const { on, off, program } of matched) {
       const sourceEventIds = [eventRef(track.index, on.eventIndex), eventRef(track.index, off.eventIndex)];
 
       if (on.channel === PERCUSSION_CHANNEL) {
@@ -335,8 +423,24 @@ export function ingestMIDI(input, options = {}) {
         continue;
       }
 
-      const program = state.programs.get(on.channel) ?? null;
-      events.push(createCanonicalNoteEvent({
+      if (!Number.isInteger(on.noteNumber) || on.noteNumber < CANONICAL_LIMITS.pitch.min || on.noteNumber > CANONICAL_LIMITS.pitch.max) {
+        // A corrupt data byte can carry the high bit and read back above 127.
+        // Masking it to 7 bits would silently invent a different pitch.
+        unsupported.push({
+          code: 'MALFORMED_NOTE_DATA',
+          trackIndex: track.index,
+          channel: on.channel,
+          noteNumber: on.noteNumber,
+          velocity: on.velocity,
+          startTick: on.tick,
+          endTick: off.tick,
+          limit: CANONICAL_LIMITS.pitch,
+          sourceEventIds,
+        });
+        continue;
+      }
+
+      const event = project(() => createCanonicalNoteEvent({
         id: `${source.id}:note:${track.index}:${on.eventIndex}`,
         pitch: on.noteNumber,
         start: String(toBeat(on.tick)),
@@ -376,8 +480,11 @@ export function ingestMIDI(input, options = {}) {
             end: { origin: 'source-notated', unit: tickUnit },
           }),
         },
-      }));
-      noteCount++;
+      }), { trackIndex: track.index, channel: on.channel, noteNumber: on.noteNumber, startTick: on.tick, endTick: off.tick, sourceEventIds, target: 'note' }, unsupported);
+      if (event) {
+        events.push(event);
+        noteCount++;
+      }
     }
 
     trackSummaries.push(Object.freeze({
@@ -387,7 +494,15 @@ export function ingestMIDI(input, options = {}) {
       noteEvents: noteCount,
       percussionEvents: percussionCount,
       channels: Object.freeze([...new Set(track.events.filter(e => e.kind === 'channel').map(e => e.channel))].sort((a, b) => a - b)),
-      programs: Object.freeze([...state.programs.entries()].map(([channel, value]) => Object.freeze({ channel, program: value.program }))),
+      // Every program change in order, not a last-wins map: a channel that
+      // switches instrument mid-track has more than one answer, and a summary
+      // that kept only the last would misdescribe the notes before it.
+      programChanges: Object.freeze(state.programChanges.map(change => Object.freeze({
+        channel: change.channel,
+        program: change.program,
+        tick: change.tick,
+        sourceEventId: change.sourceEventId,
+      }))),
       endTick: track.endTick,
       endBeat: projectEvents ? String(toBeat(track.endTick)) : null,
       sawEndOfTrack: track.sawEndOfTrack,

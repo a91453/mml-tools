@@ -214,7 +214,13 @@ function readTrack(bytes, trackIndex, anomalies) {
         if (type === 0x2f) {
           sawEndOfTrack = true;
           events.push(record);
-          if (cursor.remaining > 0) note('DATA_AFTER_END_OF_TRACK', { offset: cursor.pos, bytes: cursor.remaining });
+          if (cursor.remaining > 0) {
+            // Keep the bytes themselves, not just a count: what follows an End
+            // of Track is the evidence a reviewer needs to tell a writer bug
+            // apart from a second track appended to the same chunk.
+            const trailing = cursor.take(cursor.remaining);
+            note('DATA_AFTER_END_OF_TRACK', { offset: cursor.pos - trailing.length, bytes: trailing.length, raw: hex(trailing) });
+          }
           break;
         }
         if (META_TYPES[type] === undefined) note('UNKNOWN_META_TYPE', { offset: eventOffset, metaType: type, length });
@@ -282,15 +288,18 @@ function readDivision(raw) {
   return { type: 'smpte', framesPerSecond, ticksPerFrame: raw & 0xff, raw };
 }
 
+// Shared so the decoder and the intake adapter view the same bytes: the digest
+// of a source must be taken over exactly what was parsed, not a second
+// normalization of the caller's argument.
+export function toBytes(input) {
+  if (input instanceof Uint8Array) return input;
+  if (ArrayBuffer.isView(input)) return new Uint8Array(input.buffer, input.byteOffset, input.byteLength);
+  if (input instanceof ArrayBuffer) return new Uint8Array(input);
+  throw Error('MIDI input must be a Uint8Array, ArrayBuffer, or TypedArray');
+}
+
 export function decodeMidiFile(input) {
-  const bytes = input instanceof Uint8Array
-    ? input
-    : ArrayBuffer.isView(input)
-      ? new Uint8Array(input.buffer, input.byteOffset, input.byteLength)
-      : input instanceof ArrayBuffer
-        ? new Uint8Array(input)
-        : null;
-  if (!bytes) throw Error('MIDI input must be a Uint8Array, ArrayBuffer, or TypedArray');
+  const bytes = toBytes(input);
   if (bytes.length < 14) throw Error('MIDI input is too short to contain a header chunk');
 
   const cursor = new Cursor(bytes);
@@ -327,8 +336,9 @@ export function decodeMidiFile(input) {
     const body = cursor.take(length);
     if (type !== 'MTrk') {
       // Unrecognized chunk types are required by the spec to be skipped, but
-      // skipping without a record would lose evidence of what was in the file.
-      anomalies.push({ code: 'UNKNOWN_CHUNK', chunkType: type, bytes: length });
+      // skipping without the body would lose the evidence: the type and length
+      // alone cannot tell a reviewer what a writer put there.
+      anomalies.push({ code: 'UNKNOWN_CHUNK', chunkType: type, bytes: length, raw: hex(body) });
       continue;
     }
     const trackIndex = tracks.length;
@@ -344,7 +354,10 @@ export function decodeMidiFile(input) {
     tracks.push({ index: trackIndex, ...track });
   }
 
-  if (cursor.remaining > 0) anomalies.push({ code: 'TRAILING_BYTES', bytes: cursor.remaining });
+  if (cursor.remaining > 0) {
+    const trailing = cursor.take(cursor.remaining);
+    anomalies.push({ code: 'TRAILING_BYTES', bytes: trailing.length, raw: hex(trailing) });
+  }
   if (tracks.length !== declaredTrackCount) {
     anomalies.push({ code: 'TRACK_COUNT_MISMATCH', declared: declaredTrackCount, found: tracks.length });
   }

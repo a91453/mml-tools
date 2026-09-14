@@ -6,8 +6,9 @@
 // Source-Faithful Baseline to exist before any such transformation is accepted,
 // and this module produces that baseline.
 
-export { decodeMidiFile, META_TYPES } from './midi-file.mjs';
+export { decodeMidiFile, toBytes, META_TYPES } from './midi-file.mjs';
 export { ingestMIDI, midiFragmentToProject } from './midi.mjs';
+export { sha256Hex } from './sha256.mjs';
 
 // Factual capability record for this adapter. `false` means the adapter does
 // not do the thing -- either because it is out of G11-A scope or because doing
@@ -24,7 +25,16 @@ export const MIDI_INGESTION_STATUS = Object.freeze({
   exactRationalBeats: true,
   tempoMap: true,
   timeSignatureMap: true,
+  // The program is snapshotted at each note-on, so a later program change on
+  // the same channel cannot rewrite an earlier note's provenance, and program
+  // state never crosses track boundaries. Proven by regression, not asserted.
   programChangeProvenance: true,
+  programAtNoteOnset: true,
+  // One event the Canonical schema cannot represent is recorded in
+  // `unsupported`; it never aborts the ingest or removes other evidence.
+  schemaRejectionIsolated: true,
+  // source.sha256 is computed from the parsed bytes by default.
+  sourceIdentitySha256: true,
   sustainPedalEvidence: true,
   sysexPreservedAsEvidence: true,
   unknownMetaPreservedAsEvidence: true,
@@ -34,6 +44,7 @@ export const MIDI_INGESTION_STATUS = Object.freeze({
 
   // Not done here, by decision.
   smfFormat2: false,              // independent sequences; no shared timeline exists
+  smfFormatAbove2: false,         // undefined by the spec; track relationship unknown
   smpteDivision: false,           // absolute time, not musical time
   velocityToMobileVolume: false,  // Gate 8 adaptation, not an intake fact
   sustainPedalNoteExtension: false, // performance interpretation

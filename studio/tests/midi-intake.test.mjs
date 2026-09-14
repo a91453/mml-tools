@@ -5,6 +5,7 @@ import {
   ingestMIDI,
   midiFragmentToProject,
   MIDI_INGESTION_STATUS,
+  sha256Hex,
 } from '../backend/source/index.mjs';
 import { DEMO, validateMML, writeMidi, f } from '../../dist/core.js';
 
@@ -370,4 +371,319 @@ test('events are ordered deterministically and ingest is byte-for-byte repeatabl
   }
   assert.deepEqual(JSON.parse(JSON.stringify(second.events)), JSON.parse(JSON.stringify(first.events)));
   assert.deepEqual(JSON.parse(JSON.stringify(second.tracks)), JSON.parse(JSON.stringify(first.tracks)));
+});
+
+// --- P1-1: effective program at note onset -------------------------------
+//
+// The program a note sounds with is the one in force when it is struck. Reading
+// the channel's program after the whole track has been walked gives every note
+// the file's last program, and lets a program change that happens after a note
+// has already been released rewrite that note's provenance.
+
+const programChange = (channel, program) => [0xc0 | channel, program];
+
+test('a note keeps the program in force at its onset, not the channel final program', () => {
+  const fragment = ingest(simple([
+    [0, ...programChange(0, 0)],
+    [0, ...noteOn(0, 60, 100)],
+    [480, ...programChange(0, 41)],
+    [0, ...noteOff(0, 60)],
+    [0, ...noteOn(0, 62, 100)],
+    [480, ...noteOff(0, 62)],
+  ]));
+
+  assert.equal(fragment.complete, true);
+  const c4 = fragment.events.find(e => e.pitch === 60);
+  const d4 = fragment.events.find(e => e.pitch === 62);
+  assert.equal(c4.metadata.program, 0, 'C4 was struck under program 0');
+  assert.equal(d4.metadata.program, 41, 'D4 was struck under program 41');
+  // Provenance points at the program change actually in force, not the last one.
+  assert.notEqual(c4.metadata.programSourceEventId, d4.metadata.programSourceEventId);
+});
+
+test('a program change after a note is released does not rewrite that note', () => {
+  const fragment = ingest(simple([
+    [0, ...programChange(0, 0)],
+    [0, ...noteOn(0, 60, 100)],
+    [480, ...noteOff(0, 60)],
+    [0, ...programChange(0, 41)],
+  ]));
+  assert.equal(fragment.events.length, 1);
+  assert.equal(fragment.events[0].metadata.program, 0);
+  // The trailing change is still recorded as evidence, just not applied backwards.
+  assert.deepEqual(fragment.tracks[0].programChanges.map(c => c.program), [0, 41]);
+});
+
+test('a note struck before any program change has no program rather than a later one', () => {
+  const fragment = ingest(simple([
+    [0, ...noteOn(0, 60, 100)],
+    [480, ...noteOff(0, 60)],
+    [0, ...programChange(0, 41)],
+  ]));
+  assert.equal(fragment.events[0].metadata.program, null);
+  assert.equal(fragment.events[0].metadata.programSourceEventId, null);
+});
+
+test('program state on the same channel does not leak between tracks', () => {
+  // Both tracks use channel 0. Track 1 sets program 41; track 2 sets none.
+  // Track 2's note must not inherit track 1's instrument.
+  const fragment = ingest(buildMidi({
+    format: 1,
+    tracks: [
+      buildTrack([[0, ...setTempo(500000)]]),
+      buildTrack([[0, ...programChange(0, 41)], [0, ...noteOn(0, 72, 100)], [480, ...noteOff(0, 72)]]),
+      buildTrack([[0, ...noteOn(0, 48, 100)], [480, ...noteOff(0, 48)]]),
+    ],
+  }));
+  assert.equal(fragment.complete, true);
+  assert.equal(fragment.events.find(e => e.pitch === 72).metadata.program, 41);
+  assert.equal(fragment.events.find(e => e.pitch === 48).metadata.program, null, 'track 3 did not inherit track 2 program state');
+});
+
+test('each restruck note keeps the program in force at its own onset', () => {
+  // Same key struck twice with a program change between the two attacks; FIFO
+  // pairing must carry each attack's own program, not one shared value.
+  const fragment = ingest(simple([
+    [0, ...programChange(0, 5)],
+    [0, ...noteOn(0, 60, 100)],
+    [240, ...programChange(0, 60)],
+    [0, ...noteOn(0, 60, 90)],
+    [240, ...noteOff(0, 60)],
+    [240, ...noteOff(0, 60)],
+  ]));
+  assert.equal(fragment.events.length, 2);
+  const byOnset = [...fragment.events].sort((a, b) => f(a.start).cmp(b.start));
+  assert.deepEqual(byOnset.map(e => e.metadata.program), [5, 60]);
+});
+
+test('MIDI_INGESTION_STATUS.programChangeProvenance is backed by onset snapshotting', () => {
+  assert.equal(MIDI_INGESTION_STATUS.programChangeProvenance, true);
+  assert.equal(MIDI_INGESTION_STATUS.programAtNoteOnset, true);
+});
+
+// --- P1-2: a rejected event must not abort the ingest ---------------------
+//
+// The Canonical constructors validate their own ranges and throw. A legal SMF
+// can hold values outside those ranges, and a corrupt one certainly can. If a
+// single such event propagated its throw, the whole file's evidence would be
+// lost -- the opposite of what Gate 2 needs.
+
+const rawTempo = (b0, b1, b2) => [0xff, 0x51, 0x03, b0, b1, b2];
+const rawTimeSig = (num, denPow2) => [0xff, 0x58, 0x04, num, denPow2, 24, 8];
+
+test('a note whose pitch byte exceeds 127 is refused without aborting the ingest', () => {
+  const fragment = ingest(simple([
+    [0, ...noteOn(0, 60, 100)],
+    [0, 0x90, 0x99, 100],            // corrupt: data byte carries the high bit
+    [480, 0x80, 0x99, 0x40],
+    [0, ...noteOff(0, 60)],
+    [0, ...noteOn(0, 64, 100)],
+    [480, ...noteOff(0, 64)],
+  ]));
+
+  assert.equal(fragment.complete, false);
+  assert.deepEqual(fragment.events.map(e => e.pitch).sort((a, b) => a - b), [60, 64], 'both valid notes survive');
+  const bad = fragment.unsupported.find(u => u.code === 'MALFORMED_NOTE_DATA');
+  assert.equal(bad.noteNumber, 0x99);
+  assert.deepEqual(bad.limit, { min: 0, max: 127 });
+  assert.equal(bad.sourceEventIds.length, 2, 'the rejected note still names its raw events');
+});
+
+test('a tempo outside the Canonical BPM range is refused, not clamped', () => {
+  const fragment = ingest(simple([
+    [0, ...setTempo(500000)],        // 120 bpm, valid
+    [0, ...noteOn(0, 60, 100)],
+    [480, ...rawTempo(0x00, 0x00, 0x01)],  // 1 us/quarter -> 60,000,000 bpm
+    [0, ...noteOff(0, 60)],
+  ]));
+
+  assert.equal(fragment.complete, false);
+  assert.equal(fragment.events.length, 1, 'the note survives');
+  assert.deepEqual(fragment.tempoEvents.map(t => t.bpm), [120], 'the valid tempo survives');
+  const bad = fragment.unsupported.find(u => u.code === 'TEMPO_OUT_OF_CANONICAL_RANGE');
+  assert.equal(bad.microsecondsPerQuarter, 1);
+  assert.equal(bad.bpm, 60000000, 'the source value is reported as-is, not clamped to the limit');
+  assert.equal(fragment.tempoEvents.some(t => t.bpm === 1000), false, 'no clamped substitute was emitted');
+});
+
+test('a time signature with numerator 0 is refused while valid meters survive', () => {
+  const fragment = ingest(simple([
+    [0, ...timeSig(4, 2)],
+    [0, ...noteOn(0, 60, 100)],
+    [480, ...rawTimeSig(0x00, 0x02)],   // numerator 0
+    [0, ...noteOff(0, 60)],
+  ]));
+
+  assert.equal(fragment.complete, false);
+  assert.equal(fragment.events.length, 1);
+  assert.deepEqual(fragment.meterEvents.map(m => [m.numerator, m.denominator]), [[4, 4]]);
+  const bad = fragment.unsupported.find(u => u.code === 'METER_OUT_OF_CANONICAL_RANGE');
+  assert.equal(bad.numerator, 0);
+});
+
+test('a time signature denominator beyond the Canonical range is refused', () => {
+  const fragment = ingest(simple([
+    [0, ...rawTimeSig(0x04, 0xff)],     // 2^255
+    [0, ...noteOn(0, 60, 100)],
+    [480, ...noteOff(0, 60)],
+  ]));
+
+  assert.equal(fragment.complete, false);
+  assert.equal(fragment.events.length, 1, 'the note is unaffected by the bad meter');
+  assert.equal(fragment.meterEvents.length, 0);
+  const bad = fragment.unsupported.find(u => u.code === 'METER_OUT_OF_CANONICAL_RANGE');
+  assert.equal(bad.denominator, 2 ** 255);
+  assert.equal(bad.limit.denominator.max, 1024);
+});
+
+test('a file mixing valid and unrepresentable events keeps every valid piece of evidence', () => {
+  // One file carrying all four rejection classes alongside good data. The point
+  // of the test is the survivors, not the rejections.
+  const fragment = ingest(simple([
+    [0, ...setTempo(500000)],              // valid tempo   120 bpm
+    [0, ...timeSig(3, 2)],                 // valid meter   3/4
+    [0, ...programChange(0, 7)],
+    [0, ...noteOn(0, 60, 100)],            // valid note    C4
+    [0, ...rawTempo(0x00, 0x00, 0x01)],    // INVALID tempo
+    [0, ...rawTimeSig(0x00, 0x02)],        // INVALID meter (numerator 0)
+    [0, 0x90, 0x88, 100],                  // INVALID note  (pitch 136)
+    [480, 0x80, 0x88, 0x40],
+    [0, ...noteOff(0, 60)],
+    [0, ...noteOn(0, 67, 90)],             // valid note    G4
+    [480, ...noteOff(0, 67)],
+    [0, ...setTempo(400000)],              // valid tempo   150 bpm
+  ]));
+
+  assert.equal(fragment.complete, false, 'the file is not complete');
+
+  // Everything representable is still here.
+  assert.deepEqual(fragment.events.map(e => e.pitch).sort((a, b) => a - b), [60, 67]);
+  assert.deepEqual(fragment.tempoEvents.map(t => t.bpm), [120, 150]);
+  assert.deepEqual(fragment.meterEvents.map(m => [m.numerator, m.denominator]), [[3, 4]]);
+  assert.equal(fragment.events.find(e => e.pitch === 60).metadata.program, 7);
+
+  // And each rejection is individually accounted for.
+  assert.deepEqual(
+    ['MALFORMED_NOTE_DATA', 'TEMPO_OUT_OF_CANONICAL_RANGE', 'METER_OUT_OF_CANONICAL_RANGE']
+      .map(code => fragment.unsupported.some(u => u.code === code)),
+    [true, true, true],
+  );
+
+  // The raw decode still holds every byte, including the rejected events.
+  const rawKinds = fragment.raw.tracks[0].events.filter(e => e.metaName === 'setTempo').length;
+  assert.equal(rawKinds, 3, 'all three tempo metas remain in the raw evidence');
+
+  // The project builds from what survived.
+  const project = midiFragmentToProject(fragment);
+  assert.equal(project.events.length, 2);
+  assert.equal(project.metadata.sourceComplete, false);
+});
+
+test('an ingest never throws on any malformed event the decoder can still read', () => {
+  // The explicit range checks are not assumed to be exhaustive; the projection
+  // guard must hold for anything they miss.
+  for (const entries of [
+    [[0, 0x90, 0xff, 0xff], [480, 0x80, 0xff, 0x40]],
+    [[0, ...rawTempo(0x00, 0x00, 0x00)]],
+    [[0, ...rawTempo(0xff, 0xff, 0xff)]],
+    [[0, ...rawTimeSig(0xff, 0xfe)]],
+    [[0, 0xff, 0x58, 0x00]],
+    [[0, 0xff, 0x51, 0x00]],
+  ]) {
+    const fragment = ingest(simple(entries));
+    assert.equal(typeof fragment.complete, 'boolean');
+    assert.ok(Array.isArray(fragment.unsupported));
+  }
+});
+
+// --- P2: evidence completeness and source identity -----------------------
+
+test('an unknown chunk keeps its whole body, not just a type and a length', () => {
+  const bytes = new Uint8Array([
+    ...chunk('MThd', [...be(0, 2), ...be(1, 2), ...be(480, 2)]),
+    ...chunk('XFIR', [0xde, 0xad, 0xbe, 0xef]),
+    ...buildTrack([[0, ...noteOn(0, 60, 100)], [480, ...noteOff(0, 60)]]),
+  ]);
+  const decoded = decodeMidiFile(bytes);
+  const unknown = decoded.anomalies.find(a => a.code === 'UNKNOWN_CHUNK');
+  assert.equal(unknown.chunkType, 'XFIR');
+  assert.equal(unknown.bytes, 4);
+  assert.equal(unknown.raw, 'deadbeef', 'the skipped bytes are recoverable');
+  // The chunk is skipped for projection but the track still reads.
+  assert.equal(ingest(bytes).events.length, 1);
+});
+
+test('bytes after End of Track and after the last chunk are kept verbatim', () => {
+  const trackBody = [
+    ...vlq(0), ...noteOn(0, 60, 100),
+    ...vlq(480), ...noteOff(0, 60),
+    ...vlq(0), 0xff, 0x2f, 0x00,
+    0xca, 0xfe,                            // stowaway bytes inside the chunk
+  ];
+  const bytes = new Uint8Array([
+    ...chunk('MThd', [...be(0, 2), ...be(1, 2), ...be(480, 2)]),
+    ...chunk('MTrk', trackBody),
+    0xba, 0xbe,                            // stowaway bytes after the last chunk
+  ]);
+  const decoded = decodeMidiFile(bytes);
+  assert.equal(decoded.anomalies.find(a => a.code === 'DATA_AFTER_END_OF_TRACK').raw, 'cafe');
+  assert.equal(decoded.anomalies.find(a => a.code === 'TRAILING_BYTES').raw, 'babe');
+  assert.equal(ingest(bytes).events.length, 1, 'the valid note is still projected');
+});
+
+test('a format above 2 is not projected as if its tracks shared a timeline', () => {
+  for (const format of [3, 7, 0xffff]) {
+    const fragment = ingest(buildMidi({
+      format,
+      tracks: [
+        buildTrack([[0, ...noteOn(0, 60, 100)], [480, ...noteOff(0, 60)]]),
+        buildTrack([[0, ...noteOn(0, 64, 100)], [480, ...noteOff(0, 64)]]),
+      ],
+    }));
+    assert.equal(fragment.complete, false, `format ${format} must not read as complete`);
+    assert.equal(fragment.events.length, 0, `format ${format} must not project events`);
+    const bad = fragment.unsupported.find(u => u.code === 'UNKNOWN_SMF_FORMAT');
+    assert.equal(bad.format, format);
+  }
+  assert.equal(MIDI_INGESTION_STATUS.smfFormatAbove2, false);
+});
+
+test('formats 0 and 1 still project normally after the format guard', () => {
+  for (const format of [0, 1]) {
+    const fragment = ingest(buildMidi({
+      format,
+      tracks: [buildTrack([[0, ...noteOn(0, 60, 100)], [480, ...noteOff(0, 60)]])],
+    }));
+    assert.equal(fragment.complete, true, `format ${format} must still ingest cleanly`);
+    assert.equal(fragment.events.length, 1);
+  }
+});
+
+test('source identity is the SHA-256 of the parsed bytes and is deterministic', async () => {
+  const { createHash } = await import('node:crypto');
+  const bytes = simple([[0, ...noteOn(0, 60, 100)], [480, ...noteOff(0, 60)]]);
+  const expected = createHash('sha256').update(bytes).digest('hex');
+
+  const fragment = ingest(bytes);
+  assert.equal(fragment.source.sha256, expected, 'matches the platform digest');
+  assert.equal(ingest(bytes).source.sha256, expected, 'stable across runs');
+
+  // A different file yields a different identity.
+  const other = simple([[0, ...noteOn(0, 61, 100)], [480, ...noteOff(0, 61)]]);
+  assert.notEqual(ingest(other).source.sha256, expected);
+
+  // An explicit digest from the caller still wins.
+  const supplied = 'f'.repeat(64);
+  assert.equal(ingest(bytes, { sha256: supplied }).source.sha256, supplied);
+});
+
+test('sha256Hex agrees with the platform digest across padding boundaries', async () => {
+  const { createHash } = await import('node:crypto');
+  // 55/56 and 63/64 straddle the block-padding boundaries where a hand-written
+  // implementation typically goes wrong.
+  for (const length of [0, 1, 55, 56, 63, 64, 65, 119, 120, 1000]) {
+    const bytes = new Uint8Array(length);
+    for (let i = 0; i < length; i++) bytes[i] = (i * 37 + 11) % 256;
+    assert.equal(sha256Hex(bytes), createHash('sha256').update(bytes).digest('hex'), `length ${length}`);
+  }
 });
