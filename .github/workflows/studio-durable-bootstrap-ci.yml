@@ -1,7 +1,7 @@
 name: Studio durable bootstrap CI
 on:
   push:
-    branches: [studio-permanent-durable-migration]
+    branches: [main]
     paths: [ops/permanent/**, .github/workflows/studio-durable-bootstrap-ci.yml]
   pull_request:
     paths: [ops/permanent/**, .github/workflows/studio-durable-bootstrap-ci.yml]
