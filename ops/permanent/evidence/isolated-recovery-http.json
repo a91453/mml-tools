@@ -1,0 +1,262 @@
+{
+  "base": "https://studio-durable-isolated-production.up.railway.app",
+  "health": {
+    "status": "ready",
+    "bootstrap": "durable-source",
+    "buildId": "34c67a4a1284eee1243ee51858096660c16cbf22cf0347e139abb15f2dc3e258",
+    "cacheId": "1e78713ad6bb57aff5dd5c4ef2cf841aa01f9c550471fe9aa4f216ed51596a92",
+    "sourceSha": "5769e76849e5ef8dad03b4080050cafcf1c2eabe",
+    "canonical": {
+      "canonical_version": "2026-09-13-v1",
+      "canonical_status": "PUBLISHED",
+      "manifest_version": "2026-09-13-v1-manifest1",
+      "rules_snapshot_sha": "0a172900a01fdf39c2e9e84cf176961320b779ea"
+    },
+    "zipSha256": "ff464a35b00bb490cef3873e191b6dd870cdc6b5a10699badcb3788607f24088",
+    "trustSourceSha": "5769e76849e5ef8dad03b4080050cafcf1c2eabe"
+  },
+  "root": 200,
+  "buildJson": 200,
+  "assetCount": 34,
+  "assets": [
+    {
+      "path": "apple-touch-icon.png",
+      "status": 200,
+      "sha256": "2436759eb3b97a386cf3bada371c2be0af51ea6625a54d055e73e35ec62373f8",
+      "bytes": 690,
+      "contentType": "image/png"
+    },
+    {
+      "path": "dist/core.js",
+      "status": 200,
+      "sha256": "005950ad3837d8e80c98ef8052c8835aa9dcecd8937449f9ca8357bf8589373b",
+      "bytes": 26201,
+      "contentType": "application/javascript; charset=utf-8"
+    },
+    {
+      "path": "icon.svg",
+      "status": 200,
+      "sha256": "c34014bb699ae7495230b7b7eceae79ef5baaf18bbeeaf8949ed6533ab297bd6",
+      "bytes": 351,
+      "contentType": "image/svg+xml"
+    },
+    {
+      "path": "index.html",
+      "status": 200,
+      "sha256": "b8e925b84172fdd9b21147096bbec0c8cb9a5efa1d663eb9f14fca2032ade39d",
+      "bytes": 2488,
+      "contentType": "text/html; charset=utf-8"
+    },
+    {
+      "path": "manifest.webmanifest",
+      "status": 200,
+      "sha256": "0319313e7deaaac9838f7609deecdf37f6a0d7bc5efd215faac9de62977e155f",
+      "bytes": 351,
+      "contentType": "application/manifest+json"
+    },
+    {
+      "path": "studio/backend/arbitration/core3.mjs",
+      "status": 200,
+      "sha256": "5b7ffa8752bf54505e12b6d583b666e9c7d99b723224787d5c94f559cf7179e5",
+      "bytes": 6971,
+      "contentType": "application/javascript; charset=utf-8"
+    },
+    {
+      "path": "studio/backend/arbitration/harmony.mjs",
+      "status": 200,
+      "sha256": "ad0d1194540910b8765e7d08c6fd3e345c367cd8fe68913ef40e3515ff012b11",
+      "bytes": 5573,
+      "contentType": "application/javascript; charset=utf-8"
+    },
+    {
+      "path": "studio/backend/arbitration/lead-demotion.mjs",
+      "status": 200,
+      "sha256": "835e16e6af962c74aaeb83034a43e3da3f9c8acc3d71aa44c9af0030efd4eba7",
+      "bytes": 4963,
+      "contentType": "application/javascript; charset=utf-8"
+    },
+    {
+      "path": "studio/backend/audio/index.mjs",
+      "status": 200,
+      "sha256": "a2595623130cbd66217109f0c543a615f727eeb6cdbf053d3f5480263bc22228",
+      "bytes": 5093,
+      "contentType": "application/javascript; charset=utf-8"
+    },
+    {
+      "path": "studio/backend/bootstrap/index.mjs",
+      "status": 200,
+      "sha256": "0136d493a312e054b4743b67950d433a8786c2f77a12799a14c58d4fac40a05b",
+      "bytes": 52394,
+      "contentType": "application/javascript; charset=utf-8"
+    },
+    {
+      "path": "studio/backend/canonical/index.mjs",
+      "status": 200,
+      "sha256": "ed586b4ea0f74e809103a821c0c6086c15d9677567928a8f1bebc9bea51cf2f5",
+      "bytes": 8498,
+      "contentType": "application/javascript; charset=utf-8"
+    },
+    {
+      "path": "studio/backend/canonical/merge.mjs",
+      "status": 200,
+      "sha256": "7120e69d9aa3f307a6562b5d30848272cf607b302be8644221cec4a2d085140e",
+      "bytes": 2998,
+      "contentType": "application/javascript; charset=utf-8"
+    },
+    {
+      "path": "studio/backend/compare/version-drift.mjs",
+      "status": 200,
+      "sha256": "cebb1c4607c8935ac3d15fe826aa87f9877d9d0157e2c1bc02e2dee8ac1436cc",
+      "bytes": 7484,
+      "contentType": "application/javascript; charset=utf-8"
+    },
+    {
+      "path": "studio/backend/final/readiness.mjs",
+      "status": 200,
+      "sha256": "f9092ee92f06253296f5465197d5de4f6602e4e6cb78fc49ac480f5d8b22dc64",
+      "bytes": 7860,
+      "contentType": "application/javascript; charset=utf-8"
+    },
+    {
+      "path": "studio/backend/mml/canonicalize.mjs",
+      "status": 200,
+      "sha256": "7cf9f8e7110f1627381f25edb88b4dc8601336a0da3e4b5ef6a3d9126c8c651d",
+      "bytes": 6017,
+      "contentType": "application/javascript; charset=utf-8"
+    },
+    {
+      "path": "studio/backend/mml/index.mjs",
+      "status": 200,
+      "sha256": "e0edd6414942747620948a88a3e6d34256487fd832bcca7204daddfdfb904593",
+      "bytes": 1590,
+      "contentType": "application/javascript; charset=utf-8"
+    },
+    {
+      "path": "studio/backend/mml/parser.mjs",
+      "status": 200,
+      "sha256": "de50d41ad4df45a2f9a9a3619ea1bf4a781d5ed4c4e728f71381a2220adf2c92",
+      "bytes": 15364,
+      "contentType": "application/javascript; charset=utf-8"
+    },
+    {
+      "path": "studio/backend/rules/index.mjs",
+      "status": 200,
+      "sha256": "4a0f708f3ddbb3d237e80fa5b04ab045245a83584aa9e46d0064d779c3e056f8",
+      "bytes": 6719,
+      "contentType": "application/javascript; charset=utf-8"
+    },
+    {
+      "path": "studio/backend/score/index.mjs",
+      "status": 200,
+      "sha256": "398008aaeb4d3ccc8ae6cdf34e89a3bd6e97e42df687f7a153490d2bc29490b1",
+      "bytes": 1793,
+      "contentType": "application/javascript; charset=utf-8"
+    },
+    {
+      "path": "studio/backend/score/musicxml.mjs",
+      "status": 200,
+      "sha256": "09a194a36ab522637fd9a8fe8e1fcc2a583dad362b0e3da6ad45c58c1a735d74",
+      "bytes": 18554,
+      "contentType": "application/javascript; charset=utf-8"
+    },
+    {
+      "path": "studio/web/app.mjs",
+      "status": 200,
+      "sha256": "3d9aa4dadb4daee37e676f7e4bab0ca2bc2a84c0eb97419f64d1ca61fa07e54a",
+      "bytes": 32241,
+      "contentType": "application/javascript; charset=utf-8"
+    },
+    {
+      "path": "studio/web/audio-client.mjs",
+      "status": 200,
+      "sha256": "00c129b3bf83265f3eccd7eee9e8b327f60a808faa1c51e6ae62e4ebb19d73ba",
+      "bytes": 2715,
+      "contentType": "application/javascript; charset=utf-8"
+    },
+    {
+      "path": "studio/web/audio-payload.mjs",
+      "status": 200,
+      "sha256": "2e91f16e58b6198f018d35eb3d36bc379d5ab83e020f6571679c8f3d69fd0e23",
+      "bytes": 561,
+      "contentType": "application/javascript; charset=utf-8"
+    },
+    {
+      "path": "studio/web/canonical-contract.mjs",
+      "status": 200,
+      "sha256": "1de173bdef33c70c92568dfb461ecc27427f45bade3dd7264cfa5e499389e7f4",
+      "bytes": 2887,
+      "contentType": "application/javascript; charset=utf-8"
+    },
+    {
+      "path": "studio/web/canonical-package.mjs",
+      "status": 200,
+      "sha256": "9ffe6c2911a08b57e7c0ae5e909899d265e39e4bfcd8484017e40ac1e91a34dd",
+      "bytes": 987,
+      "contentType": "application/javascript; charset=utf-8"
+    },
+    {
+      "path": "studio/web/model.mjs",
+      "status": 200,
+      "sha256": "02b44c2a2988712370d0e38accdb31b96d91e51c01d9d2efeb626df8eef31355",
+      "bytes": 13484,
+      "contentType": "application/javascript; charset=utf-8"
+    },
+    {
+      "path": "studio/web/published.mjs",
+      "status": 200,
+      "sha256": "62ef4aa762f6de673a0956b101ac9a60792fa3be557d80a152197a8d984cf048",
+      "bytes": 52156,
+      "contentType": "application/javascript; charset=utf-8"
+    },
+    {
+      "path": "studio/web/storage.mjs",
+      "status": 200,
+      "sha256": "55df6b081a7f52e0bc15f5215a8a5e38c8e8a3c07045e9fda953ea1b4b2b116e",
+      "bytes": 1983,
+      "contentType": "application/javascript; charset=utf-8"
+    },
+    {
+      "path": "studio/web/task-queue.mjs",
+      "status": 200,
+      "sha256": "19ae0d4d9bb52af944fb0e332c162e361b0622ac046ff4588b826992f29c80ef",
+      "bytes": 289,
+      "contentType": "application/javascript; charset=utf-8"
+    },
+    {
+      "path": "studio/web/worker-client.mjs",
+      "status": 200,
+      "sha256": "a0c496d1afe88c388610ee2b1fca295388ab1bbb57e4da5aa79fb63efc934453",
+      "bytes": 3129,
+      "contentType": "application/javascript; charset=utf-8"
+    },
+    {
+      "path": "studio/web/worker.mjs",
+      "status": 200,
+      "sha256": "355e5bbe625f791e936c85bfbf199d5658e6d49de60aaff0b138f73c453875e2",
+      "bytes": 1561,
+      "contentType": "application/javascript; charset=utf-8"
+    },
+    {
+      "path": "style.css",
+      "status": 200,
+      "sha256": "4d1f00b6a5c2b789d291e50e396cbb139418c31fb3d998b8c4363ae620274142",
+      "bytes": 8039,
+      "contentType": "text/css; charset=utf-8"
+    },
+    {
+      "path": "sw.js",
+      "status": 200,
+      "sha256": "6e6696e0b38ec1aab6942f066131443dcccfd6377c3a204bf2b5d01b2351a886",
+      "bytes": 2033,
+      "contentType": "application/javascript; charset=utf-8"
+    },
+    {
+      "path": "vendor/xml.mjs",
+      "status": 200,
+      "sha256": "8e95122323ec84e1eecff4ae0c806e3245738c2eb5872259d6b25a03c706fac5",
+      "bytes": 78181,
+      "contentType": "application/javascript; charset=utf-8"
+    }
+  ],
+  "buildJsonSha256": "d5ecaffc0da494325d127f9f9fe06998b93cb53254c6bbfcae8f69ad8b0324bc"
+}

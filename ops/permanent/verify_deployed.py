@@ -26,7 +26,12 @@ def check(item):
     return {'path': name, 'status': status, 'sha256': sha, 'bytes': len(raw), 'contentType': mime}
 
 with concurrent.futures.ThreadPoolExecutor(max_workers=6) as pool:
-    assets = list(pool.map(check, build['files']))
+    assets = []
+    for future in concurrent.futures.as_completed([pool.submit(check, item) for item in build['files']]):
+        assets.append(future.result())
+        if len(assets) % 10 == 0:
+            print(json.dumps({'verifiedAssets': len(assets), 'total': len(build['files'])}), flush=True)
+    assets.sort(key=lambda item: item['path'])
 status, index, _ = get('/')
 assert status == 200 and hashlib.sha256(index).hexdigest() == dict(build['files'])['index.html']
 report = {'base': base, 'health': health, 'root': status, 'buildJson': 200,

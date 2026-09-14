@@ -1,0 +1,65 @@
+{
+  "productionDeploymentId": "f9a9bd99-4809-4a3b-8612-07b96c196d4a",
+  "volumeId": "fba8d8a3-0c88-4f9b-b2a4-54a772217388",
+  "inspections": [
+    {
+      "args": {
+        "limit": 200,
+        "path": "/studio-cache",
+        "serviceId": "311e2f06-bad4-415c-b020-d52e1a6bf064"
+      },
+      "isError": false,
+      "result": {
+        "entries": [
+          {
+            "isDir": true,
+            "modTime": "2026-09-13T17:43:41Z",
+            "name": "lost+found",
+            "size": 16384
+          },
+          {
+            "isDir": true,
+            "modTime": "2026-09-13T17:44:35Z",
+            "name": "artifact",
+            "size": 4096
+          },
+          {
+            "isDir": false,
+            "modTime": "2026-09-13T17:44:35Z",
+            "name": ".ready",
+            "size": 5
+          }
+        ],
+        "path": "/studio-cache",
+        "truncated": false
+      },
+      "toolName": "listContainerFilesTool"
+    },
+    {
+      "args": {
+        "path": "/studio-cache/.ready",
+        "serviceId": "311e2f06-bad4-415c-b020-d52e1a6bf064"
+      },
+      "isError": false,
+      "result": {
+        "content": "ready",
+        "size": 5,
+        "truncated": false
+      },
+      "toolName": "readContainerFileTool"
+    },
+    {
+      "args": {
+        "path": "/studio-cache/artifact/build.json",
+        "serviceId": "311e2f06-bad4-415c-b020-d52e1a6bf064"
+      },
+      "isError": false,
+      "result": {
+        "content": "{\n  \"buildId\": \"67733dd81d4b1351f2eff07e7f362bf0457cd79fdf3afb51d46de2c7485c7a9c\",\n  \"canonical\": {\n    \"canonical_version\": \"2026-09-13-v1\",\n    \"canonical_status\": \"PUBLISHED\",\n    \"manifest_version\": \"2026-09-13-v1-manifest1\",\n    \"rules_snapshot_sha\": \"0a172900a01fdf39c2e9e84cf176961320b779ea\"\n  },\n  \"provenance\": {\n    \"manifest_commit\": \"5e7666b850a37f1c85ee2dd8cd0f4fac037a9e14\",\n    \"repository_head\": \"aa69a77a0a9b45d1e20b666d096ce053391c62eb\",\n    \"pr_head\": \"14d1f5b0112b8a7340652b307608a02561393e6b\",\n    \"published_main_head\": \"cbbe14986e483f4158570cc873b7e1ce2b214408\"\n  },\n  \"files\": [\n    [\n      \"apple-touch-icon.png\",\n      \"2436759eb3b97a386cf3bada371c2be0af51ea6625a54d055e73e35ec62373f8\"\n    ],\n    [\n      \"dist/core.js\",\n      \"005950ad3837d8e80c98ef8052c8835aa9dcecd8937449f9ca8357bf8589373b\"\n    ],\n    [\n      \"icon.svg\",\n      \"c34014bb699ae7495230b7b7eceae79ef5baaf18bbeeaf8949ed6533ab297bd6\"\n    ],\n    [\n      \"index.html\",\n      \"b8e925b84172fdd9b21147096bbec0c8cb9a5efa1d663eb9f14fca2032ade39d\"\n    ],\n    [\n      \"manifest.webmanifest\",\n      \"0319313e7deaaac9838f7609deecdf37f6a0d7bc5efd215faac9de62977e155f\"\n    ],\n    [\n      \"studio/backend/arbitration/core3.mjs\",\n      \"5b7ffa8752bf54505e12b6d583b666e9c7d99b723224787d5c94f559cf7179e5\"\n    ],\n    [\n      \"studio/backend/arbitration/harmony.mjs\",\n      \"ad0d1194540910b8765e7d08c6fd3e345c367cd8fe68913ef40e3515ff012b11\"\n    ],\n    [\n      \"studio/backend/arbitration/lead-demotion.mjs\",\n      \"835e16e6af962c74aaeb83034a43e3da3f9c8acc3d71aa44c9af0030efd4eba7\"\n    ],\n    [\n      \"studio/backend/audio/index.mjs\",\n      \"a2595623130cbd66217109f0c543a615f727eeb6cdbf053d3f5480263bc22228\"\n    ],\n    [\n      \"studio/backend/bootstrap/index.mjs\",\n      \"97fafdadab4eed6b0be32e7c6b783564a424ac1e3dd96d365938ddc5db6d0a6a\"\n    ],\n    [\n      \"studio/backend/canonical/index.mjs\",\n      \"ed586b4ea0f74e809103a821c0c6086c15d9677567928a8f1bebc9bea51cf2f5\"\n    ],\n    [\n      \"studio/backend/canonical/merge.mjs\",\n      \"7120e69d9aa3f307a6562b5d30848272cf607b302be8644221cec4a2d085140e\"\n    ],\n    [\n      \"studio/backend/compare/version-drift.mjs\",\n      \"cebb1c4607c8935ac3d15fe826aa87f9877d9d0157e2c1bc02e2dee8ac1436cc\"\n    ],\n    [\n      \"studio/backend/final/readiness.mjs\",\n      \"f9092ee92f06253296f5465197d5de4f6602e4e6cb78fc49ac480f5d8b22dc64\"\n    ],\n    [\n      \"studio/backend/mml/canonicalize.mjs\",\n      \"7cf9f8e7110f1627381f25edb88b4dc8601336a0da3e4b5ef6a3d9126c8c651d\"\n    ],\n    [\n      \"studio/backend/mml/index.mjs\",\n      \"e0edd6414942747620948a88a3e6d34256487fd832bcca7204daddfdfb904593\"\n    ],\n    [\n      \"studio/backend/mml/parser.mjs\",\n      \"de50d41ad4df45a2f9a9a3619ea1bf4a781d5ed4c4e728f71381a2220adf2c92\"\n    ],\n    [\n      \"studio/backend/rules/index.mjs\",\n      \"4a0f708f3ddbb3d237e80fa5b04ab045245a83584aa9e46d0064d779c3e056f8\"\n    ],\n    [\n      \"studio/backend/score/index.mjs\",\n      \"398008aaeb4d3ccc8ae6cdf34e89a3bd6e97e42df687f7a153490d2bc29490b1\"\n    ],\n    [\n      \"studio/backend/score/musicxml.mjs\",\n      \"09a194a36ab522637fd9a8fe8e1fcc2a583dad362b0e3da6ad45c58c1a735d74\"\n    ],\n    [\n      \"studio/web/app.mjs\",\n      \"52bb07d2e0c7d0082af5a26dda00a304b8cbbd232aa84f5b048ec2c156156952\"\n    ],\n    [\n      \"studio/web/audio-client.mjs\",\n      \"00c129b3bf83265f3eccd7eee9e8b327f60a808faa1c51e6ae62e4ebb19d73ba\"\n    ],\n    [\n      \"studio/web/audio-payload.mjs\",\n      \"2e91f16e58b6198f018d35eb3d36bc379d5ab83e020f6571679c8f3d69fd0e23\"\n    ],\n    [\n      \"studio/web/canonical-package.mjs\",\n      \"05a7516206e879e45603ac9c8f586effd12b051362be38b8f2598fc9bb7e215d\"\n    ],\n    [\n      \"studio/web/model.mjs\",\n      \"02b44c2a2988712370d0e38accdb31b96d91e51c01d9d2efeb626df8eef31355\"\n    ],\n    [\n      \"studio/web/published.mjs\",\n      \"53bb27974c1c554e5df627671e30eba988606c2f14c7e6b6f910cafe7e3ab684\"\n    ],\n    [\n      \"studio/web/storage.mjs\",\n      \"55df6b081a7f52e0bc15f5215a8a5e38c8e8a3c07045e9fda953ea1b4b2b116e\"\n    ],\n    [\n      \"studio/web/task-queue.mjs\",\n      \"19ae0d4d9bb52af944fb0e332c162e361b0622ac046ff4588b826992f29c80ef\"\n    ],\n    [\n      \"studio/web/worker-client.mjs\",\n      \"a0c496d1afe88c388610ee2b1fca295388ab1bbb57e4da5aa79fb63efc934453\"\n    ],\n    [\n      \"studio/web/worker.mjs\",\n      \"f000452e2bf3298034535d62098d66243b281ad6496d7e6293f5dfb1c3ee2e38\"\n    ],\n    [\n      \"style.css\",\n      \"4d1f00b6a5c2b789d291e50e396cbb139418c31fb3d998b8c4363ae620274142\"\n    ],\n    [\n      \"vendor/xml.mjs\",\n      \"8e95122323ec84e1eecff4ae0c806e3245738c2eb5872259d6b25a03c706fac5\"\n    ]\n  ]\n}",
+        "size": 4526,
+        "truncated": false
+      },
+      "toolName": "readContainerFileTool"
+    }
+  ]
+}

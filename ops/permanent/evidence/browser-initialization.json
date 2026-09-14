@@ -1,0 +1,16 @@
+{
+  "url": "https://studio-durable-isolated-production.up.railway.app/",
+  "browser": "Cloud Chrome",
+  "appInitialized": true,
+  "workerCanonicalInitialized": true,
+  "visibleHeading": "\u672a\u547d\u540d\u5c08\u6848",
+  "visibleState": "CANDIDATE",
+  "canonical_version": "2026-09-13-v1",
+  "canonical_status": "PUBLISHED",
+  "manifest_version": "2026-09-13-v1-manifest1",
+  "rules_snapshot_sha": "0a172900a01fdf39c2e9e84cf176961320b779ea",
+  "visible_source_sha": "5769e76849e5ef8dad03b4080050cafcf1c2eabe",
+  "visible_manifest_commit": "5e7666b850a37f1c85ee2dd8cd0f4fac037a9e14",
+  "runtimeErrors": [],
+  "note": "Only browser-extension metadata warnings were observed; no Studio initialization error. No song acceptance claim."
+}
