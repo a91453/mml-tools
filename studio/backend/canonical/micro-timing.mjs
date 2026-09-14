@@ -483,38 +483,159 @@ function isAssignedRole(event) {
   return ASSIGNED_ROLES.has(event.role);
 }
 
-function possiblePositiveSubGridSeparation(left, right) {
-  const gap = f(right.start).sub(left.end);
-  return gap.cmp(0) > 0 && gap.cmp(SAFE_GRID) < 0;
-}
-
 function unresolvedPairKey(leftId, rightId, start, end) {
   return JSON.stringify([leftId, rightId, start, end]);
 }
 
-function collectUnresolvedStreamIssues(spans) {
-  const unassigned = spans.filter(event => !isAssignedRole(event));
+// compareEvents() semantics over pre-resolved exact rationals, so the sort and
+// the binary searches below do not re-parse the string bounds on every
+// comparison. The ordering itself is identical to compareEvents().
+function compareEntries(left, right) {
+  const startCmp = left.start.cmp(right.start);
+  if (startCmp !== 0) return startCmp;
+  const endCmp = left.end.cmp(right.end);
+  if (endCmp !== 0) return endCmp;
+  if (left.sortId < right.sortId) return -1;
+  if (left.sortId > right.sortId) return 1;
+  return 0;
+}
+
+function sortedSpanEntries(spans) {
+  const entries = spans.map(event => ({
+    event,
+    sortId: String(event.id),
+    start: f(event.start),
+    end: f(event.end),
+    assigned: isAssignedRole(event),
+    order: 0,
+  }));
+  entries.sort(compareEntries);
+  for (let index = 0; index < entries.length; index += 1) entries[index].order = index;
+  return entries;
+}
+
+// Exact-rational binary searches. `entries` is compareEvents-ordered, which is
+// start-major, so its `start` column is non-decreasing; `byEnd` is sorted on `end`.
+function firstStartAbove(entries, value) {
+  let low = 0;
+  let high = entries.length;
+  while (low < high) {
+    const mid = (low + high) >> 1;
+    if (entries[mid].start.cmp(value) > 0) high = mid;
+    else low = mid + 1;
+  }
+  return low;
+}
+
+function firstStartAtLeast(entries, value) {
+  let low = 0;
+  let high = entries.length;
+  while (low < high) {
+    const mid = (low + high) >> 1;
+    if (entries[mid].start.cmp(value) >= 0) high = mid;
+    else low = mid + 1;
+  }
+  return low;
+}
+
+function firstEndAbove(byEnd, value) {
+  let low = 0;
+  let high = byEnd.length;
+  while (low < high) {
+    const mid = (low + high) >> 1;
+    if (byEnd[mid].end.cmp(value) > 0) high = mid;
+    else low = mid + 1;
+  }
+  return low;
+}
+
+function firstEndAtLeast(byEnd, value) {
+  let low = 0;
+  let high = byEnd.length;
+  while (low < high) {
+    const mid = (low + high) >> 1;
+    if (byEnd[mid].end.cmp(value) >= 0) high = mid;
+    else low = mid + 1;
+  }
+  return low;
+}
+
+// F4. The published pair set is unchanged:
+//
+//   { (a, b) : a <_compareEvents b, a.id !== b.id, at least one role-null,
+//              0 < b.start - a.end < SAFE_GRID }
+//
+// The previous implementation enumerated role-null x all-spans and tested every
+// pair, so a MusicXML ingest carrying thousands of role=null events cost O(n^2)
+// regardless of how many relationships actually existed. The same set is
+// produced here by two windowed sweeps that never look at a pair which cannot
+// qualify:
+//
+//   pass 1 - a is role-null: b.start must lie in (a.end, a.end + SAFE_GRID),
+//            a contiguous window of the start-ordered entries;
+//   pass 2 - a has an assigned role and b is role-null: a.end must lie in
+//            (b.start - SAFE_GRID, b.start), a contiguous window of the
+//            assigned entries ordered by end.
+//
+// The two passes partition the set on whether `a` is role-null, so they neither
+// overlap nor drop a pair. Nothing is sampled, capped or approximated: for
+// well-formed spans every window slot is a reported relationship, which makes
+// the scan output-sensitive at O(n log n + issues) instead of O(n^2).
+// Comparisons stay exact rational; `seen` keeps the structural dedupe identity;
+// the final ordering is the same structural key sort.
+function collectUnresolvedStreamIssues(spans, instrumentation = null) {
+  const entries = sortedSpanEntries(spans);
+  const assignedByEnd = entries.filter(entry => entry.assigned);
+  assignedByEnd.sort((left, right) => {
+    const endCmp = left.end.cmp(right.end);
+    if (endCmp !== 0) return endCmp;
+    return left.order - right.order;
+  });
+
   const issues = [];
   const seen = new Set();
-  for (const event of unassigned) {
-    for (const other of spans) {
-      if (!other || other.id === event.id) continue;
-      const ordered = compareEvents(event, other) <= 0 ? [event, other] : [other, event];
-      if (!possiblePositiveSubGridSeparation(ordered[0], ordered[1])) continue;
-      const start = f(ordered[0].end);
-      const end = f(ordered[1].start);
-      const key = unresolvedPairKey(ordered[0].id, ordered[1].id, start.toString(), end.toString());
-      if (seen.has(key)) continue;
-      seen.add(key);
-      issues.push({
-        reason: UNRESOLVED_STREAM_REASON,
-        eventIds: [ordered[0].id, ordered[1].id],
-        start: start.toString(),
-        end: end.toString(),
-        length: end.sub(start).toString(),
-      });
+  let candidateInspections = 0;
+
+  const record = (earlier, later) => {
+    if (earlier.event.id === later.event.id) return;
+    const start = earlier.end;
+    const end = later.start;
+    const key = unresolvedPairKey(earlier.event.id, later.event.id, start.toString(), end.toString());
+    if (seen.has(key)) return;
+    seen.add(key);
+    issues.push({
+      reason: UNRESOLVED_STREAM_REASON,
+      eventIds: [earlier.event.id, later.event.id],
+      start: start.toString(),
+      end: end.toString(),
+      length: end.sub(start).toString(),
+    });
+  };
+
+  for (const earlier of entries) {
+    if (earlier.assigned) continue;
+    const windowStart = firstStartAbove(entries, earlier.end);
+    const windowEnd = firstStartAtLeast(entries, earlier.end.add(SAFE_GRID));
+    for (let index = windowStart; index < windowEnd; index += 1) {
+      candidateInspections += 1;
+      const later = entries[index];
+      if (later.order <= earlier.order) continue;
+      record(earlier, later);
     }
   }
+
+  for (const later of entries) {
+    if (later.assigned) continue;
+    const windowStart = firstEndAbove(assignedByEnd, later.start.sub(SAFE_GRID));
+    const windowEnd = firstEndAtLeast(assignedByEnd, later.start);
+    for (let index = windowStart; index < windowEnd; index += 1) {
+      candidateInspections += 1;
+      const earlier = assignedByEnd[index];
+      if (earlier.order >= later.order) continue;
+      record(earlier, later);
+    }
+  }
+
   issues.sort((left, right) => {
     const leftKey = unresolvedPairKey(left.eventIds[0], left.eventIds[1], left.start, left.end);
     const rightKey = unresolvedPairKey(right.eventIds[0], right.eventIds[1], right.start, right.end);
@@ -522,7 +643,23 @@ function collectUnresolvedStreamIssues(spans) {
     if (leftKey > rightKey) return 1;
     return 0;
   });
+
+  if (instrumentation && typeof instrumentation === 'object') {
+    instrumentation.spanCount = entries.length;
+    instrumentation.assignedCount = assignedByEnd.length;
+    instrumentation.unassignedCount = entries.length - assignedByEnd.length;
+    instrumentation.candidateInspections = candidateInspections;
+    instrumentation.issueCount = issues.length;
+  }
   return issues;
+}
+
+// Verifier entry point for the F4 scan. `instrumentation` receives the bounded
+// candidate counters so a regression can observe the scan shape itself rather
+// than relying on wall-clock timing.
+export function analyzeUnresolvedStreamIssues(project, { instrumentation = null } = {}) {
+  if (!project || typeof project !== 'object') throw Error('Canonical project is required');
+  return freezeDeep(collectUnresolvedStreamIssues(spanEvents(project), instrumentation));
 }
 
 export function analyzeProjectMicroTiming(project, options = {}) {
