@@ -1,0 +1,329 @@
+<!doctype html>
+<html lang="zh-Hant">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>隱私權政策 — 夜光MML工坊</title>
+<link rel="canonical" href="https://mml.mabi.tw/privacy">
+    <meta name="description" content="夜光 MML 工坊的隱私權政策：透過 Google 登入取得哪些資料、保存多久、如何刪除，以及本站不做哪些追蹤。">
+<link rel="icon" href="/favicon.ico" sizes="16x16" type="image/x-icon">
+
+<link rel="manifest" href="/manifest.zh-Hant.webmanifest">
+<meta name="theme-color" content="#122325">
+<link rel="apple-touch-icon" sizes="180x180" href="/img/apple-touch-icon-180-v1.png">
+
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Gloock&family=Noto+Sans+TC:wght@400;500;700&display=swap" rel="stylesheet">
+<style>
+  :root{
+    --bg:#0d1a1b; --bg2:#122325; --panel:#16292b; --panel2:#1a3032;
+    --line:#23403f; --line-soft:#1b3234;
+    --txt:#e4efec; --dim:#a8bfbb; --dimmer:#7f9b98;
+    --t1:#e0ae5a; --t2:#57b6a4; --warn:#d97a72;
+    /* Html.Raw 是必要的：字型堆疊裡有雙引號，而 Razor 預設會把它逃脫成 &quot;。
+       CSS **不解析 HTML 實體**，所以 --sans:&quot;Noto Sans JP&quot; 是無效的宣告 ——
+       整個堆疊會被丟掉、悄悄退回瀏覽器預設字體。值是我們自己算的常數，沒有使用者輸入。 */
+    --sans:"Noto Sans TC",system-ui,-apple-system,"Segoe UI",sans-serif;
+    --display:"Gloock",Georgia,serif;
+  }
+  *{box-sizing:border-box}
+  body{
+    margin:0; background:var(--bg); color:var(--txt);
+    font-family:var(--sans); font-size:15px;
+    /* 中文條文要更大的行距才讀得下去。1.6 在編輯器裡夠用，整頁純文字不夠。 */
+    line-height:1.95;
+    -webkit-font-smoothing:antialiased;
+  }
+  a{color:var(--t2)}
+  a:hover{color:var(--t1)}
+
+  header{
+    border-bottom:1px solid var(--line);
+    background:linear-gradient(180deg,var(--bg2),var(--bg));
+  }
+  header .inner{
+    max-width:820px; margin:0 auto; padding:16px 24px;
+    display:flex; align-items:baseline; gap:14px; flex-wrap:wrap;
+  }
+  header .brand{
+    font-family:var(--display); font-weight:400; font-size:20px;
+    color:var(--txt); text-decoration:none; line-height:1;
+  }
+  header .brand em{font-style:normal;color:var(--t1)}
+  header nav{margin-left:auto;display:flex;gap:16px;font-size:13px}
+
+  main{max-width:820px;margin:0 auto;padding:36px 24px 72px}
+
+  h1{
+    font-family:var(--display); font-weight:400; font-size:32px;
+    margin:0 0 6px; line-height:1.3;
+  }
+  .updated{
+    color:var(--dimmer); font-size:13px; margin:0 0 8px;
+    letter-spacing:.04em;
+  }
+  /* 目錄。條文有十幾節，沒有目錄就只能一直捲。 */
+  .toc{
+    margin:26px 0 34px; padding:16px 20px;
+    background:var(--panel); border:1px solid var(--line); border-radius:4px;
+  }
+  .toc ol{margin:0;padding-left:1.4em;columns:2;column-gap:32px}
+  .toc li{margin:2px 0;break-inside:avoid}
+  .toc a{text-decoration:none}
+  .toc a:hover{text-decoration:underline}
+  @media (max-width:620px){ .toc ol{columns:1} }
+
+  h2{
+    font-size:19px; font-weight:700; margin:38px 0 10px;
+    padding-top:14px; border-top:1px solid var(--line-soft);
+    /* 從目錄跳過來時，標題不要被貼在視窗最上緣 */
+    scroll-margin-top:16px;
+  }
+  h3{font-size:16px;font-weight:500;color:var(--t2);margin:24px 0 8px}
+  p{margin:12px 0}
+  ul,ol{margin:12px 0;padding-left:1.6em}
+  li{margin:6px 0}
+  strong{color:#fff}
+  code{
+    font-family:ui-monospace,Consolas,monospace; font-size:.9em;
+    background:var(--panel2); padding:1px 5px; border-radius:3px;
+  }
+  /* 說明頁的 MML 範例。條文頁用不到，但兩者共用這個版型。
+     範例是要拿去複製的，所以 white-space:pre 不能省；窄畫面讓它自己橫捲，
+     不要換行 —— MML 換錯行看起來就是另一段譜。 */
+  pre{
+    margin:16px 0; padding:12px 16px;
+    background:var(--panel); border:1px solid var(--line); border-radius:4px;
+    overflow-x:auto; line-height:1.7;
+  }
+  pre code{background:none;padding:0;font-size:13px}
+
+  /* 條文裡「請特別注意」那幾段。原文用粗體強調，粗體在整頁中文裡看不出來。 */
+  .note{
+    margin:16px 0; padding:12px 16px;
+    background:var(--panel); border-left:3px solid var(--t1); border-radius:0 4px 4px 0;
+  }
+  .note.warn{border-left-color:var(--warn)}
+  .note p:first-child{margin-top:0}
+  .note p:last-child{margin-bottom:0}
+
+  /* 法條依據，附在節標題底下 */
+  .basis{color:var(--dimmer);font-size:13px;margin:-4px 0 12px}
+
+  table{
+    width:100%; border-collapse:collapse; margin:16px 0; font-size:14px;
+    /* 表格在窄畫面會擠成一團，讓它自己捲 */
+    display:block; overflow-x:auto; white-space:normal;
+  }
+  th,td{
+    border:1px solid var(--line); padding:8px 12px;
+    text-align:left; vertical-align:top; line-height:1.7;
+  }
+  th{background:var(--panel);font-weight:500;color:var(--dim);white-space:nowrap}
+
+  footer{
+    max-width:820px; margin:0 auto; padding:22px 24px 48px;
+    border-top:1px solid var(--line); color:var(--dimmer); font-size:13px;
+  }
+  footer .row{display:flex;gap:18px;flex-wrap:wrap}
+  footer .row .spacer{flex:1}
+  /* 語言連結。排在版權那一行上面、用一條細線隔開 —— 它是導覽而不是聲明。
+     目前的語言是 <strong> 而不是連結（見 _LangLinks），所以要自己上色，
+     不然它會跟旁邊三個連結的青色搶眼睛。 */
+  footer .langs{display:flex;gap:16px;flex-wrap:wrap;margin-bottom:14px;padding-bottom:14px;border-bottom:1px solid var(--line-soft)}
+  footer .langs strong{color:var(--dim);font-weight:500}
+</style>
+<link rel="stylesheet" href="/css/legal.css">
+</head>
+<body>
+
+<header>
+  <div class="inner">
+    <a class="brand" href="/">夜光 <em>MML工坊</em></a>
+    <nav>
+      <a href="/">回編輯器</a>
+          <a href="/guide/mml">MML 教學</a>
+          <a href="/guide/midi">MIDI 轉譜</a>
+          <a href="/faq">常見問題</a>
+      <a href="/terms">服務條款</a>
+      <a href="/privacy">隱私權政策</a>
+    </nav>
+  </div>
+</header>
+
+<main>
+  
+<h1>隱私權政策</h1>
+<p class="updated">最後更新：2026-08-17</p>
+
+<nav class="toc" aria-label="目錄">
+  <ol>
+    <li><a href="#s1">關於本政策</a></li>
+    <li><a href="#s2">本站蒐集哪些資料</a></li>
+    <li><a href="#s3">蒐集目的與利用方式</a></li>
+    <li><a href="#s4">保存期間與刪除</a></li>
+    <li><a href="#s5">資料揭露對象</a></li>
+    <li><a href="#s6">Google 使用者資料的處理方式</a></li>
+    <li><a href="#s7">你的權利</a></li>
+    <li><a href="#s8">資料安全</a></li>
+    <li><a href="#s9">未成年人</a></li>
+    <li><a href="#s10">政策變更</a></li>
+    <li><a href="#s11">聯絡</a></li>
+  </ol>
+</nav>
+
+<h2 id="s1">1. 關於本政策</h2>
+<p>夜光MML工坊（以下稱「本站」，網址 <a href="https://mml.mabi.tw">https://mml.mabi.tw</a>）是一個 MML 樂譜的編輯與分享工具。本政策說明本站蒐集哪些個人資料、如何使用，以及你對這些資料擁有哪些權利。</p>
+<p>本站由夜光以個人身分營運，非營利、無廣告、不販售任何服務。</p>
+<p>聯絡方式：<a href="mailto:to@toxto.top">to@toxto.top</a></p>
+
+<h2 id="s2">2. 本站蒐集哪些資料</h2>
+
+<h3>2.1 透過 Google 登入取得的資料</h3>
+<p>本站使用 Google 登入（Sign in with Google）作為唯一的身分驗證方式，請求的權限範圍僅有：</p>
+<table>
+  <thead>
+    <tr><th>權限範圍</th><th>取得的內容</th></tr>
+  </thead>
+  <tbody>
+    <tr><td><code>openid</code></td><td>Google 帳號的唯一識別碼</td></tr>
+    <tr><td><code>email</code></td><td>你的電子郵件地址、以及該地址是否已驗證</td></tr>
+    <tr><td><code>profile</code></td><td>你的顯示名稱與大頭貼網址</td></tr>
+  </tbody>
+</table>
+<p>本站不會請求任何存取 Gmail、Google Drive、日曆、聯絡人或其他 Google 服務內容的權限。</p>
+<p>在上述資料中，本站實際儲存的只有：</p>
+<ul>
+  <li><strong>Google 帳號唯一識別碼</strong>：用於辨識回訪的同一使用者</li>
+  <li><strong>電子郵件地址</strong>：用於帳號辨識，以及第 3.2 節所述的法定通知義務</li>
+</ul>
+<p>顯示名稱與大頭貼僅在登入當次於畫面上顯示，不寫入資料庫。</p>
+
+<h3>2.2 你主動提供的資料</h3>
+<p>你按下「分享」時：</p>
+<ul>
+  <li>你上傳的 MML 文字、標題、標籤</li>
+  <li>你在上傳時勾選的原創聲明與授權方式</li>
+  <li>你自行填寫的作者顯示名稱（可與 Google 帳號名稱不同）</li>
+</ul>
+<p>你把樂譜存到 Web 時：</p>
+<ul>
+  <li>你取的存檔名</li>
+  <li>該份存檔的完整內容 —— 各軌的 MML 文字（<strong>包含註解，以及還沒寫完的草稿</strong>）、每軌選的樂器、軌數與顯示設定</li>
+</ul>
+<div class="note">
+  <p><strong>Web 存檔不公開。</strong>它只有你本人登入之後讀得到，不會出現在任何公開頁面、不會產生可以給別人的連結，也不會被搜尋引擎收錄。</p>
+  <p>這是它跟「分享」最主要的差別：分享是為了給別人看，所以那份資料是公開的、而且經過壓縮與截短；Web 存檔是把你的工作檔放在伺服器上，好讓你換一台電腦還接得回來，所以它是<strong>完整而未經刪減</strong>的 —— 你寫在譜裡的註解也會一起存上去。</p>
+</div>
+
+<h3>2.3 系統自動記錄的資料</h3>
+<ul>
+  <li>伺服器存取紀錄（IP 位址、瀏覽器識別字串、請求時間與路徑）</li>
+  <li>維持登入狀態所需的 Cookie（有效期 30 天）</li>
+</ul>
+<p>本站不使用第三方廣告追蹤、不進行跨站追蹤、不建立行為分析輪廓。</p>
+
+<h2 id="s3">3. 蒐集目的與利用方式</h2>
+
+<h3>3.1 提供服務</h3>
+<p>辨識帳號、顯示你的作品、讓你管理自己上傳的內容，以及保存你存到 Web 的工作檔並在你登入時交還給你。</p>
+
+<h3>3.2 履行著作權法上的法定義務</h3>
+<p>本站作為資訊儲存服務提供者，依《著作權法》第六章之一，於收到權利人的通知並移除內容後，必須將處理情形轉知上傳者（第 90 條之 6、第 90 條之 7）。你的電子郵件地址是履行這項義務的必要手段。</p>
+<p>同法第 90 條之 4 另要求本站對三次涉有侵權情事的使用者終止服務，因此本站會記錄與帳號關聯的侵權通知次數。詳見<a href="/terms">《服務條款》</a>。</p>
+
+<h3>3.3 系統維運與安全</h3>
+<p>排除故障、防止濫用與攻擊。</p>
+
+<h3>3.4 流量統計</h3>
+<p>本站以第 2.3 節所述的<strong>伺服器存取紀錄</strong>統計整體流量，例如各頁面的造訪次數、來源網站、瀏覽器語言分布，以及搜尋引擎爬蟲的造訪情形。用途是了解哪些說明頁真的有人看、以及站台是否被正常收錄。</p>
+<p>這項統計<strong>不使用任何第三方分析服務、不植入分析用的 Cookie、不在頁面上載入任何統計程式碼</strong>。資料來源就是伺服器本來就會寫的存取紀錄，保存期間與刪除方式同第 4 節，不會因為統計而延長。</p>
+<p>統計只看整體趨勢，不針對個別使用者建立瀏覽軌跡或行為輪廓。</p>
+
+<h3>3.5 不做的用途</h3>
+<p>本站不會將你的個人資料用於：</p>
+<ul>
+  <li>行銷、廣告、推播</li>
+  <li>販售、出租、交換給任何第三方</li>
+  <li>訓練機器學習模型</li>
+</ul>
+
+<h2 id="s4">4. 保存期間與刪除</h2>
+<table>
+  <thead>
+    <tr><th>資料</th><th>保存期間</th></tr>
+  </thead>
+  <tbody>
+    <tr><td>Google 帳號識別碼、電子郵件</td><td>至你刪除帳號為止</td></tr>
+    <tr><td>你上傳的內容</td><td>至你刪除為止；帳號刪除時一併移除</td></tr>
+    <tr><td>伺服器存取紀錄</td><td>【90】日後自動刪除</td></tr>
+    <tr><td>著作權通知與處理紀錄</td><td>見下方說明</td></tr>
+  </tbody>
+</table>
+<div class="note warn">
+  <p><strong>關於著作權通知紀錄的例外，請特別注意：</strong></p>
+  <p>依《著作權法》第 90 條之 9，通知取下與回復通知的流程有法定時限與轉知義務，本站必須保存相關文件以證明已依法處理。因此，即使你刪除帳號，與侵權通知有關的紀錄（含當時的電子郵件地址、通知文件、取下與轉知時間）仍會保留，保存期間為【自處理完成起 5 年】。</p>
+  <p>這是本站對你唯一無法完全履行刪除請求的情形，理由是法律遵循，而非商業利益。</p>
+</div>
+
+<h2 id="s5">5. 資料揭露對象</h2>
+<p>本站不販售資料。僅在下列情形會讓第三方接觸到你的資料：</p>
+<ul>
+  <li><strong>主機與基礎設施服務商（【主機商】）</strong>：技術上必然接觸伺服器紀錄</li>
+  <li><strong>著作權通知程序</strong>：依第 90 條之 9，你提出回復通知時，本站必須將回復通知轉送給發出通知的權利人。回復通知的內容由你自行決定要寫什麼；請自行評估要揭露多少個人資訊</li>
+  <li><strong>司法或行政機關的合法要求</strong></li>
+</ul>
+
+<h2 id="s6">6. Google 使用者資料的處理方式</h2>
+<p>本節依 Google API Services User Data Policy 揭露，說明本站如何存取、使用、儲存與分享 Google 使用者資料。</p>
+<p><strong>存取（Access）</strong>　本站僅於你主動點擊 Google 登入按鈕時，透過 OAuth 2.0 存取 <code>openid</code>、<code>email</code>、<code>profile</code> 三個非敏感權限範圍。不進行任何背景或週期性存取，不使用 refresh token 於離線狀態取得資料。</p>
+<p><strong>使用（Use）</strong>　僅用於：辨識你的帳號、於畫面顯示你的名稱、以及履行本政策第 3.2 節所述的著作權法通知義務。不用於廣告、行銷、剖析或機器學習模型訓練。</p>
+<p><strong>儲存（Store）</strong>　僅儲存 Google 帳號唯一識別碼與電子郵件地址，存放於本站資料庫（位於台灣）。顯示名稱與大頭貼不寫入資料庫。不儲存你的 Google 密碼——本站從未也無法接觸到密碼。</p>
+<p><strong>分享（Share）</strong>　不將 Google 使用者資料轉移、販售或分享給任何第三方，唯一例外是第 5 節所列的情形。</p>
+<div class="note">
+  <p>本站對 Google 使用者資料的使用，僅限於本政策所揭露的範圍，並符合 Google API Services User Data Policy 的 <strong>Limited Use</strong> 要求。</p>
+</div>
+<p>你可以隨時到 <a href="https://myaccount.google.com/permissions" rel="noopener" target="_blank">Google 帳號權限頁面</a> 撤銷本站的存取權限。撤銷後你將無法登入，但已儲存的資料需另外向本站提出刪除請求。</p>
+
+<h2 id="s7">7. 你的權利</h2>
+<p>依《個人資料保護法》第 3 條，你可以就本站保有的你的個人資料，請求：</p>
+<ul>
+  <li>查詢或請求閱覽</li>
+  <li>請求製給複製本</li>
+  <li>請求補充或更正</li>
+  <li>請求停止蒐集、處理或利用</li>
+  <li>請求刪除</li>
+</ul>
+<p>行使方式：來信 <a href="mailto:to@toxto.top">to@toxto.top</a>。本站會在收到請求後【15】日內回覆。為避免他人冒用，本站可能請你從註冊時的電子郵件地址寄出請求。</p>
+<p>除第 4 節所述的法定保存例外，本站不會對行使權利收取費用，也不會因此拒絕提供服務。</p>
+<p>你也可以自行在帳號設定頁刪除帳號，無須來信。</p>
+
+<h2 id="s8">8. 資料安全</h2>
+<p>本站以 HTTPS 傳輸全部流量，資料庫不對外開放連線，密碼由 Google 保管（本站無密碼資料）。</p>
+<p>本站是個人營運的專案，沒有企業級的安全團隊。本站會盡合理努力保護資料，但無法保證絕對安全。這也是本站刻意將蒐集範圍限縮到電子郵件地址的原因——資料愈少，外洩時的損害愈小。</p>
+<p>若發生個人資料外洩，本站會依《個人資料保護法》第 12 條以電子郵件通知受影響的使用者，並在本站首頁公告。</p>
+
+<h2 id="s9">9. 未成年人</h2>
+<p>若你未滿 18 歲，請在法定代理人同意後再使用本站。本站無法驗證使用者年齡；若你是法定代理人並發現未成年人未經同意使用本站，請來信，本站會刪除該帳號與相關資料。</p>
+
+<h2 id="s10">10. 政策變更</h2>
+<p>本政策修改時，本站會更新頁首的「最後更新」日期，並在首頁公告至少【30】日。涉及蒐集目的或範圍實質變更時，會另以電子郵件通知。</p>
+
+<h2 id="s11">11. 聯絡</h2>
+<p>夜光　電子郵件：<a href="mailto:to@toxto.top">to@toxto.top</a></p>
+<p>著作權侵害通知請寄至同一信箱，並參閱<a href="/terms">《服務條款》</a>關於通知文件應記載事項的說明。</p>
+
+</main>
+
+<footer>
+  <div class="row">
+    <span>夜光 · 個人非營利專案</span>
+    <span>聯絡：<a href="mailto:to@toxto.top">to@toxto.top</a></span>
+    <span class="spacer"></span>
+    <a href="/">回編輯器</a>
+  </div>
+</footer>
+
+</body>
+</html>

@@ -1,0 +1,1168 @@
+<!doctype html>
+<html lang="ja">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>マビノギモバイル MML楽譜エディター</title>
+<script>
+  if (matchMedia("(display-mode: standalone)").matches
+      || matchMedia("(display-mode: minimal-ui)").matches
+      || navigator.standalone === true)
+    document.title = "\u30DE\u30D3\u30CE\u30AE\u30E2\u30D0\u30A4\u30EB 4ML Editor";
+</script>
+    <meta name="robots" content="noindex,follow">
+<meta name="description" content="マビノギモバイルのMML楽譜をブラウザで編集。インストール不要。MIDIインポート、ピアノロール編集、ゲーム本来の音色で試聴、ワンクリックで共有できます。">
+
+<meta property="og:type" content="website">
+<meta property="og:site_name" content="夜光 MML 工坊">
+<meta property="og:locale" content="ja_JP">
+<meta property="og:url" content="https://mml.mabi.tw/ja/">
+<meta property="og:title" content="マビノギモバイル MML楽譜エディター">
+<meta property="og:description" content="マビノギモバイルのMML楽譜をブラウザで編集。インストール不要。MIDIインポート、ピアノロール編集、ゲーム本来の音色で試聴、ワンクリックで共有できます。">
+<meta name="twitter:card" content="summary">
+<meta name="twitter:title" content="マビノギモバイル MML楽譜エディター">
+<meta name="twitter:description" content="マビノギモバイルのMML楽譜をブラウザで編集。インストール不要。MIDIインポート、ピアノロール編集、ゲーム本来の音色で試聴、ワンクリックで共有できます。">
+
+<link rel="icon" href="/favicon.ico" sizes="16x16" type="image/x-icon">
+
+<link rel="manifest" href="/manifest.ja.webmanifest">
+<meta name="theme-color" content="#122325">
+<link rel="apple-touch-icon" sizes="180x180" href="/img/apple-touch-icon-180-v1.png">
+
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Gloock&family=IBM+Plex+Mono:wght@400;500&family=Noto+Sans+JP:wght@400;500;700&display=swap" rel="stylesheet">
+
+
+<link rel="stylesheet" href="/vendor/fontawesome/css/fontawesome.min.css">
+<link rel="stylesheet" href="/vendor/fontawesome/css/solid.min.css">
+<link rel="stylesheet" href="/vendor/fontawesome/css/regular.min.css">
+
+
+<script type="importmap">
+{
+  "imports": {
+    "spessasynth_lib":  "/vendor/spessasynth_lib.js",
+    "spessasynth_core": "/vendor/spessasynth_core.js"
+  }
+}
+</script>
+<link rel="stylesheet" href="/css/editor.css">
+<script>
+  (function () {
+    try {
+      var ui = JSON.parse(localStorage.getItem("mml-workshop/ui") || "{}");
+      if (!ui || ui.theme !== "light") return;
+      document.documentElement.dataset.theme = "light";
+      var m = document.querySelector('meta[name="theme-color"]');
+      if (m) m.content = "#f5f7f7";
+    } catch (e) {
+      // 無痕模式讀 localStorage 會丟、存進去的不是 JSON 也會丟。兩種都留在深色。
+    }
+  })();
+</script>
+<style>
+  :root{
+    /* Html.Raw 是必要的：字型堆疊裡有雙引號，而 Razor 預設會把它逃脫成 &quot;。
+       CSS **不解析 HTML 實體**，所以 --sans:&quot;Noto Sans JP&quot; 是無效的宣告 ——
+       整個堆疊會被丟掉、悄悄退回瀏覽器預設字體。值是我們自己算的常數，沒有使用者輸入。 */
+    --sans:"Noto Sans JP",system-ui,-apple-system,"Segoe UI",sans-serif;
+  }
+</style>
+</head>
+<body>
+<svg width="0" height="0" style="position:absolute" aria-hidden="true" focusable="false">
+  <defs>
+
+    <symbol id="ni-1" viewBox="4.4 1.2 18.2 24">
+      <path fill="currentColor" fill-rule="evenodd" d="
+        M 19.4 13 a 7.4 4.9 0 1 0 -14.8 0 a 7.4 4.9 0 1 0 14.8 0 Z
+        M 13.8 15.7 a 3.2 2.4 56 1 0 -3.6 -5.3 a 3.2 2.4 56 1 0 3.6 5.3 Z"/>
+    </symbol>
+
+    <symbol id="ni-2" viewBox="4.4 1.2 18.2 24">
+      <path fill="currentColor" fill-rule="evenodd" d="
+        M 14.3 17.1 a 4.8 3.5 -20 1 0 -9 3.3 a 4.8 3.5 -20 1 0 9 -3.3 Z
+        M 13.1 17.2 a 3.6 1.7 -24 1 0 -6.6 2.9 a 3.6 1.7 -24 1 0 6.6 -2.9 Z"/>
+      <rect x="12.9" y="3.6" width="1.7" height="14.7" rx=".85" fill="currentColor"/>
+    </symbol>
+
+    <symbol id="ni-4" viewBox="4.4 1.2 18.2 24">
+      <ellipse cx="9.8" cy="18.7" rx="4.8" ry="3.5"
+               transform="rotate(-20 9.8 18.7)" fill="currentColor"/>
+      <rect x="12.9" y="3.6" width="1.7" height="14.7" rx=".85" fill="currentColor"/>
+    </symbol>
+
+    <symbol id="ni-8" viewBox="4.4 1.2 18.2 24">
+      <ellipse cx="9.8" cy="18.7" rx="4.8" ry="3.5"
+               transform="rotate(-20 9.8 18.7)" fill="currentColor"/>
+      <rect x="12.9" y="3.6" width="1.7" height="14.7" rx=".85" fill="currentColor"/>
+      <path fill="currentColor" d="
+        M 14.6 3.6 C 14.6 6.8 19.3 7.4 19.3 11.9
+        C 19.3 14.2 18 15.6 17 16.3
+        C 18.5 12.6 17.2 10 14.6 8.5 Z"/>
+    </symbol>
+
+    <symbol id="ni-16" viewBox="4.4 1.2 18.2 24">
+      <ellipse cx="9.8" cy="18.7" rx="4.8" ry="3.5"
+               transform="rotate(-20 9.8 18.7)" fill="currentColor"/>
+      <rect x="12.9" y="3.6" width="1.7" height="14.7" rx=".85" fill="currentColor"/>
+      <path fill="currentColor" d="
+        M 14.6 3.6 C 14.6 6.8 19.3 7.4 19.3 11.9
+        C 19.3 14.2 18 15.6 17 16.3
+        C 18.5 12.6 17.2 10 14.6 8.5 Z"/>
+      <path fill="currentColor" d="
+        M 14.6 8 C 14.6 11.2 19.3 11.8 19.3 16.3
+        C 19.3 18.6 18 20 17 20.7
+        C 18.5 17 17.2 14.4 14.6 12.9 Z"/>
+    </symbol>
+
+    <symbol id="ni-32" viewBox="4.4 1.2 18.2 24">
+      <ellipse cx="9.8" cy="18.7" rx="4.8" ry="3.5"
+               transform="rotate(-20 9.8 18.7)" fill="currentColor"/>
+      <rect x="12.9" y="2" width="1.7" height="16.3" rx=".85" fill="currentColor"/>
+      <path fill="currentColor" d="
+        M 14.6 2 C 14.6 5.2 19.3 5.8 19.3 10.3
+        C 19.3 12.6 18 14 17 14.7
+        C 18.5 11 17.2 8.4 14.6 6.9 Z"/>
+      <path fill="currentColor" d="
+        M 14.6 6 C 14.6 9.2 19.3 9.8 19.3 14.3
+        C 19.3 16.6 18 18 17 18.7
+        C 18.5 15 17.2 12.4 14.6 10.9 Z"/>
+      <path fill="currentColor" d="
+        M 14.6 10 C 14.6 13.2 19.3 13.8 19.3 18.3
+        C 19.3 20.6 18 22 17 22.7
+        C 18.5 19 17.2 16.4 14.6 14.9 Z"/>
+    </symbol>
+
+    <symbol id="ni-64" viewBox="4.4 1.2 18.2 24">
+      <ellipse cx="9.8" cy="18.7" rx="4.8" ry="3.5"
+               transform="rotate(-20 9.8 18.7)" fill="currentColor"/>
+      <rect x="12.9" y="1.4" width="1.7" height="16.9" rx=".85" fill="currentColor"/>
+      <path fill="currentColor" d="
+        M 14.6 1.4 C 14.6 4 19 4.6 19 8.4
+        C 19 10.4 17.9 11.6 17 12.2
+        C 18.3 9.2 17.1 6.8 14.6 5.5 Z"/>
+      <path fill="currentColor" d="
+        M 14.6 4.8 C 14.6 7.4 19 8 19 11.8
+        C 19 13.8 17.9 15 17 15.6
+        C 18.3 12.6 17.1 10.2 14.6 8.9 Z"/>
+      <path fill="currentColor" d="
+        M 14.6 8.2 C 14.6 10.8 19 11.4 19 15.2
+        C 19 17.2 17.9 18.4 17 19
+        C 18.3 16 17.1 13.6 14.6 12.3 Z"/>
+      <path fill="currentColor" d="
+        M 14.6 11.6 C 14.6 14.2 19 14.8 19 18.6
+        C 19 20.6 17.9 21.8 17 22.4
+        C 18.3 19.4 17.1 17 14.6 15.7 Z"/>
+    </symbol>
+
+    <symbol id="ni-1d" viewBox="4.4 1.2 18.2 24">
+      <use href="#ni-1" x="4.4" y="1.2" width="18.2" height="24"/>
+      <circle cx="19.6" cy="20" r="2" fill="currentColor"/>
+    </symbol>
+    <symbol id="ni-2d" viewBox="4.4 1.2 18.2 24">
+      <use href="#ni-2" x="4.4" y="1.2" width="18.2" height="24"/>
+      <circle cx="17" cy="23" r="2" fill="currentColor"/>
+    </symbol>
+    <symbol id="ni-4d" viewBox="4.4 1.2 18.2 24">
+      <use href="#ni-4" x="4.4" y="1.2" width="18.2" height="24"/>
+      <circle cx="17" cy="23" r="2" fill="currentColor"/>
+    </symbol>
+    <symbol id="ni-8d" viewBox="4.4 1.2 18.2 24">
+      <use href="#ni-8" x="4.4" y="1.2" width="18.2" height="24"/>
+      <circle cx="17" cy="23" r="2" fill="currentColor"/>
+    </symbol>
+    <symbol id="ni-16d" viewBox="4.4 1.2 18.2 24">
+      <use href="#ni-16" x="4.4" y="1.2" width="18.2" height="24"/>
+      <circle cx="20" cy="23" r="2" fill="currentColor"/>
+    </symbol>
+    <symbol id="ni-32d" viewBox="4.4 1.2 18.2 24">
+      <use href="#ni-32" x="4.4" y="1.2" width="18.2" height="24"/>
+      <circle cx="20.4" cy="23" r="2" fill="currentColor"/>
+    </symbol>
+
+  </defs>
+</svg>
+
+
+<header>
+
+        <h1><a id="home" href="/ja/" title="ホームに戻り、既定の楽譜を読み込みます">夜光 <em>MML工房</em></a> <span class="sub">Mabinogi Mobile MML Editor</span></h1>
+
+  <div id="viewToggles">
+    <button type="button" class="ico toggle on" id="viewTools" aria-pressed="true">
+      <i class="fa-solid fa-toolbox" aria-hidden="true"></i>
+    </button>
+    <button type="button" class="ico toggle on" id="viewRoll" aria-pressed="true">
+      <i class="fa-solid fa-table-list" aria-hidden="true"></i>
+    </button>
+    <button type="button" class="ico toggle on" id="viewEditor" aria-pressed="true">
+      <i class="fa-solid fa-file-code" aria-hidden="true"></i>
+    </button>
+    <button type="button" class="ico toggle on" id="viewStatus" aria-pressed="true">
+      <i class="fa-solid fa-circle-info" aria-hidden="true"></i>
+    </button>
+  </div>
+
+  <span class="spacer"></span>
+  <div class="grp" id="navMenu">
+    <div id="navIo">
+      <button id="clip" title="曲全体の MML を貼り付け／コピー">
+        <i class="fa-regular fa-clipboard" aria-hidden="true"></i>クリボ
+      </button>
+      <button id="file" title=".mid から読み込み、または MIDI で保存">
+        <i class="fa-regular fa-folder-open" aria-hidden="true"></i>ファイル
+      </button>
+      <button id="share" title="共有リンクを作成、または共有履歴を表示">
+        <i class="fa-solid fa-share-nodes" aria-hidden="true"></i>共有
+      </button>
+    </div>
+    <button id="gear" title="アカウント、サウンドバンク、楽器定義ファイル">
+      <i class="fa-solid fa-gear" aria-hidden="true"></i>設定
+    </button>
+    <button id="aboutBtn" title="サイトの説明、ガイド、謝辞、バージョン">
+      <i class="fa-solid fa-circle-question" aria-hidden="true"></i>サイト情報
+    </button>
+  </div>
+  <button type="button" class="ico" id="navToggle" aria-expanded="false" aria-controls="navMenu">
+    <i class="fa-solid fa-bars" aria-hidden="true"></i>
+  </button>
+</header>
+
+<div id="rollbar">
+  <div class="grp">
+    <button class="play" id="play" disabled>▶  再生</button>
+    <button class="tiny" id="stop" disabled>停止</button>
+    <button class="tiny toggle on" id="followBtn"
+            title="再生中、再生ヘッドに合わせてページを送ります。横スクロールを手で動かすと自動でオフになり、ここを押すと再びオンになります">
+      <i class="fa-regular fa-circle-right" aria-hidden="true"></i>追従
+    </button>
+    <div id="rangeSel" role="radiogroup" aria-label="再生範囲">
+      <button type="button" role="radio" data-range="all" aria-checked="true" class="on"
+              title="曲全体を再生（小節ルーラーの開始／終了マーカーを消します）">全曲</button>
+      <button type="button" role="radio" data-range="part" aria-checked="false" aria-disabled="true"
+              title="範囲を指定：小節ルーラー上は左クリックで開始、右クリックで終了。矢印ツール（0）でロールの空白部分は左クリックで開始、右クリックでメニュー（その最初の 2 項目がこの 2 本の線です）">範囲</button>
+    </div>
+    <button class="tiny toggle" id="loopBtn" aria-pressed="false"
+            title="ループ再生：終端（または終了マーカー）まで来たら、すぐ先頭（または開始マーカー）から再生し直します">
+      <i class="fa-solid fa-retweet" aria-hidden="true"></i>ループ
+    </button>
+  </div>
+  <div class="grp hideable">
+    <button class="tool" id="toolSelect"
+            title="矢印（ショートカット 0）：音符の上では移動／長さ変更／削除、Shift か Ctrl で 2 つ目の音を押すと区間を選択。空白部分では左クリックで再生開始線、右クリックで終了線">
+      <i class="fa-solid fa-arrow-pointer" aria-hidden="true"></i><span class="sr">選択のみ</span>
+    </button>
+    <button type="button" class="lbl" id="lensLbl" aria-pressed="false">
+      <svg width="14" height="18" aria-hidden="true" focusable="false"><use href="#ni-32"/></svg>
+      <i class="fa-solid fa-music" aria-hidden="true"></i><span class="sr"></span>
+    </button>
+    <div id="lens">
+      <button data-len="1" title="全音符（ショートカット 1）">1</button>
+      <button data-len="2" title="2 分音符（ショートカット 2）">2</button>
+      <button data-len="4" title="4 分音符（ショートカット 3）">4</button>
+      <button data-len="8" title="8 分音符（ショートカット 4）">8</button>
+      <button data-len="16" title="16 分音符（ショートカット 5）">16</button>
+      <button data-len="32" title="32 分音符（ショートカット 6）">32</button>
+    </div>
+    <div id="zoom">
+      <span class="spin">
+        <i class="fa-solid fa-arrows-left-right" aria-hidden="true"></i>
+        <span class="ax">
+          <button data-zoom="w+">+</button>
+          <button data-zoom="w-">−</button>
+        </span>
+      </span>
+      <span class="spin">
+        <i class="fa-solid fa-arrows-up-down" aria-hidden="true"></i>
+        <span class="ax">
+          <button data-zoom="h+">+</button>
+          <button data-zoom="h-">−</button>
+        </span>
+      </span>
+    </div>
+    <button class="tiny ico" id="undoBtn" disabled title="元に戻す（ショートカット Ctrl+Z）">
+      <i class="fa-solid fa-rotate-left" aria-hidden="true"></i><span class="sr">元に戻す</span>
+    </button>
+    <button class="tiny ico" id="redoBtn" disabled title="やり直し（ショートカット Ctrl+Shift+Z または Ctrl+Y）">
+      <i class="fa-solid fa-rotate-right" aria-hidden="true"></i><span class="sr">やり直し</span>
+    </button>
+  </div>
+  <div class="grp hideable">
+    <button class="tiny" id="tempoBtn" title="テンポ：トラックの先頭、または選んだ音符の前にテンポ記号を書き込みます">
+      <i class="fa-solid fa-gauge-high" aria-hidden="true"></i>テンポ
+    </button>
+    <button class="tiny" id="velBtn" title="ベロシティ：v の値をまとめて上げ下げします">
+      <i class="fa-solid fa-sliders" aria-hidden="true"></i>ベロ
+    </button>
+    <button class="tiny" id="transBtn" title="移調：音符をまとめて半音単位で上下させます">
+      <i class="fa-solid fa-arrow-up-right-dots" aria-hidden="true"></i>移調
+    </button>
+    <button class="tiny" id="optBtn" title="圧縮・最適化：音符の長さと引き換えに文字数を節約します（音は変わります）">
+      <i class="fa-solid fa-wand-magic-sparkles" aria-hidden="true"></i>最適化
+    </button>
+    <button class="tiny" id="mergeBtn" title="トラック結合：このトラック（または選んだ音符）を別のトラックにまとめます。5 通りの方法があります">
+      <i class="fa-solid fa-layer-group" aria-hidden="true"></i>結合
+    </button>
+  </div>
+  <div class="grp hideable">
+    <span class="lbl" id="rollMode">編集中</span>
+    <span class="cur" id="rollTrack">メロディ</span>
+    <span class="warnmsg" id="rollNote"></span>
+    <span id="rollNonstd" hidden></span>
+  </div>
+  <span class="hint hideable" id="rollHint">左クリックで描画 · ドラッグで移動 · 右端をドラッグで長さ変更 · 右クリックで削除</span>
+</div>
+
+<div id="rollwrap">
+  <div id="stage" tabindex="-1">
+    <div id="rollpad"><canvas id="roll"></canvas></div>
+  </div>
+  <div id="flagsLayer" aria-hidden="true"><div id="flagsStrip"></div></div>
+  <div id="markdots" aria-hidden="true"></div>
+</div>
+
+<div id="splitter" role="separator" aria-orientation="horizontal" tabindex="0"
+     title="ドラッグしてピアノロールと楽譜欄の高さを変えます（矢印キーでも可、Shift で加速）"></div>
+
+<main>
+  <section class="editor">
+    <div class="tabs" id="tabs"></div>
+    <div class="panes" id="panes"></div>
+    <div class="status" id="status">
+      <span><span class="k">トラック</span> —</span>
+      <span><span class="k">音符</span> —</span>
+      <span><span class="k">テンポ</span> —</span>
+      <span><span class="k">長さ</span> —</span>
+      <span id="warn"></span>
+      <span class="store" id="storeState">未保存</span>
+      <span class="engine" id="engine">エンジン待機中</span>
+      <span class="legal">
+        <a href="/terms">利用規約</a><span aria-hidden="true">·</span><a href="/privacy">プライバシーポリシー</a>
+      </span>
+    </div>
+  </section>
+</main>
+
+
+<div id="scrim"></div>
+<aside id="settings" class="drawer" aria-label="設定">
+  <div class="head">
+    <h2>設定</h2>
+    <button id="settingsClose" title="閉じる（Esc）" aria-label="閉じる">✕</button>
+  </div>
+  <div class="body">
+
+
+    <div class="user" id="userBox">
+      <i class="fa-solid fa-circle-user" aria-hidden="true"></i>
+      <span class="who">
+        <b id="userName">未ログイン</b>
+        <em id="userMail"></em>
+      </span>
+      <a class="act auth" id="loginBtn" href="/login" rel="nofollow">Google でログイン</a>
+      <a class="act auth" id="logoutBtn" href="/logout" rel="nofollow" hidden>ログアウト</a>
+    </div>
+            <div class="group">
+                <label for="lang">言語 (Language)</label>
+                <select id="lang"></select>
+                <span class="hint">言語を切り替えるとページを再読み込みします。編集中の楽譜は保持されますが、元に戻す履歴は消えます。</span>
+            </div>
+    <div class="group">
+      <label for="theme">テーマ</label>
+      <select id="theme">
+        <option value="dark">ダーク</option>
+        <option value="light">ライト</option>
+      </select>
+    </div>
+
+    <div class="group">
+      <label for="autosave">自動保存</label>
+      <select id="autosave">
+        <option value="on">オン</option>
+        <option value="off">オフ</option>
+      </select>
+      <span class="hint" id="autosaveHint">編集のたびに楽譜をこのブラウザに保存するので、再読み込みや再起動をしても続きから始められます。サーバーには送信しません。</span>
+    </div>
+
+    <div class="group">
+      <label for="keysig">調号の表示</label>
+      <select id="keysig">
+        <option value="">使わない</option>
+      </select>
+      <span class="hint">その調に含まれない行が暗くなります。目安を示すだけで、操作を妨げることはありません。</span>
+    </div>
+
+    <div class="group">
+      <label for="timeSig">拍子記号の表示と編集</label>
+      <select id="timeSig">
+        <option value="on">オン</option>
+        <option value="off">オフ</option>
+      </select>
+      <span class="hint">オンにするとピアノロールの左上に曲頭の拍子が表示され、右クリックで拍子を変更できます。小節ルーラーを右クリックすると変拍子を設定できます。小節線、1 小節のマス数、小節の挿入と削除、MML の改行はすべて拍子に従います。</span>
+    </div>
+
+    <div class="group">
+      <label for="mmlHighlight">構文の色分け</label>
+      <select id="mmlHighlight">
+        <option value="on">オン</option>
+        <option value="off">オフ</option>
+      </select>
+      <span class="hint">テンポ・音長・オクターブ・音量にそれぞれ色が付き、音符と長さは白のままです。解釈できない文字には赤い波線、2400 文字を超えた部分には赤い背景が付きます。ヒントだけで、操作を妨げることはありません。</span>
+    </div>
+
+    <div class="group">
+      <label for="barsPerLine">MML の改行</label>
+      <select id="barsPerLine">
+        <option value="0">改行しない</option>
+        <option value="1">1 小節ごと</option>
+        <option value="2">2 小節ごと</option>
+        <option value="4">4 小節ごと</option>
+      </select>
+      <span class="hint">
+        改行は見た目だけで、空白はゲームの文字数に入りません。小節をまたぐ長い音は途中で切れないため、その行は長くなり、番号が<b>飛びます</b>。
+      </span>
+    </div>
+
+    <div class="group">
+      <label for="dls">サウンドバンク</label>
+      <label class="filebtn">
+        別の .dls / .sf2 を読み込む
+        <span class="hint" id="dlsName">既定を使用中。クリックで自分の音色を追加</span>
+        <input type="file" id="dls" accept=".dls,.sf2,.sf3">
+      </label>
+    </div>
+
+    <div class="group" id="offlineBank">
+      <span class="legend">オフライン用サウンドバンク</span>
+      <span class="hint" id="offlineBankState">確認中…</span>
+      <button class="act" id="offlineBankGet" hidden>この端末に保存する</button>
+    </div>
+    <div class="group">
+      <label for="def">楽器定義ファイル</label>
+      <label class="filebtn">
+        別の .def を読み込む
+        <span class="hint" id="defName">既定を使用中。クリックで自分の楽器定義を追加</span>
+        <input type="file" id="def" accept=".def,.txt,.ini">
+      </label>
+    </div>
+
+    <div class="group danger" id="dangerZone" hidden>
+      <span class="legend">危険な操作</span>
+      <button class="act" id="delAccount">このサイトのアカウントとすべてのデータを削除</button>
+    </div>
+  </div>
+
+</aside>
+
+<aside id="aboutPanel" class="drawer" aria-label="サイト情報">
+  <div class="head">
+    <h2>サイト情報</h2>
+    <button id="aboutClose" title="閉じる（Esc）" aria-label="閉じる">✕</button>
+  </div>
+  <div class="body">
+    <div class="group">
+      <span class="legend">このツールについて</span>
+      <p class="thanks">夜光 MML工房は、マビノギモバイル向けのオンラインMML楽譜エディターです。インストール不要 —— 開いてすぐ書き始められ、ゲームに近い音色で試聴して、できたMMLをゲームの白紙の楽譜に貼り付けられます。MIDIファイルを読み込んで自動変換したり、ピアノロールでドラッグして音符を書いたり、圧縮と最適化で1トラック2400文字の制限に収めたり、完成後はリンクで共有したりできます。</p>
+      <p class="thanks">
+        マビノギ（PC版）のMMLを作りたい場合は
+        <a href="https://3ml.mabi.tw/ja/" rel="noopener" target="_blank">マビノギ MML楽譜エディターへ</a>
+      </p>
+    </div>
+
+        <div class="group">
+      <span class="legend">説明</span>
+      <p class="thanks">
+            <a href="/ja/guide/editor" target="_blank" rel="noopener">エディター入門</a>　ゲームに貼れる楽譜を作ってみる<br>
+            <a href="/ja/guide/reference" target="_blank" rel="noopener">機能ガイド</a>　ボタンごとの説明<br>
+            <a href="/ja/guide/keys" target="_blank" rel="noopener">ショートカット</a>　キーボード・マウス・ホイール一覧<br>
+            <a href="/ja/guide/mobile" target="_blank" rel="noopener">スマホとタブレット</a>　指で曲を作る<br>
+            <a href="/ja/guide/mml" target="_blank" rel="noopener">MML 文法</a>　MML の文法をひととおり<br>
+            <a href="/ja/faq" target="_blank" rel="noopener">よくある質問</a>　音色、保存、文字数の上限、共有<br>
+      </p>
+    </div>
+
+
+    <div class="group">
+      <span class="legend">スペシャルサンクス</span>
+      <p class="thanks">
+        既定では © 2026 <b>DovidicGJ</b>および<b>Lisedrika</b> 提供の <b>Fury Sound Pack</b> サウンドバンクを使用しています。         出典 <a href="https://mabicompose.com" rel="noopener" target="_blank">mabicompose.com</a>
+                    <br>音楽への貢献に心から感謝します<br>
+      </p>
+    </div>
+
+    <div class="group">
+      <span class="legend">使用技術</span>
+      <ul class="thanks tech">
+        <li>
+          <b><a href="https://github.com/spessasus/SpessaSynth" rel="noopener" target="_blank">SpessaSynth</a> 4.3</b>
+          —— WebAudio シンセエンジン。SF2／DLS の解析と AudioWorklet によるリアルタイム再生を担当。 Apache-2.0
+        </li>
+        <li>
+          <b><a href="https://github.com/Audiveris/audiveris" rel="noopener" target="_blank">Audiveris</a> 5.11.0</b>
+          —— 光学楽譜認識（OMR）。楽譜の画像を MML に変換します。ライセンスに従いソースを公開しています —— <a href="https://github.com/sakuraakira/omr-workers" rel="noopener" target="_blank">公開リポジトリ</a>。 AGPL-3.0
+        </li>
+        <li>
+          <b><a href="https://github.com/zhuker/lamejs" rel="noopener" target="_blank">lamejs</a></b>
+          ：mp3 エンコード。ライセンス  LGPL-3.0
+        </li>
+        <li>
+          <b><a href="https://fontawesome.com" rel="noopener" target="_blank">Font Awesome Free</a> 7.3.1</b>
+          —— アイコンフォント。solid と regular の 2 セットのみ読み込み。 CC BY 4.0
+        </li>
+        <li>
+          <b><a href="https://fonts.google.com" rel="noopener" target="_blank">Google Fonts</a></b>
+          —— Gloock、IBM Plex Mono、および表示言語に応じて切り替わる Noto。 OFL
+        </li>
+      </ul>
+      <p class="thanks">MML の解析と圧縮、bzip2、ZIP 生成、ピアノロールはすべて自前実装 —— フロントエンドに他の実行時依存はありません。</p>
+    </div>
+
+    <div class="group">
+      <span class="legend">法的事項</span>
+      <p class="thanks">
+        <a href="/terms">利用規約</a><span class="sep" aria-hidden="true">·</span><a href="/privacy">プライバシーポリシー</a>
+      </p>
+    </div>
+  </div>
+
+  <div class="copy">　© 2026 梅文．夜光 v1.1.0<button type="button" id="pwaUpdateBtn" title="新しいバージョンがあります · 押すと再読み込みします" hidden>新版に更新</button></div>
+</aside>
+
+<div id="log"><button onclick="this.parentNode.style.display='none'">✕</button><span id="logMsg"></span></div>
+
+<div id="pasteBox" class="modal" data-mode="in">
+  <div class="card">
+    <h2 id="pasteTitle">MML を貼り付け</h2>
+    <p id="pasteHint">このブラウザはページからクリップボードを読むことを許可していません。下で Ctrl+V を押してから、読み込みを押してください。</p>
+    <textarea id="pasteText" spellcheck="false" placeholder="MML@t100l8o5...,...,...;"></textarea>
+    <div class="row">
+      <button class="act" id="pasteCancel">キャンセル</button>
+      <button class="act play" id="pasteOk">読み込み</button>
+    </div>
+  </div>
+</div>
+
+<div id="clipBox" class="modal">
+  <div class="card">
+    <h2>クリップボード</h2>
+    <p>MML はただのテキストです。ゲームの白紙の楽譜とここの間は、クリップボードで行き来させます。</p>
+    <div class="row">
+      <button class="act" id="paste">貼り付け</button>
+      <button class="act" id="copy">コピー</button>
+    </div>
+    <p class="hint">貼り付けるとすべてのタブの内容が置き換わります。コピーでは空白が取り除かれ、それがゲームの数える文字数です。</p>
+  </div>
+</div>
+
+<div id="fileBox" class="modal">
+  <div class="card">
+    <h2>ファイル</h2>
+
+    <div class="sect">
+      <span class="legend">新規作成 / 保存</span>
+      <div class="row">
+        <button class="act" id="newSong">新規作成</button>
+        <button class="act" id="saveOpen" title="この楽譜を保存します（ショートカット Ctrl+S）。一度保存していて名前を変えていなければ、Ctrl+S は同じファイルにそのまま上書きし、改めて確認しません。">保存先…</button>
+      </div>
+      <p class="hint">
+        「新規作成」は新しいファイルを始めます：<b>トラック数・楽器・ファイル名がすべて既定に戻ります</b>。調号と改行設定は保持されます。Ctrl+Z で元に戻せます。
+      </p>
+    </div>
+
+    <div class="sect">
+      <span class="legend">読み込み</span>
+      <label class="filebtn">
+        ファイルを選択
+        <span class="hint">.mid · .mml · .mmi、またはこの枠にファイルをドロップ</span>
+        <input type="file" id="midFile" accept=".mid,.midi,.mml,.mmi,.txt">
+      </label>
+      <p class="hint" id="fileErr" hidden></p>
+      <p class="hint">
+        ファイル内の音符がある声部を一覧にして選べるようにします（最大 15 トラック）。読み込むと<b>すべてのタブの内容が置き換わります</b>。補助トラックも含みます。
+      </p>
+
+      <button class="filebtn" id="omrOpen">
+        PDF か画像を選ぶ…
+        <span class="hint">.pdf · .png · .jpg、楽譜を取り込む</span>
+      </button>
+      <p class="hint">
+        OMR は <a href="https://github.com/Audiveris/audiveris" rel="noopener" target="_blank">Audiveris</a>（AGPL-3.0）を使用。認識率は最大で約 90%、音符の手直しは必要です。
+      </p>
+    </div>
+
+    <div class="sect">
+      <span class="legend">書き出し</span>
+      <div class="fname">
+        <input type="text" id="expName" placeholder="score" spellcheck="false"
+               autocomplete="off" aria-label="書き出すファイル名">
+        <select id="expFmt" aria-label="書き出す形式">
+          <option value="mid">.mid</option>
+          <option value="mml">.mml</option>
+          <option value="mmi">.mmi</option>
+        </select>
+      </div>
+      <button class="act" id="expGo" disabled>ダウンロード</button>
+      <button class="act" id="mixGo" disabled>ミックス MP3 書き出し</button>
+      <button class="act" id="videoOpen" disabled>MP4動画を作る</button>
+    </div>
+
+    <div class="sect">
+      <span class="legend">消去</span>
+      <button class="act danger" id="clearAll">すべての音符を消す</button>
+      <p class="hint">
+        全 15 トラックの楽譜テキストを消し、空のトラックを 3 本残します。<b>楽器の選択・ファイル名・調号は保持されます</b>。         Ctrl+Z で元に戻せます。
+      </p>
+    </div>
+  </div>
+</div>
+
+<div id="omrBox" class="modal">
+  <div class="card">
+    <h2>楽譜を取り込む（画像）</h2>
+    <p>PDF があればそのままアップロードするのが最良です —— 全体を一度に認識し、テンポと拍子が曲全体に効き、解像度を選ぶ必要もありません。画像の場合は一曲が画像の束で、左上から右下への並びがページ順になります。スキャンは 300 DPI 以上を、スマホでの撮影は明らかに劣ります。</p>
+
+    <div class="list" id="omrList">
+      <div class="empty" id="omrEmpty">
+        <p>まだファイルがありません。</p>
+        <button class="act" id="omrPick">ファイルを選ぶ</button>
+      </div>
+      <div class="grid" id="omrGrid" hidden></div>
+    </div>
+
+    <p class="hint" id="omrHint">
+      サムネイルをドラッグして並べ替えられます。<b>この並びがページ順です</b>。間違えると曲全体が狂います。認識には数十秒から数分かかります。途中で閉じないでください。
+    </p>
+    <p class="hint" id="omrErr" hidden></p>
+
+    <input type="file" id="omrFile" class="sr" accept="application/pdf,image/png,image/jpeg" multiple>
+
+    <div class="foot">
+      <span class="count" id="omrCount"></span>
+      <button class="act" id="omrAdd">画像を追加</button>
+      <button class="act danger" id="omrReset" hidden>消してやり直す</button>
+      <button class="act" id="omrCancel">キャンセル</button>
+      <button class="act" id="omrGo" disabled>認識を開始</button>
+      <button class="act" id="omrBack" hidden>パート一覧に戻る</button>
+    </div>
+
+    <div id="omrBusy" hidden>
+      <div class="notes"><span>♪</span><span>♫</span><span>♩</span><span>♬</span><span>♪</span></div>
+      <p id="omrStat"></p>
+    </div>
+  </div>
+</div>
+
+<div id="midiBox" class="modal">
+  <div class="card">
+    <h2>読み込む声部を選択</h2>
+    <p id="midiName"></p>
+    <div id="midiMode">
+      <label><input type="radio" name="impMode" value="append" checked> 追加取り込み<small>後ろに続ける</small></label>
+      <label><input type="radio" name="impMode" value="new"> 新規取り込み<small>すべて置き換え</small></label>
+      <span class="hint" id="midiAppendHint" hidden></span>
+    </div>
+    <div class="list">
+      <table>
+        <thead>
+          <tr>
+            <th style="width:1%">
+              <span class="sr">選択</span>
+              <input type="checkbox" id="pickAll">
+            </th>
+            <th style="width:1%">番号</th>
+            <th id="colUnit">Channel</th>
+            <th style="width:1%">音符数</th>
+            <th style="width:1%" id="colMode">取り込みモード</th>
+          </tr>
+        </thead>
+        <tbody id="midiRows"></tbody>
+      </table>
+    </div>
+    <p class="hint" id="midiHint">
+      各トラックが持てるのは単音だけです。<b>メロディ優先</b>は同時に鳴る音のうち最高音を取り、<b>根音優先</b>は最低音を取ります。
+      <b>両方優先</b>は 2 トラックに分けて高音も低音も残します。<br/><b>スマート声部分割</b>は 4 トラックでメロディと伴奏和音を切り分け、
+      <b>和音まるごと取り込み</b>は 15 トラックを使ってできるだけ多くの音を拾います。
+    </p>
+    <p class="hint" id="mmlHint" hidden>
+      これらの声部はもともと単音の MML なので、<b>そのまま移し、圧縮し直しません</b>。<b>読み取り専用</b>のトラックは、元の楽譜に解釈できない文字があったものです。テキストは編集できます。
+    </p>
+    <div class="foot">
+      <span class="count" id="midiCount">0 / 15 トラック選択中</span>
+      <button class="act" id="midiCancel">閉じる</button>
+      <button class="act" id="midiOk" disabled>読み込む</button>
+    </div>
+    <div id="midiBusy" hidden>
+      <div class="notes"><span>♪</span><span>♫</span><span>♩</span><span>♬</span><span>♪</span></div>
+      <p>取り込み中…</p>
+    </div>
+  </div>
+</div>
+
+<div id="saveBox" class="modal">
+  <div class="card">
+    <h2>楽譜を保存</h2>
+
+    <div class="sect">
+      <div class="namerow">
+        <input type="text" id="saveName" spellcheck="false" autocomplete="off"
+               maxlength="100" placeholder="このファイルに名前を付ける"
+               aria-label="保存するファイルの名前">
+        <button class="act" id="saveGo" disabled>local に保存</button>
+      </div>
+      <div class="result">
+        <p id="saveDirty" hidden></p>
+        <p id="saveOk" hidden></p>
+        <p id="saveErr" hidden></p>
+      </div>
+    </div>
+
+    <div class="sect">
+      <div class="tabrow" id="saveTabs" role="tablist">
+        <button type="button" class="stab on" data-tab="local" role="tab">local</button>
+        <button type="button" class="stab" data-tab="web" role="tab">web</button>
+      </div>
+
+      <div class="notes">
+        <p class="lede" id="saveLocalNote">
+          このブラウザーの中だけに保存されます。<b>パソコンやブラウザーを変えるとファイルは失われます</b>。書き出し、またはまとめてダウンロードで手元に保存するのが、長く残す方法です。
+        </p>
+        <p class="lede" id="saveWebNote" hidden>サーバーに保存されるので、同じアカウントでログインすれば取り出せます。書き出しやまとめてダウンロードでご自分のパソコンに保存するのが、長く残す方法です。</p>
+      </div>
+
+      <div class="swap">
+        <div id="saveWebLogin" hidden>
+          <p id="saveWebLoginWhy">web に保存するにはログインが必要です。ファイルの識別に使います。</p>
+          <a class="act" id="saveWebLoginBtn" href="/login" rel="nofollow">Google でログイン</a>
+        </div>
+
+        <div id="saveBody">
+          <div class="list">
+            <table>
+              <thead>
+                <tr>
+                  <th style="width:1%"><span class="sr">選択</span></th>
+                  <th>ファイル名</th>
+                  <th style="width:1%">トラック</th>
+                  <th style="width:1%">音符</th>
+                  <th style="width:1%">作成</th>
+                  <th style="width:1%">更新</th>
+                  <th style="width:1%"><span class="sr">操作</span></th>
+                </tr>
+              </thead>
+              <tbody id="saveRows"></tbody>
+            </table>
+          </div>
+          <div class="foot">
+            <label class="pickall">
+              <input type="checkbox" id="savePickAll"
+                     aria-label="すべて選択／解除">
+              <span>すべて選択</span>
+            </label>
+            <span class="count" id="savePicked"></span>
+            <span class="count" id="saveUsed"></span>
+            <span class="count" id="saveTotal"></span>
+            <button class="pg" id="saveZip" disabled>まとめてダウンロード</button>
+            <button class="pg" id="saveMove" disabled></button>
+            <button class="pg del" id="saveDel" disabled>選択したものを削除</button>
+            <span id="savePager">
+              <button class="pg" id="savePrev" aria-label="前のページ">‹</button>
+              <span class="count" id="savePage">1 / 1</span>
+              <button class="pg" id="saveNext" aria-label="次のページ">›</button>
+            </span>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<div id="saveOverBox" class="modal">
+  <div class="card">
+    <h2>このファイルを上書きしますか？</h2>
+    <p class="what" id="saveOverWhat"></p>
+    <p><b>この項目は今エディターにある内容に置き換わります</b>。元に戻せません（Ctrl+Z はエディターの操作だけで、保存済みファイルには効きません）。作成日時は保持されます。</p>
+    <div class="row">
+      <button class="act" id="saveOverCancel">キャンセル</button>
+      <button class="act danger" id="saveOverOk">上書き</button>
+    </div>
+  </div>
+</div>
+
+<div id="saveDelBox" class="modal">
+  <div class="card">
+    <h2>削除しますか？</h2>
+    <p class="what" id="saveDelWhat"></p>
+    <p><b>削除すると元に戻せません</b>。控えを残したい場合は、先に「まとめてダウンロード」で .mml として保存してください。</p>
+    <div class="row">
+      <button class="act" id="saveDelCancel">キャンセル</button>
+      <button class="act danger" id="saveDelOk">削除する</button>
+    </div>
+  </div>
+</div>
+
+<div id="saveMoveBox" class="modal">
+  <div class="card">
+    <h2>保存先に同じ名前のファイルがあります</h2>
+    <p class="what" id="saveMoveWhat"></p>
+    <p><b>上書きすると元に戻せません</b>。迷う場合はまず「残りだけコピー」を選び、名前が重なったものは改名してからコピーしてください。</p>
+    <div class="row">
+      <button class="act" id="saveMoveCancel">キャンセル</button>
+      <button class="act" id="saveMoveSkip"></button>
+      <button class="act danger" id="saveMoveOver">すべて上書き</button>
+    </div>
+  </div>
+</div>
+
+<div id="stageBox" class="modal">
+  <div class="card">
+    <h2>ミキサー空間設定</h2>
+    <p class="hint" id="stageDrop" hidden></p>
+    <div id="stagePlot" class="stage flat">
+      <svg id="stageRings" aria-hidden="true"></svg>
+    </div>
+    <div class="stagetransport">
+      <button id="stagePlay"></button>
+      <input type="range" id="stageSeek" min="0" max="1" step="0.0001" value="0"
+             aria-label="試聴位置">
+      <span id="stageTime">0:00</span>
+    </div>
+    <div class="stagefoot">
+      <label class="spk">
+        <input type="checkbox" id="stageSpatial">
+        空間ミックス
+        <span class="hint">ヘッドホンなら 3D の空間として聞こえます</span>
+      </label>
+      <label class="spk">
+        <input type="checkbox" id="stageSpk">
+        スピーカー
+        <span class="hint">前後が失われます</span>
+      </label>
+      <div class="erow">
+        <label for="stageEnv">環境音</label>
+        <select id="stageEnv"></select>
+      </div>
+      <div class="erow">
+        <label for="stageEnvAmt">環境音の音量</label>
+        <input type="range" id="stageEnvAmt" min="0" max="2" step="0.05" value="1">
+        <span id="stageEnvAmtValue"></span>
+      </div>
+      <p class="hint" id="stageEnvNote" hidden></p>
+      <div class="acts">
+        <button id="stageReset">配置をリセット</button>
+        <button class="act" id="stageGo">書き出し</button>
+      </div>
+      <div id="stageProg" hidden>
+        <progress id="stageBar" max="1" value="0"></progress>
+        <span id="stageStage"></span>
+        <button id="stageCancel">キャンセル</button>
+      </div>
+    </div>
+  </div>
+</div>
+
+<div id="shareBox" class="modal">
+  <div class="card">
+    <h2>共有</h2>
+
+    <div class="sect" id="shareLogin" hidden>
+      <p id="shareLoginWhy">
+        共有にはログインが必要です。著作権上の争いが生じた場合、当サイトは法律に基づき共有者へ取り下げを通知する義務があるため（著作権法第 90 条の 6）、         共有にあたっては連絡可能なメールアドレスを残していただく必要があります。
+      </p>
+      <a class="act" id="shareLoginBtn" href="/login" rel="nofollow">Google でログイン</a>
+    </div>
+
+    <div id="shareBody">
+      <div class="sect">
+        <p>
+          今エディタにある楽譜を共有します。楽譜は<b>元の音符を壊さない</b>文字数の最適化を通します ——           音符・長さ・テンポはまったく変わらず、より文字数の少ない書き方に置き換えるだけです。
+        </p>
+        <p class="hint" id="shareDrop" hidden></p>
+        <div class="result">
+          <p id="shareStat"></p>
+          <p id="shareCut"></p>
+        </div>
+        <button class="act" id="shareGo" disabled>共有リンクを作成</button>
+        <div class="urlrow">
+          <input id="shareUrl" readonly spellcheck="false" placeholder="作成するとここにリンクが表示され、自動でクリップボードにコピーされます">
+          <button class="act" id="shareCopy" disabled>コピー</button>
+        </div>
+        <p class="hint" id="shareErr" hidden></p>
+      </div>
+
+      <div class="sect">
+        <span class="legend">共有したリンク</span>
+        <div class="list">
+          <table>
+            <thead>
+              <tr>
+                <th>番号</th>
+                <th>リンク</th>
+                <th>トラック</th>
+                <th>作成日時</th>
+                <th><span class="sr">操作</span></th>
+              </tr>
+            </thead>
+            <tbody id="shareRows"></tbody>
+          </table>
+        </div>
+        <div class="foot">
+          <span class="count" id="shareTotal"></span>
+          <button class="pg" id="sharePrev" title="前のページ" disabled>‹</button>
+          <span class="pgno" id="sharePage">1 / 1</span>
+          <button class="pg" id="shareNext" title="次のページ" disabled>›</button>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<div id="shareDelBox" class="modal">
+  <div class="card">
+    <h2>この共有を削除</h2>
+    <p class="what" id="shareDelWhat"></p>
+    <p>
+      <b>この操作は取り消せません。すでに渡したリンクはすぐに無効になり</b>、相手が開くと「見つかりません」と表示されます。
+    </p>
+    <p>エディタ内の楽譜には影響しません —— 削除されるのはこの複製だけです。</p>
+    <div class="row">
+      <button class="act" id="shareDelCancel">キャンセル</button>
+      <button class="act danger" id="shareDelOk">削除する</button>
+    </div>
+  </div>
+</div>
+
+<div id="delBox" class="modal">
+  <div class="card">
+    <h2>アカウント削除</h2>
+    <p id="delWhat"></p>
+    <p><b>この操作は取り消せません。</b>共有したリンクはすぐに無効になり、開いた人には「見つかりません」と表示されます。</p>
+    <div class="row">
+      <button class="act" id="delCancel">キャンセル</button>
+      <button class="act danger" id="delOk">削除する</button>
+    </div>
+  </div>
+</div>
+
+<div id="markBox" class="modal">
+  <div class="card">
+    <h2 id="markTitle">セクション記号</h2>
+    <p class="what" id="markWhat"></p>
+    <div class="row" id="markRow">
+      <input type="text" id="markText" spellcheck="false" autocomplete="off"
+             aria-label="記号のテキスト">
+      <span class="hint" id="markLeft"></span>
+    </div>
+    <div class="row">
+      <button class="act" id="markCancel">キャンセル</button>
+      <button class="act play" id="markOk">OK</button>
+    </div>
+  </div>
+</div>
+
+<div id="tempoBox" class="modal">
+  <div class="card">
+    <h2>テンポ</h2>
+    <div class="tgroup">
+      <span class="legend">位置</span>
+      <div id="tempoWhere" role="radiogroup" aria-label="テンポ記号の位置">
+        <button type="button" role="radio" data-where="head" aria-checked="true" class="on">トラックの先頭</button>
+        <button type="button" role="radio" data-where="sel" aria-checked="false">選んだ音符の前</button>
+      </div>
+    </div>
+    <div class="tgroup">
+      <span class="legend">テンポ（BPM）</span>
+      <div id="tempoRow">
+        <input type="number" id="tempoNum" min="32" max="255" step="1" value="120"
+               inputmode="numeric" aria-label="テンポ BPM">
+        <input type="range" id="tempoSlider" min="32" max="255" step="1" value="120"
+               aria-label="テンポスライダー">
+        <button type="button" id="tempoTry" aria-pressed="false"
+                title="固定のリズムパターンでこのテンポを試聴します。スライダーをドラッグ中も自動で鳴ります。">
+          <i class="fa-solid fa-play" aria-hidden="true"></i>試聴
+        </button>
+      </div>
+    </div>
+    <p id="tempoInfo"></p>
+    <p id="tempoNote"></p>
+    <div class="row">
+      <button class="act" id="tempoDel" hidden>このテンポ記号を削除</button>
+      <button class="act" id="tempoCancel">キャンセル</button>
+      <button class="act play" id="tempoOk">実行</button>
+    </div>
+  </div>
+</div>
+
+<div id="velBox" class="modal">
+  <div class="card">
+    <h2>ベロシティ</h2>
+    <div class="tgroup">
+      <span class="legend">範囲</span>
+      <div id="velScope" role="radiogroup" aria-label="ベロシティの範囲">
+        <button type="button" role="radio" data-scope="all" aria-checked="false">すべてのトラック</button>
+        <button type="button" role="radio" data-scope="track" aria-checked="true" class="on">現在のトラック</button>
+        <button type="button" role="radio" data-scope="sel" aria-checked="false">選んだ音符</button>
+      </div>
+    </div>
+    <p id="velRange"></p>
+    <div class="tgroup">
+      <span class="legend">調整</span>
+      <div id="velKeys" role="radiogroup" aria-label="ベロシティの幅"></div>
+    </div>
+    <p id="velNote"></p>
+    <div class="row">
+      <button class="act" id="velCancel">キャンセル</button>
+      <button class="act play" id="velOk" disabled>実行</button>
+    </div>
+  </div>
+</div>
+
+<div id="transBox" class="modal">
+  <div class="card">
+    <h2>移調</h2>
+    <div class="tgroup">
+      <span class="legend">範囲</span>
+      <div id="transScope" role="radiogroup" aria-label="移調の範囲">
+        <button type="button" role="radio" data-scope="all" aria-checked="false">すべてのトラック</button>
+        <button type="button" role="radio" data-scope="track" aria-checked="true" class="on">現在のトラック</button>
+        <button type="button" role="radio" data-scope="sel" aria-checked="false">選んだ音符</button>
+      </div>
+    </div>
+    <div class="tgroup">
+      <span class="legend">調整</span>
+      <div id="transKeys" role="radiogroup" aria-label="移調の幅"></div>
+    </div>
+    <p id="transNote"></p>
+    <div class="row">
+      <button class="act" id="transCancel">キャンセル</button>
+                <button class="act play" id="transOk" disabled>実行</button>
+    </div>
+  </div>
+</div>
+
+<div id="optBox" class="modal">
+  <div class="card">
+    <h2>圧縮・最適化</h2>
+    <div class="tgroup">
+      <span class="legend">範囲</span>
+      <div id="optScope" role="radiogroup" aria-label="最適化の範囲">
+        <button type="button" role="radio" data-scope="all" aria-checked="false">すべてのトラック</button>
+        <button type="button" role="radio" data-scope="track" aria-checked="true" class="on">現在のトラック</button>
+        <button type="button" role="radio" data-scope="sel" aria-checked="false">選んだ音符</button>
+      </div>
+    </div>
+    <div class="tgroup">
+      <span class="legend">方法</span>
+      <div id="optRules" role="radiogroup" aria-label="最適化の方法">
+        <button type="button" role="radio" data-rule="lossless" aria-checked="false">
+          <span class="t">可逆圧縮</span>
+          <span class="d">
+            DP で各音の最も短い書き方を計算し直します。<b>音符は 1 つも動かず、音楽は完全に同じです。</b>
+          </span>
+          <span class="n"></span>
+        </button>
+        <p class="hint" id="optLossyNote">
+          文字数がまだ多すぎる場合は、以下の最適化も使えます。<b>どの音符の開始時刻も変えず、リズムも変えない</b>という前提で音符の長さを微調整し、文字数と引き換えにします。<b>音の長短は変わりますが、全体のリズムやメロディには影響しません。</b>
+        </p>
+        <button type="button" role="radio" data-rule="fill" aria-checked="false"
+                aria-describedby="optLossyNote">
+          <span class="t">音長を埋める</span>
+          <span class="d">は、音の後ろの短い休符をまるごとその音に取り込みます。最も文字数が減り、切れ目も最も少なくなります。</span>
+          <span class="n"></span>
+        </button>
+        <button type="button" role="radio" data-rule="partial" aria-checked="false"
+                aria-describedby="optLossyNote">
+          <span class="t">部分的に埋める</span>
+          <span class="d">は一部だけ取り込み、短い休符を残します。切れ目の感じが保たれます。</span>
+          <span class="n"></span>
+        </button>
+        <button type="button" role="radio" data-rule="release" aria-checked="false"
+                aria-describedby="optLossyNote">
+          <span class="t">終端を休符に</span>
+          <span class="d">は音の末尾を譲って休符にします。ブレスのようになります。</span>
+          <span class="n"></span>
+        </button>
+      </div>
+    </div>
+    <p id="optChars"></p>
+    <p id="optNote"></p>
+    <div class="row">
+      <button class="act" id="optCancel">キャンセル</button>
+      <button class="act play" id="optOk" disabled>実行</button>
+    </div>
+  </div>
+</div>
+
+<div id="mergeBox" class="modal">
+  <div class="card">
+    <h2>トラック結合</h2>
+    <div class="tgroup">
+      <span class="legend">結合</span>
+      <div id="mergeFlow">
+        <span>元</span>
+        <span class="from" id="mergeFrom"></span>
+        <i class="fa-solid fa-arrow-right" aria-hidden="true"></i>
+        <span>先</span>
+        <select id="mergeTo" aria-label="どのトラックに結合するか"></select>
+      </div>
+    </div>
+    <div class="tgroup">
+      <span class="legend">範囲</span>
+      <div id="mergeScope" role="radiogroup" aria-label="結合の範囲">
+        <button type="button" role="radio" data-scope="track" aria-checked="true" class="on">現在のトラック</button>
+        <button type="button" role="radio" data-scope="sel" aria-checked="false">選んだ音符</button>
+      </div>
+    </div>
+    <div class="tgroup">
+      <span class="legend">方法</span>
+      <div id="mergeWays" role="radiogroup" aria-label="結合の方法">
+        <button type="button" role="radio" data-way="src" aria-checked="false">
+          <span class="t">元トラック優先</span>
+          <span class="d">元の音をすべて移します。結合先のトラックが残るのは<b>元に休符がある</b>隙間だけです。</span>
+          <span class="n"></span>
+        </button>
+        <button type="button" role="radio" data-way="tgt" aria-checked="false">
+          <span class="t">結合先優先</span>
+          <span class="d">逆に、元の音を<b>結合先に休符がある</b>隙間にだけ入れ、ぶつかったものは捨てます。</span>
+          <span class="n"></span>
+        </button>
+        <p class="hint" id="mergeLineNote">
+          以下の 2 つは<b>単音の線を 1 本作り直します</b>
+        </p>
+        <button type="button" role="radio" data-way="melody" aria-checked="false"
+                aria-describedby="mergeLineNote">
+          <span class="t">メロディ優先</span>
+          <span class="d">は発音のたびに 2 トラックの<b>最高音</b>を取ります。メロディが浮かび上がります。</span>
+          <span class="n"></span>
+        </button>
+        <button type="button" role="radio" data-way="root" aria-checked="false"
+                aria-describedby="mergeLineNote">
+          <span class="t">根音優先</span>
+          <span class="d">は発音のたびに 2 トラックの<b>最低音</b>を取ります。低音の線が残ります。</span>
+          <span class="n"></span>
+        </button>
+        <p class="hint" id="mergeWipeNote">
+          以下の 1 つは<b>この範囲にある結合先トラックの内容をすべて捨てます</b>。元の休符も含みます。
+        </p>
+        <button type="button" role="radio" data-way="replace" aria-checked="false"
+                aria-describedby="mergeWipeNote">
+          <span class="t">元で置き換え</span>
+          <span class="d">範囲内の結合先トラックの内容をまるごと捨て、元の内容（休符も含めて）に置き換えます。</span>
+          <span class="n"></span>
+        </button>
+      </div>
+    </div>
+    <p id="mergeChars"></p>
+    <p id="mergeNote"></p>
+    <div class="row">
+      <button class="act" id="mergeCancel">キャンセル</button>
+      <button class="act play" id="mergeOk" disabled>実行</button>
+    </div>
+  </div>
+</div>
+
+<script type="module" src="/js/main.js"></script>
+    <script type="module" src="/js/pwa.js"></script>
+</body>
+</html>

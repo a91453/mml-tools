@@ -1,0 +1,2802 @@
+/* ──────────────────────────────────────────────────────────────────────────
+   編輯器的樣式。
+
+   從 Views/Home/Index.cshtml 的 <style> 搬出來的，一行規則都沒改 —— 唯一留在 markup
+   裡的是 `--sans`，那個字型堆疊是**伺服器按語言算的**，靜態 .css 表達不了。
+
+   搬過來之後 Program.cs 的快取政策必須跟著改（`/css/` 要進 no-cache 那一支）：落到一週
+   政策的話，發佈後回訪的人會拿到「新版 markup 配舊版樣式」——**沒有錯誤訊息，只有版面
+   壞掉**。
+   ──────────────────────────────────────────────────────────────────────────── */
+
+  :root{
+    --bg:#0d1a1b; --bg2:#122325; --panel:#16292b; --panel2:#1a3032;
+    --line:#23403f; --line-soft:#1b3234;
+    --txt:#e4efec; --dim:#7f9b98; --dimmer:#547370;
+    --t1:#e0ae5a; --t2:#57b6a4; --t3:#b487c9;
+    --t4:#7aa5e0; --t5:#e0788f; --t6:#a3c464;
+    --warn:#d97a72;
+    /* 「卜這顆是選中的」的底色。要夠深，白字才讀得出來（白字配 --t1 的金色只有
+       1.9:1，完全不能用）。工具模式、音符長度、捲軸同步共用同一套語言。 */
+    --sel:#2b6b60;
+    --mono:"IBM Plex Mono",ui-monospace,"SFMono-Regular",Consolas,monospace;
+    --display:"Gloock",Georgia,serif;
+    /* 捲軸有多寬。**只有舊引擎（webkit 那組偽元素）吃得到它** —— 現代 Chrome 與
+       Firefox 走的是 `scrollbar-width:thin`，那個關鍵字沒有數值可以調。
+       12px 是「拖得到」的下限，比原生的細一點但不到細線。 */
+    --sbw:12px;
+
+    /* ══ 配在別的顏色上的字 ════════════════════════════════════════════════
+       三個都是「字」，分開的理由是**它們各自坐在什麼上面**，而那三種底在淺色主題
+       下的去向不一樣：
+
+         --on-color   坐在**分頁色 / --sel** 上。那兩組不跟主題走（分頁色是「這一份
+                      譜是哪一份」的識別），所以配它們的白字也不跟。
+         --on-accent  坐在 **--t1 / --warn** 上。這兩個在淺色主題下壓深了，所以字
+                      要翻成白的。
+         --on-hl      坐在**選取螢光**（--hl-rgb）上。螢光兩個主題都是亮的，深字不翻。
+
+       合併成一個的話，淺色主題那一翻會把三種底一起拖下水。 */
+    --on-color:#fff;
+    /* 同一個白，但要進 rgba()。色碼變數塞不進 rgba()，所以保留三元組。 */
+    --on-color-rgb:255,255,255;
+    --on-accent:#14201a;
+    --on-hl:#14201a;
+    /* 比 --txt 再亮一階：hover 到的文字鈕、focus 的外框、標記點的內圈。**畫在深底上**，
+       所以淺色主題下它要翻成黑的（不是「更亮」，是「對比更強」）。 */
+    --txt-hi:#fff;
+
+    /* hover 一階。深色主題下是**更亮**，淺色主題下是**更深** —— 兩邊講的是同一句話
+       （「離背景更遠一點」），只是背景在兩邊的方向相反。 */
+    --sel-hi:#347d70;
+    --t1-hi:#eebc6c;
+
+    /* 「只有 1px 框、沒有填色」那一類按鈕的底。**值寫成 var() 而不是色碼**，所以兩個
+       主題各自取到自己的 --panel／--panel2，淺色區塊不必再覆寫一次。
+
+       兩個變體差在**它坐在什麼上面**：--btn-bg 給坐在 --bg／--bg2 上的（標題列、捲軸
+       工具列、分頁列），--btn-bg-alt 給坐在 --panel 上的（設定抽屜、對話框的卡片）——
+       那裡用 --panel 會跟底板同色，等於沒加。 */
+    --btn-bg:var(--panel);
+    --btn-bg-alt:var(--panel2);
+
+    /* 分隔條。--split 是靜止、--split-hi 是 hover／拖曳中。 */
+    --split:#9db2af; --split-hi:#dce8e5;
+    --toast-bg:#1d2e2c;
+    /* 搖桿：旋鈕與四顆方向鍵共用的「手指要碰的實體」色，以及外圈那道邊。 */
+    --joy-knob:#cfd6e4; --joy-edge-rgb:207,214,228;
+    /* 文字區的底。**textarea 自己是 transparent**（上色層在它下面），底在 .tarow 那一層。
+       深色主題下跟 --bg 同值，但**寫成色碼而不是 var(--bg)** —— 淺色主題下它要是純白而
+       不是頁面底色（語法上色那六個色是對白底量的）。 */
+    --ta-bg:#0d1a1b;
+
+    /* ══ 要進 rgba() 的三元組 ══════════════════════════════════════════════
+       色碼變數塞不進 rgba()，所以這幾個保留 `r,g,b` 的形式。**alpha 寫在呼叫端**，
+       因為同一個色在不同地方用不同的濃度（投影 .5/.55/.6、薄膜 .78/.82/.86）。 */
+    /* 選取螢光。= --t1 的 RGB。 */
+    --hl-rgb:224,174,90;
+    /* = --warn 的 RGB。 */
+    --warn-rgb:217,122,114;
+    /* 對話框背幕。**淺色主題刻意不翻** —— 它要壓住底下那一片，翻淺等於沒有背幕。 */
+    --scrim-rgb:6,14,15;
+    /* 薄膜：搖桿面板、忙碌遮罩、登入區塊。跟背幕同一個深色值，但**淺色主題下翻成白的**
+       —— 它上面寫的是 --txt，而且底下那一片是要看得到的。 */
+    --veil-rgb:6,14,15;
+    /* 投影。純黑在淺底上偏重，所以淺色主題下帶一點青讓它跟介面同一家。 */
+    --shadow-rgb:0,0,0;
+    /* 提亮（搖桿的高光）。淺色主題下要翻成黑的 —— 不翻的話那幾道高光會整個消失。 */
+    --tint-rgb:255,255,255;
+
+    /* ══ 鋼琴捲軸 ══════════════════════════════════════════════════════════
+       canvas 讀不到 CSS 變數，所以 pianoroll.js 的 `C` 表抄了一份當退路，開站與換主題
+       時由 `readTheme()` 從這裡讀回去。**兩份值由 test/theme.test.mjs 逐項比對** ——
+       寫錯不會報錯，只會顏色不一樣。 */
+    --roll-bg:#0d1a1b;
+    --roll-row-white:#12201f;
+    --roll-row-black:#0b1516;
+    --roll-row-key-in:#070d0e;
+    --roll-row-key-off:#2c3937;
+    /* 「音高不準」那幾列／那幾個鍵再蓋一層。疊在上面而不是換一組顏色，底下的圖樣才留得住。
+
+       ⚠️ **深色主題下 --roll-dim-row 幾乎是無效的。** 量出來（疊在四種列色上）：
+         rowWhite 1.07:1   rowBlack 1.02:1   rowKeyIn 1.00:1   rowKeyOff 1.23:1
+       連 alpha 拉到 1.0 的天花板也只有 1.17 / 1.06 / 1.01 / 1.64。rowKeyIn 是 #070d0e
+       = rgb(7,13,14)，而 tint 是 rgb(6,12,13) —— **兩個是同一個顏色**，所以選了調號之後
+       調內那幾列即使音高不準也一個像素都不會變。
+
+       這不是 alpha 調得不夠，是「在近乎全黑的底上壓暗」物理上走不通。要修得把「不準 =
+       壓暗」這個語意換掉（近黑底上只剩提亮／換色相／加紋理），那是一個要單獨想清楚的
+       視覺決定，不在加淺色主題這件事的範圍裡。淺色那邊沒有這個問題，見下面的覆寫。
+       --roll-dim-key 兩邊都正常（深 3.91:1、淺 3.43:1）。 */
+    --roll-dim-row:rgba(6,12,13,.34);
+    --roll-dim-key:rgba(6,12,13,.55);
+    --roll-grid-half:rgba(35,64,63,.18);
+    --roll-grid-cell:rgba(35,64,63,.35);
+    --roll-grid-beat:rgba(35,64,63,.75);
+    --roll-grid-bar:rgba(87,182,164,.30);
+    --roll-grid-oct:rgba(87,182,164,.16);
+    /* 音高準／不準的兩條分界（n15|n16 與 n88|n89）。中性的灰，跟青色系的格線分開。 */
+    --roll-grid-edge:rgba(176,192,189,.55);
+    --roll-gutter-bg:#16292b;
+    --roll-key-white:#c9d8d5;
+    --roll-key-black:#1a3032;
+    /* **鍵上的字全部走這一個**：C 音的音名，以及游標移到鍵盤上時換成的音名。
+
+       **不能沿用 --roll-bg** —— 淺色主題的底是近白（#e9eeec），寫在白鍵（#ffffff）上是
+       1.13:1，等於沒有。新增任何「畫在鍵上的字」都從這裡取色。
+       （這一格原本是一個從來沒有人用過的 keyEdge。） */
+    --roll-key-label:#0d1a1b;
+    --roll-ruler-bg:#122325;
+    --roll-line:#23403f;
+    --roll-dim:#7f9b98;
+    --roll-dimmer:#547370;
+    --roll-guide:#e0ae5a;
+    /* **畫在背景上的那幾條白線**：拖曳中的原位置框、群組拖曳的預覽框、打擊的十字游標。
+       要的是對**背景**的對比。跟音符外框是兩件事（後者在淺色主題下改成推導，見
+       --roll-note-edge-shade），跟選中的高亮也是兩件事（見下面那個）。 */
+    --roll-active-edge:#ffffff;
+    /* 被選中的音符外面那一圈（markSelection）。**深色主題下跟 active-edge 同一個白**，
+       拆出來是為了讓淺色主題把「選中」換成自己的顏色 —— 深色這邊一個像素都沒動。 */
+    --roll-sel-edge:#ffffff;
+    /* 別軌音符外框的 alpha。**不是顏色** —— 它跟下面兩個都是 C 表以外跟著主題走的數值，
+       所以 test/theme.test.mjs 的 --roll-* 計數要把它們算進去。
+
+       兩級：前 6 軌（會進遊戲的）用 ghost，第 7 軌之後的輔助軌再淡一級用 aux。aux 的
+       理由見 pianoroll.js 的 AUX_ALPHA —— 「外框疊再多層都讀得出輪廓」那句話是在 5 條
+       別軌時取得的證據，而現在最多是 14 條。 */
+    --roll-ghost-alpha:.6;
+    --roll-aux-alpha:.28;
+    /* 別軌音符**填色**的 alpha。純外框的音符在密的譜上要盯著看才找得到（短音的四條邊
+       幾乎黏成一條線），填一層薄的補上「這裡有東西」。
+
+       **兩級共用同一個值**，不跟著外框那邊分 —— 分級由外框扛。
+       深色只要 .06：軌色是為深底調的中飽和色，壓在 #0d1a1b 上一點點就亮起來了，而疊
+       起來的濃度是 1-(1-a)^n，最壞情況 14 條別軌 → .58。 */
+    --roll-ghost-fill-alpha:.08;
+    /* 當前軌音符外框的加深係數。0 = 不推導，用上面的 --roll-active-edge（白）。 */
+    --roll-note-edge-shade:0;
+    --roll-hover:rgba(255,255,255,.6);
+    --roll-mark-start:#8ecdf5;
+    --roll-mark-end:#f2a0bb;
+    --roll-mark-hover:rgba(255,255,255,.45);
+    --roll-marquee:rgba(126,214,223,.16);
+    --roll-marquee-edge:rgba(168,235,240,.9);
+    --roll-caret:rgba(200,214,211,.55);
+    --roll-tempo:#57b6a4;
+    --roll-vel:#e08b4a;
+    --roll-bad:#ff3b30;
+    --roll-bad-bar:rgba(255,59,48,.16);
+    --roll-will-kill:#ff3b30;
+    --roll-will-trim:#e0ae5a;
+  }
+
+  /* ══════════════════════════════════════════════════════════════════════════
+     淺色主題
+
+     `data-theme` 由 Index.cshtml 的開機腳本在**第一次繪製之前**就寫進 <html>（不能等模組
+     載完 —— /js/ 是 network-first，見 Pwa/sw.js，那會閃一整片深色）。沒有這個屬性時就是
+     深色，也就是說**既有使用者升級後看到的東西一個像素都沒變**。
+
+     只覆寫顏色，版面規則一條都不重複 —— 重複的那一刻起，兩個主題就會開始各自漂移。
+
+     四個**刻意不跟著翻**的東西：
+       · --on-color   配在彩色底上的白字。軌色不跟主題走，所以這個配對不能動。
+       · --scrim-rgb  對話框背幕。它要壓住底下那一片，翻淺等於沒有背幕。
+       · --on-hl      選取螢光上的深字。螢光兩個主題都是亮的。
+       · --btn-bg／--btn-bg-alt  值本身是 var()，指到的 --panel／--panel2 已經翻過了。
+     ══════════════════════════════════════════════════════════════════════════ */
+  :root[data-theme="light"]{
+    /* 底 → 浮起來的層次跟深色主題相反：深色是越浮越亮，淺色是越浮越白。 */
+    --bg:#e9eeec; --bg2:#f5f7f7; --panel:#fbfcfb; --panel2:#ffffff;
+    --line:#c5d3d0; --line-soft:#dee5e4;
+    --txt:#1b2424; --dim:#475d5d; --dimmer:#688583;
+
+    /* 六個品牌色**壓深**。深色主題下它們同時是 TRACK_COLORS[0..5]，淺色主題下那個
+       「同一個顏色」的關係不成立 —— 軌色不跟主題走（那是「這一份譜是哪一份」的識別），
+       而中飽和的原色畫在白底上只有 1.6:1。
+
+       --t1 在**深色主題下是琥珀金**，淺色主題下是藍的。亮度沒動（它同時要當「白底上
+       的文字」與「白字的按鈕底」，兩邊夾著），只換了色相。跟 --sel 差 18° 是刻意的：
+       兩個都是藍，靠色相分開「這是品牌」與「這個是選中的」。 */
+    --t1:#eeb752; --t2:#1d7464; --t3:#9b33cb;
+    --t4:#2e66b6; --t5:#be304f; --t6:#53701c;
+    --warn:#bb3a2c;
+    --sel:#166b96;
+
+    /* --t1／--warn 現在是深色，所以配在它們上面的字翻成白的。
+       這一翻順手治好一個既有的不一致：深色主題下 --warn 底同時配過深字（5.58:1）
+       與白字（3.01:1），後者一直是不及格的。 */
+    --on-accent:#fff;
+    --txt-hi:#000;
+
+    /* hover 在淺色主題下是**更深**一階，不是更亮。 */
+    --sel-hi:#125677;
+    --t1-hi:#856121;
+
+    --split:#b3c2bf; --split-hi:#8ba09c;
+    --toast-bg:#ffffff;
+    --joy-knob:#4a5a68; --joy-edge-rgb:60,80,90;
+    /* 文字區是**純白**，不是頁面底色 —— 語法上色那六個色是對白底量的（見下面 .mml-hl）。 */
+    --ta-bg:#ffffff;
+
+    /* 選取螢光要**更亮**（螢光筆），--on-hl 照樣是深字。 */
+    --hl-rgb:255,206,84;
+    --warn-rgb:187,58,44;
+    /* 背幕不翻（見上）；薄膜翻成白的，它上面寫的是 --txt。 */
+    --veil-rgb:255,255,255;
+    /* 提亮 → 壓暗。不翻的話搖桿高光那幾道會整個消失。 */
+    --tint-rgb:0,0,0;
+    /* 投影：**alpha 寫在呼叫端**（0 18px 40px 的 .55 之類），這裡只能換色相。
+       純黑在淺底上偏重，所以帶一點青讓它跟介面同一家。 */
+    --shadow-rgb:26,48,46;
+
+    /* ── 鋼琴捲軸 ────────────────────────────────────────────────────────── */
+    --roll-bg:#e9eeec;
+    --roll-row-white:#f2f5f4;
+    --roll-row-black:#dfe6e4;
+    /* 「黑 = 空的」在淺色主題下要翻成「白 = 空的」，灰還是「佔住了」。 */
+    --roll-row-key-in:#fbfcfc;
+    --roll-row-key-off:#bcb8d5;
+    /* 壓暗層。**這一邊四種列色的表現是一致的**（深色那邊不是，見 :root 的長註解）：
+         a=.18 → 1.34–1.41    a=.24 → 1.50–1.60    a=.34 → 1.79–1.99
+       取 .24 —— 比深色最好的那一列（rowKeyOff 1.23:1）明確一點，但 dim-row 疊在既有
+       圖樣上，再濃就會把底下的黑白鍵／調內外圖樣蓋掉。
+       dim-key 的 alpha 不動：.55 在白鍵上是 3.43:1，深色那邊是 3.91:1，夠接近。 */
+    --roll-dim-row:rgba(26,48,46,.24);
+    --roll-dim-key:rgba(26,48,46,.55);
+    --roll-grid-half:rgba(60,90,88,.05);
+    --roll-grid-cell:rgba(60,90,88,.10);
+    --roll-grid-beat:rgba(60,90,88,.25);
+    --roll-grid-bar:rgba(25,113,97,.25);
+    --roll-grid-oct:rgba(25,113,97,.10);
+    --roll-grid-edge:rgba(90,112,109,.55);
+    /* **琴鍵之間那條線就是這片底色**（每一鍵少畫 1px，讓它透出來）。所以它一定要比鍵深，
+       不能跟著 --panel 走 —— 近白的 gutter 配白鍵等於整排鍵黏成一塊。 */
+    --roll-gutter-bg:#1b2424;
+    --roll-key-white:#ffffff;
+    --roll-key-black:#1b2424;
+    --roll-key-label:#060606;
+    --roll-ruler-bg:#f5f7f7;
+    --roll-line:#c5d3d0;
+    --roll-dim:#475d5d;
+    --roll-dimmer:#688583;
+    --roll-guide:#856121;
+    /* 拖曳中的原位置框、打擊的十字游標。**這幾個畫在背景上**，所以要的是對背景的對比 ——
+       跟音符外框是兩件事，後者改成推導了（見 --roll-note-edge-shade）。 */
+    --roll-active-edge:#1b2424;
+    --roll-sel-edge:#21ade0;
+    /* 外框拉到 .9：軌色是為深底調的中飽和色，同一條 .6 的線壓在 #0d1a1b 上很清楚，壓在
+       這裡的 #e9eeec 上大約只有 1.5:1。輔助軌照同一個係數（×1.5）走到 .42。
+       代價知情 —— 最壞情況 14 條別軌疊在一起，越不透明疊起來越像一片紋理。 */
+    --roll-ghost-alpha:.9;
+    --roll-aux-alpha:.42;
+    /* 填色 .12（深色是 .06）。同一個道理：中飽和色在淺底上要多一點才看得出來。
+       最壞情況 14 條疊起來是 .83 —— 比深色的 .58 重，知情的取捨，靠逐軌的顯示開關兜底。 */
+    --roll-ghost-fill-alpha:.13;
+    /* 當前軌的音符外框 = **音符自己的顏色 × 0.45**，不是固定色。
+       固定色在這裡做不到 —— 框要同時對背景（才看得見）與對自己的填色（才切得開相鄰
+       的同音）有對比，而 15 個軌色散在整個色相環上。推導出來兩邊都成立。 */
+    --roll-note-edge-shade:.45;
+    --roll-hover:rgba(27,36,36,.55);
+    --roll-mark-start:#1f6fb0;
+    --roll-mark-end:#b03a6a;
+    --roll-mark-hover:rgba(27,36,36,.40);
+    --roll-marquee:rgba(23,120,132,.18);
+    --roll-marquee-edge:rgba(18,95,105,.85);
+    --roll-caret:rgba(40,60,58,.55);
+    --roll-tempo:#f460ff;
+    --roll-vel:#eeb752;
+    --roll-bad:#d0021b;
+    --roll-bad-bar:rgba(208,2,27,.12);
+    --roll-will-kill:#d0021b;
+    --roll-will-trim:#856121;
+  }
+  *{box-sizing:border-box}
+  html,body{height:100%}
+  body{
+    margin:0; background:var(--bg); color:var(--txt);
+    font-family:var(--sans); font-size:14px; line-height:1.6;
+    display:flex; flex-direction:column;
+    -webkit-font-smoothing:antialiased;
+  }
+  button,select,input,textarea{font:inherit;color:inherit}
+  /*
+    hidden 要真的有效。
+
+    瀏覽器內建的 `[hidden]{display:none}` 是 UA 樣式，**任何**作者寫的 display 都贏過它
+    —— 而這份 CSS 裡到處都是 `.hint{display:block}` 這種規則。踩到的表現是「設了
+    el.hidden 但東西還在畫面上」，而且完全不報錯。這個坑至少已經咬過兩次。
+  */
+  [hidden]{display:none!important}
+  ::selection{background:rgba(var(--hl-rgb),.3)}
+  /* 樂譜文字區竹的選取要更明顯：點捲軸上的音符會把游標跳到對應的那一段，
+     而那常常只有 "e4" 兩個字元 —— 30% 的底色根本看不到。 */
+  textarea::selection{background:rgba(var(--hl-rgb),.6);color:var(--on-hl)}
+
+  /* ---------- top bar ---------- */
+  /* position:relative 是給 #navMenu 用的 —— 窄畫面上它會絕對定位成一個下拉面板。
+
+     align-items:baseline 之下，標題以外的每一個子元素都自己寫著 `align-self:center`，
+     於是 h1 是唯一參與基線對齊的項目，而一個項目對不了基線等於整列都在置中。 */
+  header{
+    display:flex; align-items:baseline; gap:16px; flex-wrap:wrap;
+    padding:14px 22px; border-bottom:1px solid var(--line);
+    background:linear-gradient(180deg,var(--bg2),var(--bg));
+    position:relative;
+  }
+  h1{
+    margin:0; font-family:var(--display); font-weight:400;
+    font-size:26px; letter-spacing:.01em; line-height:1;
+    color:var(--txt);
+  }
+  h1 em{font-style:normal;color:var(--t1)}
+  /* 標題是連結但不要看起來像連結（沒有底線、水沒有藍色），只在滑過時給一點回饋 */
+  h1 a{color:inherit;text-decoration:none;transition:opacity .15s}
+  h1 a:hover{opacity:.8}
+  h1 a:focus-visible{outline:2px solid var(--t1);outline-offset:3px;border-radius:2px}
+  .sub{color:var(--dimmer);font-size:12px;letter-spacing:.08em;text-transform:uppercase}
+
+  /*
+    以 app 形式開啟時整個 h1 收掉（.sub 在它裡面）—— 視窗標題列已經寫著同一個名字。條件跟
+    manifest 的 display_override 一組，**兩個都要列**：只寫 standalone 的話，落到
+    minimal-ui 的那些視窗會變成「有視窗標題、頁內也還有標題」。
+
+    `display:none` 而不是視覺隱藏：h1 裡面是一個連結，視覺隱藏會留一個看不見卻能 Tab 到的
+    連結。**刻意放在這裡而不是檔案末端那個窄斷點裡**：它跟畫面寬窄無關。
+  */
+  @media (display-mode: standalone), (display-mode: minimal-ui) {
+    h1{display:none}
+  }
+  /* 手機版型的規則全部集中在檔案最末端的那一個 @media (max-width:528px) ——
+     搬過去的理由見那裡的說明（順序，不是偏好）。 */
+  header .spacer{flex:1}
+  #gear,#share,#clip,#file,#aboutBtn{
+    display:inline-flex; align-items:center; gap:7px; align-self:center;
+    background:var(--btn-bg); border:1px solid var(--line); border-radius:3px;
+    color:var(--dim); cursor:pointer; padding:5px 11px; font-size:12px;
+  }
+  #gear:hover,#clip:hover,#file:hover,#share:hover,#aboutBtn:hover{border-color:var(--t2);color:var(--txt)}
+  /* #share 女以前會因為「沒音符」而暗掉，現在一律可按 —— 那個判斷搬進框裡了 */
+
+  /*
+    剪貼簿／檔案／分享這一組。**平常等於不存在**：`display:contents` 讓三顆按鈕直接當
+    `#navMenu` 的 flex 項目 —— 那個下拉面板尤其需要這條，因為
+    `#navMenu button{align-self:stretch}` 只吃真正的 flex 項目，中間夾一層有盒子的 div，
+    那三顆會縮成內容寬度、跟下面那顆寬度參差。
+  */
+  #navIo{display:contents}
+  /*
+    只有 **app 視窗、而且是滑鼠尺寸的視窗**，這一組才搬到標題列左邊（上面那條規則在 app
+    視窗裡把 h1 收掉了，左半於是整片空著）。
+
+    絕對定位而不是塞回 flex 流程：要對齊的是**header 的內容左緣**，而那正好是
+    `padding-left` 的 22px；而且不佔版面就不會參與 `flex-wrap`。
+
+    **那個窄斷點的 528／480 一改，這裡的 529／481 就要跟著改** —— 對不上的症狀是某個寬度
+    區間裡這三顆同時出現在左上角與下拉面板裡。
+  */
+  @media (display-mode: standalone) and (min-width: 529px) and (min-height: 481px),
+         (display-mode: minimal-ui) and (min-width: 529px) and (min-height: 481px) {
+    #navIo{
+      display:flex; align-items:center; flex-wrap:nowrap; gap:16px;
+      position:absolute; left:22px; top:50%; transform:translateY(-50%);
+    }
+  }
+
+  /* ---------- 木標題列上的四顆顯示開關 ---------- */
+  /*
+    **預設不存在**，只在窄畫面才出現（見檔尾那個 @media）。關閉狀態寫在這裡而不是只寫在
+    斷點裡：規則的「關閉」要有個家，不然 PC 上會看到它們。
+
+    28px 正方形，跟 `.panebar .iconbtn` 與 `#rollbar` 那組按鈕同一個基準 —— 高度訂死、
+    不讓 FontAwesome 的 line box 決定。
+  */
+  header .ico{
+    display:none; align-items:center; justify-content:center; align-self:center;
+    width:28px; height:28px; padding:0; box-sizing:border-box; flex:0 0 auto;
+    background:var(--btn-bg); border:1px solid var(--line); border-radius:3px;
+    color:var(--dim); cursor:pointer;
+    transition:color .15s,background .15s,border-color .15s;
+  }
+  header .ico i{font-size:13px}
+  header .ico:not(.on):hover{border-color:var(--t2);color:var(--txt)}
+  /* 「開著」的樣式跟全站一致（工具模式、音符長度、循環、每軌靜音共用 --sel） */
+  header .ico.toggle.on{background:var(--sel);border-color:var(--sel);color:var(--on-color)}
+  header .ico.toggle.on:hover{background:var(--sel-hi);border-color:var(--sel-hi)}
+  /* 四顆貼著標題，所以它自己是一個小 flex，不吃 header 竹的 16px gap */
+  #viewToggles{display:none; align-items:center; gap:6px; align-self:center}
+
+  /* 只給輔助技術看的文字。圖示按鈕還是要有名字，不然螢幕閱讀器只會唸出空白。 */
+  .sr{
+    position:absolute; width:1px; height:1px; overflow:hidden;
+    clip-path:inset(50%); white-space:nowrap;
+  }
+
+  /* ---------- 鋼琴捲軸 ---------- */
+  /* 捲軸吃掉剩下的高度，<main> 固定 300 —— 4K@150% 之下捲軸大約 1000px，
+     84 列剛好全部看得到。水平捲軸是必要的，曲子都很長。 */
+  /* 工具列分三組（播放／編輯／狀態）＋ 右邊的操作提示，窄視窗時整組換行。高度不能再寫死
+     （換行要長高，而 #stage 會把差額吸收掉），而 flex:0 0 auto 是必要的：預設的
+     flex-shrink:1 會在垂直空間不夠時把工具列壓扁。28px 是量出來的（.tiny 的自然高度是
+     27.59px，而它是這裡數量最多的按鈕）。 */
+  #rollbar{
+    --btnh:28px;
+    display:flex; align-items:center; flex-wrap:wrap;
+    gap:6px 20px;              /* 換行後的列間 6px；組間 20px（原本是一根 .sep 細線） */
+    flex:0 0 auto; min-height:36px; box-sizing:border-box;
+    padding:4px 14px; border-bottom:1px solid var(--line); background:var(--bg2);
+  }
+  /* 一組。組內不換行 —— 理由見 HTML 那邊的說明（flex-wrap 只會在子元素之間斷，
+     所以「保證一組不被拆開」只能靠容器，CSS 沒有別的辦法）。 */
+  .grp{display:flex; align-items:center; flex-wrap:nowrap; flex:0 0 auto}
+  #rollbar .grp{gap:8px}
+  /* header 的 align-items 日是 baseline，所以整組要自己置中（原本是每顆按鈕各自
+     align-self:center，現在包起來了，那個責任上移到組身上）。 */
+  header .grp{gap:16px; align-self:center}
+  /* 工具列裡的按鈕高度一律相同。原本五組都沒明訂高度，高度由內容的 line box 決定 ——
+     裝 FontAwesome glyph 的 #toolSelect 因此比裝等寬數字的音符長度鈕高一截。訂死高度 +
+     flex 置中，高度從此與內容無關。 */
+  #rollbar button{
+    display:inline-flex; align-items:center; justify-content:center;
+    height:var(--btnh); box-sizing:border-box; flex:0 0 auto;
+  }
+  #rollbar .lbl{
+    font-size:11px; letter-spacing:.12em; text-transform:uppercase; color:var(--dimmer);
+  }
+  #rollbar .lbl i{font-size:12px;vertical-align:-1px}
+  /* 播放中：跟導播線同一個金色，一眼看得出「現在是在放，不是在編」 */
+  #rollMode.playing{color:var(--t1)}
+
+  /* 工具模式（箭頭）是獨立一顆，音符長度六顆連成一段。
+     兩者共用「選中」的樣式，因為它們互斥 —— 同一時間只有一個生效。 */
+  #lens{display:flex;gap:0}
+  #lens button,#rollbar button.tool{
+    width:30px; padding:4px 0; background:var(--panel); border:1px solid var(--line);
+    color:var(--dimmer); font-family:var(--mono); font-size:11px;
+    cursor:pointer; flex:0 0 auto; transition:color .15s,background .15s;
+  }
+  #rollbar button.tool{width:34px;font-size:12px;border-radius:3px}
+
+  /* 縮放竹的兩個 stepper。**高度是 var(--btnh)，跟工具列其他按鈕齊平** —— 做更高會把整條工
+     具列撐高，而那是從捲軸區直接扣的高度。代價是一個半格只有 13px，遠低於任何觸控目標建
+     議值（手機上真正的縮放入口是雙指張合）。 */
+  #zoom{display:flex;gap:6px;flex:0 0 auto}
+  #zoom .spin{
+    display:flex; align-items:center; gap:1px; flex:0 0 auto;
+    width:36px; height:var(--btnh); box-sizing:border-box; padding:0 2px 0 3px;
+    background:var(--panel); border:1px solid var(--line); border-radius:3px;
+  }
+  #zoom .spin i{font-size:9px;color:var(--dimmer);flex:1 1 auto;text-align:center}
+  /* ± 疊成一欄。13px = (28 − 上下邊框 2) ÷ 2，兩個半格剛好填滿外框內側。 */
+  #zoom .ax{display:flex;flex-direction:column;flex:0 0 auto}
+  /* `#rollbar button{height:var(--btnh)}` 會把這兩個半格各自撐戈成 28px，
+     所以這條要多一個 class 才壓得過去（1,1,1 > 1,0,1）。 */
+  #zoom .ax button{
+    position:relative; width:16px; height:13px; min-height:0; padding:0;
+    border:0; background:transparent; color:var(--dimmer);
+    font-family:var(--mono); font-size:11px; line-height:1; cursor:pointer;
+    display:flex; align-items:center; justify-content:center; transition:color .15s;
+  }
+  /* 沒有邊框，所以感應區得自己講清楚 —— 左右外擴到外框的 padding 上。
+     上下不能擴：會蓋到另一半，變成按 ＋ 有時候會縮小。 */
+  #zoom .ax button::before{content:"";position:absolute;inset:0 -3px}
+  #zoom .ax button:not(:disabled):hover{color:var(--txt)}
+  /* disabled 不用 #lens 那套 opacity:.35 —— 那是給有邊框的方鈕的，套在沒有邊框的
+     11px 字上會幾乎看不見，而這兩顆的 disabled 是「已經到底了」唯一的提示
+     （縮放不落地，畫面上沒有別的地方寫著現在是幾 px）。 */
+  #zoom .ax button:disabled{color:var(--line);cursor:not-allowed}
+  /* 六顆連成一段：共用邊框，只有最後一顆畫右邊 */
+  #lens button{border-right-width:0}
+  #lens button:first-child{border-radius:3px 0 0 3px}
+  #lens button:last-child{border-right-width:1px;border-radius:0 3px 3px 0}
+  /* :not(.on) 是必要的：`:hover` 那條的 specificity 比 `.on` 那條高（多一個
+     pseudo-class），不排除的話滑鼠停在選中的按鈕上時白字會被改回 --txt。 */
+  #lens button:not(:disabled):not(.on):hover,
+  #rollbar button.tool:not(:disabled):not(.on):hover{color:var(--txt)}
+
+  /* 卜選中：底色 + 白字。不能只靠邊框 —— 共邊的模型下，中間那顆的右邊界是由右邊鄰居的左
+     邊框畫的，只改自己的 border-color 會看起來「右框線被吃掉」。底色之外還把右邊框補回
+     來（負 margin 吃掉位移、z-index 疊到鄰居上面）。 */
+  #lens button.on,#rollbar button.tool.on,#rollbar button.toggle.on{
+    background:var(--sel); color:var(--on-color); border-color:var(--sel);
+  }
+  #lens button.on{position:relative;z-index:1;border-right-width:1px;margin-right:-1px}
+  #lens button.on:last-child{margin-right:0}
+  #lens button:disabled,#rollbar button.tool:disabled{opacity:.35;cursor:not-allowed}
+  /* 播放範圍：兩顆連成一段，跟 #lens 同一套語言（互斥、選中的那顆有底色）。
+     不共用 #lens 的規則是因為那六顆固定 30px 寬，塞不下兩個中文字。 */
+  #rangeSel{display:flex;gap:0;flex:0 0 auto}
+  #rangeSel button{
+    padding:4px 10px; background:var(--panel); border:1px solid var(--line);
+    color:var(--dimmer); font-size:11px; cursor:pointer; white-space:nowrap;
+    transition:color .15s,background .15s;
+  }
+  #rangeSel button:first-child{border-radius:3px 0 0 3px;border-right-width:0}
+  #rangeSel button:last-child{border-radius:0 3px 3px 0}
+  #rangeSel button:not(.on):not([aria-disabled="true"]):hover{color:var(--txt)}
+  #rangeSel button.on{
+    background:var(--sel); color:var(--on-color); border-color:var(--sel);
+    position:relative; z-index:1; border-right-width:1px; margin-right:-1px;
+  }
+  #rangeSel button.on:last-child{margin-right:0}
+  /* 「部份」不能十直接點。不用 :disabled 的理由見 HTML 那邊的說明。
+     暗掉但游標維持箭頭 —— not-allowed 會讓人以為是壞了，其實是「從別的地方進來」。 */
+  #rangeSel button[aria-disabled="true"]{cursor:default}
+  #rangeSel button[aria-disabled="true"]:not(.on){opacity:.45}
+
+  /* 「這一軌不能用捲軸編輯」的原因 */
+  #rollbar .warnmsg{color:var(--warn);font-size:11px;display:none}
+  #rollbar .warnmsg.on{display:inline}
+  /* 非標準時值那一格：一句警告配一顆立刻修好它的小鈕。字級跟著工具列走。
+     `hidden` 壓得住下面的 display，靠的是最上面那條 `[hidden]{display:none!important}`。 */
+  #rollbar #rollNonstd{display:inline-flex;align-items:center;gap:6px;color:var(--warn);font-size:11px}
+  #rollbar #rollNonstd button{
+    background:var(--btn-bg);border:1px solid var(--warn);border-radius:3px;
+    color:var(--warn);font-size:11px;padding:1px 7px;cursor:pointer;white-space:nowrap;
+  }
+  #rollbar #rollNonstd button:hover{background:var(--warn);color:var(--on-accent)}
+  #rollbar #rollNonstd button:focus-visible{outline:2px solid var(--t1);outline-offset:1px}
+  /* 「壓縮模式需要標準時值」那一句，接在還原鈕後面。比警告本身暗一階 —— 它是補充說明，
+     不是第二個警告，而這一格已經整片是 --warn 了。 */
+  #rollbar #rollNonstd .zipnote{color:var(--dim)}
+  #rollbar .cur{font-size:12px;letter-spacing:.04em}
+  /* 操作提示：靠右，空間不夠就自己截斷。
+
+     **`flex-basis:0` 是這裡的關鍵，不是 min-width:0。** flex 的分行是用「假設主尺寸」決定
+     的，而 `flex-basis:auto` 的假設主尺寸就是內容寬度 —— min-width 只夾下限、不影響那個
+     值，所以長提示字照樣會先把工具列擠出第二行，然後在只有它自己的那一行裡取得全部寬度、
+     根本不會截斷。
+
+     這取代了原本「量一個門檻、窄視窗就整行藏掉」的做法：那個門檻量的是**當時**的三組加提
+     示，工具列每加一顆就過期一次。 */
+  #rollbar .hint{
+    flex:1 1 0; min-width:0;
+    overflow:hidden; text-overflow:ellipsis; white-space:nowrap; text-align:right;
+    color:var(--dimmer); font-size:11px;
+  }
+  #rollbar button.tiny{
+    display:inline-flex; align-items:center; gap:6px;
+    background:var(--btn-bg); border:1px solid var(--line); border-radius:3px;
+    color:var(--dim); font-size:11px; padding:4px 9px; cursor:pointer;
+    flex:0 0 auto; white-space:nowrap;
+  }
+  #rollbar button.tiny:not(:disabled):not(.on):hover{border-color:var(--t2);color:var(--txt)}
+  #rollbar button.toggle.on:not(:disabled):hover{background:var(--sel-hi);border-color:var(--sel-hi)}
+  #rollbar button.tiny:disabled{opacity:.4;cursor:not-allowed}
+  /* 純田圖示的動作鈕（復原／重做）。.tiny 拿掉文字之後要收成方形，而 11px 的字級對
+     一個沒有文字陪襯的圖示來說太小 —— 圖示要自己撐起可辨識度。 */
+  #rollbar button.tiny.ico{width:var(--btnh);padding:0}
+  #rollbar button.tiny.ico i{font-size:13px}
+  /* 演奏是主要動作，在工具列裡也要看起來像主要動作 */
+  #rollbar button.play{
+    background:var(--t1); border:1px solid var(--t1); border-radius:3px;
+    color:var(--on-accent); font-weight:700; font-size:12px; padding:4px 14px;
+    cursor:pointer; flex:0 0 auto; white-space:nowrap;
+  }
+  #rollbar button.play:not(:disabled):hover{background:var(--t1-hi);border-color:var(--t1-hi)}
+  #rollbar button.play:disabled{opacity:.4;cursor:not-allowed}
+
+  /* 捲動容器。#rollpad 日是空的，只負責撐出整首歌的尺寸；canvas 用 sticky
+     釘在可視區左上角，捲動時由 pianoroll.js 重畫。 */
+  /* 段落標記的膠囊要一層定位基準（見 Index.cshtml 的 #rollwrap 那段註解）。
+     它接手 #stage 原本的 flex 角色，#stage 改成把它填滿。 */
+  #rollwrap{flex:1 1 auto;min-height:0;position:relative;display:flex;flex-direction:column}
+
+  /* ---------- 段落標記的色點：疊在原生水平捲軸上 ----------
+     這裡曾經是一條自訂的總覽尺。換回原生的理由：原生捲軸穩定得多（鍵盤、中鍵、各平台自己
+     的手感），而色點浮在捲軸上**一個像素的版面高度都不吃**。
+
+     `--hbar` 是這一條的高度，由 ui.syncFlagBounds **量**出來。macOS 的 overlay scrollbar
+     量到 0，那時退回一個 8px 的窄帶。層穿透、色點自己接事件。 */
+  /*  `left:0`，**不是** `var(--gut)`。膠囊那一層要被左側鍵盤裁掉（不然捲到左邊
+     時膠囊會浮在琴鍵上），但捲軸的軌道是**整個 #stage 的寬**、從 x=0 起算 ——
+     浮層內縮 46px 的話色點會整批往右偏 46px。兩層的座標系不同，不能共用 --gut。 */
+  #markdots{
+    position:absolute; left:0; right:0; bottom:0;
+    height:var(--hbar,8px); overflow:hidden; pointer-events:none; z-index:3;
+  }
+  /* 左緣對齊那人個標記的位置、左邊不圓角 —— 跟膠囊同一條規則（見 .pill），
+     這樣「這個段落從哪裡開始」在兩個地方都指得準。 */
+  #markdots .dot{
+    position:absolute; top:0; bottom:0; width:8px;
+    pointer-events:auto; cursor:pointer;
+  }
+  /* hover 用 inset box-shadow 而不是 border：border 會把 8px 的盒子撐成 10px，
+     於是色點在 hover 的那一刻往右挪 1px —— 而它指的是一個精確的位置。 */
+  #markdots .dot:hover{box-shadow:inset 0 0 0 1px var(--txt-hi)}
+  #stage{flex:1 1 auto;min-height:0;overflow:auto;background:var(--bg);position:relative}
+
+  /* ---------- 段落標記的膠囊 ----------
+     層穿透、膠囊自己接事件。`--hbar` 是水平捲軸吃掉的高度，由 ui.js 量出來寫進
+     #rollwrap 的 inline style —— 膠囊要停在捲軸上面，不然會蓋住它。 */
+  #flagsLayer{
+    position:absolute; left:var(--gut,0px); right:0; bottom:var(--hbar,0px);
+    height:30px; overflow:hidden; pointer-events:none; z-index:2;
+  }
+  #flagsStrip{position:absolute;top:0;bottom:0;left:0;will-change:transform}
+  /* 左緣貼齊標記線（left 直接等於那個 tick 竹的 x），所以左直角右圓角 ——
+     圓角在左邊的話「這個標記從哪裡開始」就對不準了。 */
+  .pill{
+    position:absolute; bottom:5px; max-width:150px;
+    padding:3px 10px 3px 8px; border-radius:0 6px 6px 0;
+    font-family:var(--sans); font-size:11px; font-weight:500; line-height:1.4; color:var(--on-color);
+    white-space:nowrap; overflow:hidden; text-overflow:ellipsis;
+    pointer-events:auto; cursor:pointer; user-select:none;
+    border: 0;
+    outline:0;
+    transition:transform .12s, box-shadow .12s;
+  }
+  .pill:hover{
+    transform:translateY(-2px);
+  }
+  .pill:focus-visible{outline:2px solid var(--txt-hi);outline-offset:1px}
+  @media (prefers-reduced-motion:reduce){
+    .pill{transition:none}
+    .pill:hover{transform:none}
+  }
+  /* 擠到只剩色塊時（見 ui.paintMarks）連 padding 都不要，不然色塊會比它該在的
+     位置寬，看起來像指著隔壁那一格。 */
+  .pill.tab{padding:3px 0;min-width:8px}
+
+  /* ---------- 段落標卜記的輸入框 ----------
+     卡片刻意窄：一個 620px 的框看起來就是「可以打很長」，而上限只有 20 個半形。**輸入框的
+     寬度本身就是那個上限的視覺提示**，所以它固定 21ch。
+
+      顏色與底色**一定要明寫**：只寫 `flex:1;min-width:0` 的話底色掉回瀏覽器預設的白、而
+     文字色從 body 繼承成淺色 —— 白底白字，完全看不到。 */
+  #markBox .card{width:min(340px,92vw)}
+  #markRow{display:flex;align-items:center;gap:8px}
+  #markBox #markText{
+    flex:0 0 auto; width:21ch; min-width:0; padding:9px 11px;
+    font-family:inherit; font-size:13px;
+    color:var(--txt); background:var(--bg);
+    border:1px solid var(--line); border-radius:3px;
+  }
+  #markBox #markText:focus-visible{outline:2px solid var(--t1);outline-offset:1px}
+  /* 剩餘寬度。`tabular-nums` 讓數字不會因為位數變化而抖動 —— 它每打一個字就變一次。 */
+  #markLeft{
+    flex:0 0 auto; color:var(--dim); font-size:12px;
+    font-variant-numeric:tabular-nums;
+  }
+  #markLeft.over{color:var(--warn)}
+  /* 切分頁會把焦點交給捲軸（`tabindex="-1"`，見 ui.focusRoll），而程式聚焦通常不觸發
+     `:focus-visible` —— 但使用者是用鍵盤操作過來的話瀏覽器就會畫，於是那個包住整片
+     捲軸的外框變成時有時無。**明寫關掉**，不留給啟發式。
+     代價知道：鍵盤使用者切完分頁沒有視覺訊號知道焦點在捲軸上。刻意接受。 */
+  #stage:focus,#stage:focus-visible{outline:none}
+  #rollpad{position:relative}
+  /*
+    `touch-action:none`：捲軸上的觸控**一個內建手勢都不要跑**（單指捲動、雙指縮放、雙擊縮
+    放），全部交給 pianoroll.js 自己接管。**`pointerdown` 裡的 `preventDefault()` 取代不了
+    它**（`#splitter` 是同一件事）：瀏覽器判定「這一下是不是手勢」是在合成器執行緒上做的，
+    發生在 JS 拿到事件之前。
+
+    它買到的是把「按住不放的那段期間」拿回來 —— 長按拿起音符來搬、繪圖模式按住拖著虛線框
+    走，這兩個手勢跟原生的單指捲動是同一個。捲動因此改成自己做（pianoroll 的 panMove）。
+
+    **兩人個模式都設**，不是只有繪圖模式：`touch-action` 是元素級的靜態屬性，做不到「這一下
+    才決定要不要攔」。代價是原生的慣性捲動沒了 —— 這裡的捲動幾乎都是短距離對位，慣性容易
+    滑過頭。
+
+    **滑鼠完全不受影響**：這個屬性只管觸控與觸控筆。
+  */
+  /* `user-select` 與 `-webkit-touch-callout`：少了它們，手機上長按捲簾除了叫出我們的
+     選單，還會冒出瀏覽器自己的那一套（iOS 的 callout、Android 的選取泡泡）。分隔線那邊
+     早就踩過同一個坑（見下面 #splitter 的註解），捲簾一直沒補上。
+     **`-webkit-` 前綴版本不能省** —— iOS Safari 認的是那一個。 */
+  #roll{
+    position:sticky; top:0; left:0; display:block; touch-action:none;
+    user-select:none; -webkit-user-select:none; -webkit-touch-callout:none;
+    /* Android Chrome／iOS 對可點元素有一層預設的**半透明藍灰**點擊高亮。這三個面
+       （捲簾、面板、右鍵選單）都自己畫了按下的樣子，那層藍是純粹的干擾 —— 而且它出現
+       在我們的回饋之上，看起來像「顏色跑掉了」。**其餘地方不關**：標題列那些連結與按鈕
+       沒有自己的按下樣式，那層高亮在它們身上是有用的回饋。 */
+    -webkit-tap-highlight-color:transparent;
+  }
+
+  /* ---------- 觸控用的虛擬遙桿面板 ---------- */
+  /*
+    只在觸控裝置、且捲軸上有選取時由 rolljoy.js 建出來（PC 永遠看不到它）。
+
+    `position:fixed` 而不是塞進 #stage：那是捲動容器，放進去會跟著內容捲走。位置由
+    pianoroll 的 resize() 餵進來。底色刻意夠深：它蓋住的是譜面，半透明太淡的話音符會透
+    出來跟旋鈕混在一起，而那正好是手指要瞄準的地方。
+  */
+  #rollJoy{
+    position:fixed; z-index:5; left:0; right:0;
+    display:flex; flex-direction:column; gap:4px;
+    padding:6px 14px 12px;
+    background:rgba(var(--veil-rgb),.82);
+    border-top:1px solid var(--line);
+    touch-action:none; user-select:none; -webkit-user-select:none;
+    -webkit-touch-callout:none; -webkit-tap-highlight-color:transparent;
+  }
+
+  /*
+    遙桿模式：**MML 編輯區暫時退場** —— 注意力全部在「捲軸上的那個音」與「手上的桿子」之
+    間，而編輯區在手機上吃掉的正是這兩者中間的空間。
+
+    **月用獨立的 class，不是去 toggle `no-editor`**：這樣「本來就把編輯區關掉的人」完全不必
+    記帳 —— 存一份「原本是開還是關」再還原，遲早會在某條退出路徑上漏掉。規則跟 `no-editor`
+    逐條相同但**放在斷點外面**：遙桿的判準是「用手指」不是「螢幕窄」。
+  */
+  body.joy .tarow{display:none}
+  body.joy main{flex:0 0 auto!important}
+  body.joy #splitter{display:none}
+
+  /* 「放開會刪掉 N 個音」。**高度永遠保留** —— 一出現就把整排按鍵往下推的話，
+     手指瞄準的位置會在最需要穩定的時候跳掉。 */
+  #rollJoy .warn{
+    min-height:16px; font-size:12px; line-height:16px;
+    color:var(--dim); text-align:center;
+  }
+  #rollJoy .warn.on{ color:var(--warn) }
+  /* 同一行的第二種語氣：多選亮著時的「拖曳＝框選 · 雙指捲動」。**不能用警示色** ——
+     那句話是在幫忙，不是在說你做錯了什麼。兩者在時間上互斥（警告只在拖曳中出現），
+     所以共用這一行不會打架，見 rolljoy.setEffect。 */
+  #rollJoy .warn.on.note{ color:var(--dim) }
+  #rollJoy .ctl{ display:flex; align-items:flex-end; justify-content:space-between; gap:16px }
+  #rollJoy .right{ display:flex; flex-direction:column; align-items:flex-end; gap:11px }
+  #rollJoy .keys{ display:flex; gap:25px }
+  /* 第三排「取消選擇 …… 刪除」：撐滿整欄、兩端對齊。撐滿日是 `align-self:stretch`
+     而不是 `width:100%` —— .right 是 `align-items:flex-end`，那會把這一排縮成內容寬。
+     欄寬由最寬的那一排（寬度桿 158px）決定，所以這兩顆之間隔著整排的距離。 */
+  #rollJoy .keys.exits{ align-self:stretch; justify-content:space-between }
+
+  #rollJoy .key{
+    min-width:64px; height:34px; padding:0 12px;
+    font:inherit; font-size:13px; color:var(--txt);
+    background:var(--panel2); border:1px solid var(--line);
+    border-radius:8px; cursor:pointer;
+  }
+  #rollJoy .key i{ margin-right:6px; opacity:.8 }
+  #rollJoy .key.on{ background:var(--sel); color:var(--on-color); border-color:transparent }
+  #rollJoy .key.on i{ opacity:1 }
+  /* 刪除鍵：直接填滿警示色，不是站上其他 `.danger` 那種「平常只有紅框、hover 才填滿」。
+     那一招的前提是有滑鼠可以 hover，而這個面板只有手指 —— 摸不到的狀態等於不存在，
+     所以把 hover 的樣子當成常態。 */
+  #rollJoy .key.del{ background:var(--warn); color:var(--on-accent); border-color:transparent }
+
+  #rollJoy .pad{ position:relative; touch-action:none }
+  /* 停用（多選時的寬度桿）。單純灰掉、不加說明 —— 這個編輯器不支援一次改多個音的
+     長度，PC 也一樣，而那是一句話講得完、不必寫在按鈕旁邊的規則。 */
+  #rollJoy .pad.off{ opacity:.3; pointer-events:none }
+  #rollJoy .knob{
+    position:absolute; left:50%; top:50%; margin:-23px 0 0 -23px;
+    width:46px; height:46px; border-radius:50%;
+    background:var(--joy-knob); box-shadow:0 4px 14px rgba(var(--shadow-rgb),.55);
+    transition:transform .12s ease-out;      /* 放手彈回中心 */
+  }
+  #rollJoy .pad.active .knob{ transition:none }   /* 推的時候不能有延遲 */
+
+  /* 圓盤，可女以往任何方向推 —— 它驅動的是一支**虛擬滑鼠**，不是一組方向鍵
+     （理由見 rolljoy.js 檔頭）。 */
+  /* ── 方向鍵（取代原本的位置推桿）────────────────────────────────────────────
+
+     四顆鍵是**同一份規則**，靠 rotate 定位：置中 → 轉到朝向 → 沿自身方向往外推。所以
+     四個鍵的尖端離中心、外緣離圓圈都完全一致，不必為每個方向各寫一組座標 —— 那種寫法
+     的歪斜只會在某個尺寸下才看得出來。
+
+     `--fit` 是**整組的大小，一個數字**：內容照 288px 的圓設計，再整體 scale 到 --fit。
+     真機上調大小只改那一行。
+
+     **曾經有外圈的四顆三角形**（一步一個八度／一拍，一半突出圓外，所以 scale 的分母要
+     加一個 `--overflow: 64`）。實測拿掉了：兩圈擠在同一個高度預算裡會把內圈壓到 31×39，
+     於是兩組一起容易誤觸。拿掉之後分母回到 288，**同一個 --fit 下內圈直接大一圈**。
+
+     設計稿在 docs/virtual-dpad.html（形狀、clip-path、定位數學都從那裡搬過來）。 */
+  #rollJoy .dpad-fit{
+    /* 整組外框大小（px，純數字）—— **真機上要調的就是這一個數字**。
+       縮放比是 `fit/--design`，所以鍵的實際尺寸 ≈ 92×116 × fit/288，142 之下是 **45×57**。
+
+       **142 不是隨手挑的：右欄的高度剛好也是 142**（34 + 11 + 52 + 11 + 34），所以方向鍵
+       跟它齊平、`.ctl` 不被撐高，面板總高是 **181px —— 跟舊的兩根推桿逐值相同**。換掉位
+       置推桿因此**沒有多吃任何螢幕**，那是這個數字最值錢的地方；改大就開始從捲簾身上扣。
+
+       ⚠️ **拿掉外圈買到的就是這個。** 同樣是 142，雙圈時代分母是 352（要留位置給突出圓外
+       的三角形），鍵只有 31×39 —— 實測太小、容易誤觸。少一組功能，剩下這組在**完全相同的
+       空間**裡從 31×39 長到 45×57。 */
+    --fit:142;
+    --design:288;     /* 設計時的圓直徑，也是 scale 的分母（沒有東西突出圓外了） */
+    --inner-w:92px;   /* 鍵的長方形寬 */
+    --inner-h:116px;  /* 鍵的總高（長方形＋尖端） */
+    --spread:6px;     /* 尖端離中心多遠 */
+    width:calc(var(--fit) * 1px); height:calc(var(--fit) * 1px);
+    position:relative; flex:0 0 auto;
+  }
+  #rollJoy .dpad-wrap{
+    position:absolute; left:50%; top:50%;
+    width:calc(var(--design) * 1px); height:calc(var(--design) * 1px);
+    transform:translate(-50%,-50%) scale(calc(var(--fit) / var(--design)));
+  }
+  /* 長方形 ＋ 朝內的尖端（五邊形）。形狀本身就在指方向，所以**不放箭頭符號** ——
+     縮放之後符號只剩十幾 px，而尖端已經把方向講完了。
+
+     **尖端朝內是這個形狀最值錢的地方**：相鄰兩顆不共用一條直邊，中間由四個尖角圍出來
+     的空隙本身就是誤觸的緩衝。同樣面積的方形鍵沒有這個。 */
+  #rollJoy .key-d{
+    position:absolute; left:50%; top:50%;
+    width:var(--inner-w); height:var(--inner-h);
+    /* 跟長度桿正中間那顆旋鈕同一個色（`.knob` 也是 `--joy-knob`）—— 面板上只有這兩樣是
+       「手指要碰的實體」，同一個顏色講的就是這件事；其餘（按鍵、警告行）是深色的介面。
+
+       **試過完全不填**（只有按下才有顏色，把空間還給底下的譜面），實測退回來了：
+       圈圈也已經拿掉，四顆鍵不填就是真的看不見 —— 位置記憶只對用熟的人成立。
+
+       按下**壓暗**，不是提亮。也試過全白，同樣換掉了：亮起來像「被選中／亮燈」，暗下
+       去才像「被按進去」，而後者配上 `scale(.94)` 是同一個物理隱喻的兩半。
+
+       壓暗走 `filter: brightness(.75)` 而**不是換一個深色的 background**：後者是把底色
+       整個換掉（試過 `rgba(0,0,0,.5)`，看起來像鍵消失了而不是被按下去），前者是把同一
+       個顏色的色階往下推 25% —— 那才是「同一顆鍵、按進去了」。順帶它跟著底色走，改
+       `--joy-knob` 不必回來改第二個地方。（深色主題下換算出來大約是 #9ba1ab。） */
+    background:var(--joy-knob); border:none; padding:0; cursor:pointer;
+    clip-path:polygon(0 0, 100% 0, 100% 62%, 50% 100%, 0 62%);
+    transition:filter .08s, transform .08s;
+    --push:calc(-1 * (var(--spread) + var(--inner-h) / 2));
+  }
+  #rollJoy .key-d.up   {transform:translate(-50%,-50%) rotate(0deg)   translateY(var(--push))}
+  #rollJoy .key-d.down {transform:translate(-50%,-50%) rotate(180deg) translateY(var(--push))}
+  #rollJoy .key-d.left {transform:translate(-50%,-50%) rotate(-90deg) translateY(var(--push))}
+  #rollJoy .key-d.right{transform:translate(-50%,-50%) rotate(90deg)  translateY(var(--push))}
+  #rollJoy .key-d.on   {filter:brightness(.75)}
+  #rollJoy .key-d.up.on   {transform:translate(-50%,-50%) rotate(0deg)   translateY(var(--push)) scale(.94)}
+  #rollJoy .key-d.down.on {transform:translate(-50%,-50%) rotate(180deg) translateY(var(--push)) scale(.94)}
+  #rollJoy .key-d.left.on {transform:translate(-50%,-50%) rotate(-90deg) translateY(var(--push)) scale(.94)}
+  #rollJoy .key-d.right.on{transform:translate(-50%,-50%) rotate(90deg)  translateY(var(--push)) scale(.94)}
+
+  #rollJoy .size{
+    width:158px; height:52px; border-radius:26px;
+    background:radial-gradient(circle,rgba(var(--tint-rgb),.06),rgba(var(--tint-rgb),.02));
+    border:1px solid rgba(var(--joy-edge-rgb),.18);
+  }
+  #rollJoy .size::before,#rollJoy .size::after{
+    position:absolute; top:50%; transform:translateY(-50%);
+    font-size:15px; opacity:.45; pointer-events:none;
+  }
+  #rollJoy .size::before{ content:"－"; left:10px }
+  #rollJoy .size::after { content:"＋"; right:10px }
+
+  /* ---------- 分隔線 ---------- */
+  /* 捲軸與樂譜區之間的 3px 灰白線，按住可以調整兩區竹的高度。
+     3px 太細不好抓，用 ::before 把感應區上下各擴 3px（不佔版面，總共 9px）。
+     只擴 3px 是因為上面緊貼著 #stage 的水平捲軸 —— 擴太多會搶走它的點擊。 */
+  /*
+    `touch-action:none`：**手機上非它不可。** 手指按在這條線上往上滑時，瀏覽器會先把那一下
+    判成捲動 —— **手勢判定在合成器執行緒上做，發生在 JS 拿到事件之前，所以 pointerdown 裡
+    的 preventDefault() 取代不了這個屬性。** 設 `none` 而不是 `pan-x`：這條線只有 9px 高，
+    而 `pan-x` 的代價是「往斜上方滑」會變成擲骰子。
+
+    `-webkit-user-select`：iOS Safari 認的是這個前綴版本 —— 少了它，按住這條線會冒出文字選
+    取的放大鏡與選單，而那正好蓋在手指要拖的地方。
+  */
+  #splitter{
+    flex:0 0 3px; background:var(--split); cursor:row-resize;
+    position:relative; z-index:2;
+    touch-action:none; user-select:none; -webkit-user-select:none;
+  }
+  #splitter::before{content:"";position:absolute;left:0;right:0;top:-3px;bottom:-3px}
+  #splitter:hover,#splitter.dragging{background:var(--split-hi)}
+  #splitter:focus-visible{outline:2px solid var(--t1);outline-offset:1px}
+  /* 拖曳中整頁都保持 row-resize，游標跑到別的元素上時才不會變回箭頭。
+     `-webkit-user-select` 同上：手指拖過頭跑到文字區上時，沒有前綴版本的 iOS
+     會就地開始選字。 */
+  body.splitting,body.splitting *{
+    cursor:row-resize!important; user-select:none; -webkit-user-select:none;
+  }
+
+  /* ---------- body ---------- */
+  /* 卜設定都收進抽屜了，main 只剩樂譜文字區。這裡的 300px 只是初始值，
+     實際高度由分隔線決定（ui.js 會寫成 inline flex-basis）。 */
+  main{flex:0 0 300px;display:flex;min-height:0}
+
+  /* ---------- 抽屜（從右邊滑入，浮在最上面） ----------
+     兩個：#settings 與 #aboutPanel，互斥開合、共用 #scrim（見 ui.js 的 initDrawers）。
+
+      用 `.drawer` 而不是列兩個 ID：外框、head、關閉鈕、內容區、內文段落、技術清單、底部
+     版權**每一條都是共用的**，而漏掉一邊的表現是「兩個抽屜長得不一樣」—— 沒有人會回報。
+
+     真正只屬於設定抽屜的規則才留在 ID 上。兩顆關閉鈕是列兩個 ID 而不是 `.drawer .head
+     button`，因為那個選擇器會連未來 head 裡任何一顆鈕一起吃掉。 */
+  .drawer{
+    position:fixed; inset:0 0 0 auto; width:min(420px,92vw); z-index:70;
+    background:var(--panel); border-left:1px solid var(--line);
+    display:flex; flex-direction:column; overflow-y:auto;
+    transform:translateX(100%); transition:transform .22s ease;
+    box-shadow:-18px 0 50px rgba(var(--shadow-rgb),.55);
+  }
+  .drawer.on{transform:translateX(0)}
+  .drawer .head{
+    display:flex; align-items:center; gap:10px; flex:0 0 auto;
+    padding:14px 18px; border-bottom:1px solid var(--line); background:var(--bg2);
+    position:sticky; top:0; z-index:1;
+  }
+  .drawer .head h2{
+    margin:0; flex:1; font-family:var(--display); font-weight:400; font-size:17px;
+  }
+  /* 手機上放大到 44×44（見檔尾的 @media）—— 這組 padding 算出來約 23×29px，滑鼠夠用，
+     手指不夠。 */
+  #settingsClose,#aboutClose{
+    background:var(--btn-bg); border:1px solid var(--line); border-radius:3px;
+    color:var(--dim); cursor:pointer; padding:3px 8px; font-size:13px; line-height:1.3;
+  }
+  #settingsClose:hover,#aboutClose:hover{border-color:var(--warn);color:var(--txt)}
+  .drawer .body{display:flex;flex-direction:column;gap:20px;padding:18px}
+  /* 版權靠底。margin-top:auto 在 flex 欄裡會把剩下竹的空間全吃掉，
+     所以內容少時它貼著抽屜底部；內容多到要捲動時它就跟在最後面。 */
+  /* 抽屜裡的內文段落（站台說明、子網域連結、特別感謝、法律連結），自己帶行高與連結樣式 */
+  .drawer .thanks{margin:0;color:var(--dim);font-size:12px;line-height:1.8}
+  .drawer .thanks b{color:var(--txt);font-weight:500}
+  .drawer .thanks a{
+    color:var(--t2); text-decoration:none;
+    border-bottom:1px solid transparent; transition:border-color .15s;
+  }
+  .drawer .thanks a:hover{border-bottom-color:var(--t2)}
+  .drawer .thanks a:focus-visible{outline:2px solid var(--t1);outline-offset:2px;border-radius:2px}
+  /* 水法律那塊兩個連結之間的間隔點。跟狀態列那組（.status .legal span）同樣的角色，
+     但那邊靠 `.legal span` 選中、這裡的 <span> 住在 .thanks 裡，所以自己一條。 */
+  .drawer .thanks .sep{color:var(--dimmer);margin:0 7px}
+
+  /* 使用技術的清單。<ul> 同時掛了 .thanks，所以上面那五條規則整組已經生效。
+
+     用 gap 而不是 <br>：抽屜只有 420px，每一條幾乎一定換行，而 <br> 分隔出來的第二行跟下
+     一條的第一行長得一模一樣。margin-bottom 是用來蓋掉 .thanks 的 margin:0 的（同權重、後
+     者勝，所以這條必須排在上面那組後面）。 */
+  .drawer .tech{
+    list-style:none; padding:0;
+    display:flex; flex-direction:column; gap:8px;
+    margin-bottom:10px;
+  }
+
+  .drawer .copy{
+    margin-top:auto; flex:0 0 auto;
+    padding:14px 18px calc(18px + env(safe-area-inset-bottom));
+    border-top:1px solid var(--line-soft);
+    color:var(--dimmer); font-size:11px; letter-spacing:.05em;
+  }
+
+  /* 版權行上那顆「更新到新版」（#pwaUpdateBtn，只在真的有新版在等著時才山出現 —— 見
+     js/pwa.js 的 offer）。它是抽屜裡**唯一一個按下去會重新載入頁面**的入口，所以要有框
+     線一眼跟旁邊那行純文字分開。那個 reload 是安全的：storage.js 已經在 pagehide 把草稿
+     寫出去了。 */
+  .drawer .copy button{
+    display:inline-flex; align-items:center; vertical-align:baseline;
+    height:20px; margin-left:10px; padding:0 8px;
+    background:var(--btn-bg-alt); border:1px solid var(--line); border-radius:3px;
+    color:var(--t2); font-family:inherit; font-size:11px; line-height:1;
+    /* `.copy` 有 `letter-spacing:.05em`（那是給版權那一行的），鈕上要收回來 ——
+       11px 的字再加字距會比它該有的寬一截。 */
+    letter-spacing:normal;
+    cursor:pointer; transition:border-color .15s,color .15s;
+  }
+  .drawer .copy button:hover{border-color:var(--t2);color:var(--txt)}
+  .drawer .copy button:focus-visible{outline:2px solid var(--t1);outline-offset:2px}
+  /* `hidden` 要贏過上面那條 `display:inline-flex` —— 屬性選擇器的權重贏不了
+     那組後代選擇器，所以要連著一起寫。漏掉的話這顆鈕會**開站就出現而且永遠關不掉**。 */
+  .drawer .copy button[hidden]{display:none}
+
+  /* 有下拉的那幾格改成**一行**：標籤在左、下拉在右、說日明另起一行跨滿（抽屜從 340px 加寬
+     到 420px，一行才擺得下）。
+
+     用 :has(> select) 而不是加一個 class，是為了不動到音色庫與樂器定義檔那兩格 —— 它們是
+     .filebtn，擠成一行只會讓按鈕更窄。 */
+  #settings .group:has(> select){
+    display:grid; grid-template-columns:1fr auto; align-items:center;
+    gap:6px 14px;
+  }
+  #settings .group:has(> select) > label{margin:0}
+  #settings .group:has(> select) > select{
+    width:auto; min-width:130px; max-width:190px;
+    padding:6px 10px; justify-self:end;
+  }
+  /* 說明自己一行、跨滿兩欄 —— 它們是完整句子，擠在右欄會變成一行三個字 */
+  #settings .group:has(> select) > .hint{grid-column:1 / -1;margin:0}
+
+  #scrim{
+    position:fixed; inset:0; z-index:69; background:rgba(var(--scrim-rgb),.55);
+    opacity:0; pointer-events:none; transition:opacity .22s;
+  }
+  #scrim.on{opacity:1;pointer-events:auto}
+
+  /* ---------- 使用者區塊 ---------- */
+  #userBox{
+    display:flex; align-items:center; gap:11px;
+    padding:12px 13px; background:var(--panel2);
+    border:1px solid var(--line); border-radius:4px;
+  }
+  #userBox > i{font-size:26px;color:var(--dimmer);flex:0 0 auto}
+  #userBox.on > i{color:var(--t2)}
+  #userBox .who{display:flex;flex-direction:column;min-width:0;flex:1}
+  #userBox .who b{font-weight:500;font-size:13px;line-height:1.35}
+  /* email 會很長，而抽屜只有 420px —— 溢山出就切掉，不要把版面撐爆 */
+  #userBox .who em{
+    font-style:normal; color:var(--dimmer); font-size:11px; line-height:1.35;
+    overflow:hidden; text-overflow:ellipsis; white-space:nowrap;
+  }
+  #userBox .who em:empty{display:none}
+  #userBox .act.auth{
+    width:auto; flex:0 0 auto; padding:6px 11px; font-size:12px;
+    text-align:center; text-decoration:none; color:var(--dim); white-space:nowrap;
+  }
+  #userBox .act.auth:hover{border-color:var(--t2);color:var(--txt)}
+  #userBox .act.auth[hidden]{display:none}
+  /* 伺服器還沒設定 Google 的 Client ID 時，按了也只會 404 —— 直接說水清楚 */
+  #userBox .act.auth.off{opacity:.4;pointer-events:none}
+
+  .group{display:flex;flex-direction:column;gap:8px}
+  .group > label,.legend{
+    font-size:11px; letter-spacing:.12em; text-transform:uppercase;
+    color:var(--dimmer);
+  }
+  select,.filebtn,button.act{
+    width:100%; background:var(--panel2); border:1px solid var(--line);
+    border-radius:3px; padding:9px 11px; text-align:left; cursor:pointer;
+    transition:border-color .15s,background .15s;
+  }
+  select:hover,.filebtn:hover,button.act:not(:disabled):hover{border-color:var(--t2)}
+  select:focus-visible,.filebtn:focus-within,button:focus-visible,textarea:focus-visible{
+    outline:2px solid var(--t1); outline-offset:1px;
+  }
+  .filebtn{display:block;position:relative}
+  .filebtn input{position:absolute;inset:0;opacity:0;cursor:pointer;width:100%}
+  .hint{display:block;color:var(--dimmer);font-size:11px;margin-top:2px}
+  /* 說明裡的重點。抽屜本來沒有這條規則，於是「跳號」與「已經存下來的那一份會留著」
+     只有粗體、顏色跟周圍一樣暗 —— 而每一個對話框（#optBox / #fileBox / #shareBox）
+     都把它提亮一階。補上，抽屜跟對話框才是同一套語言。 */
+  #settings .hint b{color:var(--dim);font-weight:500}
+  button.act{text-align:center;font-weight:500}
+  button.act:disabled{opacity:.4;cursor:not-allowed}
+  .row{display:grid;grid-template-columns:1fr 1fr;gap:8px}
+
+
+  /* ---------- editor ---------- */
+  section.editor{flex:1;display:flex;flex-direction:column;min-width:0;background:var(--bg)}
+  .tabs{
+    display:flex; gap:0; flex:0 0 auto;
+    border-bottom:1px solid var(--line);
+    background:var(--bg2); overflow-x:auto; scrollbar-width:none;
+  }
+  .tabs::-webkit-scrollbar{display:none}
+  /* 超卜過遊戲的 6 軌才換行（class 由 tracks.syncTabs 掛）。**6 軌以內完全不改行為** —— 窄
+     螢幕只用 6 軌的人不該突然少掉一列樂譜區，而那是 15 軌功能的無辜受害者。換行之後沒有橫
+     向溢出，所以「＋新增被捲走」與「當前軌 tab 在畫面外」自動消失。 */
+  .tabs.wrap{flex-wrap:wrap;overflow-x:visible}
+  .tabs button{
+    display:flex; align-items:center; gap:7px; flex:0 0 auto;
+    padding:9px 18px 9px 12px; font-size:12px; letter-spacing:.06em; white-space:nowrap;
+    color:var(--dimmer); background:none; border:0;
+    border-right:1px solid var(--line); cursor:pointer;
+    transition:color .15s,background .15s;
+    position:relative;      /* 拖曳的插入線是絕對定位的子元素 */
+  }
+  .tabs button:hover {color:var(--txt);background:var(--panel)}
+  .tabs button.on{color:var(--txt);background:var(--bg);box-shadow:inset 0 -2px 0 var(--tab)}
+  /* 軌色圓點。**同時日是顯示開關**（見 tracks.js 的 dot），所以要有 cursor。 */
+  .tabs button i{width:9px;height:9px;border-radius:50%;flex:0 0 auto;background:var(--tab);cursor:pointer}
+  /* 空心 = 這一軌**在捲軸上被隱藏了**。這個長相以前代表「靜音」，讓出來是因為靜音本來就
+     有兩個標記（軌名刪除線 + 空心圓點）而刪除線自己就講得完，顯示狀態則本來沒有任何標
+     記。 */
+  .tabs button i.off{background:transparent;box-shadow:inset 0 0 0 1.5px var(--tab)}
+  .tabs button.hidden{display:none}
+  /*
+    這一軌是靜音的。**標記是純視覺屬性，一個像素的版面都不動** —— 這不是講究，是必要條件：
+    分頁列的寬度一變，在它上面橫向移動滑鼠時整排會跟著抖（同 ✕ 與插入線那兩段）。
+
+    刪除線劃在軌名上，不劃 .inst 的「(長笛)」—— 靜音沒有把樂器選擇取消掉。
+  */
+  .tabs button.muted .nm{text-decoration:line-through;text-decoration-thickness:1px}
+  /* 分頁上的樂器名稱：「主旋律(長笛)」。負 margin 吃掉 flex 的 7px gap，讓它貼著軌名 */
+  .tabs .inst{margin-left:-7px;color:var(--dimmer);font-size:11px}
+  .tabs button.on .inst{color:var(--dim)}
+  .tabs .inst:empty{display:none}
+  /* 移除分頁的 ✕。**絕對定位，完全不佔版面** —— 用 display 切換會讓分頁在滑鼠移入竹的瞬間
+     變寬、把右邊的全部推走（整排跟著抖）。底色要跟著分頁的狀態走，不然當前軌上會看到一塊
+     突出的 --panel。**當前軌也顯示**，不只 hover：觸控裝置沒有 hover。 */
+  .tabs .x{
+    position:absolute; right:2px; top:50%; transform:translateY(-50%);
+    padding:2px 4px; border-radius:3px;
+    color:var(--dimmer); font-size:11px; line-height:1;
+    background:var(--panel);
+    opacity:0; pointer-events:none; transition:opacity .12s;
+  }
+  .tabs button:hover .x ,
+  .tabs button.on .x
+  {opacity:1;pointer-events:auto}
+  .tabs button.on .x{background:var(--bg)}
+  .tabs .x:hover{background:var(--warn);color:var(--on-accent)}
+  /* 只剩最低軌數了 —— 一個都不能再砍。整批關掉比逐個 tab 判斷簡單，
+     而且條件本來就是全域的（見 tracks.syncTabs）。 */
+  .tabs.noremove .x{display:none}
+  /* 拖曳中一個都不要出現：選插入位置時滑鼠會經過好幾個分頁，每經過一個閃一個 ✕
+     只是干擾，而那正是使用者在盯插入線的時候。 */
+  .tabs.dragging .x{opacity:0;pointer-events:none}
+  .tabs .add{color:var(--t2);letter-spacing:.04em}
+
+  /* 拖曳分頁改音軌順序。分頁標題是「位置的名字」，搬動的日是 MML 與樂器。 */
+  .tabs button:not(.add){cursor:grab}
+  .tabs button.dragging{opacity:.4;cursor:grabbing}
+  /*
+    插入線：**畫在兩個分頁之間的縫**，不是整格亮起來 —— 軌一多的時候使用者真正要問的是
+    「它會插到誰前面」。不改成位移預覽：分頁一位移，游標底下的元素就換人，dragover 打到別
+    的分頁、算出別的插入點、再位移一次 —— 抖動迴圈。
+  */
+  .tabs button.dropL::before,
+  .tabs button.dropR::after{
+    content:""; position:absolute; top:0; bottom:0; width:2px;
+    background:var(--t2); box-shadow:0 0 6px var(--t2);
+    pointer-events:none;
+  }
+  .tabs button.dropL::before{left:-1px}
+  .tabs button.dropR::after{right:-1px}
+
+  .panes{flex:1;display:flex;min-height:0;min-width:0}
+  .pane{flex:1;display:none;flex-direction:column;min-height:0;min-width:0}
+  .pane.on{display:flex}
+  /* 每個分頁置頂的樂器列 */
+  .panebar{
+    display:flex; align-items:center; gap:10px; flex-wrap:wrap;
+    padding:9px 22px; border-bottom:1px solid var(--line-soft); background:var(--bg2);
+  }
+  .panebar > .lbl{
+    font-size:11px; letter-spacing:.12em; text-transform:uppercase; color:var(--dimmer);
+  }
+  /*
+    樂器下拉：**讓它自己貼合內容**，不吃滿剩餘空間。原本會頂到 420px，而內建音色庫的標籤全
+    是 7–9 個字，那裡面有 300px 以上是空的。刻意**不用百分比**：那在 2560px 的螢幕上會又長
+    回 400px。
+
+    min-width  蓋掉開站時的一次跳動（載完前選項是「先載入音色庫」，比較短）
+    max-width  使用者可以載自己的音色庫；沒有 .def 的 GM 包會出現長名字，留 220px
+  */
+  .panebar select{
+    flex:0 0 auto; width:auto; min-width:96px; max-width:220px;
+    padding:6px 9px; font-size:12px;
+  }
+  /*
+    每軌的靜音鈕。純圖示 —— 可辨識性靠 title 與 aria-label 補；狀態「看得到」的那一半在分頁
+    上（軌名刪除線）。
+
+    **木樣式要自己寫全，不能靠 .tiny / .toggle**：那兩個 class 的規則全部掛在
+    `#rollbar button.tiny` 之下，選不到 panebar 裡的按鈕。保留那兩個 class 名是為了讓「它跟
+    #loopBtn 是同一種東西」在 HTML 上看得出來。
+
+    .on 用 --sel 而不是 --warn：--warn 在這個站是「出問題了」，而靜音是使用者自己要的。
+  */
+  /* 樂器列上的正方形圖示鈕（靜音、單聽、顯示、單看）。**共用一份** —— 它們並排在同一列，大
+     小差一個像素都看得出來。**樣式要自己寫全，不能靠 .tiny / .toggle**：那兩個 class 的規
+     則全部掛在 `#rollbar button.tiny` 之下。 */
+  .panebar .iconbtn{
+    flex:0 0 auto; display:inline-flex; align-items:center; justify-content:center;
+    /* **高度訂死、不讓內容的 line box 決定**，理由跟 #rollbar 那組按鈕一模一樣：裝
+       FontAwesome glyph 的按鈕會比裝文字的高一截，而那個高度會隨字型、圖示大小、
+       FontAwesome 版本漂移。正方形是因為它只有一個圖示。 */
+    width:28px; height:28px; padding:0; box-sizing:border-box;
+    background:var(--btn-bg); border:1px solid var(--line); border-radius:3px;
+    color:var(--dim); cursor:pointer;
+    transition:color .15s,background .15s,border-color .15s;
+  }
+  /* 水沒有文字陪襯的圖示要自己撐起可辨識度 —— 同 #rollbar button.tiny.ico 的判斷 */
+  .panebar .iconbtn i{font-size:13px}
+  .panebar .iconbtn:not(.on):hover{border-color:var(--t2);color:var(--txt)}
+  /* 按下狀態**四顆共用**。原本這兩條掛在 .trk-mute 上，一般化是同一個理由：
+     這一列的 toggle 從一顆變成四顆，各寫一份就是等著漂移。 */
+  .panebar .iconbtn.on{background:var(--sel);border-color:var(--sel);color:var(--on-color)}
+  .panebar .iconbtn.on:hover{background:var(--sel-hi);border-color:var(--sel-hi)}
+  /* 四顆包在自己的 .grp 裡（見 tracks.js），gap 比 .panebar 的 10px 緊一點 ——
+     它們是一組，靠近一點才讀得出來。 */
+  .panebar .grp{display:flex;align-items:center;gap:6px;flex:0 0 auto}
+  .panebar .meta{
+    font-family:var(--mono); font-size:11px; color:var(--dimmer); margin-left:auto;
+  }
+  .panebar .meta.full{color:var(--warn)}   /* 到字數上限了 */
+  /* 壓縮模式的標記，排在字數前面。**純標示不是按鈕**（見 tracks.setNoteCounts）——
+     關閉在優化框裡。顏色用 --sel 而不是 --warn：它是一個開著的功能，不是一個警告，
+     而且要跟旁邊超標的紅字分得開（一軌可以同時是壓縮模式又超過上限）。 */
+  .panebar .meta .zip{color:var(--sel);margin-right:5px;font-size:10px}
+  /*
+    排版屬性由 textarea 與語法上色層**共用同一條規則**，不是各寫一份 —— 兩層疊在一起，字元
+    必須一個對一個，任何一個排版屬性只在一邊改掉那一行之後就整片錯位，而它不會噴錯。
+
+    連字必須關掉：`<<` `>>` 在帶連字的等寬字型裡會合併成單一字形，而 textarea 是跨整串成
+    形、上色層被 span 切斷，兩層寬度就不一樣 —— 而 MML 滿滿都是 `<<` `>>`。
+
+    軟換行要**逐字元**斷（`line-break:anywhere`，老瀏覽器吃 `word-break:break-all`），不是
+    `overflow-wrap:break-word`。一整軌 MML 沒有空白，UAX #14 找得到的斷點只有 `-` `+` `.`
+    這幾個字元，於是那個值的表現是「只在附點與升降記號後面換行」：右緣參差得像亂排，而且
+    那幾個字元附近的斷點連 textarea 與上色層都不一定選一樣的（上色層被 span 切開，斷點機會
+    比純文字的 textarea 多），兩層就錯位。逐字元斷同時解掉這兩件事 —— 每個字元邊界都是斷
+    點，兩層沒有可以分歧的餘地。
+  */
+  textarea,.mml-hl{
+    font-family:var(--mono); font-size:13.5px; line-height:1.85;
+    padding:18px 22px; letter-spacing:.02em; tab-size:2;
+    white-space:pre-wrap; word-break:break-all; line-break:anywhere;
+    font-variant-ligatures:none;
+    font-feature-settings:"liga" 0,"clig" 0,"calt" 0,"dlig" 0;
+    font-kerning:none; font-synthesis:none;
+  }
+  textarea{flex:1; width:100%; resize:none; border:0; background:transparent}
+  /* 小節尺 + textarea 並排。.pane 本身日是縱向的（樂器列在上、文字在下），
+     所以要多一層橫向容器。width:auto 是必要的 —— textarea 的 width:100% 會拿
+     整列的寬度去算，把尺的寬度擠出容器。 */
+  .tarow{flex:1;display:flex;min-height:0;min-width:0;background:var(--ta-bg)}
+  .tarow textarea{width:auto;min-width:0}
+  /*
+    MML 格式化換行開啟時（body.wrapmml，由 ui.js 切）有兩件事一起發生：
+
+    1. textarea 改成 white-space:pre —— 不軟換行，改用橫向捲動。這是小節尺能對齊的**前
+       提**，不是偏好：軟換行會讓一個邏輯行佔好幾個視覺列，尺上的數字就對不上，而一把會
+       說謊的尺比沒有尺更糟。代價是密集譜會出現橫向捲軸，逃生門就是這個設定本身。
+    2. 小節尺出現。關掉時它沒有意義：整軌只有一行，尺上只會有一個「1」。
+  */
+  .barnum{display:none}
+  body.wrapmml .barnum{
+    display:block; flex:0 0 auto; width:46px; overflow:hidden;
+    background:var(--bg2); border-right:1px solid var(--line-soft); user-select:none;
+  }
+  /* 字級、行高、上內距三人個值都要跟 textarea 一模一樣 —— 「一行對一列」全靠它們。
+     改 textarea 的排版時這裡要跟著改，不然尺會整體錯位。 */
+  .barnum-in{
+    padding:18px 9px 0 0; text-align:right; color:var(--dimmer); white-space:pre;
+    font-family:var(--mono); font-size:13.5px; line-height:1.85; letter-spacing:.02em;
+  }
+  /* 不換行模式：兩層一起改成 pre，只有 textarea 加橫向捲軸（它才是捲動的那一個）。
+     上色層跟著它的 scrollLeft 被 translate 推（見 ui.syncTextLayerScroll）。 */
+  body.wrapmml .tarow textarea,body.wrapmml .mml-hl{white-space:pre}
+  body.wrapmml .tarow textarea{overflow-x:auto}
+
+  /* ---------- 語法上色層 ----------
+     三層疊法：.hlclip 裁切、.mml-hl 被 translate 推著跟 textarea 捲、textarea 在最上面收
+     輸入。textarea 的文字設成透明，畫面上的字全部是上色層畫的。裁切放在 .hlclip 而不是
+     .taclip 上：textarea 的焦點框是 outline + offset:1px，父層一裁就沒了。
+
+     span 上只能放**不影響排版**的屬性（color / background / text-decoration）——
+     font-weight 與 font-style 會改變 advance width，而那就是錯位的來源。
+
+     **opacity 雖然不影響排版，但也別月用**：它是對整個 span 做合成，發生在顏色決定之後，
+     於是 .tk-sel 的 color 蓋不掉它。 */
+  .taclip{flex:1;position:relative;display:flex;min-width:0}
+  .hlclip{position:absolute;inset:0;overflow:hidden;pointer-events:none;z-index:0}
+  .mml-hl{
+    position:absolute; top:0; left:0; margin:0; border:0;
+    color:var(--txt); overflow:visible;
+  }
+  /* textarea 要在上色層之上，不然它畫的 caret 會被上色層的字蓋住 */
+  .taclip textarea{position:relative;z-index:1}
+  /* 防呆：pre 裡的 span 一律不准帶自己的字型度量 */
+  .mml-hl span{
+    font:inherit;letter-spacing:inherit;word-spacing:inherit;
+    font-variant-ligatures:inherit;font-feature-settings:inherit;font-kerning:inherit;
+  }
+  /* 文字交給上色層。caret 仍然是 textarea 畫的 —— 只有它知道游標在哪。
+     caret-color 明寫成 --txt：不寫的話它跟著 color 走，而 color 現在是透明的。 */
+  .tarow textarea{color:transparent;-webkit-text-fill-color:transparent;caret-color:var(--txt)}
+  /* 選取底色也由上色層畫（.tk-sel），所以原生選取要讓位；兩邊都畫會疊戈成兩層底色。
+     text-fill-color 也要明寫：「元素的 text-fill-color 蓋不蓋得住 ::selection 的 color」
+     是個瀏覽器細節，賭輸的話選取處會同時有兩份字疊著。 */
+  .tarow textarea::selection{background:transparent;-webkit-text-fill-color:transparent}
+
+  /*
+    退回原生的兩種情形：hl-off（軌太長，見 ui.MAX_HL_CHARS）與 hl-composing（IME 組字中
+    —— 還沒進 value 的字在透明文字下是看不見的）。兩者都要把文字、選取底色一起還回去。
+  */
+  body.hl-off .tarow textarea,body.hl-composing .tarow textarea{
+    color:inherit;-webkit-text-fill-color:currentColor;
+  }
+  body.hl-off .tarow textarea::selection,body.hl-composing .tarow textarea::selection{
+    background:rgba(var(--hl-rgb),.6);color:var(--on-hl);-webkit-text-fill-color:var(--on-hl);
+  }
+  body.hl-off .mml-hl,body.hl-composing .mml-hl{visibility:hidden}
+
+  /*
+    MML token 的色盤。**刻意不放進 :root** —— 這是文字區的專用色盤，而 --t1..--t6 是「第
+    1～6 軌」的意思，兩者不該混在一個命名空間裡。
+
+    分色的規則只有一條（詳見 mml-highlight.js 的 R）：**t l o v 是宣告，整個 token 一起上
+    色；音符與 r 後面的數字是音長，一律白色。** 所以 `r4` 只有 r 是灰的 —— 它跟 `c4` 的 4
+    是同一件事。
+  */
+  .mml-hl{
+    --tk-t:#56c8d8;      /* 速度 */
+    --tk-l:#6ecf9c;      /* 音長，& 連結同色 */
+    --tk-o:#8ab4f8;      /* 八度，< > 移調同色 */
+    --tk-v:#ffd479;      /* 音量 */
+    --tk-n:#f7a1c4;      /* 絕對音高 —— 它的數字是半音數，跟誰都不一樣 */
+    --tk-quiet:#6b7280;  /* 休止 r p，@n 樂器同色 */
+  }
+  /* 文字區的底是白的（--ta-bg），所以這一組**不壓暗**，用飽和度正常的色 ——
+     壓暗過的版本六個色會一起往灰靠，反而比深色主題那組更難分。
+     六個色相拉開到 26° / 142° / 193° / 224° / 335°，對白底全部 ≥5:1。 */
+  :root[data-theme="light"] .mml-hl{
+    --tk-t:#f460ff;      /* 速度 */
+    --tk-l:#63da4b;      /* 音長，& 連結同色 */
+    --tk-o:#5781f7;      /* 八度，< > 移調同色 */
+    --tk-v:#eeb752;      /* 音量 */
+    --tk-n:#fd4e5d;      /* 絕對音高 */
+    --tk-quiet:#6b7280;  /* 休止 r p，@n 樂器同色 */
+  }
+  .tk-t{color:var(--tk-t)}
+  .tk-l{color:var(--tk-l)}
+  .tk-o{color:var(--tk-o)}
+  .tk-v{color:var(--tk-v)}
+  .tk-n{color:var(--tk-n)}
+  .tk-quiet{color:var(--tk-quiet)}
+  .tk-punct{color:var(--dim)}                 /* , ; [ ] */
+  .tk-dead{color:var(--dimmer)}               /* 註解、MML@ 之前、; 之後 */
+  /* 唯一竹的紅色：parser 看不懂的字（與 mml.warn.badChar 同一個判定）。
+     波浪線不吃 skip-ink —— MML 全是有下伸部的小寫字母，跳過去會斷成虛線。 */
+  .tk-bad{
+    color:var(--warn); text-decoration:underline wavy var(--warn);
+    text-decoration-skip-ink:none; text-underline-offset:3px;
+  }
+  /* 超過一軌 2400 字的那一段。跟樂器列右邊那個會變紅的字數是同一套顏色語言，
+     它只說「從這裡開始貼不進遊戲」，不解釋 —— 會直接編 MML 的人自己看得懂。 */
+  .tk-over{background:rgba(var(--warn-rgb),.16)}
+  /* 選取（播放高亮也是它）。**寫在最後** —— 它要蓋掉上面每一種 token 的顏色，
+     而它們的優先權都是一個 class，靠順序決勝。 */
+  .tk-sel{background:rgba(var(--hl-rgb),.6);color:var(--on-hl)}
+  /* 同一件事的另一條路。支援 CSS Custom Highlight API 時選取**不烘進 HTML**，改用它畫
+     （見 ui.HL_API）—— 播放中每響一個音就要換一次選取，烘進去等於每個音都砍掉重建上千個
+     span。兩份顏色必須一模一樣：換一台瀏覽器不該換一個顏色。
+     `::highlight()` 只吃 color / background-color / text-decoration / text-shadow，而這裡
+     要的剛好只有前兩個 —— 上面那條的 `background` 簡寫在這裡是無效宣告，要寫全名。 */
+  ::highlight(mml-sel){background-color:rgba(var(--hl-rgb),.6);color:var(--on-hl)}
+
+  /* 對齊除錯。**不卜進 UI**，在 devtools 手動加 body.hl-debug 才會生效：
+     把 textarea 的字露出來（半透明紅），兩層有偏移一眼就看得到。
+     這是「所有字元的角色聯集 === 原文」那條不變式的人工檢查。 */
+  body.hl-debug .tarow textarea{-webkit-text-fill-color:rgba(255,60,60,.55)}
+  /* flex:0 0 auto —— 樂譜區的下限是量 .tabs + .status 的自然高度算出來的，
+     它們被壓縮的話會變成「越量越小」的迴圈。拖到最小時被壓成 0 的是 .panes。 */
+  .status{
+    display:flex; gap:18px; flex-wrap:wrap; align-items:center; flex:0 0 auto;
+    border-top:1px solid var(--line); background:var(--bg2);
+    padding:9px 22px; font-family:var(--mono); font-size:11.5px; color:var(--dim);
+  }
+  .status .k{color:var(--dimmer)}
+  .status .bad{color:var(--warn)}
+  /* 暫存狀態靠右 —— 它是背景發生的事，不需要跟音符數搶注意力 */
+  /* 暫存狀態把後面的東西一起推到右邊 —— 它們都是背景資訊，不跟音符數搶注意力 */
+  .status .store{margin-left:auto;color:var(--dimmer)}
+  .status .engine{color:var(--dimmer)}
+  /* 條款連結。暗到不搶注意力，但一直在畫面上（Google 審核要看得到） */
+  .status .legal{display:inline-flex;gap:8px;align-items:center}
+  .status .legal a{color:var(--dimmer);text-decoration:none}
+  .status .legal a:hover{color:var(--t2);text-decoration:underline}
+
+  /* 站台說明那個頁尾摺疊區塊（#about）的木樣式**已經刪掉了** —— 那段散文現在是
+     #aboutPanel 第一塊的 .group + .thanks，樣式整組沿用抽屜的，不需要自己一份。
+     那個 <details> 從頭到尾沒有渲染過，所以刪掉的是一組從來沒生效的規則。 */
+  .status .legal span{color:var(--line)}
+  .pill{
+    display:inline-flex;align-items:center;gap:6px;
+  }
+  .pill i{width:7px;height:7px;border-radius:50%;display:inline-block}
+
+  /* ---------- 捲軸樣式（全站共用） ----------
+     明寫樣式，不用原生預設：overlay 捲軸的平台在 `overflow:scroll` 的元素上寬度是 0、
+     thumb 只在捲動時浮現 —— 那等於沒有捲軸，而這一套的全部價值就是「看得見、拖得動」。
+
+     **兩套屬性是互斥的，不是互補的。** Chrome 121 之後，元素上只要設了非預設竹的
+     `scrollbar-width` 或 `scrollbar-color`，底下那幾條 `::-webkit-scrollbar` 就會被**整組
+     忽略** —— 所以凹槽色（--bg2）要寫在 `scrollbar-color` 的**第二個值**裡。webkit 那幾條
+     留著當舊引擎的退路。
+
+     生效範圍是**明列**的五個，不是 `*`。`#stage` **不用 thin**，這是唯一的例外：鋼琴捲軸
+     的那兩條是全站被拖最多的。 */
+  .tarow textarea,.drawer,#midiBox .list,#shareBox .list,#omrBox .list{
+    scrollbar-width:thin; scrollbar-color:var(--line) var(--bg2);
+  }
+  #stage{scrollbar-color:var(--line) var(--bg2)}
+  .tarow textarea:hover,.drawer:hover,#midiBox .list:hover,
+  #shareBox .list:hover,#omrBox .list:hover,#stage:hover{
+    scrollbar-color:var(--dimmer) var(--bg2);
+  }
+  .tarow textarea::-webkit-scrollbar,.drawer::-webkit-scrollbar,
+  #midiBox .list::-webkit-scrollbar,#shareBox .list::-webkit-scrollbar,
+  #omrBox .list::-webkit-scrollbar,
+  #stage::-webkit-scrollbar{
+    width:var(--sbw); height:var(--sbw); background:var(--bg2);
+  }
+  .tarow textarea::-webkit-scrollbar-thumb,.drawer::-webkit-scrollbar-thumb,
+  #midiBox .list::-webkit-scrollbar-thumb,#shareBox .list::-webkit-scrollbar-thumb,
+  #omrBox .list::-webkit-scrollbar-thumb,
+  #stage::-webkit-scrollbar-thumb{
+    background:var(--line); border-radius:6px; border:3px solid var(--bg2);
+  }
+  .tarow textarea:hover::-webkit-scrollbar-thumb,.drawer:hover::-webkit-scrollbar-thumb,
+  #midiBox .list:hover::-webkit-scrollbar-thumb,#shareBox .list:hover::-webkit-scrollbar-thumb,
+  #omrBox .list:hover::-webkit-scrollbar-thumb,
+  #stage:hover::-webkit-scrollbar-thumb{
+    background:var(--dimmer);
+  }
+  /* 兩條捲軸交會的角。只有 #stage 與不換行模式下的 textarea 會有（其餘十都是單軸），
+     所以只列這兩個。透明＝透出容器自己的背景，而且之後誰換了背景色，角會自動跟上。
+     不寫的話 Chromium 會拿它自己的預設底色去畫，在深色主題上是一塊亮方塊。 */
+  #stage::-webkit-scrollbar-corner,.tarow textarea::-webkit-scrollbar-corner{
+    background:transparent;
+  }
+
+  /* ---------- 鋼琴捲軸的右鍵選單 ---------- */
+  /*
+    z-index 55 落在 #log（50）與對話框（60）之間，兩邊都是刻意的：底部的 toast 不該蓋住剛
+    打開的選單，而對話框開著時選單本來就不該存在。
+
+    **列一律單行。** 兩行式大約 311px 高，而手機橫放只有 390px —— 那個姿勢是寬的卻是最矮
+    的，正好是看捲軸最舒服的時候。而選單比對話框更容易溢出：它從**滑鼠位置**開始長。
+
+    所以這裡**故意沒有** max-height + overflow：選單裡的捲動清單是爛互動。
+  */
+  /* 同 #roll：長按叫出選單之後，瀏覽器自己的長按門檻（Android Chrome 約 500ms）才到，
+     而那時手指底下已經是這一塊了。 */
+  #rollMenu{
+    position:fixed; z-index:55; padding:3px;
+    user-select:none; -webkit-user-select:none; -webkit-touch-callout:none;
+    -webkit-tap-highlight-color:transparent;
+    min-width:300px; max-width:min(360px,94vw);
+    background:var(--panel); border:1px solid var(--line); border-radius:3px;
+    box-shadow:0 14px 44px rgba(var(--shadow-rgb),.55);
+    font-size:12px;
+  }
+  /* 標頭寫「第 N 小節」—— 下面幾列共用這一個位置，每一列各自重複一次只是雜訊 */
+  #rollMenu .head{
+    padding:6px 10px 5px; color:var(--dimmer); font-size:11px; letter-spacing:.12em;
+  }
+  #rollMenu hr{margin:3px 0;border:0;border-top:1px solid var(--line-soft)}
+  #rollMenu .row{display:flex;align-items:stretch}
+
+  /* 可執行區。左緣 2px 色條日是 hover 的主要訊號 —— 站上「hover 換 border-color」那一招
+     在這裡用不上（列沒有邊框），而純粹換底色不夠明確。 */
+  #rollMenu .act{
+    flex:1 1 auto; min-width:0; display:flex; align-items:center; gap:8px;
+    padding:7px 10px 7px 8px; border:0; border-left:2px solid transparent;
+    border-radius:2px; background:none; color:var(--dim);
+    text-align:left; cursor:pointer; line-height:1.35;
+    transition:background .12s,color .12s,border-color .12s;
+  }
+  #rollMenu .act b{flex:0 0 auto;font-weight:400;white-space:nowrap}
+  /* 位置說明，停用時換成原因。可能比空間長 —— **切掉而不是換行**，換行就破了單行式 */
+  #rollMenu .act span{
+    flex:1 1 auto; min-width:0; text-align:right; color:var(--dimmer); font-size:11px;
+    overflow:hidden; text-overflow:ellipsis; white-space:nowrap;
+  }
+  /*
+    高亮只有兩種來源：**滑鼠移過去**，以及**鍵盤選到那一列**。「選單一開啟不能有任何一列
+    亮著」不是靠這裡擋的，是靠 rollmenu 開啟時把焦點放在**選單本體**而不是第一列。
+
+    **所以用 `:focus`，不要「改良」成 `:focus-visible`** —— 後者看竹的是瀏覽器的啟發式判
+    斷，既測不到也不保證（實測第一列照樣會亮）。
+  */
+  #rollMenu .act:not(:disabled):hover,
+  #rollMenu .act:not(:disabled):focus{
+    background:var(--panel2); color:var(--txt); border-left-color:var(--t2); outline:none;
+  }
+  /*
+    破壞性的列（刪除小節、剪下音符、刪除音符）：**滑過去整列鋪滿警告色。**
+
+    不用紅字 —— 那會讓整份選單看起來在報錯，所以**平常一個紅字都沒有**。但 2px 的色條在
+    「滑鼠從上往下掃」時分辨不出來，而使用者需要的是「你現在停的這一列會刪東西」在**停下
+    來的那一刻**足夠大聲。鋪滿而不是常駐淡紅底，也是同一個理由。
+
+    配色照抄站上同一招的兩個前例，不是新發明一套。
+  */
+  #rollMenu .row.danger .act:not(:disabled):hover,
+  #rollMenu .row.danger .act:not(:disabled):focus{
+    background:var(--warn); color:var(--on-accent); border-left-color:var(--warn);
+  }
+  /* 灰字在紅底上要跟著翻深，不然 --dimmer 壓在 --warn 上幾乎讀不到 */
+  #rollMenu .row.danger .act:not(:disabled):hover span,
+  #rollMenu .row.danger .act:not(:disabled):focus span{color:var(--on-accent);opacity:.75}
+  /* 選單本體自己吃焦點（tabindex=-1，見 rollmenu.open），不要畫瀏覽器預設的外框 */
+  #rollMenu:focus{outline:none}
+  #rollMenu .row.off .act{opacity:.4;cursor:default}
+
+  /* 步進區。**自己的底色與邊框**就日是那條「看得見的分界」——
+     下面兩列是破壞性的，而「想把 1 調成 2、手滑點到旁邊、它直接刪了一小節」
+     是把箭頭疊在按鈕裡的經典壞法。 */
+  #rollMenu .spin{
+    flex:0 0 auto; display:flex; align-items:center;
+    margin:2px 2px 2px 4px; padding:0 2px;
+    background:var(--bg2); border:1px solid var(--line); border-radius:3px;
+  }
+  #rollMenu .spin i{
+    min-width:20px; text-align:center; font-style:normal;
+    font-family:var(--mono); font-size:12px; color:var(--txt);
+  }
+  /* 28×28。手機是**長按**開這個選單的，所以箭頭要有手指按得到的尺寸 ——
+     太小的話等於只剩下「執行」按得到，而那半邊會刪掉小節。 */
+  #rollMenu .spin button{
+    width:28px; height:28px; padding:0; border:0; background:transparent;
+    color:var(--dimmer); font-family:var(--mono); font-size:11px; line-height:1;
+    cursor:pointer; display:flex; align-items:center; justify-content:center;
+    transition:color .15s;
+  }
+  #rollMenu .spin button:not(:disabled):hover{color:var(--txt)}
+  /* 到頂／到底就暗掉。上限是**動態的**（跟著剩餘小節數變），所以卜這是「不能再多了」
+     唯一的提示。 */
+  #rollMenu .spin button:disabled{color:var(--line);cursor:not-allowed}
+
+  /* ---------- toast / log ---------- */
+  #log{
+    position:fixed; left:50%; bottom:22px; transform:translateX(-50%);
+    max-width:min(680px,92vw); background:var(--toast-bg); color:var(--txt);
+    border:1px solid var(--line); border-left:3px solid var(--warn);
+    padding:12px 16px; border-radius:3px; font-size:13px;
+    box-shadow:0 10px 40px rgba(var(--shadow-rgb),.5); display:none; z-index:50;
+  }
+  #log code{font-family:var(--mono);font-size:12px;color:var(--t1)}
+  #log button{background:none;border:0;color:var(--dim);cursor:pointer;float:right;margin-left:12px}
+
+  /* ---------- 貼上的後備視窗（瀏覽器不給讀剪貼簿時才出現） ---------- */
+  /* 所有對話框共用的外框。**用 class 不是 id 列舉** —— 這裡本來是五條各自列了十二個 id 竹的
+     選擇器，而漏掉第一條的後果是它**開站就顯示在畫面上**（沒有 display:none）而且完全沒
+     有樣式。
+
+     這個 class 還有第二個消費者：savebox.quickSave() 用 `.modal.on` 判斷「現在有別的框開
+     著嗎」—— 漏掉某個框的 class，那顆快捷鍵就會在那個框開著時在背景偷偷寫入一次。 */
+  .modal{
+    position:fixed; inset:0; z-index:60; display:none;
+    place-items:center; background:rgba(var(--scrim-rgb),.72);
+  }
+  .modal.on{display:grid}
+  /*
+    卡片的高度天花板。**這是保底，不是主要手段** —— 有置底工具列的框（#midiBox / #omrBox /
+    #saveBox / #shareBox）各自有一條「讓清單縮」的 flex 鏈，清單先讓路、卡片才輪到捲。那幾
+    個清單都是 overflow:auto 的容器，所以它們的 min-height:auto 依 flexbox 規範解析為 0、縮
+    得下去，footer 因此不會掉到捲動摺線下面。
+
+    **單位必須是 dvh。** iOS Safari 的 100vh 解析成「網址列縮起來時」的大視窗高度 ——
+    iPhone SE 上約 650px，而實際可見只有約 550px，用 vh 等於只修了一半。
+
+    這條規則原本只寫在 #shareBox 上（而且寫的是 vh）。收成共用的理由是：卡片比視窗高就被切
+    掉、而且**不會生出捲軸**的框不只那一個 —— #fileBox 約 830px、#optBox 更長，在 iPhone 上
+    一律看不到下半截。.modal 是 place-items:center 的 grid，超出時上下同時溢出，上面那一截
+    連捲都捲不到。
+
+    overscroll-behavior:contain 是給觸控的：卡片捲到底之後，後續的手勢不要傳給背後的頁面。
+  */
+  .modal .card{
+    width:min(620px,92vw); background:var(--panel); border:1px solid var(--line);
+    border-radius:4px; padding:18px; display:flex; flex-direction:column; gap:12px;
+    box-shadow:0 20px 60px rgba(var(--shadow-rgb),.6);
+    max-height:calc(100dvh - 24px); overflow-y:auto; overscroll-behavior:contain;
+  }
+  .modal h2{margin:0;font-family:var(--display);font-weight:400;font-size:19px}
+  .modal p{margin:0;color:var(--dim);font-size:12px}
+  #delBox .card{width:min(420px,92vw)}
+  #clipBox .card{width:min(420px,92vw)}
+  /* .hint 在側欄是區塊級的說明，這裡沿用同一個樣式 */
+  #clipBox .hint{margin:0}
+  #delBox p b{color:var(--warn)}
+  /* 危險動作用警示色。不是「不能按」，是「按了就回不去」 */
+  .act.danger,#dangerZone .act{border-color:var(--warn);color:var(--warn)}
+  .act.danger:hover,#dangerZone .act:hover{background:var(--warn);color:var(--on-accent)}
+  #dangerZone[hidden]{display:none}
+
+  /* ---------- 移調對話框 ---------- */
+  #transBox .card{width:min(420px,92vw)}
+  #transBox .tgroup{display:flex;flex-direction:column;gap:7px}
+
+  /* ---------- 合併音軌對話框 ---------- */
+  /* 跟壓縮優化同寬（不是移調的 420）：五個方式各有一段說明，420 會每一行十都折。範圍那一
+     排、方式那五顆、字數行、警語行**全部共用優化的規則** —— 兩個框的 markup 是刻意一樣
+     的，複製一份 CSS 只會讓它們哪天長得不一樣。 */
+  #mergeBox .card{width:min(500px,92vw)}
+  #mergeBox .tgroup{display:flex;flex-direction:column;gap:7px}
+  /* 「和弦1（64 個音符）→ [和弦2 ▾]」。箭頭撐開兩邊，讀起來是一個流向。 */
+  #mergeFlow{display:flex;align-items:center;gap:10px}
+  #mergeFlow .from{font-size:12px;color:var(--txt);white-space:nowrap}
+  #mergeFlow i{color:var(--dimmer);font-size:11px;flex:0 0 auto}
+  /* 下拉吃掉剩下的寬度 —— 軌名長度不一（「主旋律」vs「輔助9」），
+     固定寬度會在某些選項上留一段空白。 */
+  #mergeTo{
+    flex:1 1 auto; min-width:0;
+    background:var(--panel); color:var(--txt);
+    border:1px solid var(--line); border-radius:3px;
+    font-size:12px; padding:5px 8px; cursor:pointer;
+    width:200px;
+  }
+  #mergeTo:focus-visible{outline:2px solid var(--sel);outline-offset:1px}
+  /* 範圍：三顆連成一段，跟工具列的「全部／部份」同一套卜語言 */
+  #transScope{display:flex}
+  #transScope button{
+    flex:1; padding:6px 4px; background:var(--panel2); border:1px solid var(--line);
+    border-right-width:0; color:var(--dim); font-size:12px; cursor:pointer;
+  }
+  #transScope button:first-child{border-radius:3px 0 0 3px}
+  #transScope button:last-child{border-right-width:1px;border-radius:0 3px 3px 0}
+  #transScope button.on{background:var(--sel);color:var(--on-color);border-color:var(--sel)}
+  #transScope button:disabled{opacity:.35;cursor:not-allowed}
+  /* 24 顆：兩欄各 12 列。grid-auto-flow:column 讓「升」填滿左欄才換右欄 */
+  #transKeys{
+    display:grid; grid-template-columns:1fr 1fr; grid-template-rows:repeat(12,auto);
+    grid-auto-flow:column; gap:3px;
+  }
+  #transKeys button{
+    padding:4px 7px; background:var(--panel2); border:1px solid var(--line);
+    border-radius:3px; color:var(--dim); font-size:12px; cursor:pointer;
+    text-align:left; white-space:nowrap;
+  }
+  #transKeys button:not(.on):hover{border-color:var(--t2);color:var(--txt)}
+  #transKeys button.on{background:var(--sel);color:var(--on-color);border-color:var(--sel)}
+  #transKeys button em{font-style:normal;opacity:.75;font-size:11px}
+  /* 擋下來的原因寫在這裡（音域超出、有唯讀十軌）。留著高度避免按鈕跳動。 */
+  #transNote{min-height:1.5em;color:var(--warn)!important;font-size:12px}
+
+  /* ---------- 速度／拍速對話框 ---------- */
+  #tempoBox .card{width:min(460px,92vw)}
+  #tempoBox .tgroup{display:flex;flex-direction:column;gap:7px}
+  /* 數字框 + 滑桿 + 試聽鈕一列。滑桿吃掉剩下的寬度。 */
+  #tempoRow{display:flex;align-items:center;gap:10px}
+  #tempoNum{
+    flex:0 0 auto; width:76px; text-align:center;
+    background:var(--panel2); color:var(--txt); border:1px solid var(--line);
+    border-radius:3px; padding:6px 8px; font-family:var(--mono); font-size:13px;
+  }
+  #tempoNum:focus-visible{outline:2px solid var(--t1);outline-offset:1px}
+  /* min-width:0 是必要的：range 的預設固有寬度會把它撐出容器 */
+  #tempoSlider{flex:1 1 auto;min-width:0;accent-color:var(--t2);cursor:pointer}
+  /* 試聽鈕：按下去是「正在響」，所以用 .on 的實心底表示狀態而不是瞬時動作 */
+  #tempoTry{
+    flex:0 0 auto; display:inline-flex; align-items:center; gap:6px;
+    background:var(--btn-bg-alt); border:1px solid var(--line); border-radius:3px;
+    color:var(--dim); font-size:11px; padding:5px 9px; cursor:pointer; white-space:nowrap;
+  }
+  #tempoTry:not(:disabled):not(.on):hover{border-color:var(--t2);color:var(--txt)}
+  #tempoTry.on{background:var(--sel);border-color:var(--sel);color:var(--on-color)}
+  #tempoTry:disabled{opacity:.4;cursor:not-allowed}
+  /* 「原本日是 T113」「第 3、5 軌需要切段」這類事前告知。**不是警告**，所以不用警示色
+     —— 它是使用者按下確認之前該讀完的資訊，跟 #transNote 的「擋下來的原因」不同。 */
+  #tempoInfo{min-height:1.5em;font-size:12px;color:var(--dim)}
+  #tempoInfo b{color:var(--txt);font-weight:500}
+  #tempoNote{min-height:1.5em;color:var(--warn)!important;font-size:12px}
+  /* 移除鈕跟取消／執行同一列，但推到最左邊 —— 它是這個框的第三種結果，不該擠在「取消／
+     執行」那組決定旁邊。
+
+     用 flex 而不是 grid 的欄：移除鈕**平常是隱藏的**，而 display:none 會讓它從 grid 退
+     出、後面兩顆整排位移。 */
+  #tempoBox .row{display:flex;gap:8px;align-items:center}
+  #tempoBox .row .act{flex:0 0 auto;width:auto;padding:9px 16px}
+  #tempoCancel{margin-left:auto}
+  #tempoDel{border-color:var(--warn);color:var(--warn)}
+  #tempoDel:hover{background:var(--warn);color:var(--on-accent)}
+  #tempoDel[hidden]{display:none}
+
+  /* ---------- 力度／音量對卜話框 ---------- */
+  #velBox .card{width:min(420px,92vw)}
+  #velBox .tgroup{display:flex;flex-direction:column;gap:7px}
+  /* 範圍裡現在的力度分布。等寬字 —— 它是數字，要能一眼比大小。 */
+  #velRange{font-family:var(--mono);font-size:12px;color:var(--dim)}
+  #velRange b{color:var(--txt);font-weight:500}
+  /* 20 顆：兩欄各 10 列，跟 #transKeys 同一個排法（左欄填滿才換右欄） */
+  #velKeys{
+    display:grid; grid-template-columns:1fr 1fr; grid-template-rows:repeat(10,auto);
+    grid-auto-flow:column; gap:3px;
+  }
+  #velKeys button{
+    padding:4px 7px; background:var(--panel2); border:1px solid var(--line);
+    border-radius:3px; color:var(--dim); font-size:12px; cursor:pointer;
+    text-align:left; white-space:nowrap;
+  }
+  #velKeys button:not(.on):hover{border-color:var(--t2);color:var(--txt)}
+  #velKeys button.on{background:var(--sel);color:var(--on-color);border-color:var(--sel)}
+  /* 會被壓平的音數。用警示色但不是擋下來 —— 使用者可以明知會壓平還是要壓
+     （「全部推到最大聲」是合法的意圖），所以它是告知不是阻止。 */
+  #velNote{min-height:1.5em;color:var(--warn)!important;font-size:12px}
+
+  /* ---------- 壓縮優化對話框 ---------- */
+  /* 比移調寬：三人個規則各有一段說明，420px 會每一行都折 */
+  #optBox .card{width:min(500px,92vw)}
+  #optBox .tgroup{display:flex;flex-direction:column;gap:7px}
+  /* 範圍那一排跟移調完全同一套語言，共用規則（見 #transScope 那一段）。
+     速度的「設置位置」與力度的「範圍」也是同一個東西，所以一起掛進來。 */
+  #optScope,#mergeScope,#velScope,#tempoWhere{display:flex}
+  #optScope button,#mergeScope button,#velScope button,#tempoWhere button{
+    flex:1; padding:6px 4px; background:var(--panel2); border:1px solid var(--line);
+    border-right-width:0; color:var(--dim); font-size:12px; cursor:pointer;
+  }
+  #optScope button:first-child,#mergeScope button:first-child,#velScope button:first-child,#tempoWhere button:first-child{border-radius:3px 0 0 3px}
+  #optScope button:last-child,#mergeScope button:last-child,#velScope button:last-child,#tempoWhere button:last-child{border-right-width:1px;border-radius:0 3px 3px 0}
+  #optScope button.on,#mergeScope button.on,#velScope button.on,#tempoWhere button.on{background:var(--sel);color:var(--on-color);border-color:var(--sel)}
+  #optScope button:disabled,#mergeScope button:disabled,#velScope button:disabled,#tempoWhere button:disabled{opacity:.35;cursor:not-allowed}
+  /* 四個方式十直排。每顆是「標題 + 說明 + 省字數」三塊，說明會折行，所以不能用
+     移調那種一行一顆的緊密網格 */
+  #optRules,#mergeWays{display:flex;flex-direction:column;gap:5px}
+  /* 夾在無損與三個有損之間的警語。它是**分界線**，不只是一段字 —— 上面那顆不改變
+     聲音，下面三顆會。所以給它上下留白與一條線，讓兩層在視覺上真的分開。
+     （放在 radiogroup 裡面，用 aria-describedby 掛給下面三顆，見 HTML。） */
+  #optRules .hint,#mergeWays .hint{
+    margin:7px 2px 4px; padding-top:9px; border-top:1px solid var(--line-soft);
+    line-height:1.65;
+  }
+  #optRules button,#mergeWays button{
+    display:grid; grid-template-columns:1fr auto; grid-template-areas:"t n" "d n";
+    gap:2px 10px; align-items:center; text-align:left;
+    padding:8px 11px; background:var(--panel2); border:1px solid var(--line);
+    border-radius:3px; color:var(--dim); font-size:12px; cursor:pointer;
+  }
+  #optRules button:not(.on):not(:disabled):hover,#mergeWays button:not(.on):not(:disabled):hover{border-color:var(--t2)}
+  #optRules button.on,#mergeWays button.on{background:var(--sel);color:var(--on-color);border-color:var(--sel)}
+  /* 省 0 字竹的方式不給按 —— 開著讓人點了才發現沒用很煩（跟移調的「已選擇音符」同理） */
+  #optRules button:disabled,#mergeWays button:disabled{opacity:.4;cursor:not-allowed}
+  #optRules .t,#mergeWays .t{grid-area:t;color:var(--txt);font-size:12.5px}
+  #optRules button.on .t,#mergeWays button.on .t{color:var(--on-color)}
+  #optRules .d,#mergeWays .d{grid-area:d;color:var(--dimmer);font-size:11.5px;line-height:1.5}
+  #optRules button.on .d,#mergeWays button.on .d{color:rgba(var(--on-color-rgb),.8)}
+  /* 說明裡的重點（無損那顆的「一個音都不動」）。跟 .hint b 同一套語言 */
+  #optRules .d b,#mergeWays .d b{color:var(--dim);font-weight:500}
+  #optRules button.on .d b,#mergeWays button.on .d b{color:var(--on-color)}
+  /* 省下的字數：這是使用者唯一真正在比的東西，所以給它等寬字與日最強的對比。
+     white-space:pre 而不是 nowrap —— 兩行（省幾字／影響幾個音）是 ui.js 用 \n
+     串起來的，nowrap 會把換行吃掉變成一長行。 */
+  #optRules .n,#mergeWays .n{
+    grid-area:n; font-family:var(--mono); font-size:12px; color:var(--t2);
+    white-space:pre; text-align:right; line-height:1.45;
+  }
+  #optRules button.on .n,#mergeWays button.on .n{color:var(--on-color)}
+  #optRules button:disabled .n,#mergeWays button:disabled .n{color:var(--dimmer)}
+  #optBox .hint b,#mergeBox .hint b{color:var(--dim);font-weight:500}
+  /* 擋下來的原因／執行後的結果。留著高度避免按鈕跳動，同 #transNote */
+  #optNote,#mergeNote{min-height:1.5em;color:var(--warn)!important;font-size:12px}
+  /* 「關閉自動壓縮」。長得像連結而不是按鈕：它跟旁邊四個方式不是同一類動作（那四個是
+     「再壓一點」，這個是「停止自動壓縮」），做成第五顆按鈕會讓人以為關掉會把譜展開。 */
+  #optNote button.link{
+    background:none;border:none;padding:0;font:inherit;color:var(--sel);
+    text-decoration:underline;cursor:pointer;
+  }
+  #optNote button.link:hover{color:var(--txt)}
+  #optNote button.link:focus-visible{outline:2px solid var(--t1);outline-offset:2px;border-radius:2px}
+  /* 字數／上限。等寬字，因為它是一組會變動的數字，等寬才不會左右跳動。
+     超過上限時整行變紅 —— 跟樂器列右邊那個字數同一套顏色語言。 */
+  #optChars,#mergeChars{min-height:1.5em;font-family:var(--mono);font-size:12px}
+  #optChars b,#mergeChars b{color:var(--t2);font-weight:500}
+  #optChars.over b,#optChars.over,#mergeChars.over b,#mergeChars.over{color:var(--warn)!important}
+  #pasteBox textarea{
+    height:170px; flex:none; padding:11px 13px; font-size:12.5px; line-height:1.7;
+    background:var(--bg); border:1px solid var(--line); border-radius:3px;
+  }
+  /* 「拿出去」模式沒有東西要載入，只留一顆關閉 */
+  #pasteBox[data-mode="out"] .row{grid-template-columns:1fr}
+  #pasteBox[data-mode="out"] #pasteOk{display:none}
+
+  /* ---------- 木檔案：匯入 / 匯出 ---------- */
+  #fileBox .card{width:min(460px,92vw) ; padding:20px 20px 40px 20px ;}
+  #fileBox .sect{display:flex;flex-direction:column;gap:9px}
+  /* 兩個區塊之間畫一條線。它們是兩個方向的動作，不該看起來像同一組按鈕 */
+  #fileBox .sect + .sect{border-top:1px solid var(--line-soft);padding-top:15px}
+  /* 拖放：整張卡片都是放置區（框裡任何地方都接得住），邊框亮起來當回饋 */
+  #fileBox .card.drop{border-color:var(--t2)}
+  #fileBox .hint b{color:var(--dim);font-weight:500}
+  /* 讀檔失敗的原因。留在框裡而不是走 toast —— 使用者要能立刻再選一個檔案 */
+  #fileBox #fileErr{color:var(--warn)}
+  #fileBox #fileErr[hidden]{display:none}
+  /* 兩個匯入入口共用同一組外觀。`select,.filebtn,button.act` 那條規則已經把邊框、
+     內距、靠左對齊都給好了，所以「選擇圖片…」只要把說明 span 放進 button 裡面，
+     就會跟隔壁的「選擇檔案」逐像素一樣 —— 不需要為它另外寫一份樣式。 */
+  #fileBox .filebtn + .hint,#fileBox #omrOpen + .hint{margin-top:-4px}
+  /* 說明裡的連結（目前只有 Audiveris 的出處）。樣式沿用抽屜那份技術水清單：
+     不畫底線、hover 才浮出來 —— 這是說明文字，不該搶走按鈕的注意力。
+     那邊的規則是 `.drawer .thanks a`，選擇器搆不到這裡，所以照抄一份。 */
+  #fileBox .hint a{
+    color:var(--t2); text-decoration:none;
+    border-bottom:1px solid transparent; transition:border-color .15s;
+  }
+  #fileBox .hint a:hover{border-bottom-color:var(--t2)}
+  #fileBox .hint a:focus-visible{outline:2px solid var(--t1);outline-offset:2px;border-radius:2px}
+  /* 檔名 + 格式一列：合起來就是最後的檔名，所以它們並排而不是分行 */
+  #fileBox .fname{display:flex;gap:8px}
+  #fileBox #expName{
+    flex:1; min-width:0; padding:8px 10px; font-size:12.5px; font-family:inherit;
+    color:var(--txt); background:var(--panel2);
+    border:1px solid var(--line); border-radius:3px;
+  }
+  #fileBox #expName:focus-visible{outline:2px solid var(--t1);outline-offset:1px}
+  /* select 的共用規則是 width:100%，這裡要讓它只佔自己需要的寬 */
+  #fileBox #expFmt{flex:0 0 auto;width:auto;padding:8px 10px;text-align:center}
+  /* 清空：共用規則是 width:100%，滿版的紅框按鈕在這個框裡太搶戲 —— 它是最少用、
+     而且最不該被誤觸的那一顆。縮到只佔自己的寬並置中，份量就跟它的使用頻率相稱。
+     （.sect 是 flex column，所以置中用 align-self 而不是 margin auto。） */
+  #fileBox #clearAll{width:auto;align-self:center;padding:8px 20px}
+
+  /* ---------- 選擇要匯入的音十軌 ---------- */
+  #midiBox .card{width:min(740px,94vw)}
+  #midiBox #midiName{color:var(--dimmer);font-family:var(--mono);font-size:11.5px}
+  /* 16 個 channel 的清單會很長，捲在自己的框裡，對話框本身不長高。
+     **dvh 不是 vh**：iPhone SE 上 50vh ≈ 325px 而可見高度只有約 550px，光清單就吃掉 59%
+     ——理由與 `.modal .card` 那條天花板同一個。 */
+  #midiBox .list{
+    max-height:min(50dvh,400px); overflow:auto;
+    border:1px solid var(--line); border-radius:3px; background:var(--bg);
+  }
+  #midiBox table{width:100%;border-collapse:collapse;font-size:12px}
+  /* 表頭釘住：捲到第 12 列時還要看得出哪一欄是音符數 */
+  #midiBox th{
+    position:sticky; top:0; z-index:1; background:var(--bg2);
+    font-size:11px; letter-spacing:.1em; text-transform:uppercase; color:var(--dimmer);
+    font-weight:400; text-align:left; padding:7px 9px;
+    border-bottom:1px solid var(--line); white-space:nowrap;
+  }
+  #midiBox td{padding:4px 9px;border-bottom:1px solid var(--line-soft);color:var(--dim)}
+  #midiBox tbody tr:last-child td{border-bottom:0}
+  /* 整列都是勾選的靶（見 filebox.js）。user-select:none 是因為列變戈成可點之後，
+     雙擊選字會順手把它勾起來又取消 —— 頻道名沒有人需要複製走。 */
+  #midiBox tbody tr{cursor:pointer;user-select:none}
+  /* 四階要分得開：底色 → 停在上面 → 勾起來 → 勾起來又停在上面。
+     列本身是點擊目標，「我現在會點到哪一列」必須一眼看得出來。 */
+  #midiBox tbody tr:hover td{background:var(--panel);color:var(--txt)}
+  #midiBox tbody tr.on td{background:var(--panel2);color:var(--txt)}
+  #midiBox tbody tr.on:hover td{background:var(--line)}
+  #midiBox td.n{font-family:var(--mono);color:var(--dimmer);text-align:right}
+  #midiBox td.name{color:var(--txt);word-break:break-all}
+  #midiBox td.cnt{font-family:var(--mono);text-align:right;white-space:nowrap}
+  #midiBox select{width:auto;padding:3px 6px;font-size:12px}
+  #midiBox input[type=checkbox]{accent-color:var(--t2);cursor:pointer;display:block}
+  /* 打擊組：音高是鼓的編號不是音階，採出來一定是噪音。**標出來，但照樣預設勾起來**
+     —— 清單是全勾開場的（見 filebox.openList），要取消是使用者看到這個標籤之後
+     自己的決定。同一套樣式也給「有旋律 / 純伴奏 / 唯讀 / 超字數」那幾個小標籤用。 */
+  #midiBox .drum{
+    margin-left:7px; padding:1px 5px; border:1px solid var(--line);
+    border-radius:2px; color:var(--dimmer); font-size:10.5px; white-space:nowrap;
+  }
+  /* 「有旋律」用強調色：一份 16 列的清單要能一眼掃山出哪幾列有主旋律。
+     「純伴奏」維持暗色 —— 兩個都上色就等於都沒上色。 */
+  #midiBox .drum.lead{border-color:var(--t2);color:var(--t2)}
+  #midiBox .foot{display:flex;align-items:center;gap:10px}
+  #midiBox .foot .count{flex:1;font-size:12px;color:var(--dim)}
+  /* 超額不擋操作，只擋匯入 —— 紅字說得出「超了多少」，灰掉的 checkbox 說不出 */
+  #midiBox .foot .count.over{color:var(--warn)}
+
+  /* ---------- 新採譜 / 追加採譜 ---------- */
+  #midiMode{display:flex;align-items:center;gap:14px;flex-wrap:wrap}
+  #midiMode label{
+    display:flex; align-items:center; gap:6px;
+    font-size:12.5px; color:var(--txt); cursor:pointer; user-select:none;
+  }
+  #midiMode input{accent-color:var(--t2);cursor:pointer}
+  #midiMode small{color:var(--dimmer);font-size:11px}
+  #midiMode .hint{flex:1 0 100%;color:var(--dim);font-size:11.5px}
+  /* 選了「新採譜」而且目前真的有東西時的警告。留在框裡而不是走 toast ——
+     toast 會自己消失，而這則訊息要在他按下匯入之前都看得到。 */
+  #midiMode .hint.warn{color:var(--warn)}
+
+  /* ---------- 採譜中 ---------- */
+  /* 蓋住整張卡片。position:absolute 需要 .card 是定位脈絡 —— 只有這裡月用得到，
+     所以就地宣告，不動共用的 .card 規則。 */
+  #midiBox .card{position:relative}
+  #midiBox #midiBusy{
+    position:absolute; inset:0; z-index:2; border-radius:4px;
+    display:flex; flex-direction:column; align-items:center; justify-content:center; gap:14px;
+    /* 寫死 rgba 而不是 color-mix：這個檔案其他地方（例如對話框的背幕）都是這樣寫的 */
+    background:rgba(var(--veil-rgb),.86);
+    /* 延遲淡入：算得快的時候它來不及出現就被移掉了，不需要任何判斷邏輯。
+       只動 opacity，所以這一段也在合成器執行緒上。 */
+    opacity:0; animation:midiBusyIn .2s .15s forwards;
+  }
+  #midiBox #midiBusy[hidden]{display:none}
+  #midiBox #midiBusy p{color:var(--dim);font-size:12.5px;letter-spacing:.08em}
+  #midiBox #midiBusy .notes{display:flex;gap:10px}
+  #midiBox #midiBusy .notes span{
+    display:block; font-size:22px; line-height:1; color:var(--t2);
+    /* **只能是 transform 與 opacity。** 換成 top/margin 這人個動畫就會綁回主執行緒，
+       而主執行緒正在跑聲部分離 —— 音符會凍在半空中，看起來像網頁當掉了。 */
+    animation:midiBusyHop .9s ease-in-out infinite;
+  }
+  #midiBox #midiBusy .notes span:nth-child(2){animation-delay:.12s}
+  #midiBox #midiBusy .notes span:nth-child(3){animation-delay:.24s}
+  #midiBox #midiBusy .notes span:nth-child(4){animation-delay:.36s}
+  #midiBox #midiBusy .notes span:nth-child(5){animation-delay:.48s}
+  @keyframes midiBusyIn{to{opacity:1}}
+  @keyframes midiBusyHop{
+    0%,100%{transform:translateY(0) scale(1);opacity:.45}
+    45%    {transform:translateY(-11px) scale(1.12);opacity:1}
+  }
+  /* 會動的東西一律尊重這個偏好。停下來的遮罩仍然看得出「在忙」（它蓋住了卡片）。 */
+  @media (prefers-reduced-motion:reduce){
+    #midiBox #midiBusy .notes span{animation:none;opacity:.8}
+    #midiBox #midiBusy{animation:none;opacity:1}
+  }
+  #midiBox .foot .act{width:auto;padding:7px 18px;flex:0 0 auto}
+
+  /* ---------- 匯入五線譜：整理田圖片 ---------- */
+  /*
+    卡片寬度跟 #midiBox 一樣，不是巧合：這兩個框是同一趟流程的前後兩步
+    （整理圖片 → 選聲部），寬度跳一下會讓人以為換到別的地方去了。
+  */
+  #omrBox .card{width:min(740px,94vw);position:relative}
+  /* dvh 不是 vh，理由見 #midiBox .list */
+  #omrBox .list{
+    max-height:min(50dvh,400px); overflow:auto;
+    border:1px solid var(--line); border-radius:3px; background:var(--bg);
+  }
+  #omrBox .empty{
+    padding:26px 16px; display:flex; flex-direction:column;
+    align-items:center; gap:12px; text-align:center;
+  }
+  #omrBox .empty[hidden]{display:none}
+  #omrBox .empty p{margin:0;color:var(--dimmer);font-size:12px}
+  #omrBox .empty .act{width:auto;padding:7px 18px}
+  /*
+    auto-fill 而不是固定欄數：卡片在手機上是 94vw，寫死 4 欄的話每張縮圖會窄到
+    看不出是哪一頁 —— 而「看得出是哪一頁」正是這個框存在的唯一理由。
+  */
+  #omrBox .grid{
+    display:grid; gap:10px; padding:10px;
+    grid-template-columns:repeat(auto-fill,minmax(132px,1fr));
+  }
+  #omrBox .grid[hidden]{display:none}
+
+  /*
+    一張圖。`touch-action:none` 在手機上**非它不可** —— 拖曳是 pointer events
+    做的，不設的話瀏覽器會先把手勢判成頁面捲動，然後發 pointercancel 把拖曳砍掉。
+    症狀是「按住拖，畫面就是不動」，而且完全沒有錯誤。
+    （這跟 #roll 與分隔線是同一個坑，見那兩處的註解。）
+  */
+  #omrBox .page{
+    position:relative; touch-action:none;
+    user-select:none; -webkit-user-select:none;
+    border:1px solid var(--line); border-radius:3px; background:var(--bg2);
+    padding:6px; display:flex; flex-direction:column; gap:5px;
+  }
+  #omrBox .page img{
+    display:block; width:100%; height:104px; object-fit:contain;
+    /* **紙白，刻意不跟主題。** 這一格裝的是掃描進來的樂譜，而樂譜是白紙黑字 —— PNG 帶
+       透明時底要是紙的顏色，不是介面的顏色。翻成淺色主題的 --panel 只會讓譜紙跟卡片
+       黏成一塊。同理下面那顆頁碼徽章走 --scrim-rgb（那一組也是不翻的）。 */
+    background:#fff; border-radius:2px;
+    /* 縮圖不能被拖山出去變成瀏覽器的原生圖片拖曳 —— 那會蓋掉這裡自己的拖曳 */
+    -webkit-user-drag:none; user-drag:none; pointer-events:none;
+  }
+  #omrBox .page .no{
+    position:absolute; top:9px; left:9px; z-index:1;
+    min-width:17px; padding:1px 4px; border-radius:2px;
+    background:rgba(var(--scrim-rgb),.78); color:var(--t2);
+    font-family:var(--mono); font-size:11px; line-height:1.4; text-align:center;
+  }
+  /* 檔名是次要的：使用者排的是**頁碼**，檔名只在「這張到底是哪張」時才要看 */
+  #omrBox .page .nm{
+    color:var(--dimmer); font-size:10.5px; line-height:1.3;
+    overflow:hidden; text-overflow:ellipsis; white-space:nowrap;
+  }
+  #omrBox .page .ops{display:flex;gap:4px}
+  #omrBox .page .ops button{
+    flex:1 1 auto; padding:2px 0; font-size:11px; line-height:1.5;
+    border:1px solid var(--line); border-radius:2px;
+    background:transparent; color:var(--dimmer); cursor:pointer;
+  }
+  #omrBox .page .ops button:not(:disabled):hover{border-color:var(--t2);color:var(--txt)}
+  #omrBox .page .ops button:disabled{opacity:.35;cursor:not-allowed}
+  #omrBox .page .ops .del:not(:disabled):hover{border-color:var(--warn);color:var(--warn)}
+
+  /* 拖著走竹的那一張。**只降透明度，不動版面** —— 見下面插入線的註解。 */
+  #omrBox .page.dragging{opacity:.4}
+  /*
+    插入線。**絕對定位、不佔空間**，因為一位移就會踩到拖曳重排的經典災難：游標底下的元素
+    換人 → 算出別的插入點 → 再位移一次 → 抖動迴圈。（tracks.js 的分頁重排踩過同一個坑。）
+  */
+  #omrBox .page.dropL::before,#omrBox .page.dropR::after{
+    content:""; position:absolute; top:2px; bottom:2px; width:2px;
+    background:var(--t2); border-radius:1px;
+  }
+  #omrBox .page.dropL::before{left:-6px}
+  #omrBox .page.dropR::after{right:-6px}
+
+  /* 完成之後縮圖是唯讀的：不能拖、不能改順序、不能刪 */
+  #omrBox .grid.done .page{touch-action:auto;cursor:default}
+  #omrBox .grid.done .page .ops{display:none}
+
+  /*
+    一份 PDF：**一張檔案卡，不是縮圖格**。上面那整套存在的理由是「看得出這是第幾頁」，而
+    PDF 的頁序在檔案裡面 —— 沒有東西可以排。
+
+    `touch-action:auto` 要蓋回去：`.page` 為了拖曳設了 `none`，而這張卡不能拖，留著只會讓
+    卡片區域**吃掉手機上的頁面捲動**（症狀是框內滑不動，而且沒有錯誤）。
+  */
+  #omrBox .grid.pdf{grid-template-columns:1fr}
+  #omrBox .page.pdf{
+    touch-action:auto; cursor:default;
+    flex-direction:row; align-items:center; gap:9px; padding:9px 10px;
+  }
+  #omrBox .page.pdf .no{position:static; flex:0 0 auto}
+  #omrBox .page.pdf .nm{flex:1 1 auto; font-size:12px}
+  #omrBox .page.pdf .ops{flex:0 0 auto}
+  #omrBox .page.pdf .ops button{padding:2px 9px}
+
+  #omrBox .foot{display:flex;align-items:center;gap:10px;flex-wrap:wrap}
+  #omrBox .foot .count{flex:1;font-size:12px;color:var(--dim)}
+  #omrBox .foot .count.over{color:var(--warn)}
+  #omrBox .foot .act{width:auto;padding:7px 18px;flex:0 0 auto}
+  #omrBox .foot .act[hidden]{display:none}
+  #omrBox #omrErr{color:var(--warn)}
+
+  /*
+    辨識中的遮罩。**動畫只能動 transform 與 opacity**（同 #midiBusy）。這裡主執行緒其實是
+    閒的（在等網路），但照同一條規矩寫沒有代價。
+  */
+  #omrBox #omrBusy{
+    position:absolute; inset:0; z-index:2; border-radius:4px;
+    display:flex; flex-direction:column; align-items:center; justify-content:center; gap:14px;
+    background:rgba(var(--veil-rgb),.86);
+    opacity:0; animation:midiBusyIn .2s .15s forwards;
+  }
+  #omrBox #omrBusy[hidden]{display:none}
+  /* 卜這行字一直在變（排隊位置、第幾頁），所以要留得住兩行而不是被切掉 */
+  #omrBox #omrBusy p{
+    margin:0; max-width:82%; text-align:center;
+    color:var(--dim); font-size:12.5px; letter-spacing:.08em;
+  }
+  #omrBox #omrBusy .notes{display:flex;gap:10px}
+  #omrBox #omrBusy .notes span{
+    display:block; font-size:22px; line-height:1; color:var(--t2);
+    animation:midiBusyHop .9s ease-in-out infinite;
+  }
+  #omrBox #omrBusy .notes span:nth-child(2){animation-delay:.12s}
+  #omrBox #omrBusy .notes span:nth-child(3){animation-delay:.24s}
+  #omrBox #omrBusy .notes span:nth-child(4){animation-delay:.36s}
+  #omrBox #omrBusy .notes span:nth-child(5){animation-delay:.48s}
+  @media (prefers-reduced-motion:reduce){
+    #omrBox #omrBusy .notes span{animation:none;opacity:.8}
+    #omrBox #omrBusy{animation:none;opacity:1}
+  }
+
+  /* ---------- 分享 ---------- */
+  /*
+    矮螢幕的處理：10 列的清單讓卡片長到約 860px，而 768p 的筆電只有 768。#shareBox 是
+    place-items:center 的 grid，卡片比視窗高就會上下被切掉。
+
+    解法是讓**清單**縮，而不是讓卡片捲 —— 卡片捲的話置底的分頁工具列會掉到捲動摺線下面。
+    下面那條 flex 鏈就是為了讓縮的地方落在清單上。
+
+    **天花板本身已經搬到共用的 `.modal .card`**（連 overflow 一起）。這裡曾經自己有一份
+    `max-height:calc(100vh - 24px)` —— 同一個數字兩份真相，而且那一份用的是 vh，在 iPhone
+    上量不準。刪掉之後這個框拿到的天花板跟其他 18 個框是同一個。
+  */
+  #shareBox .card{width:min(660px,94vw)}
+  #shareBox #shareBody{
+    display:flex; flex-direction:column; gap:12px;
+    /* min-height:0 日是 flex 子項能真的縮下去的前提（預設 min-height:auto 會擋住） */
+    flex:1 1 auto; min-height:0;
+  }
+  /*
+    這一條不能省：上面的 display:flex **會蓋掉 hidden 屬性的 display:none**（CSS 宣告的優
+    先順序高於 HTML 屬性的預設樣式）。少了它，未登入時整個分享內容還是畫在登入提示下面 ——
+    而且 element.hidden 讀起來是 true，所以只檢查屬性的測試會過。
+  */
+  #shareBox #shareBody[hidden]{display:none}
+  #shareBox .sect{display:flex;flex-direction:column;gap:9px}
+  /* 清單所在的那一區要一起讓路，縮才傳得到 .list */
+  #shareBox #shareBody .sect:last-child{flex:1 1 auto;min-height:0}
+  #shareBox .sect + .sect{border-top:1px solid var(--line-soft);padding-top:15px}
+  #shareBox .sect[hidden]{display:none}
+  #shareBox .hint b,#shareBox p b{color:var(--dim);font-weight:500}
+  /* 登入鈕是一人個 <a>，要長得跟 .act 一樣（.act 的選擇器只吃 button） */
+  #shareBox a.act{
+    width:100%; background:var(--panel2); border:1px solid var(--line);
+    border-radius:3px; padding:9px 11px; text-align:center; font-weight:500;
+    color:var(--dim); text-decoration:none; cursor:pointer;
+  }
+  #shareBox a.act:hover{border-color:var(--t2);color:var(--txt)}
+  /*
+    離線時停用。**`pointer-events:none` 是重點，不是 opacity** —— 這是一個
+    `<a href="/login">`（整頁導向），離線按下去會落到瀏覽器的「無法連線」頁。
+
+    沿用 `off` 這個 class 名而不是新發明一個：這個檔案裡已經有三處用它表示同一件事。
+  */
+  #shareBox a.act.off{opacity:.4;pointer-events:none}
+
+  /*
+    壓縮結果要**預留高度**：按下「產生」的瞬間結果長出來，如果不佔位，底下整個已分享清單
+    會往下跳一段。兩行：一行壓縮字數、一行截斷警告。
+  */
+  #shareBox .result{min-height:40px;display:flex;flex-direction:column;gap:3px}
+  #shareBox #shareStat{font-family:var(--mono);font-size:12px}
+  #shareBox #shareStat.saved{color:var(--t2)}
+  #shareBox #shareCut{color:var(--warn)}
+  #shareBox #shareErr{color:var(--warn)}
+  #shareBox #shareErr[hidden]{display:none}
+  /* 輔助十軌不會被分享的事前警告。用 --warn 而不是 --dimmer：它講的是「送出去的
+     東西跟你看到的不一樣」，跟 #shareCut 同一類，不該長得像一般說明文字。 */
+  #shareBox #shareDrop{color:var(--warn)}
+  #shareBox #shareDrop b{color:var(--warn);font-weight:600}
+  #shareBox #shareDrop[hidden]{display:none}
+
+  #shareBox .urlrow{display:flex;gap:8px}
+  #shareBox .urlrow input{
+    flex:1; min-width:0; padding:9px 11px; background:var(--bg);
+    border:1px solid var(--line); border-radius:3px;
+    font-family:var(--mono); font-size:12px; color:var(--txt);
+  }
+  #shareBox .urlrow input::placeholder{color:var(--dimmer);font-family:var(--sans)}
+  #shareBox .urlrow .act{width:auto;flex:0 0 auto;padding:9px 16px}
+
+  /*
+    清單高度是**固定**的，不隨這一頁有幾筆而變 —— 最後一頁只有 3 筆時，置底的分頁工具列
+    不能往上跳。514px = 表頭 32 + 10 列 × 48.2（列高 48 是因為「操作」欄的按鈕繼承了 body
+    的 line-height:1.6，而那比原本設計的 42 更好按）。
+
+    height 而不是 min-height：min-height 會贏過 max-height，矮螢幕上就壓不下來了。
+  */
+  #shareBox .list{
+    flex:0 1 514px; min-height:150px; overflow:auto;
+    border:1px solid var(--line); border-radius:3px; background:var(--bg);
+  }
+  #shareBox table{width:100%;border-collapse:collapse;font-size:12px}
+  #shareBox th{
+    position:sticky; top:0; z-index:1; background:var(--bg2);
+    font-size:11px; letter-spacing:.1em; text-transform:uppercase; color:var(--dimmer);
+    font-weight:400; text-align:left; padding:7px 9px;
+    border-bottom:1px solid var(--line); white-space:nowrap;
+  }
+  /* 上下 9px = 列高 42px。卜這一列有一顆不可復原的「刪除」，靶大一點是安全問題，
+     不只是美觀問題。 */
+  #shareBox td{padding:9px;border-bottom:1px solid var(--line-soft);color:var(--dim)}
+  #shareBox tbody tr:last-child td{border-bottom:0}
+  #shareBox tbody tr:hover td{background:var(--panel)}
+  /* 剛產生（或剛重複命中）的那一列。指給使用者看「你要的就是這個」 */
+  #shareBox tbody tr.hit td{background:var(--panel2);color:var(--txt)}
+  #shareBox td.n{font-family:var(--mono);color:var(--dimmer);text-align:right;width:1%}
+  #shareBox td.link{font-family:var(--mono);color:var(--txt);white-space:nowrap;width:1%}
+  #shareBox td.sum{white-space:nowrap;width:1%}
+  #shareBox td.when{font-family:var(--mono);white-space:nowrap;width:1%}
+  #shareBox td.ops{white-space:nowrap;width:1%}
+  #shareBox td.empty{
+    color:var(--dimmer); text-align:center; padding:28px 9px; border-bottom:0;
+  }
+  /* 「製作影片」是 <a> 而不是 <button>（中鍵、Ctrl+點、長按都要能開新分頁），
+     所以這一組選擇器同時吃兩種標籤 —— 少了 :any-link 那一半，那顆會變成一個
+     沒有框、字級也不同的裸連結。 */
+  #shareBox td.ops button,
+  #shareBox td.ops a{
+    display:inline-block; text-decoration:none; line-height:normal;
+    background:var(--btn-bg-alt); border:1px solid var(--line); border-radius:3px;
+    color:var(--dim); font-size:12px; padding:4px 9px; cursor:pointer;
+    margin-right:4px;
+  }
+  #shareBox td.ops button:last-child,
+  #shareBox td.ops a:last-child{margin-right:0}
+  #shareBox td.ops button:hover,
+  #shareBox td.ops a:hover{border-color:var(--t2);color:var(--txt)}
+  #shareBox td.ops button.del:hover{border-color:var(--warn);color:var(--warn)}
+
+  /* 置底工具列 */
+  #shareBox .foot{display:flex;align-items:center;gap:8px}
+  #shareBox .foot .count{flex:1;font-size:12px;color:var(--dimmer)}
+  #shareBox .foot .pg{
+    background:var(--btn-bg-alt); border:1px solid var(--line); border-radius:3px;
+    color:var(--dim); font-size:14px; line-height:1; padding:5px 11px; cursor:pointer;
+  }
+  #shareBox .foot .pg:not(:disabled):hover{border-color:var(--t2);color:var(--txt)}
+  #shareBox .foot .pg:disabled{opacity:.3;cursor:default}
+  #shareBox .foot .pgno{
+    font-family:var(--mono); font-size:12px; color:var(--dim);
+    min-width:58px; text-align:center;
+  }
+
+  #shareDelBox .card{width:min(460px,92vw)}
+  #shareDelBox p b{color:var(--warn)}
+  #shareDelBox .what{
+    font-family:var(--mono); font-size:12px; color:var(--txt);
+    background:var(--bg); border:1px solid var(--line); border-radius:3px; padding:9px 11px;
+  }
+
+
+  /* ---------- 本機存木檔 ---------- */
+  /*
+    版面骨架整套沿用分享框（見那邊「矮螢幕的處理」）：卡片不捲，讓**清單**縮，這樣置底的
+    批次工具列永遠看得到 —— 那裡有一顆不可復原的「刪除選取」。差別只有一個：這個框有七欄
+    （分享框五欄），所以卡片寬一點。
+  */
+  #saveBox .card{
+    width:min(760px,95vw);
+    /* 這一條 flex 鏈（card → .sect → .list）就是為了讓縮的地方落在清單上 */
+    display:flex; flex-direction:column; gap:12px;
+  }
+  /*
+    本機分頁的常駐警告。**不是 .hint** —— hint 是「順帶一提」，而這一句講的是資料會不見。
+
+    **class 叫 `lede` 而不是 `sub`，那是踩過才改的。** `.sub` 是標題列站名副標的 class
+    （`text-transform:uppercase` + `letter-spacing`，而且 **576px 以下 `display:none`**）。
+    共用它的後果第二層才是真正嚴重的：手機上這則警告會**整個消失**。
+
+    只有中段 <b> 是 --warn：整句都上色會變成一直在喊。Web 分頁那一句共用這個 class 但**沒
+    有 <b>**，共用是為了讓兩句話的位置與份量一樣。
+  */
+  #saveBox .lede{
+    margin:0; font-size:12px; line-height:1.7; color:var(--dim);
+  }
+  #saveBox .lede b{color:var(--warn);font-weight:500}
+  /*
+    `flex:0 0 auto` 從 .lede 搬到這裡，因為現在是這一層當 flex 子項。它是必要的而不是講
+    究：卡片是 column flex，矮螢幕上清單讓路時沒有它的話這一段會被一起壓扁 —— 而被壓扁的
+    是「你的檔案會不見」那則警告。
+  */
+  #saveBox .notes{flex:0 0 auto}
+  #saveBox .sect{display:flex;flex-direction:column;gap:9px}
+  /* 水清單所在的那一區要一起讓路，縮才傳得到 .list */
+  #saveBox .sect:last-child{flex:1 1 auto;min-height:0}
+  #saveBox .sect + .sect{border-top:1px solid var(--line-soft);padding-top:15px}
+
+  /*
+    分頁列（這台電腦／Web）。**它同時就是原本那個「已儲存的檔案」的 legend** —— 「以下是
+    哪裡的檔案」本來就是它在答的問題。
+
+    做成底線而不是實心分頁：這個框裡已經有很多框線，再多一組分頁的外框會讓版面糊掉。
+  */
+  #saveBox .tabrow{
+    flex:0 0 auto; display:flex; gap:2px;
+    border-bottom:1px solid var(--line); margin-bottom:3px;
+  }
+  #saveBox .stab{
+    background:none; border:0; border-bottom:2px solid transparent;
+    margin-bottom:-1px; padding:7px 14px; cursor:pointer;
+    font-size:12px; color:var(--dimmer); font-family:inherit;
+  }
+  #saveBox .stab:hover{color:var(--dim)}
+  #saveBox .stab.on{color:var(--txt);border-bottom-color:var(--t1)}
+  #saveBox .stab:focus-visible{outline:2px solid var(--t1);outline-offset:-2px}
+
+  /*
+    ─── 切分頁時卡片不准跳高度 ───
+
+    兩塊會跟著分頁換內容，而它們本來都是**內容決定高度**，所以按一下分頁列整張卡片會上下
+    抽動。兩塊都用 grid 把候選內容疊在同一格解決，但理由不同：
+
+    **.notes** 要互相撐高度 —— 被藏起來竹的那一句走 `visibility:hidden` 而不是
+    `display:none`，所以它**照樣參與格子的高度計算**。這比在 CSS 裡釘一個像素高度好：那個
+    數字要同時容納四個語言 × 兩句說明的折行數。
+
+    **.swap** 不需要互相撐高度（#saveBody 永遠不隱藏），疊圖只是讓登入提示壓在清單前面。
+  */
+  #saveBox .notes{display:grid}
+  #saveBox .notes > p{grid-area:1 / 1}
+  #saveBox .swap{display:grid;flex:1 1 auto;min-height:0}
+  #saveBox .swap > *{grid-area:1 / 1;min-height:0}
+  /*
+    **這兩條是上面那套的關鍵，不是可有可無的收尾。**
+
+    `hidden` 屬性的預設樣式是 `display:none`，而 display:none 的元素**不佔格子** —— 對
+    .notes 來說那等於沒有疊，高度又回去跟著內容跑。
+
+    `visibility:hidden` 同時會把裡面的東西移出無障礙樹與 Tab 順序，這是必要的而不是附帶好
+    處：登入之後那顆登入鈕**不可以還 Tab 得到**，而它就疊在清單上面。`opacity:0` 做不到。
+  */
+  #saveBox .notes > p[hidden]{display:block;visibility:hidden}
+  #saveBox .swap > *[hidden]{visibility:hidden}
+
+  /*
+    未登入的 web 分頁：**蓋在清單前面的遮罩**，不是取代清單 —— 使用者看得到底下有一張表
+    格、有置底工具列，前面壓著一句話和一顆登入鈕，那比一個乾淨的登入畫面更清楚地說明「這
+    裡有東西可以用，但要先登入」。
+
+    半透明底寫死 rgba 而不是 color-mix：同 #midiBusy，這個檔案其他地方的遮罩都是這樣寫的。
+
+    `position:relative` 是 z-index 生效的前提：grid 子項不是 positioned element，光給
+    z-index 在同一個堆疊層裡不保證順序。
+  */
+  #saveBox #saveWebLogin{
+    position:relative; z-index:2;
+    display:flex; flex-direction:column; justify-content:center;
+    align-items:center; gap:14px; padding:0 24px;
+    background:rgba(var(--veil-rgb),.86); border-radius:3px;
+  }
+  #saveBox #saveWebLogin p{margin:0;font-size:12px;line-height:1.7;color:var(--dim);text-align:center}
+  /* 登入鈕日是一個 <a>，要長得跟 .act 一樣（.act 的選擇器只吃 button）—— 同 #shareBox */
+  #saveBox a.act{
+    width:auto; background:var(--panel2); border:1px solid var(--line);
+    border-radius:3px; padding:9px 20px; text-align:center; font-weight:500;
+    font-size:13px; color:var(--dim); text-decoration:none; cursor:pointer;
+  }
+  #saveBox a.act:hover{border-color:var(--t2);color:var(--txt)}
+  /* 離線時停用 —— 同 #shareBox a.act.off，理由寫在那裡 */
+  #saveBox a.act.off{opacity:.4;pointer-events:none}
+
+  /*
+    清單 + 置底工具列。**永遠顯示，登入與否都一樣** —— 未登入時它就是一張空清單，而登入
+    提示疊在它前面（見上面 .swap）。
+
+    這一點跟 #shareBody 剛好相反（那邊未登入時是真的收起來）：差別在分享框沒有「兩個分頁
+    互相切換」這件事，所以那邊換版面不會被看成抽動。
+
+    所以這裡**沒有也不該有** `[hidden]{display:none}`：savebox.js 一行都不會去 hidden 它。
+  */
+  #saveBox #saveBody{
+    display:flex; flex-direction:column; gap:9px;
+  }
+
+  /* 木檔名 + 儲存排成一列，讀起來就是「這個名字，存下去」 */
+  #saveBox .namerow{display:flex;gap:8px}
+  #saveBox #saveName{
+    flex:1; min-width:0; padding:9px 11px; background:var(--bg);
+    border:1px solid var(--line); border-radius:3px;
+    font-size:13px; color:var(--txt);
+  }
+  #saveBox #saveName::placeholder{color:var(--dimmer)}
+  #saveBox #saveName:focus-visible{outline:2px solid var(--t1);outline-offset:1px}
+  #saveBox .namerow .act{width:auto;flex:0 0 auto;padding:9px 20px}
+
+  /*
+    三行回饋（未儲存狀態／成功／錯誤）**預留高度**：訊息長出來時底下整張清單會往下跳一段。
+
+    **預留兩行（40px）而不日是一行。** 三者同時出現是極少數沒錯，但**兩者同時出現是常態**：
+    按下儲存之後 #saveDirty 變成「✓ 已儲存」、#saveOk 說「已儲存「x」」。而切分頁會把
+    ok／err 清掉，所以「存完之後切一下分頁」會讓卡片當場矮一行。預留兩行把這兩種跳動一起
+    消掉，代價是空手開框時多 20px 的留白。
+  */
+  #saveBox .result{min-height:40px;display:flex;flex-direction:column;gap:3px;font-size:12px}
+  #saveBox .result p[hidden]{display:none}
+  /* 「已儲存」是中性的灰，「有未儲存的變更」才亮起來 —— 前者是常態，
+     常態不該搶注意力（同狀態列「已暫存」的處理）。 */
+  #saveBox #saveDirty{color:var(--dimmer)}
+  #saveBox #saveDirty.on{color:var(--t2)}
+  #saveBox #saveOk{color:var(--t2)}
+  #saveBox #saveErr{color:var(--warn)}
+
+  /*
+    清單高度**固定**，不隨這一頁有幾筆而變 —— 只有 2 筆時置底工具列不能往上跳。370px ≈
+    表頭 32 + 7 列 × 48（列高 48 是因為「操作」欄的按鈕繼承了 body 的 line-height:1.6，而
+    這一列有一顆不可復原的「刪除」，靶大一點是安全問題不只是美觀問題）。
+
+    height 走 flex-basis 而不是 min-height：後者會贏過 max-height，矮螢幕上就壓不下來。
+  */
+  #saveBox .list{
+    flex:0 1 370px; min-height:150px; overflow:auto;
+    border:1px solid var(--line); border-radius:3px; background:var(--bg);
+  }
+  #saveBox table{width:100%;border-collapse:collapse;font-size:12px}
+  #saveBox th{
+    position:sticky; top:0; z-index:1; background:var(--bg2);
+    font-size:11px; letter-spacing:.1em; text-transform:uppercase; color:var(--dimmer);
+    font-weight:400; text-align:left; padding:7px 9px;
+    border-bottom:1px solid var(--line); white-space:nowrap;
+  }
+  #saveBox td{padding:9px;border-bottom:1px solid var(--line-soft);color:var(--dim)}
+  #saveBox tbody tr:last-child td{border-bottom:0}
+  /*
+    整列都是勾選的靶，做法跟 #midiBox 那張清單一致（見 filebox.js）。`user-select:none` 是
+    因為列變成可點之後，雙擊選字會順手把它勾起來又取消。
+
+    **`cursor:pointer` 不能下在 td.ops 上**：那一木格裡的兩顆按鈕有自己的 cursor，而「開
+    啟」「刪除」不是勾選。
+  */
+  #saveBox tbody tr{cursor:pointer;user-select:none}
+  #saveBox td.ops{cursor:default}
+  /*
+    四階要分得開：底色 → 停在上面 → 勾起來 → 勾起來又停在上面。
+    列本身是點擊目標，「我現在會點到哪一列」必須一眼看得出來。
+  */
+  #saveBox tbody tr:hover td{background:var(--panel);color:var(--txt)}
+  #saveBox tbody tr.on td{background:var(--panel2);color:var(--txt)}
+  #saveBox tbody tr.on:hover td{background:var(--line)}
+  /*
+    檔名欄跟這一列一樣的那一份 —— 「按下儲存會蓋掉的就是它」。比對的是名字（這個功能沒有
+    id），所以它答的是「同名」不是「同內容」。
+
+    **它以前日是 `background:var(--panel2)`，而那個顏色現在被 `tr.on` 拿去用了。** 不能兩個
+    都用底色：`.hit` 與 `.on` 是**完全正交**的兩件事，一列可以同時是兩者，而共用同一個底
+    色會讓「只有 hit」看起來像「已經勾起來了」—— 使用者接著按批次刪除就會少刪一筆。
+
+    所以 `.hit` 換到別的通道：左緣一條金色的槓 + 檔名轉金色。
+  */
+  #saveBox tbody tr.hit td:first-child{box-shadow:inset 3px 0 0 var(--t1)}
+  #saveBox tbody tr.hit td.name{color:var(--t1)}
+  /* 檔名可以很長（上限 100 字），給它剩下的全部寬度並在放不下時截斷 ——
+     其他六欄都是 width:1% 的窄欄。 */
+  #saveBox td.name{
+    color:var(--txt); max-width:0;
+    overflow:hidden; text-overflow:ellipsis; white-space:nowrap;
+  }
+  /* 數字靠右對齊、等寬 —— 兩欄數字上下對齊才掃得動 */
+  #saveBox td.num{font-family:var(--mono);text-align:right;white-space:nowrap;width:1%}
+  #saveBox td.when{font-family:var(--mono);white-space:nowrap;width:1%;color:var(--dimmer)}
+  #saveBox td.ops{white-space:nowrap;width:1%}
+  #saveBox td.empty{
+    color:var(--dimmer); text-align:center; padding:28px 9px; border-bottom:0;
+  }
+  #saveBox td.ops button{
+    background:var(--btn-bg-alt); border:1px solid var(--line); border-radius:3px;
+    color:var(--dim); font-size:12px; padding:4px 9px; cursor:pointer;
+    margin-right:4px;
+  }
+  #saveBox td.ops button:last-child{margin-right:0}
+  #saveBox td.ops button:hover{border-color:var(--t2);color:var(--txt)}
+  #saveBox td.ops button.del:hover{border-color:var(--warn);color:var(--warn)}
+
+  /* 置底工具列。全卜選的勾放在最左邊，跟表格第一欄對齊 */
+  #saveBox .foot{display:flex;align-items:center;gap:8px}
+  /*
+    「全選」那兩個字包在 <label> 裡，所以整塊（checkbox + 文字 + 兩側的 padding）都點得
+    到，而不是只有 14px 的方框。user-select:none：這是一個按鈕，雙擊它應該勾選兩次。
+  */
+  #saveBox .foot .pickall{
+    display:flex; align-items:center; gap:6px; padding:0 4px;
+    cursor:pointer; user-select:none; font-size:12px; color:var(--dimmer);
+  }
+  #saveBox .foot .pickall:hover{color:var(--dim)}
+  #saveBox .foot .count{font-size:12px;color:var(--dimmer)}
+  /*
+    右半邊的推手。本機是「已用 x / 20 MB」，Web 是「共 n 份」—— **永遠只有一個看得見**
+    （savebox.syncTab 把另一個 hidden 掉）。那件事是這條規則的前提，不是巧合：兩個都可見
+    的話 `margin-left:auto` 會出現兩次，剩餘空間被平分，右半邊整組就不再靠右了。
+  */
+  #saveBox .foot #saveUsed,
+  #saveBox .foot #saveTotal{margin-left:auto;font-family:var(--mono)}
+  #saveBox .foot .pg{
+    background:var(--btn-bg-alt); border:1px solid var(--line); border-radius:3px;
+    color:var(--dim); font-size:12px; padding:5px 11px; cursor:pointer;
+  }
+  #saveBox .foot .pg:not(:disabled):hover{border-color:var(--t2);color:var(--txt)}
+  #saveBox .foot .pg.del:not(:disabled):hover{border-color:var(--warn);color:var(--warn)}
+  #saveBox .foot .pg:disabled{opacity:.3;cursor:default}
+  /*
+    分頁器只有 Web 分頁有（本機一次全撈）。上下頁那兩顆窄一點 —— 它們的內容是一個箭頭，用
+    批次鈕的 padding 會顯得很空。
+  */
+  #saveBox .foot #savePager{display:inline-flex;align-items:center;gap:6px}
+  #saveBox .foot #savePager[hidden]{display:none}
+  #saveBox .foot #savePager .pg{padding:5px 9px}
+  /* 「2 / 7」月用等寬，翻頁時數字不會左右抖 */
+  #saveBox .foot #savePage{font-family:var(--mono);min-width:44px;text-align:center}
+
+  /* 三個確認框跟 #shareDelBox 完全同一套 —— 它們問的是同一種問題 */
+  #saveOverBox .card,#saveDelBox .card{width:min(460px,92vw)}
+  /*
+    搬遷的那個框寬一點：它要列出撞名的檔名（最多 20 個，每個上限 100 字），460px 會變成一
+    團折了六行的字。
+  */
+  #saveMoveBox .card{width:min(560px,92vw)}
+  /* 三顆鈕（取消／只搬其餘／全部覆蓋）比兩顆擠，縮小間距讓它們排得下 */
+  #saveMoveBox .row{gap:8px}
+  #saveOverBox p b,#saveDelBox p b{color:var(--warn)}
+  #saveOverBox .what,#saveDelBox .what{
+    font-family:var(--mono); font-size:12px; color:var(--txt);
+    background:var(--bg); border:1px solid var(--line); border-radius:3px; padding:9px 11px;
+    /* 木檔名可能很長，而這裡不能截斷 —— 使用者正要決定要不要蓋掉「哪一個」 */
+    overflow-wrap:anywhere;
+  }
+
+  /* ─── 混音匯出的舞台 ─────────────────────────────────────────────────────── */
+
+  #stageBox .card{width:min(560px,92vw)}
+  /* 「第 7 軌之後不會進這個檔案」的事前警告。用 --warn 而不是 --dim：它要被讀到，
+     不是被略過 —— 使用者按下去之後就來不及了。 */
+  #stageDrop{margin:0; color:var(--warn)}
+  /*
+     舞台是**正方形**，而正方形在矮螢幕上最危險 —— 寬度給滿的話高度就跟著給滿，把下面那排
+     按鈕（含「開始匯出」）推出畫面外，而溢出的部分**捲不到**（見 .modal .card）。
+  */
+  #stagePlot{
+    position:relative; margin:0 auto;
+    width:min(100%, calc(100dvh - 320px)); aspect-ratio:1;
+    background:var(--bg); border:1px solid var(--line); border-radius:4px;
+    /* 沒有這一行，手機上拖曳會被瀏覽器判成捲動，chip 完全拖不動 */
+    touch-action:none;
+    overflow:hidden;
+  }
+  #stagePlot.busy{opacity:.5; pointer-events:none}
+  /* 空間混音關著：位置擺在那裡但現在不算數，所以淡掉而**不是**藏起來或鎖住 ——
+     它們仍然拖得動，而拖下去就會把空間混音打開（見 mixstage.armSpatial）。 */
+  #stagePlot.flat #stageRings{opacity:.35}
+  #stagePlot.flat .chip{opacity:.55}
+  #stageRings{position:absolute; inset:0; width:100%; height:100%; pointer-events:none}
+  /* stroke-width 的單位是 viewBox 的單位，也就是公尺。0.04 m 在 500px 寬的舞台上約 1.7px */
+  #stageRings circle{fill:none; stroke:var(--line); stroke-width:.04}
+
+  #stagePlot .chip,
+  #stagePlot .ear{position:absolute; transform:translate(-50%,-50%); padding:0}
+  /* 兩行：軌名 + 樂器名。圓角收成 10px 而不是 999px —— 兩行的膠囊會變成很奇怪的橢圓。 */
+  #stagePlot .chip{
+    display:flex; flex-direction:column; align-items:center;
+    background:var(--c); color:var(--on-color); border:1px solid var(--on-color); border-radius:10px;
+    padding:2px 7px; font-size:11px; line-height:1.35; white-space:nowrap;
+    max-width:46%; cursor:grab; box-shadow:0 1px 4px rgba(var(--shadow-rgb),.5);
+  }
+  /* 兩行都要各自省略，不能只在外層省 —— 那樣長的樂器名會把整顆撐開 */
+  #stagePlot .chip .nm,
+  #stagePlot .chip .inst{max-width:100%; overflow:hidden; text-overflow:ellipsis}
+  /* 樂器名是次要資訊：小一階、透明一點，但仍要讀得出來（0.72 是量過的下限） */
+  #stagePlot .chip .inst{font-size:10px; opacity:.72}
+  /* 沒選音色時第二行是空的。留著它讓所有 chip 等高，高矮不一在俯視圖上會被誤讀成
+     「這些是不一樣的東西」。 */
+  #stagePlot .chip .inst:empty::before{content:"\00a0"}
+  #stagePlot .ear{
+    width:26px; height:26px; border-radius:50%;
+    background:var(--txt); border:2px solid var(--bg); cursor:grab;
+  }
+  /* 朝向指示：頭上一個朝上的小三角。聽者的朝向是固定的（永遠面向畫面上方），
+     所以這個三角不會轉 —— 它存在是為了讓那條規則不必用文字說明。 */
+  #stagePlot .ear::after{
+    content:""; position:absolute; left:50%; top:-10px; transform:translateX(-50%);
+    border-left:5px solid transparent; border-right:5px solid transparent;
+    border-bottom:7px solid var(--txt);
+  }
+  #stagePlot .chip.grab,
+  #stagePlot .ear.grab{cursor:grabbing}
+  #stagePlot .chip:focus-visible,
+  #stagePlot .ear:focus-visible{outline:2px solid var(--t2); outline-offset:2px}
+
+  /*
+     **樣式要自己寫全，不能借 .tiny。** 那個 class 的規則整組掛在 `#rollbar button.tiny`
+     底下，在別的地方掛上去等於什麼都沒有 —— 而 `button{color:inherit}` 讓文字繼承近白的
+     --txt，配上瀏覽器預設的淺灰底就是白字配白底。
+  */
+  #stagePlay,
+  #stageReset,
+  #stageCancel{
+    background:var(--btn-bg); border:1px solid var(--line); border-radius:3px;
+    color:var(--dim); font-size:11px; padding:5px 10px; cursor:pointer;
+    white-space:nowrap; flex:0 0 auto;
+    transition:border-color .15s,color .15s;
+  }
+  #stagePlay:not(:disabled):hover,
+  #stageReset:not(:disabled):hover,
+  #stageCancel:not(:disabled):hover{border-color:var(--t2); color:var(--txt)}
+  #stagePlay:disabled,
+  #stageReset:disabled,
+  #stageCancel:disabled{opacity:.4; cursor:not-allowed}
+  /* 試聽鈕比其他兩顆重要一階：它是這個框裡最常按的東西 */
+  #stagePlay{color:var(--txt); min-width:6.5em; text-align:center}
+
+  .stagetransport{display:flex; align-items:center; gap:10px}
+  .stagetransport input[type=range]{flex:1; min-width:0}
+  #stageTime{font-family:var(--mono); font-size:12px; color:var(--dim); min-width:3.5em; text-align:right}
+  /* 直排而不是讓兩個核取方塊跟按鈕擠同一列：那一列在窄畫面會 wrap 成很難讀的三段，
+     而且「空間混音」是「喇叭模式」的前提，上下排才看得出從屬。 */
+  .stagefoot{display:flex; flex-direction:column; gap:8px}
+  .stagefoot .spk{display:flex; align-items:center; gap:6px; font-size:12px; flex-wrap:wrap}
+  .stagefoot .spk .hint{margin:0; color:var(--dim); font-size:11px}
+  .stagefoot .spk:has(:disabled){opacity:.45}
+  /* 環境音的兩列。`label` 固定寬、控制項吃掉剩下的 —— 兩列的控制項因此左緣對齊，
+     而那是「這兩個是同一組」唯一的視覺線索（它們中間沒有框線）。 */
+  .stagefoot .erow{display:flex; align-items:center; gap:8px; font-size:12px}
+  .stagefoot .erow label{min-width:5em; color:var(--dim)}
+  .stagefoot .erow select{flex:1; min-width:0}
+  .stagefoot .erow input[type=range]{flex:1; min-width:0}
+  .stagefoot .erow #stageEnvAmtValue{font-family:var(--mono); min-width:3.2em; text-align:right; color:var(--dim)}
+  #stageEnvNote{margin:0; font-size:11px; color:var(--warn, var(--dim))}
+  .stagefoot .acts{display:flex; gap:8px; margin-left:auto}
+  #stageProg{display:flex; align-items:center; gap:10px; width:100%}
+  #stageProg progress{flex:1; height:6px}
+  #stageStage{font-size:12px; color:var(--dim); min-width:5em}
+
+  @media (prefers-reduced-motion:reduce){
+    *{transition:none!important}
+  }
+
+  /* ---------- 觸控目標 ----------
+     **判準是「用手指」不是「螢幕窄」。** 這條規則本來住在下面那個 528px／480px 的斷點
+     裡，於是**平板橫放拿不到它** —— 1024×768 兩個條件一個都不符合，而那台機器上按鈕的
+     使用者是用手指的。`body.joy`（遙桿模式下編輯區退場）早就選過同一條判準，這裡只是讓
+     其餘的觸控目標跟上。三個 class 怎麼來的見 ui.js 的 `initPointerClass`。
+
+     ── 抽屜的關閉鈕放大到 44×44 ──
+     桌面那組 `padding:3px 8px; font-size:13px` 算出來約 23×29px：滑鼠夠用，手指不夠
+     （iOS 的建議下限是 44）。
+
+     抽屜的另外兩條出路在手指上都不好走：Esc 在沒有實體鍵盤時**根本不存在**，而點遮罩要
+     打在抽屜外面 —— `width:min(420px,92vw)` 在 375px 的機器上佔掉 345px，只剩 30px。這顆
+     鈕實際上就是唯一按得準的出口，所以它得夠大。（平板上遮罩很寬，但「23×29px 對手指太
+     小」跟螢幕多寬無關。） */
+  body:is(.touch, .coarse:not(.fine)) :is(#settingsClose,#aboutClose){
+    min-width:44px; min-height:44px; padding:0; font-size:15px;
+    display:inline-flex; align-items:center; justify-content:center;
+  }
+
+  /* ---------- 窄版型（唯一的一個斷點） ----------
+     這一塊**必須放在檔案最末端**，而且只能有一塊：它覆寫的是寫在中段的基礎規則，而
+     @media 不加任何權重 —— 同選擇器對撞時贏的是後面那一條。原本這塊放在 header 附近，於
+     是任何想覆寫中後段規則的東西會靜靜地失效（語法沒錯、DevTools 裡看得到那條規則被劃
+     掉，很難聯想）。
+
+     **兩個條件，兩個獨立的理由：**
+
+       max-width:528   標題列擠不擠得下。`.grp` 是 `flex-wrap:nowrap`，所以橫排那一列**要
+                       嘛整條擺得下、要嘛讓整頁橫向捲動**，沒有中間狀態 —— 這個數字只有一
+                       個正確答案。實測需要的最小視窗寬是**語言決定的**：繁中 448／英文
+                       452／韓文 485／日文 508，取最寬的再加 20px 餘裕（字型退回系統字體時
+                       韓文會漲到 499）。
+
+                        **以後在 #navMenu 加鈕、或改任何一顆鈕的標籤，都要回來重量一
+                       次。** 沒有任何測試會替你發現 —— 症狀是某個寬度區間裡整頁可以橫向
+                       拖動幾十像素，而開發的人用的視窗通常比那個區間寬。
+       max-height:480  **手機橫放**：它是寬的（844）卻是最矮的（390），純寬度的斷點完全抓
+                       不到，而垂直空間最稀缺的正是那個姿勢。 */
+  @media (max-width:528px), (max-height:480px){
+    .sub{display:none}
+    h1{font-size:18px}
+    /* 弓引擎名與條款連結在窄畫面下是雜訊，而且它們是 .status 裡最會撐寬度的兩段 */
+    #status .legal{display:none}
+    #status .engine{display:none}
+
+    /* 容器與按鈕都要開 —— `header .ico` 的 display:none 掛在按鈕自己身上，
+       只把容器打開的話裡面還是空的。 */
+    #viewToggles{display:flex}
+    #navToggle,
+    #viewToggles .ico{display:inline-flex}
+
+    /*
+      四顆選單鈕變成下拉面板。**沿用同一個 .grp**，不另外做一個面板 —— 同一批按鈕、同一份
+      tooltip、同一組事件，複製一份只會讓它們哪天長得不一樣。
+
+      絕對定位而不是把內容往下推：窄畫面的垂直空間就是這整件事要省的東西。
+    */
+    #navMenu{
+      display:none; position:absolute; top:100%; right:12px; z-index:65;
+      flex-direction:column; align-items:stretch; gap:8px;
+      margin-top:4px; padding:8px; min-width:168px;
+      background:var(--panel); border:1px solid var(--line); border-radius:3px;
+      box-shadow:0 18px 40px rgba(var(--shadow-rgb),.55);
+    }
+    header.navopen #navMenu{display:flex}
+    /*
+      `align-self:stretch` 是必要的：那四顆自己寫著 `align-self:center`（給橫排的標題列用
+      的），在直排的面板裡那會讓它們縮成內容寬度、寬度參差不齊。
+
+      **尺寸放大到跟卜設定抽屜裡的控制項一樣。** 標題列上那組 12px／5px 是為了「擠得進一
+      列」，而這裡是絕對定位的面板 —— 它不佔版面，長高一點不跟任何東西搶空間。算下來一顆
+      約 42px 高，按錯隔壁的機會小得多。
+    */
+    #navMenu button{
+      align-self:stretch; justify-content:flex-start;
+      padding:9px 12px; font-size:14px; gap:9px;
+    }
+
+    /*
+      四條橫向長條的左右內距一律收成 10px。22px 是桌面版「留白撐起層次」的值，在 528px 以
+      下卻是直接吃掉 44px 可用寬度 —— #rollbar 與 .panebar 都是 flex-wrap，少 44px 就足以
+      多換一行（而工具列換行會直接吃掉鋼琴捲軸的高度）。
+
+      **上下內距只有 header 與 .status 收**，理由跟橫向那條無關：這兩條在窄畫面上是純導覽
+      與純狀態，省下來的高度直接進捲軸。#rollbar 與 .panebar 的上下內距**不動** —— 它們裝
+      的是按鈕，收上下內距等於把手指的目標壓小。
+
+      textarea 與 .mml-hl 必須寫在同一條規則裡（見那組基礎規則上面的長註解）。.barnum-in
+      不必跟：橫向內距不影響「一行對一列」。
+    */
+    header{padding:8px 10px}
+    #rollbar{padding-left:10px;padding-right:10px}
+    .panebar{padding-left:10px;padding-right:10px}
+    .status{padding:5px 10px; column-gap:12px}
+    textarea,.mml-hl{padding-left:10px;padding-right:10px}
+
+    /* ── 對話框的內距收成 10px ──
+       跟下面那四條橫向長條同一個判斷：18px 是桌面版「留白撐起層次」的值，在 375px 的螢幕
+       上卻是左右直接吃掉 36px —— 而卡片本身只有 92vw（約 345px），裡面還要塞下 #midiBox
+       的七欄表格與 #saveBox 的清單。收到 10px，每一列多出 16px 可用寬。
+
+       垂直方向的收穫更直接：卡片現在有天花板（見 `.modal .card` 那條 max-height），省下
+       來的上下內距就是少捲的距離。
+
+       **#fileBox 必須單獨再寫一次。** 它自己那條是 `#fileBox .card`（1,0,1），權重壓得過
+       `.modal .card`（0,2,0）—— 只改共用的那條，這個框會靜靜地維持 20/20/40 不動，而它正
+       是所有框裡最高的那一個（約 830px）。收完省下垂直 40px、左右各 10px。
+
+       **查過了，只有它一個需要重寫。** 另外 19 個 `#xxx .card`（editor.css 17 個 +
+       waterfall.css 的 #lookBox / #envBox）全部只設 width、position 或 display，沒有人蓋
+       padding。鋼琴瀑布那一頁載入的是同一份 editor.css，所以它的兩個框跟著收。 */
+    .modal .card{padding:10px}
+    #fileBox .card{padding:10px}
+
+    /* ── 演奏鈕的橫向內距收成 9px ──
+       **這一條治的是整頁橫向捲動。** 播放組（#play / #stop / #followBtn / #rangeSel /
+       #loopBtn）是一個 `.grp`，而 `.grp` 是 `flex-wrap:nowrap` —— 組內擺不下就是讓整頁
+       橫向捲，沒有中間狀態。#rollbar 自己雖然是 wrap 的，但那只換得了**組與組之間**。
+
+       而它又是窄畫面上**唯一一條不會被藏起來的組**（`.hideable` 只掛在後三組，見下面
+       「開關 1」），所以整條工具列的最小寬度就等於播放組的寬度。
+
+       上面那段前言把橫向捲動歸給 header，528px 也是照 header 量出來的 —— 播放組是**另一
+       個獨立的限制**，那個數字從來沒算進它。
+
+       9px 不是隨便挑的：它就是 `#rollbar button.tiny` 的橫向內距，所以演奏鈕收完之後跟
+       旁邊那幾顆一樣寬鬆，不會看起來像被壓扁。省下 10px。
+
+       **標籤是本地化的，所以這條的餘裕也是。** 播放組那六顆鈕的字四語不一樣寬（繁中與韓
+       文各 14 個全形字最寬，日文 13，英文 28 個拉丁字母）—— 改任何一顆的標籤、或在這一組
+       再加一顆鈕，都要回來重量一次，而且四語都要量。跟前言那段對斷點的叮嚀是同一件事：
+       沒有任何測試會替你發現。 */
+    #rollbar button.play{padding:4px 9px}
+
+    /* ── 縮放的兩個 stepper 直接收掉 ──
+       **不等「開關 1」那個 .hideable** —— 它在窄畫面上一律不出現。理由是這裡有更好的入
+       口：手機是雙指張合，桌機是 Ctrl＋滾輪。而這四顆半格各只有 13px 高，遠低於任何觸控
+       目標建議值（見上面 #zoom 那組規則的註解）—— 留著等於留一個按不到的東西佔位。
+
+       順帶把 #rollbar 的換行壓下去：兩個 stepper 是 36×2 + gap 6 = 78px，而 #rollbar 是
+       flex-wrap，少換一行就是捲軸區多一行的高度。
+
+       跟 `#zoom{display:flex}` 的權重一樣（1,0,0），靠的是這一條排在後面 —— @media 不加
+       任何權重（見這個 @media 上面那段註解）。 */
+    #zoom{display:none}
+
+    /* ── 開關 1：工具列 ──
+       播放組留著（`.hideable` 只掛在後三組與提示上）—— 窄畫面上最不該消失的就是
+       播放，而工具列擠掉的高度幾乎都在後面那三組。
+
+       `.kbd` 走同一組規則：一個是使用者按的、一個是軟鍵盤逼的，但「工具列不在了」
+       是同一件事（見下面 `.kbd` 那一段）。**兩個位元分開記**，所以打字時自動收起來
+       不會弄髒使用者手動按的那一位元 —— 完整理由見 ui.initKeyboardHide。 */
+    body:is(.no-tools,.kbd) #rollbar .hideable{display:none}
+
+    /* ── 開關 2：鋼琴軸（只給人使用者手動按的那顆） ──
+       `main` 要跟著改成 `flex:1 1 auto`：`#stage` 是唯一 `flex:1` 的那個，藏掉之後
+       沒有人會去吃那塊空間，畫面下半會整片空著。 */
+    body.no-roll #stage{display:none}
+    body.no-roll #splitter{display:none}
+    body.no-roll main{flex:1 1 auto!important}
+
+    /* ── `.kbd`：軟鍵盤頂上來時讓出高度，但**捲軸留著** ──
+       （由 ui.initKeyboardHide 的 focusin/focusout 掛上與拿掉。）
+
+       原本 `.kbd` 跟 `.no-roll` 共用規則、把 `#stage` 整個藏掉，前提是「他點進文字區就是
+       要打字」。錯在後半 —— 打字的人**要一邊看捲軸上的結果**，那正是這個編輯器存在的理
+       由。
+
+       所以改成收掉「打字時真的用不到」的三條：工具列後三組（`.hideable`）、每個分頁的樂器
+       列（`.panebar`）、狀態列（`#status`）。加起來約 100px，而且都是打字前後才動的東西。
+       **播放組、分頁列與捲軸全部留著。**
+
+       `main` 這裡**不動**：`#stage` 還在，它仍然是那個 `flex:1`。分隔線也留著。
+
+       **卜這組斷點曾經被 JS 抄了一份**（`config.COMPACT_MQ`），當「切分頁要不要把焦點搶進文
+       字區」的閘門。那道閘門拆了，副本也刪了 —— 現在**切分頁一律不搶焦點**，所以 `.kbd`
+       根本不會因為切分頁而掛上。這組數字**只剩 CSS 這一份真相**。 */
+    body.kbd .panebar{display:none}
+
+    /* ── 開關 3：編輯器 ──
+       **`!important` 是必要的，不是偷懶**：`main` 的高度是 `#splitter` 寫進 inline
+       `style.flexBasis` 的，而 author stylesheet 的 !important 壓得過普通的 inline 宣告。
+       開關打開時 class 一移除，inline 值就自己接回去。
+
+       分隔線一起藏：那時 `main` 是內容高度，拖它一個像素都不會動 —— 而且拖曳結束會把
+       `main.offsetHeight` 存進 localStorage，那時量到的是「沒有文字區」的高度，再打開編輯
+       器就會發現它莫名其妙變矮了（見 ui.setMainH）。
+
+       **分頁列與樂器列留著**：樂器列上日是靜音與樂器選擇，專心看捲軸的時候反而最需要它。 */
+    body.no-editor .tarow{display:none}
+    body.no-editor main{flex:0 0 auto!important}
+    body.no-editor #splitter{display:none}
+
+    /* ── 開關 4：狀態列 ──
+       `.kbd` 同上：打字時狀態列上那幾行（暫存狀態、警告）不是當下要讀的東西，
+       而它的高度直接進捲軸。它一走 `minMainH()` 也跟著縮（那個下限就是
+       分頁列 + 狀態列量出來的），所以樂譜區能讓出的高度又多一截。 */
+    body:is(.no-status,.kbd) #status{display:none}
+
+    /* 抽屜關閉鈕的 44×44 **搬走了** —— 它的判準是「用手指」不是「螢幕窄」，所以住在
+       斷點外面的 `body:is(.touch, .coarse:not(.fine))` 那條。往上找「觸控目標」。 */
+  }
+
+
+  #lensLbl{
+    background:none; border:0; padding:0 2px;
+    color:var(--dimmer); cursor:pointer; transition:color .15s;
+  }
+  /*
+    svg 是 14×18。**字要變大靠的是裁掉符號自己的留白**（`_NoteIcons` 的 viewBox 收成
+    筆畫的聯集邊界 `4.4 1.2 18.2 24`），不是把這個框放大 —— 放大過一次，實測退回來了：
+    那一格變得比旁邊的數字鈕還搶眼，而它只是一個狀態顯示。
+
+    **寬度 14 是算出來的**：筆畫的長寬比是 18.2/24 = 0.758，框比它胖的話 `meet` 會卡在
+    高度上、寬度那邊一定剩白。14/18 = 0.778 剛好貼著那個比例，於是字畫成 13.65 × 18，
+    兩個方向都吃滿。改高度的話寬度要跟著重算。
+  */
+  #lensLbl svg{display:block;width:14px;height:18px}
+  #lensLbl > i{display:none}
+  #lensLbl:not(:disabled):hover{color:var(--txt-hi)}
+  /*
+    只選取模式：換成一圈虛線框 + 通用的 ♫，按鈕 disabled。
+
+    **寬度要跟 svg 一模一樣（14px），高度不必** —— 會讓工具列抖的只有寬度，垂直方向
+    由 `#rollbar button` 的 `height:var(--btnh)` 定死了，兩種形態都撐不開它。所以這個框
+    可以拉到 `--btnh` 跟 `#lens` 那六顆一樣高（圓角也一樣 3px），看起來就是同一排東西
+    的一格，而 svg 保持 16×18 不動。
+    虛線的節奏對齊畫布上那個 `setLineDash([3,3])`（見 pianoroll.dashedBox）。
+  */
+  #lensLbl:disabled{color:var(--dimmer);cursor:default}
+  #lensLbl.sel svg{display:none}
+  #lensLbl.sel > i{
+    display:flex; align-items:center; justify-content:center; box-sizing:border-box;
+    width:14px; height:var(--btnh); font-size:10px; line-height:1;
+    border:1px dashed currentColor; border-radius:3px;
+  }
+
+@media (max-width:576px){ #rollbar #lensLbl{display:inline-flex;min-width:32px} }

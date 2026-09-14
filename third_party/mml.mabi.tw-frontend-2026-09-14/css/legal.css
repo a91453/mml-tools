@@ -1,0 +1,10 @@
+
+  .noteicons{
+    display:flex; flex-wrap:wrap; gap:10px 14px; align-items:flex-end;
+    margin:16px 0; padding:14px 16px;
+    background:var(--panel); border:1px solid var(--line); border-radius:8px;
+  }
+  .noteicons span{display:flex; flex-direction:column; align-items:center; gap:4px}
+  .noteicons svg{width:14px; height:18px; color:var(--txt)}
+  .noteicons i{font-style:normal; font-family:var(--mono,ui-monospace,monospace);
+               font-size:11px; color:var(--dim)}

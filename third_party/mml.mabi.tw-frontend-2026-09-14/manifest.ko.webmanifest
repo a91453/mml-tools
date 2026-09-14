@@ -1,0 +1,55 @@
+{
+  "id": "/ko/",
+  "name": "\uB9C8\uBE44\uB178\uAE30 \uBAA8\uBC14\uC77C 4ML Editor",
+  "short_name": "4ML Editor",
+  "description": "\uB9C8\uBE44\uB178\uAE30 \uBAA8\uBC14\uC77C MML \uC545\uBCF4 \uD3B8\uC9D1\uAE30. \uC791\uC131\u00B7\uBBF8\uB9AC\uB4E3\uAE30\u00B7\uB0B4\uBCF4\uB0B4\uAE30, \uC624\uD504\uB77C\uC778\uC5D0\uC11C\uB3C4 \uC0AC\uC6A9\uD560 \uC218 \uC788\uC2B5\uB2C8\uB2E4.",
+  "lang": "ko",
+  "start_url": "/ko/",
+  "scope": "/",
+  "display": "standalone",
+  "display_override": [
+    "standalone",
+    "minimal-ui"
+  ],
+  "background_color": "#0d1a1b",
+  "theme_color": "#122325",
+  "categories": [
+    "music",
+    "utilities"
+  ],
+  "icons": [
+    {
+      "src": "/img/icon-192-v1.png",
+      "sizes": "192x192",
+      "type": "image/png",
+      "purpose": "any"
+    },
+    {
+      "src": "/img/icon-512-v1.png",
+      "sizes": "512x512",
+      "type": "image/png",
+      "purpose": "any"
+    },
+    {
+      "src": "/img/icon-maskable-512-v1.png",
+      "sizes": "512x512",
+      "type": "image/png",
+      "purpose": "maskable"
+    }
+  ],
+  "shortcuts": [
+    {
+      "name": "\uD3B8\uC9D1\uAE30 \uC785\uBB38",
+      "url": "/ko/guide/editor"
+    },
+    {
+      "name": "MML \uBB38\uBC95",
+      "url": "/ko/guide/mml"
+    },
+    {
+      "name": "\uC790\uC8FC \uBB3B\uB294 \uC9C8\uBB38",
+      "url": "/ko/faq"
+    }
+  ],
+  "dir": "ltr"
+}

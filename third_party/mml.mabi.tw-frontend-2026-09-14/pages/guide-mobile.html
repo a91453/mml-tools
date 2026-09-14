@@ -1,0 +1,409 @@
+<!doctype html>
+<html lang="zh-Hant">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>手機與平板操作 — 夜光MML工坊</title>
+<link rel="canonical" href="https://mml.mabi.tw/guide/mobile">
+        <link rel="alternate" hreflang="zh-Hant" href="https://mml.mabi.tw/guide/mobile">
+        <link rel="alternate" hreflang="en" href="https://mml.mabi.tw/en/guide/mobile">
+        <link rel="alternate" hreflang="ja" href="https://mml.mabi.tw/ja/guide/mobile">
+        <link rel="alternate" hreflang="ko" href="https://mml.mabi.tw/ko/guide/mobile">
+    <link rel="alternate" hreflang="x-default" href="https://mml.mabi.tw/guide/mobile">
+    <meta name="description" content="用手指在夜光編輯器上作曲：輕觸選音符、長按拖著搬、雙指平移與縮放，以及選中音符後從畫面底部浮出的操作面板——方向鍵、長度桿、多選、選單、刪除。">
+<link rel="icon" href="/favicon.ico" sizes="16x16" type="image/x-icon">
+
+<link rel="manifest" href="/manifest.zh-Hant.webmanifest">
+<meta name="theme-color" content="#122325">
+<link rel="apple-touch-icon" sizes="180x180" href="/img/apple-touch-icon-180-v1.png">
+
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Gloock&family=Noto+Sans+TC:wght@400;500;700&display=swap" rel="stylesheet">
+<style>
+  :root{
+    --bg:#0d1a1b; --bg2:#122325; --panel:#16292b; --panel2:#1a3032;
+    --line:#23403f; --line-soft:#1b3234;
+    --txt:#e4efec; --dim:#a8bfbb; --dimmer:#7f9b98;
+    --t1:#e0ae5a; --t2:#57b6a4; --warn:#d97a72;
+    /* Html.Raw 是必要的：字型堆疊裡有雙引號，而 Razor 預設會把它逃脫成 &quot;。
+       CSS **不解析 HTML 實體**，所以 --sans:&quot;Noto Sans JP&quot; 是無效的宣告 ——
+       整個堆疊會被丟掉、悄悄退回瀏覽器預設字體。值是我們自己算的常數，沒有使用者輸入。 */
+    --sans:"Noto Sans TC",system-ui,-apple-system,"Segoe UI",sans-serif;
+    --display:"Gloock",Georgia,serif;
+  }
+  *{box-sizing:border-box}
+  body{
+    margin:0; background:var(--bg); color:var(--txt);
+    font-family:var(--sans); font-size:15px;
+    /* 中文條文要更大的行距才讀得下去。1.6 在編輯器裡夠用，整頁純文字不夠。 */
+    line-height:1.95;
+    -webkit-font-smoothing:antialiased;
+  }
+  a{color:var(--t2)}
+  a:hover{color:var(--t1)}
+
+  header{
+    border-bottom:1px solid var(--line);
+    background:linear-gradient(180deg,var(--bg2),var(--bg));
+  }
+  header .inner{
+    max-width:820px; margin:0 auto; padding:16px 24px;
+    display:flex; align-items:baseline; gap:14px; flex-wrap:wrap;
+  }
+  header .brand{
+    font-family:var(--display); font-weight:400; font-size:20px;
+    color:var(--txt); text-decoration:none; line-height:1;
+  }
+  header .brand em{font-style:normal;color:var(--t1)}
+  header nav{margin-left:auto;display:flex;gap:16px;font-size:13px}
+
+  main{max-width:820px;margin:0 auto;padding:36px 24px 72px}
+
+  h1{
+    font-family:var(--display); font-weight:400; font-size:32px;
+    margin:0 0 6px; line-height:1.3;
+  }
+  .updated{
+    color:var(--dimmer); font-size:13px; margin:0 0 8px;
+    letter-spacing:.04em;
+  }
+  /* 目錄。條文有十幾節，沒有目錄就只能一直捲。 */
+  .toc{
+    margin:26px 0 34px; padding:16px 20px;
+    background:var(--panel); border:1px solid var(--line); border-radius:4px;
+  }
+  .toc ol{margin:0;padding-left:1.4em;columns:2;column-gap:32px}
+  .toc li{margin:2px 0;break-inside:avoid}
+  .toc a{text-decoration:none}
+  .toc a:hover{text-decoration:underline}
+  @media (max-width:620px){ .toc ol{columns:1} }
+
+  h2{
+    font-size:19px; font-weight:700; margin:38px 0 10px;
+    padding-top:14px; border-top:1px solid var(--line-soft);
+    /* 從目錄跳過來時，標題不要被貼在視窗最上緣 */
+    scroll-margin-top:16px;
+  }
+  h3{font-size:16px;font-weight:500;color:var(--t2);margin:24px 0 8px}
+  p{margin:12px 0}
+  ul,ol{margin:12px 0;padding-left:1.6em}
+  li{margin:6px 0}
+  strong{color:#fff}
+  code{
+    font-family:ui-monospace,Consolas,monospace; font-size:.9em;
+    background:var(--panel2); padding:1px 5px; border-radius:3px;
+  }
+  /* 說明頁的 MML 範例。條文頁用不到，但兩者共用這個版型。
+     範例是要拿去複製的，所以 white-space:pre 不能省；窄畫面讓它自己橫捲，
+     不要換行 —— MML 換錯行看起來就是另一段譜。 */
+  pre{
+    margin:16px 0; padding:12px 16px;
+    background:var(--panel); border:1px solid var(--line); border-radius:4px;
+    overflow-x:auto; line-height:1.7;
+  }
+  pre code{background:none;padding:0;font-size:13px}
+
+  /* 條文裡「請特別注意」那幾段。原文用粗體強調，粗體在整頁中文裡看不出來。 */
+  .note{
+    margin:16px 0; padding:12px 16px;
+    background:var(--panel); border-left:3px solid var(--t1); border-radius:0 4px 4px 0;
+  }
+  .note.warn{border-left-color:var(--warn)}
+  .note p:first-child{margin-top:0}
+  .note p:last-child{margin-bottom:0}
+
+  /* 法條依據，附在節標題底下 */
+  .basis{color:var(--dimmer);font-size:13px;margin:-4px 0 12px}
+
+  table{
+    width:100%; border-collapse:collapse; margin:16px 0; font-size:14px;
+    /* 表格在窄畫面會擠成一團，讓它自己捲 */
+    display:block; overflow-x:auto; white-space:normal;
+  }
+  th,td{
+    border:1px solid var(--line); padding:8px 12px;
+    text-align:left; vertical-align:top; line-height:1.7;
+  }
+  th{background:var(--panel);font-weight:500;color:var(--dim);white-space:nowrap}
+
+  footer{
+    max-width:820px; margin:0 auto; padding:22px 24px 48px;
+    border-top:1px solid var(--line); color:var(--dimmer); font-size:13px;
+  }
+  footer .row{display:flex;gap:18px;flex-wrap:wrap}
+  footer .row .spacer{flex:1}
+  /* 語言連結。排在版權那一行上面、用一條細線隔開 —— 它是導覽而不是聲明。
+     目前的語言是 <strong> 而不是連結（見 _LangLinks），所以要自己上色，
+     不然它會跟旁邊三個連結的青色搶眼睛。 */
+  footer .langs{display:flex;gap:16px;flex-wrap:wrap;margin-bottom:14px;padding-bottom:14px;border-bottom:1px solid var(--line-soft)}
+  footer .langs strong{color:var(--dim);font-weight:500}
+</style>
+<link rel="stylesheet" href="/css/legal.css">
+</head>
+<body>
+
+<header>
+  <div class="inner">
+    <a class="brand" href="/">夜光 <em>MML工坊</em></a>
+    <nav>
+      <a href="/">回編輯器</a>
+          <a href="/guide/mml">MML 教學</a>
+          <a href="/guide/midi">MIDI 轉譜</a>
+          <a href="/faq">常見問題</a>
+      <a href="/terms">服務條款</a>
+      <a href="/privacy">隱私權政策</a>
+    </nav>
+  </div>
+</header>
+
+<main>
+  
+<h1>用手機與平板編曲</h1>
+<p class="updated">用手指畫音符、搬音符、改長度</p>
+
+<div class="toc">
+  <ol>
+    <li><a href="#who">這一頁給誰</a></li>
+    <li><a href="#one">單指：輕觸、拖曳、長按</a></li>
+    <li><a href="#two">雙指：平移與縮放</a></li>
+    <li><a href="#pad">選中之後：操作面板</a></li>
+    <li><a href="#screen">打字與畫面</a></li>
+    <li><a href="#install">裝成 app</a></li>
+    <li><a href="#rest">其餘跟桌機一樣</a></li>
+  </ol>
+</div>
+
+<h2 id="who">這一頁給誰</h2>
+
+<p>判準是<strong>你用手指</strong>，不是螢幕多小。平板橫著放很寬，一樣是這一套；手機直放也是這一套。反過來說，把桌機視窗拉得很扁雖然會讓版面收起來，但那時你手上還是滑鼠，這一頁對你沒有用——那件事在<a href="/guide/reference#narrow">窄螢幕與手機</a>。</p>
+
+<p>手機上能做的事跟桌機一樣多：畫音符、搬音符、改長度、換樂器、插刪小節、三連音、匯出、分享，全都在。長譜在桌機上會快一些，但短譜、改幾個音、在外面臨時想到什麼要調，手機完全夠用。</p>
+
+<div class="note">
+  <p>還沒摸過這個編輯器的話，先走一次<a href="/guide/editor">編輯器入門</a>——那一頁是從開站到把譜貼進遊戲的完整路線。它的第三節用的是滑鼠說法，對照這一頁看就好，其他內容通用。</p>
+</div>
+
+<h2 id="one">單指：輕觸、拖曳、長按</h2>
+
+<p>一根手指有三種下法，而它們的意思看你<strong>按在哪裡</strong>、以及工具列現在是哪個模式（<strong>只選取</strong>還是拿著某個音符長度，見<a href="/guide/reference#tools">捲簾工具列</a>）：</p>
+
+<table>
+  <tr><th></th><th>只選取模式</th><th>拿著音符長度時</th></tr>
+  <tr>
+    <td><strong>空白處</strong></td>
+    <td>輕觸＝取消選取，並把播放基準線設在那裡（<strong>操作面板開著的時候，這一下不算數</strong>）<br>拖曳＝平移畫面（多選亮著時＝<strong>框住一片</strong>）<br>長按＝開空白處的選單</td>
+    <td>輕觸＝在那一格畫一個音<br>拖曳＝平移畫面<br>長按＝拉出一個虛線框，拖著調大小，<strong>放開才畫進去</strong></td>
+  </tr>
+  <tr>
+    <td><strong>音符上</strong></td>
+    <td colspan="2">輕觸＝選它<br>拖曳＝平移畫面<br>長按＝<strong>把它拿起來搬</strong>，手指移到哪就跟到哪，放開才寫進去</td>
+  </tr>
+  <tr>
+    <td><strong>左邊的琴鍵、上面的小節尺</strong></td>
+    <td colspan="2">按下去就是試聽那個音／設播放線，不等你決定要不要拖</td>
+  </tr>
+</table>
+
+<p>三個值得先知道的：</p>
+
+<ul>
+  <li><strong>按下去不會馬上選。</strong> 手指同時是游標也是點擊，所以編輯器會先等一下：<strong>移動超過一點點</strong>就當成你要捲畫面，<strong>按住不動約 0.4 秒</strong>就當成長按，兩個都不是才在放開時算成輕觸。想捲畫面的時候不會順手改掉選取。</li>
+  <li><strong>長按搬音符時拖到畫面邊緣，捲簾會自己捲。</strong> 要搬去很遠的地方不必先放開。</li>
+  <li><strong>插入／刪除小節要在「只選取」模式的空白處長按。</strong> 拿著音符長度的時候，長按那條路讓給了拉框畫音符，所以叫不出選單——切回只選取就有了。選單裡有什麼在<a href="/guide/reference#menu-bar">右鍵選單（空白處）</a>。</li>
+</ul>
+
+<h2 id="two">雙指：平移與縮放</h2>
+
+<p>兩根手指放上去之後，<strong>先動的那一種贏</strong>：</p>
+
+<table>
+  <tr><th>你做的動作</th><th>結果</th></tr>
+  <tr><td>兩指一起移動</td><td>平移畫面</td></tr>
+  <tr><td><strong>左右</strong>張開或捏合</td><td>改格子寬度——看多幾小節，或把某一段拉開來對位</td></tr>
+  <tr><td><strong>上下</strong>張開或捏合</td><td>改列高——看多幾個八度，或把音高拉開來看清楚</td></tr>
+</table>
+
+<p>兩軸是分開判斷的，所以手指斜斜地擺著做水平張開也認得出來——它看的是你<strong>真正在做的事</strong>，跟你把手擺成什麼角度無關。</p>
+
+<h2 id="pad">選中之後：操作面板</h2>
+
+<p>選中一個音（或一組），畫面<strong>最底部</strong>會浮出一塊面板。它是手機上調整音符的地方，也是音符選單與刪除唯一的入口。</p>
+
+<svg viewBox="0 0 720 300" width="100%" role="img"
+     aria-label="操作面板示意圖：左邊是四顆方向鍵，右邊由上而下是多選與選單兩顆鍵、橫長形的長度桿、以及左右兩端的取消選擇與刪除；面板最上面一行是警告行"
+     style="max-width:720px;margin:20px 0;display:block;font-family:var(--sans);">
+
+  <!-- 面板本體 -->
+  <rect x="165" y="60" width="390" height="180" rx="4" fill="#0a1416" stroke="#23403f"/>
+
+  <!-- 警告行 -->
+  <text x="360" y="78" fill="#d97a72" font-size="11" text-anchor="middle">放開會蓋掉 2 個音</text>
+
+  <!-- 位置：四顆方向鍵（五邊形，尖端朝內）。同一個形狀靠 rotate 定位 ——
+       跟實作同一套數學（見 editor.css 的 .key-d）。外框的圓也跟實作一樣沒有：
+       四顆朝內的尖端已經把「這是一組」講完了。 -->
+  <g fill="#2a4547">
+    <path id="dpk" d="M224 106 H266 V139 L245 159 L224 139 Z"/>
+    <use href="#dpk" transform="rotate(90 245 162)"/>
+    <use href="#dpk" transform="rotate(180 245 162)"/>
+    <use href="#dpk" transform="rotate(270 245 162)"/>
+  </g>
+
+  <!-- 上排兩顆鍵 -->
+  <g fill="#1a3032" stroke="#23403f">
+    <rect x="368" y="86" width="76" height="34" rx="8"/>
+    <rect x="469" y="86" width="72" height="34" rx="8"/>
+  </g>
+  <g fill="#e4efec" font-size="12" text-anchor="middle">
+    <text x="406" y="108">多選</text>
+    <text x="505" y="108">選單</text>
+  </g>
+
+  <!-- 長度桿 -->
+  <rect x="383" y="131" width="158" height="52" rx="26" fill="#142526" stroke="#3a4a4c"/>
+  <circle cx="462" cy="157" r="23" fill="#cfd6e4"/>
+  <g fill="#7f9b98" font-size="13" text-anchor="middle">
+    <text x="395" y="162">－</text>
+    <text x="529" y="162">＋</text>
+  </g>
+
+  <!-- 下排：取消選擇 …… 刪除 -->
+  <rect x="368" y="194" width="88" height="34" rx="8" fill="#1a3032" stroke="#23403f"/>
+  <text x="412" y="216" fill="#e4efec" font-size="12" text-anchor="middle">取消選擇</text>
+  <rect x="477" y="194" width="64" height="34" rx="8" fill="#d97a72"/>
+  <text x="509" y="216" fill="#14201a" font-size="12" text-anchor="middle">刪除</text>
+
+  <!-- 引線與名字 -->
+  <g stroke="#7f9b98" stroke-width="1" fill="none">
+    <path d="M360 46 L360 66"/>
+    <path d="M179 162 L110 162"/>
+    <path d="M541 157 L610 157"/>
+  </g>
+  <g fill="#a8bfbb" font-size="12">
+    <text x="360" y="40" text-anchor="middle">警告行——只在放開會蓋掉別的音時出現</text>
+    <text x="103" y="158" text-anchor="end">方向鍵</text>
+    <text x="103" y="174" text-anchor="end">上下音高・左右時間</text>
+    <text x="617" y="153">長度桿</text>
+    <text x="617" y="169">只能左右推</text>
+  </g>
+
+  <text x="360" y="270" fill="#7f9b98" font-size="11" text-anchor="middle">面板貼在畫面最底部，選中音符才出現，取消選擇就收起來</text>
+</svg>
+
+<div class="note">
+  <p><strong>面板出現的時候，下面的 MML 文字區會暫時退場</strong>，取消選擇就回來。那是刻意的：這時候你要對照的只有兩樣東西——捲簾上那個音，跟手上的按鍵——把文字區收掉，那兩樣才靠得近。文字沒有不見，也沒有被改。</p>
+</div>
+
+<h3 id="move">方向鍵：搬音符</h3>
+
+<p>左邊那組是<strong>四顆方向鍵</strong>（尖端朝內的那些）。<strong>按哪一邊，音符就往哪一邊走</strong>——左右換位置、上下換音高，一按走一步。</p>
+
+<table>
+  <tr><th>上下</th><th>左右</th></tr>
+  <tr><td>一個半音</td><td>六十四分音符</td></tr>
+</table>
+
+<p><strong>按住不放會連續走。</strong></p>
+
+<p>多選的時候，方向鍵<strong>一次搬整組</strong>，它們之間的相對關係不變。</p>
+
+<div class="note">
+  <p><strong>停手大約 0.4 秒才真的寫進去。</strong> 中間都只是預覽，所以連按十下、或按住三秒，<strong>復原</strong>都只要按一次就全部收回來——那是一整段調整，不是十件事。</p>
+</div>
+
+<p><strong>要搬去很遠的地方就長按把音符拿起來拖。</strong> 這兩件事刻意分工：拖曳負責跨越距離，方向鍵負責最後那幾格——手指拖不準的那一段，正是方向鍵存在的理由。</p>
+
+<h3 id="size">長度桿：改長度</h3>
+
+<p>右下那根橫長形的，<strong>只能左右推</strong>：往右變長、往左變短。它推起來刻意偏慢，因為長度推過頭會影響到<strong>後面那個音</strong>（變長會把後面的音截短甚至蓋掉）。落點細到<strong>六十四分音符</strong>，所以慢不等於粗。推的時候捲簾上會出現一個<strong>十字游標</strong>，那是你目前推到的位置——兩個落點之間只有幾個像素，沒有它會看起來像桿子失靈。</p>
+
+<p>會蓋掉東西的時候，面板最上面那一行會告訴你<strong>放開會蓋掉幾個音</strong>。不想蓋就推回來，那一行會消失。</p>
+
+<div class="note">
+  <p><strong>多選的時候長度桿會變暗，推不動。</strong> 一組長度不一樣的音沒辦法一起改長度，這條規則<strong>桌機也一樣</strong>，不是手機少了什麼。要改就一個一個選。</p>
+</div>
+
+<h3 id="keys">四顆鍵</h3>
+
+<table>
+  <tr><th>鍵</th><th>做什麼</th></tr>
+  <tr><td><strong>多選</strong></td><td>按亮它，接下來輕觸音符是<strong>加進選取</strong>而不是換一個；輕觸已經選起來的音則是把它<strong>抽掉</strong>。再按一次這顆鍵就關掉。選好之後可以一次搬、一次刪，或一次套用選單裡的功能。亮著而且在<strong>只選取</strong>模式時，還可以<strong>在空白處拖曳框住一片</strong>，框到的音全部加進來，本來選著的不會被框掉——那時單指拖曳讓給了框選，要捲畫面就用<strong>兩根手指</strong>，或者從音符上起手拖</td></tr>
+  <tr><td><strong>選單</strong></td><td>叫出<strong>音符上的選單</strong>——複製、剪下、設成三連音、刪除音符等等，跟桌機右鍵點音符是同一個選單，內容在<a href="/guide/reference#menu-note">右鍵選單（音符上）</a>。選單就開在這顆鍵上面</td></tr>
+  <tr><td><strong>取消選擇</strong></td><td>放掉選取。面板跟著收起來，文字區回來。<strong>這是收起面板唯一的一顆鍵</strong>——手指誤觸到空白處不會關掉它，多選也是按了這顆才歸零</td></tr>
+  <tr><td><strong>刪除</strong></td><td>刪掉選起來的音（多選時一次刪整組）。<strong>按下去就刪，不會再問一次</strong>——紅色已經把話講完了，而且 <strong>復原</strong> 收得回來</td></tr>
+</table>
+
+<p>下面那一排刻意跟上面隔開，而且刪除獨自佔著最右端：那兩顆是<strong>離開跟毀掉</strong>，上面兩排是<strong>調整</strong>，手指不該在它們之間滑錯。</p>
+
+<p><strong>一次只能推一根桿子。</strong> 一邊搬位置一邊改長度不是一個有意義的動作，所以按著其中一根的時候另一根不理你。</p>
+
+<h2 id="screen">打字與畫面</h2>
+
+<h3 id="toggles">四顆顯示開關</h3>
+
+<p>畫面窄的時候，標題列上會多出四顆開關（<strong>桌機的一般視窗看不到</strong>）：</p>
+
+<table>
+  <tr><th>開關</th><th>關掉之後</th></tr>
+  <tr><td><strong>顯示工具列</strong></td><td>模式、音符長度、縮放、復原、速度力度那些收起來</td></tr>
+  <tr><td><strong>顯示鋼琴捲簾</strong></td><td>只剩文字，適合專心打 MML</td></tr>
+  <tr><td><strong>顯示編輯器</strong></td><td>只剩捲簾，適合專心畫音符</td></tr>
+  <tr><td><strong>顯示狀態列</strong></td><td>最下面那條狀態文字收起來</td></tr>
+</table>
+
+<p>亮著代表現在看得到。手機上<strong>垂直空間最稀缺</strong>，關掉一區，剩下的會把空間吃掉——這四顆是你在小螢幕上最常用的東西。</p>
+
+<h3 id="keyboard">軟鍵盤頂上來的時候</h3>
+
+<p>手指點進 MML 文字區，系統鍵盤會蓋掉半個畫面。這時編輯器會<strong>自己讓出高度</strong>：工具列的後半、樂器列、狀態列暫時收起來，<strong>捲簾留著</strong>——因為打字的時候你正要看捲簾上的結果。收起鍵盤，那三樣就回來。</p>
+
+<div class="note">
+  <p><strong>那幾顆開關會亮著，但東西不在畫面上</strong>，這是刻意的。開關反映的永遠是<strong>你自己按過的選擇</strong>，不會被系統鍵盤的來去改掉——所以你手動關掉工具列之後打字再離開，它不會被「好心」放回來；打字中按那顆開關，收鍵盤之後也照你按的結果走。</p>
+</div>
+
+<p>還有一件事：<strong>點分頁不會彈出鍵盤</strong>。在小螢幕上點另一個分頁通常是想看那一軌的音符，不是要打字——所以切分頁、新增樂譜、改名都不會把游標塞進文字區。要打字就自己點一下文字區。</p>
+
+<h2 id="install">裝成 app</h2>
+
+<p>這個站可以裝到手機主畫面，裝完之後開起來沒有網址欄，跟一般 app 一樣。<strong>而且裝完就能離線用</strong>——沒有網路的時候照樣打得開、打得動、聽得到聲音。</p>
+
+<p>Android 的 Chrome 通常會自己冒出安裝提示；沒看到的話從瀏覽器選單找「安裝應用程式」或「加到主畫面」。桌機的 Chrome 與 Edge 是在網址列右側出現一顆安裝鈕。</p>
+
+<p>iPhone 與 iPad 沒有自動提示，要自己來：Safari 底下那排的分享鈕，往下找「加到主畫面」。</p>
+
+<p>離線要有聲音，音色庫得先留在裝置上。那份檔案是 15 MB，但你不用做任何事：通常第二次開站的時候它就自己留下來了，而你一安裝，它會再確認一次、沒留好就自己補。想知道現在到底好了沒有，打開<strong>設定</strong>抽屜看<strong>離線音色庫</strong>那一格——它會直接告訴你。</p>
+
+<div class="note">
+  <p><strong>iPhone 與 iPad 上有幾件事會不一樣。</strong>系統在空間不足時可能把那 15 MB 清掉，清掉之後回到有網路的地方會自己補回來，但在那之前離線是沒有聲音的。另外從主畫面開起來的時候，Google 登入有機會轉不回來——真的遇到就改用 Safari 開這個站登入。這些是 iOS 本身的限制，不是你設定錯了。</p>
+</div>
+
+<h2 id="rest">其餘跟桌機一樣</h2>
+
+<p>剩下的東西手機上都在，用法也一樣，只是收在漢堡鈕裡（標題列右邊那一顆）：剪貼簿、檔案（匯入／匯出／清空）、分享、設定、關於。工具列的速度／力度／移調／優化／合併、樂器列、樂譜分頁、狀態列也都跟桌機一樣。</p>
+
+<p>那些都寫在<a href="/guide/keys">功能與快捷鍵總覽</a>。版面在窄畫面上怎麼收，在那一頁的<a href="/guide/reference#narrow">窄螢幕與手機</a>。</p>
+
+<div class="note">
+  <p>沒找到答案？看<a href="/guide/editor">編輯器入門</a>、<a href="/guide/mml">MML 語法教學</a>、<a href="/guide/midi">MIDI 轉 MML 教學</a>或<a href="/faq">常見問題</a>。</p>
+</div>
+
+</main>
+
+<footer>
+    <span class="langs">
+            <strong lang="zh-Hant">繁體中文</strong>
+            <a href="/en/guide/mobile" hreflang="en" lang="en">English</a>
+            <a href="/ja/guide/mobile" hreflang="ja" lang="ja">日本語</a>
+            <a href="/ko/guide/mobile" hreflang="ko" lang="ko">한국어</a>
+    </span>
+  <div class="row">
+    <span>夜光 · 個人非營利專案</span>
+    <span>聯絡：<a href="mailto:to@toxto.top">to@toxto.top</a></span>
+    <span class="spacer"></span>
+    <a href="/">回編輯器</a>
+  </div>
+</footer>
+
+</body>
+</html>

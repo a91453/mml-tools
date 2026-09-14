@@ -1,0 +1,1176 @@
+<!doctype html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>마비노기 모바일 MML 악보 편집기</title>
+<script>
+  if (matchMedia("(display-mode: standalone)").matches
+      || matchMedia("(display-mode: minimal-ui)").matches
+      || navigator.standalone === true)
+    document.title = "\uB9C8\uBE44\uB178\uAE30 \uBAA8\uBC14\uC77C 4ML Editor";
+</script>
+<link rel="canonical" href="https://mml.mabi.tw/ko/">
+        <link rel="alternate" hreflang="zh-Hant" href="https://mml.mabi.tw/">
+        <link rel="alternate" hreflang="en" href="https://mml.mabi.tw/en/">
+        <link rel="alternate" hreflang="ja" href="https://mml.mabi.tw/ja/">
+        <link rel="alternate" hreflang="ko" href="https://mml.mabi.tw/ko/">
+    <link rel="alternate" hreflang="x-default" href="https://mml.mabi.tw/">
+<meta name="description" content="마비노기 모바일 MML 악보를 브라우저에서 편집하세요. 설치 불필요. MIDI 가져오기, 피아노 롤 편집, 게임 원본 음색 미리듣기, 원클릭 공유를 지원합니다.">
+
+<meta property="og:type" content="website">
+<meta property="og:site_name" content="夜光 MML 工坊">
+<meta property="og:locale" content="ko_KR">
+<meta property="og:url" content="https://mml.mabi.tw/ko/">
+<meta property="og:title" content="마비노기 모바일 MML 악보 편집기">
+<meta property="og:description" content="마비노기 모바일 MML 악보를 브라우저에서 편집하세요. 설치 불필요. MIDI 가져오기, 피아노 롤 편집, 게임 원본 음색 미리듣기, 원클릭 공유를 지원합니다.">
+<meta name="twitter:card" content="summary">
+<meta name="twitter:title" content="마비노기 모바일 MML 악보 편집기">
+<meta name="twitter:description" content="마비노기 모바일 MML 악보를 브라우저에서 편집하세요. 설치 불필요. MIDI 가져오기, 피아노 롤 편집, 게임 원본 음색 미리듣기, 원클릭 공유를 지원합니다.">
+
+    <script type="application/ld+json">
+        {"@context":"https://schema.org","@type":"WebApplication","name":"\uB9C8\uBE44\uB178\uAE30 \uBAA8\uBC14\uC77C MML \uC545\uBCF4 \uD3B8\uC9D1\uAE30","url":"https://mml.mabi.tw/ko/","description":"\uB9C8\uBE44\uB178\uAE30 \uBAA8\uBC14\uC77C MML \uC545\uBCF4\uB97C \uBE0C\uB77C\uC6B0\uC800\uC5D0\uC11C \uD3B8\uC9D1\uD558\uC138\uC694. \uC124\uCE58 \uBD88\uD544\uC694. MIDI \uAC00\uC838\uC624\uAE30, \uD53C\uC544\uB178 \uB864 \uD3B8\uC9D1, \uAC8C\uC784 \uC6D0\uBCF8 \uC74C\uC0C9 \uBBF8\uB9AC\uB4E3\uAE30, \uC6D0\uD074\uB9AD \uACF5\uC720\uB97C \uC9C0\uC6D0\uD569\uB2C8\uB2E4.","applicationCategory":"MultimediaApplication","operatingSystem":"Web","browserRequirements":"Requires AudioWorklet support","inLanguage":"ko","isAccessibleForFree":true,"offers":{"@type":"Offer","price":"0","priceCurrency":"TWD"}}
+    </script>
+<link rel="icon" href="/favicon.ico" sizes="16x16" type="image/x-icon">
+
+<link rel="manifest" href="/manifest.ko.webmanifest">
+<meta name="theme-color" content="#122325">
+<link rel="apple-touch-icon" sizes="180x180" href="/img/apple-touch-icon-180-v1.png">
+
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Gloock&family=IBM+Plex+Mono:wght@400;500&family=Noto+Sans+KR:wght@400;500;700&display=swap" rel="stylesheet">
+
+
+<link rel="stylesheet" href="/vendor/fontawesome/css/fontawesome.min.css">
+<link rel="stylesheet" href="/vendor/fontawesome/css/solid.min.css">
+<link rel="stylesheet" href="/vendor/fontawesome/css/regular.min.css">
+
+
+<script type="importmap">
+{
+  "imports": {
+    "spessasynth_lib":  "/vendor/spessasynth_lib.js",
+    "spessasynth_core": "/vendor/spessasynth_core.js"
+  }
+}
+</script>
+<link rel="stylesheet" href="/css/editor.css">
+<script>
+  (function () {
+    try {
+      var ui = JSON.parse(localStorage.getItem("mml-workshop/ui") || "{}");
+      if (!ui || ui.theme !== "light") return;
+      document.documentElement.dataset.theme = "light";
+      var m = document.querySelector('meta[name="theme-color"]');
+      if (m) m.content = "#f5f7f7";
+    } catch (e) {
+      // 無痕模式讀 localStorage 會丟、存進去的不是 JSON 也會丟。兩種都留在深色。
+    }
+  })();
+</script>
+<style>
+  :root{
+    /* Html.Raw 是必要的：字型堆疊裡有雙引號，而 Razor 預設會把它逃脫成 &quot;。
+       CSS **不解析 HTML 實體**，所以 --sans:&quot;Noto Sans JP&quot; 是無效的宣告 ——
+       整個堆疊會被丟掉、悄悄退回瀏覽器預設字體。值是我們自己算的常數，沒有使用者輸入。 */
+    --sans:"Noto Sans KR",system-ui,-apple-system,"Segoe UI",sans-serif;
+  }
+</style>
+</head>
+<body>
+<svg width="0" height="0" style="position:absolute" aria-hidden="true" focusable="false">
+  <defs>
+
+    <symbol id="ni-1" viewBox="4.4 1.2 18.2 24">
+      <path fill="currentColor" fill-rule="evenodd" d="
+        M 19.4 13 a 7.4 4.9 0 1 0 -14.8 0 a 7.4 4.9 0 1 0 14.8 0 Z
+        M 13.8 15.7 a 3.2 2.4 56 1 0 -3.6 -5.3 a 3.2 2.4 56 1 0 3.6 5.3 Z"/>
+    </symbol>
+
+    <symbol id="ni-2" viewBox="4.4 1.2 18.2 24">
+      <path fill="currentColor" fill-rule="evenodd" d="
+        M 14.3 17.1 a 4.8 3.5 -20 1 0 -9 3.3 a 4.8 3.5 -20 1 0 9 -3.3 Z
+        M 13.1 17.2 a 3.6 1.7 -24 1 0 -6.6 2.9 a 3.6 1.7 -24 1 0 6.6 -2.9 Z"/>
+      <rect x="12.9" y="3.6" width="1.7" height="14.7" rx=".85" fill="currentColor"/>
+    </symbol>
+
+    <symbol id="ni-4" viewBox="4.4 1.2 18.2 24">
+      <ellipse cx="9.8" cy="18.7" rx="4.8" ry="3.5"
+               transform="rotate(-20 9.8 18.7)" fill="currentColor"/>
+      <rect x="12.9" y="3.6" width="1.7" height="14.7" rx=".85" fill="currentColor"/>
+    </symbol>
+
+    <symbol id="ni-8" viewBox="4.4 1.2 18.2 24">
+      <ellipse cx="9.8" cy="18.7" rx="4.8" ry="3.5"
+               transform="rotate(-20 9.8 18.7)" fill="currentColor"/>
+      <rect x="12.9" y="3.6" width="1.7" height="14.7" rx=".85" fill="currentColor"/>
+      <path fill="currentColor" d="
+        M 14.6 3.6 C 14.6 6.8 19.3 7.4 19.3 11.9
+        C 19.3 14.2 18 15.6 17 16.3
+        C 18.5 12.6 17.2 10 14.6 8.5 Z"/>
+    </symbol>
+
+    <symbol id="ni-16" viewBox="4.4 1.2 18.2 24">
+      <ellipse cx="9.8" cy="18.7" rx="4.8" ry="3.5"
+               transform="rotate(-20 9.8 18.7)" fill="currentColor"/>
+      <rect x="12.9" y="3.6" width="1.7" height="14.7" rx=".85" fill="currentColor"/>
+      <path fill="currentColor" d="
+        M 14.6 3.6 C 14.6 6.8 19.3 7.4 19.3 11.9
+        C 19.3 14.2 18 15.6 17 16.3
+        C 18.5 12.6 17.2 10 14.6 8.5 Z"/>
+      <path fill="currentColor" d="
+        M 14.6 8 C 14.6 11.2 19.3 11.8 19.3 16.3
+        C 19.3 18.6 18 20 17 20.7
+        C 18.5 17 17.2 14.4 14.6 12.9 Z"/>
+    </symbol>
+
+    <symbol id="ni-32" viewBox="4.4 1.2 18.2 24">
+      <ellipse cx="9.8" cy="18.7" rx="4.8" ry="3.5"
+               transform="rotate(-20 9.8 18.7)" fill="currentColor"/>
+      <rect x="12.9" y="2" width="1.7" height="16.3" rx=".85" fill="currentColor"/>
+      <path fill="currentColor" d="
+        M 14.6 2 C 14.6 5.2 19.3 5.8 19.3 10.3
+        C 19.3 12.6 18 14 17 14.7
+        C 18.5 11 17.2 8.4 14.6 6.9 Z"/>
+      <path fill="currentColor" d="
+        M 14.6 6 C 14.6 9.2 19.3 9.8 19.3 14.3
+        C 19.3 16.6 18 18 17 18.7
+        C 18.5 15 17.2 12.4 14.6 10.9 Z"/>
+      <path fill="currentColor" d="
+        M 14.6 10 C 14.6 13.2 19.3 13.8 19.3 18.3
+        C 19.3 20.6 18 22 17 22.7
+        C 18.5 19 17.2 16.4 14.6 14.9 Z"/>
+    </symbol>
+
+    <symbol id="ni-64" viewBox="4.4 1.2 18.2 24">
+      <ellipse cx="9.8" cy="18.7" rx="4.8" ry="3.5"
+               transform="rotate(-20 9.8 18.7)" fill="currentColor"/>
+      <rect x="12.9" y="1.4" width="1.7" height="16.9" rx=".85" fill="currentColor"/>
+      <path fill="currentColor" d="
+        M 14.6 1.4 C 14.6 4 19 4.6 19 8.4
+        C 19 10.4 17.9 11.6 17 12.2
+        C 18.3 9.2 17.1 6.8 14.6 5.5 Z"/>
+      <path fill="currentColor" d="
+        M 14.6 4.8 C 14.6 7.4 19 8 19 11.8
+        C 19 13.8 17.9 15 17 15.6
+        C 18.3 12.6 17.1 10.2 14.6 8.9 Z"/>
+      <path fill="currentColor" d="
+        M 14.6 8.2 C 14.6 10.8 19 11.4 19 15.2
+        C 19 17.2 17.9 18.4 17 19
+        C 18.3 16 17.1 13.6 14.6 12.3 Z"/>
+      <path fill="currentColor" d="
+        M 14.6 11.6 C 14.6 14.2 19 14.8 19 18.6
+        C 19 20.6 17.9 21.8 17 22.4
+        C 18.3 19.4 17.1 17 14.6 15.7 Z"/>
+    </symbol>
+
+    <symbol id="ni-1d" viewBox="4.4 1.2 18.2 24">
+      <use href="#ni-1" x="4.4" y="1.2" width="18.2" height="24"/>
+      <circle cx="19.6" cy="20" r="2" fill="currentColor"/>
+    </symbol>
+    <symbol id="ni-2d" viewBox="4.4 1.2 18.2 24">
+      <use href="#ni-2" x="4.4" y="1.2" width="18.2" height="24"/>
+      <circle cx="17" cy="23" r="2" fill="currentColor"/>
+    </symbol>
+    <symbol id="ni-4d" viewBox="4.4 1.2 18.2 24">
+      <use href="#ni-4" x="4.4" y="1.2" width="18.2" height="24"/>
+      <circle cx="17" cy="23" r="2" fill="currentColor"/>
+    </symbol>
+    <symbol id="ni-8d" viewBox="4.4 1.2 18.2 24">
+      <use href="#ni-8" x="4.4" y="1.2" width="18.2" height="24"/>
+      <circle cx="17" cy="23" r="2" fill="currentColor"/>
+    </symbol>
+    <symbol id="ni-16d" viewBox="4.4 1.2 18.2 24">
+      <use href="#ni-16" x="4.4" y="1.2" width="18.2" height="24"/>
+      <circle cx="20" cy="23" r="2" fill="currentColor"/>
+    </symbol>
+    <symbol id="ni-32d" viewBox="4.4 1.2 18.2 24">
+      <use href="#ni-32" x="4.4" y="1.2" width="18.2" height="24"/>
+      <circle cx="20.4" cy="23" r="2" fill="currentColor"/>
+    </symbol>
+
+  </defs>
+</svg>
+
+
+<header>
+
+        <h1><a id="home" href="/ko/" title="홈으로 돌아가고 기본 악보를 불러옵니다">夜光 <em>MML공방</em></a> <span class="sub">Mabinogi Mobile MML Editor</span></h1>
+
+  <div id="viewToggles">
+    <button type="button" class="ico toggle on" id="viewTools" aria-pressed="true">
+      <i class="fa-solid fa-toolbox" aria-hidden="true"></i>
+    </button>
+    <button type="button" class="ico toggle on" id="viewRoll" aria-pressed="true">
+      <i class="fa-solid fa-table-list" aria-hidden="true"></i>
+    </button>
+    <button type="button" class="ico toggle on" id="viewEditor" aria-pressed="true">
+      <i class="fa-solid fa-file-code" aria-hidden="true"></i>
+    </button>
+    <button type="button" class="ico toggle on" id="viewStatus" aria-pressed="true">
+      <i class="fa-solid fa-circle-info" aria-hidden="true"></i>
+    </button>
+  </div>
+
+  <span class="spacer"></span>
+  <div class="grp" id="navMenu">
+    <div id="navIo">
+      <button id="clip" title="곡 전체의 MML을 붙여넣기／복사">
+        <i class="fa-regular fa-clipboard" aria-hidden="true"></i>클립보드
+      </button>
+      <button id="file" title=".mid에서 가져오거나 MIDI로 저장">
+        <i class="fa-regular fa-folder-open" aria-hidden="true"></i>파일
+      </button>
+      <button id="share" title="공유 링크를 만들거나 공유 기록 보기">
+        <i class="fa-solid fa-share-nodes" aria-hidden="true"></i>공유
+      </button>
+    </div>
+    <button id="gear" title="계정, 사운드뱅크, 악기 정의 파일">
+      <i class="fa-solid fa-gear" aria-hidden="true"></i>설정
+    </button>
+    <button id="aboutBtn" title="사이트 소개, 가이드, 감사의 말, 버전">
+      <i class="fa-solid fa-circle-question" aria-hidden="true"></i>사이트 정보
+    </button>
+  </div>
+  <button type="button" class="ico" id="navToggle" aria-expanded="false" aria-controls="navMenu">
+    <i class="fa-solid fa-bars" aria-hidden="true"></i>
+  </button>
+</header>
+
+<div id="rollbar">
+  <div class="grp">
+    <button class="play" id="play" disabled>▶  재생</button>
+    <button class="tiny" id="stop" disabled>정지</button>
+    <button class="tiny toggle on" id="followBtn"
+            title="재생 중 재생 헤드를 따라 화면을 넘깁니다. 가로 스크롤을 손으로 움직이면 자동으로 꺼지며, 여기를 누르면 다시 켜집니다">
+      <i class="fa-regular fa-circle-right" aria-hidden="true"></i>따라가기
+    </button>
+    <div id="rangeSel" role="radiogroup" aria-label="재생 범위">
+      <button type="button" role="radio" data-range="all" aria-checked="true" class="on"
+              title="곡 전체 재생(마디 눈금자의 시작／끝 표시를 지웁니다)">전곡</button>
+      <button type="button" role="radio" data-range="part" aria-checked="false" aria-disabled="true"
+              title="범위 지정: 마디 눈금자 위에서는 좌클릭이 시작, 우클릭이 끕. 화살표 도구(0)로 롤의 빈 곳에서는 좌클릭이 시작, 우클릭은 메뉴(그 앞 두 항목이 이 두 선입니다)">범위</button>
+    </div>
+    <button class="tiny toggle" id="loopBtn" aria-pressed="false"
+            title="반복 재생: 끝(또는 끝 표시)에 닿으면 바로 처음(또는 시작 표시)부터 다시 재생합니다">
+      <i class="fa-solid fa-retweet" aria-hidden="true"></i>반복
+    </button>
+  </div>
+  <div class="grp hideable">
+    <button class="tool" id="toolSelect"
+            title="화살표(단축키 0): 음표 위에서는 이동／길이 변경／삭제, Shift나 Ctrl로 두 번째 음을 누르면 구간 선택. 빈 곳에서는 좌클릭이 재생 시작선, 우클릭이 끝선">
+      <i class="fa-solid fa-arrow-pointer" aria-hidden="true"></i><span class="sr">선택만</span>
+    </button>
+    <button type="button" class="lbl" id="lensLbl" aria-pressed="false">
+      <svg width="14" height="18" aria-hidden="true" focusable="false"><use href="#ni-32"/></svg>
+      <i class="fa-solid fa-music" aria-hidden="true"></i><span class="sr"></span>
+    </button>
+    <div id="lens">
+      <button data-len="1" title="온음표(단축키 1)">1</button>
+      <button data-len="2" title="2분음표(단축키 2)">2</button>
+      <button data-len="4" title="4분음표(단축키 3)">4</button>
+      <button data-len="8" title="8분음표(단축키 4)">8</button>
+      <button data-len="16" title="16분음표(단축키 5)">16</button>
+      <button data-len="32" title="32분음표(단축키 6)">32</button>
+    </div>
+    <div id="zoom">
+      <span class="spin">
+        <i class="fa-solid fa-arrows-left-right" aria-hidden="true"></i>
+        <span class="ax">
+          <button data-zoom="w+">+</button>
+          <button data-zoom="w-">−</button>
+        </span>
+      </span>
+      <span class="spin">
+        <i class="fa-solid fa-arrows-up-down" aria-hidden="true"></i>
+        <span class="ax">
+          <button data-zoom="h+">+</button>
+          <button data-zoom="h-">−</button>
+        </span>
+      </span>
+    </div>
+    <button class="tiny ico" id="undoBtn" disabled title="실행 취소(단축키 Ctrl+Z)">
+      <i class="fa-solid fa-rotate-left" aria-hidden="true"></i><span class="sr">실행 취소</span>
+    </button>
+    <button class="tiny ico" id="redoBtn" disabled title="다시 실행(단축키 Ctrl+Shift+Z 또는 Ctrl+Y)">
+      <i class="fa-solid fa-rotate-right" aria-hidden="true"></i><span class="sr">다시 실행</span>
+    </button>
+  </div>
+  <div class="grp hideable">
+    <button class="tiny" id="tempoBtn" title="템포: 트랙 처음이나 선택한 음표 앞에 템포 기호를 씁니다">
+      <i class="fa-solid fa-gauge-high" aria-hidden="true"></i>템포
+    </button>
+    <button class="tiny" id="velBtn" title="벨로시티: v 값을 한꺼번에 올리거나 내립니다">
+      <i class="fa-solid fa-sliders" aria-hidden="true"></i>벨로시티
+    </button>
+    <button class="tiny" id="transBtn" title="조옮김: 음표를 한꺼번에 반음 단위로 올리거나 내립니다">
+      <i class="fa-solid fa-arrow-up-right-dots" aria-hidden="true"></i>조옮김
+    </button>
+    <button class="tiny" id="optBtn" title="압축·최적화: 음 길이를 내주고 글자 수를 줄입니다(소리가 바뀝니다)">
+      <i class="fa-solid fa-wand-magic-sparkles" aria-hidden="true"></i>최적화
+    </button>
+    <button class="tiny" id="mergeBtn" title="트랙 병합: 이 트랙(또는 선택한 음표)을 다른 트랙에 합칩니다. 다섯 가지 방법이 있습니다">
+      <i class="fa-solid fa-layer-group" aria-hidden="true"></i>병합
+    </button>
+  </div>
+  <div class="grp hideable">
+    <span class="lbl" id="rollMode">편집 중</span>
+    <span class="cur" id="rollTrack">멜로디</span>
+    <span class="warnmsg" id="rollNote"></span>
+    <span id="rollNonstd" hidden></span>
+  </div>
+  <span class="hint hideable" id="rollHint">좌클릭으로 그리기 · 끌어서 이동 · 오른쪽 끝을 끌어서 길이 변경 · 우클릭으로 삭제</span>
+</div>
+
+<div id="rollwrap">
+  <div id="stage" tabindex="-1">
+    <div id="rollpad"><canvas id="roll"></canvas></div>
+  </div>
+  <div id="flagsLayer" aria-hidden="true"><div id="flagsStrip"></div></div>
+  <div id="markdots" aria-hidden="true"></div>
+</div>
+
+<div id="splitter" role="separator" aria-orientation="horizontal" tabindex="0"
+     title="끌어서 피아노 롤과 악보 영역의 높이를 조절합니다(화살표 키도 가능, Shift로 빠르게)"></div>
+
+<main>
+  <section class="editor">
+    <div class="tabs" id="tabs"></div>
+    <div class="panes" id="panes"></div>
+    <div class="status" id="status">
+      <span><span class="k">트랙</span> —</span>
+      <span><span class="k">음표</span> —</span>
+      <span><span class="k">템포</span> —</span>
+      <span><span class="k">길이</span> —</span>
+      <span id="warn"></span>
+      <span class="store" id="storeState">아직 저장 안 됨</span>
+      <span class="engine" id="engine">엔진 대기 중</span>
+      <span class="legal">
+        <a href="/terms">서비스 약관</a><span aria-hidden="true">·</span><a href="/privacy">개인정보 처리방침</a>
+      </span>
+    </div>
+  </section>
+</main>
+
+
+<div id="scrim"></div>
+<aside id="settings" class="drawer" aria-label="설정">
+  <div class="head">
+    <h2>설정</h2>
+    <button id="settingsClose" title="닫기(Esc)" aria-label="닫기">✕</button>
+  </div>
+  <div class="body">
+
+
+    <div class="user" id="userBox">
+      <i class="fa-solid fa-circle-user" aria-hidden="true"></i>
+      <span class="who">
+        <b id="userName">로그인 안 됨</b>
+        <em id="userMail"></em>
+      </span>
+      <a class="act auth" id="loginBtn" href="/login" rel="nofollow">Google로 로그인</a>
+      <a class="act auth" id="logoutBtn" href="/logout" rel="nofollow" hidden>로그아웃</a>
+    </div>
+            <div class="group">
+                <label for="lang">언어 (Language)</label>
+                <select id="lang"></select>
+                <span class="hint">언어를 바꾸면 페이지를 다시 불러옵니다. 편집 중인 악보는 유지되지만 실행 취소 기록은 지워집니다.</span>
+            </div>
+    <div class="group">
+      <label for="theme">테마</label>
+      <select id="theme">
+        <option value="dark">다크</option>
+        <option value="light">라이트</option>
+      </select>
+    </div>
+
+    <div class="group">
+      <label for="autosave">자동 저장</label>
+      <select id="autosave">
+        <option value="on">켬</option>
+        <option value="off">끔</option>
+      </select>
+      <span class="hint" id="autosaveHint">편집할 때마다 악보를 이 브라우저에 저장하므로, 새로고침하거나 다시 열어도 이어서 작업할 수 있습니다. 서버로는 올리지 않습니다.</span>
+    </div>
+
+    <div class="group">
+      <label for="keysig">조표 표시</label>
+      <select id="keysig">
+        <option value="">사용 안 함</option>
+      </select>
+      <span class="hint">그 조에 없는 가로줄이 어두워집니다. 안내일 뿐이며 어떤 조작도 막지 않습니다.</span>
+    </div>
+
+    <div class="group">
+      <label for="timeSig">박자표 표시 및 편집</label>
+      <select id="timeSig">
+        <option value="on">사용</option>
+        <option value="off">사용 안 함</option>
+      </select>
+      <span class="hint">켜면 피아노 롤 왼쪽 위에 곡 첫머리 박자가 표시되고, 오른쪽 클릭으로 박자를 바꿀 수 있습니다. 마디 눈금자를 오른쪽 클릭하면 박자 변경을 넣을 수 있습니다. 마디선, 한 마디의 칸 수, 마디 삽입과 삭제, MML 줄바꿈이 모두 박자를 따릅니다.</span>
+    </div>
+
+    <div class="group">
+      <label for="mmlHighlight">문법 색상 표시</label>
+      <select id="mmlHighlight">
+        <option value="on">켬</option>
+        <option value="off">끔</option>
+      </select>
+      <span class="hint">템포·음길이·옥타브·음량에 각각 색이 붙고, 음표와 길이는 흰색으로 남습니다. 해석할 수 없는 문자에는 빨간 물결선이, 2400자를 넘은 부분에는 빨간 배경이 붙습니다. 힌트일 뿐이며 어떤 조작도 막지 않습니다.</span>
+    </div>
+
+    <div class="group">
+      <label for="barsPerLine">MML 줄바꿈</label>
+      <select id="barsPerLine">
+        <option value="0">줄바꿈 없음</option>
+        <option value="1">1마디마다</option>
+        <option value="2">2마디마다</option>
+        <option value="4">4마디마다</option>
+      </select>
+      <span class="hint">
+        줄바꿈은 보기용일 뿐이며 공백은 게임의 글자 수에 들어가지 않습니다. 마디를 가로지르는 긴 음은 중간에서 자를 수 없어 그 줄은 길어지고 번호는 <b>건너뜁니다</b>.
+      </span>
+    </div>
+
+    <div class="group">
+      <label for="dls">사운드뱅크</label>
+      <label class="filebtn">
+        다른 .dls / .sf2 불러오기
+        <span class="hint" id="dlsName">기본값 사용 중. 클릭하면 직접 만든 음색을 추가합니다</span>
+        <input type="file" id="dls" accept=".dls,.sf2,.sf3">
+      </label>
+    </div>
+
+    <div class="group" id="offlineBank">
+      <span class="legend">오프라인 사운드뱅크</span>
+      <span class="hint" id="offlineBankState">확인 중…</span>
+      <button class="act" id="offlineBankGet" hidden>이 기기에 보관</button>
+    </div>
+    <div class="group">
+      <label for="def">악기 정의 파일</label>
+      <label class="filebtn">
+        다른 .def 불러오기
+        <span class="hint" id="defName">기본값 사용 중. 클릭하면 직접 만든 악기 정의를 추가합니다</span>
+        <input type="file" id="def" accept=".def,.txt,.ini">
+      </label>
+    </div>
+
+    <div class="group danger" id="dangerZone" hidden>
+      <span class="legend">위험 구역</span>
+      <button class="act" id="delAccount">이 사이트의 계정과 모든 데이터 삭제</button>
+    </div>
+  </div>
+
+</aside>
+
+<aside id="aboutPanel" class="drawer" aria-label="사이트 정보">
+  <div class="head">
+    <h2>사이트 정보</h2>
+    <button id="aboutClose" title="닫기(Esc)" aria-label="닫기">✕</button>
+  </div>
+  <div class="body">
+    <div class="group">
+      <span class="legend">이 도구에 대해</span>
+      <p class="thanks">夜光 MML 공방은 마비노기 모바일용 온라인 MML 악보 편집기입니다. 설치가 필요 없습니다 —— 열자마자 악보를 쓰고, 게임에 가까운 음색으로 미리 들어본 뒤, 완성된 MML을 게임의 빈 악보에 붙여넣으세요. MIDI 파일을 불러와 자동으로 변환하고, 피아노 롤에서 드래그해 음표를 그리고, 압축과 최적화로 트랙당 2400자 제한에 맞추고, 완성 후에는 링크로 공유할 수 있습니다.</p>
+      <p class="thanks">
+        마비노기(PC) MML을 만들려면
+        <a href="https://3ml.mabi.tw/ko/" rel="noopener" target="_blank">마비노기 MML 악보 편집기로</a>
+      </p>
+    </div>
+
+        <div class="group">
+      <span class="legend">설명</span>
+      <p class="thanks">
+            <a href="/ko/guide/editor" target="_blank" rel="noopener">편집기 입문</a>　게임에 붙여넣을 수 있는 악보 만들어 보기<br>
+            <a href="/ko/guide/reference" target="_blank" rel="noopener">기능 안내</a>　모든 버튼의 역할<br>
+            <a href="/ko/guide/keys" target="_blank" rel="noopener">단축키</a>　키보드·마우스·휠 대조표<br>
+            <a href="/ko/guide/mobile" target="_blank" rel="noopener">휴대폰과 태블릿</a>　손가락으로 작곡하기<br>
+            <a href="/ko/guide/mml" target="_blank" rel="noopener">MML 문법</a>　MML 문법을 처음부터<br>
+            <a href="/ko/faq" target="_blank" rel="noopener">자주 묻는 질문</a>　음색, 저장, 글자 수 상한, 공유<br>
+      </p>
+    </div>
+
+
+    <div class="group">
+      <span class="legend">스페셜 땡스</span>
+      <p class="thanks">
+        기본으로 © 2026 <b>DovidicGJ</b>및<b>Lisedrika</b> 이(가) 제공한 <b>Fury Sound Pack</b> 사운드뱅크를 사용합니다.         출처 <a href="https://mabicompose.com" rel="noopener" target="_blank">mabicompose.com</a>
+                    <br>음악에 기여해 주신 데 깊이 감사드립니다<br>
+      </p>
+    </div>
+
+    <div class="group">
+      <span class="legend">사용 기술</span>
+      <ul class="thanks tech">
+        <li>
+          <b><a href="https://github.com/spessasus/SpessaSynth" rel="noopener" target="_blank">SpessaSynth</a> 4.3</b>
+          — WebAudio 신시사이저 엔진. SF2/DLS 파싱과 AudioWorklet 실시간 재생을 담당합니다. Apache-2.0
+        </li>
+        <li>
+          <b><a href="https://github.com/Audiveris/audiveris" rel="noopener" target="_blank">Audiveris</a> 5.11.0</b>
+          — 광학 악보 인식(OMR). 악보 이미지를 MML로 변환합니다. 라이선스에 따라 소스를 공개합니다 — <a href="https://github.com/sakuraakira/omr-workers" rel="noopener" target="_blank">공개 저장소</a>. AGPL-3.0
+        </li>
+        <li>
+          <b><a href="https://github.com/zhuker/lamejs" rel="noopener" target="_blank">lamejs</a></b>
+          : mp3 인코딩. 라이선스  LGPL-3.0
+        </li>
+        <li>
+          <b><a href="https://fontawesome.com" rel="noopener" target="_blank">Font Awesome Free</a> 7.3.1</b>
+          — 아이콘 폰트. solid와 regular 두 세트만 불러옵니다. CC BY 4.0
+        </li>
+        <li>
+          <b><a href="https://fonts.google.com" rel="noopener" target="_blank">Google Fonts</a></b>
+          — Gloock, IBM Plex Mono, 그리고 인터페이스 언어에 따라 바뀌는 Noto. OFL
+        </li>
+      </ul>
+      <p class="thanks">MML 파싱과 압축, bzip2, ZIP 생성, 피아노롤은 모두 직접 구현했습니다 — 프런트엔드에 다른 런타임 의존성은 없습니다.</p>
+    </div>
+
+    <div class="group">
+      <span class="legend">법적 고지</span>
+      <p class="thanks">
+        <a href="/terms">서비스 약관</a><span class="sep" aria-hidden="true">·</span><a href="/privacy">개인정보 처리방침</a>
+      </p>
+    </div>
+  </div>
+
+  <div class="copy">　© 2026 梅文．夜光 v1.1.0<button type="button" id="pwaUpdateBtn" title="새 버전이 있습니다 · 누르면 다시 불러옵니다" hidden>새 버전 적용</button></div>
+</aside>
+
+<div id="log"><button onclick="this.parentNode.style.display='none'">✕</button><span id="logMsg"></span></div>
+
+<div id="pasteBox" class="modal" data-mode="in">
+  <div class="card">
+    <h2 id="pasteTitle">MML 붙여넣기</h2>
+    <p id="pasteHint">이 브라우저는 페이지가 클립보드를 읽는 것을 허용하지 않습니다. 아래에서 Ctrl+V를 누른 뒤 불러오기를 누르세요.</p>
+    <textarea id="pasteText" spellcheck="false" placeholder="MML@t100l8o5...,...,...;"></textarea>
+    <div class="row">
+      <button class="act" id="pasteCancel">취소</button>
+      <button class="act play" id="pasteOk">불러오기</button>
+    </div>
+  </div>
+</div>
+
+<div id="clipBox" class="modal">
+  <div class="card">
+    <h2>클립보드</h2>
+    <p>MML은 그냥 텍스트입니다. 게임의 빈 악보와 이곳 사이는 클립보드로 옮깁니다.</p>
+    <div class="row">
+      <button class="act" id="paste">붙여넣기</button>
+      <button class="act" id="copy">복사</button>
+    </div>
+    <p class="hint">붙여넣으면 모든 탭의 내용이 바뀝니다. 복사하면 공백이 빠지며, 그것이 게임이 세는 글자 수입니다.</p>
+  </div>
+</div>
+
+<div id="fileBox" class="modal">
+  <div class="card">
+    <h2>파일</h2>
+
+    <div class="sect">
+      <span class="legend">새로 만들기 / 저장</span>
+      <div class="row">
+        <button class="act" id="newSong">새로 만들기</button>
+        <button class="act" id="saveOpen" title="이 악보를 저장합니다(단축키 Ctrl+S). 이미 저장했고 이름을 바꾸지 않았다면 Ctrl+S는 다시 묻지 않고 같은 파일에 바로 저장합니다.">저장 위치…</button>
+      </div>
+      <p class="hint">
+        '새로 만들기'는 완전히 새 파일을 시작합니다: <b>트랙 수와 악기, 파일 이름이 모두 기본값으로 돌아갑니다</b>. 조표와 줄바꿈 설정은 유지됩니다. Ctrl+Z로 되돌릴 수 있습니다.
+      </p>
+    </div>
+
+    <div class="sect">
+      <span class="legend">가져오기</span>
+      <label class="filebtn">
+        파일 선택
+        <span class="hint">.mid · .mml · .mmi, 또는 이 칸에 파일을 끌어다 놓으세요</span>
+        <input type="file" id="midFile" accept=".mid,.midi,.mml,.mmi,.txt">
+      </label>
+      <p class="hint" id="fileErr" hidden></p>
+      <p class="hint">
+        파일 안에서 음표가 있는 성부를 최대 15개 트랙까지 골라 쓸 수 있게 보여줍니다. 가져오면 <b>모든 탭의 내용이 바뀝니다</b>. 보조 트랙도 포함됩니다.
+      </p>
+
+      <button class="filebtn" id="omrOpen">
+        PDF 또는 이미지 선택…
+        <span class="hint">.pdf · .png · .jpg, 악보 가져오기</span>
+      </button>
+      <p class="hint">
+        OMR은 <a href="https://github.com/Audiveris/audiveris" rel="noopener" target="_blank">Audiveris</a>(AGPL-3.0)를 사용합니다. 인식률은 최대 약 90%이며, 음표는 직접 손봐야 합니다.
+      </p>
+    </div>
+
+    <div class="sect">
+      <span class="legend">내보내기</span>
+      <div class="fname">
+        <input type="text" id="expName" placeholder="score" spellcheck="false"
+               autocomplete="off" aria-label="내보낼 파일 이름">
+        <select id="expFmt" aria-label="내보낼 형식">
+          <option value="mid">.mid</option>
+          <option value="mml">.mml</option>
+          <option value="mmi">.mmi</option>
+        </select>
+      </div>
+      <button class="act" id="expGo" disabled>다운로드</button>
+      <button class="act" id="mixGo" disabled>믹스 MP3 내보내기</button>
+      <button class="act" id="videoOpen" disabled>MP4 영상 만들기</button>
+    </div>
+
+    <div class="sect">
+      <span class="legend">비우기</span>
+      <button class="act danger" id="clearAll">모든 음표 지우기</button>
+      <p class="hint">
+        15개 트랙의 악보 텍스트를 모두 지우고 빈 트랙 3개를 남깁니다.<b>악기 선택·파일 이름·조표는 유지됩니다</b>.         Ctrl+Z로 되돌릴 수 있습니다.
+      </p>
+    </div>
+  </div>
+</div>
+
+<div id="omrBox" class="modal">
+  <div class="card">
+    <h2>악보 가져오기(이미지)</h2>
+    <p>PDF가 있다면 PDF를 그대로 올리는 것이 가장 좋습니다 —— 전체를 한 번에 인식하고, 템포와 박자가 곡 전체에 적용되며, 해상도를 고를 필요도 없습니다. 이미지라면 한 곡은 이미지 묶음이고 왼쪽 위에서 오른쪽 아래로가 페이지 순서입니다. 스캔은 300 DPI 이상으로, 휴대폰 촬영은 눈에 띄게 떨어집니다.</p>
+
+    <div class="list" id="omrList">
+      <div class="empty" id="omrEmpty">
+        <p>아직 파일이 없습니다.</p>
+        <button class="act" id="omrPick">파일 선택</button>
+      </div>
+      <div class="grid" id="omrGrid" hidden></div>
+    </div>
+
+    <p class="hint" id="omrHint">
+      썸네일을 끌어 순서를 바꿀 수 있습니다. <b>이 순서가 페이지 순서입니다</b>. 틀리면 곡 전체가 어긋납니다. 인식에는 수십 초에서 몇 분이 걸립니다. 도중에 닫지 마세요.
+    </p>
+    <p class="hint" id="omrErr" hidden></p>
+
+    <input type="file" id="omrFile" class="sr" accept="application/pdf,image/png,image/jpeg" multiple>
+
+    <div class="foot">
+      <span class="count" id="omrCount"></span>
+      <button class="act" id="omrAdd">이미지 추가</button>
+      <button class="act danger" id="omrReset" hidden>지우고 다시</button>
+      <button class="act" id="omrCancel">취소</button>
+      <button class="act" id="omrGo" disabled>인식 시작</button>
+      <button class="act" id="omrBack" hidden>파트 목록으로</button>
+    </div>
+
+    <div id="omrBusy" hidden>
+      <div class="notes"><span>♪</span><span>♫</span><span>♩</span><span>♬</span><span>♪</span></div>
+      <p id="omrStat"></p>
+    </div>
+  </div>
+</div>
+
+<div id="midiBox" class="modal">
+  <div class="card">
+    <h2>가져올 성부 선택</h2>
+    <p id="midiName"></p>
+    <div id="midiMode">
+      <label><input type="radio" name="impMode" value="append" checked> 추가 채집<small>뒤에 이어서</small></label>
+      <label><input type="radio" name="impMode" value="new"> 새로 채집<small>전부 교체</small></label>
+      <span class="hint" id="midiAppendHint" hidden></span>
+    </div>
+    <div class="list">
+      <table>
+        <thead>
+          <tr>
+            <th style="width:1%">
+              <span class="sr">선택</span>
+              <input type="checkbox" id="pickAll">
+            </th>
+            <th style="width:1%">번호</th>
+            <th id="colUnit">Channel</th>
+            <th style="width:1%">음표 수</th>
+            <th style="width:1%" id="colMode">채집 모드</th>
+          </tr>
+        </thead>
+        <tbody id="midiRows"></tbody>
+      </table>
+    </div>
+    <p class="hint" id="midiHint">
+      트랙마다 단음만 담을 수 있습니다.<b>멜로디 우선</b>은 동시에 울리는 음 중 가장 높은 음을 취하고,<b>근음 우선</b>은 가장 낮은 음을 취합니다.
+      <b>둘 다 우선</b>은 2개 트랙으로 나눠 고음과 저음을 모두 남깁니다.<br/><b>스마트 성부 분리</b>는 4개 트랙으로 멜로디와 반주 화음을 갈라내고,
+      <b>화음 전체 채집</b>은 15개 트랙을 써서 최대한 많은 음을 담아냅니다.
+    </p>
+    <p class="hint" id="mmlHint" hidden>
+      이 성부들은 원래 단음 MML이므로 <b>그대로 옮기며 다시 압축하지 않습니다</b>. <b>읽기 전용</b> 트랙은 원본 악보에 알 수 없는 문자가 있던 것입니다. 텍스트는 그대로 고칠 수 있습니다.
+    </p>
+    <div class="foot">
+      <span class="count" id="midiCount">0 / 15개 트랙 선택됨</span>
+      <button class="act" id="midiCancel">닫기</button>
+      <button class="act" id="midiOk" disabled>가져오기</button>
+    </div>
+    <div id="midiBusy" hidden>
+      <div class="notes"><span>♪</span><span>♫</span><span>♩</span><span>♬</span><span>♪</span></div>
+      <p>채집 중…</p>
+    </div>
+  </div>
+</div>
+
+<div id="saveBox" class="modal">
+  <div class="card">
+    <h2>악보 저장</h2>
+
+    <div class="sect">
+      <div class="namerow">
+        <input type="text" id="saveName" spellcheck="false" autocomplete="off"
+               maxlength="100" placeholder="이 파일의 이름을 지어 주세요"
+               aria-label="저장할 파일의 이름">
+        <button class="act" id="saveGo" disabled>local에 저장</button>
+      </div>
+      <div class="result">
+        <p id="saveDirty" hidden></p>
+        <p id="saveOk" hidden></p>
+        <p id="saveErr" hidden></p>
+      </div>
+    </div>
+
+    <div class="sect">
+      <div class="tabrow" id="saveTabs" role="tablist">
+        <button type="button" class="stab on" data-tab="local" role="tab">local</button>
+        <button type="button" class="stab" data-tab="web" role="tab">web</button>
+      </div>
+
+      <div class="notes">
+        <p class="lede" id="saveLocalNote">
+          이 브라우저 안에만 저장됩니다. <b>컴퓨터나 브라우저를 바꾸면 파일은 사라집니다</b>. 내보내기나 일괄 내려받기로 내 컴퓨터에 저장하는 것이 오래 보관하는 방법입니다.
+        </p>
+        <p class="lede" id="saveWebNote" hidden>서버에 저장되므로 같은 계정으로 로그인하면 다시 가져올 수 있습니다. 내보내기나 일괄 내려받기로 내 컴퓨터에 저장하는 것이 오래 보관하는 방법입니다.</p>
+      </div>
+
+      <div class="swap">
+        <div id="saveWebLogin" hidden>
+          <p id="saveWebLoginWhy">web에 저장하려면 로그인이 필요합니다. 파일 식별에 사용합니다.</p>
+          <a class="act" id="saveWebLoginBtn" href="/login" rel="nofollow">Google로 로그인</a>
+        </div>
+
+        <div id="saveBody">
+          <div class="list">
+            <table>
+              <thead>
+                <tr>
+                  <th style="width:1%"><span class="sr">선택</span></th>
+                  <th>파일 이름</th>
+                  <th style="width:1%">트랙</th>
+                  <th style="width:1%">음표</th>
+                  <th style="width:1%">만든 날짜</th>
+                  <th style="width:1%">수정 날짜</th>
+                  <th style="width:1%"><span class="sr">작업</span></th>
+                </tr>
+              </thead>
+              <tbody id="saveRows"></tbody>
+            </table>
+          </div>
+          <div class="foot">
+            <label class="pickall">
+              <input type="checkbox" id="savePickAll"
+                     aria-label="전체 선택／해제">
+              <span>전체 선택</span>
+            </label>
+            <span class="count" id="savePicked"></span>
+            <span class="count" id="saveUsed"></span>
+            <span class="count" id="saveTotal"></span>
+            <button class="pg" id="saveZip" disabled>일괄 내려받기</button>
+            <button class="pg" id="saveMove" disabled></button>
+            <button class="pg del" id="saveDel" disabled>선택 항목 삭제</button>
+            <span id="savePager">
+              <button class="pg" id="savePrev" aria-label="이전 페이지">‹</button>
+              <span class="count" id="savePage">1 / 1</span>
+              <button class="pg" id="saveNext" aria-label="다음 페이지">›</button>
+            </span>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<div id="saveOverBox" class="modal">
+  <div class="card">
+    <h2>이 파일을 덮어쓸까요?</h2>
+    <p class="what" id="saveOverWhat"></p>
+    <p><b>이 항목은 지금 편집기에 있는 내용으로 바뀝니다</b>. 되돌릴 수 없습니다(Ctrl+Z는 편집기에만 적용되며 저장된 파일에는 적용되지 않습니다). 만든 날짜는 유지됩니다.</p>
+    <div class="row">
+      <button class="act" id="saveOverCancel">취소</button>
+      <button class="act danger" id="saveOverOk">덮어쓰기</button>
+    </div>
+  </div>
+</div>
+
+<div id="saveDelBox" class="modal">
+  <div class="card">
+    <h2>삭제할까요?</h2>
+    <p class="what" id="saveDelWhat"></p>
+    <p><b>삭제하면 되돌릴 수 없습니다</b>. 사본을 남기려면 먼저 '일괄 내려받기'로 .mml로 저장하세요.</p>
+    <div class="row">
+      <button class="act" id="saveDelCancel">취소</button>
+      <button class="act danger" id="saveDelOk">삭제</button>
+    </div>
+  </div>
+</div>
+
+<div id="saveMoveBox" class="modal">
+  <div class="card">
+    <h2>저장할 곳에 같은 이름의 파일이 있습니다</h2>
+    <p class="what" id="saveMoveWhat"></p>
+    <p><b>덮어쓰면 되돌릴 수 없습니다</b>. 확실하지 않으면 먼저 ‘나머지만 복사’를 선택하고, 이름이 겹치는 것은 이름을 바꿔서 복사하세요.</p>
+    <div class="row">
+      <button class="act" id="saveMoveCancel">취소</button>
+      <button class="act" id="saveMoveSkip"></button>
+      <button class="act danger" id="saveMoveOver">모두 덮어쓰기</button>
+    </div>
+  </div>
+</div>
+
+<div id="stageBox" class="modal">
+  <div class="card">
+    <h2>믹서 공간 설정</h2>
+    <p class="hint" id="stageDrop" hidden></p>
+    <div id="stagePlot" class="stage flat">
+      <svg id="stageRings" aria-hidden="true"></svg>
+    </div>
+    <div class="stagetransport">
+      <button id="stagePlay"></button>
+      <input type="range" id="stageSeek" min="0" max="1" step="0.0001" value="0"
+             aria-label="미리듣기 위치">
+      <span id="stageTime">0:00</span>
+    </div>
+    <div class="stagefoot">
+      <label class="spk">
+        <input type="checkbox" id="stageSpatial">
+        공간 믹스
+        <span class="hint">헤드폰이면 3D 공간으로 들립니다</span>
+      </label>
+      <label class="spk">
+        <input type="checkbox" id="stageSpk">
+        스피커
+        <span class="hint">앞뒤가 사라집니다</span>
+      </label>
+      <div class="erow">
+        <label for="stageEnv">환경음</label>
+        <select id="stageEnv"></select>
+      </div>
+      <div class="erow">
+        <label for="stageEnvAmt">환경음 볼륨</label>
+        <input type="range" id="stageEnvAmt" min="0" max="2" step="0.05" value="1">
+        <span id="stageEnvAmtValue"></span>
+      </div>
+      <p class="hint" id="stageEnvNote" hidden></p>
+      <div class="acts">
+        <button id="stageReset">배치 초기화</button>
+        <button class="act" id="stageGo">내보내기</button>
+      </div>
+      <div id="stageProg" hidden>
+        <progress id="stageBar" max="1" value="0"></progress>
+        <span id="stageStage"></span>
+        <button id="stageCancel">취소</button>
+      </div>
+    </div>
+  </div>
+</div>
+
+<div id="shareBox" class="modal">
+  <div class="card">
+    <h2>공유</h2>
+
+    <div class="sect" id="shareLogin" hidden>
+      <p id="shareLoginWhy">
+        공유하려면 로그인이 필요합니다. 저작권 분쟁이 생기면 이 사이트는 법에 따라 공유자에게 내림을 통지할 의무가 있으므로(저작권법 제90조의6),         공유할 때는 연락 가능한 이메일을 남겨 주셔야 합니다.
+      </p>
+      <a class="act" id="shareLoginBtn" href="/login" rel="nofollow">Google로 로그인</a>
+    </div>
+
+    <div id="shareBody">
+      <div class="sect">
+        <p>
+          지금 편집기에 있는 악보를 공유합니다. 악보는 <b>원래 음표를 해치지 않는</b> 글자 수 최적화를 거칩니다 ——           음표·길이·템포는 전혀 바뀌지 않고, 더 짧은 표기로 바뀔 뿐입니다.
+        </p>
+        <p class="hint" id="shareDrop" hidden></p>
+        <div class="result">
+          <p id="shareStat"></p>
+          <p id="shareCut"></p>
+        </div>
+        <button class="act" id="shareGo" disabled>공유 링크 만들기</button>
+        <div class="urlrow">
+          <input id="shareUrl" readonly spellcheck="false" placeholder="만들면 여기에 링크가 나타나며 자동으로 클립보드에 복사됩니다">
+          <button class="act" id="shareCopy" disabled>복사</button>
+        </div>
+        <p class="hint" id="shareErr" hidden></p>
+      </div>
+
+      <div class="sect">
+        <span class="legend">공유한 링크</span>
+        <div class="list">
+          <table>
+            <thead>
+              <tr>
+                <th>번호</th>
+                <th>링크</th>
+                <th>트랙</th>
+                <th>만든 시각</th>
+                <th><span class="sr">동작</span></th>
+              </tr>
+            </thead>
+            <tbody id="shareRows"></tbody>
+          </table>
+        </div>
+        <div class="foot">
+          <span class="count" id="shareTotal"></span>
+          <button class="pg" id="sharePrev" title="이전 페이지" disabled>‹</button>
+          <span class="pgno" id="sharePage">1 / 1</span>
+          <button class="pg" id="shareNext" title="다음 페이지" disabled>›</button>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<div id="shareDelBox" class="modal">
+  <div class="card">
+    <h2>이 공유 삭제</h2>
+    <p class="what" id="shareDelWhat"></p>
+    <p>
+      <b>이 동작은 되돌릴 수 없습니다. 이미 건넨 링크는 즉시 무효가 되고</b>, 상대가 열면 「찾을 수 없음」이 뜹니다.
+    </p>
+    <p>편집기 안의 악보에는 영향이 없습니다 —— 지워지는 것은 이 사본뿐입니다.</p>
+    <div class="row">
+      <button class="act" id="shareDelCancel">취소</button>
+      <button class="act danger" id="shareDelOk">삭제</button>
+    </div>
+  </div>
+</div>
+
+<div id="delBox" class="modal">
+  <div class="card">
+    <h2>계정 삭제</h2>
+    <p id="delWhat"></p>
+    <p><b>이 동작은 되돌릴 수 없습니다.</b>공유한 링크는 즉시 무효가 되고, 연 사람에게는 「찾을 수 없음」이 뜹니다.</p>
+    <div class="row">
+      <button class="act" id="delCancel">취소</button>
+      <button class="act danger" id="delOk">삭제</button>
+    </div>
+  </div>
+</div>
+
+<div id="markBox" class="modal">
+  <div class="card">
+    <h2 id="markTitle">구간 표시</h2>
+    <p class="what" id="markWhat"></p>
+    <div class="row" id="markRow">
+      <input type="text" id="markText" spellcheck="false" autocomplete="off"
+             aria-label="표시 텍스트">
+      <span class="hint" id="markLeft"></span>
+    </div>
+    <div class="row">
+      <button class="act" id="markCancel">취소</button>
+      <button class="act play" id="markOk">확인</button>
+    </div>
+  </div>
+</div>
+
+<div id="tempoBox" class="modal">
+  <div class="card">
+    <h2>템포</h2>
+    <div class="tgroup">
+      <span class="legend">위치</span>
+      <div id="tempoWhere" role="radiogroup" aria-label="템포 기호의 위치">
+        <button type="button" role="radio" data-where="head" aria-checked="true" class="on">트랙 처음</button>
+        <button type="button" role="radio" data-where="sel" aria-checked="false">선택한 음표 앞</button>
+      </div>
+    </div>
+    <div class="tgroup">
+      <span class="legend">템포(BPM)</span>
+      <div id="tempoRow">
+        <input type="number" id="tempoNum" min="32" max="255" step="1" value="120"
+               inputmode="numeric" aria-label="템포 BPM">
+        <input type="range" id="tempoSlider" min="32" max="255" step="1" value="120"
+               aria-label="템포 슬라이더">
+        <button type="button" id="tempoTry" aria-pressed="false"
+                title="고정된 리듬 패턴으로 이 템포를 미리 듣습니다. 슬라이더를 끄는 동안에도 자동으로 울립니다.">
+          <i class="fa-solid fa-play" aria-hidden="true"></i>미리듣기
+        </button>
+      </div>
+    </div>
+    <p id="tempoInfo"></p>
+    <p id="tempoNote"></p>
+    <div class="row">
+      <button class="act" id="tempoDel" hidden>이 템포 기호 삭제</button>
+      <button class="act" id="tempoCancel">취소</button>
+      <button class="act play" id="tempoOk">실행</button>
+    </div>
+  </div>
+</div>
+
+<div id="velBox" class="modal">
+  <div class="card">
+    <h2>벨로시티</h2>
+    <div class="tgroup">
+      <span class="legend">범위</span>
+      <div id="velScope" role="radiogroup" aria-label="벨로시티 범위">
+        <button type="button" role="radio" data-scope="all" aria-checked="false">모든 트랙</button>
+        <button type="button" role="radio" data-scope="track" aria-checked="true" class="on">현재 트랙</button>
+        <button type="button" role="radio" data-scope="sel" aria-checked="false">선택한 음표</button>
+      </div>
+    </div>
+    <p id="velRange"></p>
+    <div class="tgroup">
+      <span class="legend">조정</span>
+      <div id="velKeys" role="radiogroup" aria-label="벨로시티 폭"></div>
+    </div>
+    <p id="velNote"></p>
+    <div class="row">
+      <button class="act" id="velCancel">취소</button>
+      <button class="act play" id="velOk" disabled>실행</button>
+    </div>
+  </div>
+</div>
+
+<div id="transBox" class="modal">
+  <div class="card">
+    <h2>조옮김</h2>
+    <div class="tgroup">
+      <span class="legend">범위</span>
+      <div id="transScope" role="radiogroup" aria-label="조옮김 범위">
+        <button type="button" role="radio" data-scope="all" aria-checked="false">모든 트랙</button>
+        <button type="button" role="radio" data-scope="track" aria-checked="true" class="on">현재 트랙</button>
+        <button type="button" role="radio" data-scope="sel" aria-checked="false">선택한 음표</button>
+      </div>
+    </div>
+    <div class="tgroup">
+      <span class="legend">조정</span>
+      <div id="transKeys" role="radiogroup" aria-label="조옮김 폭"></div>
+    </div>
+    <p id="transNote"></p>
+    <div class="row">
+      <button class="act" id="transCancel">취소</button>
+                <button class="act play" id="transOk" disabled>실행</button>
+    </div>
+  </div>
+</div>
+
+<div id="optBox" class="modal">
+  <div class="card">
+    <h2>압축·최적화</h2>
+    <div class="tgroup">
+      <span class="legend">범위</span>
+      <div id="optScope" role="radiogroup" aria-label="최적화 범위">
+        <button type="button" role="radio" data-scope="all" aria-checked="false">모든 트랙</button>
+        <button type="button" role="radio" data-scope="track" aria-checked="true" class="on">현재 트랙</button>
+        <button type="button" role="radio" data-scope="sel" aria-checked="false">선택한 음표</button>
+      </div>
+    </div>
+    <div class="tgroup">
+      <span class="legend">방법</span>
+      <div id="optRules" role="radiogroup" aria-label="최적화 방법">
+        <button type="button" role="radio" data-rule="lossless" aria-checked="false">
+          <span class="t">무손실 압축</span>
+          <span class="d">
+            DP로 각 음의 가장 짧은 표기를 다시 계산합니다.<b>음표는 하나도 움직이지 않고 음악은 완전히 같습니다.</b>
+          </span>
+          <span class="n"></span>
+        </button>
+        <p class="hint" id="optLossyNote">
+          글자 수가 아직 많다면 아래 최적화도 쓸 수 있습니다. <b>어떤 음표의 시작 시각도 바꾸지 않고 리듬도 바꾸지 않는</b> 전제로 음 길이를 미세 조정해 글자 수와 맞바꿉니다.<b> 음의 길고 짧음은 바뀌지만 전체 리듬이나 멜로디에는 영향이 없습니다.</b>
+        </p>
+        <button type="button" role="radio" data-rule="fill" aria-checked="false"
+                aria-describedby="optLossyNote">
+          <span class="t">음 길이 채우기</span>
+          <span class="d">는 음 뒤의 짧은 쉼표를 통째로 그 음에 합칩니다. 가장 많이 줄고 끊김도 가장 적습니다.</span>
+          <span class="n"></span>
+        </button>
+        <button type="button" role="radio" data-rule="partial" aria-checked="false"
+                aria-describedby="optLossyNote">
+          <span class="t">일부만 채우기</span>
+          <span class="d">는 일부만 합치고 짧은 쉼표를 남깁니다. 끊기는 느낌이 유지됩니다.</span>
+          <span class="n"></span>
+        </button>
+        <button type="button" role="radio" data-rule="release" aria-checked="false"
+                aria-describedby="optLossyNote">
+          <span class="t">끝을 쉼표로</span>
+          <span class="d">는 음의 끝을 내주어 쉼표로 만듭니다. 숨 쉬는 지점처럼 됩니다.</span>
+          <span class="n"></span>
+        </button>
+      </div>
+    </div>
+    <p id="optChars"></p>
+    <p id="optNote"></p>
+    <div class="row">
+      <button class="act" id="optCancel">취소</button>
+      <button class="act play" id="optOk" disabled>실행</button>
+    </div>
+  </div>
+</div>
+
+<div id="mergeBox" class="modal">
+  <div class="card">
+    <h2>트랙 병합</h2>
+    <div class="tgroup">
+      <span class="legend">병합</span>
+      <div id="mergeFlow">
+        <span>원본</span>
+        <span class="from" id="mergeFrom"></span>
+        <i class="fa-solid fa-arrow-right" aria-hidden="true"></i>
+        <span>대상</span>
+        <select id="mergeTo" aria-label="어느 트랙에 병합할지"></select>
+      </div>
+    </div>
+    <div class="tgroup">
+      <span class="legend">범위</span>
+      <div id="mergeScope" role="radiogroup" aria-label="병합 범위">
+        <button type="button" role="radio" data-scope="track" aria-checked="true" class="on">현재 트랙</button>
+        <button type="button" role="radio" data-scope="sel" aria-checked="false">선택한 음표</button>
+      </div>
+    </div>
+    <div class="tgroup">
+      <span class="legend">방법</span>
+      <div id="mergeWays" role="radiogroup" aria-label="병합 방법">
+        <button type="button" role="radio" data-way="src" aria-checked="false">
+          <span class="t">원본 트랙 우선</span>
+          <span class="d">원본의 음을 모두 옮깁니다. 대상 트랙은 <b>원본에 쉼표가 있는</b> 빈틈에만 남습니다.</span>
+          <span class="n"></span>
+        </button>
+        <button type="button" role="radio" data-way="tgt" aria-checked="false">
+          <span class="t">대상 우선</span>
+          <span class="d">반대로, 원본의 음을 <b>대상에 쉼표가 있는</b> 빈틈에만 넣고, 부딪치면 버립니다.</span>
+          <span class="n"></span>
+        </button>
+        <p class="hint" id="mergeLineNote">
+          아래 두 가지는 <b>단음 선을 하나 새로 만듭니다</b>
+        </p>
+        <button type="button" role="radio" data-way="melody" aria-checked="false"
+                aria-describedby="mergeLineNote">
+          <span class="t">멜로디 우선</span>
+          <span class="d">은 소리 나는 지점마다 두 트랙의 <b>가장 높은 음</b>을 취합니다. 멜로디가 떠오릅니다.</span>
+          <span class="n"></span>
+        </button>
+        <button type="button" role="radio" data-way="root" aria-checked="false"
+                aria-describedby="mergeLineNote">
+          <span class="t">근음 우선</span>
+          <span class="d">은 소리 나는 지점마다 두 트랙의 <b>가장 낮은 음</b>을 취합니다. 저음 선이 남습니다.</span>
+          <span class="n"></span>
+        </button>
+        <p class="hint" id="mergeWipeNote">
+          아래 한 가지는 <b>이 범위에 있는 대상 트랙의 내용을 모두 버립니다</b>. 원본의 쉼표도 포함합니다.
+        </p>
+        <button type="button" role="radio" data-way="replace" aria-checked="false"
+                aria-describedby="mergeWipeNote">
+          <span class="t">원본으로 교체</span>
+          <span class="d">범위 안의 대상 트랙 내용을 통째로 버리고 원본의 내용(쉼표까지)으로 바꿉니다.</span>
+          <span class="n"></span>
+        </button>
+      </div>
+    </div>
+    <p id="mergeChars"></p>
+    <p id="mergeNote"></p>
+    <div class="row">
+      <button class="act" id="mergeCancel">취소</button>
+      <button class="act play" id="mergeOk" disabled>실행</button>
+    </div>
+  </div>
+</div>
+
+<script type="module" src="/js/main.js"></script>
+    <script type="module" src="/js/pwa.js"></script>
+</body>
+</html>

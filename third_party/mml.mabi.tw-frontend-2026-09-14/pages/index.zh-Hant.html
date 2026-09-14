@@ -1,0 +1,1181 @@
+<!doctype html>
+<html lang="zh-Hant">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>瑪奇 Mobile MML 樂譜編輯器</title>
+<script>
+  if (matchMedia("(display-mode: standalone)").matches
+      || matchMedia("(display-mode: minimal-ui)").matches
+      || navigator.standalone === true)
+    document.title = "\u746A\u5947M 4ML Editor";
+</script>
+<link rel="canonical" href="https://mml.mabi.tw/">
+        <link rel="alternate" hreflang="zh-Hant" href="https://mml.mabi.tw/">
+        <link rel="alternate" hreflang="en" href="https://mml.mabi.tw/en/">
+        <link rel="alternate" hreflang="ja" href="https://mml.mabi.tw/ja/">
+        <link rel="alternate" hreflang="ko" href="https://mml.mabi.tw/ko/">
+    <link rel="alternate" hreflang="x-default" href="https://mml.mabi.tw/">
+<meta name="description" content="線上編輯瑪奇M（Mabinogi Mobile）MML 樂譜，免安裝。支援 MIDI 匯入、鋼琴捲軸編輯、以遊戲原始音色試聽，一鍵分享給朋友。">
+
+<meta property="og:type" content="website">
+<meta property="og:site_name" content="夜光 MML 工坊">
+<meta property="og:locale" content="zh_TW">
+<meta property="og:url" content="https://mml.mabi.tw/">
+<meta property="og:title" content="瑪奇 Mobile MML 樂譜編輯器">
+<meta property="og:description" content="線上編輯瑪奇M（Mabinogi Mobile）MML 樂譜，免安裝。支援 MIDI 匯入、鋼琴捲軸編輯、以遊戲原始音色試聽，一鍵分享給朋友。">
+<meta name="twitter:card" content="summary">
+<meta name="twitter:title" content="瑪奇 Mobile MML 樂譜編輯器">
+<meta name="twitter:description" content="線上編輯瑪奇M（Mabinogi Mobile）MML 樂譜，免安裝。支援 MIDI 匯入、鋼琴捲軸編輯、以遊戲原始音色試聽，一鍵分享給朋友。">
+
+    <script type="application/ld+json">
+        {"@context":"https://schema.org","@type":"WebApplication","name":"\u746A\u5947 Mobile MML \u6A02\u8B5C\u7DE8\u8F2F\u5668","url":"https://mml.mabi.tw/","description":"\u7DDA\u4E0A\u7DE8\u8F2F\u746A\u5947M\uFF08Mabinogi Mobile\uFF09MML \u6A02\u8B5C\uFF0C\u514D\u5B89\u88DD\u3002\u652F\u63F4 MIDI \u532F\u5165\u3001\u92FC\u7434\u6372\u8EF8\u7DE8\u8F2F\u3001\u4EE5\u904A\u6232\u539F\u59CB\u97F3\u8272\u8A66\u807D\uFF0C\u4E00\u9375\u5206\u4EAB\u7D66\u670B\u53CB\u3002","applicationCategory":"MultimediaApplication","operatingSystem":"Web","browserRequirements":"Requires AudioWorklet support","inLanguage":"zh-Hant","isAccessibleForFree":true,"offers":{"@type":"Offer","price":"0","priceCurrency":"TWD"}}
+    </script>
+<link rel="icon" href="/favicon.ico" sizes="16x16" type="image/x-icon">
+
+<link rel="manifest" href="/manifest.zh-Hant.webmanifest">
+<meta name="theme-color" content="#122325">
+<link rel="apple-touch-icon" sizes="180x180" href="/img/apple-touch-icon-180-v1.png">
+
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Gloock&family=IBM+Plex+Mono:wght@400;500&family=Noto+Sans+TC:wght@400;500;700&display=swap" rel="stylesheet">
+
+
+<link rel="stylesheet" href="/vendor/fontawesome/css/fontawesome.min.css">
+<link rel="stylesheet" href="/vendor/fontawesome/css/solid.min.css">
+<link rel="stylesheet" href="/vendor/fontawesome/css/regular.min.css">
+
+
+<script type="importmap">
+{
+  "imports": {
+    "spessasynth_lib":  "/vendor/spessasynth_lib.js",
+    "spessasynth_core": "/vendor/spessasynth_core.js"
+  }
+}
+</script>
+<link rel="stylesheet" href="/css/editor.css">
+<script>
+  (function () {
+    try {
+      var ui = JSON.parse(localStorage.getItem("mml-workshop/ui") || "{}");
+      if (!ui || ui.theme !== "light") return;
+      document.documentElement.dataset.theme = "light";
+      var m = document.querySelector('meta[name="theme-color"]');
+      if (m) m.content = "#f5f7f7";
+    } catch (e) {
+      // 無痕模式讀 localStorage 會丟、存進去的不是 JSON 也會丟。兩種都留在深色。
+    }
+  })();
+</script>
+<style>
+  :root{
+    /* Html.Raw 是必要的：字型堆疊裡有雙引號，而 Razor 預設會把它逃脫成 &quot;。
+       CSS **不解析 HTML 實體**，所以 --sans:&quot;Noto Sans JP&quot; 是無效的宣告 ——
+       整個堆疊會被丟掉、悄悄退回瀏覽器預設字體。值是我們自己算的常數，沒有使用者輸入。 */
+    --sans:"Noto Sans TC",system-ui,-apple-system,"Segoe UI",sans-serif;
+  }
+</style>
+</head>
+<body>
+<svg width="0" height="0" style="position:absolute" aria-hidden="true" focusable="false">
+  <defs>
+
+    <symbol id="ni-1" viewBox="4.4 1.2 18.2 24">
+      <path fill="currentColor" fill-rule="evenodd" d="
+        M 19.4 13 a 7.4 4.9 0 1 0 -14.8 0 a 7.4 4.9 0 1 0 14.8 0 Z
+        M 13.8 15.7 a 3.2 2.4 56 1 0 -3.6 -5.3 a 3.2 2.4 56 1 0 3.6 5.3 Z"/>
+    </symbol>
+
+    <symbol id="ni-2" viewBox="4.4 1.2 18.2 24">
+      <path fill="currentColor" fill-rule="evenodd" d="
+        M 14.3 17.1 a 4.8 3.5 -20 1 0 -9 3.3 a 4.8 3.5 -20 1 0 9 -3.3 Z
+        M 13.1 17.2 a 3.6 1.7 -24 1 0 -6.6 2.9 a 3.6 1.7 -24 1 0 6.6 -2.9 Z"/>
+      <rect x="12.9" y="3.6" width="1.7" height="14.7" rx=".85" fill="currentColor"/>
+    </symbol>
+
+    <symbol id="ni-4" viewBox="4.4 1.2 18.2 24">
+      <ellipse cx="9.8" cy="18.7" rx="4.8" ry="3.5"
+               transform="rotate(-20 9.8 18.7)" fill="currentColor"/>
+      <rect x="12.9" y="3.6" width="1.7" height="14.7" rx=".85" fill="currentColor"/>
+    </symbol>
+
+    <symbol id="ni-8" viewBox="4.4 1.2 18.2 24">
+      <ellipse cx="9.8" cy="18.7" rx="4.8" ry="3.5"
+               transform="rotate(-20 9.8 18.7)" fill="currentColor"/>
+      <rect x="12.9" y="3.6" width="1.7" height="14.7" rx=".85" fill="currentColor"/>
+      <path fill="currentColor" d="
+        M 14.6 3.6 C 14.6 6.8 19.3 7.4 19.3 11.9
+        C 19.3 14.2 18 15.6 17 16.3
+        C 18.5 12.6 17.2 10 14.6 8.5 Z"/>
+    </symbol>
+
+    <symbol id="ni-16" viewBox="4.4 1.2 18.2 24">
+      <ellipse cx="9.8" cy="18.7" rx="4.8" ry="3.5"
+               transform="rotate(-20 9.8 18.7)" fill="currentColor"/>
+      <rect x="12.9" y="3.6" width="1.7" height="14.7" rx=".85" fill="currentColor"/>
+      <path fill="currentColor" d="
+        M 14.6 3.6 C 14.6 6.8 19.3 7.4 19.3 11.9
+        C 19.3 14.2 18 15.6 17 16.3
+        C 18.5 12.6 17.2 10 14.6 8.5 Z"/>
+      <path fill="currentColor" d="
+        M 14.6 8 C 14.6 11.2 19.3 11.8 19.3 16.3
+        C 19.3 18.6 18 20 17 20.7
+        C 18.5 17 17.2 14.4 14.6 12.9 Z"/>
+    </symbol>
+
+    <symbol id="ni-32" viewBox="4.4 1.2 18.2 24">
+      <ellipse cx="9.8" cy="18.7" rx="4.8" ry="3.5"
+               transform="rotate(-20 9.8 18.7)" fill="currentColor"/>
+      <rect x="12.9" y="2" width="1.7" height="16.3" rx=".85" fill="currentColor"/>
+      <path fill="currentColor" d="
+        M 14.6 2 C 14.6 5.2 19.3 5.8 19.3 10.3
+        C 19.3 12.6 18 14 17 14.7
+        C 18.5 11 17.2 8.4 14.6 6.9 Z"/>
+      <path fill="currentColor" d="
+        M 14.6 6 C 14.6 9.2 19.3 9.8 19.3 14.3
+        C 19.3 16.6 18 18 17 18.7
+        C 18.5 15 17.2 12.4 14.6 10.9 Z"/>
+      <path fill="currentColor" d="
+        M 14.6 10 C 14.6 13.2 19.3 13.8 19.3 18.3
+        C 19.3 20.6 18 22 17 22.7
+        C 18.5 19 17.2 16.4 14.6 14.9 Z"/>
+    </symbol>
+
+    <symbol id="ni-64" viewBox="4.4 1.2 18.2 24">
+      <ellipse cx="9.8" cy="18.7" rx="4.8" ry="3.5"
+               transform="rotate(-20 9.8 18.7)" fill="currentColor"/>
+      <rect x="12.9" y="1.4" width="1.7" height="16.9" rx=".85" fill="currentColor"/>
+      <path fill="currentColor" d="
+        M 14.6 1.4 C 14.6 4 19 4.6 19 8.4
+        C 19 10.4 17.9 11.6 17 12.2
+        C 18.3 9.2 17.1 6.8 14.6 5.5 Z"/>
+      <path fill="currentColor" d="
+        M 14.6 4.8 C 14.6 7.4 19 8 19 11.8
+        C 19 13.8 17.9 15 17 15.6
+        C 18.3 12.6 17.1 10.2 14.6 8.9 Z"/>
+      <path fill="currentColor" d="
+        M 14.6 8.2 C 14.6 10.8 19 11.4 19 15.2
+        C 19 17.2 17.9 18.4 17 19
+        C 18.3 16 17.1 13.6 14.6 12.3 Z"/>
+      <path fill="currentColor" d="
+        M 14.6 11.6 C 14.6 14.2 19 14.8 19 18.6
+        C 19 20.6 17.9 21.8 17 22.4
+        C 18.3 19.4 17.1 17 14.6 15.7 Z"/>
+    </symbol>
+
+    <symbol id="ni-1d" viewBox="4.4 1.2 18.2 24">
+      <use href="#ni-1" x="4.4" y="1.2" width="18.2" height="24"/>
+      <circle cx="19.6" cy="20" r="2" fill="currentColor"/>
+    </symbol>
+    <symbol id="ni-2d" viewBox="4.4 1.2 18.2 24">
+      <use href="#ni-2" x="4.4" y="1.2" width="18.2" height="24"/>
+      <circle cx="17" cy="23" r="2" fill="currentColor"/>
+    </symbol>
+    <symbol id="ni-4d" viewBox="4.4 1.2 18.2 24">
+      <use href="#ni-4" x="4.4" y="1.2" width="18.2" height="24"/>
+      <circle cx="17" cy="23" r="2" fill="currentColor"/>
+    </symbol>
+    <symbol id="ni-8d" viewBox="4.4 1.2 18.2 24">
+      <use href="#ni-8" x="4.4" y="1.2" width="18.2" height="24"/>
+      <circle cx="17" cy="23" r="2" fill="currentColor"/>
+    </symbol>
+    <symbol id="ni-16d" viewBox="4.4 1.2 18.2 24">
+      <use href="#ni-16" x="4.4" y="1.2" width="18.2" height="24"/>
+      <circle cx="20" cy="23" r="2" fill="currentColor"/>
+    </symbol>
+    <symbol id="ni-32d" viewBox="4.4 1.2 18.2 24">
+      <use href="#ni-32" x="4.4" y="1.2" width="18.2" height="24"/>
+      <circle cx="20.4" cy="23" r="2" fill="currentColor"/>
+    </symbol>
+
+  </defs>
+</svg>
+
+
+<header>
+
+        <h1><a id="home" href="/" title="回首頁，並載入預設樂譜">夜光 <em>MML工坊</em></a> <span class="sub">Mabinogi Mobile MML Editor</span></h1>
+
+  <div id="viewToggles">
+    <button type="button" class="ico toggle on" id="viewTools" aria-pressed="true">
+      <i class="fa-solid fa-toolbox" aria-hidden="true"></i>
+    </button>
+    <button type="button" class="ico toggle on" id="viewRoll" aria-pressed="true">
+      <i class="fa-solid fa-table-list" aria-hidden="true"></i>
+    </button>
+    <button type="button" class="ico toggle on" id="viewEditor" aria-pressed="true">
+      <i class="fa-solid fa-file-code" aria-hidden="true"></i>
+    </button>
+    <button type="button" class="ico toggle on" id="viewStatus" aria-pressed="true">
+      <i class="fa-solid fa-circle-info" aria-hidden="true"></i>
+    </button>
+  </div>
+
+  <span class="spacer"></span>
+  <div class="grp" id="navMenu">
+    <div id="navIo">
+      <button id="clip" title="貼上或複製整首 MML">
+        <i class="fa-regular fa-clipboard" aria-hidden="true"></i>剪貼簿
+      </button>
+      <button id="file" title="從 .mid 匯入，或另存 MIDI">
+        <i class="fa-regular fa-folder-open" aria-hidden="true"></i>檔案
+      </button>
+      <button id="share" title="產生分享連結，或查看已分享的紀錄">
+        <i class="fa-solid fa-share-nodes" aria-hidden="true"></i>分享
+      </button>
+    </div>
+    <button id="gear" title="帳號、音色庫、樂器定義檔">
+      <i class="fa-solid fa-gear" aria-hidden="true"></i>設定
+    </button>
+    <button id="aboutBtn" title="站台說明、說明頁、特別感謝、版本">
+      <i class="fa-solid fa-circle-question" aria-hidden="true"></i>關於
+    </button>
+  </div>
+  <button type="button" class="ico" id="navToggle" aria-expanded="false" aria-controls="navMenu">
+    <i class="fa-solid fa-bars" aria-hidden="true"></i>
+  </button>
+</header>
+
+<div id="rollbar">
+  <div class="grp">
+    <button class="play" id="play" disabled>▶  演奏</button>
+    <button class="tiny" id="stop" disabled>停止</button>
+    <button class="tiny toggle on" id="followBtn"
+            title="播放時畫面跟著導播線換頁。手動捲動水平捲軸會自動關閉，按這裡可以再打開">
+      <i class="fa-regular fa-circle-right" aria-hidden="true"></i>捲軸同步
+    </button>
+    <div id="rangeSel" role="radiogroup" aria-label="播放範圍">
+      <button type="button" role="radio" data-range="all" aria-checked="true" class="on"
+              title="整首播放（會清掉小節尺上的開始／結束線）">全曲</button>
+      <button type="button" role="radio" data-range="part" aria-checked="false" aria-disabled="true"
+              title="設定範圍：小節尺上左鍵設開始、右鍵設結束；箭頭工具（0）在捲軸空白處左鍵設開始、右鍵開選單（選單前兩項就是這兩條線）">範圍</button>
+    </div>
+    <button class="tiny toggle" id="loopBtn" aria-pressed="false"
+            title="循環播放：播到結尾（或結束線）立刻從頭（或基準線）再播一次">
+      <i class="fa-solid fa-retweet" aria-hidden="true"></i>循環
+    </button>
+  </div>
+  <div class="grp hideable">
+    <button class="tool" id="toolSelect"
+            title="箭頭（快捷鍵 0）：音符上搬動／改長度／刪除，Shift或Ctrl 點第二個音可以選取整段；空白處左鍵設播放的開始線、右鍵設結束線">
+      <i class="fa-solid fa-arrow-pointer" aria-hidden="true"></i><span class="sr">只選取</span>
+    </button>
+    <button type="button" class="lbl" id="lensLbl" aria-pressed="false">
+      <svg width="14" height="18" aria-hidden="true" focusable="false"><use href="#ni-32"/></svg>
+      <i class="fa-solid fa-music" aria-hidden="true"></i><span class="sr"></span>
+    </button>
+    <div id="lens">
+      <button data-len="1" title="全音符（快捷鍵 1）">1</button>
+      <button data-len="2" title="二分音符（快捷鍵 2）">2</button>
+      <button data-len="4" title="四分音符（快捷鍵 3）">4</button>
+      <button data-len="8" title="八分音符（快捷鍵 4）">8</button>
+      <button data-len="16" title="十六分音符（快捷鍵 5）">16</button>
+      <button data-len="32" title="三十二分音符（快捷鍵 6）">32</button>
+    </div>
+    <div id="zoom">
+      <span class="spin">
+        <i class="fa-solid fa-arrows-left-right" aria-hidden="true"></i>
+        <span class="ax">
+          <button data-zoom="w+">+</button>
+          <button data-zoom="w-">−</button>
+        </span>
+      </span>
+      <span class="spin">
+        <i class="fa-solid fa-arrows-up-down" aria-hidden="true"></i>
+        <span class="ax">
+          <button data-zoom="h+">+</button>
+          <button data-zoom="h-">−</button>
+        </span>
+      </span>
+    </div>
+    <button class="tiny ico" id="undoBtn" disabled title="復原（快捷鍵 Ctrl+Z）">
+      <i class="fa-solid fa-rotate-left" aria-hidden="true"></i><span class="sr">復原</span>
+    </button>
+    <button class="tiny ico" id="redoBtn" disabled title="重做（快捷鍵 Ctrl+Shift+Z 或 Ctrl+Y）">
+      <i class="fa-solid fa-rotate-right" aria-hidden="true"></i><span class="sr">重做</span>
+    </button>
+  </div>
+  <div class="grp hideable">
+    <button class="tiny" id="tempoBtn" title="速度/拍速：在音軌開頭或選擇的音符前寫入速度記號">
+      <i class="fa-solid fa-gauge-high" aria-hidden="true"></i>速度
+    </button>
+    <button class="tiny" id="velBtn" title="力度/音量：整批增強或減弱 v 值">
+      <i class="fa-solid fa-sliders" aria-hidden="true"></i>力度
+    </button>
+    <button class="tiny" id="transBtn" title="移調：把音符整批升高或降低半音">
+      <i class="fa-solid fa-arrow-up-right-dots" aria-hidden="true"></i>移調
+    </button>
+    <button class="tiny" id="optBtn" title="壓縮優化：微調音符長度換取字數（會改變聲音）">
+      <i class="fa-solid fa-wand-magic-sparkles" aria-hidden="true"></i>優化
+    </button>
+    <button class="tiny" id="mergeBtn" title="合併音軌：把這一軌（或所選的音符）併進另一軌，五種併法">
+      <i class="fa-solid fa-layer-group" aria-hidden="true"></i>合併
+    </button>
+  </div>
+  <div class="grp hideable">
+    <span class="lbl" id="rollMode">編輯中</span>
+    <span class="cur" id="rollTrack">主旋律</span>
+    <span class="warnmsg" id="rollNote"></span>
+    <span id="rollNonstd" hidden></span>
+  </div>
+  <span class="hint hideable" id="rollHint">左鍵畫 · 拖曳搬動 · 拖右邊框改長度 · 右鍵刪除</span>
+</div>
+
+<div id="rollwrap">
+  <div id="stage" tabindex="-1">
+    <div id="rollpad"><canvas id="roll"></canvas></div>
+  </div>
+  <div id="flagsLayer" aria-hidden="true"><div id="flagsStrip"></div></div>
+  <div id="markdots" aria-hidden="true"></div>
+</div>
+
+<div id="splitter" role="separator" aria-orientation="horizontal" tabindex="0"
+     title="拖曳調整鋼琴捲軸與樂譜區的高度（方向鍵也可以，Shift 加速）"></div>
+
+<main>
+  <section class="editor">
+    <div class="tabs" id="tabs"></div>
+    <div class="panes" id="panes"></div>
+    <div class="status" id="status">
+      <span><span class="k">軌</span> —</span>
+      <span><span class="k">音符</span> —</span>
+      <span><span class="k">速度</span> —</span>
+      <span><span class="k">長度</span> —</span>
+      <span id="warn"></span>
+      <span class="store" id="storeState">尚未暫存</span>
+      <span class="engine" id="engine">引擎待命</span>
+      <span class="legal">
+        <a href="/terms">服務條款</a><span aria-hidden="true">·</span><a href="/privacy">隱私權政策</a>
+      </span>
+    </div>
+  </section>
+</main>
+
+
+<div id="scrim"></div>
+<aside id="settings" class="drawer" aria-label="設定">
+  <div class="head">
+    <h2>設定</h2>
+    <button id="settingsClose" title="關閉（Esc）" aria-label="關閉">✕</button>
+  </div>
+  <div class="body">
+
+
+    <div class="user" id="userBox">
+      <i class="fa-solid fa-circle-user" aria-hidden="true"></i>
+      <span class="who">
+        <b id="userName">未登入</b>
+        <em id="userMail"></em>
+      </span>
+      <a class="act auth" id="loginBtn" href="/login" rel="nofollow">以 Google 登入</a>
+      <a class="act auth" id="logoutBtn" href="/logout" rel="nofollow" hidden>登出</a>
+    </div>
+            <div class="group">
+                <label for="lang">語言 (Language)</label>
+                <select id="lang"></select>
+                <span class="hint">切換語言會重新載入頁面。編輯中的樂譜會保留，復原記錄會清空。</span>
+            </div>
+    <div class="group">
+      <label for="theme">主題</label>
+      <select id="theme">
+        <option value="dark">深色</option>
+        <option value="light">淺色</option>
+      </select>
+    </div>
+
+    <div class="group">
+      <label for="autosave">自動存檔</label>
+      <select id="autosave">
+        <option value="on">啟用</option>
+        <option value="off">關閉</option>
+      </select>
+      <span class="hint" id="autosaveHint">每次編輯後把樂譜儲存的瀏覽器裡，重新整理或重開都接得回來。不會上傳到伺服器。</span>
+    </div>
+
+    <div class="group">
+      <label for="keysig">調號顯示</label>
+      <select id="keysig">
+        <option value="">不使用</option>
+      </select>
+      <span class="hint">不在這個調上的水平列會變暗。只是提示，不會擋住任何操作。</span>
+    </div>
+
+    <div class="group">
+      <label for="timeSig">拍號顯示及調整</label>
+      <select id="timeSig">
+        <option value="on">啟用</option>
+        <option value="off">停用</option>
+      </select>
+      <span class="hint">啟用後，鋼琴捲軸左上角會顯示曲首拍號，右鍵可以改拍號；在小節尺上右鍵可以設定變拍。小節線、每小節格數、插入／刪除小節、MML 換行都會照拍號走。</span>
+    </div>
+
+    <div class="group">
+      <label for="mmlHighlight">語法上色</label>
+      <select id="mmlHighlight">
+        <option value="on">啟用</option>
+        <option value="off">關閉</option>
+      </select>
+      <span class="hint">速度、音長、八度、音量各有自己的顏色，音符與音長保持白色。看不懂的字元畫紅色波浪線，超過 2400 字的那一段加紅底。只是提示，不會擋住任何操作。</span>
+    </div>
+
+    <div class="group">
+      <label for="barsPerLine">MML 格式化換行</label>
+      <select id="barsPerLine">
+        <option value="0">不換行</option>
+        <option value="1">每 1 小節</option>
+        <option value="2">每 2 小節</option>
+        <option value="4">每 4 小節</option>
+      </select>
+      <span class="hint">
+        換行只是排版，空白不佔遊戲字數。跨小節的長音沒辦法從中間切開，所以那一行會比較長，號碼會<b>跳號</b>。
+      </span>
+    </div>
+
+    <div class="group">
+      <label for="dls">音色庫</label>
+      <label class="filebtn">
+        載入其他 .dls / .sf2
+        <span class="hint" id="dlsName">目前使用預設，點擊加入自訂音色</span>
+        <input type="file" id="dls" accept=".dls,.sf2,.sf3">
+      </label>
+    </div>
+
+    <div class="group" id="offlineBank">
+      <span class="legend">離線音色庫</span>
+      <span class="hint" id="offlineBankState">檢查中…</span>
+      <button class="act" id="offlineBankGet" hidden>保留在這台裝置</button>
+    </div>
+    <div class="group">
+      <label for="def">樂器定義檔</label>
+      <label class="filebtn">
+        載入其他 .def
+        <span class="hint" id="defName">目前使用預設，點擊加入自訂樂器定義</span>
+        <input type="file" id="def" accept=".def,.txt,.ini">
+      </label>
+    </div>
+
+    <div class="group danger" id="dangerZone" hidden>
+      <span class="legend">危險區</span>
+      <button class="act" id="delAccount">刪除在本站的帳號及所有資料</button>
+    </div>
+  </div>
+
+</aside>
+
+<aside id="aboutPanel" class="drawer" aria-label="關於">
+  <div class="head">
+    <h2>關於</h2>
+    <button id="aboutClose" title="關閉（Esc）" aria-label="關閉">✕</button>
+  </div>
+  <div class="body">
+    <div class="group">
+      <span class="legend">關於這個工具</span>
+      <p class="thanks">夜光 MML 工坊是一個線上的瑪奇 Mobile（Mabinogi Mobile）MML 樂譜編輯器。不用安裝，打開就能寫譜，用接近遊戲的音色試聽，再把 MML 複製回遊戲的空白樂譜。可以從 MIDI 檔匯入自動轉譜、用鋼琴捲軸拖曳畫音符、靠壓縮與優化把樂譜壓進每軌 2400 字的上限，完成後產生連結分享給朋友。</p>
+      <p class="thanks">
+        如需製作新瑪奇（PC 版）的 MML，可以到
+        <a href="https://3ml.mabi.tw/" rel="noopener" target="_blank">新瑪奇 MML 樂譜編輯器</a>
+      </p>
+    </div>
+
+        <div class="group">
+      <span class="legend">說明</span>
+      <p class="thanks">
+            <a href="/guide/editor" target="_blank" rel="noopener">編輯器入門</a>　試著做可貼進遊戲的譜<br>
+            <a href="/guide/reference" target="_blank" rel="noopener">功能說明</a>　每一顆按鈕在做什麼<br>
+            <a href="/guide/keys" target="_blank" rel="noopener">快捷鍵</a>　鍵盤、滑鼠與滾輪的對照表<br>
+            <a href="/guide/mobile" target="_blank" rel="noopener">手機與平板</a>　用手指編曲<br>
+            <a href="/guide/mml" target="_blank" rel="noopener">MML 教學</a>　簡介 MML 語法<br>
+            <a href="/guide/midi" target="_blank" rel="noopener">MIDI 轉 MML</a>　把現成的 MIDI 檔轉成瑪奇能用的樂譜<br>
+            <a href="/faq" target="_blank" rel="noopener">常見問題</a>　音色、存檔、字數上限、分享<br>
+      </p>
+    </div>
+
+
+    <div class="group">
+      <span class="legend">特別感謝</span>
+      <p class="thanks">
+        我們預設使用 © 2026 <b>DovidicGJ</b>及<b>Lisedrika</b> 提供的 <b>Fury Sound Pack</b> 音色庫。
+        來源 <a href="https://mabicompose.com" rel="noopener" target="_blank">mabicompose.com</a>
+                    <br>非常感謝 他們對音樂的貢獻<br>
+      </p>
+    </div>
+
+    <div class="group">
+      <span class="legend">使用技術</span>
+      <ul class="thanks tech">
+        <li>
+          <b><a href="https://github.com/spessasus/SpessaSynth" rel="noopener" target="_blank">SpessaSynth</a> 4.3</b>
+          —— WebAudio 合成引擎，負責 SF2／DLS 解析與 AudioWorklet 即時播放。 Apache-2.0
+        </li>
+        <li>
+          <b><a href="https://github.com/Audiveris/audiveris" rel="noopener" target="_blank">Audiveris</a> 5.11.0</b>
+          —— 光學樂譜辨識（OMR），把五線譜的圖片轉成 MML；依授權開源項目 <a href="https://github.com/sakuraakira/omr-workers" rel="noopener" target="_blank">公開Repo</a>。 AGPL-3.0
+        </li>
+        <li>
+          <b><a href="https://github.com/zhuker/lamejs" rel="noopener" target="_blank">lamejs</a></b>
+          ：mp3 編碼。授權  LGPL-3.0
+        </li>
+        <li>
+          <b><a href="https://fontawesome.com" rel="noopener" target="_blank">Font Awesome Free</a> 7.3.1</b>
+          —— 圖示字型，只載 solid 與 regular 兩套。 CC BY 4.0
+        </li>
+        <li>
+          <b><a href="https://fonts.google.com" rel="noopener" target="_blank">Google Fonts</a></b>
+          —— Gloock、IBM Plex Mono，以及按介面語言切換的 Noto。 OFL
+        </li>
+      </ul>
+      <p class="thanks">MML 解析與壓縮、bzip2、ZIP 打包、鋼琴捲軸皆為自行實作 —— 前端無其他執行期相依。</p>
+    </div>
+
+    <div class="group">
+      <span class="legend">法律</span>
+      <p class="thanks">
+        <a href="/terms">服務條款</a><span class="sep" aria-hidden="true">·</span><a href="/privacy">隱私權政策</a>
+      </p>
+    </div>
+  </div>
+
+  <div class="copy">　© 2026 梅文．夜光 v1.1.0<button type="button" id="pwaUpdateBtn" title="有新版本 · 按下會重新載入" hidden>更新到新版</button></div>
+</aside>
+
+<div id="log"><button onclick="this.parentNode.style.display='none'">✕</button><span id="logMsg"></span></div>
+
+<div id="pasteBox" class="modal" data-mode="in">
+  <div class="card">
+    <h2 id="pasteTitle">貼上 MML</h2>
+    <p id="pasteHint">這個瀏覽器不讓網頁直接讀剪貼簿。在下面按 Ctrl+V，然後按載入。</p>
+    <textarea id="pasteText" spellcheck="false" placeholder="MML@t100l8o5...,...,...;"></textarea>
+    <div class="row">
+      <button class="act" id="pasteCancel">取消</button>
+      <button class="act play" id="pasteOk">載入</button>
+    </div>
+  </div>
+</div>
+
+<div id="clipBox" class="modal">
+  <div class="card">
+    <h2>剪貼簿</h2>
+    <p>MML 是純文字。用剪貼簿在遊戲的空白樂譜與這裡之間搬。</p>
+    <div class="row">
+      <button class="act" id="paste">貼上</button>
+      <button class="act" id="copy">複製</button>
+    </div>
+    <p class="hint">貼上會取代所有分頁的內容。複製會去掉空白，那才是遊戲算的字數。</p>
+  </div>
+</div>
+
+<div id="fileBox" class="modal">
+  <div class="card">
+    <h2>檔案</h2>
+
+    <div class="sect">
+      <span class="legend">新增 / 儲存</span>
+      <div class="row">
+        <button class="act" id="newSong">新增</button>
+        <button class="act" id="saveOpen" title="儲存這一份樂譜（快捷鍵 Ctrl+S）。已經存過而且名字沒改的話，Ctrl+S 會直接存回同一份，不會再問一次。">儲存到…</button>
+      </div>
+      <p class="hint">
+        「新增」會開一份全新的檔案：<b>軌數、樂器與檔名全部回到預設</b>，調號與換行設定保留。按 Ctrl+Z 可以復原。
+      </p>
+    </div>
+
+    <div class="sect">
+      <span class="legend">匯入</span>
+      <label class="filebtn">
+        選擇檔案
+        <span class="hint">.mid · .mml · .mmi，或把檔案拖到這個框裡</span>
+        <input type="file" id="midFile" accept=".mid,.midi,.mml,.mmi,.txt">
+      </label>
+      <p class="hint" id="fileErr" hidden></p>
+      <p class="hint">
+        會列出檔案裡有音符的聲部讓你勾選，最多 15 軌。匯入會<b>取代所有分頁的內容</b>，包括輔助軌。
+      </p>
+
+      <button class="filebtn" id="omrOpen">
+        選擇 PDF 或圖片…
+        <span class="hint">.pdf · .png · .jpg，匯入五線譜</span>
+      </button>
+      <p class="hint">
+        使用 <a href="https://github.com/Audiveris/audiveris" rel="noopener" target="_blank">Audiveris</a> AGPL-3.0 的 OMR 技術。最高約 90% 辨識率，依然需要人工調整音符。
+      </p>
+    </div>
+
+    <div class="sect">
+      <span class="legend">匯出</span>
+      <div class="fname">
+        <input type="text" id="expName" placeholder="score" spellcheck="false"
+               autocomplete="off" aria-label="匯出的檔名">
+        <select id="expFmt" aria-label="匯出的格式">
+          <option value="mid">.mid</option>
+          <option value="mml">.mml</option>
+          <option value="mmi">.mmi</option>
+        </select>
+      </div>
+      <button class="act" id="expGo" disabled>下載</button>
+      <button class="act" id="mixGo" disabled>混音MP3匯出</button>
+      <button class="act" id="videoOpen" disabled>MP4影片製作</button>
+    </div>
+
+    <div class="sect">
+      <span class="legend">清空</span>
+      <button class="act danger" id="clearAll">清空所有音符</button>
+      <p class="hint">
+        清掉全部 15 軌的樂譜文字，留下 3 個空白音軌。<b>樂器選擇、檔名、調號都保留</b>。
+        按 Ctrl+Z 可以復原。
+      </p>
+    </div>
+  </div>
+</div>
+
+<div id="omrBox" class="modal">
+  <div class="card">
+    <h2>匯入五線譜（圖片）</h2>
+    <p>有 PDF 的話直接傳 PDF 最好 —— 整份一次辨識，速度與拍號跟著整首曲子走，也不必自己挑解析度。傳圖片的話一首曲子就是一疊圖，由左上到右下就是頁序，掃描建議 300 DPI 以上，手機翻拍明顯較差。</p>
+
+    <div class="list" id="omrList">
+      <div class="empty" id="omrEmpty">
+        <p>還沒有檔案。</p>
+        <button class="act" id="omrPick">選擇檔案</button>
+      </div>
+      <div class="grid" id="omrGrid" hidden></div>
+    </div>
+
+    <p class="hint" id="omrHint">
+      拖曳縮圖可以排順序，<b>這個順序就是頁序</b>，排錯了整首曲子就錯了。辨識要幾十秒到幾分鐘，中途請不要關掉。
+    </p>
+    <p class="hint" id="omrErr" hidden></p>
+
+    <input type="file" id="omrFile" class="sr" accept="application/pdf,image/png,image/jpeg" multiple>
+
+    <div class="foot">
+      <span class="count" id="omrCount"></span>
+      <button class="act" id="omrAdd">追加圖片</button>
+      <button class="act danger" id="omrReset" hidden>清空重來</button>
+      <button class="act" id="omrCancel">取消</button>
+      <button class="act" id="omrGo" disabled>開始辨識</button>
+      <button class="act" id="omrBack" hidden>回到聲部清單</button>
+    </div>
+
+    <div id="omrBusy" hidden>
+      <div class="notes"><span>♪</span><span>♫</span><span>♩</span><span>♬</span><span>♪</span></div>
+      <p id="omrStat"></p>
+    </div>
+  </div>
+</div>
+
+<div id="midiBox" class="modal">
+  <div class="card">
+    <h2>選擇要匯入的聲部</h2>
+    <p id="midiName"></p>
+    <div id="midiMode">
+      <label><input type="radio" name="impMode" value="append" checked> 追加採譜<small>接在後面</small></label>
+      <label><input type="radio" name="impMode" value="new"> 新採譜<small>取代全部</small></label>
+      <span class="hint" id="midiAppendHint" hidden></span>
+    </div>
+    <div class="list">
+      <table>
+        <thead>
+          <tr>
+            <th style="width:1%">
+              <span class="sr">勾選</span>
+              <input type="checkbox" id="pickAll">
+            </th>
+            <th style="width:1%">序</th>
+            <th id="colUnit">Channel</th>
+            <th style="width:1%">音符數</th>
+            <th style="width:1%" id="colMode">採樣模式</th>
+          </tr>
+        </thead>
+        <tbody id="midiRows"></tbody>
+      </table>
+    </div>
+    <p class="hint" id="midiHint">
+      每軌只能保留單音。<b>旋律重視</b>在同時按下的音裡取最高音；<b>根音重視</b>取最低音；
+      <b>兩者重視</b>分兩軌高低音都保留<br/><b>智能分弦</b>分4軌把旋律和伴奏和弦拆開；
+      <b>和弦全採</b>利用15軌盡可能把音符都採出來；
+    </p>
+    <p class="hint" id="mmlHint" hidden>
+      這些聲部本來就是單音的 MML，<b>直接搬進來、不重新壓縮</b>，<b>唯讀</b>的軌是原譜有看不懂的字元，文字照樣可以改。
+    </p>
+    <div class="foot">
+      <span class="count" id="midiCount">已選 0 / 15 軌</span>
+      <button class="act" id="midiCancel">關閉</button>
+      <button class="act" id="midiOk" disabled>匯入</button>
+    </div>
+    <div id="midiBusy" hidden>
+      <div class="notes"><span>♪</span><span>♫</span><span>♩</span><span>♬</span><span>♪</span></div>
+      <p>採譜中…</p>
+    </div>
+  </div>
+</div>
+
+<div id="saveBox" class="modal">
+  <div class="card">
+    <h2>儲存樂譜</h2>
+
+    <div class="sect">
+      <div class="namerow">
+        <input type="text" id="saveName" spellcheck="false" autocomplete="off"
+               maxlength="100" placeholder="為這個檔案取個名字"
+               aria-label="存檔的名稱">
+        <button class="act" id="saveGo" disabled>存到 local</button>
+      </div>
+      <div class="result">
+        <p id="saveDirty" hidden></p>
+        <p id="saveOk" hidden></p>
+        <p id="saveErr" hidden></p>
+      </div>
+    </div>
+
+    <div class="sect">
+      <div class="tabrow" id="saveTabs" role="tablist">
+        <button type="button" class="stab on" data-tab="local" role="tab">local</button>
+        <button type="button" class="stab" data-tab="web" role="tab">web</button>
+      </div>
+
+      <div class="notes">
+        <p class="lede" id="saveLocalNote">
+          只儲存在瀏覽器裡，<b>更換電腦或瀏覽器，檔案就會不見</b>。匯出或批次下載到本機，才是長久的保存方法。
+        </p>
+        <p class="lede" id="saveWebNote" hidden>儲存在伺服器上，登入同一個帳號就拿得回來。匯出或批次下載到本機，才是長久的保存方法。</p>
+      </div>
+
+      <div class="swap">
+        <div id="saveWebLogin" hidden>
+          <p id="saveWebLoginWhy">存到 web 要先登入，用於識別你的檔案。</p>
+          <a class="act" id="saveWebLoginBtn" href="/login" rel="nofollow">用 Google 登入</a>
+        </div>
+
+        <div id="saveBody">
+          <div class="list">
+            <table>
+              <thead>
+                <tr>
+                  <th style="width:1%"><span class="sr">選取</span></th>
+                  <th>檔名</th>
+                  <th style="width:1%">軌</th>
+                  <th style="width:1%">音符</th>
+                  <th style="width:1%">建立</th>
+                  <th style="width:1%">更新</th>
+                  <th style="width:1%"><span class="sr">操作</span></th>
+                </tr>
+              </thead>
+              <tbody id="saveRows"></tbody>
+            </table>
+          </div>
+          <div class="foot">
+            <label class="pickall">
+              <input type="checkbox" id="savePickAll"
+                     aria-label="全選／全部取消">
+              <span>全選</span>
+            </label>
+            <span class="count" id="savePicked"></span>
+            <span class="count" id="saveUsed"></span>
+            <span class="count" id="saveTotal"></span>
+            <button class="pg" id="saveZip" disabled>批次下載</button>
+            <button class="pg" id="saveMove" disabled></button>
+            <button class="pg del" id="saveDel" disabled>刪除選取</button>
+            <span id="savePager">
+              <button class="pg" id="savePrev" aria-label="上一頁">‹</button>
+              <span class="count" id="savePage">1 / 1</span>
+              <button class="pg" id="saveNext" aria-label="下一頁">›</button>
+            </span>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<div id="saveOverBox" class="modal">
+  <div class="card">
+    <h2>要覆蓋這個檔案嗎？</h2>
+    <p class="what" id="saveOverWhat"></p>
+    <p><b>這一份會被現在編輯器裡的內容取代</b>，而且沒有辦法復原（Ctrl+Z 只管編輯器，不管存檔）。建立時間會保留。</p>
+    <div class="row">
+      <button class="act" id="saveOverCancel">取消</button>
+      <button class="act danger" id="saveOverOk">覆蓋</button>
+    </div>
+  </div>
+</div>
+
+<div id="saveDelBox" class="modal">
+  <div class="card">
+    <h2>要刪除嗎？</h2>
+    <p class="what" id="saveDelWhat"></p>
+    <p><b>刪掉之後就拿不回來了</b>。想留一份的話，先用「批次下載」把它們存成 .mml。</p>
+    <div class="row">
+      <button class="act" id="saveDelCancel">取消</button>
+      <button class="act danger" id="saveDelOk">確定刪除</button>
+    </div>
+  </div>
+</div>
+
+<div id="saveMoveBox" class="modal">
+  <div class="card">
+    <h2>目的地已經有同名的檔案</h2>
+    <p class="what" id="saveMoveWhat"></p>
+    <p><b>覆蓋之後拿不回來</b>。不確定的話先選「只搬其餘」，撞名的那幾份改個名字再搬。</p>
+    <div class="row">
+      <button class="act" id="saveMoveCancel">取消</button>
+      <button class="act" id="saveMoveSkip"></button>
+      <button class="act danger" id="saveMoveOver">全部覆蓋</button>
+    </div>
+  </div>
+</div>
+
+<div id="stageBox" class="modal">
+  <div class="card">
+    <h2>混音器空間設置</h2>
+    <p class="hint" id="stageDrop" hidden></p>
+    <div id="stagePlot" class="stage flat">
+      <svg id="stageRings" aria-hidden="true"></svg>
+    </div>
+    <div class="stagetransport">
+      <button id="stagePlay"></button>
+      <input type="range" id="stageSeek" min="0" max="1" step="0.0001" value="0"
+             aria-label="試聽位置">
+      <span id="stageTime">0:00</span>
+    </div>
+    <div class="stagefoot">
+      <label class="spk">
+        <input type="checkbox" id="stageSpatial">
+        空間混音
+        <span class="hint">用耳機可以聽出 3D 空間效果</span>
+      </label>
+      <label class="spk">
+        <input type="checkbox" id="stageSpk">
+        喇叭模式
+        <span class="hint">前後會被壓平</span>
+      </label>
+      <div class="erow">
+        <label for="stageEnv">環境音</label>
+        <select id="stageEnv"></select>
+      </div>
+      <div class="erow">
+        <label for="stageEnvAmt">環境音量</label>
+        <input type="range" id="stageEnvAmt" min="0" max="2" step="0.05" value="1">
+        <span id="stageEnvAmtValue"></span>
+      </div>
+      <p class="hint" id="stageEnvNote" hidden></p>
+      <div class="acts">
+        <button id="stageReset">重置佈局</button>
+        <button class="act" id="stageGo">開始匯出</button>
+      </div>
+      <div id="stageProg" hidden>
+        <progress id="stageBar" max="1" value="0"></progress>
+        <span id="stageStage"></span>
+        <button id="stageCancel">取消</button>
+      </div>
+    </div>
+  </div>
+</div>
+
+<div id="shareBox" class="modal">
+  <div class="card">
+    <h2>分享</h2>
+
+    <div class="sect" id="shareLogin" hidden>
+      <p id="shareLoginWhy">
+        分享需要登入。產生著作權糾紛時本站依法要通知分享者下架（著作權法第 90 條之 6），
+        所以分享必須留下明確的 Email 供我方通知。
+      </p>
+      <a class="act" id="shareLoginBtn" href="/login" rel="nofollow">用 Google 登入</a>
+    </div>
+
+    <div id="shareBody">
+      <div class="sect">
+        <p>
+          分享目前編輯器上的樂譜。樂譜會經過<b>不破壞原曲音符</b>的字數壓縮優化 ——
+          音符、長度、速度完全不變，只是換成更省字的寫法。
+        </p>
+        <p class="hint" id="shareDrop" hidden></p>
+        <div class="result">
+          <p id="shareStat"></p>
+          <p id="shareCut"></p>
+        </div>
+        <button class="act" id="shareGo" disabled>產生分享連結</button>
+        <div class="urlrow">
+          <input id="shareUrl" readonly spellcheck="false" placeholder="產生之後連結會出現在這裡，並自動複製到剪貼簿">
+          <button class="act" id="shareCopy" disabled>複製</button>
+        </div>
+        <p class="hint" id="shareErr" hidden></p>
+      </div>
+
+      <div class="sect">
+        <span class="legend">已分享的連結</span>
+        <div class="list">
+          <table>
+            <thead>
+              <tr>
+                <th>序</th>
+                <th>連結</th>
+                <th>軌</th>
+                <th>建立時間</th>
+                <th><span class="sr">操作</span></th>
+              </tr>
+            </thead>
+            <tbody id="shareRows"></tbody>
+          </table>
+        </div>
+        <div class="foot">
+          <span class="count" id="shareTotal"></span>
+          <button class="pg" id="sharePrev" title="上一頁" disabled>‹</button>
+          <span class="pgno" id="sharePage">1 / 1</span>
+          <button class="pg" id="shareNext" title="下一頁" disabled>›</button>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<div id="shareDelBox" class="modal">
+  <div class="card">
+    <h2>刪除這一筆分享</h2>
+    <p class="what" id="shareDelWhat"></p>
+    <p>
+      <b>這個動作無法復原。已經傳給別人的連結會立刻失效</b>，對方打開會看到「找不到」。
+    </p>
+    <p>你在編輯器裡的樂譜不受影響 —— 刪掉的只是這一份副本。</p>
+    <div class="row">
+      <button class="act" id="shareDelCancel">取消</button>
+      <button class="act danger" id="shareDelOk">確定刪除</button>
+    </div>
+  </div>
+</div>
+
+<div id="delBox" class="modal">
+  <div class="card">
+    <h2>刪除帳號</h2>
+    <p id="delWhat"></p>
+    <p><b>這個動作無法復原。</b>已經分享出去的連結會立刻失效，別人打開會看到「找不到」。</p>
+    <div class="row">
+      <button class="act" id="delCancel">取消</button>
+      <button class="act danger" id="delOk">確定刪除</button>
+    </div>
+  </div>
+</div>
+
+<div id="markBox" class="modal">
+  <div class="card">
+    <h2 id="markTitle">段落標記</h2>
+    <p class="what" id="markWhat"></p>
+    <div class="row" id="markRow">
+      <input type="text" id="markText" spellcheck="false" autocomplete="off"
+             aria-label="標記文字">
+      <span class="hint" id="markLeft"></span>
+    </div>
+    <div class="row">
+      <button class="act" id="markCancel">取消</button>
+      <button class="act play" id="markOk">確定</button>
+    </div>
+  </div>
+</div>
+
+<div id="tempoBox" class="modal">
+  <div class="card">
+    <h2>速度/拍速</h2>
+    <div class="tgroup">
+      <span class="legend">設置位置</span>
+      <div id="tempoWhere" role="radiogroup" aria-label="速度記號的位置">
+        <button type="button" role="radio" data-where="head" aria-checked="true" class="on">音軌開頭</button>
+        <button type="button" role="radio" data-where="sel" aria-checked="false">選擇的音符前</button>
+      </div>
+    </div>
+    <div class="tgroup">
+      <span class="legend">速度（BPM）</span>
+      <div id="tempoRow">
+        <input type="number" id="tempoNum" min="32" max="255" step="1" value="120"
+               inputmode="numeric" aria-label="速度 BPM">
+        <input type="range" id="tempoSlider" min="32" max="255" step="1" value="120"
+               aria-label="速度滑桿">
+        <button type="button" id="tempoTry" aria-pressed="false"
+                title="用固定的節拍型試聽這個速度。拖著滑桿時也會自動響。">
+          <i class="fa-solid fa-play" aria-hidden="true"></i>試聽
+        </button>
+      </div>
+    </div>
+    <p id="tempoInfo"></p>
+    <p id="tempoNote"></p>
+    <div class="row">
+      <button class="act" id="tempoDel" hidden>移除這個速度記號</button>
+      <button class="act" id="tempoCancel">取消</button>
+      <button class="act play" id="tempoOk">執行</button>
+    </div>
+  </div>
+</div>
+
+<div id="velBox" class="modal">
+  <div class="card">
+    <h2>力度/音量</h2>
+    <div class="tgroup">
+      <span class="legend">範圍</span>
+      <div id="velScope" role="radiogroup" aria-label="力度範圍">
+        <button type="button" role="radio" data-scope="all" aria-checked="false">全部音軌</button>
+        <button type="button" role="radio" data-scope="track" aria-checked="true" class="on">目前音軌</button>
+        <button type="button" role="radio" data-scope="sel" aria-checked="false">選擇的音符</button>
+      </div>
+    </div>
+    <p id="velRange"></p>
+    <div class="tgroup">
+      <span class="legend">調整</span>
+      <div id="velKeys" role="radiogroup" aria-label="力度幅度"></div>
+    </div>
+    <p id="velNote"></p>
+    <div class="row">
+      <button class="act" id="velCancel">取消</button>
+      <button class="act play" id="velOk" disabled>執行</button>
+    </div>
+  </div>
+</div>
+
+<div id="transBox" class="modal">
+  <div class="card">
+    <h2>移調</h2>
+    <div class="tgroup">
+      <span class="legend">範圍</span>
+      <div id="transScope" role="radiogroup" aria-label="移調範圍">
+        <button type="button" role="radio" data-scope="all" aria-checked="false">全部音軌</button>
+        <button type="button" role="radio" data-scope="track" aria-checked="true" class="on">目前音軌</button>
+        <button type="button" role="radio" data-scope="sel" aria-checked="false">已選擇音符</button>
+      </div>
+    </div>
+    <div class="tgroup">
+      <span class="legend">調整</span>
+      <div id="transKeys" role="radiogroup" aria-label="移調幅度"></div>
+    </div>
+    <p id="transNote"></p>
+    <div class="row">
+      <button class="act" id="transCancel">取消</button>
+                <button class="act play" id="transOk" disabled>執行</button>
+    </div>
+  </div>
+</div>
+
+<div id="optBox" class="modal">
+  <div class="card">
+    <h2>壓縮優化</h2>
+    <div class="tgroup">
+      <span class="legend">範圍</span>
+      <div id="optScope" role="radiogroup" aria-label="優化範圍">
+        <button type="button" role="radio" data-scope="all" aria-checked="false">全部音軌</button>
+        <button type="button" role="radio" data-scope="track" aria-checked="true" class="on">目前音軌</button>
+        <button type="button" role="radio" data-scope="sel" aria-checked="false">已選擇音符</button>
+      </div>
+    </div>
+    <div class="tgroup">
+      <span class="legend">方式</span>
+      <div id="optRules" role="radiogroup" aria-label="優化方式">
+        <button type="button" role="radio" data-rule="lossless" aria-checked="false">
+          <span class="t">無損壓縮</span>
+          <span class="d">
+            用 DP 重算每個音最省的寫法。<b>一個音都不動，音符完全相同。</b>
+          </span>
+          <span class="n"></span>
+        </button>
+        <p class="hint" id="optLossyNote">
+          字數過長時可再使用以下優化，在<b>不改變任何一個音符的起始時間、也不改變節奏</b>的前提下微調音符長度，換取字數。<b>這會改變音符長短但不影響整體節奏旋律。</b>
+        </p>
+        <button type="button" role="radio" data-rule="fill" aria-checked="false"
+                aria-describedby="optLossyNote">
+          <span class="t">音長補滿</span>
+          <span class="d">音後面的短休止整段併進那個音。省最多，也最沒有斷點。</span>
+          <span class="n"></span>
+        </button>
+        <button type="button" role="radio" data-rule="partial" aria-checked="false"
+                aria-describedby="optLossyNote">
+          <span class="t">部分補滿</span>
+          <span class="d">只併進一部分，留下一段較短的休止。保有斷點感。</span>
+          <span class="n"></span>
+        </button>
+        <button type="button" role="radio" data-rule="release" aria-checked="false"
+                aria-describedby="optLossyNote">
+          <span class="t">尾段收音</span>
+          <span class="d">把音的尾巴讓出來變成休止，像呼吸點。</span>
+          <span class="n"></span>
+        </button>
+      </div>
+    </div>
+    <p id="optChars"></p>
+    <p id="optNote"></p>
+    <div class="row">
+      <button class="act" id="optCancel">取消</button>
+      <button class="act play" id="optOk" disabled>執行</button>
+    </div>
+  </div>
+</div>
+
+<div id="mergeBox" class="modal">
+  <div class="card">
+    <h2>合併音軌</h2>
+    <div class="tgroup">
+      <span class="legend">合併</span>
+      <div id="mergeFlow">
+        <span>來源</span>
+        <span class="from" id="mergeFrom"></span>
+        <i class="fa-solid fa-arrow-right" aria-hidden="true"></i>
+        <span>目標</span>
+        <select id="mergeTo" aria-label="合併到哪一個音軌"></select>
+      </div>
+    </div>
+    <div class="tgroup">
+      <span class="legend">範圍</span>
+      <div id="mergeScope" role="radiogroup" aria-label="合併範圍">
+        <button type="button" role="radio" data-scope="track" aria-checked="true" class="on">目前音軌</button>
+        <button type="button" role="radio" data-scope="sel" aria-checked="false">已選擇音符</button>
+      </div>
+    </div>
+    <div class="tgroup">
+      <span class="legend">方式</span>
+      <div id="mergeWays" role="radiogroup" aria-label="合併方式">
+        <button type="button" role="radio" data-way="src" aria-checked="false">
+          <span class="t">來源音軌優先</span>
+          <span class="d">來源的音全部搬過去。目標軌只在<b>來源有休止符</b>的空隙裡保留。</span>
+          <span class="n"></span>
+        </button>
+        <button type="button" role="radio" data-way="tgt" aria-checked="false">
+          <span class="t">合併目標優先</span>
+          <span class="d">反過來：只把來源的音塞進<b>目標軌有休止符</b>的空隙，撞到就捨棄。</span>
+          <span class="n"></span>
+        </button>
+        <p class="hint" id="mergeLineNote">
+          以下兩種會<b>重新產生一條單音線</b>
+        </p>
+        <button type="button" role="radio" data-way="melody" aria-checked="false"
+                aria-describedby="mergeLineNote">
+          <span class="t">旋律重視</span>
+          <span class="d">每個發聲點取兩軌的<b>最高音</b>。主旋律會浮上來。</span>
+          <span class="n"></span>
+        </button>
+        <button type="button" role="radio" data-way="root" aria-checked="false"
+                aria-describedby="mergeLineNote">
+          <span class="t">根音重視</span>
+          <span class="d">每個發聲點取兩軌的<b>最低音</b>。低音線會留下來。</span>
+          <span class="n"></span>
+        </button>
+        <p class="hint" id="mergeWipeNote">
+          以下這種會<b>丟棄目標軌在這個範圍內的全部內容</b>，包含來源休止符。
+        </p>
+        <button type="button" role="radio" data-way="replace" aria-checked="false"
+                aria-describedby="mergeWipeNote">
+          <span class="t">來源取代目標</span>
+          <span class="d">範圍內的目標軌內容整段丟棄，換成來源的內容（連休止符一起）。</span>
+          <span class="n"></span>
+        </button>
+      </div>
+    </div>
+    <p id="mergeChars"></p>
+    <p id="mergeNote"></p>
+    <div class="row">
+      <button class="act" id="mergeCancel">取消</button>
+      <button class="act play" id="mergeOk" disabled>執行</button>
+    </div>
+  </div>
+</div>
+
+<script type="module" src="/js/main.js"></script>
+    <script type="module" src="/js/pwa.js"></script>
+</body>
+</html>

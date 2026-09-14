@@ -1,0 +1,1176 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Mabinogi Mobile MML Score Editor</title>
+<script>
+  if (matchMedia("(display-mode: standalone)").matches
+      || matchMedia("(display-mode: minimal-ui)").matches
+      || navigator.standalone === true)
+    document.title = "Mabinogi Mobile 4ML Editor";
+</script>
+<link rel="canonical" href="https://mml.mabi.tw/en/">
+        <link rel="alternate" hreflang="zh-Hant" href="https://mml.mabi.tw/">
+        <link rel="alternate" hreflang="en" href="https://mml.mabi.tw/en/">
+        <link rel="alternate" hreflang="ja" href="https://mml.mabi.tw/ja/">
+        <link rel="alternate" hreflang="ko" href="https://mml.mabi.tw/ko/">
+    <link rel="alternate" hreflang="x-default" href="https://mml.mabi.tw/">
+<meta name="description" content="Write and edit Mabinogi Mobile MML scores in your browser — nothing to install. MIDI import, piano-roll editing, preview with the game&#x27;s own soundfont, and one-click sharing.">
+
+<meta property="og:type" content="website">
+<meta property="og:site_name" content="夜光 MML 工坊">
+<meta property="og:locale" content="en_US">
+<meta property="og:url" content="https://mml.mabi.tw/en/">
+<meta property="og:title" content="Mabinogi Mobile MML Score Editor">
+<meta property="og:description" content="Write and edit Mabinogi Mobile MML scores in your browser — nothing to install. MIDI import, piano-roll editing, preview with the game&#x27;s own soundfont, and one-click sharing.">
+<meta name="twitter:card" content="summary">
+<meta name="twitter:title" content="Mabinogi Mobile MML Score Editor">
+<meta name="twitter:description" content="Write and edit Mabinogi Mobile MML scores in your browser — nothing to install. MIDI import, piano-roll editing, preview with the game&#x27;s own soundfont, and one-click sharing.">
+
+    <script type="application/ld+json">
+        {"@context":"https://schema.org","@type":"WebApplication","name":"Mabinogi Mobile MML Score Editor","url":"https://mml.mabi.tw/en/","description":"Write and edit Mabinogi Mobile MML scores in your browser \u2014 nothing to install. MIDI import, piano-roll editing, preview with the game\u0027s own soundfont, and one-click sharing.","applicationCategory":"MultimediaApplication","operatingSystem":"Web","browserRequirements":"Requires AudioWorklet support","inLanguage":"en","isAccessibleForFree":true,"offers":{"@type":"Offer","price":"0","priceCurrency":"TWD"}}
+    </script>
+<link rel="icon" href="/favicon.ico" sizes="16x16" type="image/x-icon">
+
+<link rel="manifest" href="/manifest.en.webmanifest">
+<meta name="theme-color" content="#122325">
+<link rel="apple-touch-icon" sizes="180x180" href="/img/apple-touch-icon-180-v1.png">
+
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Gloock&family=IBM+Plex+Mono:wght@400;500&family=Noto+Sans:wght@400;500;700&display=swap" rel="stylesheet">
+
+
+<link rel="stylesheet" href="/vendor/fontawesome/css/fontawesome.min.css">
+<link rel="stylesheet" href="/vendor/fontawesome/css/solid.min.css">
+<link rel="stylesheet" href="/vendor/fontawesome/css/regular.min.css">
+
+
+<script type="importmap">
+{
+  "imports": {
+    "spessasynth_lib":  "/vendor/spessasynth_lib.js",
+    "spessasynth_core": "/vendor/spessasynth_core.js"
+  }
+}
+</script>
+<link rel="stylesheet" href="/css/editor.css">
+<script>
+  (function () {
+    try {
+      var ui = JSON.parse(localStorage.getItem("mml-workshop/ui") || "{}");
+      if (!ui || ui.theme !== "light") return;
+      document.documentElement.dataset.theme = "light";
+      var m = document.querySelector('meta[name="theme-color"]');
+      if (m) m.content = "#f5f7f7";
+    } catch (e) {
+      // 無痕模式讀 localStorage 會丟、存進去的不是 JSON 也會丟。兩種都留在深色。
+    }
+  })();
+</script>
+<style>
+  :root{
+    /* Html.Raw 是必要的：字型堆疊裡有雙引號，而 Razor 預設會把它逃脫成 &quot;。
+       CSS **不解析 HTML 實體**，所以 --sans:&quot;Noto Sans JP&quot; 是無效的宣告 ——
+       整個堆疊會被丟掉、悄悄退回瀏覽器預設字體。值是我們自己算的常數，沒有使用者輸入。 */
+    --sans:"Noto Sans",system-ui,-apple-system,"Segoe UI","Noto Sans TC",sans-serif;
+  }
+</style>
+</head>
+<body>
+<svg width="0" height="0" style="position:absolute" aria-hidden="true" focusable="false">
+  <defs>
+
+    <symbol id="ni-1" viewBox="4.4 1.2 18.2 24">
+      <path fill="currentColor" fill-rule="evenodd" d="
+        M 19.4 13 a 7.4 4.9 0 1 0 -14.8 0 a 7.4 4.9 0 1 0 14.8 0 Z
+        M 13.8 15.7 a 3.2 2.4 56 1 0 -3.6 -5.3 a 3.2 2.4 56 1 0 3.6 5.3 Z"/>
+    </symbol>
+
+    <symbol id="ni-2" viewBox="4.4 1.2 18.2 24">
+      <path fill="currentColor" fill-rule="evenodd" d="
+        M 14.3 17.1 a 4.8 3.5 -20 1 0 -9 3.3 a 4.8 3.5 -20 1 0 9 -3.3 Z
+        M 13.1 17.2 a 3.6 1.7 -24 1 0 -6.6 2.9 a 3.6 1.7 -24 1 0 6.6 -2.9 Z"/>
+      <rect x="12.9" y="3.6" width="1.7" height="14.7" rx=".85" fill="currentColor"/>
+    </symbol>
+
+    <symbol id="ni-4" viewBox="4.4 1.2 18.2 24">
+      <ellipse cx="9.8" cy="18.7" rx="4.8" ry="3.5"
+               transform="rotate(-20 9.8 18.7)" fill="currentColor"/>
+      <rect x="12.9" y="3.6" width="1.7" height="14.7" rx=".85" fill="currentColor"/>
+    </symbol>
+
+    <symbol id="ni-8" viewBox="4.4 1.2 18.2 24">
+      <ellipse cx="9.8" cy="18.7" rx="4.8" ry="3.5"
+               transform="rotate(-20 9.8 18.7)" fill="currentColor"/>
+      <rect x="12.9" y="3.6" width="1.7" height="14.7" rx=".85" fill="currentColor"/>
+      <path fill="currentColor" d="
+        M 14.6 3.6 C 14.6 6.8 19.3 7.4 19.3 11.9
+        C 19.3 14.2 18 15.6 17 16.3
+        C 18.5 12.6 17.2 10 14.6 8.5 Z"/>
+    </symbol>
+
+    <symbol id="ni-16" viewBox="4.4 1.2 18.2 24">
+      <ellipse cx="9.8" cy="18.7" rx="4.8" ry="3.5"
+               transform="rotate(-20 9.8 18.7)" fill="currentColor"/>
+      <rect x="12.9" y="3.6" width="1.7" height="14.7" rx=".85" fill="currentColor"/>
+      <path fill="currentColor" d="
+        M 14.6 3.6 C 14.6 6.8 19.3 7.4 19.3 11.9
+        C 19.3 14.2 18 15.6 17 16.3
+        C 18.5 12.6 17.2 10 14.6 8.5 Z"/>
+      <path fill="currentColor" d="
+        M 14.6 8 C 14.6 11.2 19.3 11.8 19.3 16.3
+        C 19.3 18.6 18 20 17 20.7
+        C 18.5 17 17.2 14.4 14.6 12.9 Z"/>
+    </symbol>
+
+    <symbol id="ni-32" viewBox="4.4 1.2 18.2 24">
+      <ellipse cx="9.8" cy="18.7" rx="4.8" ry="3.5"
+               transform="rotate(-20 9.8 18.7)" fill="currentColor"/>
+      <rect x="12.9" y="2" width="1.7" height="16.3" rx=".85" fill="currentColor"/>
+      <path fill="currentColor" d="
+        M 14.6 2 C 14.6 5.2 19.3 5.8 19.3 10.3
+        C 19.3 12.6 18 14 17 14.7
+        C 18.5 11 17.2 8.4 14.6 6.9 Z"/>
+      <path fill="currentColor" d="
+        M 14.6 6 C 14.6 9.2 19.3 9.8 19.3 14.3
+        C 19.3 16.6 18 18 17 18.7
+        C 18.5 15 17.2 12.4 14.6 10.9 Z"/>
+      <path fill="currentColor" d="
+        M 14.6 10 C 14.6 13.2 19.3 13.8 19.3 18.3
+        C 19.3 20.6 18 22 17 22.7
+        C 18.5 19 17.2 16.4 14.6 14.9 Z"/>
+    </symbol>
+
+    <symbol id="ni-64" viewBox="4.4 1.2 18.2 24">
+      <ellipse cx="9.8" cy="18.7" rx="4.8" ry="3.5"
+               transform="rotate(-20 9.8 18.7)" fill="currentColor"/>
+      <rect x="12.9" y="1.4" width="1.7" height="16.9" rx=".85" fill="currentColor"/>
+      <path fill="currentColor" d="
+        M 14.6 1.4 C 14.6 4 19 4.6 19 8.4
+        C 19 10.4 17.9 11.6 17 12.2
+        C 18.3 9.2 17.1 6.8 14.6 5.5 Z"/>
+      <path fill="currentColor" d="
+        M 14.6 4.8 C 14.6 7.4 19 8 19 11.8
+        C 19 13.8 17.9 15 17 15.6
+        C 18.3 12.6 17.1 10.2 14.6 8.9 Z"/>
+      <path fill="currentColor" d="
+        M 14.6 8.2 C 14.6 10.8 19 11.4 19 15.2
+        C 19 17.2 17.9 18.4 17 19
+        C 18.3 16 17.1 13.6 14.6 12.3 Z"/>
+      <path fill="currentColor" d="
+        M 14.6 11.6 C 14.6 14.2 19 14.8 19 18.6
+        C 19 20.6 17.9 21.8 17 22.4
+        C 18.3 19.4 17.1 17 14.6 15.7 Z"/>
+    </symbol>
+
+    <symbol id="ni-1d" viewBox="4.4 1.2 18.2 24">
+      <use href="#ni-1" x="4.4" y="1.2" width="18.2" height="24"/>
+      <circle cx="19.6" cy="20" r="2" fill="currentColor"/>
+    </symbol>
+    <symbol id="ni-2d" viewBox="4.4 1.2 18.2 24">
+      <use href="#ni-2" x="4.4" y="1.2" width="18.2" height="24"/>
+      <circle cx="17" cy="23" r="2" fill="currentColor"/>
+    </symbol>
+    <symbol id="ni-4d" viewBox="4.4 1.2 18.2 24">
+      <use href="#ni-4" x="4.4" y="1.2" width="18.2" height="24"/>
+      <circle cx="17" cy="23" r="2" fill="currentColor"/>
+    </symbol>
+    <symbol id="ni-8d" viewBox="4.4 1.2 18.2 24">
+      <use href="#ni-8" x="4.4" y="1.2" width="18.2" height="24"/>
+      <circle cx="17" cy="23" r="2" fill="currentColor"/>
+    </symbol>
+    <symbol id="ni-16d" viewBox="4.4 1.2 18.2 24">
+      <use href="#ni-16" x="4.4" y="1.2" width="18.2" height="24"/>
+      <circle cx="20" cy="23" r="2" fill="currentColor"/>
+    </symbol>
+    <symbol id="ni-32d" viewBox="4.4 1.2 18.2 24">
+      <use href="#ni-32" x="4.4" y="1.2" width="18.2" height="24"/>
+      <circle cx="20.4" cy="23" r="2" fill="currentColor"/>
+    </symbol>
+
+  </defs>
+</svg>
+
+
+<header>
+
+        <h1><a id="home" href="/en/" title="Back to the home page, loading the default score">夜光 <em>MML Workshop</em></a> <span class="sub">Mabinogi Mobile MML Editor</span></h1>
+
+  <div id="viewToggles">
+    <button type="button" class="ico toggle on" id="viewTools" aria-pressed="true">
+      <i class="fa-solid fa-toolbox" aria-hidden="true"></i>
+    </button>
+    <button type="button" class="ico toggle on" id="viewRoll" aria-pressed="true">
+      <i class="fa-solid fa-table-list" aria-hidden="true"></i>
+    </button>
+    <button type="button" class="ico toggle on" id="viewEditor" aria-pressed="true">
+      <i class="fa-solid fa-file-code" aria-hidden="true"></i>
+    </button>
+    <button type="button" class="ico toggle on" id="viewStatus" aria-pressed="true">
+      <i class="fa-solid fa-circle-info" aria-hidden="true"></i>
+    </button>
+  </div>
+
+  <span class="spacer"></span>
+  <div class="grp" id="navMenu">
+    <div id="navIo">
+      <button id="clip" title="Paste or copy the whole score as MML">
+        <i class="fa-regular fa-clipboard" aria-hidden="true"></i>Clip
+      </button>
+      <button id="file" title="Import from .mid, or save as MIDI">
+        <i class="fa-regular fa-folder-open" aria-hidden="true"></i>File
+      </button>
+      <button id="share" title="Create a share link, or browse what you have shared">
+        <i class="fa-solid fa-share-nodes" aria-hidden="true"></i>Share
+      </button>
+    </div>
+    <button id="gear" title="Account, sound bank, instrument definitions">
+      <i class="fa-solid fa-gear" aria-hidden="true"></i>Prefs
+    </button>
+    <button id="aboutBtn" title="About this site, guides, credits, version">
+      <i class="fa-solid fa-circle-question" aria-hidden="true"></i>About
+    </button>
+  </div>
+  <button type="button" class="ico" id="navToggle" aria-expanded="false" aria-controls="navMenu">
+    <i class="fa-solid fa-bars" aria-hidden="true"></i>
+  </button>
+</header>
+
+<div id="rollbar">
+  <div class="grp">
+    <button class="play" id="play" disabled>▶  Play</button>
+    <button class="tiny" id="stop" disabled>Stop</button>
+    <button class="tiny toggle on" id="followBtn"
+            title="Follow the playhead across pages while playing. Scrolling horizontally by hand turns this off; click here to turn it back on">
+      <i class="fa-regular fa-circle-right" aria-hidden="true"></i>Follow
+    </button>
+    <div id="rangeSel" role="radiogroup" aria-label="Playback range">
+      <button type="button" role="radio" data-range="all" aria-checked="true" class="on"
+              title="Play the whole piece (clears the start/end markers on the bar ruler)">Whole</button>
+      <button type="button" role="radio" data-range="part" aria-checked="false" aria-disabled="true"
+              title="Set a range: on the bar ruler, left click sets the start and right click the end; with the arrow tool (0) on empty space in the roll, left click sets the start and right click opens a menu (its first two items are those two markers)">Range</button>
+    </div>
+    <button class="tiny toggle" id="loopBtn" aria-pressed="false"
+            title="Loop: on reaching the end (or the end marker), start again from the beginning (or the start marker)">
+      <i class="fa-solid fa-retweet" aria-hidden="true"></i>Loop
+    </button>
+  </div>
+  <div class="grp hideable">
+    <button class="tool" id="toolSelect"
+            title="Arrow (shortcut 0): on a note, move / resize / delete it; Shift or Ctrl click a second note to select a span. On empty space, left click sets the playback start and right click the end">
+      <i class="fa-solid fa-arrow-pointer" aria-hidden="true"></i><span class="sr">Select only</span>
+    </button>
+    <button type="button" class="lbl" id="lensLbl" aria-pressed="false">
+      <svg width="14" height="18" aria-hidden="true" focusable="false"><use href="#ni-32"/></svg>
+      <i class="fa-solid fa-music" aria-hidden="true"></i><span class="sr"></span>
+    </button>
+    <div id="lens">
+      <button data-len="1" title="Whole note (shortcut 1)">1</button>
+      <button data-len="2" title="Half note (shortcut 2)">2</button>
+      <button data-len="4" title="Quarter note (shortcut 3)">4</button>
+      <button data-len="8" title="Eighth note (shortcut 4)">8</button>
+      <button data-len="16" title="Sixteenth note (shortcut 5)">16</button>
+      <button data-len="32" title="Thirty-second note (shortcut 6)">32</button>
+    </div>
+    <div id="zoom">
+      <span class="spin">
+        <i class="fa-solid fa-arrows-left-right" aria-hidden="true"></i>
+        <span class="ax">
+          <button data-zoom="w+">+</button>
+          <button data-zoom="w-">−</button>
+        </span>
+      </span>
+      <span class="spin">
+        <i class="fa-solid fa-arrows-up-down" aria-hidden="true"></i>
+        <span class="ax">
+          <button data-zoom="h+">+</button>
+          <button data-zoom="h-">−</button>
+        </span>
+      </span>
+    </div>
+    <button class="tiny ico" id="undoBtn" disabled title="Undo (shortcut Ctrl+Z)">
+      <i class="fa-solid fa-rotate-left" aria-hidden="true"></i><span class="sr">Undo</span>
+    </button>
+    <button class="tiny ico" id="redoBtn" disabled title="Redo (shortcut Ctrl+Shift+Z or Ctrl+Y)">
+      <i class="fa-solid fa-rotate-right" aria-hidden="true"></i><span class="sr">Redo</span>
+    </button>
+  </div>
+  <div class="grp hideable">
+    <button class="tiny" id="tempoBtn" title="Tempo: write a tempo mark at the start of a track or before the selected note">
+      <i class="fa-solid fa-gauge-high" aria-hidden="true"></i>Tempo
+    </button>
+    <button class="tiny" id="velBtn" title="Velocity: raise or lower v values in bulk">
+      <i class="fa-solid fa-sliders" aria-hidden="true"></i>Vel
+    </button>
+    <button class="tiny" id="transBtn" title="Transpose: shift notes up or down by semitones in bulk">
+      <i class="fa-solid fa-arrow-up-right-dots" aria-hidden="true"></i>Trans
+    </button>
+    <button class="tiny" id="optBtn" title="Optimise: trade note length for character count (this changes the sound)">
+      <i class="fa-solid fa-wand-magic-sparkles" aria-hidden="true"></i>Opt
+    </button>
+    <button class="tiny" id="mergeBtn" title="Merge tracks: fold this track (or the selected notes) into another, five ways">
+      <i class="fa-solid fa-layer-group" aria-hidden="true"></i>Merge
+    </button>
+  </div>
+  <div class="grp hideable">
+    <span class="lbl" id="rollMode">Editing</span>
+    <span class="cur" id="rollTrack">Melody</span>
+    <span class="warnmsg" id="rollNote"></span>
+    <span id="rollNonstd" hidden></span>
+  </div>
+  <span class="hint hideable" id="rollHint">Left click draws · drag to move · drag the right edge to resize · right click deletes</span>
+</div>
+
+<div id="rollwrap">
+  <div id="stage" tabindex="-1">
+    <div id="rollpad"><canvas id="roll"></canvas></div>
+  </div>
+  <div id="flagsLayer" aria-hidden="true"><div id="flagsStrip"></div></div>
+  <div id="markdots" aria-hidden="true"></div>
+</div>
+
+<div id="splitter" role="separator" aria-orientation="horizontal" tabindex="0"
+     title="Drag to change the height of the piano roll and the score area (arrow keys work too; Shift is faster)"></div>
+
+<main>
+  <section class="editor">
+    <div class="tabs" id="tabs"></div>
+    <div class="panes" id="panes"></div>
+    <div class="status" id="status">
+      <span><span class="k">Tracks</span> —</span>
+      <span><span class="k">Notes</span> —</span>
+      <span><span class="k">Tempo</span> —</span>
+      <span><span class="k">Length</span> —</span>
+      <span id="warn"></span>
+      <span class="store" id="storeState">Not saved yet</span>
+      <span class="engine" id="engine">Engine idle</span>
+      <span class="legal">
+        <a href="/terms">Terms of Service</a><span aria-hidden="true">·</span><a href="/privacy">Privacy Policy</a>
+      </span>
+    </div>
+  </section>
+</main>
+
+
+<div id="scrim"></div>
+<aside id="settings" class="drawer" aria-label="Settings">
+  <div class="head">
+    <h2>Settings</h2>
+    <button id="settingsClose" title="Close (Esc)" aria-label="Close">✕</button>
+  </div>
+  <div class="body">
+
+
+    <div class="user" id="userBox">
+      <i class="fa-solid fa-circle-user" aria-hidden="true"></i>
+      <span class="who">
+        <b id="userName">Not signed in</b>
+        <em id="userMail"></em>
+      </span>
+      <a class="act auth" id="loginBtn" href="/login" rel="nofollow">Sign in with Google</a>
+      <a class="act auth" id="logoutBtn" href="/logout" rel="nofollow" hidden>Sign out</a>
+    </div>
+            <div class="group">
+                <label for="lang">Language</label>
+                <select id="lang"></select>
+                <span class="hint">Switching language reloads the page. The score you are editing is kept; the undo history is cleared.</span>
+            </div>
+    <div class="group">
+      <label for="theme">Theme</label>
+      <select id="theme">
+        <option value="dark">Dark</option>
+        <option value="light">Light</option>
+      </select>
+    </div>
+
+    <div class="group">
+      <label for="autosave">Autosave</label>
+      <select id="autosave">
+        <option value="on">On</option>
+        <option value="off">Off</option>
+      </select>
+      <span class="hint" id="autosaveHint">Saves the score in this browser after every edit, so a refresh or restart picks it up again. Nothing is uploaded to the server.</span>
+    </div>
+
+    <div class="group">
+      <label for="keysig">Key signature</label>
+      <select id="keysig">
+        <option value="">None</option>
+      </select>
+      <span class="hint">Rows outside the key are dimmed. It is only a hint and never blocks anything.</span>
+    </div>
+
+    <div class="group">
+      <label for="timeSig">Time signatures</label>
+      <select id="timeSig">
+        <option value="on">On</option>
+        <option value="off">Off</option>
+      </select>
+      <span class="hint">When on, the top-left corner of the piano roll shows the opening time signature and a right click changes it; right-click the bar ruler to set a meter change. Bar lines, cells per bar, inserting and deleting bars, and MML line breaks all follow the meter.</span>
+    </div>
+
+    <div class="group">
+      <label for="mmlHighlight">Syntax colouring</label>
+      <select id="mmlHighlight">
+        <option value="on">On</option>
+        <option value="off">Off</option>
+      </select>
+      <span class="hint">Tempo, note length, octave and volume each get their own colour; notes and durations stay white. Characters the parser cannot read get a red wavy underline, and anything past 2400 characters gets a red background. It is only a hint and never blocks anything.</span>
+    </div>
+
+    <div class="group">
+      <label for="barsPerLine">MML line breaks</label>
+      <select id="barsPerLine">
+        <option value="0">No breaks</option>
+        <option value="1">Every bar</option>
+        <option value="2">Every 2 bars</option>
+        <option value="4">Every 4 bars</option>
+      </select>
+      <span class="hint">
+        Line breaks are formatting only — whitespace does not count towards the game's character limit. A note held across a bar line cannot be split, so that line runs longer and the numbering <b>skips</b>.
+      </span>
+    </div>
+
+    <div class="group">
+      <label for="dls">Sound bank</label>
+      <label class="filebtn">
+        Load a different .dls / .sf2
+        <span class="hint" id="dlsName">Using the default — click to add your own</span>
+        <input type="file" id="dls" accept=".dls,.sf2,.sf3">
+      </label>
+    </div>
+
+    <div class="group" id="offlineBank">
+      <span class="legend">Offline sound bank</span>
+      <span class="hint" id="offlineBankState">Checking…</span>
+      <button class="act" id="offlineBankGet" hidden>Keep on this device</button>
+    </div>
+    <div class="group">
+      <label for="def">Instrument definitions</label>
+      <label class="filebtn">
+        Load a different .def
+        <span class="hint" id="defName">Using the default — click to add your own</span>
+        <input type="file" id="def" accept=".def,.txt,.ini">
+      </label>
+    </div>
+
+    <div class="group danger" id="dangerZone" hidden>
+      <span class="legend">Danger zone</span>
+      <button class="act" id="delAccount">Delete my account and all my data on this site</button>
+    </div>
+  </div>
+
+</aside>
+
+<aside id="aboutPanel" class="drawer" aria-label="About">
+  <div class="head">
+    <h2>About</h2>
+    <button id="aboutClose" title="Close (Esc)" aria-label="Close">✕</button>
+  </div>
+  <div class="body">
+    <div class="group">
+      <span class="legend">About this tool</span>
+      <p class="thanks">夜光 MML Workshop is an online MML score editor for Mabinogi Mobile. Nothing to install — open it and start writing, preview with a soundfont close to the game's own, then copy the MML back into the game's blank score. You can import a MIDI file and convert it automatically, draw notes by dragging in the piano roll, use compression and optimisation to fit the 2,400-character-per-track limit, and share a link when you are done.</p>
+      <p class="thanks">
+        Writing MML for Mabinogi on PC instead? Head to the
+        <a href="https://3ml.mabi.tw/en/" rel="noopener" target="_blank">Mabinogi MML Score Editor</a>
+      </p>
+    </div>
+
+        <div class="group">
+      <span class="legend">Guides</span>
+      <p class="thanks">
+            <a href="/en/guide/editor" target="_blank" rel="noopener">Editor quick start</a>　Try making a score you can paste into the game<br>
+            <a href="/en/guide/reference" target="_blank" rel="noopener">Reference</a>　What every button does<br>
+            <a href="/en/guide/keys" target="_blank" rel="noopener">Shortcuts</a>　Keyboard, mouse and wheel at a glance<br>
+            <a href="/en/guide/mobile" target="_blank" rel="noopener">Phone and tablet</a>　Writing music with your fingers<br>
+            <a href="/en/guide/mml" target="_blank" rel="noopener">MML syntax</a>　An introduction to the MML syntax<br>
+            <a href="/en/faq" target="_blank" rel="noopener">FAQ</a>　Sound banks, saving, character limits, sharing<br>
+      </p>
+    </div>
+
+
+    <div class="group">
+      <span class="legend">Special thanks</span>
+      <p class="thanks">
+        By default we use the © 2026 <b>DovidicGJ</b>and<b>Lisedrika</b> sound bank by <b>Fury Sound Pack</b> .         Source <a href="https://mabicompose.com" rel="noopener" target="_blank">mabicompose.com</a>
+                    <br>Many thanks for their contribution to music<br>
+      </p>
+    </div>
+
+    <div class="group">
+      <span class="legend">Technologies used</span>
+      <ul class="thanks tech">
+        <li>
+          <b><a href="https://github.com/spessasus/SpessaSynth" rel="noopener" target="_blank">SpessaSynth</a> 4.3</b>
+          — WebAudio synthesis engine; handles SF2/DLS parsing and real-time AudioWorklet playback. Apache-2.0
+        </li>
+        <li>
+          <b><a href="https://github.com/Audiveris/audiveris" rel="noopener" target="_blank">Audiveris</a> 5.11.0</b>
+          — Optical music recognition; turns images of sheet music into MML. Open-sourced as its licence requires — <a href="https://github.com/sakuraakira/omr-workers" rel="noopener" target="_blank">public repo</a>. AGPL-3.0
+        </li>
+        <li>
+          <b><a href="https://github.com/zhuker/lamejs" rel="noopener" target="_blank">lamejs</a></b>
+          : mp3 encoding. Licensed  LGPL-3.0
+        </li>
+        <li>
+          <b><a href="https://fontawesome.com" rel="noopener" target="_blank">Font Awesome Free</a> 7.3.1</b>
+          — Icon font; only the solid and regular sets are loaded. CC BY 4.0
+        </li>
+        <li>
+          <b><a href="https://fonts.google.com" rel="noopener" target="_blank">Google Fonts</a></b>
+          — Gloock, IBM Plex Mono, and Noto switched by interface language. OFL
+        </li>
+      </ul>
+      <p class="thanks">MML parsing and compression, bzip2, ZIP packaging and the piano roll are all written in-house — the front end has no other runtime dependencies.</p>
+    </div>
+
+    <div class="group">
+      <span class="legend">Legal</span>
+      <p class="thanks">
+        <a href="/terms">Terms of Service</a><span class="sep" aria-hidden="true">·</span><a href="/privacy">Privacy Policy</a>
+      </p>
+    </div>
+  </div>
+
+  <div class="copy">　© 2026 梅文．夜光 v1.1.0<button type="button" id="pwaUpdateBtn" title="A new version is ready · this reloads the page" hidden>Update</button></div>
+</aside>
+
+<div id="log"><button onclick="this.parentNode.style.display='none'">✕</button><span id="logMsg"></span></div>
+
+<div id="pasteBox" class="modal" data-mode="in">
+  <div class="card">
+    <h2 id="pasteTitle">Paste MML</h2>
+    <p id="pasteHint">This browser will not let the page read the clipboard. Press Ctrl+V below, then press Load.</p>
+    <textarea id="pasteText" spellcheck="false" placeholder="MML@t100l8o5...,...,...;"></textarea>
+    <div class="row">
+      <button class="act" id="pasteCancel">Cancel</button>
+      <button class="act play" id="pasteOk">Load</button>
+    </div>
+  </div>
+</div>
+
+<div id="clipBox" class="modal">
+  <div class="card">
+    <h2>Clipboard</h2>
+    <p>MML is plain text. Use the clipboard to move it between the game's Blank Score and here.</p>
+    <div class="row">
+      <button class="act" id="paste">Paste</button>
+      <button class="act" id="copy">Copy</button>
+    </div>
+    <p class="hint">Pasting replaces the contents of every tab. Copying strips whitespace — that is what the game counts.</p>
+  </div>
+</div>
+
+<div id="fileBox" class="modal">
+  <div class="card">
+    <h2>File</h2>
+
+    <div class="sect">
+      <span class="legend">New / Save</span>
+      <div class="row">
+        <button class="act" id="newSong">Create New</button>
+        <button class="act" id="saveOpen" title="Save this score (shortcut Ctrl+S). Once it has been saved and the name is unchanged, Ctrl+S writes straight back to the same file without asking again.">Save to…</button>
+      </div>
+      <p class="hint">
+        “Create New” starts a brand new file: <b>track count, instruments and the file name all go back to default</b>; key signature and line-wrap settings are kept. Ctrl+Z undoes it.
+      </p>
+    </div>
+
+    <div class="sect">
+      <span class="legend">Import</span>
+      <label class="filebtn">
+        Choose a file
+        <span class="hint">.mid · .mml · .mmi, or drop a file into this box</span>
+        <input type="file" id="midFile" accept=".mid,.midi,.mml,.mmi,.txt">
+      </label>
+      <p class="hint" id="fileErr" hidden></p>
+      <p class="hint">
+        Voices in the file that contain notes are listed for you to tick, up to 15 tracks. Importing <b>replaces the contents of every tab</b>, including the aux tracks.
+      </p>
+
+      <button class="filebtn" id="omrOpen">
+        Choose a PDF or images…
+        <span class="hint">.pdf · .png · .jpg, import sheet music</span>
+      </button>
+      <p class="hint">
+        OMR by <a href="https://github.com/Audiveris/audiveris" rel="noopener" target="_blank">Audiveris</a> (AGPL-3.0). Up to about 90% accurate — you will still need to fix notes by hand.
+      </p>
+    </div>
+
+    <div class="sect">
+      <span class="legend">Export</span>
+      <div class="fname">
+        <input type="text" id="expName" placeholder="score" spellcheck="false"
+               autocomplete="off" aria-label="Export file name">
+        <select id="expFmt" aria-label="Export format">
+          <option value="mid">.mid</option>
+          <option value="mml">.mml</option>
+          <option value="mmi">.mmi</option>
+        </select>
+      </div>
+      <button class="act" id="expGo" disabled>Download</button>
+      <button class="act" id="mixGo" disabled>Export MP3 mix</button>
+      <button class="act" id="videoOpen" disabled>Make MP4 video</button>
+    </div>
+
+    <div class="sect">
+      <span class="legend">Clear</span>
+      <button class="act danger" id="clearAll">Clear all notes</button>
+      <p class="hint">
+        Clears the score text of all 15 tracks, leaving 3 empty tracks.<b>Instrument choices, file name and key signature are kept</b>.         Ctrl+Z undoes it.
+      </p>
+    </div>
+  </div>
+</div>
+
+<div id="omrBox" class="modal">
+  <div class="card">
+    <h2>Import sheet music (images)</h2>
+    <p>If you have a PDF, upload the PDF — it is recognised in one pass, tempo and time signature apply to the whole piece, and you don’t have to pick a resolution. With images, one piece is a stack of images and top-left to bottom-right is the page order; scan at 300 DPI or higher, a phone snapshot is noticeably worse.</p>
+
+    <div class="list" id="omrList">
+      <div class="empty" id="omrEmpty">
+        <p>No files yet.</p>
+        <button class="act" id="omrPick">Choose files</button>
+      </div>
+      <div class="grid" id="omrGrid" hidden></div>
+    </div>
+
+    <p class="hint" id="omrHint">
+      Drag the thumbnails to reorder — <b>this is the page order</b>, and getting it wrong ruins the whole piece. Recognition takes tens of seconds to a few minutes; don't close this while it runs.
+    </p>
+    <p class="hint" id="omrErr" hidden></p>
+
+    <input type="file" id="omrFile" class="sr" accept="application/pdf,image/png,image/jpeg" multiple>
+
+    <div class="foot">
+      <span class="count" id="omrCount"></span>
+      <button class="act" id="omrAdd">Add more</button>
+      <button class="act danger" id="omrReset" hidden>Clear and start over</button>
+      <button class="act" id="omrCancel">Cancel</button>
+      <button class="act" id="omrGo" disabled>Start recognition</button>
+      <button class="act" id="omrBack" hidden>Back to the part list</button>
+    </div>
+
+    <div id="omrBusy" hidden>
+      <div class="notes"><span>♪</span><span>♫</span><span>♩</span><span>♬</span><span>♪</span></div>
+      <p id="omrStat"></p>
+    </div>
+  </div>
+</div>
+
+<div id="midiBox" class="modal">
+  <div class="card">
+    <h2>Choose which voices to import</h2>
+    <p id="midiName"></p>
+    <div id="midiMode">
+      <label><input type="radio" name="impMode" value="append" checked> Append<small>after the existing tracks</small></label>
+      <label><input type="radio" name="impMode" value="new"> Fresh capture<small>replace everything</small></label>
+      <span class="hint" id="midiAppendHint" hidden></span>
+    </div>
+    <div class="list">
+      <table>
+        <thead>
+          <tr>
+            <th style="width:1%">
+              <span class="sr">Tick</span>
+              <input type="checkbox" id="pickAll">
+            </th>
+            <th style="width:1%">#</th>
+            <th id="colUnit">Channel</th>
+            <th style="width:1%">Notes</th>
+            <th style="width:1%" id="colMode">Capture mode</th>
+          </tr>
+        </thead>
+        <tbody id="midiRows"></tbody>
+      </table>
+    </div>
+    <p class="hint" id="midiHint">
+      Each track can only hold one note at a time.<b>Favour melody</b>takes the highest of the simultaneous notes;<b>Favour root</b>takes the lowest;
+      <b>Both</b>keeps high and low in two separate tracks;<br/><b>Smart voice split</b>uses 4 tracks to separate the melody from the accompanying chords;
+      <b>Full chord capture</b>uses all 15 tracks to capture as many notes as possible;
+    </p>
+    <p class="hint" id="mmlHint" hidden>
+      These voices are already monophonic MML, so they are <b>moved across as-is, without recompression</b>. A track marked <b>read-only</b> had unrecognised characters in the source; the text is still editable.
+    </p>
+    <div class="foot">
+      <span class="count" id="midiCount">Selected 0 / 15 tracks</span>
+      <button class="act" id="midiCancel">Close</button>
+      <button class="act" id="midiOk" disabled>Import</button>
+    </div>
+    <div id="midiBusy" hidden>
+      <div class="notes"><span>♪</span><span>♫</span><span>♩</span><span>♬</span><span>♪</span></div>
+      <p>Capturing…</p>
+    </div>
+  </div>
+</div>
+
+<div id="saveBox" class="modal">
+  <div class="card">
+    <h2>Save a score</h2>
+
+    <div class="sect">
+      <div class="namerow">
+        <input type="text" id="saveName" spellcheck="false" autocomplete="off"
+               maxlength="100" placeholder="Name this file"
+               aria-label="Name of the saved file">
+        <button class="act" id="saveGo" disabled>Save to local</button>
+      </div>
+      <div class="result">
+        <p id="saveDirty" hidden></p>
+        <p id="saveOk" hidden></p>
+        <p id="saveErr" hidden></p>
+      </div>
+    </div>
+
+    <div class="sect">
+      <div class="tabrow" id="saveTabs" role="tablist">
+        <button type="button" class="stab on" data-tab="local" role="tab">local</button>
+        <button type="button" class="stab" data-tab="web" role="tab">web</button>
+      </div>
+
+      <div class="notes">
+        <p class="lede" id="saveLocalNote">
+          Stored inside this browser only — <b>switch computer or browser and these files are gone</b>. Exporting, or downloading a batch to your own disk, is the way to keep them for good.
+        </p>
+        <p class="lede" id="saveWebNote" hidden>Stored on our server, so signing in to the same account brings it back. Exporting or downloading a batch to your own machine is what keeps it for the long run.</p>
+      </div>
+
+      <div class="swap">
+        <div id="saveWebLogin" hidden>
+          <p id="saveWebLoginWhy">Sign in to save to the web. It is what identifies your files.</p>
+          <a class="act" id="saveWebLoginBtn" href="/login" rel="nofollow">Sign in with Google</a>
+        </div>
+
+        <div id="saveBody">
+          <div class="list">
+            <table>
+              <thead>
+                <tr>
+                  <th style="width:1%"><span class="sr">Select</span></th>
+                  <th>Name</th>
+                  <th style="width:1%">Tracks</th>
+                  <th style="width:1%">Notes</th>
+                  <th style="width:1%">Created</th>
+                  <th style="width:1%">Updated</th>
+                  <th style="width:1%"><span class="sr">Actions</span></th>
+                </tr>
+              </thead>
+              <tbody id="saveRows"></tbody>
+            </table>
+          </div>
+          <div class="foot">
+            <label class="pickall">
+              <input type="checkbox" id="savePickAll"
+                     aria-label="Select all / none">
+              <span>Select all</span>
+            </label>
+            <span class="count" id="savePicked"></span>
+            <span class="count" id="saveUsed"></span>
+            <span class="count" id="saveTotal"></span>
+            <button class="pg" id="saveZip" disabled>Download batch</button>
+            <button class="pg" id="saveMove" disabled></button>
+            <button class="pg del" id="saveDel" disabled>Delete selected</button>
+            <span id="savePager">
+              <button class="pg" id="savePrev" aria-label="Previous page">‹</button>
+              <span class="count" id="savePage">1 / 1</span>
+              <button class="pg" id="saveNext" aria-label="Next page">›</button>
+            </span>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<div id="saveOverBox" class="modal">
+  <div class="card">
+    <h2>Overwrite this file?</h2>
+    <p class="what" id="saveOverWhat"></p>
+    <p><b>This entry will be replaced by what is in the editor now</b>, and that cannot be undone (Ctrl+Z covers the editor, not saved files). The creation time is kept.</p>
+    <div class="row">
+      <button class="act" id="saveOverCancel">Cancel</button>
+      <button class="act danger" id="saveOverOk">Overwrite</button>
+    </div>
+  </div>
+</div>
+
+<div id="saveDelBox" class="modal">
+  <div class="card">
+    <h2>Delete?</h2>
+    <p class="what" id="saveDelWhat"></p>
+    <p><b>Once deleted, they cannot be recovered</b>. To keep a copy, use “Download batch” to save them as .mml first.</p>
+    <div class="row">
+      <button class="act" id="saveDelCancel">Cancel</button>
+      <button class="act danger" id="saveDelOk">Delete</button>
+    </div>
+  </div>
+</div>
+
+<div id="saveMoveBox" class="modal">
+  <div class="card">
+    <h2>The destination already has files with these names</h2>
+    <p class="what" id="saveMoveWhat"></p>
+    <p><b>Overwriting cannot be undone</b>. If unsure, choose “Copy the rest” and rename the clashing ones first.</p>
+    <div class="row">
+      <button class="act" id="saveMoveCancel">Cancel</button>
+      <button class="act" id="saveMoveSkip"></button>
+      <button class="act danger" id="saveMoveOver">Overwrite all</button>
+    </div>
+  </div>
+</div>
+
+<div id="stageBox" class="modal">
+  <div class="card">
+    <h2>Spatial mixer</h2>
+    <p class="hint" id="stageDrop" hidden></p>
+    <div id="stagePlot" class="stage flat">
+      <svg id="stageRings" aria-hidden="true"></svg>
+    </div>
+    <div class="stagetransport">
+      <button id="stagePlay"></button>
+      <input type="range" id="stageSeek" min="0" max="1" step="0.0001" value="0"
+             aria-label="Preview position">
+      <span id="stageTime">0:00</span>
+    </div>
+    <div class="stagefoot">
+      <label class="spk">
+        <input type="checkbox" id="stageSpatial">
+        Spatial mix
+        <span class="hint">audible as a 3D space on headphones</span>
+      </label>
+      <label class="spk">
+        <input type="checkbox" id="stageSpk">
+        Speakers
+        <span class="hint">Front/back collapses</span>
+      </label>
+      <div class="erow">
+        <label for="stageEnv">Environment</label>
+        <select id="stageEnv"></select>
+      </div>
+      <div class="erow">
+        <label for="stageEnvAmt">Ambience level</label>
+        <input type="range" id="stageEnvAmt" min="0" max="2" step="0.05" value="1">
+        <span id="stageEnvAmtValue"></span>
+      </div>
+      <p class="hint" id="stageEnvNote" hidden></p>
+      <div class="acts">
+        <button id="stageReset">Reset layout</button>
+        <button class="act" id="stageGo">Export</button>
+      </div>
+      <div id="stageProg" hidden>
+        <progress id="stageBar" max="1" value="0"></progress>
+        <span id="stageStage"></span>
+        <button id="stageCancel">Cancel</button>
+      </div>
+    </div>
+  </div>
+</div>
+
+<div id="shareBox" class="modal">
+  <div class="card">
+    <h2>Share</h2>
+
+    <div class="sect" id="shareLogin" hidden>
+      <p id="shareLoginWhy">
+        Sharing requires signing in. If a copyright dispute arises, this site is legally required to notify the sharer to take the score down (Article 90-6 of the Copyright Act),         so sharing must leave a working email address we can reach you at.
+      </p>
+      <a class="act" id="shareLoginBtn" href="/login" rel="nofollow">Sign in with Google</a>
+    </div>
+
+    <div id="shareBody">
+      <div class="sect">
+        <p>
+          Shares the score currently in the editor. It goes through character-count optimisation that is <b>non-destructive to the original notes</b> —           the notes, lengths and tempo are completely unchanged, only written more compactly.
+        </p>
+        <p class="hint" id="shareDrop" hidden></p>
+        <div class="result">
+          <p id="shareStat"></p>
+          <p id="shareCut"></p>
+        </div>
+        <button class="act" id="shareGo" disabled>Create share link</button>
+        <div class="urlrow">
+          <input id="shareUrl" readonly spellcheck="false" placeholder="The link appears here once created, and is copied to the clipboard automatically">
+          <button class="act" id="shareCopy" disabled>Copy</button>
+        </div>
+        <p class="hint" id="shareErr" hidden></p>
+      </div>
+
+      <div class="sect">
+        <span class="legend">Links you have shared</span>
+        <div class="list">
+          <table>
+            <thead>
+              <tr>
+                <th>#</th>
+                <th>Link</th>
+                <th>Score</th>
+                <th>Created</th>
+                <th><span class="sr">Actions</span></th>
+              </tr>
+            </thead>
+            <tbody id="shareRows"></tbody>
+          </table>
+        </div>
+        <div class="foot">
+          <span class="count" id="shareTotal"></span>
+          <button class="pg" id="sharePrev" title="Previous page" disabled>‹</button>
+          <span class="pgno" id="sharePage">1 / 1</span>
+          <button class="pg" id="shareNext" title="Next page" disabled>›</button>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<div id="shareDelBox" class="modal">
+  <div class="card">
+    <h2>Delete this share</h2>
+    <p class="what" id="shareDelWhat"></p>
+    <p>
+      <b>This cannot be undone. Links you have already given out stop working immediately</b>, and anyone opening one will see “not found”.
+    </p>
+    <p>The score in your editor is unaffected — only this copy is deleted.</p>
+    <div class="row">
+      <button class="act" id="shareDelCancel">Cancel</button>
+      <button class="act danger" id="shareDelOk">Delete</button>
+    </div>
+  </div>
+</div>
+
+<div id="delBox" class="modal">
+  <div class="card">
+    <h2>Delete account</h2>
+    <p id="delWhat"></p>
+    <p><b>This cannot be undone.</b>Links you have shared stop working immediately, and anyone opening one will see “not found”.</p>
+    <div class="row">
+      <button class="act" id="delCancel">Cancel</button>
+      <button class="act danger" id="delOk">Delete</button>
+    </div>
+  </div>
+</div>
+
+<div id="markBox" class="modal">
+  <div class="card">
+    <h2 id="markTitle">Section mark</h2>
+    <p class="what" id="markWhat"></p>
+    <div class="row" id="markRow">
+      <input type="text" id="markText" spellcheck="false" autocomplete="off"
+             aria-label="Mark text">
+      <span class="hint" id="markLeft"></span>
+    </div>
+    <div class="row">
+      <button class="act" id="markCancel">Cancel</button>
+      <button class="act play" id="markOk">OK</button>
+    </div>
+  </div>
+</div>
+
+<div id="tempoBox" class="modal">
+  <div class="card">
+    <h2>Tempo</h2>
+    <div class="tgroup">
+      <span class="legend">Position</span>
+      <div id="tempoWhere" role="radiogroup" aria-label="Position of the tempo mark">
+        <button type="button" role="radio" data-where="head" aria-checked="true" class="on">Start of track</button>
+        <button type="button" role="radio" data-where="sel" aria-checked="false">Before the selected note</button>
+      </div>
+    </div>
+    <div class="tgroup">
+      <span class="legend">Tempo (BPM)</span>
+      <div id="tempoRow">
+        <input type="number" id="tempoNum" min="32" max="255" step="1" value="120"
+               inputmode="numeric" aria-label="Tempo BPM">
+        <input type="range" id="tempoSlider" min="32" max="255" step="1" value="120"
+               aria-label="Tempo slider">
+        <button type="button" id="tempoTry" aria-pressed="false"
+                title="Preview this tempo with a fixed rhythm pattern. It also sounds automatically while you drag the slider.">
+          <i class="fa-solid fa-play" aria-hidden="true"></i>Preview
+        </button>
+      </div>
+    </div>
+    <p id="tempoInfo"></p>
+    <p id="tempoNote"></p>
+    <div class="row">
+      <button class="act" id="tempoDel" hidden>Remove this tempo mark</button>
+      <button class="act" id="tempoCancel">Cancel</button>
+      <button class="act play" id="tempoOk">Apply</button>
+    </div>
+  </div>
+</div>
+
+<div id="velBox" class="modal">
+  <div class="card">
+    <h2>Velocity</h2>
+    <div class="tgroup">
+      <span class="legend">Range</span>
+      <div id="velScope" role="radiogroup" aria-label="Velocity range">
+        <button type="button" role="radio" data-scope="all" aria-checked="false">All tracks</button>
+        <button type="button" role="radio" data-scope="track" aria-checked="true" class="on">Current track</button>
+        <button type="button" role="radio" data-scope="sel" aria-checked="false">Selected notes</button>
+      </div>
+    </div>
+    <p id="velRange"></p>
+    <div class="tgroup">
+      <span class="legend">Adjust</span>
+      <div id="velKeys" role="radiogroup" aria-label="Velocity amount"></div>
+    </div>
+    <p id="velNote"></p>
+    <div class="row">
+      <button class="act" id="velCancel">Cancel</button>
+      <button class="act play" id="velOk" disabled>Apply</button>
+    </div>
+  </div>
+</div>
+
+<div id="transBox" class="modal">
+  <div class="card">
+    <h2>Transpose</h2>
+    <div class="tgroup">
+      <span class="legend">Range</span>
+      <div id="transScope" role="radiogroup" aria-label="Transpose range">
+        <button type="button" role="radio" data-scope="all" aria-checked="false">All tracks</button>
+        <button type="button" role="radio" data-scope="track" aria-checked="true" class="on">Current track</button>
+        <button type="button" role="radio" data-scope="sel" aria-checked="false">Selected notes</button>
+      </div>
+    </div>
+    <div class="tgroup">
+      <span class="legend">Adjust</span>
+      <div id="transKeys" role="radiogroup" aria-label="Transpose amount"></div>
+    </div>
+    <p id="transNote"></p>
+    <div class="row">
+      <button class="act" id="transCancel">Cancel</button>
+                <button class="act play" id="transOk" disabled>Apply</button>
+    </div>
+  </div>
+</div>
+
+<div id="optBox" class="modal">
+  <div class="card">
+    <h2>Optimise</h2>
+    <div class="tgroup">
+      <span class="legend">Range</span>
+      <div id="optScope" role="radiogroup" aria-label="Optimisation range">
+        <button type="button" role="radio" data-scope="all" aria-checked="false">All tracks</button>
+        <button type="button" role="radio" data-scope="track" aria-checked="true" class="on">Current track</button>
+        <button type="button" role="radio" data-scope="sel" aria-checked="false">Selected notes</button>
+      </div>
+    </div>
+    <div class="tgroup">
+      <span class="legend">Method</span>
+      <div id="optRules" role="radiogroup" aria-label="Optimisation method">
+        <button type="button" role="radio" data-rule="lossless" aria-checked="false">
+          <span class="t">Lossless</span>
+          <span class="d">
+            Recomputes the shortest spelling of every note with DP.<b>Not a single note moves; the music is identical.</b>
+          </span>
+          <span class="n"></span>
+        </button>
+        <p class="hint" id="optLossyNote">
+          If the character count is still too high, the options below trade note length for characters while <b>never changing any note's start time and never changing the rhythm</b>.<b> This changes note lengths but not the overall rhythm or melody.</b>
+        </p>
+        <button type="button" role="radio" data-rule="fill" aria-checked="false"
+                aria-describedby="optLossyNote">
+          <span class="t">Fill the gap</span>
+          <span class="d">folds the short rest after a note entirely into that note. Saves the most, and leaves the fewest breaks.</span>
+          <span class="n"></span>
+        </button>
+        <button type="button" role="radio" data-rule="partial" aria-checked="false"
+                aria-describedby="optLossyNote">
+          <span class="t">Partial fill</span>
+          <span class="d">folds in only part of it, leaving a shorter rest. Keeps a sense of separation.</span>
+          <span class="n"></span>
+        </button>
+        <button type="button" role="radio" data-rule="release" aria-checked="false"
+                aria-describedby="optLossyNote">
+          <span class="t">Tail rest</span>
+          <span class="d">gives up the tail of the note to become a rest, like a breath.</span>
+          <span class="n"></span>
+        </button>
+      </div>
+    </div>
+    <p id="optChars"></p>
+    <p id="optNote"></p>
+    <div class="row">
+      <button class="act" id="optCancel">Cancel</button>
+      <button class="act play" id="optOk" disabled>Apply</button>
+    </div>
+  </div>
+</div>
+
+<div id="mergeBox" class="modal">
+  <div class="card">
+    <h2>Merge tracks</h2>
+    <div class="tgroup">
+      <span class="legend">Merge</span>
+      <div id="mergeFlow">
+        <span>From</span>
+        <span class="from" id="mergeFrom"></span>
+        <i class="fa-solid fa-arrow-right" aria-hidden="true"></i>
+        <span>To</span>
+        <select id="mergeTo" aria-label="Which track to merge into"></select>
+      </div>
+    </div>
+    <div class="tgroup">
+      <span class="legend">Range</span>
+      <div id="mergeScope" role="radiogroup" aria-label="Merge range">
+        <button type="button" role="radio" data-scope="track" aria-checked="true" class="on">Current track</button>
+        <button type="button" role="radio" data-scope="sel" aria-checked="false">Selected notes</button>
+      </div>
+    </div>
+    <div class="tgroup">
+      <span class="legend">Method</span>
+      <div id="mergeWays" role="radiogroup" aria-label="Merge method">
+        <button type="button" role="radio" data-way="src" aria-checked="false">
+          <span class="t">Source wins</span>
+          <span class="d">Every note from the source moves across. The target track survives only in the gaps where <b>the source has a rest</b>.</span>
+          <span class="n"></span>
+        </button>
+        <button type="button" role="radio" data-way="tgt" aria-checked="false">
+          <span class="t">Target wins</span>
+          <span class="d">The reverse: source notes are only placed in the gaps where <b>the target has a rest</b>; anything that collides is dropped.</span>
+          <span class="n"></span>
+        </button>
+        <p class="hint" id="mergeLineNote">
+          The next two <b>generate a fresh monophonic line</b>
+        </p>
+        <button type="button" role="radio" data-way="melody" aria-checked="false"
+                aria-describedby="mergeLineNote">
+          <span class="t">Favour melody</span>
+          <span class="d">takes, at every attack, the <b>highest note</b> of the two tracks. The melody floats to the top.</span>
+          <span class="n"></span>
+        </button>
+        <button type="button" role="radio" data-way="root" aria-checked="false"
+                aria-describedby="mergeLineNote">
+          <span class="t">Favour root</span>
+          <span class="d">takes, at every attack, the <b>lowest note</b> of the two tracks. The bass line survives.</span>
+          <span class="n"></span>
+        </button>
+        <p class="hint" id="mergeWipeNote">
+          This last one <b>discards everything in the target track within the range</b>, including the source's rests.
+        </p>
+        <button type="button" role="radio" data-way="replace" aria-checked="false"
+                aria-describedby="mergeWipeNote">
+          <span class="t">Source replaces target</span>
+          <span class="d">The target track's content in the range is discarded wholesale and replaced by the source's (rests included).</span>
+          <span class="n"></span>
+        </button>
+      </div>
+    </div>
+    <p id="mergeChars"></p>
+    <p id="mergeNote"></p>
+    <div class="row">
+      <button class="act" id="mergeCancel">Cancel</button>
+      <button class="act play" id="mergeOk" disabled>Apply</button>
+    </div>
+  </div>
+</div>
+
+<script type="module" src="/js/main.js"></script>
+    <script type="module" src="/js/pwa.js"></script>
+</body>
+</html>

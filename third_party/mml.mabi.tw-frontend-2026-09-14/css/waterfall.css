@@ -1,0 +1,432 @@
+/* ──────────────────────────────────────────────────────────────────────────
+   鋼琴瀑布影片頁（/waterfall/{guid}）專屬的樣式。
+
+   **這一份只放這一頁自己用的東西。** 色票、`body` 的排版、`button` / `select` /
+   `.modal` / `.card` / `.legend` / `.act` / `[hidden]` 那些全部由 `editor.css` 提供 ——
+   這一頁跟編輯器 `<link>` 的是同一支，所以「兩邊長得一樣」不是靠維護，是靠沒有第二份。
+
+   ─── 為什麼工具列自己寫一份，而不是去借編輯器的 ───
+
+   編輯器的工具列樣式掛在 `#rollbar` / `#rangeSel` 這些 **ID** 上（`#rollbar button.tiny`），
+   借不到。可以把那些選擇器清單加上這一頁的 ID，宣告就會是字面上同一份、永遠不會漂；代價
+   是 `editor.css` 從此知道另一頁的存在。**這裡選的是另一邊**：分開寫，`editor.css` 的檔頭
+   那句「編輯器的樣式」維持是真的。
+
+   代價要記著：這一頁的按鈕會慢慢跟編輯器長不一樣，而**那不會有任何錯誤訊息**。改編輯器工
+   具列的顏色、圓角、字級時，記得回來看一眼這裡。
+
+   ─── ⚠️ 新增元素之前先查一次 ID 有沒有撞到 ───
+
+   借整份 `editor.css` 的另一個代價是**它的 ID 選擇器會落到這一頁**，而 ID 沒有命名空間。
+   這已經咬過一次：畫布本來叫 `#stage`，而 `editor.css` 的 `#stage` 是鋼琴捲軸的捲動容器，
+   帶著 `flex:1 1 auto` —— 於是 9:16 的畫布被拉成整列寬的橫幅。**畫面沒壞掉、沒有錯誤、
+   比例就是不對**，只有把它畫出來看才會發現。
+
+   所以這一頁的 ID 一律加 `wf` 前綴（`#wfStage`、`#wfbar`、`#wfName`…）。要開新的 ID 之前
+   先 `grep -n '#新名字' wwwroot/css/editor.css` 一次。class 沒有這個問題 —— `.modal`、
+   `.card`、`.legend`、`.act`、`.row`、`.tgroup` 撞到是**刻意的**，那正是共用的部分。
+
+   快取政策不用另外處理：`/css/` 已經在 `Program.cs` 的 no-cache 那一支裡，precache 也已經
+   被 `pwa-assets.json` 的 `css/**/*.css` 蓋到。
+   ────────────────────────────────────────────────────────────────────────── */
+
+/*
+  這一頁沒有捲軸：header ＋ 兩列工具列是固定高度，畫布吃掉剩下的全部。`editor.css` 的
+  `body` 已經是 `flex-direction:column`，這裡只補「不要捲」。
+*/
+body{overflow:hidden}
+
+/*
+  ─── header 與工具列跟著預覽畫布收窄 ───
+
+  寬螢幕上畫布只佔中間一條（9:16 尤其窄），而 header 與工具列橫跨整個視窗 —— 於是「檔名」
+  跟「匯出」離畫面兩端各有幾百像素，眼睛要來回掃。這裡把兩者的**內容**夾在畫布的寬度內。
+
+  夾的是內容不是那兩條 bar 本身：背景與 `border-bottom` 維持滿版，那是分隔頁面區塊的線，
+  截斷了反而看起來像壞掉。
+
+  `--wfw` 由 video.js 量畫布的實際寬度後寫在 `<body>` 上。**下限 560 是必要的而不是保險**：
+  畫布高度 ＝ 視窗高度減掉工具列高度，所以「工具列變窄 → 換行 → 變高 → 畫布變矮 → 畫布變窄
+  → 工具列更窄」是一個真的會轉起來的迴圈。夾住下限之後它一定停 —— 窄到 560 就不再跟著縮，
+  高度也就不再增加。560 是編輯器每個對話框的寬度，第二列在那個寬度下仍然排得下一行。
+*/
+header > h1,
+#wfbar .line{
+  width:100%;
+  max-width:max(var(--wfw, 100%), 560px);
+  margin-inline:auto;
+}
+
+/* header 的右半在這一頁是空的（沒有 #viewToggles、沒有 #navMenu），所以標題自己撐滿。
+   padding 比編輯器小一階：這一頁只有一列標題，14px 上下留白會顯得頭重。 */
+header{padding:10px 18px}
+
+/* ---------- 工具列 ---------- */
+
+/*
+  兩列。第一列是播放，第二列是製作。
+
+  **seek 獨佔第一列**是這個分法的全部理由：它是這裡唯一會伸縮的元素，旁邊放任何東西都
+  只是在壓縮它。第二列則全是「決定成品長什麼樣」的東西，以主要動作（匯出）收尾 —— 讀起來
+  就是一張表單。
+
+  載入中與匯出中**原地換掉其中一列**（`.line` 掛 `hidden`，`editor.css` 的
+  `[hidden]{display:none!important}` 就夠了），不另外長一列 —— 畫布高度是底下那個
+  `flex:1 1 auto` 算出來的，多一列會讓整個瀑布在按下匯出的那一刻往下跳一格，而那正好是
+  使用者盯著畫面看的時刻（正在編碼的那一幀就畫在上面）。
+*/
+#wfbar{
+  flex:0 0 auto;
+  display:flex; flex-direction:column; gap:8px;
+  padding:10px 18px;
+  border-bottom:1px solid var(--line);
+  background:var(--bg2);
+}
+/*
+  `min-height` 讓四種狀態（載入／播放／製作／匯出）的列高一致，換掉的那一瞬間畫布才不會抖。
+
+  **寫死 28 而不是 `var(--btnh)`**：那個變數定義在 `editor.css` 的 `#rollbar` 上，不是
+  `:root` —— 從這裡讀得到的只有 `auto`。（原本寫成 `var(--btnh, 28px)`，那個 fallback 才是
+  真正在生效的值，而它看起來像是防禦性程式。）28 的來歷跟那邊同一句：`.tiny` 的自然高度
+  是 27.59px，而它是這裡數量最多的按鈕。
+*/
+#wfbar .line{
+  display:flex; align-items:center; gap:10px; flex-wrap:wrap;
+  min-height:28px;
+}
+
+/* 一組互斥的選項連成一段（比例、落下速度）。跟編輯器的 #rangeSel 是同一套語言：
+   選中的那顆有 --sel 底色配白字，而那個底色夠深，白字讀得出來。 */
+#wfbar .seg{display:flex; flex:0 0 auto}
+#wfbar .seg button{
+  padding:5px 11px; background:var(--panel); border:1px solid var(--line);
+  color:var(--dimmer); font-size:11px; cursor:pointer; white-space:nowrap;
+  transition:color .15s,background .15s;
+}
+#wfbar .seg button:first-child{border-radius:3px 0 0 3px}
+#wfbar .seg button:last-child{border-radius:0 3px 3px 0}
+/* 相鄰兩顆之間只留一條邊。**寫成 `:not(:last-child)` 而不是 `:first-child`** —— 後者在
+   兩顆的時候剛好對（比例就是兩顆），超過兩顆中間就會疊成雙線。 */
+#wfbar .seg button:not(:last-child){border-right-width:0}
+#wfbar .seg button:not(.on):not(:disabled):hover{color:var(--txt)}
+#wfbar .seg button.on{
+  /* 配在 --sel 上的白字。用 editor.css 的 token 而不是硬寫 #fff —— 這一頁 <link> 的是同一
+     支，而檔頭那句「改編輯器工具列的顏色時記得回來看一眼這裡」講的正是這種漂移。 */
+  background:var(--sel); color:var(--on-color); border-color:var(--sel);
+  position:relative; z-index:1; border-right-width:1px; margin-right:-1px;
+}
+#wfbar .seg button.on:last-child{margin-right:0}
+#wfbar .seg button:disabled{opacity:.4; cursor:not-allowed}
+
+/* 次要動作（外觀、取消）。圖示 ＋ 兩個字，同編輯器工具列的 .tiny。 */
+#wfbar button.tiny{
+  display:inline-flex; align-items:center; gap:6px;
+  background:none; border:1px solid var(--line); border-radius:3px;
+  color:var(--dim); font-size:11px; padding:5px 10px; cursor:pointer;
+  flex:0 0 auto; white-space:nowrap;
+}
+#wfbar button.tiny:not(:disabled):hover{border-color:var(--t2); color:var(--txt)}
+#wfbar button.tiny:disabled{opacity:.4; cursor:not-allowed}
+/* 純圖示的（播放／暫停）收成方形，而且圖示要放大一階 —— 11px 對一個沒有文字陪襯的
+   圖示來說太小，它得自己撐起可辨識度。 */
+#wfbar button.tiny.ico{width:30px; height:30px; padding:0; justify-content:center}
+#wfbar button.tiny.ico i{font-size:13px}
+
+/* 匯出是這一頁存在的理由，在工具列裡也要看起來像主要動作。跟編輯器的「演奏」同一顆金色。 */
+#wfbar button.play{
+  display:inline-flex; align-items:center; gap:7px;
+  background:var(--t1); border:1px solid var(--t1); border-radius:3px;
+  color:#14201a; font-weight:700; font-size:12px; padding:5px 14px;
+  cursor:pointer; flex:0 0 auto; white-space:nowrap;
+}
+#wfbar button.play:not(:disabled):hover{background:#eebc6c; border-color:#eebc6c}
+#wfbar button.play:disabled{opacity:.4; cursor:not-allowed}
+
+/*
+  播放位置。`flex:1 1 0` 而不是 `auto`：flex 的分行是用「假設主尺寸」決定的，而 `auto`
+  的假設主尺寸是內容寬度 —— 對一個 range 來說那是瀏覽器的預設 129px，於是它在寬螢幕上
+  不會長大。（同 #rollbar .hint 那條註解講的是同一個坑，只是方向相反。）
+*/
+#wfSeek{flex:1 1 0; min-width:120px; accent-color:var(--t2)}
+#wfSeek:disabled{opacity:.5}
+
+/* 時間、預估大小這些讀數。tabular-nums 讓數字跳動時左右不晃。 */
+#wfbar .read{
+  font-variant-numeric:tabular-nums; color:var(--dimmer);
+  font-size:11px; letter-spacing:.04em; flex:0 0 auto;
+}
+#wfTime{min-width:92px; text-align:center}
+/* 檔案大到有機會讓分頁被系統殺掉時轉成警示色。**不能只縮成 tooltip** —— 那是這一頁唯一
+   一個「按下去可能整頁消失」的預警。 */
+#wfSize.warn{color:var(--warn)}
+
+/*
+  檔名。**這一列唯一會伸縮的元素**，所以窄畫面的換行一定斷在它前面 —— 而那剛好是語意的
+  分界（左邊是規格，右邊是輸出）。`min-width` 是 8 個中文字左右，再窄就看不到自己打了什麼。
+*/
+#wfName{
+  flex:1 1 0; min-width:9em; max-width:26em;
+  padding:5px 9px; font-size:12px; font-family:inherit;
+  color:var(--txt); background:var(--panel2);
+  border:1px solid var(--line); border-radius:3px;
+}
+#wfName:focus-visible{outline:2px solid var(--t1); outline-offset:1px}
+#wfName:disabled{opacity:.5}
+#wfbar .ext{color:var(--dimmer); font-size:11px; flex:0 0 auto; margin-left:-4px}
+
+/* 進度條（載入與匯出共用外觀）。 */
+#wfbar progress{flex:1 1 0; min-width:120px; height:6px}
+#wfPhase{min-width:76px}
+
+/* ---------- 畫布 ---------- */
+
+/*
+  畫布固定在目標比例，寬螢幕上左右留黑 —— **預覽的構圖就是成品的構圖**。
+
+  `min-height:0` 是必要的而不是保險：flex 項目的預設 `min-height` 是 `auto`，也就是「不
+  准縮到比內容小」，而一個 1080×1920 的 canvas 的「內容」就是 1920px 高 —— 少了這一行，
+  畫布會把 body 撐出捲軸，然後 `max-height:100%` 對著一個已經變高的容器算，永遠夾不住。
+*/
+#wfStageWrap{
+  flex:1 1 auto; min-height:0;
+  display:flex; align-items:center; justify-content:center;
+  padding:12px; background:var(--bg);
+}
+#wfStage{
+  display:block; max-height:100%; max-width:100%;
+  min-height:0;
+  border-radius:6px; background:#04060f;
+  box-shadow:0 6px 34px rgba(0,0,0,.55);
+}
+
+/* 錯誤與說明。放在畫布下面，兩者都是 `flex:0 0 auto` —— 錯誤訊息出現時畫布會縮一點點，
+   那是刻意的：訊息蓋在畫面上更糟（它可能兩行，而畫布正在動）。 */
+#wfFoot{
+  flex:0 0 auto; padding:0 18px 10px;
+  display:flex; flex-direction:column; align-items:center; gap:4px;
+}
+#wfErr{color:var(--warn); font-size:12px; text-align:center; max-width:640px}
+#wfHint{color:var(--dimmer); font-size:11px; text-align:center; max-width:560px; line-height:1.7}
+
+/* ---------- 外觀對話框 ---------- */
+
+/*
+  兩組各自一疊，跟編輯器每個對話框的 .tgroup 同構。
+
+  **680 而不是編輯器慣用的 560**：目前特效有四項，而 560 的卡片一列只放得下三個 ——
+  第四個會自己掉到第二列去，卡片憑空高一截而右邊空一大塊。680 讓四項剛好一列。
+
+  **`max-height` ＋ `overflow-y` 不是為了未來預留，現在就需要了**：手機上選項變成兩欄，
+  卡片高度約 760px，而 iPhone SE 那類 667px 高的螢幕會把「完成」整顆切掉 —— 而 `.modal`
+  的 `place-items:center` 底下**連捲都捲不到**。編輯器每個對話框都比這個矮，所以那邊沒有
+  現成的規則可以借。
+
+  這裡原本寫著「未來樣式加到十種時，這一行就是它需要的全部」。**那句話是錯的**：樣式真的
+  加到十一種之後，光靠捲動的代價是「看不見的那幾排縮圖照樣每幀重畫」（見 video.js 的
+  `thumbFrame`），所以最後是加了分頁而不是靠捲。`max-height` 仍然留著兜底 —— 手機兩欄時
+  光是音符那一頁就有六排。
+
+  **680 在分頁之後仍然是對的**：落鍵特效那一頁還是四項一列，而音符那一頁在 680 底下剛好
+  四欄 × 三排。
+
+  ─── 卡片高度會隨分頁變 ───
+
+  音符頁三排、特效頁一排，差兩百多像素。`#saveBox` 那組分頁用 grid 疊圖把高度鎖成兩頁的
+  最大值，**這裡刻意不學** —— 那邊兩頁高度只差幾十像素，鎖住是為了消掉抖動；這裡鎖住的
+  意思是特效頁有一大半是空白，那比收合難看。`.modal` 的 `place-items:center` 會讓卡片從
+  上下同時收合，看起來是「這一頁比較短」，不是「版面壞了」。
+*/
+/* max-height 是 **dvh 不是 vh**：iOS Safari 的 100vh 解析成「網址列縮起來時」的大視窗高
+   度，iPhone SE 上約 650px 而實際可見只有約 550px —— 88vh 算出來 572px，還是比可見區高。
+   這條的權重（1,0,1）壓得過 editor.css 共用的 `.modal .card`（0,2,0），所以它**收不到**
+   那邊的天花板，得自己講對。理由詳見 editor.css 的 `.modal .card`。 */
+#lookBox .card{width:min(680px,92vw); max-height:88dvh; overflow-y:auto}
+#lookBox .tgroup{display:flex; flex-direction:column; gap:8px}
+/* 環境音框。**沒有縮圖**：它選的是聲音，而聲音的預覽就是放出來聽 —— 所以這個框比外觀框
+   窄得多，寬度由內容決定。兩列的 label 同寬，控制項左緣才對得齊。 */
+#envBox .card{max-width:26rem}
+#envBox .erow{display:flex; align-items:center; gap:10px; font-size:13px}
+#envBox .erow label{min-width:5em; color:var(--dim)}
+#envBox .erow select,
+#envBox .erow input[type=range]{flex:1; min-width:0}
+#envAmtValue{font-family:var(--mono); min-width:3.4em; text-align:right; color:var(--dim)}
+#envNote{margin:0; font-size:12px; color:var(--dim); min-height:1.2em}
+
+/*
+  分頁列。**宣告跟 editor.css 的 `#saveBox .tabrow` / `.stab` 逐字相同，但選擇器借不到**
+  —— 那一組是 `#saveBox` 開頭的，而這一頁雖然整份載入 editor.css，`#lookBox` 吃不到。這
+  跟本檔開頭講的工具列是同一道牆：與其把 editor.css 的選擇器放寬到會連帶影響編輯器，不如
+  在這裡再寫一次。**代價一樣要記著**：改編輯器那一組的顏色或字級時，記得回來看一眼這裡。
+
+  做成底線而不是實心分頁的理由也照抄那邊：這個框裡已經有很多框線，再多一組分頁的外框會讓
+  版面糊掉。
+*/
+#lookBox .tabrow{
+  display:flex; gap:2px;
+  border-bottom:1px solid var(--line); margin-bottom:3px;
+}
+#lookBox .stab{
+  background:none; border:0; border-bottom:2px solid transparent;
+  margin-bottom:-1px; padding:7px 14px; cursor:pointer;
+  font-size:12px; color:var(--dimmer); font-family:inherit;
+}
+#lookBox .stab:hover{color:var(--dim)}
+#lookBox .stab.on{color:var(--txt); border-bottom-color:var(--t1)}
+#lookBox .stab:focus-visible{outline:2px solid var(--t1); outline-offset:-2px}
+
+/*
+  ─── 軌道顏色那一頁 ───
+
+  六列「軌名 ＋ 下拉 ＋ 色塊」。**一軌一列，不排兩欄** —— 由上往下讀就是軌序，跟編輯器軌道
+  分頁的排法一致；兩欄會逼讀者先判斷是「先左右」還是「先上下」，而軌序在這裡是有意義的資
+  訊，不是任意排列。
+
+  grid 開在**容器**上而不是每一列上：開在列上的話每一列各自是一個 grid，六個下拉的左緣就
+  對不齊 —— 而軌名的長度在四個語言底下差很多（「主旋律」三個字，"Melody" 六個）。
+*/
+#lookBox .cols{
+  display:grid; grid-template-columns:auto 1fr;
+  gap:6px 8px; align-items:center;
+}
+#lookBox .cols label{font-size:12px; color:var(--dim); text-transform:none; letter-spacing:0}
+
+/*
+  看起來是下拉，實際上是一顆開色票格的按鈕。**原生 `<select>` 換掉的理由是它的 `<option>`
+  顯示不了顏色** —— 各家瀏覽器對 option 背景色的支援差很多，深色模式下更糟，於是選色變成
+  「照著名字盲選」。做成按鈕之後，收合時看得到目前的顏色，展開時整片色票一起看。
+
+  三角形只是外觀。使用者不需要知道它開的是同一塊面板裡的一格而不是原生選單 —— 他要知道的
+  是「按下去有東西可以選」。
+*/
+#lookBox .cols .pickc{
+  display:flex; align-items:center; gap:8px;
+  width:100%; padding:6px 8px; cursor:pointer; text-align:left;
+  background:var(--panel2); border:1px solid var(--line); border-radius:3px;
+  font-size:12px; color:var(--txt); font-family:inherit;
+  transition:border-color .15s;
+}
+#lookBox .cols .pickc:hover{border-color:var(--t2)}
+#lookBox .cols .pickc:focus-visible{outline:2px solid var(--t1); outline-offset:1px}
+#lookBox .cols .pickc > span{flex:1 1 auto}
+#lookBox .cols .pickc::after{content:"▾"; color:var(--dimmer); font-size:10px}
+
+/*
+  色塊。**下拉裡的選項標的是「第 N 軌原色」而不是顏色名**，所以「到底是什麼顏色」完全靠這
+  一格回答 —— 它不是裝飾，拿掉的話那一列就只剩下一個指向別的軌的編號。
+
+  `--c` 由 JS 用 `style.setProperty` 設，跟 `mixstage.js` 擺軌道色是同一招。
+*/
+#lookBox .sw{
+  flex:0 0 auto; width:16px; height:16px; border-radius:2px;
+  border:1px solid var(--line); background:var(--c, #888);
+}
+
+/*
+  色票格：15 色由左至右、由上而下排一片。
+
+  `auto-fit` ＋ `minmax` 跟樣式那一排同一招，理由也一樣 —— 調色盤未來會加顏色，寫死欄數的話
+  加到第 16 個就要回來改 CSS，而忘記改的症狀是「最後一格擠成一條」。680px 底下是五欄，15 色
+  剛好三排。
+
+  格子的外觀**逐字比照 `.pick`**（樣式與特效那兩排的選項）：同樣的邊框、同樣的 `.on` 選中態、
+  同樣的色塊在上文字在下。三頁的「選一個」長得一樣，使用者只要學一次。
+*/
+#lookBox .cgrid{display:flex; flex-direction:column; gap:8px}
+#lookBox .cback{
+  align-self:flex-start; background:none; border:0; padding:2px 0;
+  font-size:12px; color:var(--dim); cursor:pointer; font-family:inherit;
+}
+#lookBox .cback:hover{color:var(--txt)}
+#lookBox .cback:focus-visible{outline:2px solid var(--t1); outline-offset:1px}
+#lookBox .swatches{
+  display:grid; grid-template-columns:repeat(auto-fit,minmax(104px,1fr)); gap:6px;
+}
+#lookBox .swatches button{
+  display:flex; flex-direction:column; padding:0; overflow:hidden; cursor:pointer;
+  background:var(--panel2); border:1px solid var(--line); border-radius:3px;
+  color:var(--dim); font-size:11px; font-family:inherit;
+  transition:border-color .15s,color .15s;
+}
+#lookBox .swatches button:not(.on):hover{border-color:var(--t2); color:var(--txt)}
+#lookBox .swatches button.on{border-color:var(--sel); color:#fff; background:var(--sel)}
+#lookBox .swatches button:focus-visible{outline:2px solid var(--t1); outline-offset:1px}
+#lookBox .swatches i{display:block; height:34px; background:var(--c, #888)}
+#lookBox .swatches span{padding:5px 4px; text-align:center}
+
+/*
+  恢復預設。刻意**不用 `.act`** —— 那個 class 會讓它跟「完成」長得一模一樣，而這兩顆的份量
+  差很遠：一顆是離開對話框，一顆是丟掉六個選擇。做成不起眼的文字按鈕，找得到但不會誤按。
+*/
+#lookBox #lookReset{
+  align-self:flex-end; background:none; border:0; padding:4px 2px;
+  font-size:11px; color:var(--dimmer); cursor:pointer; font-family:inherit;
+  text-decoration:underline; text-underline-offset:3px;
+}
+#lookBox #lookReset:hover{color:var(--dim)}
+#lookBox #lookReset:focus-visible{outline:2px solid var(--t1); outline-offset:1px}
+
+/*
+  選項是一排縮圖。`auto-fit` ＋ `minmax` 而不是寫死欄數：**未來會再加樣式**（見
+  `wfstyles.js` 的檔頭），寫死的話加到第五種就要回來改 CSS，而忘記改的症狀是
+  「最後一個選項擠成一條」。140 是「還看得出三種畫法差在哪」的下限。
+*/
+#lookBox .picks{
+  display:grid; grid-template-columns:repeat(auto-fit,minmax(140px,1fr));
+  gap:8px;
+}
+#lookBox .pick{
+  display:flex; flex-direction:column; gap:0;
+  padding:0; overflow:hidden;
+  background:var(--panel2); border:1px solid var(--line); border-radius:3px;
+  color:var(--dim); font-size:11px; cursor:pointer;
+  transition:border-color .15s,color .15s;
+}
+#lookBox .pick:not(.on):hover{border-color:var(--t2); color:var(--txt)}
+#lookBox .pick.on{border-color:var(--sel); color:#fff; background:var(--sel)}
+#lookBox .pick:focus-visible{outline:2px solid var(--t1); outline-offset:1px}
+/* 縮圖。**寬高比寫死在 CSS**，而 canvas 的 width/height 由 JS 按 DPR 設 —— 兩者不同步的
+   話畫面會被拉伸，而那在「用來判斷樣式長相」的縮圖上是最不能接受的一種錯。 */
+#lookBox .pick canvas{
+  display:block; width:100%; aspect-ratio:10 / 7;
+  background:#04060f; border-bottom:1px solid var(--line);
+}
+#lookBox .pick span{padding:5px 4px; text-align:center}
+
+/* ---------- 403／本機交棒失效 ---------- */
+
+.pagemsg{
+  margin:auto; text-align:center;
+  display:flex; flex-direction:column; gap:12px; padding:24px;
+}
+.pagemsg h2{margin:0; font-family:var(--display); font-weight:400; font-size:19px}
+.pagemsg p{margin:0; color:var(--dim); font-size:12px}
+/*
+  **這條是必要的，不是裝飾。** `editor.css` 沒有裸 `a` 的規則（它的連結都掛在
+  `.drawer .thanks a`、`.status .legal a` 這種選擇器上），而這一頁本來自己帶著
+  `a{color:#9db8ff}` —— 那份 inline style 撤掉之後，403 上唯一那個連結就掉回瀏覽器預設的
+  藍／紫，配深色底幾乎讀不出來。而 403 是**只有出錯的人才看得到的畫面**，平常不會有人經過。
+
+  樣式抄 `.drawer .thanks a`（--t2 ＋ 滑過才長出底線），那是這個站的散文連結長相。
+*/
+.pagemsg a{
+  color:var(--t2); text-decoration:none;
+  border-bottom:1px solid transparent; transition:border-color .15s;
+}
+.pagemsg a:hover{border-bottom-color:var(--t2)}
+.pagemsg a:focus-visible{outline:2px solid var(--t1); outline-offset:2px; border-radius:2px}
+
+/* ---------- 窄畫面 ---------- */
+
+@media (max-width:640px){
+  header{padding:8px 12px}
+  /* 標題在手機上收成一行小字：這一頁的主角是畫布，而直式的 9:16 需要每一個像素。
+     `.sub` 整個收掉 —— 那行英文副標在 12px 寬的地方只會換行成兩列。 */
+  header h1{font-size:19px}
+  header .sub{display:none}
+  #wfbar{padding:8px 12px; gap:6px}
+  #wfStageWrap{padding:6px}
+  #wfFoot{padding:0 12px 8px}
+  /* 說明文字在窄畫面收掉 —— 它是第一次來的人才需要的，而它會吃掉兩行畫布高度。
+     錯誤訊息**不收**：那是非看不可的。 */
+  #wfHint{display:none}
+}
