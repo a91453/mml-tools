@@ -85,7 +85,10 @@ export async function bootstrapStudio({ lock, trustZip, fetchArchive, cacheRoot 
     need((await regularFiles(trustRoot)).join('\n') === Object.keys(lock.trust.files).sort().join('\n'), 'Trust bundle file set mismatch');
     for (const [path, sha] of Object.entries(lock.trust.files)) need(hash(await readFile(resolve(trustRoot, path))) === sha, `Trusted source mismatch: ${path}`);
     log('TRUSTED_SOURCE_VERIFIED', { sourceSha: lock.trust.sourceSha, sha256: lock.trust.sha256 });
-    const { verifyStudioArtifact } = await import(pathToFileURL(resolve(trustRoot, 'scripts/verify-studio-artifact.mjs')).href);
+    // A separate resolved URL prevents Railway Function dependency discovery
+    // from misreading the local trusted path as an npm package named scripts.
+    const trustedEntryUrl = pathToFileURL(resolve(trustRoot, 'scripts', 'verify-studio-artifact.mjs')).href;
+    const { verifyStudioArtifact } = await import(trustedEntryUrl);
     async function verify(dir) {
       need((await lstat(dir)).isDirectory(), 'Artifact root is not a real directory');
       await regularFiles(dir); // Reject symlinks before repository traversal.
