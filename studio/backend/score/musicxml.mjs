@@ -8,7 +8,9 @@ import {
   createCanonicalMeterEvent,
   createCanonicalProject,
 } from '../canonical/index.mjs';
+import { createTimingProvenance } from '../canonical/timing.mjs';
 
+const MUSICXML_ADAPTER = 'studio/backend/score/musicxml.mjs';
 const MAX_XML_CHARS = 20_000_000;
 const STEP_TO_SEMITONE = Object.freeze({ C: 0, D: 2, E: 4, F: 5, G: 7, A: 9, B: 11 });
 const BEAT_UNIT_QUARTERS = Object.freeze({
@@ -366,6 +368,22 @@ export function ingestMusicXML(xml, options = {}) {
             dots: dotCount,
             durationDivisions: durationValue,
             divisions,
+            // The duration is read literally from <duration> against the
+            // <divisions> in force, so this event's length is notated. The onset
+            // is positional — accumulated through the measure cursor, backup /
+            // forward and measure extents — which is why `unit` reports the
+            // quantum the file encodes on rather than an onset claim.
+            //
+            // No artifact attestation is emitted: this adapter only reads, it
+            // never creates a meaning-free value by construction.
+            timing: createTimingProvenance({
+              origin: 'source-notated',
+              adapter: MUSICXML_ADAPTER,
+              // <divisions> counts divisions per quarter note, so one division
+              // is 1/(4 × divisions) of a whole note.
+              unit: new F(1, divisions).div(4),
+              writtenForm: type ? `${type}${'.'.repeat(dotCount)}` : null,
+            }),
           },
         };
 
