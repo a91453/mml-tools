@@ -17,7 +17,7 @@ import * as fixtures from './fixtures/midi-fixtures.mjs';
 // studio/browser-tests, against Chromium and WebKit.
 
 const settings = { meterText: '0 4/4', recording: 'synthetic', offset: '0', end: '2', audioRequired: 'no', preview: 'none' };
-const asset = (name, bytes, id = 'midi') => intakeMidi({ name, bytes, id });
+const asset = (name, bytes) => intakeMidi({ name, bytes });
 const nodeDigest = bytes => createHash('sha256').update(Buffer.from(bytes)).digest('hex');
 const workspaceWith = record => ({ ...newWorkspace(), title: 'fixture', settings, assets: { candidate: record } });
 
@@ -26,7 +26,7 @@ const persist = workspace => ({ ...structuredClone(workspace), saveToken: 'token
 
 test('a stored workspace keeps the MIDI bytes byte-for-byte', () => {
   const bytes = fixtures.format1();
-  const workspace = workspaceWith(asset('song.mid', bytes, 'srcA'));
+  const workspace = workspaceWith(asset('song.mid', bytes));
   const restored = persist(workspace);
 
   const record = restored.assets.candidate;
@@ -39,7 +39,7 @@ test('a stored workspace keeps the MIDI bytes byte-for-byte', () => {
 
 test('a JSON backup keeps them too, and survives a round trip through text', () => {
   const bytes = fixtures.percussion();
-  const workspace = workspaceWith(asset('drums.mid', bytes, 'srcA'));
+  const workspace = workspaceWith(asset('drums.mid', bytes));
   const backup = JSON.stringify({ ...workspace, canonical: { canonical_version: '2026-09-13-v1' } });
   const record = JSON.parse(backup).assets.candidate;
   assert.deepEqual([...decodeSourceBytes(record.source.bytesBase64)], [...bytes]);
@@ -50,7 +50,7 @@ test('a JSON backup keeps them too, and survives a round trip through text', () 
 });
 
 test('reloading re-derives the analysis from the stored bytes and gets the same answer', () => {
-  const workspace = workspaceWith(asset('six.mid', fixtures.sixSourceVoices(), 'six'));
+  const workspace = workspaceWith(asset('six.mid', fixtures.sixSourceVoices()));
   const before = analyzeWorkspace(workspace);
   const after = analyzeWorkspace(persist(workspace));
 
@@ -62,7 +62,7 @@ test('reloading re-derives the analysis from the stored bytes and gets the same 
 });
 
 test('a stored record whose bytes no longer parse is refused, not analysed anyway', () => {
-  const record = persist(workspaceWith(asset('zero.mid', fixtures.format0(), 'zero'))).assets.candidate;
+  const record = persist(workspaceWith(asset('zero.mid', fixtures.format0()))).assets.candidate;
   // Internally consistent: the stored bytes, the stored length and both digests
   // all agree. They simply are not a MIDI file any more. A digest check alone
   // clears this record; re-reading the bytes through the decoder does not.
@@ -84,20 +84,20 @@ test('a stored record whose bytes no longer parse is refused, not analysed anywa
 // ─── revision safety ────────────────────────────────────────────────────────
 
 test('the same filename with different bytes is a different source', () => {
-  const first = asset('song.mid', fixtures.format0(), 'a');
-  const second = asset('song.mid', fixtures.format1(), 'b');
+  const first = asset('song.mid', fixtures.format0());
+  const second = asset('song.mid', fixtures.format1());
   assert.equal(first.name, second.name);
   assert.notEqual(first.source.sha256, second.source.sha256);
   assert.notEqual(first.source.byteLength, second.source.byteLength);
   assert.notEqual(first.project.events.length, second.project.events.length);
 
   // And the same bytes under a different name are the same source identity.
-  const renamed = asset('renamed.mid', fixtures.format0(), 'a');
+  const renamed = asset('renamed.mid', fixtures.format0());
   assert.equal(renamed.source.sha256, first.source.sha256);
 });
 
 test('replacing the source drops every review, decision and acceptance it was judged under', () => {
-  let workspace = workspaceWith(asset('song.mid', fixtures.format0(), 'a'));
+  let workspace = workspaceWith(asset('song.mid', fixtures.format0()));
   workspace.harmonyDecisions = [{ id: 'd1', revision: 0 }];
   workspace.core3Approvals = [{ eventId: 'e1', revision: 0 }];
   workspace.leadEvidence = [{ eventId: 'e1', revision: 0, sourceIdentity: { sourceId: 'a', sourceEventId: 'track:0/event:0' } }];
@@ -107,7 +107,7 @@ test('replacing the source drops every review, decision and acceptance it was ju
 
   // Exactly the transaction putMidiSource performs: invalidate, then install.
   const next = invalidate(workspace);
-  next.assets.candidate = asset('song.mid', fixtures.format1(), 'b');
+  next.assets.candidate = asset('song.mid', fixtures.format1());
 
   assert.equal(next.revision, workspace.revision + 1);
   assert.deepEqual(next.reviews, {});
@@ -119,7 +119,7 @@ test('replacing the source drops every review, decision and acceptance it was ju
 });
 
 test('a review carried over at the old revision does not count for the new bytes', () => {
-  let workspace = workspaceWith(asset('song.mid', fixtures.format0(), 'a'));
+  let workspace = workspaceWith(asset('song.mid', fixtures.format0()));
   for (const name of REVIEW_NAMES) workspace = recordReview(workspace, name, 'reviewed', 'synthetic');
   const reviewedAt = workspace.revision;
 
@@ -127,7 +127,7 @@ test('a review carried over at the old revision does not count for the new bytes
   // corrupted store or a hand-edited backup could produce.
   const smuggled = structuredClone(workspace);
   smuggled.revision = reviewedAt + 1;
-  smuggled.assets.candidate = asset('song.mid', fixtures.format1(), 'b');
+  smuggled.assets.candidate = asset('song.mid', fixtures.format1());
 
   const report = analyzeWorkspace(smuggled);
   for (const name of REVIEW_NAMES) {
@@ -149,7 +149,7 @@ test('an accepted in-game record cannot survive a source replacement', () => {
   assert.equal(analyzeWorkspace(workspace).state, 'IN_GAME_ACCEPTED');
 
   const next = invalidate(workspace);
-  next.assets.candidate = asset('song.mid', fixtures.format0(), 'a');
+  next.assets.candidate = asset('song.mid', fixtures.format0());
   assert.equal(next.acceptance, null);
   assert.equal(analyzeWorkspace(next).state, 'CANDIDATE');
 });
@@ -173,7 +173,7 @@ test('a workspace stored before Raw MIDI existed still analyses unchanged', () =
 test('a backup of a mixed workspace restores every source type', () => {
   const mml = 'MML@t120o4c1,t120o3e1,t120o2c1,,,;';
   let workspace = { ...newWorkspace(), title: 'mixed', settings };
-  workspace.assets.candidate = asset('candidate.mid', fixtures.format1(), 'midi');
+  workspace.assets.candidate = asset('candidate.mid', fixtures.format1());
   workspace.assets.baseline = intake({ name: 'baseline.mml', content: mml, id: 'b', meterText: '0 4/4' });
   workspace.assets.previous = intake({ name: 'previous.mml', content: mml, id: 'p', meterText: '0 4/4' });
   for (const name of REVIEW_NAMES) workspace = recordReview(workspace, name, 'reviewed', 'synthetic');
@@ -193,14 +193,14 @@ test('a backup of a mixed workspace restores every source type', () => {
 });
 
 test('a backup missing its MIDI bytes is refused rather than restored empty', () => {
-  const workspace = workspaceWith(asset('song.mid', fixtures.format0(), 'a'));
+  const workspace = workspaceWith(asset('song.mid', fixtures.format0()));
   const stripped = JSON.parse(JSON.stringify(workspace));
   delete stripped.assets.candidate.source.bytesBase64;
   assert.throws(() => importWorkspace(JSON.stringify(stripped)), /MIDI source bytes are missing/);
 });
 
 test('a record claiming the MIDI format without a source block is a verdict, not a crash', () => {
-  const broken = { name: 'claims.mid', format: 'MIDI', project: asset('zero.mid', fixtures.format0(), 'zero').project, complete: true, warnings: [], errors: [], unsupported: [] };
+  const broken = { name: 'claims.mid', format: 'MIDI', project: asset('zero.mid', fixtures.format0()).project, complete: true, warnings: [], errors: [], unsupported: [] };
   const report = analyzeWorkspace(workspaceWith(broken));
   const entry = report.rawMidi[0];
   assert.equal(entry.integrity.verified, false);

@@ -1,7 +1,8 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { intakeMidi, newWorkspace, analyzeWorkspace, recordReview, REVIEW_NAMES } from '../web/model.mjs';
-import { RAW_MIDI_PIPELINE, deriveArrangement } from '../web/midi-source.mjs';
+import { RAW_MIDI_PIPELINE, deriveArrangement, midiSourceId } from '../web/midi-source.mjs';
+import { sha256Hex } from '../backend/source/index.mjs';
 import { splitProjectSourceVoices, suggestRoleCandidates, CORE3_ROLE_NAMES, ENRICHMENT_ROLE_NAMES, SIX_ROLES } from '../backend/arrangement/index.mjs';
 import { mergeCanonicalProjects } from '../backend/canonical/merge.mjs';
 import { analyzeProjectMicroTiming } from '../backend/canonical/micro-timing.mjs';
@@ -15,9 +16,13 @@ import * as fixtures from './fixtures/midi-fixtures.mjs';
 // candidate into the source project, and every protection merged in PR #19
 // still holds when the provenance underneath is a raw MIDI file.
 
-const asset = (name, bytes, id = 'midi') => intakeMidi({ name, bytes, id });
-const arrangementFor = (name, bytes, id) => {
-  const record = asset(name, bytes, id);
+const asset = (name, bytes) => intakeMidi({ name, bytes });
+// Expectations about provenance are derived from the bytes, never typed in.
+// Hand-written ids were what let a random UUID reach Canonical identity
+// unnoticed, because every test supplied its own.
+const sourceIdOf = bytes => midiSourceId(sha256Hex(bytes));
+const arrangementFor = (name, bytes) => {
+  const record = asset(name, bytes);
   return { record, arrangement: deriveArrangement(record.project, { sourceSha256: record.source.sha256 }) };
 };
 
@@ -27,7 +32,7 @@ const workspaceWith = record => ({ ...newWorkspace(), title: 'fixture', settings
 // ─── the Web caller adds nothing ────────────────────────────────────────────
 
 test('the Web integration calls G11-C with the project and no caller options', () => {
-  const { record, arrangement } = arrangementFor('six.mid', fixtures.sixSourceVoices(), 'six');
+  const { record, arrangement } = arrangementFor('six.mid', fixtures.sixSourceVoices());
   // If any override, evidence entry, duplication or section were injected on
   // the way through, this would differ.
   assert.equal(JSON.stringify(arrangement.candidate), JSON.stringify(suggestRoleCandidates(record.project)));
@@ -36,7 +41,7 @@ test('the Web integration calls G11-C with the project and no caller options', (
 });
 
 test('deriving the arrangement leaves the Source-Faithful project untouched', () => {
-  const record = asset('six.mid', fixtures.sixSourceVoices(), 'six');
+  const record = asset('six.mid', fixtures.sixSourceVoices());
   const before = JSON.stringify(record.project);
   deriveArrangement(record.project, { sourceSha256: record.source.sha256 });
   assert.equal(JSON.stringify(record.project), before);
@@ -54,7 +59,7 @@ test('G11-B loses and duplicates nothing on the way through the Web path', () =>
     ['six', fixtures.sixSourceVoices()],
     ['rational', fixtures.rationalTiming()],
   ]) {
-    const { record, arrangement } = arrangementFor(`${name}.mid`, bytes, name);
+    const { record, arrangement } = arrangementFor(`${name}.mid`, bytes);
     const split = arrangement.voiceSplit;
     const sourceIds = record.project.events.map(event => event.id).sort();
 
@@ -71,7 +76,7 @@ test('G11-B loses and duplicates nothing on the way through the Web path', () =>
 });
 
 test('G11-B lanes are a pure function of the source event set, not of array order', () => {
-  const record = asset('six.mid', fixtures.sixSourceVoices(), 'six');
+  const record = asset('six.mid', fixtures.sixSourceVoices());
   const canonical = JSON.stringify(deriveArrangement(record.project, { sourceSha256: record.source.sha256 }).voiceSplit);
 
   // A deterministic shuffle: browser enumeration order, a Worker's transfer or
@@ -88,14 +93,14 @@ test('G11-B lanes are a pure function of the source event set, not of array orde
 });
 
 test('polyphony is decomposed and a same-pitch restrike stays two lanes', () => {
-  const overlap = arrangementFor('overlap.mid', fixtures.overlappingSamePitch(), 'ov').arrangement;
+  const overlap = arrangementFor('overlap.mid', fixtures.overlappingSamePitch()).arrangement;
   assert.equal(overlap.voiceSplit.maxPolyphony, 2);
   assert.equal(overlap.voiceSplit.laneCount, 2, 'the second strike is a second lane, never a merge');
   assert.equal(overlap.voiceSplit.groups[0].lanes.reduce((total, lane) => total + lane.noteCount, 0), 2);
 });
 
 test('six concurrent source voices are all preserved and each stays explainable', () => {
-  const { record, arrangement } = arrangementFor('six.mid', fixtures.sixSourceVoices(), 'six');
+  const { record, arrangement } = arrangementFor('six.mid', fixtures.sixSourceVoices());
   assert.equal(arrangement.voiceSplit.sourceVoiceCount, 6);
   assert.equal(arrangement.voiceSplit.laneCount, 6, 'no source voice is dropped before role reduction');
 
@@ -115,9 +120,9 @@ test('six concurrent source voices are all preserved and each stays explainable'
 });
 
 test('each lane keeps the provenance of the events it carries', () => {
-  const { record, arrangement } = arrangementFor('format1.mid', fixtures.format1(), 'srcA');
+  const { record, arrangement } = arrangementFor('format1.mid', fixtures.format1());
   for (const lane of arrangement.candidate.lanes) {
-    assert.deepEqual([...lane.sourceIds], ['srcA']);
+    assert.deepEqual([...lane.sourceIds], [sourceIdOf(fixtures.format1())]);
     assert.ok(lane.sourceEventIds.length > 0);
     for (const eventId of lane.eventIds) {
       const event = record.project.events.find(item => item.id === eventId);
@@ -130,7 +135,7 @@ test('each lane keeps the provenance of the events it carries', () => {
 // ─── G11-C is a candidate, never an accepted arrangement ────────────────────
 
 test('the candidate declares what it is and certifies nothing', () => {
-  const { arrangement } = arrangementFor('six.mid', fixtures.sixSourceVoices(), 'six');
+  const { arrangement } = arrangementFor('six.mid', fixtures.sixSourceVoices());
   assert.equal(arrangement.stageKind, 'ARRANGEMENT_CANDIDATE');
   assert.equal(arrangement.accepted, false);
   assert.deepEqual(arrangement.certifiesGates, []);
@@ -139,7 +144,7 @@ test('the candidate declares what it is and certifies nothing', () => {
 });
 
 test('a Raw MIDI candidate never becomes a VALIDATED workspace on its own', () => {
-  let workspace = workspaceWith(asset('six.mid', fixtures.sixSourceVoices(), 'six'));
+  let workspace = workspaceWith(asset('six.mid', fixtures.sixSourceVoices()));
   const first = analyzeWorkspace(workspace);
   assert.equal(first.state, 'CANDIDATE');
   const entry = first.rawMidi[0];
@@ -157,7 +162,7 @@ test('a Raw MIDI candidate never becomes a VALIDATED workspace on its own', () =
 });
 
 test('the analysis re-derives the candidate and refuses a stored one', () => {
-  const record = asset('format1.mid', fixtures.format1(), 'srcA');
+  const record = asset('format1.mid', fixtures.format1());
   const workspace = workspaceWith(record);
   const fresh = analyzeWorkspace(workspace).rawMidi[0];
   assert.equal(fresh.arrangementSource, 'RECOMPUTED_FROM_SOURCE_PROJECT');
@@ -177,7 +182,7 @@ test('the analysis re-derives the candidate and refuses a stored one', () => {
 });
 
 test('an arrangement bound to other bytes or other events is reported stale', () => {
-  const record = asset('format1.mid', fixtures.format1(), 'srcA');
+  const record = asset('format1.mid', fixtures.format1());
   const arrangement = deriveArrangement(record.project, { sourceSha256: record.source.sha256 });
   for (const [mutate, reason] of [
     [copy => { copy.arrangement.derivation.sourceSha256 = '0'.repeat(64); }, 'ARRANGEMENT_SOURCE_BYTES_CHANGED'],
@@ -199,8 +204,8 @@ const LEAD_VOICE = 'track:1/channel:0';
 const leadEvidence = sourceIds => [{ sourceVoice: LEAD_VOICE, role: 'Melody', citation: 'synthetic score citation, bars 1-6', ...(sourceIds ? { sourceIds } : {}) }];
 
 test('a cited trusted symbolic Lead over MIDI material is source-supported', () => {
-  const record = asset('six.mid', fixtures.sixSourceVoices(), 'six');
-  const candidate = suggestRoleCandidates(record.project, { sourceRoleEvidence: leadEvidence(['six']) });
+  const record = asset('six.mid', fixtures.sixSourceVoices());
+  const candidate = suggestRoleCandidates(record.project, { sourceRoleEvidence: leadEvidence([sourceIdOf(fixtures.sixSourceVoices())]) });
   assert.equal(candidate.roles.Melody.status, 'ASSIGNED');
   assert.equal(candidate.roles.Melody.evidenceTier, 1);
   assert.equal(candidate.roles.Melody.evidenceTierName, 'DECLARED_SOURCE_ROLE');
@@ -209,8 +214,8 @@ test('a cited trusted symbolic Lead over MIDI material is source-supported', () 
 });
 
 test('a caller override cannot demote that Lead, and no substitute is invented', () => {
-  const record = asset('six.mid', fixtures.sixSourceVoices(), 'six');
-  const evidence = leadEvidence(['six']);
+  const record = asset('six.mid', fixtures.sixSourceVoices());
+  const evidence = leadEvidence([sourceIdOf(fixtures.sixSourceVoices())]);
   const leadLane = suggestRoleCandidates(record.project, { sourceRoleEvidence: evidence }).lanes.find(item => item.sourceVoice === LEAD_VOICE);
 
   const demoted = suggestRoleCandidates(record.project, { sourceRoleEvidence: evidence, roleOverrides: { [leadLane.id]: 'Chord3' } });
@@ -229,8 +234,8 @@ test('a caller override cannot demote that Lead, and no substitute is invented',
 });
 
 test('pinning another lane to Melody does not resolve the demotion it was meant to hide', () => {
-  const record = asset('six.mid', fixtures.sixSourceVoices(), 'six');
-  const evidence = leadEvidence(['six']);
+  const record = asset('six.mid', fixtures.sixSourceVoices());
+  const evidence = leadEvidence([sourceIdOf(fixtures.sixSourceVoices())]);
   const base = suggestRoleCandidates(record.project, { sourceRoleEvidence: evidence });
   const leadLane = base.lanes.find(item => item.sourceVoice === LEAD_VOICE);
   const substitute = base.lanes.find(item => item.sourceVoice !== LEAD_VOICE);
@@ -250,12 +255,12 @@ test('pinning another lane to Melody does not resolve the demotion it was meant 
 });
 
 test('a citation covering some events of a lane is not whole-lane authority', () => {
-  const record = asset('six.mid', fixtures.sixSourceVoices(), 'six');
+  const record = asset('six.mid', fixtures.sixSourceVoices());
   const lane = suggestRoleCandidates(record.project).lanes.find(item => item.sourceVoice === LEAD_VOICE);
   assert.ok(lane.eventIds.length >= 2);
 
   const partial = suggestRoleCandidates(record.project, {
-    sourceRoleEvidence: [{ eventIds: [lane.eventIds[0]], role: 'Melody', citation: 'covers one event only', sourceIds: ['six'] }],
+    sourceRoleEvidence: [{ eventIds: [lane.eventIds[0]], role: 'Melody', citation: 'covers one event only', sourceIds: [sourceIdOf(fixtures.sixSourceVoices())] }],
   });
   const partialLane = partial.lanes.find(item => item.sourceVoice === LEAD_VOICE);
   assert.notEqual(partialLane.roleSupport.Melody.tier, 1, 'partial coverage cannot declare the whole lane');
@@ -264,12 +269,15 @@ test('a citation covering some events of a lane is not whole-lane authority', ()
 });
 
 test('a sourceVoice label shared by two MIDI sources grants no authority', () => {
-  // Two different files, each with a track:1/channel:0. The label is not
-  // provenance, so a voice-only citation over it is withheld from both.
-  const first = asset('first.mid', fixtures.format1(), 'srcA');
-  const second = asset('second.mid', fixtures.format1(), 'srcB');
+  // Two genuinely different files, each with a track:1/channel:0. The label is
+  // not provenance, so a voice-only citation over it is withheld from both.
+  // They must differ in bytes: identical bytes are one source, not two, now
+  // that identity is content-derived.
+  const first = asset('first.mid', fixtures.format1());
+  const second = asset('second.mid', fixtures.format1Variant());
+  assert.notEqual(first.source.id, second.source.id, 'the fixture must supply two distinct sources');
   const merged = mergeCanonicalProjects([first.project, second.project], { id: 'merged', title: 'merged' });
-  assert.deepEqual(merged.sources.map(item => item.id), ['srcA', 'srcB']);
+  assert.deepEqual(merged.sources.map(item => item.id), [first.source.id, second.source.id]);
 
   const ambiguous = suggestRoleCandidates(merged, { sourceRoleEvidence: leadEvidence(null) });
   assert.equal(ambiguous.roles.Melody.status, 'EMPTY');
@@ -277,25 +285,25 @@ test('a sourceVoice label shared by two MIDI sources grants no authority', () =>
   for (const lane of ambiguous.lanes) assert.notEqual(lane.roleSupport.Melody.tier, 1);
 
   // Naming the source that made the claim resolves it, and only for that source.
-  const scoped = suggestRoleCandidates(merged, { sourceRoleEvidence: leadEvidence(['srcA']) });
+  const scoped = suggestRoleCandidates(merged, { sourceRoleEvidence: leadEvidence([first.source.id]) });
   const declared = scoped.lanes.filter(lane => lane.roleSupport.Melody.tier === 1);
   assert.equal(declared.length, 1);
-  assert.deepEqual([...declared[0].sourceIds], ['srcA']);
+  assert.deepEqual([...declared[0].sourceIds], [first.source.id]);
 });
 
 test('selectors are conjunctive: a citation naming a source it does not own declares nothing', () => {
-  const record = asset('six.mid', fixtures.sixSourceVoices(), 'six');
+  const record = asset('six.mid', fixtures.sixSourceVoices());
   const wrongSource = suggestRoleCandidates(record.project, { sourceRoleEvidence: leadEvidence(['a-source-not-in-this-project']) });
   assert.equal(wrongSource.roles.Melody.status, 'EMPTY');
   assert.deepEqual([...wrongSource.roles.Melody.reasons], ['NO_LEAD_EVIDENCE']);
 
   const lane = suggestRoleCandidates(record.project).lanes.find(item => item.sourceVoice === LEAD_VOICE);
   const wrongLane = suggestRoleCandidates(record.project, {
-    sourceRoleEvidence: [{ sourceVoice: LEAD_VOICE, laneId: lane.id, role: 'Melody', citation: 'score', sourceIds: ['six'] }],
+    sourceRoleEvidence: [{ sourceVoice: LEAD_VOICE, laneId: lane.id, role: 'Melody', citation: 'score', sourceIds: [sourceIdOf(fixtures.sixSourceVoices())] }],
   });
   assert.equal(wrongLane.roles.Melody.evidenceTier, 1, 'every selector agreeing does declare');
   const contradictory = suggestRoleCandidates(record.project, {
-    sourceRoleEvidence: [{ sourceVoice: 'track:5/channel:4', laneId: lane.id, role: 'Melody', citation: 'score', sourceIds: ['six'] }],
+    sourceRoleEvidence: [{ sourceVoice: 'track:5/channel:4', laneId: lane.id, role: 'Melody', citation: 'score', sourceIds: [sourceIdOf(fixtures.sixSourceVoices())] }],
   });
   assert.equal(contradictory.roles.Melody.status, 'EMPTY', 'selectors that disagree declare nothing');
 });
@@ -303,7 +311,7 @@ test('selectors are conjunctive: a citation naming a source it does not own decl
 // ─── Core3 and Full6 ────────────────────────────────────────────────────────
 
 test('Core3 is one three-role unit with no ranking among its roles', () => {
-  const { arrangement } = arrangementFor('six.mid', fixtures.sixSourceVoices(), 'six');
+  const { arrangement } = arrangementFor('six.mid', fixtures.sixSourceVoices());
   const core3 = arrangement.candidate.core3;
   assert.deepEqual([...core3.architecture.roles], [...CORE3_ROLE_NAMES]);
   assert.equal(core3.architecture.allThreeRequiredForComplete, true);
@@ -315,7 +323,7 @@ test('Core3 is one three-role unit with no ranking among its roles', () => {
 });
 
 test('Chord3-Chord5 cannot repair an incomplete Core3', () => {
-  const record = asset('six.mid', fixtures.sixSourceVoices(), 'six');
+  const record = asset('six.mid', fixtures.sixSourceVoices());
   const laneIds = suggestRoleCandidates(record.project).lanes.map(lane => lane.id);
 
   // Fill every enrichment role. Core3 is still short of a Lead and a principal
@@ -344,7 +352,7 @@ test('Chord3-Chord5 cannot repair an incomplete Core3', () => {
 // ─── unsupported, percussion and overflow stay visible ──────────────────────
 
 test('percussion never reaches the candidate as pitched material and stays counted', () => {
-  const record = asset('drums.mid', fixtures.percussion(), 'drums');
+  const record = asset('drums.mid', fixtures.percussion());
   const workspace = workspaceWith(record);
   const entry = analyzeWorkspace(workspace).rawMidi[0];
 
@@ -363,7 +371,7 @@ test('percussion never reaches the candidate as pitched material and stays count
 });
 
 test('unsupported source material stays attached to the report, not dropped', () => {
-  const record = asset('after-eot.mid', fixtures.dataAfterEndOfTrack(), 'eot');
+  const record = asset('after-eot.mid', fixtures.dataAfterEndOfTrack());
   const entry = analyzeWorkspace(workspaceWith(record)).rawMidi[0];
   assert.equal(entry.complete, false);
   assert.ok(entry.unsupported.some(item => item.code === 'DATA_AFTER_END_OF_TRACK'));
@@ -387,7 +395,7 @@ const microTimingMidi = () => fixtures.buildMidi({
 });
 
 test('a sub-grid interval from Raw MIDI stays unresolved, never source-supported', () => {
-  const record = asset('micro.mid', microTimingMidi(), 'micro');
+  const record = asset('micro.mid', microTimingMidi());
   assert.deepEqual(record.project.events.map(event => event.start), ['0', '1/360', '1', '361/360']);
 
   const report = analyzeProjectMicroTiming(record.project);
@@ -405,7 +413,7 @@ test('a sub-grid interval from Raw MIDI stays unresolved, never source-supported
 });
 
 test('a suggested role is never written back into the source the gate reads', () => {
-  const record = asset('micro.mid', microTimingMidi(), 'micro');
+  const record = asset('micro.mid', microTimingMidi());
   const before = JSON.stringify(record.project);
   const entry = analyzeWorkspace(workspaceWith(record)).rawMidi[0];
   // Roles really were suggested -- so the source staying role-free below is a
@@ -419,14 +427,14 @@ test('a suggested role is never written back into the source the gate reads', ()
 
 test('identical bytes produce an identical candidate, twice', () => {
   const bytes = fixtures.sixSourceVoices();
-  const first = arrangementFor('six.mid', bytes, 'six');
-  const second = arrangementFor('six.mid', bytes, 'six');
+  const first = arrangementFor('six.mid', bytes);
+  const second = arrangementFor('six.mid', bytes);
   assert.equal(first.record.source.sha256, second.record.source.sha256);
   assert.equal(JSON.stringify(first.arrangement), JSON.stringify(second.arrangement));
 });
 
 test('a storage and Worker round trip does not change the candidate', () => {
-  const record = asset('six.mid', fixtures.sixSourceVoices(), 'six');
+  const record = asset('six.mid', fixtures.sixSourceVoices());
   const direct = deriveArrangement(record.project, { sourceSha256: record.source.sha256 });
   for (const transported of [structuredClone(record), JSON.parse(JSON.stringify(record))]) {
     const after = deriveArrangement(transported.project, { sourceSha256: transported.source.sha256 });
@@ -435,7 +443,7 @@ test('a storage and Worker round trip does not change the candidate', () => {
 });
 
 test('splitProjectSourceVoices and the report agree on lane membership', () => {
-  const record = asset('six.mid', fixtures.sixSourceVoices(), 'six');
+  const record = asset('six.mid', fixtures.sixSourceVoices());
   const direct = splitProjectSourceVoices(record.project);
   const reported = deriveArrangement(record.project, { sourceSha256: record.source.sha256 }).voiceSplit;
   assert.equal(reported.sourceVoiceCount, direct.length);

@@ -92,6 +92,28 @@ export const format1 = () => buildMidi({
   ],
 });
 
+// A second, genuinely different file laid out on the same tracks and channels
+// as `format1`. Two third-party arrangements of one piece look like this: the
+// voice labels collide while the bytes, and therefore the sources, do not.
+//
+// Its register sits a clear octave below `format1`. That is deliberate: merged
+// with `format1`, the two share a voice label, so G11-B decomposes them
+// together, and adjacent-slice matching is decided on semitone distance. A
+// near-unison variant ties that cost and lets the two sources interleave into
+// mixed-provenance lanes -- true to the algorithm, but it stops the fixture
+// from isolating the question a provenance test is asking.
+export const format1Variant = () => buildMidi({
+  format: 1,
+  division: PPQ,
+  tracks: [
+    buildTrack([[0, ...trackName('Conductor')], [0, ...setTempo(400000)], [0, ...timeSig(3, 2)]]),
+    buildTrack([[0, ...trackName('Melody')], [0, ...programChange(0, 0)],
+      ...notesToEntries([[0, 60, 0, PPQ], [0, 62, PPQ, PPQ * 2], [0, 64, PPQ * 2, PPQ * 3]])]),
+    buildTrack([[0, ...trackName('Accompaniment')], [0, ...programChange(1, 48)],
+      ...notesToEntries([[1, 36, 0, PPQ * 3], [1, 43, 0, PPQ * 3]])]),
+  ],
+});
+
 // A legal SMF text meta event whose payload is whitespace. PR #20 fixed the
 // defect where this destroyed an otherwise complete ingest.
 export const blankTrackName = () => buildMidi({

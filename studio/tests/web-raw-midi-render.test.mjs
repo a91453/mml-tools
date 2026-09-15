@@ -24,8 +24,8 @@ slice('const $ ', 'const roles =');
 slice('const bytesLabel', 'function diffTable');
 
 const settings = { meterText: '0 4/4', recording: 'synthetic', offset: '0', end: '2', audioRequired: 'no', preview: 'none' };
-const asset = (name, bytes, id = 'midi') => intakeMidi({ name, bytes, id });
-const reportFor = (name, bytes, id) => analyzeWorkspace({ ...newWorkspace(), title: 'fixture', settings, assets: { candidate: asset(name, bytes, id) } });
+const asset = (name, bytes) => intakeMidi({ name, bytes });
+const reportFor = (name, bytes) => analyzeWorkspace({ ...newWorkspace(), title: 'fixture', settings, assets: { candidate: asset(name, bytes) } });
 const renderRawMidi = entries => context.rawMidiSection(entries);
 
 // Non-void elements must open and close in equal numbers, or the browser will
@@ -46,7 +46,7 @@ test('a project with no Raw MIDI renders no Raw MIDI section at all', () => {
 });
 
 test('the section states the source facts a reviewer needs', () => {
-  const report = reportFor('six.mid', fixtures.sixSourceVoices(), 'six');
+  const report = reportFor('six.mid', fixtures.sixSourceVoices());
   const html = renderRawMidi(report.rawMidi);
   assertBalanced(html);
 
@@ -67,7 +67,7 @@ test('the section states the source facts a reviewer needs', () => {
 });
 
 test('Core3 and Full6 are rendered as separate groups, with all three Core3 roles equal', () => {
-  const html = renderRawMidi(reportFor('six.mid', fixtures.sixSourceVoices(), 'six').rawMidi);
+  const html = renderRawMidi(reportFor('six.mid', fixtures.sixSourceVoices()).rawMidi);
   const core3Start = html.indexOf('Core3 候選');
   const full6Start = html.indexOf('Full6 加值角色');
   assert.ok(core3Start > 0 && full6Start > core3Start, 'Core3 is its own block and Full6 follows it');
@@ -89,7 +89,7 @@ test('Core3 and Full6 are rendered as separate groups, with all three Core3 role
 });
 
 test('an incomplete Core3 is never presented as repairable by enrichment', () => {
-  const report = reportFor('six.mid', fixtures.sixSourceVoices(), 'six');
+  const report = reportFor('six.mid', fixtures.sixSourceVoices());
   const entry = report.rawMidi[0];
   assert.notEqual(entry.arrangement.candidate.core3.status, 'COMPLETE');
 
@@ -106,7 +106,7 @@ test('an incomplete Core3 is never presented as repairable by enrichment', () =>
 });
 
 test('the candidate is labelled a candidate and certifies nothing', () => {
-  const html = renderRawMidi(reportFor('format1.mid', fixtures.format1(), 'srcA').rawMidi);
+  const html = renderRawMidi(reportFor('format1.mid', fixtures.format1()).rawMidi);
   assert.match(html, /這是<strong>候選建議<\/strong>，不是已接受的編排/);
   assert.match(html, /來源事件仍然沒有角色/);
   for (const gate of ['TECHNICAL_PASS', 'SOURCE_PASS', 'PLAYER_READBACK_PASS', 'AUDIO_ALIGNMENT_PASS', 'MOBILE_ADAPTATION_PASS', 'IN_GAME_ACCEPTED']) {
@@ -117,7 +117,7 @@ test('the candidate is labelled a candidate and certifies nothing', () => {
 });
 
 test('percussion is shown as percussion and never as a pitched role', () => {
-  const report = reportFor('drums.mid', fixtures.percussion(), 'drums');
+  const report = reportFor('drums.mid', fixtures.percussion());
   const html = renderRawMidi(report.rawMidi);
   assertBalanced(html);
 
@@ -137,14 +137,14 @@ test('percussion is shown as percussion and never as a pitched role', () => {
 });
 
 test('unsupported material and pending lanes stay on screen', () => {
-  const report = reportFor('after-eot.mid', fixtures.dataAfterEndOfTrack(), 'eot');
+  const report = reportFor('after-eot.mid', fixtures.dataAfterEndOfTrack());
   const html = renderRawMidi(report.rawMidi);
   assertBalanced(html);
   assert.ok(html.includes('DATA_AFTER_END_OF_TRACK'), 'the code itself is shown, not a friendly summary');
   assert.match(html, /未支援材料不會被修補、量化或丟棄/);
   assert.match(html, /來源未完整/);
 
-  const pendingReport = reportFor('six.mid', fixtures.sixSourceVoices(), 'six');
+  const pendingReport = reportFor('six.mid', fixtures.sixSourceVoices());
   const pendingHtml = renderRawMidi(pendingReport.rawMidi);
   const pending = pendingReport.rawMidi[0].arrangement.candidate.pending;
   assert.ok(pending.length > 0);
@@ -161,7 +161,7 @@ test('unsupported material and pending lanes stay on screen', () => {
 });
 
 test('G11-B is reported as a decomposition, with its losslessness visible', () => {
-  const report = reportFor('six.mid', fixtures.sixSourceVoices(), 'six');
+  const report = reportFor('six.mid', fixtures.sixSourceVoices());
   const html = renderRawMidi(report.rawMidi);
   assert.ok(html.includes('G11-B'));
   assert.match(html, /不指派角色、不合併、不刪除任何事件/);
@@ -171,7 +171,7 @@ test('G11-B is reported as a decomposition, with its losslessness visible', () =
 });
 
 test('a source whose bytes fail verification renders no candidate at all', () => {
-  const record = asset('zero.mid', fixtures.format0(), 'zero');
+  const record = asset('zero.mid', fixtures.format0());
   const tampered = structuredClone(record);
   tampered.source.sha256 = '0'.repeat(64);
   const report = analyzeWorkspace({ ...newWorkspace(), title: 'fixture', settings, assets: { candidate: tampered } });
@@ -185,7 +185,7 @@ test('a source whose bytes fail verification renders no candidate at all', () =>
 test('a ledger too large to print inline says so instead of dropping entries', () => {
   // Built directly rather than from a fixture: the point is the display bound,
   // and a real file with 500+ events would only make the test slow.
-  const record = asset('six.mid', fixtures.sixSourceVoices(), 'six');
+  const record = asset('six.mid', fixtures.sixSourceVoices());
   const candidate = suggestRoleCandidates(record.project);
   const inflated = { ...candidate, ledger: Array.from({ length: 900 }, (_, index) => ({ ...candidate.ledger[0], eventId: `synthetic:${index}` })) };
   const html = context.pendingCard(inflated);
@@ -196,7 +196,7 @@ test('a ledger too large to print inline says so instead of dropping entries', (
 });
 
 test('a workspace under full review still shows the Raw MIDI candidate as a candidate', () => {
-  let workspace = { ...newWorkspace(), title: 'fixture', settings, assets: { candidate: asset('six.mid', fixtures.sixSourceVoices(), 'six') } };
+  let workspace = { ...newWorkspace(), title: 'fixture', settings, assets: { candidate: asset('six.mid', fixtures.sixSourceVoices()) } };
   for (const name of REVIEW_NAMES) workspace = recordReview(workspace, name, 'reviewed', 'synthetic');
   const report = analyzeWorkspace(workspace);
   const html = renderRawMidi(report.rawMidi);
@@ -206,7 +206,7 @@ test('a workspace under full review still shows the Raw MIDI candidate as a cand
 });
 
 test('an unmet Core3 role reads as PENDING, never as not-applicable', () => {
-  const report = reportFor('six.mid', fixtures.sixSourceVoices(), 'six');
+  const report = reportFor('six.mid', fixtures.sixSourceVoices());
   const candidate = report.rawMidi[0].arrangement.candidate;
   assert.equal(candidate.roles.Melody.status, 'EMPTY', 'the fixture has no evidenced Lead');
   assert.equal(candidate.roles.Chord3.status, 'EMPTY', 'and no enrichment either');
@@ -221,7 +221,7 @@ test('an unmet Core3 role reads as PENDING, never as not-applicable', () => {
 });
 
 test('each fact keeps its own label and value together', () => {
-  const html = renderRawMidi(reportFor('format1.mid', fixtures.format1(), 'srcA').rawMidi);
+  const html = renderRawMidi(reportFor('format1.mid', fixtures.format1()).rawMidi);
   // dt and dd are wrapped per pair, so a multi-column grid cannot separate a
   // value from the label it belongs to.
   assert.equal(/<dt>[^<]*<\/dt><dd>/.test(html), true);
@@ -231,7 +231,7 @@ test('each fact keeps its own label and value together', () => {
 });
 
 test('a hostile track name is rendered as text, never as markup', () => {
-  const report = reportFor('hostile.mid', fixtures.hostileTrackName(), 'hostile');
+  const report = reportFor('hostile.mid', fixtures.hostileTrackName());
   const entry = report.rawMidi[0];
   // The name is preserved verbatim as source evidence...
   assert.equal(entry.midi.tracks[0].name, '<script>alert("x")</script> & "quoted" \'name\'');

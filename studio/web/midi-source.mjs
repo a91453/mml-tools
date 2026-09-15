@@ -16,7 +16,15 @@
 //   * completeness is whatever the backend computed. Nothing in this module,
 //     and no caller metadata reaching it, can raise `complete`;
 //   * the bytes are hashed over exactly what was parsed, so a source identity
-//     can never describe a different byte sequence than the one ingested.
+//     can never describe a different byte sequence than the one ingested;
+//   * async request identity and source content identity are different things
+//     and never mix. A request token (source-requests.mjs) is ephemeral, exists
+//     only to suppress a stale in-flight result, and never reaches Canonical
+//     provenance. A source identity is derived from the bytes and from nothing
+//     else -- not the filename, not the workspace slot, not the revision, not a
+//     timestamp, and not a random UUID. That is why `ingestMidiSource` takes no
+//     id: an identity that a caller can supply is an identity a caller can make
+//     non-deterministic, so the parameter does not exist.
 //
 // It is deliberately free of DOM and Node APIs: it runs unchanged inside the
 // analysis Worker and inside `node --test`.
@@ -25,6 +33,18 @@ import { ingestMIDI, midiFragmentToProject, sha256Hex, toBytes } from '../backen
 import { splitProjectSourceVoices, suggestRoleCandidates } from '../backend/arrangement/index.mjs';
 
 export const MIDI_SOURCE_FORMAT = 'MIDI';
+
+// Source content identity. The full digest, not a prefix: nothing in this
+// repository contracts a short source id, and a truncation would trade a real
+// guarantee for bytes in a field that has to stay collision-free to be
+// provenance at all.
+//
+// Everything downstream inherits it -- `midiFragmentToProject` derives the
+// project id from the source id, and midi.mjs derives every note, tempo and
+// meter event id from it -- so deriving this from the bytes is what makes the
+// whole Canonical event identity chain a function of the file.
+export const MIDI_SOURCE_ID_PREFIX = 'midi:sha256:';
+export const midiSourceId = sha256 => `${MIDI_SOURCE_ID_PREFIX}${sha256}`;
 
 // The pipeline identity a stored arrangement is bound to. Bump it whenever the
 // derivation changes shape, so a restored project shows its candidate as stale
@@ -295,7 +315,7 @@ export function looksLikeMidi(input) {
   } catch { return false; }
 }
 
-export function ingestMidiSource({ name, bytes, id, authority = 'supporting' }) {
+export function ingestMidiSource({ name, bytes, authority = 'supporting' }) {
   const data = toBytes(bytes);
   if (!data.length) throw Error('UNSUPPORTED: empty MIDI file');
   if (data.length > MAX_MIDI_BYTES) throw Error(`UNSUPPORTED: MIDI file exceeds ${MAX_MIDI_BYTES / 1048576} MiB`);
@@ -310,7 +330,11 @@ export function ingestMidiSource({ name, bytes, id, authority = 'supporting' }) 
   // claim changes the source record -- never the completeness verdict below.
   const official = authority === 'primary-symbolic';
   const kind = official ? 'official-midi' : 'third-party-midi';
-  const sourceId = id ?? `midi:${sha256.slice(0, 16)}`;
+  // Content-derived, always. `name` is display metadata and is carried as the
+  // source label; it deliberately does not participate in identity, so the same
+  // file renamed is the same source and two different files sharing a name are
+  // not.
+  const sourceId = midiSourceId(sha256);
 
   const fragment = ingestMIDI(data, {
     sourceId,
@@ -356,16 +380,19 @@ export function ingestMidiSource({ name, bytes, id, authority = 'supporting' }) 
 // project. Used by portable import, where the JSON is data of unknown
 // provenance: whatever project it claims to carry, what is ingested is the
 // byte sequence it also carries, and the digest has to agree.
-export function reingestMidiAsset(asset, { id = null } = {}) {
+export function reingestMidiAsset(asset) {
   const source = asset?.source ?? null;
   if (!source || typeof source.bytesBase64 !== 'string') throw Error('UNSUPPORTED: MIDI source bytes are missing from this backup');
   const bytes = decodeSourceBytes(source.bytesBase64);
   const digest = sha256Hex(bytes);
   if (typeof source.sha256 === 'string' && source.sha256 !== digest) throw Error('SOURCE_DIGEST_MISMATCH: the backup\'s MIDI bytes do not match its recorded source identity');
+  // No id is carried across the import boundary. The bytes were just proven to
+  // be the bytes this record names, so re-deriving from them reproduces the
+  // identity the export had -- which is the point: a round trip through a
+  // backup must not renumber a source, a project, or any event in it.
   return ingestMidiSource({
     name: typeof asset.name === 'string' && asset.name.trim() ? asset.name : 'imported.mid',
     bytes,
-    id: id ?? source.id,
     authority: source.authority === 'primary-symbolic' ? 'primary-symbolic' : 'supporting',
   });
 }

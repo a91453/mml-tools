@@ -59,8 +59,12 @@ export function intake({ name, content, id, authority = 'supporting', meterText 
 
 // Raw MIDI arrives as bytes, never as text. The whole decode runs in the
 // backend adapter; this is the transport boundary and nothing else.
-export function intakeMidi({ name, bytes, id, authority = 'supporting' }) {
-  return ingestMidiSource({ name, bytes, id, authority });
+//
+// No id crosses this boundary. The source identity is derived from the bytes
+// inside ingestMidiSource, so re-picking one file cannot renumber its source,
+// its project or any of its events.
+export function intakeMidi({ name, bytes, authority = 'supporting' }) {
+  return ingestMidiSource({ name, bytes, authority });
 }
 
 export function invalidate(workspace) {
@@ -86,8 +90,10 @@ export function importWorkspace(raw) {
     if (!asset) continue;
     // A backup's MIDI asset is re-ingested from the bytes it carries, not
     // restored from the project it claims. Whatever the JSON asserts about the
-    // events, what is loaded is what those exact bytes decode to.
-    if (isRawMidiAsset(asset)) clean.assets[slot] = reingestMidiAsset(asset, { id: `import:${slot}` });
+    // events, what is loaded is what those exact bytes decode to -- and because
+    // the identity is derived from those bytes, the slot it lands in does not
+    // rename the source.
+    if (isRawMidiAsset(asset)) clean.assets[slot] = reingestMidiAsset(asset);
     else clean.assets[slot] = intake({ name: asset.name, content: asset.content, id: `import:${slot}`, meterText: clean.settings.meterText, authority: asset.project?.sources?.[0]?.authority });
   }
   // Portable backups cannot attest who accepted an exact client test. Preserve

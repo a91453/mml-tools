@@ -323,7 +323,11 @@ async function putMidiSource(slot, file, authority, token) {
   // postMessage structured-clones the buffer instead of transferring it, so
   // this page keeps its own copy and persistence never races the decode.
   const bytes = await file.arrayBuffer();
-  const asset = await call('intakeMidi', { name: file.name, bytes, id: crypto.randomUUID(), authority });
+  // No id is supplied: the source identity is the digest of these exact bytes.
+  // A random one here would make the same file a different Canonical source on
+  // every pick, renumbering every event that evidence binds to. The ephemeral
+  // identity this path does need is `token`, and it stays out of provenance.
+  const asset = await call('intakeMidi', { name: file.name, bytes, authority });
   if (stale()) return;
   // Replacement is one transaction: the previous source is only released once
   // the new one has decoded, and the new revision clears every review and
