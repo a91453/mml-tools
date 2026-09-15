@@ -22,8 +22,19 @@
 // either list would be a second rule source.
 import { F, f } from '../mml/index.mjs';
 import { EFFECTIVE_RULESET } from '../rules/index.mjs';
+import { SAFE_GRID } from '../canonical/micro-timing.mjs';
 
 const syntax = EFFECTIVE_RULESET.mobileSyntax;
+
+// How many off-grid (caution) tokens one decomposition may use. See
+// `planDuration` for why the search is organised around the grid at all; three
+// is far beyond what real source timing needs — a triplet group costs one — and
+// it is what keeps the caution search bounded instead of combinatorial.
+export const MAX_OFF_GRID_SEGMENTS = 3;
+
+// A duration is grid-aligned when it is a whole number of 1/64 notes. `SAFE_GRID`
+// is the published grid, read from the analyzer rather than restated.
+const onGrid = value => f(value).div(SAFE_GRID).d === 1n;
 
 export const LENGTH_CLASS = Object.freeze({
   // MOBILE_SYNTAX §3: simple stable lengths.
@@ -66,6 +77,7 @@ export function buildTokenLattice({ cautionLengthOptIn = false } = {}) {
       duration: plainDuration(n),
       suffix: String(n),
       lengthClass: isPreferred ? LENGTH_CLASS.PREFERRED : LENGTH_CLASS.CAUTION,
+      onGrid: onGrid(plainDuration(n)),
     });
   }
 
@@ -81,6 +93,7 @@ export function buildTokenLattice({ cautionLengthOptIn = false } = {}) {
       duration: dottedDuration(n),
       suffix: `${n}.`,
       lengthClass: LENGTH_CLASS.PREFERRED,
+      onGrid: onGrid(dottedDuration(n)),
     });
   }
 
@@ -112,21 +125,22 @@ export function buildTokenLattice({ cautionLengthOptIn = false } = {}) {
  *
  * Returns `null` when no single token matches exactly.
  */
-export function spellDuration(duration, defaultLength, lattice) {
+export function spellDuration(duration, defaultLength, lattice, offGridAllowed = Infinity) {
   const target = f(duration);
   if (defaultLength !== null && target.cmp(plainDuration(defaultLength)) === 0) {
-    return { suffix: '', cost: 0, denominator: defaultLength, dots: 0, lengthClass: null };
+    return { suffix: '', cost: 0, denominator: defaultLength, dots: 0, lengthClass: null, onGrid: onGrid(target) };
   }
   let best = null;
   for (const token of lattice.tokens) {
     if (token.duration.cmp(target) !== 0) continue;
+    if (!token.onGrid && offGridAllowed < 1) continue;
     // A dot on the current default length is one character regardless of how
     // many digits the denominator has.
     const useBareDot = token.dots === 1 && token.denominator === defaultLength;
     const suffix = useBareDot ? '.' : token.suffix;
     const cost = suffix.length;
     if (best === null || cost < best.cost) {
-      best = { suffix, cost, denominator: token.denominator, dots: token.dots, lengthClass: token.lengthClass };
+      best = { suffix, cost, denominator: token.denominator, dots: token.dots, lengthClass: token.lengthClass, onGrid: token.onGrid };
     }
   }
   return best;
@@ -136,10 +150,16 @@ export function spellDuration(duration, defaultLength, lattice) {
  * Exact decomposition of `duration` into tie segments under default length `L`.
  *
  * Returns `{ segments, cost }` where `segments` is an ordered list of written
- * suffixes whose token durations sum to exactly `duration`, and `cost` is the
- * character cost of the *length text alone* — the caller adds the per-segment
- * note name and the `&` joiners, because those depend on the pitch spelling it
- * has not chosen yet.
+ * suffixes whose token durations sum to exactly `duration`.
+ *
+ * `perSegmentCost` is what one extra segment costs the caller beyond its own
+ * length text: `1` for a rest (the `r`), and `spelling.length + 1` for a note
+ * (the repeated note name plus the `&` that joins it). It has to be part of the
+ * search rather than added afterwards, because it changes which decomposition
+ * wins. Under `l4`, three beats can be written `2.` (one segment, two suffix
+ * characters) or as three default-length segments (zero suffix characters) —
+ * scoring suffixes alone picks the second and emits `c&c&c` where `c2.` was
+ * available. The caller subtracts the one `&` the first segment does not pay.
  *
  * Greedy does not work. "Take the largest token that fits" happily produces a
  * long tail of tiny tokens where a different first token lands exactly. The
@@ -147,12 +167,36 @@ export function spellDuration(duration, defaultLength, lattice) {
  * exact remaining rational, and bounded by an explicit node budget so that a
  * pathological input fails rather than hangs.
  *
+ * The search is organised around the 1/64 grid, and that is what keeps it
+ * bounded. Every preferred token is a whole number of 1/64 notes, so a
+ * grid-aligned remainder minus a preferred token is still grid-aligned: the
+ * reachable state set collapses onto the grid and stays small. Every *caution*
+ * length is off-grid — a plain denominator divides 64 only inside the preferred
+ * set — so admitting all 64 of them at every step instead explodes the state
+ * space into arbitrary rationals.
+ *
+ * Two deterministic restrictions keep that from happening, and neither can make
+ * an emitted duration wrong, because everything returned is still an exact sum:
+ *
+ *   - a grid-aligned remainder is decomposed with grid-aligned tokens only. A
+ *     grid solution always exists (in the limit, repeated `64`), so exactness is
+ *     never lost. Only a hypothetical mixed answer that left the grid and came
+ *     back could be missed, and that needs at least two off-grid tokens with
+ *     multi-character suffixes to beat a grid answer.
+ *   - at most `MAX_OFF_GRID_SEGMENTS` off-grid tokens per decomposition. Off-grid
+ *     material is exactly what caution lengths exist for (a triplet costs one),
+ *     and a remainder that is off-grid with no allowance left is a dead end,
+ *     since no grid token can ever bring it back.
+ *
+ * Both are implementer policy for search cost, not rules, and both are reported
+ * as `not-representable` rather than silently approximated.
+ *
  * Failure modes are distinguished, because they mean different things: a
  * duration that is provably not a lattice sum is `not-representable`, while an
  * exhausted budget is `budget-exhausted` and says only that this search gave up.
  * Neither ever returns an approximate answer.
  */
-export function planDuration(duration, defaultLength, lattice, state) {
+export function planDuration(duration, defaultLength, lattice, state, perSegmentCost = 0) {
   const target = f(duration);
   if (target.cmp(0) <= 0) return { ok: false, reason: 'non-positive-duration', plan: null };
   // Once the budget is gone the memo may hold `null`s that mean "cut short",
@@ -162,14 +206,54 @@ export function planDuration(duration, defaultLength, lattice, state) {
 
   const memo = state.memo;
   const maxSegments = state.maxTieSegments;
+  if (!Number.isSafeInteger(perSegmentCost) || perSegmentCost < 0) throw Error('perSegmentCost must be a non-negative integer');
 
-  const search = (remaining, segmentsLeft) => {
+  // Heads, priced once for this default length and ordered cheapest-first, then
+  // longest-first. Finding a cheap answer early is what makes the bound below
+  // bite: with 64 caution lengths admitted, an unordered search spends most of
+  // its budget exploring branches it will never keep.
+  const offGridBudget = Number.isSafeInteger(state.maxOffGridSegments)
+    ? state.maxOffGridSegments
+    : MAX_OFF_GRID_SEGMENTS;
+
+  const heads = lattice.tokens.map(token => {
+    const bareDot = token.dots === 1 && token.denominator === defaultLength;
+    const bareDefault = token.dots === 0 && token.denominator === defaultLength;
+    const suffix = bareDefault ? '' : bareDot ? '.' : token.suffix;
+    return {
+      duration: token.duration,
+      onGrid: token.onGrid,
+      segment: {
+        suffix,
+        cost: suffix.length,
+        denominator: token.denominator,
+        dots: token.dots,
+        lengthClass: token.lengthClass,
+        onGrid: token.onGrid,
+      },
+    };
+  }).sort((left, right) => left.segment.cost - right.segment.cost
+    || right.duration.cmp(left.duration)
+    || (left.segment.suffix < right.segment.suffix ? -1 : 1));
+
+  // A tail always has at least one segment, and the cheapest conceivable segment
+  // writes no suffix at all, so any split costs at least
+  // `head + 2 * perSegmentCost`. That bound is exact, not a heuristic: it can
+  // only discard branches that provably cannot beat the best already found.
+  const floorCost = perSegmentCost;
+
+  const search = (remaining, segmentsLeft, offGridLeft) => {
     if (state.exhausted) return null;
+    const aligned = onGrid(remaining);
+    // A remainder that has left the grid with no allowance left can never come
+    // back: every remaining head is grid-aligned and preserves the offset.
+    if (!aligned && offGridLeft <= 0) return null;
+
     // The plan depends on the default length in force, so the memo is keyed on
     // it too. One state object serves every default-length candidate the
     // planner tries, and sharing a key across them would return a plan written
     // against the wrong `lN`.
-    const key = `${remaining.toString()}|${segmentsLeft}|${defaultLength}`;
+    const key = `${remaining.toString()}|${segmentsLeft}|${defaultLength}|${perSegmentCost}|${offGridLeft}`;
     if (memo.has(key)) return memo.get(key);
     if (state.budget <= 0) {
       state.exhausted = true;
@@ -182,33 +266,29 @@ export function planDuration(duration, defaultLength, lattice, state) {
     memo.set(key, null);
 
     let best = null;
-    const single = spellDuration(remaining, defaultLength, lattice);
-    if (single) best = { segments: [single], cost: single.cost };
+    const single = spellDuration(remaining, defaultLength, lattice, offGridLeft);
+    if (single) best = { segments: [single], cost: single.cost + perSegmentCost };
 
-    if (segmentsLeft > 1) {
-      for (const token of lattice.tokens) {
+    if (segmentsLeft > 1 && !(best && best.cost <= floorCost)) {
+      for (const head of heads) {
+        // A grid-aligned remainder is decomposed on the grid; see the note above
+        // for why that costs no exactness.
+        if (aligned && !head.onGrid) continue;
+        if (!head.onGrid && offGridLeft <= 0) continue;
         // Every head must be strictly shorter than the remainder, so the
         // recursion always decreases and terminates.
-        if (token.duration.cmp(remaining) >= 0) continue;
-        const useBareDot = token.dots === 1 && token.denominator === defaultLength;
-        const suffix = useBareDot ? '.' : token.suffix;
-        const head = {
-          suffix,
-          cost: suffix.length,
-          denominator: token.denominator,
-          dots: token.dots,
-          lengthClass: token.lengthClass,
-        };
-        // A token equal to the default length writes nothing at all.
-        if (token.dots === 0 && token.denominator === defaultLength) {
-          head.suffix = '';
-          head.cost = 0;
-        }
-        const tail = search(remaining.sub(token.duration), segmentsLeft - 1);
+        if (head.duration.cmp(remaining) >= 0) continue;
+        if (best && head.segment.cost + floorCost + perSegmentCost >= best.cost) continue;
+        const tail = search(
+          remaining.sub(head.duration),
+          segmentsLeft - 1,
+          head.onGrid ? offGridLeft : offGridLeft - 1,
+        );
         if (!tail) continue;
-        const cost = head.cost + tail.cost;
+        const cost = head.segment.cost + perSegmentCost + tail.cost;
         if (best === null || cost < best.cost) {
-          best = { segments: [head, ...tail.segments], cost };
+          best = { segments: [head.segment, ...tail.segments], cost };
+          if (best.cost <= floorCost) break;
         }
       }
     }
@@ -217,7 +297,7 @@ export function planDuration(duration, defaultLength, lattice, state) {
     return best;
   };
 
-  const plan = search(target, maxSegments);
+  const plan = search(target, maxSegments, offGridBudget);
   if (plan) return { ok: true, reason: null, plan };
   return {
     ok: false,
@@ -226,10 +306,11 @@ export function planDuration(duration, defaultLength, lattice, state) {
   };
 }
 
-export function createPlanState({ budget, maxTieSegments }) {
+export function createPlanState({ budget, maxTieSegments, maxOffGridSegments = MAX_OFF_GRID_SEGMENTS }) {
   return {
     budget,
     maxTieSegments,
+    maxOffGridSegments,
     exhausted: false,
     memo: new Map(),
   };

@@ -15,6 +15,7 @@ import { EFFECTIVE_RULESET } from '../backend/rules/index.mjs';
 import { SAFE_GRID } from '../backend/canonical/micro-timing.mjs';
 import {
   LENGTH_CLASS,
+  MAX_OFF_GRID_SEGMENTS,
   buildTokenLattice,
   spellDuration,
   planDuration,
@@ -211,4 +212,47 @@ test('a long duration decomposes exactly into tied segments', () => {
   assert.equal(result.ok, true);
   assert.equal(planExactDuration(result.plan).cmp(target), 0);
   assert.equal(f(planExactDuration(result.plan)).cmp(13), 0);
+});
+
+test('the caution search stays bounded instead of exploring arbitrary rationals', () => {
+  // Admitting all 64 caution lengths at every step turns the reachable state
+  // set into arbitrary rationals and burns the whole node budget on durations
+  // that are plainly representable. Organising the search around the grid keeps
+  // it small. This observes the search *shape*, not wall-clock time.
+  for (const numerator of [7, 13, 19, 29, 37]) {
+    const shared = createPlanState({ budget: 200000, maxTieSegments: 12 });
+    const result = planDuration(new F(numerator, 16), 4, cautionLattice, shared, 2);
+    assert.equal(result.ok, true, `${numerator}/16 must be representable`);
+    assert.equal(planExactDuration(result.plan).cmp(new F(numerator, 16)), 0);
+    assert.equal(shared.exhausted, false, `${numerator}/16 exhausted the budget`);
+    assert.ok(shared.memo.size < 2000, `${numerator}/16 visited ${shared.memo.size} states`);
+  }
+});
+
+test('a grid-aligned duration is decomposed with grid-aligned tokens only', () => {
+  // Every preferred token is a whole number of 1/64 notes; every caution length
+  // is not. A grid-aligned duration therefore never needs to leave the grid,
+  // and the planner does not.
+  const result = plan(new F(29, 16), 4, cautionLattice);
+  assert.equal(result.ok, true);
+  for (const segment of result.plan.segments) {
+    assert.equal(segment.onGrid, true, `${segment.suffix} left the grid unnecessarily`);
+  }
+});
+
+test('an off-grid duration may use caution tokens, within the declared bound', () => {
+  const state = createPlanState({ budget: 200000, maxTieSegments: 12 });
+  const target = new F(1, 3).add(new F(1, 2));
+  const result = planDuration(target, 4, cautionLattice, state, 2);
+  assert.equal(result.ok, true);
+  assert.equal(planExactDuration(result.plan).cmp(target), 0);
+  const offGrid = result.plan.segments.filter(segment => !segment.onGrid).length;
+  assert.ok(offGrid >= 1 && offGrid <= MAX_OFF_GRID_SEGMENTS);
+});
+
+test('exhausting the off-grid allowance fails closed, never approximates', () => {
+  const state = createPlanState({ budget: 200000, maxTieSegments: 12, maxOffGridSegments: 0 });
+  const result = planDuration(new F(1, 3), 4, cautionLattice, state, 2);
+  assert.equal(result.ok, false);
+  assert.equal(result.plan, null);
 });
