@@ -464,6 +464,29 @@ enrichment neither compensating nor laundering the conflict; a mixed-provenance
 lane failing closed; and proof that no source authority — order, length or id
 sort — picks a winner.
 
+### End-to-end pipeline regression
+
+`studio/tests/g11-pipeline.test.mjs` runs the real production path from raw
+Standard MIDI File bytes: `ingestMIDI` → `midiFragmentToProject` (G11-A) →
+`splitProjectSourceVoices` (G11-B) → `suggestRoleCandidates` (G11-C). Hand-built
+Canonical events would prove nothing about the contracts *between* the stages,
+which is what that file exists to check.
+
+The fixture uses PPQ 360 so a beat divides exactly into thirds, and carries a
+triplet Lead opening, a genuine one-bar Lead rest with an instrumental answer
+over it, a polyphonic block-triad accompaniment, a moving bass, a sustained pad,
+a same-pitch simultaneous double from two distinct source events, more lanes than
+six-role capacity, and General MIDI channel-10 percussion. It asserts: source
+event conservation by id and by count; the provenance chain from raw note-on /
+note-off through the Canonical event and the G11-B lane and chain to the G11-C
+ledger entry; `1/3` and `2/3` spelled identically at all three stages with no
+float anywhere in the candidate; percussion staying unsupported and never
+becoming a pitched role; bare MIDI failing closed to Core3 `PENDING`; the Core3
+three-role backbone — including the Lead hand-off across the rest — surviving the
+whole pipeline once the score's role evidence is supplied; that no stage does
+another stage's job or mutates source truth; and determinism under permuted
+source-event and caller-evidence order.
+
 Performance is asserted as a **work shape**, matching the repository's existing
 convention in `micro-timing-performance.test.mjs` — one sweep over the exact
 boundary grid, bucketed same-pitch scans, and counters that stay output-sensitive
