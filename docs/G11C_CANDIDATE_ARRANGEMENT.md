@@ -149,6 +149,32 @@ never silent. `laneId` and `eventIds` pin provenance by themselves and need no
 such guard. Each record states its own scope in `scopedBy`, `declaredSourceIds`
 and `laneSourceIds`.
 
+An `eventIds` citation is scoped to the events it lists, and role assignment is
+lane-level, so coverage decides whether it may be read as a declared role at
+all. Covering every event of a lane declares it. Covering only part of one is
+recorded at `supporting` strength with no supported role — context that can
+never create an assignment — keeping the exact `eventIds` and
+`uncoveredEventIds`, and the lane's role decision fails closed to `PENDING`
+with blocker `PARTIAL_EVENT_EVIDENCE_SCOPE`. Extending the citation over the
+events it did not name would break the event-level traceability
+`MASTER_RULES.md` §3 and `SOURCE_POLICY.md` §3 require, and deciding the lane
+against the citation would discard evidence the source did give.
+
+### Source-supported Lead
+
+`MASTER_RULES.md` §4 and `SOURCE_POLICY.md` §4 protect a source-supported Lead
+from demotion without positive evidence and a demotion report. What makes a Lead
+source-supported is the **authority of the evidence, not the field it arrived
+in**: `SOURCE_POLICY.md` §1.A makes an official score, official MusicXML or
+trusted official MIDI primary authority for staff and voice placement, and §4
+lists score-role evidence among a Lead move's inputs. A cited trusted symbolic
+Melody is therefore exactly as protected as a Melody carried by the baseline
+event, and both interlocks share one predicate — tier 1 for Melody, which is
+reached only from `source_role_hint` or `trusted_symbolic_role`. Derived
+measurement cannot reach tier 1 for Melody, so a contour or register heuristic
+never manufactures a protected Lead; that would invert §4's forbidden
+`highest note -> Melody`.
+
 Evidence **tiers** decide selection. Selection only ever happens inside the
 highest non-empty tier, so a declared source role is never outvoted by a derived
 measurement:
@@ -402,6 +428,7 @@ All non-destructive, all carrying `deleted: false`:
 low/mid boundary), `COMPETING_LEAD_CANDIDATES`, `COMPETING_BASS_CANDIDATES`,
 `COMPETING_HARMONY_CANDIDATES`, `CONFLICTING_ROLE_EVIDENCE`,
 `SOURCE_LANE_OVERFLOW`, `AMBIGUOUS_EVIDENCE_PROVENANCE`,
+`PARTIAL_EVENT_EVIDENCE_SCOPE`,
 `UNRESOLVED_CORE_HARMONY_SIBLING`,
 `UNRESOLVED_CROSS_SOURCE_HARMONY`, `UNRESOLVED_CROSS_SOURCE_DECLARED_CHORD1`,
 `ESSENTIAL_MATERIAL_IN_ENRICHMENT`,
@@ -496,6 +523,16 @@ a voice label shared by two sources failing closed and reporting itself; the
 same claim re-issued with `sourceIds` reaching exactly the provenance that made
 it; a lane reaching outside a declared provenance scope; and the `sourceIds`
 input contract.
+
+Lead and event evidence scope adds: a baseline declared Lead and a *cited*
+trusted symbolic Lead each refusing a caller override; what a blocked demotion
+must look like on both routes — no destination role, Melody `PENDING`, no
+substitute Lead, every event still `PENDING` and unmutated; cited Chord1/Chord2
+evidence that must not trip the Lead interlock; a citation naming one event of a
+four-event lane that must not declare it; partial evidence that must not clear
+the Core3 sibling interlock, with the whole-lane citation that does; a citation
+covering every event still declaring the lane; and the `laneId` and
+single-source `sourceVoice` routes still declaring unchanged.
 
 ### End-to-end pipeline regression
 
@@ -601,6 +638,25 @@ diagnostic, instead of a silent cross-source claim. That is the intended
 outcome: the label did not say which source was speaking, and inventing an
 answer is exactly the automatic source authority `MASTER_RULES.md` §6 and
 `SOURCE_POLICY.md` §5 refuse.
+
+## 12c. Lead and event evidence scope
+
+Two further fail-opens in how far cited evidence reached. Both were reproduced
+with minimal synthetic probes before anything was changed, and both are now
+regressions in `studio/tests/role-candidates.test.mjs`.
+
+| Fail-open | Previous behaviour | Behaviour now |
+| --- | --- | --- |
+| A cited trusted symbolic Lead meets a non-Melody caller override | The Lead-demotion interlock tested `lane.sourceRoles`, which carries only the baseline event's role. A citation reaches tier 1 for Melody without appearing there, so a lane with no baseline role, a citation naming it Melody, and `roleOverrides[lane] = 'Chord1'` was demoted outright — no `PENDING`, no `LEAD_DEMOTION_NOT_EVALUATED`, and a substitute Lead chosen in its place. | Both interlocks share `isSourceSupportedLead` (tier 1 for Melody). The move is refused, the lane is `PENDING` with `LEAD_DEMOTION_NOT_EVALUATED` and the gate reference, Melody reports `PENDING` with no lane, and no substitute Lead is invented. |
+| A citation naming a strict subset of a lane's events | Matching asked only whether *any* cited event fell in the lane. Once matched the whole lane received a primary `trusted_symbolic_role`, and `roleSupport` made it tier 1 — so evidence for `e1` made `e2` and `e3` inherit the same authoritative role. | Coverage is computed. Full coverage still declares the lane. Partial coverage is `supporting` with no supported role, keeps `eventIds` and `uncoveredEventIds` exactly, and fails the lane closed to `PENDING` with `PARTIAL_EVENT_EVIDENCE_SCOPE`. It also still raises `UNRESOLVED_CORE_HARMONY_SIBLING`, since it established neither a role nor that the lane is optional. |
+
+The second rule covers Melody as well: a partially cited Lead cannot be demoted
+by an override either, because incomplete evidence stays `PENDING`
+(`MASTER_RULES.md` §4).
+
+No lane splitting was changed — G11-B's decomposition contract is untouched and
+the repair is a G11-C evidence/assignment guard. No music theory, key detection
+or statistical role inference was added, and no Canonical document was modified.
 
 ## 13. Explicitly deferred
 
