@@ -37,6 +37,14 @@ export const EFFECTIVE_RULESET = Object.freeze({
     numericNoteFinalPolicy: 'opt-in-with-evidence',
     numericNoteDefaultFinalAllowed: false,
     rejectZeroDuration: true,
+    // G10. These three values are the executable echo of MOBILE_SYNTAX §4 /
+    // §11 step 5 and MASTER_RULES §7, and they are read — not merely
+    // declared — by backend/final/micro-gap-enforcement.mjs, which applies the
+    // Final micro-gap policy for both the readiness gate and any future
+    // Canonical-aware Final emitter. `shortestSafeDenominator` above is the
+    // same echo for the 1/64 safe grid. Changing any of them does not relax the
+    // published rule: the enforcement module reports a non-conformant contract
+    // and fails closed.
     rejectTechnicalMicroGapsBelow64: true,
     preserveMeaningfulRests: true,
     octaveTokenRangeIsImplementationMapping: true,
