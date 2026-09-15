@@ -34,6 +34,7 @@ shallow; the snapshot commit was confirmed present rather than substituted with
 | 1 | P1 | G11-A MIDI intake | A blank MIDI track name destroyed a complete ingest | Fixed + regression |
 | 2 | P1 | Canonical IR merge | Caller metadata could overwrite the merge's own `sourceComplete` verdict | Fixed + regression |
 | 3 | P1 | G10 C2A/C2B micro-timing | Evidence from an unrelated primary source bound a sub-grid interval | Fixed + regression |
+| 3b | P1 | G10 C2A/C2B micro-timing | Union-level containment still let one side of a cross-source gap vouch for the other | Fixed + regression |
 
 No P0 was found. Nothing below P1 was fixed, to keep this change reviewable.
 
@@ -111,6 +112,74 @@ was used only for reporting; it is now threaded into classification.
 Regressions: `studio/tests/micro-timing-readiness.test.mjs` — C2B-A1, C2B-A2
 (containment must not cost a legitimate keep its PASS) and C2B-A3 (inter-event
 gaps).
+
+## 3b — P1: union containment was incomplete for cross-source gaps
+
+`studio/backend/canonical/micro-timing.mjs`
+
+External review of the fix for #3 found it directionally correct but incomplete,
+and the follow-up case reproduced against that reviewed HEAD
+(`e00573292c0be0b0b9a5f1f6b89198e267c2d711`).
+
+The #3 fix required a cited source to be primary *and* present in the interval's
+source IDs — but `involvedSourceIds()` returns the **union** of the provenance of
+every event in the interval. A union is adequate for a single-event duration,
+where it is just that event's own provenance. It is not adequate for an
+inter-event gap, which has two participating events:
+
+```
+event A  sourceIds = ['official']   (official-musicxml, primary-symbolic)
+event B  sourceIds = ['third']      (third-party-midi,  supporting)
+gap      A -> B, length 1/17 (below the 1/16 safe grid)
+
+decision.eventIds           = [A, B]
+decision.evidenceSourceIds  = ['official']
+interval union sourceIds    = ['official', 'third']
+```
+
+`official` is a genuine primary record and is in the union, so the citation
+cleared containment and the gap classified as `SOURCE_SUPPORTED_MICROTIMING`.
+But it is only *A's* provenance. It establishes nothing about B, which is
+supporting-only, and nothing about the cross-source gap as a whole. One side
+vouched for the other.
+
+`SOURCE_POLICY.md` §2 requires the exact source IDs **and the event involved** to
+be recorded together, and §5 states that a source reference proves provenance,
+not compatibility. The interval should have stayed unresolved.
+
+Fix: binding is evaluated per participating event instead of against a union.
+`perEventSourceIds()` returns one provenance list per event in `eventIdsFor()`
+order, and `hasAdmissibleSourceBinding` now requires *every* participating event
+to intersect a cited admissible primary source. Either side unbound fails closed.
+An event the project does not carry yields an empty list, which can never
+intersect, so an interval naming a missing event also fails closed.
+
+Deliberately unchanged: a cited source need not be used; an event's other sources
+need not be primary; a mixed-provenance event is bound as soon as it intersects a
+cited primary. Interval identity matching, technical-residue handling and Final
+representability semantics are untouched.
+
+Scope: this establishes provenance backing per event and nothing more. It is not
+a claim of cross-source harmonic or audio compatibility, arrangement correctness,
+Final representability, or target-client acceptance — those remain separate
+gates, and this module is not a cross-source arbitration engine.
+
+Regression matrix — `studio/tests/micro-timing-readiness.test.mjs`:
+
+| Case | Shape | Expected | Pre-fix | Post-fix |
+| --- | --- | --- | --- | --- |
+| C2B-B1 | A official / B third, cite `official` | PENDING | **FAIL** (`PASS`) | PASS |
+| C2B-B2 | A third / B official, cite `official` (mirror) | PENDING | **FAIL** (`PASS`) | PASS |
+| C2B-B3 | both `official`, cite `official` | PASS | PASS | PASS |
+| C2B-B4 | A `official` / B `official-b`, cite both | PASS | PASS | PASS |
+| C2B-B5 | A `['official','third']` / B `official`, cite `official` | PASS | PASS | PASS |
+| C2B-B6 | both `official`, cite `official-b` only | PENDING | PASS | PASS |
+| C2B-B7 | event-duration bound to its own cited primary | PASS | PASS | PASS |
+| C2B-B8 | supporting-only duration citing adjacent primary | PENDING | PASS | PASS |
+
+B1 and B2 are the vulnerable cases: both failed pre-fix on the gate status itself
+(`'PASS' !== 'PENDING'`), not on an added assertion field. B3–B8 pin the
+behaviour that must not regress, and C2B-A1/A2/A3 from the first pass still hold.
 
 ## Areas adversarially tested and found sound
 
