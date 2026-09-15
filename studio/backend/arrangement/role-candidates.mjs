@@ -220,15 +220,31 @@ function normalizeRoleEvidence(entries) {
     if (typeof item.citation !== 'string' || !item.citation.trim()) throw Error(`options.sourceRoleEvidence[${index}] requires a citation`);
     const hasTarget = typeof item.sourceVoice === 'string' || typeof item.laneId === 'string' || Array.isArray(item.eventIds);
     if (!hasTarget) throw Error(`options.sourceRoleEvidence[${index}] must target a sourceVoice, laneId, or eventIds`);
+    // `sourceIds` narrows a claim to the provenance that actually made it. It is
+    // a scope qualifier, never a target on its own: "everything this source ever
+    // published is Chord1" is not a claim any citation supports.
+    if (item.sourceIds !== undefined && (!Array.isArray(item.sourceIds)
+      || !item.sourceIds.length
+      || item.sourceIds.some(id => typeof id !== 'string' || !id.trim())))
+      throw Error(`options.sourceRoleEvidence[${index}].sourceIds must be a non-empty array of source id strings`);
     return Object.freeze({
       sourceVoice: item.sourceVoice ?? null,
       laneId: item.laneId ?? null,
       eventIds: Object.freeze(Array.isArray(item.eventIds) ? [...item.eventIds].sort(cmpStr) : []),
+      sourceIds: Object.freeze(Array.isArray(item.sourceIds)
+        ? [...new Set(item.sourceIds.map(id => id.trim()))].sort(cmpStr)
+        : []),
       role: item.role,
       citation: item.citation.trim(),
       evidenceClass: 'symbolic',
     });
-  }).sort((a, b) => cmpStr(a.citation, b.citation) || cmpStr(a.role, b.role));
+    // Two entries sharing a citation and a role are still distinct claims, so the
+    // whole scope participates in the order: caller array order never decides.
+  }).sort((a, b) => cmpStr(a.citation, b.citation) || cmpStr(a.role, b.role)
+    || cmpStr(String(a.sourceVoice ?? ''), String(b.sourceVoice ?? ''))
+    || cmpStr(String(a.laneId ?? ''), String(b.laneId ?? ''))
+    || cmpStr(a.sourceIds.join(','), b.sourceIds.join(','))
+    || cmpStr(a.eventIds.join(','), b.eventIds.join(',')));
 }
 
 // Optional section/form evidence. Recorded as supporting context only: it never
@@ -440,6 +456,81 @@ function evidenceRecord(lane, seq, record) {
   });
 }
 
+// Scope of a cited trusted symbolic role.
+//
+// A citation is an authority claim about specific material (SOURCE_POLICY.md
+// §A/§2), so every selector an entry supplies has to hold: `sourceVoice`,
+// `laneId`, `eventIds` and `sourceIds` are conjunctive filters. Reading them as
+// alternatives lets the broadest selector win, which silently applies a claim to
+// lanes the caller narrowed it away from -- and because a cited role lands in
+// tier 1 `DECLARED_SOURCE_ROLE`, that claim then outranks every derived
+// measurement and clears the Core3 interlocks on lanes it never named.
+//
+// Provenance is read from `sourceIds`, never from the `sourceVoice` string (§10).
+// A voice label is a track/channel coordinate, and two sources of the same song
+// ordinarily share it, so a voice-only claim in a project where that label spans
+// several sources identifies nothing. It fails closed -- withheld from every
+// lane and reported -- rather than crossing into a source that never made it.
+// `laneId` and `eventIds` pin provenance by themselves and need no such guard.
+function evidenceScope(entry, lane, context) {
+  const scopedBy = [];
+
+  if (entry.laneId !== null) {
+    if (entry.laneId !== lane.id) return NO_EVIDENCE_MATCH;
+    scopedBy.push('laneId');
+  }
+  if (entry.sourceVoice !== null) {
+    if (String(entry.sourceVoice) !== String(lane.sourceVoice)) return NO_EVIDENCE_MATCH;
+    scopedBy.push('sourceVoice');
+  }
+  // An event-scoped citation speaks for the events it lists, not for the lane
+  // they happen to sit in. `coversLane` is what decides whether it may be read
+  // as a lane-level declared role at all; see the partial-coverage rule below.
+  let coveredEventIds = lane.eventIds;
+  let coversLane = true;
+  if (entry.eventIds.length) {
+    coveredEventIds = lane.eventIds.filter(id => entry.eventIds.includes(id));
+    if (!coveredEventIds.length) return NO_EVIDENCE_MATCH;
+    coversLane = coveredEventIds.length === lane.eventIds.length;
+    scopedBy.push('eventIds');
+  }
+  if (!scopedBy.length) return NO_EVIDENCE_MATCH;
+
+  // A declared provenance scope must contain the lane's own provenance. A lane of
+  // mixed provenance reaching outside the declared set is not safely covered by
+  // it, so it fails closed exactly as cross-source arbitration does.
+  if (entry.sourceIds.length) {
+    if (!lane.sourceIds.length || !lane.sourceIds.every(id => entry.sourceIds.includes(id))) return NO_EVIDENCE_MATCH;
+    scopedBy.push('sourceIds');
+  } else if (!scopedBy.includes('laneId') && !scopedBy.includes('eventIds')) {
+    const spans = context.voiceSources.get(String(lane.sourceVoice ?? 'voice:null')) ?? [];
+    if (spans.length > 1) {
+      context.withheldEvidence.push({
+        citation: entry.citation,
+        role: entry.role,
+        sourceVoice: entry.sourceVoice,
+        laneId: lane.id,
+        spansSourceIds: spans,
+      });
+      return NO_EVIDENCE_MATCH;
+    }
+  }
+
+  return {
+    matched: true,
+    matchedBy: scopedBy.includes('laneId') ? 'laneId' : scopedBy.includes('sourceVoice') ? 'sourceVoice' : 'eventIds',
+    scopedBy,
+    coversLane,
+    coveredEventIds,
+    uncoveredEventIds: coversLane ? [] : lane.eventIds.filter(id => !coveredEventIds.includes(id)),
+  };
+}
+
+const NO_EVIDENCE_MATCH = Object.freeze({
+  matched: false, matchedBy: null, scopedBy: Object.freeze([]),
+  coversLane: false, coveredEventIds: Object.freeze([]), uncoveredEventIds: Object.freeze([]),
+});
+
 function buildLaneEvidence(lane, context) {
   const t = ROLE_CANDIDATE_THRESHOLDS;
   const records = [];
@@ -476,22 +567,42 @@ function buildLaneEvidence(lane, context) {
   }
 
   for (const entry of context.roleEvidence) {
-    const targetsVoice = entry.sourceVoice !== null && String(entry.sourceVoice) === String(lane.sourceVoice);
-    const targetsLane = entry.laneId !== null && entry.laneId === lane.id;
-    const targetsEvents = entry.eventIds.length > 0 && entry.eventIds.some(id => lane.eventIds.includes(id));
-    if (!targetsVoice && !targetsLane && !targetsEvents) continue;
+    const scope = evidenceScope(entry, lane, context);
+    if (!scope.matched) continue;
+    // Role assignment is lane-level, so a citation covering only part of a lane
+    // cannot be honoured as a declared role without extending its authority to
+    // events it never named -- which would break the event-level traceability
+    // MASTER_RULES.md §3 and SOURCE_POLICY.md §3 require. It is recorded at
+    // `supporting` strength (context only; can never create an assignment), keeps
+    // the exact events it does cover, and fails the lane closed below rather than
+    // inventing evidence for the uncovered ones.
+    const partial = !scope.coversLane;
     push({
       signal: 'trusted_symbolic_role',
-      strength: 'primary',
+      strength: partial ? 'supporting' : 'primary',
       evidenceClass: 'symbolic',
-      supportsRoles: [entry.role],
+      supportsRoles: partial ? [] : [entry.role],
       measurement: {
         role: entry.role,
         citation: entry.citation,
-        matchedBy: targetsLane ? 'laneId' : targetsVoice ? 'sourceVoice' : 'eventIds',
-        eventIds: entry.eventIds.filter(id => lane.eventIds.includes(id)),
+        matchedBy: scope.matchedBy,
+        scopedBy: [...scope.scopedBy],
+        declaredSourceIds: [...entry.sourceIds],
+        laneSourceIds: [...lane.sourceIds],
+        eventIds: [...scope.coveredEventIds],
+        coversLane: scope.coversLane,
+        uncoveredEventIds: [...scope.uncoveredEventIds],
       },
-      notice: 'Trusted symbolic role evidence supplied with a citation. Symbolic and audio evidence remain separate classes; audio evidence is not accepted at this layer.',
+      notice: partial
+        ? 'Trusted symbolic role evidence covering only part of this lane. Role assignment is lane-level, so it is kept as context and never widened into a declared role for the events it does not name; the lane fails closed to PENDING instead.'
+        : 'Trusted symbolic role evidence supplied with a citation, applied only to material every selector on the entry names. Symbolic and audio evidence remain separate classes; audio evidence is not accepted at this layer.',
+    });
+    if (partial) context.partialEvidence.push({
+      laneId: lane.id,
+      citation: entry.citation,
+      role: entry.role,
+      coveredEventIds: [...scope.coveredEventIds],
+      uncoveredEventIds: [...scope.uncoveredEventIds],
     });
   }
 
@@ -799,8 +910,28 @@ function enrichmentAgainstCore3(lane, laneIndex, intervals, core3LaneIndices) {
 // three functions must be positively resolved before it can be called complete
 // -- a strong Lead and a strong bass never pay for an unresolved Chord1.
 
+// A source-supported Lead, as Published Canonical protects it.
+//
+// MASTER_RULES.md §4 and SOURCE_POLICY.md §4 forbid moving a source-supported
+// Lead off Melody without positive evidence and a demotion report. What makes a
+// Lead source-supported is the *authority* of the evidence, not which field it
+// arrived in: SOURCE_POLICY.md §1.A makes an official score / official MusicXML /
+// trusted official MIDI primary authority for staff and voice placement, and §4
+// lists score-role evidence among the inputs to a Lead move. A cited trusted
+// symbolic Melody is therefore exactly as protected as a Melody carried by the
+// baseline event itself, and reading only `lane.sourceRoles` let a cited Lead be
+// demoted with no gate at all.
+//
+// Tier 1 is precisely that set: `roleSupport` reaches `DECLARED_SOURCE_ROLE` only
+// from `source_role_hint` (the baseline event) or `trusted_symbolic_role` (a
+// citation). Derived measurement is deliberately excluded and cannot reach tier 1
+// for Melody, so a contour or register heuristic can never manufacture a
+// protected Lead -- which would invert §4's forbidden `highest note -> Melody`.
+const isSourceSupportedLead = lane => lane.roleSupport.Melody.tier === 1;
+
 function assignRoles(state) {
   const { lanes, pinned } = state;
+  const partialEvidenceLaneIds = state.partialEvidenceLaneIds ?? new Set();
   const assignment = new Map();          // laneId -> role
   const roleMeta = new Map();            // role -> { status, tier, tierName, reasons, competingLaneIds, evidenceIds }
   const pendingLanes = [];
@@ -822,7 +953,7 @@ function assignRoles(state) {
   // route.
   const blockedLeadLaneIds = new Set();
   for (const lane of lanes) {
-    if (!lane.sourceRoles.includes('Melody')) continue;
+    if (!isSourceSupportedLead(lane)) continue;
     if (!pinned.has(lane.id) || pinned.get(lane.id) === 'Melody') continue;
     blockedLeadLaneIds.add(lane.id);
     markPending({
@@ -835,10 +966,34 @@ function assignRoles(state) {
     });
   }
 
+  // Partial event-evidence interlock.
+  //
+  // A citation covering only some of a lane's events leaves the lane's role
+  // genuinely open: the cited events are named, the rest are not, and a lane
+  // carries one role. Assigning the lane would extend the citation's authority
+  // over events it never named; assigning it *against* the citation would
+  // discard evidence the source did give. Neither is decidable here, so the lane
+  // is PENDING with both sets of events recorded -- including where the citation
+  // names Melody, so a partially-cited Lead cannot be demoted by an override
+  // either (MASTER_RULES.md §4: incomplete evidence stays PENDING).
+  for (const lane of lanes) {
+    if (!partialEvidenceLaneIds.has(lane.id)) continue;
+    if (blockedLeadLaneIds.has(lane.id) || pendingLaneIds.has(lane.id)) continue;
+    markPending({
+      laneId: lane.id,
+      proposedRole: pinned.get(lane.id) ?? null,
+      blockers: ['PARTIAL_EVENT_EVIDENCE_SCOPE'],
+      competingLaneIds: [],
+      evidenceIds: lane.evidence
+        .filter(record => record.signal === 'trusted_symbolic_role' && record.measurement.coversLane === false)
+        .map(record => record.id),
+    });
+  }
+
   // Caller pins come next: an explicit override is a declared decision, and the
   // automatic selection must not compete with it.
   for (const [laneId, role] of [...pinned.entries()].sort(([a], [b]) => cmpStr(a, b))) {
-    if (role === null || blockedLeadLaneIds.has(laneId)) continue;
+    if (role === null || blockedLeadLaneIds.has(laneId) || pendingLaneIds.has(laneId)) continue;
     assignment.set(laneId, role);
     meta(role, { status: 'ASSIGNED', tier: 0, tierName: 'CALLER_ROLE_OVERRIDE', reasons: ['CALLER_ROLE_OVERRIDE'] });
   }
@@ -1444,7 +1599,7 @@ function denseAttackSignals(entries) {
 // moved, merged or deleted, and it is not forced into Chord2. Only positive
 // evidence -- a declared source role or a cited trusted symbolic role naming an
 // enrichment role -- establishes it as optional and clears the blocker.
-function unresolvedHarmonySiblings(lanes, assignment, pendingLaneIds) {
+function unresolvedHarmonySiblings(lanes, assignment, pendingLaneIds, partialEvidenceLaneIds = new Set()) {
   const core3ByVoice = new Map();
   for (const lane of lanes) {
     if (!CORE3_ROLE_NAMES.includes(assignment.get(lane.id))) continue;
@@ -1457,8 +1612,12 @@ function unresolvedHarmonySiblings(lanes, assignment, pendingLaneIds) {
   for (const lane of lanes) {
     const role = assignment.get(lane.id) ?? null;
     if (CORE3_ROLE_NAMES.includes(role)) continue;
-    // A lane already blocking the candidate needs no second blocker.
-    if (pendingLaneIds.has(lane.id)) continue;
+    // A lane already blocking the candidate needs no second blocker -- but a lane
+    // pending only for partial event evidence blocks nothing on its own, and a
+    // citation that covers part of it established neither a role nor that it is
+    // optional. Skipping it there would let partial evidence buy the very
+    // COMPLETE that citing the whole lane has to earn.
+    if (pendingLaneIds.has(lane.id) && !partialEvidenceLaneIds.has(lane.id)) continue;
 
     const siblings = (core3ByVoice.get(String(lane.sourceVoice ?? 'voice:null')) ?? [])
       .filter(sibling => lanesOverlap(sibling, lane));
@@ -1944,14 +2103,28 @@ export function suggestRoleCandidates(project, options = {}) {
   const registerRank = new Map([...lanes]
     .sort((a, b) => f(b.metrics.weightedPitch).cmp(a.metrics.weightedPitch) || cmpStr(a.id, b.id))
     .map((lane, index) => [lane.id, index]));
-  const evidenceContext = { noteById, roleEvidence, sections, registerRank, laneCount: lanes.length };
+  // Which sources each voice label actually carries. A label shared by two
+  // sources cannot stand in for provenance, so a voice-only citation over it is
+  // withheld rather than spread across both (SOURCE_POLICY.md §5, §10).
+  const voiceSources = new Map();
+  for (const lane of lanes) {
+    const voiceKey = String(lane.sourceVoice ?? 'voice:null');
+    if (!voiceSources.has(voiceKey)) voiceSources.set(voiceKey, new Set());
+    for (const sourceId of lane.sourceIds) voiceSources.get(voiceKey).add(sourceId);
+  }
+  for (const [voiceKey, ids] of voiceSources) voiceSources.set(voiceKey, [...ids].sort(cmpStr));
+
+  const withheldEvidence = [];
+  const partialEvidence = [];
+  const evidenceContext = { noteById, roleEvidence, sections, registerRank, laneCount: lanes.length, voiceSources, withheldEvidence, partialEvidence };
   for (const lane of lanes) {
     const evidence = buildLaneEvidence(lane, evidenceContext);
     lane.evidence = evidence.records;
     lane.roleSupport = roleSupport(lane, evidence);
   }
 
-  const state = { lanes, intervals, pinned, duplications };
+  const partialEvidenceLaneIds = new Set(partialEvidence.map(item => item.laneId));
+  const state = { lanes, intervals, pinned, duplications, partialEvidenceLaneIds };
   const { assignment, roleMeta, pendingLanes } = assignRoles(state);
   // Enrichment slots are filled after Core3 is known, so their reasons are
   // recorded from there rather than in the Core3 selection pass.
@@ -1977,7 +2150,7 @@ export function suggestRoleCandidates(project, options = {}) {
   // (MASTER_RULES.md §4, SOURCE_POLICY.md §4).
   const alreadyPending = new Set(pendingLanes.map(item => item.laneId));
   for (const lane of lanes) {
-    if (!lane.sourceRoles.includes('Melody')) continue;
+    if (!isSourceSupportedLead(lane)) continue;
     if (alreadyPending.has(lane.id)) continue;
     const role = assignment.get(lane.id) ?? null;
     if (role === 'Melody') continue;
@@ -2244,6 +2417,43 @@ export function suggestRoleCandidates(project, options = {}) {
   if (conflictingEvidenceLanes.length) add('CONFLICTING_ROLE_EVIDENCE', {
     deleted: false, lanes: Object.freeze(conflictingEvidenceLanes.map(item => Object.freeze(item))),
   });
+  if (withheldEvidence.length) {
+    const byClaim = new Map();
+    for (const item of withheldEvidence) {
+      const key = [item.citation, item.role, String(item.sourceVoice)].join('\u0000');
+      if (!byClaim.has(key)) byClaim.set(key, { ...item, laneIds: [] });
+      byClaim.get(key).laneIds.push(item.laneId);
+    }
+    add('AMBIGUOUS_EVIDENCE_PROVENANCE', {
+      deleted: false,
+      applied: false,
+      claims: Object.freeze([...byClaim.values()]
+        .map(claim => Object.freeze({
+          citation: claim.citation,
+          role: claim.role,
+          sourceVoice: claim.sourceVoice,
+          spansSourceIds: Object.freeze([...claim.spansSourceIds]),
+          withheldFromLaneIds: Object.freeze([...claim.laneIds].sort(cmpStr)),
+        }))
+        .sort((a, b) => cmpStr(a.citation, b.citation) || cmpStr(a.role, b.role)
+          || cmpStr(String(a.sourceVoice), String(b.sourceVoice)))),
+      notice: 'A source voice label carried by more than one source is not provenance (SOURCE_POLICY.md §5). The citation is withheld from every lane rather than applied across sources that did not make it; re-issue it with `sourceIds`, a `laneId` or `eventIds` to say which source it speaks for.',
+    });
+  }
+  if (partialEvidence.length) add('PARTIAL_EVENT_EVIDENCE_SCOPE', {
+    deleted: false,
+    widened: false,
+    claims: Object.freeze([...partialEvidence]
+      .map(item => Object.freeze({
+        laneId: item.laneId,
+        citation: item.citation,
+        role: item.role,
+        coveredEventIds: Object.freeze([...item.coveredEventIds]),
+        uncoveredEventIds: Object.freeze([...item.uncoveredEventIds]),
+      }))
+      .sort((a, b) => cmpStr(a.laneId, b.laneId) || cmpStr(a.citation, b.citation) || cmpStr(a.role, b.role))),
+    notice: 'A citation naming only some of a lane\'s events is never read as a declared role for the whole lane. The covered events are kept exactly; the lane\'s role decision stays PENDING rather than extending the citation over events it did not name.',
+  });
   if (overflowLaneIds.size) add('SOURCE_LANE_OVERFLOW', {
     deleted: false,
     laneCount: lanes.length,
@@ -2376,7 +2586,7 @@ export function suggestRoleCandidates(project, options = {}) {
     notice: 'Accompaniment candidates for Chord1 come from more than one source and nothing settles which carries the principal harmony. A coverage ranking may propose one, but the cross-source arbitration stays PENDING and Core3 cannot be complete (SOURCE_POLICY.md §5, MASTER_RULES.md §6).',
   });
 
-  const unresolvedSiblings = unresolvedHarmonySiblings(lanes, assignment, pendingLaneIds);
+  const unresolvedSiblings = unresolvedHarmonySiblings(lanes, assignment, pendingLaneIds, partialEvidenceLaneIds);
   if (unresolvedSiblings.length) add('UNRESOLVED_CORE_HARMONY_SIBLING', {
     deleted: false,
     movedToChord2: false,
