@@ -100,6 +100,165 @@ function intakeCard(slot, title, hint) {
   const source = asset?.source ? `<p class="meta">${bytesLabel(asset.source.byteLength)} · SMF ${esc(asset.midi?.smfFormat ?? '?')} · ${asset.midi?.trackCount ?? '?'} tracks<br><code class="digest">sha256 ${esc(asset.source.sha256.slice(0, 16))}…</code></p>` : '';
   return `<div class="card"><h3>${title}</h3><p class="meta">${hint}</p>${asset ? `<p><strong>${esc(asset.name)}</strong></p><p class="meta">${esc(asset.format)} · ${asset.project.events.length} events</p>${source}${badge(asset.unsupported.length ? 'UNSUPPORTED' : 'PENDING')} <small>${asset.complete ? '解析完成，等待來源審核' : '來源未完整'}</small>${detail('來源 authority／warnings／unsupported', { sources: asset.project.sources, warnings: asset.warnings, errors: asset.errors, unsupported: asset.unsupported })}` : '<div class="empty">尚未加入來源<br>MusicXML · MML · MIDI · Canonical IR</div>'}<label class="file-button secondary">${asset ? '更換來源' : '選擇檔案'}<input type="file" data-intake="${slot}" accept=".xml,.musicxml,.mml,.txt,.json,.mid,.midi,application/xml,text/xml,text/plain,application/json,audio/midi,audio/x-midi" aria-label="${title}檔案"></label>${asset ? `<button class="quiet" data-download-ir="${slot}">匯出 IR</button>` : ''}</div>`;
 }
+// ─── Raw MIDI presentation ──────────────────────────────────────────────────
+//
+// Three things this section must not do, because each of them would be the UI
+// contradicting the backend it is displaying:
+//
+//   * present the G11-C candidate as an accepted arrangement;
+//   * present Melody as required and Chord1/Chord2 as optional, or let
+//     Chord3-Chord5 make an incomplete Core3 look finished;
+//   * hide PENDING, unsupported, percussion or overflow material to make the
+//     page read as complete.
+//
+// It also invents no readiness of its own. Every status shown here is a status
+// the backend computed.
+const LEDGER_DISPLAY_LIMIT = 500;
+const slotLabels = { candidate: '目前候選', baseline: 'Source-Faithful Baseline', previous: '已接受的前一版' };
+const facts = entries => `<dl class="facts">${entries.filter(([, value]) => value !== undefined && value !== null).map(([label, value]) => `<dt>${esc(label)}</dt><dd>${esc(value)}</dd>`).join('')}</dl>`;
+const countList = counts => Object.entries(counts ?? {}).map(([code, count]) => `<li><code>${esc(code)}</code> × ${count}</li>`).join('');
+
+function midiSourceCard(entry) {
+  const m = entry.midi ?? {};
+  const division = m.division?.type === 'ppq' ? `PPQ ${m.division.ticksPerQuarter}` : `${m.division?.type ?? '?'} ${m.division?.raw ?? ''}`;
+  const integrity = entry.integrity.verified ? 'PASS' : 'UNSUPPORTED';
+  const parse = entry.error ? 'UNSUPPORTED' : entry.complete ? 'PENDING' : 'UNSUPPORTED';
+  return `<div class="card">
+    <div class="row"><h3>${esc(slotLabels[entry.slot] ?? entry.slot)} · ${esc(entry.name)}</h3>${badge(integrity)}</div>
+    <p class="meta">位元組完整性 ${integrity === 'PASS' ? '＝儲存的位元組與來源身分一致' : `＝失敗：${esc(entry.integrity.reasons.join(', '))}`}。這不是來源審核，也不是 SOURCE_PASS。</p>
+    ${facts([
+      ['檔案位元組', `${entry.source.byteLength} bytes（${bytesLabel(entry.source.byteLength)}）`],
+      ['sha256', entry.source.sha256],
+      ['來源類型／權威', `${entry.source.kind} · ${entry.source.authority}`],
+      ['SMF format', m.smfFormat],
+      ['Division', division],
+      ['Tracks（宣告／實際）', `${m.declaredTrackCount} / ${m.trackCount}`],
+      ['Note events', m.noteEventCount],
+      ['Tempo / Meter events', `${m.tempoEventCount} / ${m.meterEventCount}`],
+      ['Sustain pedal evidence', m.pedalEventCount],
+      ['來源聲部（track/channel）', m.sourceVoices?.length ?? 0],
+      ['解析完整', entry.complete ? '是' : '否（見下方未支援材料）'],
+    ])}
+    <p>${badge(parse)} <small>${entry.complete ? '解析完成。仍需來源審核，解析成功不等於 SOURCE_PASS。' : '來源未完整：有未支援或受損材料，下方逐項列出。'}</small></p>
+    ${entry.claimedComplete !== entry.complete ? `<p class="note">儲存紀錄宣稱 complete=${entry.claimedComplete}，重新讀取位元組後的結論為 complete=${entry.complete}。以位元組為準。</p>` : ''}
+    <details><summary>逐軌（名稱、事件數、打擊、channel、program 變更）</summary><div class="scroll"><table><thead><tr><th>#</th><th>名稱</th><th>raw</th><th>note</th><th>percussion</th><th>channels</th><th>program changes</th><th>EoT</th></tr></thead><tbody>${(m.tracks ?? []).map(track => `<tr><td>${track.index}</td><td>${esc(track.name ?? '—')}</td><td>${track.rawEvents}</td><td>${track.noteEvents}</td><td>${track.percussionEvents}</td><td>${esc(track.channels.join(', ') || '—')}</td><td>${track.programChanges.length}</td><td>${track.sawEndOfTrack ? '有' : '缺'}</td></tr>`).join('')}</tbody></table></div></details>
+    ${detail('來源紀錄與完整 unsupported／warnings 證據', { source: entry.source, integrity: entry.integrity, warnings: entry.warnings, unsupported: entry.unsupported })}
+  </div>`;
+}
+
+function percussionCard(entry) {
+  const m = entry.midi ?? {};
+  if (!m.percussionEventCount) return '';
+  return `<div class="card"><div class="row"><h3>打擊材料</h3>${badge('UNSUPPORTED')}</div>
+    <p class="meta">General MIDI channel 10 的音符編號是鼓組選擇器，不是音高。這些事件保留完整時值作為證據，但不會成為任何音高角色的材料；沒有證據支持的 drum-face 對應不在本階段範圍內（MASTER_RULES.md §8）。</p>
+    ${facts([['打擊事件', m.percussionEventCount], ['Channel', m.percussionChannels?.join(', ')], ['Note numbers', m.percussionNoteNumbers?.join(', ')]])}
+    ${detail('逐一打擊事件（含 tick 起訖與 source event id）', entry.unsupported.filter(item => item.code === 'PERCUSSION_CHANNEL_EVENT'))}</div>`;
+}
+
+function unsupportedCard(entry) {
+  const codes = Object.entries(entry.midi?.unsupportedCounts ?? {}).filter(([code]) => code !== 'PERCUSSION_CHANNEL_EVENT');
+  const warnings = Object.entries(entry.midi?.warningCounts ?? {});
+  if (!codes.length && !warnings.length) return '';
+  return `<div class="card"><div class="row"><h3>未支援材料與來源警告</h3>${badge(codes.length ? 'UNSUPPORTED' : 'PENDING')}</div>
+    <p class="meta">未支援材料不會被修補、量化或丟棄。它讓來源保持「不完整」，並在此逐項可見。</p>
+    ${codes.length ? `<p><strong>未支援</strong></p><ul class="codes">${countList(Object.fromEntries(codes))}</ul>` : ''}
+    ${warnings.length ? `<p><strong>警告（來源事實，不影響完整性）</strong></p><ul class="codes">${countList(Object.fromEntries(warnings))}</ul>` : ''}
+    ${detail('完整證據', { unsupported: entry.unsupported, warnings: entry.warnings })}</div>`;
+}
+
+function voiceSplitCard(split) {
+  const lossless = !split.missingEventIds.length && !split.duplicatedEventIds.length;
+  return `<div class="card"><div class="row"><h3>G11-B　來源聲部分解</h3>${badge(lossless && split.complete ? 'PASS' : 'UNSUPPORTED')}</div>
+    <p class="meta">把來源聲部拆成單音 lane。這裡不指派角色、不合併、不刪除任何事件。Lane 相鄰只是打包結果，不代表同一條連續聲部。</p>
+    ${facts([
+      ['來源聲部數', split.sourceVoiceCount],
+      ['Lane 數', split.laneCount],
+      ['最大同時發聲數', split.maxPolyphony],
+      ['事件（輸入／輸出）', `${split.inputEventCount} / ${split.outputEventCount}`],
+      ['遺失事件', split.missingEventIds.length],
+      ['重複事件', split.duplicatedEventIds.length],
+    ])}
+    <div class="scroll"><table><thead><tr><th>來源聲部</th><th>lane</th><th>事件</th><th>平均音高（精確）</th><th>靜默接點</th></tr></thead><tbody>${split.groups.flatMap(group => group.lanes.map(lane => `<tr><td><code>${esc(group.sourceVoice)}</code></td><td>#${lane.index}</td><td>${lane.noteCount}</td><td>${esc(lane.averagePitchExact)}</td><td>${lane.silenceJunctions.length}</td></tr>`)).join('')}</tbody></table></div>
+    ${split.groups.some(group => group.diagnostics.length) ? detail('G11-B 診斷（同音重疊、密度、lane 目標等）', split.groups.flatMap(group => group.diagnostics)) : ''}</div>`;
+}
+
+function roleRow(role, view, candidate) {
+  const lanes = candidate.lanes.filter(lane => view.laneIds.includes(lane.id));
+  const events = view.eventIds.length;
+  return `<tr><th scope="row">${esc(role)}</th><td>${badge(view.status === 'ASSIGNED' ? 'PENDING' : view.status === 'EMPTY' ? 'N/A' : view.status)}</td><td>${view.laneIds.length}</td><td>${events}</td><td>${esc(view.evidenceTierName ?? (view.evidenceTier === null ? '—' : String(view.evidenceTier)))}</td><td>${esc(view.reasons.join(' · ') || '—')}</td><td>${esc(lanes.map(lane => lane.sourceVoice).join(', ') || '—')}</td></tr>`;
+}
+
+function core3Card(candidate) {
+  const core3 = candidate.core3;
+  const rows = ['Melody', 'Chord1', 'Chord2'].map(role => roleRow(role, candidate.roles[role], candidate)).join('');
+  return `<div class="card"><div class="row"><h3>Core3 候選（Melody ＋ Chord1 ＋ Chord2）</h3>${badge(core3.status === 'COMPLETE' ? 'PASS' : core3.status)}</div>
+    <p class="meta">Core3 是一個三角色單位，三者同為必要，彼此沒有優先順序。這是候選階段的判讀，不是 ACCEPTANCE_CRITERIA.md Gate 4 的接受。</p>
+    <div class="scroll"><table><thead><tr><th>角色</th><th>狀態</th><th>lane</th><th>事件</th><th>證據層級</th><th>理由</th><th>來源聲部</th></tr></thead><tbody>${rows}</tbody></table></div>
+    ${facts([
+      ['尚未成立的功能', core3.missingFunctions.join(', ') || '—'],
+      ['未獲證據支持的功能', core3.unprovenFunctions.join(', ') || '—'],
+      ['音樂身分是否依賴 Chord3–Chord5', core3.identityDependsOnEnrichment ? '是' : core3.identityMayDependOnEnrichment ? '未確定' : '否'],
+      ['三者皆必要', core3.architecture.allThreeRequiredForComplete ? '是' : '否'],
+      ['角色間優先順序', core3.architecture.priorityAmongRoles],
+    ])}
+    ${detail('Core3 功能、理由與未解衝突', { functions: core3.functions, rationale: core3.rationale, unresolvedHarmony: core3.unresolvedHarmony, conflicts: core3.conflicts, pending: core3.pending })}</div>`;
+}
+
+function full6Card(candidate) {
+  const full6 = candidate.full6;
+  const core3Incomplete = candidate.core3.status !== 'COMPLETE';
+  const rows = ['Chord3', 'Chord4', 'Chord5'].map(role => roleRow(role, candidate.roles[role], candidate)).join('');
+  return `<div class="card"><div class="row"><h3>Full6 加值角色（Chord3–Chord5）</h3>${badge(full6.status === 'USEFUL' ? 'PENDING' : full6.status === 'NONE' ? 'N/A' : full6.status)}</div>
+    <p class="meta">加值角色與 Core3 分開評估。它們不能替代、不能補足、也不能掩蓋尚未成立的 Core3。</p>
+    ${core3Incomplete ? `<p class="note">目前 Core3 為 ${esc(candidate.core3.status)}。即使 Chord3–Chord5 全部填滿，Core3 仍然不完整；這裡不計算任何「完成度百分比」。</p>` : ''}
+    <div class="scroll"><table><thead><tr><th>角色</th><th>狀態</th><th>lane</th><th>事件</th><th>證據層級</th><th>理由</th><th>來源聲部</th></tr></thead><tbody>${rows}</tbody></table></div>
+    ${detail('加值角色理由、重複風險與跨角色訊號', { rolesUsed: full6.rolesUsed, roleContributions: full6.roleContributions, duplicationRisks: full6.duplicationRisks, conflictSignals: full6.conflictSignals, core3DependencyLaneIds: full6.core3DependencyLaneIds })}</div>`;
+}
+
+function pendingCard(candidate) {
+  const coverage = candidate.coverage;
+  return `<div class="card"><div class="row"><h3>待決、未指派與未支援</h3>${badge(candidate.pending.length || candidate.unassigned.length || candidate.unsupportedSourceMaterial.length ? 'PENDING' : 'PASS')}</div>
+    <p class="meta">每個來源事件都必須落在以下其中一格。沒有事件會為了讓畫面好看而被刪除。</p>
+    ${facts([
+      ['來源事件', coverage.sourceEventCount],
+      ['已指派角色', coverage.assignedEventCount],
+      ['待決（證據不足或衝突）', coverage.pendingEventCount],
+      ['未指派（超出六角色或保留）', coverage.unassignedEventCount],
+      ['未支援', coverage.unsupportedEventCount],
+      ['覆蓋完整', coverage.complete ? '是' : '否'],
+    ])}
+    ${candidate.pending.length ? `<div class="scroll"><table><thead><tr><th>lane</th><th>建議角色</th><th>阻擋原因</th><th>Gate</th></tr></thead><tbody>${candidate.pending.map(item => `<tr><td><code>${esc(item.laneId)}</code></td><td>${esc(item.proposedRole ?? '—')}</td><td>${esc(item.blockers.join(' · '))}</td><td><code>${esc(item.gate ?? '—')}</code></td></tr>`).join('')}</tbody></table></div>` : '<p class="empty">目前沒有待決 lane。</p>'}
+    ${candidate.unassigned.length ? detail(`未指派 lane（${candidate.unassigned.length}）：材料保留，等待角色決策`, candidate.unassigned) : ''}
+    ${candidate.unsupportedSourceMaterial.length ? detail(`G11-C 未支援來源材料（${candidate.unsupportedSourceMaterial.length}）`, candidate.unsupportedSourceMaterial) : ''}
+    ${detail('候選診斷訊號', candidate.diagnostics)}
+    ${candidate.ledger.length <= LEDGER_DISPLAY_LIMIT
+      ? detail(`逐事件角色帳（${candidate.ledger.length}）`, candidate.ledger)
+      : `<p class="meta">逐事件角色帳共 ${candidate.ledger.length} 筆，超過畫面顯示上限 ${LEDGER_DISPLAY_LIMIT}。完整內容包含在「下載分析報告」中，沒有任何一筆被捨棄。</p>`}</div>`;
+}
+
+function rawMidiSection(entries) {
+  if (!entries?.length) return '';
+  return `<section id="raw-midi"><div class="section-heading"><h2>02　Raw MIDI 來源與候選</h2><small>完全在本機處理</small></div>
+    <p class="note safe">原始 .mid／.midi 位元組只留在這台裝置：檔案 → 本機 Worker → 已合併的 G11 分析模組 → 本頁。任何雲端端點都不會收到這些位元組。</p>
+    ${entries.map(entry => `<div class="raw-midi-slot">
+      ${midiSourceCard(entry)}
+      ${percussionCard(entry)}
+      ${unsupportedCard(entry)}
+      ${entry.error ? `<div class="card"><div class="row"><h3>G11-B／G11-C</h3>${badge('UNSUPPORTED')}</div><p>${esc(entry.error)}</p></div>`
+        : !entry.arrangement ? `<div class="card"><div class="row"><h3>G11-B／G11-C</h3>${badge('UNSUPPORTED')}</div><p class="meta">位元組完整性未通過，因此不進行分解與角色候選：${esc(entry.integrity.reasons.join(', '))}</p></div>`
+        : `${voiceSplitCard(entry.arrangement.voiceSplit)}
+      <div class="card candidate-banner"><div class="row"><h3>G11-C　角色候選</h3>${badge('PENDING')}</div>
+        <p>這是<strong>候選建議</strong>，不是已接受的編排。它沒有修改來源專案，來源事件仍然沒有角色，也不認證任何 Gate：TECHNICAL_PASS、SOURCE_PASS、PLAYER_READBACK_PASS、AUDIO_ALIGNMENT_PASS、MOBILE_ADAPTATION_PASS、IN_GAME_ACCEPTED 皆不成立。</p>
+        <p class="meta">來源狀態（上方）、角色候選（下方）與實際審核／接受紀錄（第 04、06 節）是三件不同的事，不會互相升級。</p>
+        ${facts([['階段', entry.arrangement.stage], ['種類', entry.arrangement.stageKind], ['已接受', entry.arrangement.accepted ? '是' : '否'], ['認證 Gate', entry.arrangement.certifiesGates.length ? entry.arrangement.certifiesGates.join(', ') : '無'], ['derivation', `${entry.arrangement.pipeline} · ${entry.arrangement.derivation.eventCount} events`]])}
+        ${entry.persistedArrangement && !entry.persistedArrangement.current ? `<p class="note">已捨棄一份與目前來源不相符的儲存候選：${esc(entry.persistedArrangement.reasons.join(', '))}。上方顯示的是重新計算的結果。</p>` : ''}</div>
+      ${core3Card(entry.arrangement.candidate)}
+      ${full6Card(entry.arrangement.candidate)}
+      ${pendingCard(entry.arrangement.candidate)}`}
+    </div>`).join('')}
+    <p class="note">本節不產生 Final MML、不做 Mobile 適配、不指派樂器或八度，也不宣稱任何實機結果。</p></section>`;
+}
+
 function diffTable(diff) {
   if (!diff) return '<p class="empty">加入來源基準後顯示事件層級差異。</p>';
   return `<div class="scroll"><table><thead><tr><th>新增音</th><th>移除音</th><th>音高／時值／力度修改</th><th>角色移動</th><th>Tempo 變化</th></tr></thead><tbody><tr><td>${diff.summary.noteAdded}</td><td>${diff.summary.noteRemoved}</td><td>${diff.summary.noteModified}</td><td>${diff.summary.roleMoved}</td><td>${diff.summary.tempoChanged + diff.summary.tempoAdded + diff.summary.tempoRemoved}</td></tr></tbody></table></div>${detail('逐事件差異（音高、起訖拍、角色、力度）', diff)}`;
@@ -115,8 +274,9 @@ function render() {
       <div class="grid intake-grid">${intakeCard('candidate','目前候選','這次要審核的版本')}${intakeCard('baseline','Source-Faithful Baseline','編修之前、可逐事件比對的來源基準')}${intakeCard('previous','已接受的前一版','有歷史版本時，用於回歸比較')}</div>
       <details class="card"><summary>貼上 MML／Canonical IR，或附上交付 MML</summary><form id="paste"><div class="field-grid"><label>用途<select name="slot">${options([['candidate','目前候選'],['baseline','來源基準'],['previous','已接受前版'],['delivery','IR 候選對應的交付 MML']],'candidate')}</select></label>${input('name','檔名','pasted.mml')}</div><label>完整文字<textarea name="content" class="code" required spellcheck="false" placeholder="MML@…,…,…,…,…,…;"></textarea></label><div class="actions"><button>在本機載入</button></div></form></details>
     </section>
-    <section id="gates"><div class="section-heading"><h2>02　Analysis Gate</h2><span class="ready-count">${r.blockers?.length ?? 0} 項待處理</span></div><div class="gate-grid">${gates.map(([name,g])=>`<div class="gate"><strong>${esc(gateLabels[name] ?? name)}</strong>${badge(g.status)}<p>${esc(g.reason ?? g.blockers?.join(' · ') ?? '')}</p>${detail('檢查內容',g)}</div>`).join('')}</div><p class="note">技術語法通過只代表 TECHNICAL_PASS。未審核、未知與 unsupported 均不會被升級為 PASS。</p></section>
-    <section id="review"><div class="section-heading"><h2>03　比對與審核</h2><small>先看證據，再記錄決策</small></div>
+    ${rawMidiSection(r.rawMidi)}
+    <section id="gates"><div class="section-heading"><h2>03　Analysis Gate</h2><span class="ready-count">${r.blockers?.length ?? 0} 項待處理</span></div><div class="gate-grid">${gates.map(([name,g])=>`<div class="gate"><strong>${esc(gateLabels[name] ?? name)}</strong>${badge(g.status)}<p>${esc(g.reason ?? g.blockers?.join(' · ') ?? '')}</p>${detail('檢查內容',g)}</div>`).join('')}</div><p class="note">技術語法通過只代表 TECHNICAL_PASS。未審核、未知與 unsupported 均不會被升級為 PASS。</p></section>
+    <section id="review"><div class="section-heading"><h2>04　比對與審核</h2><small>先看證據，再記錄決策</small></div>
       <div class="card"><h3>Version Drift</h3><p class="review-subtitle">來源基準 → 目前候選。變動數量是診斷資訊。</p>${diffTable(r.lineage?.sourceToCandidate)}<details><summary>已接受前版 → 目前候選</summary>${diffTable(r.lineage?.previousToCandidate)}</details></div>
       <div class="grid"><div class="card"><h3>Lead / Core3</h3><p class="meta">前三軌的 Lead、核心和聲、必要低音／內聲部需能獨立成立。</p>${r.core3 ? detail('連續性、缺口、音域與角色報告',r.core3) : '<p class="empty">等待來源基準</p>'}${detail('Lead 降級證據結果',r.leadReports ?? [])}<div id="core3-changes">${(r.core3?.unapproved ?? []).map((change,index)=>`<form class="conflict" data-core3="${index}"><p class="meta">${esc(change.type)} · ${esc(change.eventId)}</p>${input('reason','保留此變動的正面理由','')}${input('evidence','來源／段落證據','')}<button class="secondary">記錄此變動審核</button></form>`).join('')}</div></div><div class="card"><h3>六軌重疊與密度</h3><p class="meta">全部 15 組跨軌持續同音、低中音摩擦及同步起音皆供審核；不自動刪音。</p>${detail('跨軌檢查',r.technical?.song?.review ?? {status:'PENDING'})}<p class="note">Rashisa 等具名歷史回歸：FIXTURE_PENDING。通用測試成功不代表這些歌曲已通過。</p></div></div>
       <div class="card"><h3>Harmony arbitration</h3><p class="meta">${r.harmony?.unresolvedCount ?? '—'} 項跨來源衝突待審核。保留須有理由及證據；其他方案先記為 PENDING，待候選實際修改後重新比對。</p>${(r.harmony?.conflicts ?? []).map((c,index)=>`<form class="conflict" data-harmony="${index}"><div class="row"><strong>${esc(c.intervalName)} · ${esc(c.leftRole)} / ${esc(c.rightRole)}</strong>${badge(c.resolved?'PASS':'PENDING')}</div><p class="meta">拍 ${esc(c.start)}–${esc(c.end)} · pitch ${c.leftPitch} / ${c.rightPitch}<br>${esc(c.leftEventId)}<br>${esc(c.rightEventId)}</p>${c.resolved?json(c.decision):`<div class="field-grid"><label>決策<select name="action">${options([['pending','仍待審核'],['keep','保留，已核對'],['omit','建議省略'],['move-role','建議移動角色'],['octave','建議改八度'],['redistribute','建議重新分配']],'pending')}</select></label>${input('reason','音樂／角色理由','')}${input('evidence','來源及段落／event 證據','')}</div><button class="secondary">記錄仲裁</button>`}</form>`).join('') || '<p class="empty">目前沒有跨來源衝突報告。Full6 人工審核仍然需要。</p>'}</div>
@@ -124,8 +284,8 @@ function render() {
       <details class="card"><summary>Lead 降級的完整證據鏈</summary><form id="lead-form"><div class="field-grid">${input('eventId','來源基準 Melody event ID','')}${input('destinationRole','目標角色（Chord1–Chord5 或 omitted）','')}<label>段落角色<select name="sectionRole">${options(['unknown','vocal-active','vocal-rest','instrumental','intro','interlude','solo','outro'].map(x=>[x,x]),'unknown')}</select></label><label>樂譜角色<select name="scoreClass">${options(['unknown','lead','accompaniment','inner','counter','duplicate'].map(x=>[x,x]),'unknown')}</select></label>${input('scoreCitation','樂譜來源／event／段落證據','')}<label>音訊角色<select name="audioClass">${options(['unknown','foreground','background','mixed'].map(x=>[x,x]),'unknown')}</select></label>${input('audioCitation','音訊來源／時間窗證據（不可用則留空）','')}${input('positiveReason','目標角色的正面理由','')}<label>接棒與 Core3 檢查<select name="continuity"><option value="unknown">尚未確認</option><option value="checked">已確認無 Lead 缺口且 Core3 成立</option></select></label></div><button class="secondary">執行 Lead evidence gate</button></form></details>
       <div class="card"><h3>記錄本輪人工審核</h3><p class="meta">只在已完成對照／聽驗時記錄；原因與證據綁定目前 revision。紀錄不會清除工具找到的未解決缺口或 unsupported。</p><form id="review-form"><div class="field-grid"><label>審核項目<select name="name">${options(Object.entries(reviewLabels),'source')}</select></label>${input('evidence','來源 ID、event、時間窗或實機紀錄','')}<label class="wide">審核結論與理由<textarea name="note" required></textarea></label></div><button>記錄已完成審核</button></form>${Object.entries(w.reviews).map(([name,v])=>`<div class="review-log"><strong>${esc(reviewLabels[name])}</strong> · ${esc(v.note)}<br><span class="muted">${esc(v.evidence)}</span></div>`).join('')}</div>
     </section>
-    <section id="audio"><div class="section-heading"><h2>04　Audio evidence</h2><small>僅主動要求時上傳</small></div><div class="card"><p class="note safe">選取音訊只會留在本機。按下「要求 Audio Alignment」才會傳送該音訊及候選的衍生音符／時間特徵；MusicXML／MML 原始文字不會上傳。</p><p id="audio-file-status" class="meta">${audioFile?esc(`${audioFile.name} · ${(audioFile.size/1048576).toFixed(1)} MiB · 尚未上傳`):'未選取音訊。雲端未連線。'}</p><label class="file-button secondary">選擇 M4A／FLAC／WAV<input id="audio-file" type="file" accept=".m4a,.flac,.wav,audio/mp4,audio/flac,audio/wav"></label><details><summary>Audio Worker 連線（選用）</summary><label>HTTPS alignment endpoint<input id="audio-endpoint" type="url" placeholder="https://your-worker.example/align" autocomplete="off"></label><label>本次工作階段 access token<input id="audio-token" type="password" autocomplete="off"></label><p class="meta">Token 僅存於目前畫面記憶體。v1 沒有預設雲端服務；未設定時保持 PENDING。</p></details><div class="actions"><button id="request-audio" ${!audioFile || !w.assets.candidate?'disabled':''}>要求 Audio Alignment</button><button id="cancel-audio" class="quiet" ${uploadController?'':'disabled'}>取消上傳／等待</button><label class="file-button quiet">匯入既有 alignment report<input id="audio-report" type="file" accept=".json,application/json"></label></div><div id="audio-progress" role="status"></div>${detail('音訊證據、控制點、信心與漂移',w.audio?.report ?? {status:'PENDING',reason:'SONG_AUDIO_EVIDENCE_MISSING'})}<p class="meta">Audio evidence 不會修改、刪除或重排 symbolic events。信心分數本身不代表音高真值。</p></div></section>
-    <section id="delivery"><div class="section-heading"><h2>05　Readiness 與交付</h2>${badge(r.state)}</div><div class="card"><p class="note">${r.state==='CANDIDATE'?'目前為 Candidate，尚有必要 Gate 未通過。複製內容仍屬候選版本。':r.state==='VALIDATED'?'必要非實機 Gate 已通過。等待使用者於目標遊戲 client 實際接受。':'已有本輪 exact-MML 實機接受紀錄。'}</p><div class="actions"><button id="copy-mml" ${r.rawMml?'':'disabled'}>複製完整 MML@</button><button id="export-mml" class="secondary" ${r.rawMml?'':'disabled'}>下載六軌文字</button><button id="export-report" class="quiet">下載分析報告</button></div>${r.tracks?r.tracks.map((track,i)=>`<div class="track"><div class="row"><label for="track-${i}">${roles[i]} <small>${track.length} / 2400</small></label><button data-copy-track="${i}" class="quiet">複製</button></div><textarea id="track-${i}" class="code" readonly spellcheck="false">${esc(track)}</textarea></div>`).join(''):'<p class="empty">需有通過 Final 技術語法且與候選事件一致的六軌 MML。MusicXML／IR 不會自動縮編或猜測角色；可附上對應的交付 MML 進行回讀。</p>'}<details><summary>記錄 In-game Accepted</summary><form id="acceptance"><div class="field-grid">${input('client','Client／地區／版本','')}${input('instrument','樂器與軌道配置','')}${input('evidence','實機結果／截圖或紀錄定位','')}</div><button ${r.state==='CANDIDATE'?'disabled':''}>此 exact-MML 已實機接受</button></form>${w.acceptance?json(w.acceptance):''}</details></div></section>
+    <section id="audio"><div class="section-heading"><h2>05　Audio evidence</h2><small>僅主動要求時上傳</small></div><div class="card"><p class="note safe">選取音訊只會留在本機。按下「要求 Audio Alignment」才會傳送該音訊及候選的衍生音符／時間特徵；MusicXML／MML 原始文字不會上傳。</p><p id="audio-file-status" class="meta">${audioFile?esc(`${audioFile.name} · ${(audioFile.size/1048576).toFixed(1)} MiB · 尚未上傳`):'未選取音訊。雲端未連線。'}</p><label class="file-button secondary">選擇 M4A／FLAC／WAV<input id="audio-file" type="file" accept=".m4a,.flac,.wav,audio/mp4,audio/flac,audio/wav"></label><details><summary>Audio Worker 連線（選用）</summary><label>HTTPS alignment endpoint<input id="audio-endpoint" type="url" placeholder="https://your-worker.example/align" autocomplete="off"></label><label>本次工作階段 access token<input id="audio-token" type="password" autocomplete="off"></label><p class="meta">Token 僅存於目前畫面記憶體。v1 沒有預設雲端服務；未設定時保持 PENDING。</p></details><div class="actions"><button id="request-audio" ${!audioFile || !w.assets.candidate?'disabled':''}>要求 Audio Alignment</button><button id="cancel-audio" class="quiet" ${uploadController?'':'disabled'}>取消上傳／等待</button><label class="file-button quiet">匯入既有 alignment report<input id="audio-report" type="file" accept=".json,application/json"></label></div><div id="audio-progress" role="status"></div>${detail('音訊證據、控制點、信心與漂移',w.audio?.report ?? {status:'PENDING',reason:'SONG_AUDIO_EVIDENCE_MISSING'})}<p class="meta">Audio evidence 不會修改、刪除或重排 symbolic events。信心分數本身不代表音高真值。</p></div></section>
+    <section id="delivery"><div class="section-heading"><h2>06　Readiness 與交付</h2>${badge(r.state)}</div><div class="card"><p class="note">${r.state==='CANDIDATE'?'目前為 Candidate，尚有必要 Gate 未通過。複製內容仍屬候選版本。':r.state==='VALIDATED'?'必要非實機 Gate 已通過。等待使用者於目標遊戲 client 實際接受。':'已有本輪 exact-MML 實機接受紀錄。'}</p><div class="actions"><button id="copy-mml" ${r.rawMml?'':'disabled'}>複製完整 MML@</button><button id="export-mml" class="secondary" ${r.rawMml?'':'disabled'}>下載六軌文字</button><button id="export-report" class="quiet">下載分析報告</button></div>${r.tracks?r.tracks.map((track,i)=>`<div class="track"><div class="row"><label for="track-${i}">${roles[i]} <small>${track.length} / 2400</small></label><button data-copy-track="${i}" class="quiet">複製</button></div><textarea id="track-${i}" class="code" readonly spellcheck="false">${esc(track)}</textarea></div>`).join(''):'<p class="empty">需有通過 Final 技術語法且與候選事件一致的六軌 MML。MusicXML／IR 不會自動縮編或猜測角色；可附上對應的交付 MML 進行回讀。</p>'}<details><summary>記錄 In-game Accepted</summary><form id="acceptance"><div class="field-grid">${input('client','Client／地區／版本','')}${input('instrument','樂器與軌道配置','')}${input('evidence','實機結果／截圖或紀錄定位','')}</div><button ${r.state==='CANDIDATE'?'disabled':''}>此 exact-MML 已實機接受</button></form>${w.acceptance?json(w.acceptance):''}</details></div></section>
     <details class="card"><summary>Published Canonical 與建置身分</summary><p class="meta">本機使用建置時由 Published main 取得並核驗的完整固定快照。離線模式不宣稱已確認最新 main。</p>${json(identity.metadata)}${identity.provenance?json(identity.provenance):''}${identity.documents.map(d=>`<details><summary>${esc(d.path)} · ${esc(d.authority)}</summary><a href="${esc(d.url)}" target="_blank" rel="noopener">GitHub 固定快照</a><pre>${esc(d.content)}</pre></details>`).join('')}</details>`;
   bind();
 }
