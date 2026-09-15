@@ -73,12 +73,17 @@ export function mergeCanonicalProjects(projects, options = {}) {
     meterEvents,
     decisions,
     metadata: {
+      notes: 'Merging preserves separate sources/events; it does not reconcile or deduplicate musically equivalent events across sources.',
+      // Caller metadata is annotation, so it is spread first. What the merge
+      // itself determined is written after it and is not overridable:
+      // `sourceComplete` is read as a Gate 2 verdict by
+      // backend/final/readiness.mjs, and letting a caller assert it would let a
+      // merge of incomplete inputs present itself as source-complete.
+      ...(options.metadata ?? {}),
       merge: 'canonical-project-merge-v1',
       componentProjects: projectKinds,
       sourceComplete: incompleteInputs.length === 0,
       incompleteInputs,
-      notes: 'Merging preserves separate sources/events; it does not reconcile or deduplicate musically equivalent events across sources.',
-      ...(options.metadata ?? {}),
     },
   });
 }

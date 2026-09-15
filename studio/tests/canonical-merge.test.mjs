@@ -68,3 +68,36 @@ test('duplicate event ids with conflicting contents fail closed', () => {
   });
   assert.throws(() => mergeCanonicalProjects([p1, p2]), /conflicting duplicate event id/);
 });
+
+// Adversarial audit (pre-Studio-Web). `sourceComplete` is not decoration: it is
+// read straight out of project metadata by the Gate 2 source readiness check in
+// backend/final/readiness.mjs. Caller-supplied merge metadata used to be spread
+// last, so it could overwrite the merge's own findings and present a merge of
+// incomplete inputs as source-complete. ACCEPTANCE_CRITERIA Gate 2 and
+// MASTER_RULES §3 make that verdict the merge's to state, not its caller's.
+test('caller metadata cannot overwrite the merge findings it did not compute', async () => {
+  const { evaluateProjectReadiness } = await import('../backend/final/readiness.mjs');
+  const incomplete = singleProject({
+    projectId: 'incomplete-project', sourceId: 'partial', kind: 'third-party-midi', authority: 'supporting', pitch: 60, complete: false,
+  });
+
+  const laundered = mergeCanonicalProjects([incomplete], {
+    id: 'merged',
+    metadata: { sourceComplete: true, incompleteInputs: [], merge: 'not-a-merge', componentProjects: [] },
+  });
+
+  assert.equal(laundered.metadata.sourceComplete, false);
+  assert.deepEqual(laundered.metadata.incompleteInputs, ['incomplete-project']);
+  assert.equal(laundered.metadata.merge, 'canonical-project-merge-v1');
+  assert.deepEqual(laundered.metadata.componentProjects.map(item => item.id), ['incomplete-project']);
+
+  // The readiness source gate must still see an incomplete merge.
+  const readiness = evaluateProjectReadiness({ project: laundered, mmlValidation: { ok: true, errors: [] } });
+  assert.equal(readiness.gates.source.status, 'PENDING');
+  assert.deepEqual(readiness.gates.source.blockers, ['SOURCE_COMPLETENESS_NOT_CONFIRMED']);
+
+  // Metadata the merge does not compute is still the caller's to supply.
+  const annotated = mergeCanonicalProjects([incomplete], { id: 'merged', metadata: { reviewTicket: 'AUDIT-1' } });
+  assert.equal(annotated.metadata.reviewTicket, 'AUDIT-1');
+  assert.equal(annotated.metadata.sourceComplete, false);
+});

@@ -229,6 +229,13 @@ function involvedSourceIds(eventsById, identity) {
   return ids;
 }
 
+// One entry per participating event, in eventIdsFor() order. An event the
+// project does not carry yields an empty list, which can never intersect a
+// cited source, so an interval naming a missing event fails closed.
+function perEventSourceIds(eventsById, identity) {
+  return eventIdsFor(identity).map(eventId => [...new Set(eventsById.get(eventId)?.sourceIds ?? [])]);
+}
+
 function decisionEventIds(decision) {
   return Array.isArray(decision?.eventIds) ? decision.eventIds.filter(id => typeof id === 'string' && id) : [];
 }
@@ -284,17 +291,37 @@ function isPrimarySourceRecord(source) {
   return false;
 }
 
-function hasAdmissibleSourceBinding(project, decision) {
+// `eventSourceIds` is the provenance of each participating event, kept apart
+// rather than unioned. A cited source must be primary, and *every* event in the
+// interval must itself carry one of the cited primaries.
+//
+// SOURCE_POLICY §5: a source reference proves provenance, not compatibility --
+// a real official score that carries none of these events says nothing about
+// this interval; §2 requires the exact source IDs and the event involved to be
+// recorded together. A union satisfies §2 for a single-event duration but not
+// for a gap: a gap between an official event and a supporting-only event has
+// union {official, third}, so citing `official` alone would clear the union
+// while proving nothing about the second event or about the gap as a whole.
+// Either side unbound therefore fails closed.
+//
+// Deliberately not required: that every cited source be used, that every one of
+// an event's sources be primary, or that an event carry no supporting source. A
+// mixed-provenance event is bound as soon as it intersects a cited primary.
+// This establishes provenance backing per event and nothing more -- not
+// cross-source compatibility, arrangement correctness or Final representability.
+function hasAdmissibleSourceBinding(project, decision, eventSourceIds) {
   const cited = evidenceSourceIdsOf(decision);
   if (!cited.length) return false;
   const sources = sourceById(project);
-  const resolved = [];
+  const admissible = new Set();
   for (const id of cited) {
+    // An unresolvable citation is not evidence, whatever else is cited.
     const source = sources.get(id);
     if (!source) return false;
-    resolved.push(source);
+    if (isPrimarySourceRecord(source)) admissible.add(source.id);
   }
-  return resolved.some(isPrimarySourceRecord);
+  if (!admissible.size || !eventSourceIds.length) return false;
+  return eventSourceIds.every(ids => ids.some(id => admissible.has(id)));
 }
 
 function matchingDecisions(project, identity) {
@@ -305,13 +332,13 @@ function matchingDecisions(project, identity) {
   ));
 }
 
-function classifyInterval(project, identity) {
+function classifyInterval(project, identity, eventSourceIds) {
   const matches = matchingDecisions(project, identity);
   const acceptedKeep = matches.filter(decision => (
     decision.status === 'accepted'
     && decision.action === MICRO_TIMING_KEEP_ACTION
     && evidenceOf(decision).length > 0
-    && hasAdmissibleSourceBinding(project, decision)
+    && hasAdmissibleSourceBinding(project, decision, eventSourceIds)
   ));
   const acceptedTechnical = matches.filter(decision => (
     decision.status === 'accepted'
@@ -374,7 +401,7 @@ function classifyInterval(project, identity) {
     decision.status === 'accepted'
     && decision.action === MICRO_TIMING_KEEP_ACTION
     && evidenceOf(decision).length > 0
-    && !hasAdmissibleSourceBinding(project, decision)
+    && !hasAdmissibleSourceBinding(project, decision, eventSourceIds)
   ));
   let classificationBasis = 'insufficient-proof';
   if (emptyEvidenceKeep) classificationBasis = 'accepted-keep-decision-empty-evidence';
@@ -398,7 +425,8 @@ function compareToSafeGrid(length) {
 }
 
 function reportFor(project, identity, eventsById) {
-  const classified = classifyInterval(project, identity);
+  const sourceIds = involvedSourceIds(eventsById, identity);
+  const classified = classifyInterval(project, identity, perEventSourceIds(eventsById, identity));
   return freezeDeep({
     identity,
     identityKey: intervalIdentityKey(identity),
@@ -413,7 +441,7 @@ function reportFor(project, identity, eventsById) {
     evidence: classified.evidence,
     attestation: classified.attestation,
     eventIds: eventIdsFor(identity),
-    sourceIds: involvedSourceIds(eventsById, identity),
+    sourceIds,
     // C2A answers source-support only. It never certifies Final representability.
     finalRepresentable: null,
   });

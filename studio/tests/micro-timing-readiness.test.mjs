@@ -842,3 +842,246 @@ test('C2B a dense role-null MusicXML-like stream is analyzed synchronously insid
   assert.equal(gate.unresolvedStreamIssueCount, 1999);
   assert.ok(seconds < 5, `readiness took ${seconds.toFixed(3)}s for a 2000-event role-null ingest`);
 });
+
+// ---------------------------------------------------------------------------
+// Adversarial audit (pre-Studio-Web): evidence scope containment
+// ---------------------------------------------------------------------------
+//
+// C2B-6 already proves a *spoofed* primary record cannot bind a sub-grid
+// interval. A genuinely primary record that carries none of the interval's own
+// events is the same unproven claim wearing a real badge: SOURCE_POLICY §5 says
+// a source reference proves provenance, not compatibility, and §2 requires the
+// exact source IDs *and the event involved* to be recorded together. Admissible
+// binding therefore has to be scoped to the interval, not merely present in the
+// project. G11-C already contains role evidence this way (evidenceScope in
+// backend/arrangement/role-candidates.mjs); the micro-timing gate did not.
+
+test('C2B-A1 a genuine primary source that carries none of the interval\'s events is microTiming PENDING', () => {
+  // The sub-grid note belongs only to the supporting third-party source. The
+  // official score is real, primary and in the project -- but not this note's.
+  const { project } = subGridDurationProject({
+    sources: [OFFICIAL, SUPPORTING_THIRD_PARTY],
+    sourceId: 'third',
+    decisions: [event => keepDecision({ event, evidenceSourceIds: ['official'] })],
+  });
+  const gate = readiness(project).gates.microTiming;
+  assert.equal(gate.status, 'PENDING');
+  assert.deepEqual(gate.blockers, ['MICRO_TIMING_CLASSIFICATION_UNKNOWN']);
+  assert.equal(gate.sourceSupportedCount, 0);
+  assert.equal(
+    gate.unknownIntervals[0].classificationBasis,
+    'accepted-keep-decision-without-admissible-source-binding',
+  );
+  assert.equal(readiness(project).candidateReady, false);
+});
+
+test('C2B-A2 an interval bound to its own cited primary source stays microTiming PASS', () => {
+  // Same shape, but the cited primary source is the one the note actually came
+  // from. Containment must not cost a legitimate keep its PASS.
+  const { project } = subGridDurationProject({
+    sources: [OFFICIAL, SUPPORTING_THIRD_PARTY],
+    sourceId: 'official',
+    decisions: [event => keepDecision({ event, evidenceSourceIds: ['third', 'official'] })],
+  });
+  const gate = readiness(project).gates.microTiming;
+  assert.equal(gate.status, 'PASS');
+  assert.equal(gate.sourceSupportedCount, 1);
+});
+
+test('C2B-A3 an inter-event gap needs a primary source from the events that bound it', () => {
+  const official = note({ id: 'lead-a', start: '0', end: '1', sourceId: 'official' });
+  const strayPrimary = createSource({
+    id: 'other-official',
+    label: 'Official score for a different section',
+    kind: 'official-musicxml',
+    authority: 'primary-symbolic',
+  });
+  const next = note({ id: 'lead-b', start: EXACT_GRID.add(new F(1, 1)).sub(JUST_BELOW).toString(), end: '3', sourceId: 'third' });
+  const target = gapIdentity(official, next);
+  const decision = createArbitrationDecision({
+    id: 'keep:gap',
+    eventIds: [official.id, next.id],
+    action: KEEP,
+    status: 'accepted',
+    reason: 'Claimed source-supported breath.',
+    evidence: ['a citation naming an unrelated section'],
+    metadata: { intervalIdentity: target, evidenceSourceIds: ['other-official'] },
+  });
+  const project = candidate({
+    events: [official, next],
+    sources: [OFFICIAL, SUPPORTING_THIRD_PARTY, strayPrimary],
+    decisions: [decision],
+  });
+  const gate = readiness(project).gates.microTiming;
+  assert.equal(gate.status, 'PENDING');
+  assert.ok(gate.blockers.includes('MICRO_TIMING_CLASSIFICATION_UNKNOWN'));
+  assert.equal(gate.sourceSupportedCount, 0);
+});
+
+// ---------------------------------------------------------------------------
+// Per-event source binding for sub-grid intervals (external-review follow-up)
+// ---------------------------------------------------------------------------
+//
+// C2B-A1/A3 above established that a cited primary source must be scoped to the
+// interval rather than merely present in the project. That containment was
+// checked against the *union* of the interval's event provenance, which is
+// enough for a single-event duration but not for a gap: a gap between an
+// official event A and a supporting-only event B has union
+// {official, third}, so citing `official` alone satisfied the union while
+// proving nothing about B or about the gap as a whole.
+//
+// SOURCE_POLICY §2 requires the exact source IDs *and the event involved* to be
+// recorded together, and §5 states a source reference proves provenance, not
+// compatibility. Binding is therefore evaluated per participating event: every
+// event in the interval must itself intersect a cited admissible primary
+// source. Either side unbound fails closed.
+//
+// Scope note: this proves provenance backing per event only. It is not a claim
+// of cross-source harmonic or audio compatibility, arrangement correctness,
+// Final representability, or client acceptance -- those stay separate gates.
+
+const ANOTHER_OFFICIAL = createSource({
+  id: 'official-b',
+  label: 'Second official score',
+  kind: 'official-musicxml',
+  authority: 'primary-symbolic',
+});
+
+// A gap of 1/17 (sub-grid) between two same-role events with chosen provenance.
+function gapProject({ previousSourceIds, nextSourceIds, evidenceSourceIds, sources }) {
+  const previous = createCanonicalNoteEvent({
+    id: 'gap-a', pitch: 60, start: '0', end: '1',
+    sourceIds: previousSourceIds, sourceEventIds: previousSourceIds.map(id => `${id}:a`), role: 'Melody',
+  });
+  const next = createCanonicalNoteEvent({
+    id: 'gap-b', pitch: 62, start: new F(1, 1).add(JUST_BELOW).toString(), end: '3',
+    sourceIds: nextSourceIds, sourceEventIds: nextSourceIds.map(id => `${id}:b`), role: 'Melody',
+  });
+  const target = gapIdentity(previous, next);
+  const decision = createArbitrationDecision({
+    id: 'keep:gap-a+gap-b',
+    eventIds: [previous.id, next.id],
+    action: KEEP,
+    status: 'accepted',
+    reason: 'Claimed source-supported micro-gap.',
+    evidence: ['cited score location for the claimed breath'],
+    metadata: { intervalIdentity: target, evidenceSourceIds },
+  });
+  return candidate({ events: [previous, next], sources, decisions: [decision] });
+}
+
+function gapGate(options) {
+  const gate = readiness(gapProject(options)).gates.microTiming;
+  assert.equal(gate.candidateCount, 1, 'fixture must produce exactly one sub-grid interval');
+  return gate;
+}
+
+// The case the external review used to expose the union hole. `official` is a
+// genuine primary source and is in the interval's union, but it is only A's
+// provenance: B is supporting-only and nothing cited backs it.
+test('C2B-B1 a gap whose next event has no cited primary provenance is PENDING', () => {
+  const gate = gapGate({
+    previousSourceIds: ['official'],
+    nextSourceIds: ['third'],
+    evidenceSourceIds: ['official'],
+    sources: [OFFICIAL, SUPPORTING_THIRD_PARTY],
+  });
+  assert.equal(gate.status, 'PENDING');
+  assert.deepEqual(gate.blockers, ['MICRO_TIMING_CLASSIFICATION_UNKNOWN']);
+  assert.equal(gate.sourceSupportedCount, 0);
+  assert.equal(
+    gate.unknownIntervals[0].classificationBasis,
+    'accepted-keep-decision-without-admissible-source-binding',
+  );
+});
+
+// Mirror of B1: the unbound side is the previous event.
+test('C2B-B2 a gap whose previous event has no cited primary provenance is PENDING', () => {
+  const gate = gapGate({
+    previousSourceIds: ['third'],
+    nextSourceIds: ['official'],
+    evidenceSourceIds: ['official'],
+    sources: [OFFICIAL, SUPPORTING_THIRD_PARTY],
+  });
+  assert.equal(gate.status, 'PENDING');
+  assert.equal(gate.sourceSupportedCount, 0);
+  assert.equal(
+    gate.unknownIntervals[0].classificationBasis,
+    'accepted-keep-decision-without-admissible-source-binding',
+  );
+});
+
+test('C2B-B3 a gap whose events share one cited primary source is PASS', () => {
+  const gate = gapGate({
+    previousSourceIds: ['official'],
+    nextSourceIds: ['official'],
+    evidenceSourceIds: ['official'],
+    sources: [OFFICIAL],
+  });
+  assert.equal(gate.status, 'PASS');
+  assert.equal(gate.sourceSupportedCount, 1);
+});
+
+// Two different primary sources, each cited and each backing its own side.
+// Provenance coverage only -- this says nothing about whether the two sources
+// are musically compatible, which is not this gate's question.
+test('C2B-B4 a gap backed by a different cited primary source on each side is PASS', () => {
+  const gate = gapGate({
+    previousSourceIds: ['official'],
+    nextSourceIds: ['official-b'],
+    evidenceSourceIds: ['official', 'official-b'],
+    sources: [OFFICIAL, ANOTHER_OFFICIAL],
+  });
+  assert.equal(gate.status, 'PASS');
+  assert.equal(gate.sourceSupportedCount, 1);
+});
+
+// A mixed-provenance event is not rejected for also carrying a supporting
+// source: what matters is that each event intersects a cited admissible primary.
+test('C2B-B5 mixed provenance is PASS when every event still intersects the cited primary', () => {
+  const gate = gapGate({
+    previousSourceIds: ['official', 'third'],
+    nextSourceIds: ['official'],
+    evidenceSourceIds: ['official'],
+    sources: [OFFICIAL, SUPPORTING_THIRD_PARTY],
+  });
+  assert.equal(gate.status, 'PASS');
+  assert.equal(gate.sourceSupportedCount, 1);
+});
+
+// Citing a primary source that backs neither side stays unbound, even though
+// both events are individually well-sourced elsewhere.
+test('C2B-B6 a cited primary backing neither side of the gap is PENDING', () => {
+  const gate = gapGate({
+    previousSourceIds: ['official'],
+    nextSourceIds: ['official'],
+    evidenceSourceIds: ['official-b'],
+    sources: [OFFICIAL, ANOTHER_OFFICIAL],
+  });
+  assert.equal(gate.status, 'PENDING');
+  assert.equal(gate.sourceSupportedCount, 0);
+});
+
+// The single-event path must be unaffected by per-event evaluation.
+test('C2B-B7 an event-duration interval bound to its own cited primary stays PASS', () => {
+  const { project } = subGridDurationProject({
+    sources: [OFFICIAL],
+    sourceId: 'official',
+    decisions: [event => keepDecision({ event, evidenceSourceIds: ['official'] })],
+  });
+  const gate = readiness(project).gates.microTiming;
+  assert.equal(gate.status, 'PASS');
+  assert.equal(gate.sourceSupportedCount, 1);
+});
+
+// A supporting-only event citing an adjacent-but-unrelated primary stays unbound.
+test('C2B-B8 a supporting-only event duration cannot borrow an adjacent primary', () => {
+  const { project } = subGridDurationProject({
+    sources: [OFFICIAL, SUPPORTING_THIRD_PARTY],
+    sourceId: 'third',
+    decisions: [event => keepDecision({ event, evidenceSourceIds: ['official'] })],
+  });
+  const gate = readiness(project).gates.microTiming;
+  assert.equal(gate.status, 'PENDING');
+  assert.equal(gate.sourceSupportedCount, 0);
+});

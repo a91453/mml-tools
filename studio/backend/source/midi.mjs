@@ -515,7 +515,11 @@ export function ingestMIDI(input, options = {}) {
 
   return Object.freeze({
     source,
-    title: options.title ?? trackSummaries.find(track => track.name)?.name ?? source.label,
+    // A track name is evidence and is preserved verbatim in `tracks`, but a
+    // blank one cannot become the project title: createCanonicalProject rejects
+    // a whitespace-only title, which would throw away a fully parsed file over
+    // a legal SMF text meta event. Only a name with actual content is a title.
+    title: options.title ?? trackSummaries.find(track => track.name?.trim())?.name.trim() ?? source.label,
     complete: unsupported.length === 0,
     events: Object.freeze(events),
     tempoEvents: Object.freeze(tempoEvents),
@@ -532,7 +536,7 @@ export function midiFragmentToProject(fragment, options = {}) {
   if (!fragment?.source || !Array.isArray(fragment.events)) throw Error('invalid MIDI fragment');
   return createCanonicalProject({
     id: options.id ?? `${fragment.source.id}-project`,
-    title: options.title ?? fragment.title ?? fragment.source.label,
+    title: options.title ?? (fragment.title?.trim() ? fragment.title : fragment.source.label),
     sources: [fragment.source],
     events: [...fragment.events],
     tempoEvents: [...fragment.tempoEvents],
