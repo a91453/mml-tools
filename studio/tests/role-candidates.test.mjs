@@ -19,7 +19,7 @@ const note = (id, pitch, start, end, voice, extra = {}) => Object.freeze({
   pitch,
   start,
   end,
-  sourceIds: Object.freeze([extra.sourceId ?? 'fixture']),
+  sourceIds: Object.freeze(extra.sourceIds ?? [extra.sourceId ?? 'fixture']),
   sourceEventIds: Object.freeze([`raw:${id}`]),
   role: extra.role ?? null,
   voice,
@@ -1676,4 +1676,328 @@ test('Core3: a resolved Chord1 arbitration states why, not only that it resolved
   assert.equal(arbitration.disagreement, null);
   assert.deepEqual([...arbitration.candidateSourceIds], ['official-midi']);
   assert.equal(arbitration.candidateVoices[0].sourceVoice, ACC_A);
+});
+
+// ═══════════════════════════════════════════════════════════════════════════
+// Overlapping cross-source declared Chord1 must not be blindly co-assigned
+// ═══════════════════════════════════════════════════════════════════════════
+//
+// A declared source role proves "this source presents this material as Chord1".
+// It does not prove that two separate arrangements are mutually compatible and
+// may be stacked into one Core Harmony (MASTER_RULES.md §6, SOURCE_POLICY.md
+// §5). Same-source polyphony is co-assignment; overlapping cross-source
+// declarations are a conflict that needs arbitration.
+
+const SRC_A = 'official-score';
+const SRC_B = 'third-party-midi';
+const VOICE_A = 'track:3/channel:3';
+const VOICE_B = 'track:4/channel:4';
+
+const core3Backbone = [
+  ...line('m', [72, 74, 76, 72], MELODY_VOICE, 0, { sourceId: SRC_A }),
+  ...line('b', [48, 50, 43, 45], BASS_VOICE, 0, { sourceId: SRC_A }),
+];
+
+// A: one source, one accompaniment staff, several overlapping declared lanes.
+test('A: same-source polyphonic declared Chord1 still co-assigns without deadlock', () => {
+  const events = [
+    ...core3Backbone,
+    note('x1', 60, '0', '2', HARMONY_VOICE, { sourceId: SRC_A, role: 'Chord1' }),
+    note('x2', 64, '0', '2', HARMONY_VOICE, { sourceId: SRC_A, role: 'Chord1' }),
+    note('x3', 59, '2', '4', HARMONY_VOICE, { sourceId: SRC_A, role: 'Chord1' }),
+    note('x4', 62, '2', '4', HARMONY_VOICE, { sourceId: SRC_A, role: 'Chord1' }),
+  ];
+  const candidate = run(events);
+  assertOrderIndependent(events);
+
+  assert.equal(candidate.roles.Chord1.status, 'ASSIGNED');
+  assert.equal(candidate.roles.Chord1.laneIds.length, 2, 'both overlapping lanes of one source carry Chord1');
+  assert.equal(candidate.core3.functions.principalHarmony.status, 'PRESENT');
+  assert.equal(candidate.core3.functions.principalHarmony.arbitration.crossSource, false);
+  assert.equal(candidate.core3.functions.principalHarmony.arbitration.decision, 'RESOLVED_BY_DECLARED_SOURCE_ROLE');
+  assert.deepEqual([...candidate.core3.functions.principalHarmony.arbitration.conflicts], []);
+  assert.equal(diagnostic(candidate, 'UNRESOLVED_CROSS_SOURCE_DECLARED_CHORD1'), undefined);
+  assert.equal(candidate.core3.status, 'COMPLETE');
+});
+
+test('A: same source split across two source voices is still same provenance', () => {
+  // Provenance is read from sourceIds, never from the sourceVoice string. Two
+  // voices of one source overlapping each other are not a cross-source stack.
+  const events = [
+    ...core3Backbone,
+    ...line('a', [60, 64, 60, 64], VOICE_A, 0, { sourceId: SRC_A, role: 'Chord1' }),
+    ...line('c', [62, 65, 62, 65], VOICE_B, 0, { sourceId: SRC_A, role: 'Chord1' }),
+  ];
+  const candidate = run(events);
+  assert.equal(candidate.roles.Chord1.laneIds.length, 2);
+  assert.equal(candidate.core3.status, 'COMPLETE');
+  assert.equal(diagnostic(candidate, 'UNRESOLVED_CROSS_SOURCE_DECLARED_CHORD1'), undefined);
+});
+
+// B: two sources, overlapping, both declaring Chord1.
+const crossSourceStackEvents = [
+  ...core3Backbone,
+  ...line('a', [60, 64, 60, 64], VOICE_A, 0, { sourceId: SRC_A, role: 'Chord1' }),
+  ...line('c', [62, 65, 62, 65], VOICE_B, 0, { sourceId: SRC_B, role: 'Chord1' }),
+];
+const stackLaneIds = [`lane:${VOICE_A}#0`, `lane:${VOICE_B}#0`];
+
+test('B: overlapping cross-source declared Chord1 is a conflict, not a co-assignment', () => {
+  const candidate = run(crossSourceStackEvents);
+  assertOrderIndependent(crossSourceStackEvents);
+
+  // Neither is stacked into Core Harmony, and neither is chosen over the other.
+  assert.equal(candidate.roles.Chord1.status, 'PENDING');
+  assert.deepEqual([...candidate.roles.Chord1.laneIds], []);
+  assert.deepEqual([...candidate.roles.Chord1.reasons], ['CROSS_SOURCE_DECLARED_CHORD1_OVERLAP']);
+  assert.equal(candidate.core3.functions.principalHarmony.satisfied, false);
+  assert.equal(candidate.core3.functions.principalHarmony.status, 'PENDING');
+  assert.equal(candidate.core3.status, 'PENDING');
+  assert.ok(candidate.core3.unprovenFunctions.includes('principal-harmony'));
+
+  // The disagreement is recorded with its exact source ids and where it happens.
+  const arbitration = candidate.core3.functions.principalHarmony.arbitration;
+  assert.equal(arbitration.crossSource, true);
+  assert.equal(arbitration.decision, 'PENDING');
+  assert.equal(arbitration.disagreement, 'CROSS_SOURCE_DECLARED_CHORD1_OVERLAP');
+  assert.deepEqual([...arbitration.candidateSourceIds], [SRC_A, SRC_B]);
+  assert.equal(arbitration.conflicts.length, 1);
+  assert.deepEqual([...arbitration.conflicts[0].laneIds], [...stackLaneIds].sort());
+  assert.deepEqual([...arbitration.conflicts[0].sourceIds], [SRC_A, SRC_B]);
+  assert.deepEqual([...arbitration.conflicts[0].overlapWindows], [{ start: '0', end: '4' }]);
+
+  const reported = diagnostic(candidate, 'UNRESOLVED_CROSS_SOURCE_DECLARED_CHORD1');
+  assert.ok(reported);
+  assert.equal(reported.deleted, false);
+  assert.equal(reported.merged, false);
+  assert.equal(reported.stacked, false);
+  assert.equal(reported.sourcePreferred, false, 'no source authority may be applied');
+  assert.equal(reported.decision, 'PENDING');
+  assert.deepEqual([...reported.laneIds], [...stackLaneIds].sort());
+
+  // Every lane, event and source id survives.
+  for (const laneId of stackLaneIds) {
+    const lane = laneOf(candidate, laneId);
+    assert.ok(lane, `${laneId} must be preserved`);
+    assert.ok(lane.eventIds.length);
+    assert.ok(lane.sourceEventIds.length);
+    for (const id of lane.eventIds) {
+      const [entry] = ledgerFor(candidate, id);
+      assert.equal(entry.decision, ROLE_DECISIONS.PENDING);
+      assert.equal(entry.sourceRole, 'Chord1', 'the declaration itself is retained');
+    }
+  }
+  const pendingIds = candidate.pending.map(item => item.laneId).sort();
+  assert.deepEqual(pendingIds, [...stackLaneIds].sort());
+  for (const item of candidate.pending) {
+    assert.equal(item.crossSource, true);
+    assert.ok(item.sourceIds.length, 'the pending record names the source behind the lane');
+    assert.deepEqual([...item.blockers], ['CROSS_SOURCE_DECLARED_CHORD1_OVERLAP']);
+  }
+});
+
+test('B: cited trusted-role declarations reach the same conflict as event-level roles', () => {
+  const events = [
+    ...core3Backbone,
+    ...line('a', [60, 64, 60, 64], VOICE_A, 0, { sourceId: SRC_A }),
+    ...line('c', [62, 65, 62, 65], VOICE_B, 0, { sourceId: SRC_B }),
+  ];
+  const cited = {
+    sourceRoleEvidence: [
+      { sourceVoice: VOICE_A, role: 'Chord1', citation: 'fixture:official score accompaniment staff' },
+      { sourceVoice: VOICE_B, role: 'Chord1', citation: 'fixture:third-party midi accompaniment track' },
+    ],
+  };
+  const candidate = run(events, cited);
+  assertOrderIndependent(events, cited);
+  assert.equal(candidate.core3.status, 'PENDING');
+  assert.equal(candidate.core3.functions.principalHarmony.status, 'PENDING');
+  assert.ok(diagnostic(candidate, 'UNRESOLVED_CROSS_SOURCE_DECLARED_CHORD1'));
+});
+
+// C: explicit arbitration clears it.
+test('C: explicit arbitration resolves the stack and preserves the other source', () => {
+  const events = [
+    ...core3Backbone,
+    ...line('a', [60, 64, 60, 64], VOICE_A, 0, { sourceId: SRC_A }),
+    ...line('c', [62, 65, 62, 65], VOICE_B, 0, { sourceId: SRC_B }),
+  ];
+  const arbitrated = {
+    sourceRoleEvidence: [
+      { sourceVoice: VOICE_A, role: 'Chord1', citation: 'fixture:official score accompaniment staff' },
+      { sourceVoice: VOICE_B, role: 'Chord3', citation: 'fixture:third-party alternate voicing, secondary' },
+    ],
+  };
+  const candidate = run(events, arbitrated);
+  assertOrderIndependent(events, arbitrated);
+
+  assert.deepEqual([...candidate.roles.Chord1.laneIds], [`lane:${VOICE_A}#0`]);
+  assert.equal(candidate.core3.functions.principalHarmony.status, 'PRESENT');
+  assert.equal(candidate.core3.functions.principalHarmony.evidenceStrength, 'POSITIVE');
+  assert.equal(candidate.core3.status, 'COMPLETE');
+  assert.equal(diagnostic(candidate, 'UNRESOLVED_CROSS_SOURCE_DECLARED_CHORD1'), undefined);
+
+  // The loser is preserved as enrichment, not dropped.
+  const other = laneOf(candidate, `lane:${VOICE_B}#0`);
+  assert.ok(ENRICHMENT_ROLE_NAMES.includes(other.candidateRole));
+  assert.equal(candidate.full6.status, 'USEFUL');
+  for (const id of other.eventIds) assert.equal(ledgerFor(candidate, id).length, 1);
+});
+
+// D: different sources that never overlap are not this conflict.
+test('D: non-overlapping cross-source declared Chord1 is not rejected for differing source ids', () => {
+  const events = [
+    ...line('m', [72, 74, 76, 72, 74, 76, 72, 74], MELODY_VOICE, 0, { sourceId: SRC_A }),
+    ...line('b', [48, 50, 43, 45, 48, 50, 43, 45], BASS_VOICE, 0, { sourceId: SRC_A }),
+    ...line('a', [60, 64, 60, 64], VOICE_A, 0, { sourceId: SRC_A, role: 'Chord1' }),
+    ...line('c', [62, 65, 62, 65], VOICE_B, 4, { sourceId: SRC_B, role: 'Chord1' }),
+  ];
+  const candidate = run(events);
+  assertOrderIndependent(events);
+
+  assert.equal(candidate.roles.Chord1.status, 'ASSIGNED');
+  assert.equal(candidate.roles.Chord1.laneIds.length, 2, 'a sectional hand-off stays representable');
+  assert.equal(candidate.core3.functions.principalHarmony.status, 'PRESENT');
+  assert.equal(candidate.core3.functions.principalHarmony.arbitration.crossSource, true,
+    'the cross-source fact is still recorded');
+  assert.deepEqual([...candidate.core3.functions.principalHarmony.arbitration.conflicts], [],
+    'but differing source ids alone are not a conflict');
+  assert.equal(diagnostic(candidate, 'UNRESOLVED_CROSS_SOURCE_DECLARED_CHORD1'), undefined);
+  assert.equal(candidate.core3.status, 'COMPLETE');
+});
+
+test('D: a multi-source project where only one source declares Chord1 is unaffected', () => {
+  const events = [
+    ...line('m', [72, 74, 76, 72], MELODY_VOICE, 0, { sourceId: SRC_A }),
+    ...line('b', [48, 50, 43, 45], BASS_VOICE, 0, { sourceId: SRC_B }),
+    ...line('a', [60, 64, 60, 64], VOICE_A, 0, { sourceId: SRC_A, role: 'Chord1' }),
+  ];
+  const candidate = run(events);
+  assert.equal(candidate.core3.status, 'COMPLETE');
+  assert.equal(diagnostic(candidate, 'UNRESOLVED_CROSS_SOURCE_DECLARED_CHORD1'), undefined);
+});
+
+// E: a perfect Melody and bass do not compensate for the unresolved conflict.
+test('E: Melody and Chord2 both satisfied cannot carry an unresolved cross-source Chord1', () => {
+  const candidate = run(crossSourceStackEvents);
+  assert.equal(candidate.core3.functions.leadContinuity.satisfied, true);
+  assert.equal(candidate.core3.functions.bassSkeleton.satisfied, true);
+  assert.equal(candidate.core3.functions.principalHarmony.satisfied, false);
+  assert.equal(candidate.core3.status, 'PENDING');
+  assert.equal(candidate.core3.architecture.priorityAmongRoles, 'NONE');
+  assert.equal(candidate.core3.architecture.allThreeRequiredForComplete, true);
+  // Chord2 must not quietly take over the principal-harmony material either.
+  assert.deepEqual([...candidate.roles.Chord2.laneIds], [`lane:${BASS_VOICE}#0`]);
+  for (const laneId of stackLaneIds) {
+    assert.equal(candidate.roles.Chord2.laneIds.includes(laneId), false);
+  }
+});
+
+// F: enrichment cannot compensate either, and must not launder the conflict.
+test('F/15: Full6 neither compensates for nor launders the unresolved conflict', () => {
+  const events = [
+    ...crossSourceStackEvents,
+    note('t1', 55, '0', '2', 'track:5/channel:5', { sourceId: SRC_A }),
+    note('t2', 57, '2', '4', 'track:5/channel:5', { sourceId: SRC_A }),
+    note('t3', 79, '0', '2', 'track:6/channel:6', { sourceId: SRC_A }),
+    note('t4', 77, '2', '4', 'track:6/channel:6', { sourceId: SRC_A }),
+  ];
+  const candidate = run(events);
+  assertOrderIndependent(events);
+
+  assert.ok(candidate.full6.rolesUsed.length >= 1, 'enrichment roles really are populated');
+  assert.equal(candidate.core3.status, 'PENDING', 'Full6 material cannot move the Core3 verdict');
+  assert.notEqual(candidate.full6.status, 'USEFUL',
+    'Full6 may not read as plain useful enrichment while Core3 is unresolved');
+
+  // The conflicting candidates never appear as enrichment at all.
+  for (const laneId of stackLaneIds) {
+    assert.equal(candidate.full6.enrichmentRationale.some(entry => entry.laneId === laneId), false,
+      'an unresolved Core Harmony candidate is not optional Full6 enrichment');
+    assert.equal(ENRICHMENT_ROLE_NAMES.includes(laneOf(candidate, laneId).candidateRole), false);
+  }
+});
+
+// G: the declared-role protection from the previous checkpoint still holds.
+test('G: a declared Chord2 bass is still not promoted to Melody by a derived signal', () => {
+  const events = [
+    ...line('h', [60, 64, 60, 64], HARMONY_VOICE, 0, { sourceId: SRC_A, role: 'Chord1' }),
+    ...line('b', [48, 50, 43, 45], BASS_VOICE, 0, { sourceId: SRC_A, role: 'Chord2' }),
+  ];
+  const candidate = run(events);
+  assert.deepEqual([...candidate.roles.Chord2.laneIds], [`lane:${BASS_VOICE}#0`]);
+  assert.deepEqual([...candidate.roles.Melody.laneIds], []);
+  assert.equal(candidate.core3.functions.leadContinuity.status, 'ABSENT');
+  assert.equal(candidate.core3.status, 'INCOMPLETE');
+});
+
+// H: provenance survives the conflict untouched.
+test('H: the conflict changes no pitch, onset, duration or source identity', () => {
+  const candidate = run(crossSourceStackEvents);
+  const byId = new Map(crossSourceStackEvents.map(event => [event.id, event]));
+  assert.equal(candidate.coverage.complete, true);
+  assert.deepEqual([...candidate.coverage.mutatedEventIds], []);
+  for (const entry of candidate.ledger) {
+    const source = byId.get(entry.eventId);
+    assert.equal(entry.sourcePitch, source.pitch);
+    assert.ok(f(entry.sourceStart).cmp(source.start) === 0);
+    assert.ok(f(entry.sourceEnd).cmp(source.end) === 0);
+    assert.deepEqual([...entry.sourceIds], [...source.sourceIds]);
+    assert.deepEqual([...entry.sourceEventIds], [...source.sourceEventIds]);
+  }
+  // Both source identities remain distinguishable in the output.
+  assert.deepEqual([...laneOf(candidate, `lane:${VOICE_A}#0`).sourceIds], [SRC_A]);
+  assert.deepEqual([...laneOf(candidate, `lane:${VOICE_B}#0`).sourceIds], [SRC_B]);
+});
+
+// §11: provenance is read from source ids, and ambiguity fails closed.
+test('a lane of mixed provenance is never treated as safely same-source', () => {
+  const mixed = [
+    ...core3Backbone,
+    ...line('a', [60, 64, 60, 64], VOICE_A, 0, { sourceId: SRC_A, role: 'Chord1' }),
+    ...line('c', [62, 65, 62, 65], VOICE_B, 0, { sourceIds: [SRC_A, SRC_B], role: 'Chord1' }),
+  ];
+  const candidate = run(mixed);
+  assertOrderIndependent(mixed);
+  assert.equal(candidate.core3.status, 'PENDING');
+  const reported = diagnostic(candidate, 'UNRESOLVED_CROSS_SOURCE_DECLARED_CHORD1');
+  assert.ok(reported);
+  assert.equal(reported.conflicts[0].ambiguousProvenance, true);
+  assert.deepEqual([...reported.conflicts[0].sourceIds], [SRC_A, SRC_B]);
+
+  // Even two lanes carrying the same mixed set are not safely same-source:
+  // nothing establishes that they are one arrangement.
+  const bothMixed = [
+    ...core3Backbone,
+    ...line('a', [60, 64, 60, 64], VOICE_A, 0, { sourceIds: [SRC_A, SRC_B], role: 'Chord1' }),
+    ...line('c', [62, 65, 62, 65], VOICE_B, 0, { sourceIds: [SRC_A, SRC_B], role: 'Chord1' }),
+  ];
+  const second = run(bothMixed);
+  assert.equal(second.core3.status, 'PENDING');
+  assert.ok(diagnostic(second, 'UNRESOLVED_CROSS_SOURCE_DECLARED_CHORD1'));
+});
+
+test('no automatic source authority decides the conflict', () => {
+  // Neither ordering of the source ids, nor which was declared first, nor which
+  // sounds longer may pick a winner. Canonical requires arbitration.
+  const longerThirdParty = [
+    ...core3Backbone,
+    ...line('a', [60, 64], VOICE_A, 0, { sourceId: SRC_A, role: 'Chord1' }),
+    ...line('c', [62, 65, 62, 65], VOICE_B, 0, { sourceId: SRC_B, role: 'Chord1' }),
+  ];
+  const candidate = run(longerThirdParty);
+  assert.equal(candidate.roles.Chord1.status, 'PENDING');
+  assert.deepEqual([...candidate.roles.Chord1.laneIds], [], 'the longer third-party source does not win');
+  assert.equal(diagnostic(candidate, 'UNRESOLVED_CROSS_SOURCE_DECLARED_CHORD1').sourcePreferred, false);
+
+  // Reversing which id sorts first must not change the outcome either.
+  const swapped = [
+    ...line('m', [72, 74, 76, 72], MELODY_VOICE, 0, { sourceId: 'aaa-source' }),
+    ...line('b', [48, 50, 43, 45], BASS_VOICE, 0, { sourceId: 'aaa-source' }),
+    ...line('a', [60, 64, 60, 64], VOICE_A, 0, { sourceId: 'zzz-source', role: 'Chord1' }),
+    ...line('c', [62, 65, 62, 65], VOICE_B, 0, { sourceId: 'aaa-source', role: 'Chord1' }),
+  ];
+  const second = run(swapped);
+  assert.equal(second.roles.Chord1.status, 'PENDING');
+  assert.deepEqual([...second.roles.Chord1.laneIds], []);
 });

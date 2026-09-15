@@ -1,9 +1,9 @@
 # G11-C — Traceable Six-Role Candidate Suggestion
 
 Status: IMPLEMENTER NOTE — **NOT CANONICAL**
-Stage: G11-C (Arrangement Candidates), checkpoint 2
+Stage: G11-C (Arrangement Candidates)
 
-This file records the G11-C checkpoint-1 implementation. It is not a Canonical
+This file records the G11-C implementation across its checkpoints. It is not a Canonical
 authority. Under `docs/CANONICAL_MANIFEST.md` the only Canonical rule sources are
 the four human-readable documents pinned at `rules_snapshot_sha`; **nothing here
 adds, amends, or reinterprets them.** G11-C implements Published Canonical; it
@@ -54,7 +54,7 @@ or touch G12 interoperability. `ROLE_CANDIDATE_STATUS` states each of these as `
 Heuristic evidence is not authority. `PENDING` is a valid, preferred outcome.
 The six-role limit is a capacity fact and never authorises silent deletion.
 
-## 3. Canonical rules this checkpoint is built around
+## 3. Canonical rules this stage is built around
 
 - **§0 / §4 authority and Lead policy.** Melody is the Lead role, not
   Vocal-only. `highest note -> Melody` and `not proven Vocal -> demote` are
@@ -262,6 +262,37 @@ arbitration is reported as `UNRESOLVED_CROSS_SOURCE_HARMONY` and Core3 cannot be
 complete. A losing accompaniment from another source is never allowed to vanish
 into enrichment with nothing in the report saying an arbitration was left open.
 
+**Same-source co-assignment vs. cross-source stacking.** These are different
+questions and are handled differently:
+
+| Declared Chord1 lanes | Handling |
+| --- | --- |
+| Several overlapping lanes, **one source provenance** | Co-assigned. One source naming the role for all of them leaves nothing to pick between, and a role holds zero or more lanes. Declaring a whole accompaniment staff as Chord1 yields Chord1. |
+| Overlapping lanes, **distinct source provenance** | `CROSS_SOURCE_DECLARED_CHORD1_OVERLAP`. Neither is stacked, neither is chosen, neither is dropped. `principalHarmony` is `PENDING` and Core3 cannot be complete. |
+| **Non-overlapping** lanes from distinct sources | Co-assigned. A sectional or arrangement hand-off stays representable; differing source ids alone are never the conflict. |
+
+A declared source role proves *"this source presents this material as Chord1"*.
+It does **not** prove *"two separate arrangements are mutually compatible and may
+be stacked into one Core Harmony"* — `MASTER_RULES.md` §6 forbids directly
+stacking alternate arrangements merely because each has a source, and
+`SOURCE_POLICY.md` §5 says a source proves provenance, not compatibility. Both
+candidates keep every lane, event, `sourceIds` and `sourceEventIds`; the conflict
+is reported as `UNRESOLVED_CROSS_SOURCE_DECLARED_CHORD1` with the exact source
+ids and the exact overlap windows, and clears through an explicit keep / omit /
+move-role / redistribute arbitration — for example declaring one source `Chord1`
+and the other `Chord3`–`Chord5` with a citation. The loser is then preserved as
+enrichment rather than dropped.
+
+**No automatic source authority.** Nothing here prefers official over
+third-party, earlier over later, longer over shorter, or one source id's sort
+order over another's. Canonical requires arbitration, and without one the answer
+is `PENDING`.
+
+**Provenance is read from `sourceIds`, never from the `sourceVoice` string.** Two
+source voices of one source are still one provenance; a lane whose own provenance
+is mixed is never treated as safely same-source, because nothing establishes that
+it is, and it fails closed into the conflict instead.
+
 **Lead-demotion interlock.** A lane carrying a declared source Lead cannot be
 moved off Melody here, not even by an explicit caller override. The move is
 refused, the lane becomes `PENDING` with blocker `LEAD_DEMOTION_NOT_EVALUATED`
@@ -347,7 +378,7 @@ All non-destructive, all carrying `deleted: false`:
 low/mid boundary), `COMPETING_LEAD_CANDIDATES`, `COMPETING_BASS_CANDIDATES`,
 `COMPETING_HARMONY_CANDIDATES`, `CONFLICTING_ROLE_EVIDENCE`,
 `SOURCE_LANE_OVERFLOW`, `UNRESOLVED_CORE_HARMONY_SIBLING`,
-`UNRESOLVED_CROSS_SOURCE_HARMONY`,
+`UNRESOLVED_CROSS_SOURCE_HARMONY`, `UNRESOLVED_CROSS_SOURCE_DECLARED_CHORD1`,
 `ESSENTIAL_MATERIAL_IN_ENRICHMENT`,
 `ESSENTIAL_MATERIAL_UNASSIGNED`, `LANE_PACKING_IS_NOT_CONTINUITY`,
 `UNSUPPORTED_SOURCE_MATERIAL_RETAINED`, `ROLE_ASSIGNMENT_PENDING`,
@@ -420,6 +451,18 @@ after explicit Chord1 arbitration, which reaches `COMPLETE`; a matrix degrading
 each of the three functions in turn, none of which may be covered by the other
 two; enrichment piled onto an unresolved Chord1, which must not move the verdict;
 and a declared `Chord2` lane that a derived Lead signal must not promote.
+
+Overlapping cross-source declared Chord1 adds: same-source polyphony still
+co-assigning without deadlock, including when one source is split across two
+source voices; overlapping declarations from two sources becoming a reported
+conflict with `principalHarmony` `PENDING` and Core3 `PENDING`, by both the
+event-level and the cited-evidence declaration paths; explicit arbitration
+clearing it with the loser preserved as enrichment; a non-overlapping hand-off
+that must not be rejected for differing source ids; a multi-source project where
+only one source declares Chord1; Melody and Chord2 unable to compensate;
+enrichment neither compensating nor laundering the conflict; a mixed-provenance
+lane failing closed; and proof that no source authority — order, length or id
+sort — picks a winner.
 
 Performance is asserted as a **work shape**, matching the repository's existing
 convention in `micro-timing-performance.test.mjs` — one sweep over the exact

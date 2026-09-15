@@ -669,6 +669,24 @@ function mergedIntervals(lane) {
   return merged;
 }
 
+// Exact intersection windows between two lanes' sounding intervals. Used to say
+// *where* two candidates collide, not merely that they do (SOURCE_POLICY.md §2
+// wants the event/section involved, not just the fact of disagreement).
+function laneOverlapWindows(a, b) {
+  const windows = [];
+  let i = 0;
+  let j = 0;
+  while (i < a.intervals.length && j < b.intervals.length) {
+    const left = a.intervals[i];
+    const right = b.intervals[j];
+    const start = maxB(left.start, right.start);
+    const end = minB(left.end, right.end);
+    if (end.cmp(start) > 0) windows.push({ start: key(start), end: key(end) });
+    if (cmpB(left.end, right.end) <= 0) i++; else j++;
+  }
+  return windows;
+}
+
 function lanesOverlap(a, b) {
   let i = 0;
   let j = 0;
@@ -941,32 +959,98 @@ function assignRoles(state) {
   const chord1Pinned = [...assignment.entries()].some(([, role]) => role === 'Chord1');
   if (!chord1Pinned) {
     const declared = lanes.filter(available).filter(lane => lane.roleSupport.Chord1.tier === 1);
-    if (declared.length) {
-      // Declared lanes are co-assignees, not rivals. The overlap contest exists
-      // to stop the implementation arbitrarily picking one of several plausible
-      // candidates; when the source names the role for all of them there is
-      // nothing to pick between, and a role holds zero or more lanes. Declaring
-      // a whole accompaniment staff as Chord1 must yield Chord1, not a deadlock.
+    // Declared lanes of one and the same source are co-assignees, not rivals:
+    // an overlap contest between them would only stop the implementation
+    // arbitrarily picking one of several plausible candidates, and when one
+    // source names the role for all of them there is nothing to pick between.
+    // Declaring a whole accompaniment staff as Chord1 must yield Chord1.
+    //
+    // Across sources that reasoning does not hold. A declared role proves "this
+    // source presents this material as Chord1"; it does not prove that two
+    // separate arrangements are mutually compatible and may be stacked into one
+    // Core Harmony (MASTER_RULES.md §6, SOURCE_POLICY.md §5). Overlapping
+    // declarations from distinct source provenance are a real conflict that
+    // needs arbitration -- keep / omit / move / redistribute -- and until that
+    // arbitration exists the decision stays PENDING. No source is preferred:
+    // there is no automatic authority here, and nothing is deleted or demoted.
+    //
+    // Provenance is read from sourceIds, never from the sourceVoice string. A
+    // lane that is itself of mixed provenance is never treated as safely
+    // same-source, because nothing establishes that it is.
+    const singleSource = lane => lane.sourceIds.length === 1;
+    const crossSourceOverlaps = [];
+    for (let i = 0; i < declared.length; i++) {
+      for (let j = i + 1; j < declared.length; j++) {
+        const left = declared[i];
+        const right = declared[j];
+        const safelySameSource = singleSource(left) && singleSource(right)
+          && left.sourceIds[0] === right.sourceIds[0];
+        if (safelySameSource || !lanesOverlap(left, right)) continue;
+        crossSourceOverlaps.push(Object.freeze({
+          laneIds: Object.freeze([left.id, right.id].sort(cmpStr)),
+          sourceIds: Object.freeze([...new Set([...left.sourceIds, ...right.sourceIds])].sort(cmpStr)),
+          ambiguousProvenance: !singleSource(left) || !singleSource(right),
+          overlapWindows: Object.freeze(laneOverlapWindows(left, right).map(window => Object.freeze(window))),
+        }));
+      }
+    }
+
+    const describeDeclaredVoices = pool => Object.freeze(
+      [...new Set(pool.map(lane => String(lane.sourceVoice ?? 'voice:null')))].sort(cmpStr)
+        .map(voiceKey => Object.freeze({
+          sourceVoice: voiceKey,
+          sourceIds: Object.freeze([...new Set(pool
+            .filter(lane => String(lane.sourceVoice ?? 'voice:null') === voiceKey)
+            .flatMap(lane => lane.sourceIds))].sort(cmpStr)),
+          laneIds: Object.freeze(pool
+            .filter(lane => String(lane.sourceVoice ?? 'voice:null') === voiceKey)
+            .map(lane => lane.id).sort(cmpStr)),
+        })));
+
+    // One unresolved pair makes the whole Chord1 decision unresolved: "which
+    // source supplies the principal harmony" is a single question for the role,
+    // so no subset of the declared lanes is assigned while it is open. The
+    // record names exactly which pairs collided and where.
+    if (crossSourceOverlaps.length) {
+      const declaredIds = declared.map(lane => lane.id).sort(cmpStr);
+      state.chord1Arbitration = Object.freeze({
+        crossSource: true,
+        candidateSourceIds: Object.freeze([...new Set(declared.flatMap(lane => lane.sourceIds))].sort(cmpStr)),
+        candidateVoices: describeDeclaredVoices(declared),
+        conflicts: Object.freeze(crossSourceOverlaps),
+        disagreement: 'CROSS_SOURCE_DECLARED_CHORD1_OVERLAP',
+        decision: 'PENDING',
+        notice: 'Overlapping Chord1 declarations from distinct source provenance. A source declaration proves role evidence, not cross-source compatibility, so the candidates are neither stacked nor ranked against each other. Every lane, source id and source event id is preserved; the decision needs an explicit keep / omit / move / redistribute arbitration (SOURCE_POLICY.md §5).',
+      });
+      meta('Chord1', {
+        status: 'PENDING', tier: 1,
+        reasons: ['CROSS_SOURCE_DECLARED_CHORD1_OVERLAP'],
+        competingLaneIds: declaredIds,
+        evidenceIds: declared.flatMap(lane => lane.roleSupport.Chord1.evidenceIds).sort(cmpStr),
+      });
+      for (const lane of declared) {
+        markPending({
+          laneId: lane.id,
+          proposedRole: 'Chord1',
+          blockers: ['CROSS_SOURCE_DECLARED_CHORD1_OVERLAP'],
+          competingLaneIds: declaredIds.filter(id => id !== lane.id),
+          evidenceIds: lane.roleSupport.Chord1.evidenceIds,
+          sourceIds: [...lane.sourceIds],
+          crossSource: true,
+        });
+      }
+    } else if (declared.length) {
       for (const lane of declared) assignment.set(lane.id, 'Chord1');
       // SOURCE_POLICY.md §5: the report must state why, for the resolved case
       // as well as the open one.
       state.chord1Arbitration = Object.freeze({
         crossSource: new Set(declared.flatMap(lane => lane.sourceIds)).size > 1,
         candidateSourceIds: Object.freeze([...new Set(declared.flatMap(lane => lane.sourceIds))].sort(cmpStr)),
-        candidateVoices: Object.freeze([...new Set(declared.map(lane => String(lane.sourceVoice ?? 'voice:null')))]
-          .sort(cmpStr)
-          .map(voiceKey => Object.freeze({
-            sourceVoice: voiceKey,
-            sourceIds: Object.freeze([...new Set(declared
-              .filter(lane => String(lane.sourceVoice ?? 'voice:null') === voiceKey)
-              .flatMap(lane => lane.sourceIds))].sort(cmpStr)),
-            laneIds: Object.freeze(declared
-              .filter(lane => String(lane.sourceVoice ?? 'voice:null') === voiceKey)
-              .map(lane => lane.id).sort(cmpStr)),
-          }))),
+        candidateVoices: describeDeclaredVoices(declared),
+        conflicts: Object.freeze([]),
         disagreement: null,
         decision: 'RESOLVED_BY_DECLARED_SOURCE_ROLE',
-        notice: 'Principal harmony is settled by a declared source role or a cited trusted symbolic role, not by a coverage ranking.',
+        notice: 'Principal harmony is settled by a declared source role or a cited trusted symbolic role, not by a coverage ranking. Co-assigned lanes are either of one source provenance or do not overlap in time, so no cross-source stacking is asserted.',
       });
       meta('Chord1', {
         status: 'ASSIGNED', tier: 1, tierName: 'DECLARED_SOURCE_ROLE',
@@ -2256,7 +2340,32 @@ export function suggestRoleCandidates(project, options = {}) {
   const chord1Arbitration = state.chord1Arbitration ?? null;
   const chord1Evidenced = roles => roles.every(lane => lane.roleSupport.Chord1.tier === 1);
   const chord1Lanes = lanes.filter(lane => assignment.get(lane.id) === 'Chord1');
+  const declaredChord1Conflict = chord1Arbitration?.disagreement === 'CROSS_SOURCE_DECLARED_CHORD1_OVERLAP';
+
+  // Two distinct sources each declare this material principal harmony, and they
+  // overlap in musical time. Declaration is role evidence, not proof that two
+  // arrangements may be stacked, so neither is chosen, neither is dropped, and
+  // the conflict is reported for arbitration (MASTER_RULES.md §6,
+  // SOURCE_POLICY.md §2 and §5).
+  if (declaredChord1Conflict) add('UNRESOLVED_CROSS_SOURCE_DECLARED_CHORD1', {
+    deleted: false,
+    merged: false,
+    stacked: false,
+    sourcePreferred: false,
+    decision: 'PENDING',
+    disagreement: chord1Arbitration.disagreement,
+    candidateSourceIds: Object.freeze([...chord1Arbitration.candidateSourceIds]),
+    candidateVoices: Object.freeze([...chord1Arbitration.candidateVoices]),
+    conflicts: Object.freeze([...chord1Arbitration.conflicts]),
+    laneIds: Object.freeze(chord1Arbitration.candidateVoices.flatMap(voice => [...voice.laneIds]).sort(cmpStr)),
+    resolvedBy: 'An explicit keep / omit / move-role / redistribute arbitration, for example declaring one source Chord1 and the other Chord3-Chord5 with a citation.',
+    notice: 'No source authority is applied: official does not automatically outrank third-party, and neither candidate is deleted, demoted, merged or silently moved. Core3 cannot be complete while this stays open.',
+  });
+
+  // The generic ranked-candidate form of the same question. Suppressed when the
+  // declared-overlap case above already reports it.
   if (chord1Arbitration?.crossSource
+    && !declaredChord1Conflict
     && !(chord1Lanes.length && chord1Evidenced(chord1Lanes))) add('UNRESOLVED_CROSS_SOURCE_HARMONY', {
     deleted: false,
     decision: 'PENDING',
