@@ -213,6 +213,17 @@ decomposition belongs to that emitter. Rejecting is the fail-closed half of the
 range MASTER_RULES §7 permits, and `rejectedIntervalKeys` is the worklist the
 emitter can adopt without this contract changing meaning.
 
+**Follow-up, as built.** The Canonical-aware Final MML emitter now exists as
+`studio/backend/final/mml-emitter.mjs` and is G10's second declared consumer: it
+reads `enforceMicroGaps` rather than re-deriving a threshold, refuses to emit on
+a rejected or blocked interval, and refuses rather than damaging a preserved
+source-supported one — no Final token is shorter than the 1/64 grid, so such an
+interval cannot be written at all. It performs **no** technical timing repair,
+so `rejectedIntervalKeys` remains an unconsumed worklist and that part of the
+paragraph above still stands. See [FINAL_MML_EMITTER.md](FINAL_MML_EMITTER.md).
+It resolves no `PENDING`: P1, P2, P3, P4, P5, P6, P10 and P16 are all still
+open, and the emitter is deliberately narrower than each of them.
+
 ### G12 — Stale legacy `workbench-source.zip` · `OPEN`
 
 **Evidence.** `dist/workbench-source.zip` is tracked (`.gitignore` excludes only
@@ -449,6 +460,7 @@ Sequenced so that no PR mixes a decision-bearing change with a mechanical one.
 | **C — G10 enforcement** ✅ | Source-aware micro-gap enforcement with mutation-verified regressions | Delivered across C2A / C2B / C2C |
 | **D — G12 / G13** | Artifact strategy and lockfile posture together | G12 + G13 decisions, after M3b |
 | **E — M5 groundwork** | Song History structure documentation only, no schema | D1–D8 decisions |
+| **F — Final MML emitter** ✅ | Canonical-aware Final MML emitter: exact-rational duration decomposition, attack/tie semantics, tempo placement, pitch/octave and character planning, G10 consumption, round-trip Final gate | C. Foundation delivered; no technical timing repair, no `Nxx` opt-in output |
 
 G8 and G9 receive no PR row: neither is unblocked, and G9 is `ROADMAP_ONLY`.
 M4 receives no PR row: it is applied in repository settings by the owner.

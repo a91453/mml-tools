@@ -74,7 +74,7 @@ That is exactly what the round-trip gate checks.
 The emitter **reads** all of these. It re-implements none of them: there is no
 second character counter, no second 1/64 threshold, no second pitch table, and no
 second Final syntax rule set. The pitch mapping in particular is *derived from
-the parser at load time* (`probeParserDefaults()`) rather than transcribed, so the
+the parser at load time* (`parserFacts()`) rather than transcribed, so the
 inverse can never drift from the forward direction.
 
 There was no pre-existing MML serializer, duration serializer, tempo serializer
@@ -213,6 +213,53 @@ the grid is unrepresentable without caution lengths, and **unrepresentable fails
 closed** — it is never rounded, snapped, or approximated to the nearest legal
 token.
 
+### Why the search is organised around the grid
+
+Every preferred token is a whole number of 1/64 notes, because a plain
+denominator divides 64 only inside the preferred set. So a grid-aligned
+remainder minus a preferred token is still grid-aligned, and the reachable state
+set collapses onto the grid and stays small. Every caution length is off-grid,
+and admitting all 64 of them at every step instead explodes the state space into
+arbitrary rationals — a plainly representable 7/16 beats burned a 200,000-node
+budget and then poisoned every later plan sharing that search state.
+
+Two deterministic restrictions prevent that, and neither can make an emitted
+duration wrong, because everything returned is still an exact sum:
+
+- a grid-aligned remainder is decomposed with grid-aligned tokens only. A grid
+  solution always exists (in the limit, repeated `64`), so exactness is never
+  lost; only a hypothetical mixed answer that left the grid and came back could
+  be missed, and that needs at least two off-grid tokens with multi-character
+  suffixes to beat a grid answer;
+- at most `MAX_OFF_GRID_SEGMENTS` (3) off-grid tokens per decomposition. A
+  triplet costs one. A remainder that is off-grid with no allowance left is a
+  dead end, since no grid token can bring it back.
+
+Both are implementer policy for search cost, not rules. Both report
+`not-representable` rather than approximating.
+
+## 4a. What the emitter refuses
+
+| Situation | Outcome |
+| --- | --- |
+| duration is not an exact lattice sum | `FAIL` — never rounded to the nearest token |
+| duration search budget exhausted | `FAIL`, reported as a search limit rather than a proof of impossibility |
+| two notes overlap inside one role | `FAIL` — a role is one sequential voice; neither note is dropped or truncated |
+| a note/rest event carries no six-slot role | `FAIL` — the emitter does not choose a slot |
+| some notes in a role have a decided volume and some do not | `FAIL` — no level is invented for the rest |
+| pitch above the official `0–107` range | `FAIL` — not re-spelled, and `Nxx` is not substituted (P3) |
+| pitch with no ordinary spelling in the octave mapping | `FAIL` (P6) |
+| tempo not an integer, or outside `T32–T255` | `FAIL` — never rounded or clamped |
+| no tempo at beat 0, or two tempi on one beat | `FAIL` — nothing is invented or deduplicated |
+| a tempo position falls past a non-empty role's end | `FAIL` — the role is **not** padded with filler rests (P2 / P14 stay open) |
+| any role exceeds the 2,400-character budget | `FAIL` with role, count, overage and attack count — no note, attack or rest is removed |
+| G10 reports confirmed technical residue | `FAIL` — this PR attempts no technical timing repair |
+| G10 reports unproven sub-grid material | `PENDING` — never acted on |
+| G10 preserves source-supported sub-grid material | `FAIL` — unrepresentable, and refusing is the only answer that does not damage it |
+| a supplied readiness report blocks on any gate but `technical` | `PENDING` |
+| a pending arbitration decision exists | `PENDING` |
+| the round-trip readback does not match | `FAIL` |
+
 ## 5. G10 consumption
 
 The emitter calls `enforceMicroGaps(project)` and honours the three key lists it
@@ -238,3 +285,29 @@ every run.
 
 `projectFromFinalReadback()` rebuilds a Canonical project from the emitted
 string's own parse, so `emit → parse → emit` can be asserted byte-identical.
+
+## 7. Local mutation exercise
+
+Ten deliberate mutations were applied by hand, the targeted suites run, the
+catching test recorded, and the mutation reverted. **There is no committed
+mutation harness**, so this is a *local mutation exercise* and not independently
+reproducible mutation testing.
+
+| # | Mutation | Caught by |
+| --- | --- | --- |
+| A | exact rational duration equality replaced with a float compare | 3 tests, incl. the 10⁻²⁰ pair whose doubles are equal |
+| B | adjacent same-pitch notes merged into one tied note | 6 tests, first `adjacent same-pitch notes stay two distinct attacks` |
+| C | unrepresentable duration rounded to the nearest legal token | 7 tests, incl. both fail-closed paths |
+| D | G10 blocked/unproven intervals ignored and emitted anyway | `an unclassified micro-gap blocks Final output entirely` |
+| E | G10 preserve guard removed, destroying source-supported material | `a source-supported sub-1/64 interval is never destroyed to make output` |
+| F | round-trip enforcement branch deleted | `the Final gate itself refuses output whose readback does not match` |
+| G | trailing notes dropped until the role fit the character budget | `a role one character over the limit fails, and deletes no music` |
+| H | every non-power-of-two denominator treated as engine-illegal | 5 tests, incl. the 4/7-beat duration no tick grid can express |
+| I | the six forbidden dotted forms admitted to the lattice | `the forbidden dotted forms are never admitted` |
+| J | tempo positions moved to the nearest whole beat | `tempo positions round-trip exactly on a non-integer beat` |
+
+F initially caught **nothing**: the enforcement branch was unreachable from
+outside, because by construction the serializer never produces output that fails
+its own gate. A redundant check that is never exercised has silently stopped
+being a check, so the gate was extracted into `finalizeWithRoundTrip` and given
+direct coverage. That is the one coverage gap this exercise found.
