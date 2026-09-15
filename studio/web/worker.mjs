@@ -20,7 +20,10 @@ self.onmessage = async ({ data }) => {
     if (initializationError) throw Error(initializationError);
     let result;
     if (data.action === 'identity') result = { metadata: canonical.metadata, documents: canonical.documents };
-    else if (['newWorkspace', 'intake', 'analyzeWorkspace', 'invalidate', 'importWorkspace', 'recordReview', 'recordAcceptance'].includes(data.action)) result = model[data.action](...data.args);
+    // intakeMidi receives an ArrayBuffer by structured clone, so the page keeps
+    // its own copy of the bytes: the buffer is never transferred and never
+    // detached, and persistence does not race the decode for ownership.
+    else if (['newWorkspace', 'intake', 'intakeMidi', 'analyzeWorkspace', 'invalidate', 'importWorkspace', 'recordReview', 'recordAcceptance'].includes(data.action)) result = model[data.action](...data.args);
     else throw Error('UNSUPPORTED: worker action');
     self.postMessage({ id: data.id, result });
   } catch (error) { self.postMessage({ id: data.id, error: error.message }); }
