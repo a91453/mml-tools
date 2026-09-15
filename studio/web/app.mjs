@@ -1,6 +1,10 @@
 import { listProjects, saveProject } from './storage.mjs';
 import { createWorkerClient } from './worker-client.mjs';
 import { createTaskQueue } from './task-queue.mjs';
+// Request identity only. The MIDI decoder, the Canonical conversion and the
+// G11-B/G11-C derivation all live behind the Worker, so the main thread never
+// imports the backend and never parses a source file itself.
+import { createSourceRequestLedger } from './source-requests.mjs';
 
 const $ = selector => document.querySelector(selector);
 const esc = value => String(value ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
@@ -13,6 +17,8 @@ const reviewLabels = { source: '來源完整與可追溯', version: 'Version Dri
 const gateLabels = { implementation: '分析模組', source: '來源完整性', baseline: '來源基準', technical: 'MML 技術語法', microTiming: '來源感知微時值（1/64 以下）', core3: 'Core3', leadDemotion: 'Lead 降級證據', crossSourceHarmony: '跨來源和聲', versionDrift: '版本差異', originalAudio: '原曲音訊', playerReadback: '播放器實際回讀', pendingDecisions: '待決仲裁', intake: '版本／音樂範圍', lead: 'Lead 審核', full6: 'Full6 審核', tempo: 'Tempo／時值審核', adaptation: 'Mobile 適配', regression: '回歸審核', deliveryIdentity: '交付事件一致性' };
 let workspace, report, identity, projects = [], audioFile = null, uploadController = null, busy = 0;
 const queued = createTaskQueue();
+const midiRequests = createSourceRequestLedger();
+const MAX_SOURCE_BYTES = 4194304;
 const { call } = createWorkerClient({ spawn: () => new Worker(new URL('./worker.mjs', import.meta.url), { type: 'module' }) });
 let messageTimer;
 function message(value, persistent = false) { clearTimeout(messageTimer); $('#message').textContent = value; if (!persistent) messageTimer = setTimeout(() => { $('#message').textContent = ''; }, 7000); }
@@ -86,9 +92,13 @@ async function commit(next) {
   } finally { markBusy(false); }
 }
 const input = (name, label, value, attrs = '') => `<label>${esc(label)}<input name="${name}" value="${esc(value)}" ${attrs}></label>`;
+const bytesLabel = value => value >= 1048576 ? `${(value / 1048576).toFixed(2)} MiB` : `${(value / 1024).toFixed(1)} KiB`;
 function intakeCard(slot, title, hint) {
   const asset = workspace.assets[slot];
-  return `<div class="card"><h3>${title}</h3><p class="meta">${hint}</p>${asset ? `<p><strong>${esc(asset.name)}</strong></p><p class="meta">${esc(asset.format)} · ${asset.project.events.length} events</p>${badge(asset.unsupported.length ? 'UNSUPPORTED' : asset.complete ? 'PENDING' : 'PENDING')} <small>${asset.complete ? '解析完成，等待來源審核' : '來源未完整'}</small>${detail('來源 authority／warnings／unsupported', { sources: asset.project.sources, warnings: asset.warnings, errors: asset.errors, unsupported: asset.unsupported })}` : '<div class="empty">尚未加入來源<br>MusicXML · MML · Canonical IR</div>'}<label class="file-button secondary">${asset ? '更換來源' : '選擇檔案'}<input type="file" data-intake="${slot}" accept=".xml,.musicxml,.mml,.txt,.json,application/xml,text/xml,text/plain,application/json" aria-label="${title}檔案"></label>${asset ? `<button class="quiet" data-download-ir="${slot}">匯出 IR</button>` : ''}</div>`;
+  // A Raw MIDI asset has no text representation, so its identity is stated as
+  // the byte count and the digest of the bytes that were actually parsed.
+  const source = asset?.source ? `<p class="meta">${bytesLabel(asset.source.byteLength)} · SMF ${esc(asset.midi?.smfFormat ?? '?')} · ${asset.midi?.trackCount ?? '?'} tracks<br><code class="digest">sha256 ${esc(asset.source.sha256.slice(0, 16))}…</code></p>` : '';
+  return `<div class="card"><h3>${title}</h3><p class="meta">${hint}</p>${asset ? `<p><strong>${esc(asset.name)}</strong></p><p class="meta">${esc(asset.format)} · ${asset.project.events.length} events</p>${source}${badge(asset.unsupported.length ? 'UNSUPPORTED' : 'PENDING')} <small>${asset.complete ? '解析完成，等待來源審核' : '來源未完整'}</small>${detail('來源 authority／warnings／unsupported', { sources: asset.project.sources, warnings: asset.warnings, errors: asset.errors, unsupported: asset.unsupported })}` : '<div class="empty">尚未加入來源<br>MusicXML · MML · MIDI · Canonical IR</div>'}<label class="file-button secondary">${asset ? '更換來源' : '選擇檔案'}<input type="file" data-intake="${slot}" accept=".xml,.musicxml,.mml,.txt,.json,.mid,.midi,application/xml,text/xml,text/plain,application/json,audio/midi,audio/x-midi" aria-label="${title}檔案"></label>${asset ? `<button class="quiet" data-download-ir="${slot}">匯出 IR</button>` : ''}</div>`;
 }
 function diffTable(diff) {
   if (!diff) return '<p class="empty">加入來源基準後顯示事件層級差異。</p>';
@@ -101,7 +111,7 @@ function render() {
     <div class="hero"><p class="eyebrow">LOCAL-FIRST / STUDIO V1</p><div class="hero-line"><h1>${esc(w.title)}</h1>${badge(r.state)}</div><p>保留來源、看見差異，再決定如何演奏。你的符號樂譜與審核紀錄在本機處理。</p><div class="state-path"><span class="${r.state === 'CANDIDATE' ? 'current' : ''}">01　Candidate</span><span class="${r.state === 'VALIDATED' ? 'current' : ''}">02　Validated</span><span class="${r.state === 'IN_GAME_ACCEPTED' ? 'current' : ''}">03　In-game Accepted</span></div><p class="meta">${w.savedAt ? `本機已保存 ${esc(new Date(w.savedAt).toLocaleString())}` : '尚未儲存'} · Revision ${w.revision}</p></div>
     <section id="intake"><div class="section-heading"><h2>01　專案與來源</h2><small>裝置本地處理</small></div>
       <div class="card"><form id="settings"><div class="field-grid">${input('title', '專案／歌曲名稱', w.title)}${input('recording', '錄音版本（專輯／MV／Live 等）', s.recording)}${input('offset', '有效音樂起點（秒）', s.offset, 'type="number" min="0" step="any"')}${input('end', '有效音樂終點（秒）', s.end, 'type="number" min="0" step="any"')}<label>來源確認的拍號圖<textarea name="meterText" placeholder="例如：0 4/4&#10;32 3/4">${esc(s.meterText)}</textarea></label><div><label>原曲音訊是否為來源集的一部分？<select name="audioRequired">${options([['unknown','尚未確認'],['yes','是，需要 Audio evidence'],['no','否，本專案沒有原曲音訊']],s.audioRequired)}</select></label><label>本次是否使用驗證播放器？<select name="preview">${options([['unknown','尚未確認'],['none','本次未使用播放器／preview'],['used','有使用，需要實際回讀（v1 尚待支援）']],s.preview)}</select></label></div></div><div class="actions"><button>儲存專案設定</button></div><p class="meta">來源、設定或候選內容變更後，先前審核與實機接受將失效。</p></form></div>
-      <div class="row"><p class="meta">MusicXML 預設為第三方 supporting。只有已確認的官方譜可選 primary symbolic。</p><select id="authority" aria-label="MusicXML 來源權威"><option value="supporting">第三方／未確認</option><option value="primary-symbolic">已確認官方 symbolic</option></select></div>
+      <div class="row"><p class="meta">MusicXML 與 MIDI 預設為第三方 supporting。只有已確認的官方譜／官方 MIDI 可選 primary symbolic；這只改變來源紀錄，不會讓不完整的來源變完整。</p><select id="authority" aria-label="MusicXML／MIDI 來源權威"><option value="supporting">第三方／未確認</option><option value="primary-symbolic">已確認官方 symbolic</option></select></div>
       <div class="grid intake-grid">${intakeCard('candidate','目前候選','這次要審核的版本')}${intakeCard('baseline','Source-Faithful Baseline','編修之前、可逐事件比對的來源基準')}${intakeCard('previous','已接受的前一版','有歷史版本時，用於回歸比較')}</div>
       <details class="card"><summary>貼上 MML／Canonical IR，或附上交付 MML</summary><form id="paste"><div class="field-grid"><label>用途<select name="slot">${options([['candidate','目前候選'],['baseline','來源基準'],['previous','已接受前版'],['delivery','IR 候選對應的交付 MML']],'candidate')}</select></label>${input('name','檔名','pasted.mml')}</div><label>完整文字<textarea name="content" class="code" required spellcheck="false" placeholder="MML@…,…,…,…,…,…;"></textarea></label><div class="actions"><button>在本機載入</button></div></form></details>
     </section>
@@ -125,6 +135,39 @@ async function putSource(slot, name, content, authority = 'supporting') {
   const next = await call('invalidate',workspace); next.assets[slot] = asset;
   await commit(next);
 }
+// Four bytes decide, not the extension. A native picker's filter is a hint: a
+// .mid holding text and a MIDI file named something else both have to reach the
+// right decoder, and the decoder still validates everything after MThd.
+async function isMidiFile(file) {
+  const head = new Uint8Array(await file.slice(0, 4).arrayBuffer());
+  if (head.length === 4 && head[0] === 0x4d && head[1] === 0x54 && head[2] === 0x68 && head[3] === 0x64) return true;
+  return /\.(mid|midi)$/i.test(file.name);
+}
+async function putMidiSource(slot, file, authority, token) {
+  // Checked on both sides of the decode, because either side can go stale: a
+  // second file may be chosen for this slot while this one waits its turn, and
+  // another may be chosen, or another project opened, while it decodes
+  // off-thread. Never silently: a discarded result says so.
+  const stale = () => {
+    const verdict = midiRequests.evaluate(token, { projectId: workspace?.id });
+    if (verdict.accepted) return false;
+    message(`已略過過期的 MIDI 來源分析（${verdict.reason}）。畫面顯示的是目前的來源。`, true);
+    return true;
+  };
+  if (stale()) return;
+  // Real bytes. Nothing between the picker and ingestMIDI reads them as text.
+  // postMessage structured-clones the buffer instead of transferring it, so
+  // this page keeps its own copy and persistence never races the decode.
+  const bytes = await file.arrayBuffer();
+  const asset = await call('intakeMidi', { name: file.name, bytes, id: crypto.randomUUID(), authority });
+  if (stale()) return;
+  // Replacement is one transaction: the previous source is only released once
+  // the new one has decoded, and the new revision clears every review and
+  // acceptance recorded against the old bytes.
+  const next = await call('invalidate', workspace);
+  next.assets[slot] = asset;
+  await commit(next);
+}
 async function copyText(value, textarea) {
   try { await navigator.clipboard.writeText(value); message('已複製'); }
   catch { if (textarea) { textarea.focus(); textarea.select(); } else { const box=document.createElement('textarea');box.value=value;$('#delivery').append(box);box.focus();box.select(); } message('Safari 未授予剪貼簿權限。已選取文字，可長按複製。',true); }
@@ -135,9 +178,27 @@ function bind() {
     if(settings.meterText!==workspace.settings.meterText) for(const [slot,a] of Object.entries(next.assets)) if(a.format==='MML') next.assets[slot]=await call('intake',{name:a.name,content:a.content,id:a.project.sources[0].id,meterText:settings.meterText});
     await commit(next);
   },{revisionBound:false}); };
-  document.querySelectorAll('[data-intake]').forEach(input=>input.onchange=()=>{const file=input.files[0],authority=$('#authority').value;if(file)run(async()=>{if(file.size>4194304)throw Error('UNSUPPORTED: symbolic file exceeds 4 MiB');await putSource(input.dataset.intake,file.name,await file.text(),authority);},{revisionBound:false});});
+  document.querySelectorAll('[data-intake]').forEach(input=>input.onchange=()=>{
+    const file=input.files[0],authority=$('#authority').value,slot=input.dataset.intake;
+    // A file input fires no change event when the chosen value is unchanged, so
+    // clearing it here is what lets the same file be selected again after a
+    // failure or a replacement. The File itself is already captured.
+    input.value='';
+    if(!file)return;
+    // Taken now, not when the task runs: a second choice for this slot has to
+    // supersede the first even while the first is still decoding off-thread.
+    const token=midiRequests.begin(slot,{projectId:workspace?.id,revision:workspace?.revision});
+    run(async()=>{
+      if(file.size>MAX_SOURCE_BYTES)throw Error(`UNSUPPORTED: 來源檔案 ${(file.size/1048576).toFixed(1)} MiB 超過 4 MiB 上限`);
+      if(await isMidiFile(file))await putMidiSource(slot,file,authority,token);
+      else await putSource(slot,file.name,await file.text(),authority);
+    },{revisionBound:false});
+  });
   document.querySelectorAll('[data-download-ir]').forEach(button=>button.onclick=()=>{const asset=workspace.assets[button.dataset.downloadIr];download('canonical-project.json',JSON.stringify(asset.project,null,2));});
-  $('#paste').onsubmit=event=>{event.preventDefault();const data=Object.fromEntries(new FormData(event.target)),authority=$('#authority').value;run(()=>putSource(data.slot,data.name,data.content,authority),{revisionBound:false});};
+  $('#paste').onsubmit=event=>{event.preventDefault();const data=Object.fromEntries(new FormData(event.target)),authority=$('#authority').value;
+    // Pasting into a slot supersedes an in-flight file choice for that slot too.
+    if(data.slot!=='delivery')midiRequests.begin(data.slot,{projectId:workspace?.id,revision:workspace?.revision});
+    run(()=>putSource(data.slot,data.name,data.content,authority),{revisionBound:false});};
   $('#review-form').onsubmit=event=>{event.preventDefault();const data=Object.fromEntries(new FormData(event.target));run(async()=>commit(await call('recordReview',workspace,data.name,data.note,data.evidence)));};
   document.querySelectorAll('[data-harmony]').forEach(form=>form.onsubmit=event=>{event.preventDefault();const data=Object.fromEntries(new FormData(form)),conflict=report.harmony.conflicts[Number(form.dataset.harmony)];run(async()=>{
     if(!data.reason?.trim()||!data.evidence?.trim())throw Error('每個仲裁需要理由與證據');
@@ -176,7 +237,7 @@ function bind() {
 $('#new-project').onclick=()=>run(async()=>{audioFile=null;await commit(await call('newWorkspace'));},{revisionBound:false,projectBound:false});
 $('#projects').onchange=()=>{const id=$('#projects').value;run(async()=>{const selected=projects.find(p=>p.id===id);if(!selected)throw Error('找不到選取的專案，請重新開啟');audioFile=null;await commit(selected);},{revisionBound:false,projectBound:false});};
 $('#export-project').onclick=()=>{if(workspace)download('mml-studio-project.json',JSON.stringify({...workspace,canonical:identity.metadata},null,2));};
-$('#restore-project').onchange=()=>{const file=$('#restore-project').files[0];if(file)run(async()=>{if(file.size>16*1048576)throw Error('Project backup exceeds 16 MiB');audioFile=null;await commit(await call('importWorkspace',await file.text()));message('已匯入；先前審核保留為歷史，本輪需要重新審核。');},{revisionBound:false,projectBound:false});};
+$('#restore-project').onchange=()=>{const file=$('#restore-project').files[0];if(file)run(async()=>{if(file.size>16*1048576)throw Error(`Project backup is ${(file.size/1048576).toFixed(1)} MiB; the restore limit is 16 MiB. Export the sources separately if a MIDI project exceeds it.`);audioFile=null;await commit(await call('importWorkspace',await file.text()));message('已匯入；先前審核保留為歷史，本輪需要重新審核。');},{revisionBound:false,projectBound:false});};
 // Build/Git provenance is audit metadata served by build.json, deliberately
 // outside the hashed runtime bundle. Display-only: its absence never relaxes
 // Canonical verification, which already ran fail-closed inside the worker.
