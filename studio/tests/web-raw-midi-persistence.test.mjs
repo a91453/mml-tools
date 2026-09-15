@@ -198,3 +198,17 @@ test('a backup missing its MIDI bytes is refused rather than restored empty', ()
   delete stripped.assets.candidate.source.bytesBase64;
   assert.throws(() => importWorkspace(JSON.stringify(stripped)), /MIDI source bytes are missing/);
 });
+
+test('a record claiming the MIDI format without a source block is a verdict, not a crash', () => {
+  const broken = { name: 'claims.mid', format: 'MIDI', project: asset('zero.mid', fixtures.format0(), 'zero').project, complete: true, warnings: [], errors: [], unsupported: [] };
+  const report = analyzeWorkspace(workspaceWith(broken));
+  const entry = report.rawMidi[0];
+  assert.equal(entry.integrity.verified, false);
+  assert.deepEqual(entry.integrity.reasons, ['SOURCE_BYTES_MISSING']);
+  assert.equal(entry.source.sha256, null);
+  assert.equal(entry.complete, false, 'the record\'s own claim grants nothing');
+  assert.equal(entry.claimedComplete, true);
+  assert.equal(entry.arrangement, null);
+  assert.equal(report.gates.rawMidiSource.status, 'UNSUPPORTED');
+  assert.equal(report.state, 'CANDIDATE');
+});

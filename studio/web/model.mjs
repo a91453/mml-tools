@@ -9,7 +9,7 @@ import { analyzeCrossSourceHarmony } from '../backend/arbitration/harmony.mjs';
 import { evaluateProjectReadiness } from '../backend/final/readiness.mjs';
 import { attachAudioAlignmentEvidence } from '../backend/audio/index.mjs';
 import { alignmentProjectText } from './audio-payload.mjs';
-import { MIDI_SOURCE_FORMAT, arrangementBinding, deriveArrangement, ingestMidiSource, isRawMidiAsset, reingestMidiAsset, verifyStoredProject } from './midi-source.mjs';
+import { arrangementBinding, deriveArrangement, ingestMidiSource, isRawMidiAsset, reingestMidiAsset, verifyStoredProject } from './midi-source.mjs';
 
 export const WORKSPACE_SCHEMA = 'mml-studio-web/workspace@1';
 export const MAX_TEXT_BYTES = 4 * 1024 * 1024;
@@ -132,16 +132,20 @@ function rawMidiReport(workspace, projects) {
     if (!isRawMidiAsset(asset)) continue;
     const integrity = verifyStoredProject(asset, projects[slot]);
     const persistedArrangement = asset.arrangement ? arrangementBinding(asset) : null;
+    // A record can claim this format and carry no source block at all. That is
+    // a verdict, not a crash: integrity already reports it, and reading the
+    // fields defensively keeps the whole analysis from throwing on one asset.
+    const source = asset.source ?? {};
     let arrangement = null;
     let error = null;
     if (integrity.verified) {
-      try { arrangement = deriveArrangement(projects[slot], { sourceSha256: asset.source.sha256 }); }
+      try { arrangement = deriveArrangement(projects[slot], { sourceSha256: source.sha256 }); }
       catch (failure) { error = `ARRANGEMENT_DERIVATION_FAILED: ${failure.message}`; }
     }
     entries.push({
       slot,
       name: asset.name,
-      source: { id: asset.source.id, kind: asset.source.kind, authority: asset.source.authority, sha256: asset.source.sha256, byteLength: asset.source.byteLength },
+      source: { id: source.id ?? null, kind: source.kind ?? null, authority: source.authority ?? null, sha256: source.sha256 ?? null, byteLength: source.byteLength ?? null },
       // Re-derived from the stored bytes, never read off the stored record.
       // `claimed` is kept beside it so a disagreement is visible rather than
       // just resolved.

@@ -203,6 +203,19 @@ export const sixSourceVoices = () => buildMidi({
   ],
 });
 
+// A track name is arbitrary attacker-controlled text: the SMF spec defines no
+// encoding for it and a file can carry anything. It reaches the page, so markup
+// in it is a real case, not a hypothetical one.
+export const hostileTrackName = () => buildMidi({
+  format: 0,
+  division: PPQ,
+  tracks: [buildTrack([
+    [0, ...trackName('<script>alert("x")</script> & "quoted" \'name\'')],
+    [0, ...setTempo(500000)],
+    ...notesToEntries([[0, 60, 0, PPQ]]),
+  ])],
+});
+
 // ── malformed / fail-closed fixtures ────────────────────────────────────────
 
 export const notMidiAtAll = () => new Uint8Array(Array.from('this file is plain text, not a Standard MIDI File', c => c.charCodeAt(0)));

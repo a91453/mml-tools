@@ -97,7 +97,7 @@ function intakeCard(slot, title, hint) {
   const asset = workspace.assets[slot];
   // A Raw MIDI asset has no text representation, so its identity is stated as
   // the byte count and the digest of the bytes that were actually parsed.
-  const source = asset?.source ? `<p class="meta">${bytesLabel(asset.source.byteLength)} · SMF ${esc(asset.midi?.smfFormat ?? '?')} · ${asset.midi?.trackCount ?? '?'} tracks<br><code class="digest">sha256 ${esc(asset.source.sha256.slice(0, 16))}…</code></p>` : '';
+  const source = asset?.source?.sha256 ? `<p class="meta">${bytesLabel(asset.source.byteLength)} · SMF ${esc(asset.midi?.smfFormat ?? '?')} · ${asset.midi?.trackCount ?? '?'} tracks<br><code class="digest">sha256 ${esc(asset.source.sha256.slice(0, 16))}…</code></p>` : '';
   return `<div class="card"><h3>${title}</h3><p class="meta">${hint}</p>${asset ? `<p><strong>${esc(asset.name)}</strong></p><p class="meta">${esc(asset.format)} · ${asset.project.events.length} events</p>${source}${badge(asset.unsupported.length ? 'UNSUPPORTED' : 'PENDING')} <small>${asset.complete ? '解析完成，等待來源審核' : '來源未完整'}</small>${detail('來源 authority／warnings／unsupported', { sources: asset.project.sources, warnings: asset.warnings, errors: asset.errors, unsupported: asset.unsupported })}` : '<div class="empty">尚未加入來源<br>MusicXML · MML · MIDI · Canonical IR</div>'}<label class="file-button secondary">${asset ? '更換來源' : '選擇檔案'}<input type="file" data-intake="${slot}" accept=".xml,.musicxml,.mml,.txt,.json,.mid,.midi,application/xml,text/xml,text/plain,application/json,audio/midi,audio/x-midi" aria-label="${title}檔案"></label>${asset ? `<button class="quiet" data-download-ir="${slot}">匯出 IR</button>` : ''}</div>`;
 }
 // ─── Raw MIDI presentation ──────────────────────────────────────────────────
@@ -127,9 +127,9 @@ function midiSourceCard(entry) {
     <div class="row"><h3>${esc(slotLabels[entry.slot] ?? entry.slot)} · ${esc(entry.name)}</h3>${badge(integrity)}</div>
     <p class="meta">位元組完整性 ${integrity === 'PASS' ? '＝儲存的位元組與來源身分一致' : `＝失敗：${esc(entry.integrity.reasons.join(', '))}`}。這不是來源審核，也不是 SOURCE_PASS。</p>
     ${facts([
-      ['檔案位元組', `${entry.source.byteLength} bytes（${bytesLabel(entry.source.byteLength)}）`],
+      ['檔案位元組', entry.source.byteLength === null ? null : `${entry.source.byteLength} bytes（${bytesLabel(entry.source.byteLength)}）`],
       ['sha256', entry.source.sha256],
-      ['來源類型／權威', `${entry.source.kind} · ${entry.source.authority}`],
+      ['來源類型／權威', entry.source.kind === null ? null : `${entry.source.kind} · ${entry.source.authority}`],
       ['SMF format', m.smfFormat],
       ['Division', division],
       ['Tracks（宣告／實際）', `${m.declaredTrackCount} / ${m.trackCount}`],

@@ -229,3 +229,17 @@ test('each fact keeps its own label and value together', () => {
   assert.equal(html.match(/<dd>/g).length, html.match(/<div class="fact">/g).length);
   assert.equal(/<\/dd><dt>/.test(html), false, 'pairs must not be emitted as bare siblings');
 });
+
+test('a hostile track name is rendered as text, never as markup', () => {
+  const report = reportFor('hostile.mid', fixtures.hostileTrackName(), 'hostile');
+  const entry = report.rawMidi[0];
+  // The name is preserved verbatim as source evidence...
+  assert.equal(entry.midi.tracks[0].name, '<script>alert("x")</script> & "quoted" \'name\'');
+
+  const html = renderRawMidi(report.rawMidi);
+  assertBalanced(html);
+  // ...and escaped everywhere it is shown, including inside the JSON details.
+  assert.equal(html.includes('<script>'), false, 'no track name may open a tag');
+  assert.equal(/<\/script>/.test(html), false);
+  assert.ok(html.includes('&lt;script&gt;alert(&quot;x&quot;)&lt;/script&gt;'), 'it is shown, escaped, rather than dropped');
+});
