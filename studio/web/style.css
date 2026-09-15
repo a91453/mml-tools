@@ -8,13 +8,18 @@
 
 /* Raw MIDI source, G11-B decomposition and G11-C candidate. */
 #raw-midi .raw-midi-slot{display:grid;gap:14px;margin-bottom:22px}
-.facts{display:grid;grid-template-columns:repeat(auto-fit,minmax(min(100%,210px),1fr));gap:2px 16px;margin:10px 0 0;font-size:13px}
-.facts dt{color:var(--muted);font-size:11px;letter-spacing:.04em;text-transform:uppercase}
-.facts dd{margin:0 0 8px;word-break:break-word}
+.facts{display:grid;grid-template-columns:repeat(auto-fit,minmax(min(100%,210px),1fr));gap:10px 16px;margin:10px 0 0;font-size:13px}
+.facts .fact{min-width:0}
+.facts dt{color:var(--muted);font-size:11px;letter-spacing:.04em;text-transform:uppercase;margin-bottom:2px}
+.facts dd{margin:0;word-break:break-word}
 .codes{margin:6px 0 0;padding-left:20px;font-size:12px;line-height:1.9}
 code.digest,.facts dd code,table code{font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:11px;word-break:break-all}
 .candidate-banner{border-left:3px solid var(--amber)}
 .candidate-banner p{font-size:13px;line-height:1.8}
 #raw-midi table th[scope=row]{white-space:nowrap;font-weight:600}
 #raw-midi td,#raw-midi th{padding:6px 10px;border-bottom:1px solid var(--line);vertical-align:top}
+/* Let these tables overflow their .scroll container instead of compressing:
+   a squeezed role table stacks its headings one character per line. The
+   wrapper scrolls, so the page body still never scrolls horizontally. */
+#raw-midi .scroll>table{min-width:600px}
 @media(max-width:720px){.facts{grid-template-columns:1fr}}

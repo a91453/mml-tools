@@ -204,3 +204,28 @@ test('a workspace under full review still shows the Raw MIDI candidate as a cand
   assert.ok(html.includes('已接受</dt><dd>否</dd>'), 'recording reviews does not accept the arrangement');
   assert.notEqual(report.state, 'VALIDATED');
 });
+
+test('an unmet Core3 role reads as PENDING, never as not-applicable', () => {
+  const report = reportFor('six.mid', fixtures.sixSourceVoices(), 'six');
+  const candidate = report.rawMidi[0].arrangement.candidate;
+  assert.equal(candidate.roles.Melody.status, 'EMPTY', 'the fixture has no evidenced Lead');
+  assert.equal(candidate.roles.Chord3.status, 'EMPTY', 'and no enrichment either');
+
+  const html = renderRawMidi(report.rawMidi);
+  const core3Block = html.slice(html.indexOf('Core3 候選'), html.indexOf('Full6 加值角色'));
+  const full6Block = html.slice(html.indexOf('Full6 加值角色'));
+  // An empty required role is an unmet requirement; an empty optional one is not.
+  assert.match(core3Block, /<th scope="row">Melody<\/th><td><span class="badge PENDING">PENDING<\/span>/);
+  assert.match(full6Block, /<th scope="row">Chord3<\/th><td><span class="badge na">N\/A<\/span>/);
+  assert.equal(core3Block.includes('badge na'), false, 'no Core3 role may render as N/A');
+});
+
+test('each fact keeps its own label and value together', () => {
+  const html = renderRawMidi(reportFor('format1.mid', fixtures.format1(), 'srcA').rawMidi);
+  // dt and dd are wrapped per pair, so a multi-column grid cannot separate a
+  // value from the label it belongs to.
+  assert.equal(/<dt>[^<]*<\/dt><dd>/.test(html), true);
+  assert.equal(html.match(/<dt>/g).length, html.match(/<div class="fact">/g).length);
+  assert.equal(html.match(/<dd>/g).length, html.match(/<div class="fact">/g).length);
+  assert.equal(/<\/dd><dt>/.test(html), false, 'pairs must not be emitted as bare siblings');
+});

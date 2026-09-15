@@ -115,7 +115,7 @@ function intakeCard(slot, title, hint) {
 // the backend computed.
 const LEDGER_DISPLAY_LIMIT = 500;
 const slotLabels = { candidate: '目前候選', baseline: 'Source-Faithful Baseline', previous: '已接受的前一版' };
-const facts = entries => `<dl class="facts">${entries.filter(([, value]) => value !== undefined && value !== null).map(([label, value]) => `<dt>${esc(label)}</dt><dd>${esc(value)}</dd>`).join('')}</dl>`;
+const facts = entries => `<dl class="facts">${entries.filter(([, value]) => value !== undefined && value !== null).map(([label, value]) => `<div class="fact"><dt>${esc(label)}</dt><dd>${esc(value)}</dd></div>`).join('')}</dl>`;
 const countList = counts => Object.entries(counts ?? {}).map(([code, count]) => `<li><code>${esc(code)}</code> × ${count}</li>`).join('');
 
 function midiSourceCard(entry) {
@@ -182,15 +182,19 @@ function voiceSplitCard(split) {
     ${split.groups.some(group => group.diagnostics.length) ? detail('G11-B 診斷（同音重疊、密度、lane 目標等）', split.groups.flatMap(group => group.diagnostics)) : ''}</div>`;
 }
 
-function roleRow(role, view, candidate) {
+// An assigned role is a suggestion, so it renders PENDING rather than PASS. An
+// empty one is only N/A where the role really is optional: an empty Core3 role
+// is an unmet requirement, and "not applicable" would misdescribe it.
+function roleRow(role, view, candidate, group) {
   const lanes = candidate.lanes.filter(lane => view.laneIds.includes(lane.id));
   const events = view.eventIds.length;
-  return `<tr><th scope="row">${esc(role)}</th><td>${badge(view.status === 'ASSIGNED' ? 'PENDING' : view.status === 'EMPTY' ? 'N/A' : view.status)}</td><td>${view.laneIds.length}</td><td>${events}</td><td>${esc(view.evidenceTierName ?? (view.evidenceTier === null ? '—' : String(view.evidenceTier)))}</td><td>${esc(view.reasons.join(' · ') || '—')}</td><td>${esc(lanes.map(lane => lane.sourceVoice).join(', ') || '—')}</td></tr>`;
+  const status = view.status === 'ASSIGNED' ? 'PENDING' : view.status === 'EMPTY' ? (group === 'core3' ? 'PENDING' : 'N/A') : view.status;
+  return `<tr><th scope="row">${esc(role)}</th><td>${badge(status)}</td><td>${view.laneIds.length}</td><td>${events}</td><td>${esc(view.evidenceTierName ?? (view.evidenceTier === null ? '—' : String(view.evidenceTier)))}</td><td>${esc(view.reasons.join(' · ') || '—')}</td><td>${esc(lanes.map(lane => lane.sourceVoice).join(', ') || '—')}</td></tr>`;
 }
 
 function core3Card(candidate) {
   const core3 = candidate.core3;
-  const rows = ['Melody', 'Chord1', 'Chord2'].map(role => roleRow(role, candidate.roles[role], candidate)).join('');
+  const rows = ['Melody', 'Chord1', 'Chord2'].map(role => roleRow(role, candidate.roles[role], candidate, 'core3')).join('');
   return `<div class="card"><div class="row"><h3>Core3 候選（Melody ＋ Chord1 ＋ Chord2）</h3>${badge(core3.status === 'COMPLETE' ? 'PASS' : core3.status)}</div>
     <p class="meta">Core3 是一個三角色單位，三者同為必要，彼此沒有優先順序。這是候選階段的判讀，不是 ACCEPTANCE_CRITERIA.md Gate 4 的接受。</p>
     <div class="scroll"><table><thead><tr><th>角色</th><th>狀態</th><th>lane</th><th>事件</th><th>證據層級</th><th>理由</th><th>來源聲部</th></tr></thead><tbody>${rows}</tbody></table></div>
@@ -207,7 +211,7 @@ function core3Card(candidate) {
 function full6Card(candidate) {
   const full6 = candidate.full6;
   const core3Incomplete = candidate.core3.status !== 'COMPLETE';
-  const rows = ['Chord3', 'Chord4', 'Chord5'].map(role => roleRow(role, candidate.roles[role], candidate)).join('');
+  const rows = ['Chord3', 'Chord4', 'Chord5'].map(role => roleRow(role, candidate.roles[role], candidate, 'full6')).join('');
   return `<div class="card"><div class="row"><h3>Full6 加值角色（Chord3–Chord5）</h3>${badge(full6.status === 'USEFUL' ? 'PENDING' : full6.status === 'NONE' ? 'N/A' : full6.status)}</div>
     <p class="meta">加值角色與 Core3 分開評估。它們不能替代、不能補足、也不能掩蓋尚未成立的 Core3。</p>
     ${core3Incomplete ? `<p class="note">目前 Core3 為 ${esc(candidate.core3.status)}。即使 Chord3–Chord5 全部填滿，Core3 仍然不完整；這裡不計算任何「完成度百分比」。</p>` : ''}

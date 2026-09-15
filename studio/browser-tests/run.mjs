@@ -3,6 +3,14 @@ import assert from 'node:assert/strict';
 import { mkdir, writeFile } from 'node:fs/promises';
 import { serveStudio } from '../../scripts/serve-studio-web.mjs';
 import { installWorkerControls, runAuditChecks } from './audit.mjs';
+import { runRawMidiChecks } from './raw-midi.mjs';
+
+// A browser build that is not installed is neither a pass nor a failed
+// assertion, so it is recorded as NOT_RUN with its reason rather than being
+// skipped quietly. The run still fails on it unless the caller says otherwise,
+// which keeps CI -- where every engine is installed -- honest.
+const executable = { chromium: process.env.STUDIO_BROWSER_CHROMIUM, webkit: process.env.STUDIO_BROWSER_WEBKIT };
+const allowMissingEngine = process.env.STUDIO_BROWSER_ALLOW_MISSING === '1';
 
 let server=null;
 const results=[];
@@ -13,9 +21,9 @@ await mkdir(out,{recursive:true});
 let failed=false;
 try {
   for(const profile of [
-    {name:'iphone-webkit',engine:webkit,viewport:{width:390,height:844},isMobile:true,hasTouch:true},
-    {name:'ipad-webkit',engine:webkit,viewport:{width:820,height:1180},isMobile:true,hasTouch:true},
-    {name:'desktop-chromium',engine:chromium,viewport:{width:1440,height:1000}},
+    {name:'iphone-webkit',engine:webkit,engineName:'webkit',viewport:{width:390,height:844},isMobile:true,hasTouch:true},
+    {name:'ipad-webkit',engine:webkit,engineName:'webkit',viewport:{width:820,height:1180},isMobile:true,hasTouch:true},
+    {name:'desktop-chromium',engine:chromium,engineName:'chromium',viewport:{width:1440,height:1000}},
   ]) {
     let browser,page,context;
     const errors=[],requests=[];
@@ -24,7 +32,8 @@ try {
     server=await serveStudio({port:0});
     const base=`http://127.0.0.1:${server.address().port}`;
     try {
-      browser=await profile.engine.launch();
+      try{browser=await profile.engine.launch(executable[profile.engineName]?{executablePath:executable[profile.engineName]}:{});}
+      catch(error){throw Object.assign(Error(error.message),{engineMissing:true});}
       context=await browser.newContext({viewport:profile.viewport,isMobile:profile.isMobile,hasTouch:profile.hasTouch});
       page=await context.newPage();page.on('pageerror',e=>errors.push(e.message));page.on('request',r=>requests.push({url:r.url(),method:r.method()}));
       // aria-busy false is a claim that what is on screen is settled, so a gate
@@ -134,6 +143,7 @@ try {
       assert.equal(await page.evaluate(()=>window.bootAnnouncedBusy),true,'boot analysis must announce aria-busy before showing a state');
       assert.equal(await page.locator('.hero .badge').textContent(),'IN_GAME_ACCEPTED');
       await runAuditChecks({page,idle,file,mml});
+      await runRawMidiChecks({page,idle,base,requests,screenshot:name=>page.screenshot({path:new URL(`${profile.name}-${name}.png`,out).pathname,fullPage:true})});
       // A revision change invalidates all reviews/acceptance before re-analysis.
       await file('candidate',mml.replace('o4c1','o4d1'),'changed.mml');assert.equal(await page.locator('.hero .badge').textContent(),'CANDIDATE');
       await page.locator('#audio-file').setInputFiles({name:'original.wav',mimeType:'audio/wav',buffer:Buffer.from('synthetic audio')});
@@ -154,8 +164,13 @@ try {
       assert.ok((await page.locator('#gates').textContent()).includes('UNSUPPORTED'));
       assert.equal(await page.evaluate(()=>Number(sessionStorage.getItem('settledWhileRunning')||0)),0,'aria-busy must never go false with a gate still reading ANALYSIS_RUNNING');
       assert.deepEqual(errors,[]);
-      results.push({profile:profile.name,status:'PASS',checks:['Files picker','local MML/MusicXML','full review workflow','state separation','exact clipboard payload','IndexedDB reload','boot busy signal','busy-window two-waiter FIFO','boot waiter drain','project-scoped queue','stable Core3 evidence IDs','Worker failure and recovery','unsaved failure state','IndexedDB stale-token rejection','Final pitch boundary','settled state never ANALYSIS_RUNNING','source-aware micro-timing gate visible','revision invalidation','unsupported fail closed','no implicit uploads','responsive layout','offline module graph']});
+      results.push({profile:profile.name,status:'PASS',checks:['Files picker','local MML/MusicXML','full review workflow','state separation','exact clipboard payload','IndexedDB reload','boot busy signal','busy-window two-waiter FIFO','boot waiter drain','project-scoped queue','stable Core3 evidence IDs','Worker failure and recovery','unsaved failure state','IndexedDB stale-token rejection','Final pitch boundary','settled state never ANALYSIS_RUNNING','source-aware micro-timing gate visible','revision invalidation','unsupported fail closed','no implicit uploads','responsive layout','offline module graph','Raw MIDI file picker','binary intake and source digest','Raw MIDI section structure','Core3 vs Full6 separation','percussion visible and never pitched','byte-exact IndexedDB reload','exact rational timing through the browser','superseded MIDI request discarded','malformed MIDI fails visibly','same-file reselect after failure','no Raw MIDI upload']});
     } catch(error) {
+      if(error.engineMissing){
+        results.push({profile:profile.name,engine:profile.engineName,status:'NOT_RUN',reason:error.message.split('\n')[0]});
+        if(!allowMissingEngine)failed=true;
+        continue;
+      }
       failed=true;results.push({profile:profile.name,status:'FAIL',error:error.stack,consoleErrors:errors});
       if(page)await page.screenshot({path:new URL(`${profile.name}-failure.png`,out).pathname,fullPage:true}).catch(()=>{});
     } finally {if(browser)await browser.close();if(server.listening){server.closeAllConnections();server.close();}}
