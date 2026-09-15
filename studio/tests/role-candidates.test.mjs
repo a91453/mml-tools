@@ -2197,3 +2197,228 @@ test('scope: sourceIds is a provenance qualifier with its own input contract', (
     sourceRoleEvidence: [{ sourceIds: [SRC_A], role: 'Chord1', citation: 'fixture:score' }],
   }), /must target a sourceVoice, laneId, or eventIds/);
 });
+
+// ─── source-supported Lead: authority, not which field it arrived in ────────
+//
+// MASTER_RULES.md §4 / SOURCE_POLICY.md §4: moving a source-supported Lead off
+// Melody needs positive evidence and a demotion report, and incomplete evidence
+// stays PENDING. SOURCE_POLICY.md §1.A makes an official score / trusted
+// symbolic source primary authority for staff and voice placement, and §4 lists
+// score-role evidence among a Lead move's inputs -- so a *cited* Lead is as
+// protected as a baseline one. Gating the interlock on `lane.sourceRoles` alone
+// saw only the baseline field, and a cited Lead could be demoted with no gate.
+
+const LEAD_LANE = `lane:${MELODY_VOICE}#0`;
+const plainBackbone = [
+  ...line('m', [72, 74, 76, 72], MELODY_VOICE),
+  ...line('h', [60, 62, 60, 62], HARMONY_VOICE),
+  ...line('b', [48, 50, 43, 45], BASS_VOICE),
+];
+
+// A: the baseline-role route must stay blocked.
+test('lead: a baseline declared Lead is not demoted by a caller override', () => {
+  const events = [
+    ...line('m', [72, 74, 76, 72], MELODY_VOICE, 0, { role: 'Melody' }),
+    ...line('h', [60, 62, 60, 62], HARMONY_VOICE),
+    ...line('b', [48, 50, 43, 45], BASS_VOICE),
+  ];
+  const options = { roleOverrides: { [LEAD_LANE]: 'Chord1' } };
+  const candidate = run(events, options);
+  assertOrderIndependent(events, options);
+
+  assert.ok(!candidate.roles.Chord1.laneIds.includes(LEAD_LANE));
+  const [blocked] = candidate.pending.filter(item => item.laneId === LEAD_LANE);
+  assert.ok(blocked);
+  assert.ok([...blocked.blockers].includes('LEAD_DEMOTION_NOT_EVALUATED'));
+});
+
+// B: the cited route must be blocked identically, with no baseline role at all.
+test('lead: a cited trusted symbolic Lead is not demoted by a caller override', () => {
+  const options = {
+    sourceRoleEvidence: [
+      { laneId: LEAD_LANE, role: 'Melody', citation: 'fixture:official score, lead staff' },
+    ],
+    roleOverrides: { [LEAD_LANE]: 'Chord1' },
+  };
+  const candidate = run(plainBackbone, options);
+  assertOrderIndependent(plainBackbone, options);
+
+  // The baseline carries no role at all: the protection comes from the citation.
+  assert.deepEqual([...laneOf(candidate, LEAD_LANE).declaredSourceRoles], []);
+  assert.equal(laneOf(candidate, LEAD_LANE).roleSupport.Melody.tier, 1);
+  assert.equal(laneOf(candidate, LEAD_LANE).roleSupport.Melody.tierName, 'DECLARED_SOURCE_ROLE');
+
+  assert.ok(!candidate.roles.Chord1.laneIds.includes(LEAD_LANE),
+    'a cited Lead must not be demoted without the Lead Demotion Gate');
+  const [blocked] = candidate.pending.filter(item => item.laneId === LEAD_LANE);
+  assert.ok(blocked);
+  assert.ok([...blocked.blockers].includes('LEAD_DEMOTION_NOT_EVALUATED'));
+  assert.equal(blocked.gate, 'studio/backend/arbitration/lead-demotion.mjs#evaluateLeadDemotion');
+});
+
+// C: what a blocked demotion must look like, on both routes.
+test('lead: a blocked demotion assigns nothing and invents no substitute Lead', () => {
+  for (const [label, options] of [
+    ['baseline', { roleOverrides: { [LEAD_LANE]: 'Chord1' } }],
+    ['cited', {
+      sourceRoleEvidence: [{ laneId: LEAD_LANE, role: 'Melody', citation: 'fixture:official score, lead staff' }],
+      roleOverrides: { [LEAD_LANE]: 'Chord1' },
+    }],
+  ]) {
+    const events = label === 'baseline'
+      ? [
+        ...line('m', [72, 74, 76, 72], MELODY_VOICE, 0, { role: 'Melody' }),
+        ...line('h', [60, 62, 60, 62], HARMONY_VOICE),
+        ...line('b', [48, 50, 43, 45], BASS_VOICE),
+      ]
+      : plainBackbone;
+    // `run` asserts event conservation and that no pitch/onset/duration/source
+    // identity moved, so the whole of C's last clause is checked here.
+    const candidate = run(events, options);
+
+    assert.equal(laneOf(candidate, LEAD_LANE).candidateRole, null, `${label}: no destination role`);
+    for (const role of SIX_ROLES) {
+      assert.ok(!candidate.roles[role].laneIds.includes(LEAD_LANE), `${label}: unassigned in ${role}`);
+    }
+    // No other lane is quietly promoted into the empty Lead slot.
+    assert.equal(candidate.roles.Melody.status, 'PENDING', `${label}: Melody unresolved`);
+    assert.deepEqual([...candidate.roles.Melody.laneIds], [], `${label}: no substitute Lead`);
+    for (const id of laneOf(candidate, LEAD_LANE).eventIds) {
+      const [entry] = ledgerFor(candidate, id);
+      assert.equal(entry.decision, ROLE_DECISIONS.PENDING, `${label}: ${id} stays PENDING`);
+    }
+  }
+});
+
+// D: the interlock is about Lead, and must not swallow ordinary role evidence.
+test('lead: cited Chord1/Chord2 evidence is unaffected by the Lead interlock', () => {
+  const options = {
+    sourceRoleEvidence: [
+      { laneId: `lane:${HARMONY_VOICE}#0`, role: 'Chord1', citation: 'fixture:official score, accompaniment staff' },
+      { laneId: `lane:${BASS_VOICE}#0`, role: 'Chord2', citation: 'fixture:official score, bass staff' },
+    ],
+  };
+  const candidate = run(plainBackbone, options);
+  assertOrderIndependent(plainBackbone, options);
+
+  assert.deepEqual([...candidate.roles.Chord1.laneIds], [`lane:${HARMONY_VOICE}#0`]);
+  assert.deepEqual([...candidate.roles.Chord2.laneIds], [`lane:${BASS_VOICE}#0`]);
+  assert.deepEqual(candidate.pending.filter(item => [...item.blockers].includes('LEAD_DEMOTION_NOT_EVALUATED')), [],
+    'non-Lead citations must not trip the Lead interlock');
+});
+
+// ─── event-level citation scope ─────────────────────────────────────────────
+//
+// Role assignment is lane-level. A citation naming a strict subset of a lane's
+// events cannot be honoured as a declared role without extending its authority
+// over events it never named, which breaks the event-level traceability
+// MASTER_RULES.md §3 and SOURCE_POLICY.md §3 require.
+
+// E: the widening itself.
+test('events: a citation naming one event does not declare the whole lane', () => {
+  const options = {
+    sourceRoleEvidence: [
+      { eventIds: ['m1'], role: 'Melody', citation: 'fixture:official score, bar 1 only' },
+    ],
+  };
+  const candidate = run(plainBackbone, options);
+  assertOrderIndependent(plainBackbone, options);
+
+  const lane = laneOf(candidate, LEAD_LANE);
+  assert.deepEqual([...lane.eventIds], ['m1', 'm2', 'm3', 'm4']);
+  assert.notEqual(lane.roleSupport.Melody.tierName, 'DECLARED_SOURCE_ROLE',
+    'm2-m4 were never named and must not inherit a declared role');
+
+  // The citation is kept, at a strength that can never create an assignment,
+  // and it still states exactly which events it does and does not cover.
+  const [cited] = lane.evidence.filter(record => record.signal === 'trusted_symbolic_role');
+  assert.ok(cited);
+  assert.equal(cited.strength, 'supporting');
+  assert.deepEqual([...cited.supportsRoles], []);
+  assert.equal(cited.measurement.coversLane, false);
+  assert.deepEqual([...cited.measurement.eventIds], ['m1']);
+  assert.deepEqual([...cited.measurement.uncoveredEventIds], ['m2', 'm3', 'm4']);
+
+  // And the lane fails closed rather than being decided either way.
+  const [blocked] = candidate.pending.filter(item => item.laneId === LEAD_LANE);
+  assert.ok(blocked);
+  assert.ok([...blocked.blockers].includes('PARTIAL_EVENT_EVIDENCE_SCOPE'));
+
+  const reported = diagnostic(candidate, 'PARTIAL_EVENT_EVIDENCE_SCOPE');
+  assert.ok(reported);
+  assert.equal(reported.widened, false);
+  assert.equal(reported.claims.length, 1);
+  assert.deepEqual([...reported.claims[0].coveredEventIds], ['m1']);
+  assert.deepEqual([...reported.claims[0].uncoveredEventIds], ['m2', 'm3', 'm4']);
+});
+
+// F: partial evidence must not clear an interlock for the events it never named.
+test('events: partial evidence cannot clear the Core3 sibling interlock', () => {
+  const sibling = `lane:${HARMONY_VOICE}#2`;
+  const partial = {
+    sourceRoleEvidence: [
+      { laneId: `lane:${HARMONY_VOICE}#0`, role: 'Chord1', citation: 'fixture:score accompaniment, upper part' },
+      { laneId: `lane:${HARMONY_VOICE}#1`, role: 'Chord3', citation: 'fixture:score inner part, marked optional' },
+      // Names only one of this lane's two events, so it cannot make the lane optional.
+      { eventIds: ['ha1'], role: 'Chord4', citation: 'fixture:score inner part, bar 1 only' },
+    ],
+  };
+  const candidate = run(concurrentInnerEvents, partial);
+  assertOrderIndependent(concurrentInnerEvents, partial);
+
+  assert.deepEqual([...laneOf(candidate, sibling).eventIds], ['ha1', 'hb1']);
+  assert.notEqual(laneOf(candidate, sibling).roleSupport.Chord4.tier, 1);
+  assert.notEqual(candidate.core3.status, 'COMPLETE',
+    'an uncovered event may not be talked into enrichment by a partial citation');
+
+  // Citing the lane's whole event set is what actually resolves it.
+  const whole = run(concurrentInnerEvents, {
+    sourceRoleEvidence: [
+      ...partial.sourceRoleEvidence.slice(0, 2),
+      { eventIds: ['ha1', 'hb1'], role: 'Chord4', citation: 'fixture:score inner part, marked optional' },
+    ],
+  });
+  assert.equal(laneOf(whole, sibling).roleSupport.Chord4.tier, 1);
+  assert.equal(whole.core3.status, 'COMPLETE');
+  assert.equal(diagnostic(whole, 'PARTIAL_EVENT_EVIDENCE_SCOPE'), undefined);
+});
+
+// G: full coverage is still a declared role.
+test('events: a citation covering every event of a lane still declares it', () => {
+  const options = {
+    sourceRoleEvidence: [
+      { eventIds: ['m1', 'm2', 'm3', 'm4'], role: 'Melody', citation: 'fixture:official score, lead staff' },
+    ],
+  };
+  const candidate = run(plainBackbone, options);
+  assertOrderIndependent(plainBackbone, options);
+
+  const lane = laneOf(candidate, LEAD_LANE);
+  assert.equal(lane.roleSupport.Melody.tier, 1);
+  assert.equal(lane.roleSupport.Melody.tierName, 'DECLARED_SOURCE_ROLE');
+  assert.deepEqual([...candidate.roles.Melody.laneIds], [LEAD_LANE]);
+  const [cited] = lane.evidence.filter(record => record.signal === 'trusted_symbolic_role');
+  assert.equal(cited.strength, 'primary');
+  assert.equal(cited.measurement.coversLane, true);
+  assert.deepEqual([...cited.measurement.uncoveredEventIds], []);
+  assert.equal(diagnostic(candidate, 'PARTIAL_EVENT_EVIDENCE_SCOPE'), undefined);
+});
+
+// H / I: the other two targeting routes are lane-complete by construction and
+// must keep working untouched.
+test('events: laneId-scoped and single-source sourceVoice-scoped citations still declare', () => {
+  for (const [label, entry] of [
+    ['laneId', { laneId: `lane:${HARMONY_VOICE}#0`, role: 'Chord1', citation: 'fixture:score accompaniment staff' }],
+    ['sourceVoice', { sourceVoice: HARMONY_VOICE, role: 'Chord1', citation: 'fixture:score accompaniment staff' }],
+  ]) {
+    const options = { sourceRoleEvidence: [entry] };
+    const candidate = run(plainBackbone, options);
+    assertOrderIndependent(plainBackbone, options);
+
+    const lane = laneOf(candidate, `lane:${HARMONY_VOICE}#0`);
+    assert.equal(lane.roleSupport.Chord1.tier, 1, `${label}: still a declared role`);
+    assert.equal(lane.roleSupport.Chord1.tierName, 'DECLARED_SOURCE_ROLE', `${label}`);
+    assert.deepEqual([...candidate.roles.Chord1.laneIds], [`lane:${HARMONY_VOICE}#0`], `${label}`);
+    assert.equal(diagnostic(candidate, 'PARTIAL_EVENT_EVIDENCE_SCOPE'), undefined, `${label}`);
+  }
+});
