@@ -1,0 +1,240 @@
+# Canonical-aware Final MML Emitter — implementation notes
+
+Status: IMPLEMENTATION NOTES (not a Canonical rule source)
+Implements: Published Canonical `2026-09-13-v1`, rules snapshot
+`0a172900a01fdf39c2e9e84cf176961320b779ea`
+
+This document describes an implementer. It defines no rule, publishes no
+Canonical snapshot, and closes no `PENDING` item. Where it states a behaviour
+that the published rule sources do not state, that behaviour is labelled an
+**implementer policy** and is chosen to be strictly narrower than the rule, never
+wider.
+
+## 1. Where the emitter sits
+
+```
+ source intake ──► Canonical IR ──► arrangement/role candidates
+                       │                        │
+                       │                        ▼
+                       │            candidate Canonical project
+                       │                        │
+                       ├────────────────────────┤
+                       ▼                        ▼
+        final/micro-gap-enforcement.mjs   final/mml-emitter.mjs   ◄── this PR
+                       │                        │
+                       ▼                        ▼
+              final/readiness.mjs        six role bodies + `MML@…;`
+```
+
+Before this PR the repository could *read* MML (`mml/parser.mjs`) and convert it
+into Canonical IR (`mml/canonicalize.mjs`), but nothing could *write* it. The web
+delivery path (`studio/web/model.mjs`) only ever accepted an MML string the user
+pasted and checked it back against the candidate. This PR supplies the missing
+direction.
+
+### A. Emitter input type
+
+The **Canonical project** — the frozen object built by
+`canonical/index.mjs#createCanonicalProject`. That is the same value
+`enforceMicroGaps()` and `evaluateProjectReadiness()` already consume, so the
+emitter can consult the G10 enforcement contract on the identical object rather
+than on a re-derived view of it. No new candidate schema is introduced.
+
+Canonical IR beats are **quarter notes**: `l4` is one beat, a whole note is `4`.
+That is the convention `mml/parser.mjs` and `canonical/micro-timing.mjs` already
+use (`SAFE_GRID = 4/64`), and the emitter inherits it rather than restating it.
+
+### B. Field classification
+
+| Field | Class |
+| --- | --- |
+| `event.pitch`, `event.start`, `event.end`, `event.kind` | source truth (via the baseline) |
+| `event.sourceIds`, `event.sourceEventIds`, `event.metadata.timing` | source truth / provenance |
+| `event.role`, `event.voice`, `event.volume` | derived musical decision |
+| `tempoEvents[].beat`, `.bpm` | derived musical decision over source truth |
+| `decisions[]` | derived musical decision |
+| default-length (`lN`) plan, octave state, `<`/`>`/`oN` choice, enharmonic spelling, tie segmentation, rest segmentation | **Final-only serialization state** |
+
+Everything in the third row is invented by the emitter and carries no musical
+meaning: it must be freely re-choosable without changing a single parsed event.
+That is exactly what the round-trip gate checks.
+
+### C. Production modules that already exist (not rewritten here)
+
+| Concern | Existing authority |
+| --- | --- |
+| exact rational arithmetic | `dist/core.js#F` / `f` (re-exported by `mml/index.mjs`) |
+| MML parsing, Final syntax validation | `mml/parser.mjs#parseTrack` / `#validateMML` |
+| six-slot `MML@…;` split contract | `mml/parser.mjs#splitMML` |
+| pitch ↔ octave/note mapping | `mml/parser.mjs` (`12 * (octave + 1) + noteBase + accidental`) |
+| character limit, tempo range, length ranges, dotted policy, octave/volume ranges | `rules/index.mjs#EFFECTIVE_RULESET.mobileSyntax` |
+| sub-1/64 policy and the 1/64 grid | `canonical/micro-timing.mjs#SAFE_GRID`, `final/micro-gap-enforcement.mjs` |
+| song readiness | `final/readiness.mjs` |
+
+The emitter **reads** all of these. It re-implements none of them: there is no
+second character counter, no second 1/64 threshold, no second pitch table, and no
+second Final syntax rule set. The pitch mapping in particular is *derived from
+the parser at load time* (`probeParserDefaults()`) rather than transcribed, so the
+inverse can never drift from the forward direction.
+
+There was no pre-existing MML serializer, duration serializer, tempo serializer
+or token emitter to reuse.
+
+### D. PENDING items that constrain the emitter
+
+| Item | Effect on this emitter |
+| --- | --- |
+| **P1** client character-count semantics | The emitter reports `characters` as a JavaScript string length and labels it `javascript-string-length`. It never claims client equivalence. The 2,400 budget comes from the one existing contract value. |
+| **P2** tempo-map duplication across roles | The emitter *applies* the published `FINAL_CANONICAL_POLICY` (same complete map at the same positions on every non-empty role) and labels it a project policy, not engine law. It does not create a third tempo policy. |
+| **P3** `Nxx` exact guarantees | The default emitter never emits `Nxx`. A pitch that ordinary notation cannot spell inside the octave mapping fails closed instead of silently switching to numeric notation. Opt-in numeric output is **not implemented**; P3 stays open. |
+| **P4** arbitrary 1–64 length behaviour | Plain non-power-of-two lengths are *not* treated as illegal. They are `FINAL_ALLOWED_WITH_CAUTION`, so they enter the token lattice only under the explicit `cautionLengthOptIn` flag that `parseTrack` already defines. |
+| **P5** dotted edge forms | Single dots only, only on bases `1, 2, 4, 8, 16, 32`; never `64.`, never `3. 6. 12. 24. 48.`, never multiple dots. Read from the contract, not hard-coded. |
+| **P6** octave token mapping | Treated as an implementation mapping throughout. Named pitches above the official `0–107` range fail closed for Final rather than being re-spelled. P6 stays open. |
+| **P10** drum mapping | Out of scope. The emitter serializes pitched events only and does not consult a drum profile. |
+| **P16** `r64` / 64th behaviour | Plain `64` is inside the official range and is **not** banned. It is an ordinary member of the preferred lattice. |
+
+`P7` (empty-role behaviour) also binds: empty roles are emitted as empty strings
+and never receive filler tempo or rests.
+
+## 2. Clean-room legacy inventory
+
+A single legacy file, `mml-compress.js`, was read as `LEGACY_REFERENCE` for
+algorithmic ideas only. Nothing was copied; no function, control flow or constant
+was ported. The file is not committed.
+
+### A — concept adopted, re-implemented from scratch
+
+| Legacy idea | What it actually solves | How this PR does it |
+| --- | --- | --- |
+| memoized search over tie segments instead of greedy "largest first" | greedy is genuinely suboptimal: a two-token split can beat a single long token plus a long tail | `duration-plan.mjs` runs a memoized exact search over *rational* remainders, with a deterministic candidate order and a hard node budget |
+| a token may be written with an empty length suffix when it equals the current default `lN` | the cheapest token is the one you do not write | the suffix cost function takes the current default length as an argument |
+| plan the `lN` switch points rather than fixing one default | one default for a whole role is rarely optimal | DP over (event index × default length), candidates restricted to lengths that actually occur |
+| octave state is a carried DP state, not a per-note greedy choice | the value of an enharmonic spelling is in what it saves *later* | DP over (attack index × octave), cost weighted by how many tie segments repeat the note name |
+| enharmonic spelling at the octave boundary (`b+` for C, `c-` for B) | avoids an octave shift *and* avoids shifting back | verified against this repo's parser: `o3b+` and `o4c` both yield pitch 60 |
+| bound the search with an explicit budget and fail rather than hang | an unbounded decomposition search is a denial-of-service on the caller | `budget` option; exhaustion is a structured fail-closed diagnostic, never a truncated answer |
+| splitting a sustained note where a tempo change falls, as tied segments | a tempo token cannot appear inside a token | `planRoleTimeline()` cuts at tempo beats and marks the later pieces as continuations of the same attack |
+
+### B — valuable but needed Canonical adaptation
+
+| Legacy idea | Why it could not be taken as-is |
+| --- | --- |
+| round-trip comparison of emitted vs re-parsed events | legacy compares with `eps = 1e-6` float tolerance. Replaced with exact rational comparison; a float compare cannot distinguish `4/64` from `4/64 − 10⁻²⁰`. |
+| "rewrite the track by parse → re-emit rather than by string surgery" | sound idea, but legacy's re-emit target set is its own `STD_NUMS`, which is not this project's Final policy. Re-derived from `EFFECTIVE_RULESET`. |
+| merging adjacent rests into fewer tokens | legal here *because a rest carries no attack*, so it is a pure representation choice. Adopted only for representation, never to delete or move a rest. |
+
+### C — this repository already has a better implementation
+
+- exact rational arithmetic (`F`) — legacy converted everything to integer PPQ=480 ticks precisely *because* its own fraction model drifted. This repo's `F` is exact BigInt rational and needs no tick domain.
+- syntax legality — `parseTrack` in `mode: 'final'` already encodes the published policy, including the caution and dotted rules.
+- the 1/64 question — `micro-gap-enforcement.mjs` already answers it source-awarely.
+
+### D — legacy-only, rejected
+
+| Legacy element | Why rejected |
+| --- | --- |
+| `PPQ = 480`, integer tick domain, `lenTicks` | a tick grid is not Canonical and silently quantizes. All timing here stays exact rational. |
+| `STD_NUMS` as the legal denominator set | MOBILE_SYNTAX §3 forbids calling a plain 1–64 length engine-illegal for being non-power-of-two. |
+| `gameLegal` / `hasNonStdDenom` | same reason: it hard-rejects denominators the published rules explicitly protect. |
+| `N_BASE`, `OCT_BASE`, `PITCH_MIN/MAX`, `foldIntoRange` | legacy pitch model. This repo derives the mapping from its own parser. |
+| free use of `n<num>` for character savings | `Nxx` is `FINAL_ALLOWED_WITH_CAUTION` with opt-in plus evidence (P3). Never a compression device. |
+| `OPT_RULES` = `fill` / `partial` / `release` | **lossy**: they absorb rests into notes or shorten notes to create breaths. That is arrangement, and MASTER_RULES §7 protects meaningful rests. |
+| `repairItems` / `snap` / drift accounting | quantization and rounding toward a legal value. Forbidden; unrepresentable means fail closed. |
+| `trimToToken` | truncates a track to fit a character budget. That is silent musical deletion. |
+| `maxDots` > 1, `l16.`-style dotted defaults | multiple dots are `FINAL_FORBIDDEN`; and this repo's parser does not accept a dot after `lN` at all (verified). |
+
+## 3. Emitter contract
+
+```js
+import { emitFinalMml } from './studio/backend/final/index.mjs';
+
+const result = emitFinalMml(canonicalProject, options);
+```
+
+`options` (all optional):
+
+| Option | Meaning |
+| --- | --- |
+| `cautionLengthOptIn` | admit `FINAL_ALLOWED_WITH_CAUTION` plain lengths (1–64 outside the preferred set) into the token lattice. Default `false`. |
+| `readiness` | a report from `evaluateProjectReadiness()`. When supplied, any blocking gate other than `technical` (which needs this emitter's own output) blocks emission. |
+| `budget` | node budget for the duration search. Exhaustion fails closed. |
+| `maxTieSegments` | maximum tie segments per attack. Exhaustion fails closed. |
+
+Result — always a frozen plain object, never a thrown error for a musical or
+policy outcome:
+
+```js
+{
+  status: 'PASS' | 'FAIL' | 'PENDING',
+  combinedMml: string | null,      // 'MML@a,b,c,d,e,f;'  — null unless PASS
+  roles: [{ role, empty, mml, characters, attacks, ... }],
+  characterCounts: { limit, unit: 'javascript-string-length', perRole, overBudget },
+  microGap: { status, preservedIntervalKeys, rejectedIntervalKeys, blockedIntervalKeys, ... },
+  roundTrip: { status, comparedFields, mismatches } | null,
+  diagnostics: [{ code, severity, role?, ... }],
+  canonical: { canonical_version, rules_snapshot_sha, ... },
+  notice: '...'
+}
+```
+
+`throw` is reserved for programmer error (a missing or non-object project). Every
+representability, Canonical, evidence and budget outcome is a structured result.
+
+### What `status: 'PASS'` does and does not mean
+
+It means: the candidate was serialized exactly, the emitted string re-parses
+under `mode: 'final'` with no errors, and the re-parsed semantics are
+**exactly** equal to the candidate's. It is a `TECHNICAL_PASS`-class statement
+plus round-trip evidence.
+
+It does **not** mean the song is Canonical-compliant, source-complete, ready, or
+accepted in game. `evaluateProjectReadiness()` remains the readiness authority,
+and `IN_GAME_ACCEPTED` remains the user's to set. An emitter that succeeds has
+verified an implementation, not certified a rule.
+
+## 4. Representability policy
+
+A duration is Final-representable iff it is an exact sum of admitted token
+durations. Admitted tokens are built from the executable contract:
+
+- plain length `n`, duration `4/n` IR beats, for `n` in
+  `preferredLengthDenominators` (`1 2 4 8 16 32 64`);
+- plain length `n` for any other integer `n` in `officialLengthMin..officialLengthMax`
+  — **only** when `cautionLengthOptIn` is set;
+- single-dotted length `n`, duration `6/n` IR beats, for `n` in
+  `preferredDottedBaseDenominators` (`1 2 4 8 16 32`).
+
+Nothing else is emitted. In particular `64.`, `3.`, `6.`, `12.`, `24.`, `48.`,
+any multiple dot, any zero duration, and any `Nxx` are never produced.
+
+With the preferred lattice alone, the shortest token is `64` = `4/64` IR beats =
+`SAFE_GRID`, so every admitted token is an exact multiple of the safe grid and no
+emitted component can ever fall below it. A duration that is not a multiple of
+the grid is unrepresentable without caution lengths, and **unrepresentable fails
+closed** — it is never rounded, snapped, or approximated to the nearest legal
+token.
+
+## 5. G10 consumption
+
+The emitter calls `enforceMicroGaps(project)` and honours the three key lists it
+publishes, without re-deriving any threshold:
+
+- `preservedIntervalKeys` — source-supported sub-grid material. The emitter may
+  not delete, shorten, quantize, absorb or move an attack across these. Because
+  no admitted token is shorter than the grid, a preserved sub-grid interval is
+  **not representable**, so the emitter fails closed with
+  `SOURCE_SUPPORTED_INTERVAL_NOT_REPRESENTABLE` rather than damaging it.
+- `rejectedIntervalKeys` — confirmed technical residue. `enforceMicroGaps`
+  already returns `FAIL` for these, and the emitter refuses to emit. This PR
+  deliberately does **not** attempt technical timing repair: a correct refusal is
+  better than a guessed normalization.
+- `blockedIntervalKeys` — unproven. The emitter returns `PENDING` and emits
+  nothing.
+
+## 6. Determinism and idempotence
+
+Every search has a fixed candidate order and improves only on strict `<`, so ties
+resolve to the first candidate. The same project emits byte-identical output on
+every run.
+
+`projectFromFinalReadback()` rebuilds a Canonical project from the emitted
+string's own parse, so `emit → parse → emit` can be asserted byte-identical.
