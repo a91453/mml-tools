@@ -114,7 +114,7 @@ layer**), and a `strength`:
 | Signal | Strength | Notes |
 | --- | --- | --- |
 | `source_role_hint` | primary | Role carried by the baseline event itself. |
-| `trusted_symbolic_role` | primary | Caller-supplied, **citation required**. |
+| `trusted_symbolic_role` | primary | Caller-supplied, **citation required**, and applied **only to the material every selector on the entry names** (see below). |
 | `melodic_contour` | primary when the gate passes | Distinct pitches and pitch-change ratio across real attacks. |
 | `attack_independence` | primary when the gate passes | Share of attacks that coincide with a sibling lane of the same source voice. |
 | `bass_function` | primary when the gate passes | Time spent as the lowest sounding pitch, measured over the exact sounding grid. |
@@ -124,6 +124,30 @@ layer**), and a `strength`:
 | `rhythmic_density` | supporting | Diagnostic only. |
 | `instrument_hint` | supporting | GM program family; never proves a final role. |
 | `section_role` | supporting | Form context; never demotes and never creates a Lead gap. |
+
+### Scope of a cited role
+
+A cited trusted symbolic role lands in tier 1 `DECLARED_SOURCE_ROLE`, where it
+outranks every derived measurement and is one of the two things that clear the
+Core3 interlocks. Its scope is therefore load-bearing, and the entry's
+selectors — `sourceVoice`, `laneId`, `eventIds` and the optional `sourceIds` —
+are **conjunctive**: every selector supplied has to hold before the claim
+reaches a lane. A narrowing selector narrows and can never widen, so a citation
+naming one lane of a polyphonic accompaniment voice never reaches its siblings.
+
+`sourceIds` scopes a claim to the provenance that made it, and is a qualifier
+rather than a target: a lane whose provenance reaches outside the declared set
+is not covered by it and fails closed, exactly as cross-source arbitration does.
+
+**Provenance is read from `sourceIds`, never from the `sourceVoice` string**
+(§10). A voice label is a track/channel coordinate that two sources of one song
+ordinarily share, so a voice-only citation over a label spanning several sources
+identifies nothing: it is withheld from every lane rather than spread across
+sources that did not make it, and is reported as `AMBIGUOUS_EVIDENCE_PROVENANCE`
+with the sources it spans and the lanes it was withheld from. A withheld claim is
+never silent. `laneId` and `eventIds` pin provenance by themselves and need no
+such guard. Each record states its own scope in `scopedBy`, `declaredSourceIds`
+and `laneSourceIds`.
 
 Evidence **tiers** decide selection. Selection only ever happens inside the
 highest non-empty tier, so a declared source role is never outvoted by a derived
@@ -377,7 +401,8 @@ All non-destructive, all carrying `deleted: false`:
 `DENSE_SIMULTANEOUS_ATTACKS`, `LOW_MID_CLOSE_INTERVAL` (m2/M7/m9 below the
 low/mid boundary), `COMPETING_LEAD_CANDIDATES`, `COMPETING_BASS_CANDIDATES`,
 `COMPETING_HARMONY_CANDIDATES`, `CONFLICTING_ROLE_EVIDENCE`,
-`SOURCE_LANE_OVERFLOW`, `UNRESOLVED_CORE_HARMONY_SIBLING`,
+`SOURCE_LANE_OVERFLOW`, `AMBIGUOUS_EVIDENCE_PROVENANCE`,
+`UNRESOLVED_CORE_HARMONY_SIBLING`,
 `UNRESOLVED_CROSS_SOURCE_HARMONY`, `UNRESOLVED_CROSS_SOURCE_DECLARED_CHORD1`,
 `ESSENTIAL_MATERIAL_IN_ENRICHMENT`,
 `ESSENTIAL_MATERIAL_UNASSIGNED`, `LANE_PACKING_IS_NOT_CONTINUITY`,
@@ -464,6 +489,14 @@ enrichment neither compensating nor laundering the conflict; a mixed-provenance
 lane failing closed; and proof that no source authority — order, length or id
 sort — picks a winner.
 
+Evidence scope adds: a narrowing selector that must not widen to unnamed lanes;
+a citation for one lane that must not clear another lane's
+`UNRESOLVED_CORE_HARMONY_SIBLING` interlock, and the named citation that does;
+a voice label shared by two sources failing closed and reporting itself; the
+same claim re-issued with `sourceIds` reaching exactly the provenance that made
+it; a lane reaching outside a declared provenance scope; and the `sourceIds`
+input contract.
+
 ### End-to-end pipeline regression
 
 `studio/tests/g11-pipeline.test.mjs` runs the real production path from raw
@@ -529,6 +562,45 @@ evidence attached — it simply no longer claims a completeness it cannot suppor
 Several checkpoint-1 fixtures asserted `COMPLETE` on exactly such input; those
 assertions encoded the fail-open and now supply the score's own role evidence so
 that each fixture's actual subject stays isolated.
+
+## 12b. Evidence scope hotfix — a citation speaks only for what it names
+
+A cited trusted symbolic role is tier 1 `DECLARED_SOURCE_ROLE`. It outranks every
+derived measurement, and it is one of the two things that clear the checkpoint-2
+Core3 interlocks. How far such a claim reaches is therefore as load-bearing as
+the claim itself, and it reached further than the caller said in two ways. Both
+were reproduced with minimal synthetic probes before anything was changed, and
+both are now regressions in `studio/tests/role-candidates.test.mjs`.
+
+| Fail-open | Previous behaviour | Behaviour now |
+| --- | --- | --- |
+| An entry carries more than one of `sourceVoice`, `laneId`, `eventIds` | Selectors were read as alternatives, so a lane matching any single one received the claim: the broadest selector won and a narrowing selector silently widened. A citation naming one lane of a polyphonic accompaniment voice reached its siblings, cleared `UNRESOLVED_CORE_HARMONY_SIBLING` on lanes it never named, and Core3 could report `COMPLETE` on evidence that did not cover them. | Selectors are conjunctive: every selector supplied must hold. The claim reaches the named lane and nothing else; an unnamed sibling keeps its interlock and Core3 stays `PENDING` until a citation names *it*. |
+| A voice-only citation in a multi-source project | Provenance was taken from the `sourceVoice` string, which §10 says it never is. A track/channel label is ordinarily shared by two sources of one song, so one source's citation was applied to the other's lanes, and the report carried the official score's citation text against third-party material. | The label is not provenance. A voice-only claim over a label spanning several sources is withheld from every lane and reported as `AMBIGUOUS_EVIDENCE_PROVENANCE` with the sources it spans and the lanes it was withheld from. Re-issuing it with `sourceIds`, a `laneId` or `eventIds` says which source it speaks for, and it then reaches exactly that provenance. |
+
+`sourceIds` is the new optional qualifier, and it narrows only: it is never a
+target on its own, because "everything this source ever published is Chord1" is
+not a claim any citation supports. A lane whose provenance reaches outside the
+declared set is not covered by it and fails closed, matching the existing
+mixed-provenance rule in cross-source arbitration. `laneId` and `eventIds` pin
+provenance by themselves and are unaffected.
+
+The repair is evidence discipline, not music theory. **No chord-name inference,
+key detection, harmonic-function analysis or statistical threshold was added.**
+The question kept apart throughout is "this citation covers this material" vs.
+"this citation exists somewhere in the project". Nothing in the earlier contract
+was removed: no existing caller supplied more than one selector, so no fixture
+changes meaning, and each record now states its own scope in `scopedBy`,
+`declaredSourceIds` and `laneSourceIds`.
+
+### Consequence for callers
+
+A caller that annotated a whole voice in a project where that voice label is
+carried by one source is unaffected. A caller doing the same where two sources
+share the label now gets no assignment from that entry plus an explicit
+diagnostic, instead of a silent cross-source claim. That is the intended
+outcome: the label did not say which source was speaking, and inventing an
+answer is exactly the automatic source authority `MASTER_RULES.md` §6 and
+`SOURCE_POLICY.md` §5 refuse.
 
 ## 13. Explicitly deferred
 
