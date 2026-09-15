@@ -284,17 +284,25 @@ function isPrimarySourceRecord(source) {
   return false;
 }
 
-function hasAdmissibleSourceBinding(project, decision) {
+// `intervalSourceIds` is the provenance of the interval's own events. A cited
+// source must be primary *and* be one of them. SOURCE_POLICY §5: a source
+// reference proves provenance, not compatibility -- a real official score that
+// carries none of these events says nothing about this interval, and §2 requires
+// the exact source IDs and the event involved to be recorded together. Without
+// the scope check, any primary record anywhere in the project could bind any
+// sub-grid interval, including one whose events are all supporting third-party.
+function hasAdmissibleSourceBinding(project, decision, intervalSourceIds) {
   const cited = evidenceSourceIdsOf(decision);
   if (!cited.length) return false;
   const sources = sourceById(project);
+  const scope = new Set(intervalSourceIds);
   const resolved = [];
   for (const id of cited) {
     const source = sources.get(id);
     if (!source) return false;
     resolved.push(source);
   }
-  return resolved.some(isPrimarySourceRecord);
+  return resolved.some(source => isPrimarySourceRecord(source) && scope.has(source.id));
 }
 
 function matchingDecisions(project, identity) {
@@ -305,13 +313,13 @@ function matchingDecisions(project, identity) {
   ));
 }
 
-function classifyInterval(project, identity) {
+function classifyInterval(project, identity, intervalSourceIds) {
   const matches = matchingDecisions(project, identity);
   const acceptedKeep = matches.filter(decision => (
     decision.status === 'accepted'
     && decision.action === MICRO_TIMING_KEEP_ACTION
     && evidenceOf(decision).length > 0
-    && hasAdmissibleSourceBinding(project, decision)
+    && hasAdmissibleSourceBinding(project, decision, intervalSourceIds)
   ));
   const acceptedTechnical = matches.filter(decision => (
     decision.status === 'accepted'
@@ -374,7 +382,7 @@ function classifyInterval(project, identity) {
     decision.status === 'accepted'
     && decision.action === MICRO_TIMING_KEEP_ACTION
     && evidenceOf(decision).length > 0
-    && !hasAdmissibleSourceBinding(project, decision)
+    && !hasAdmissibleSourceBinding(project, decision, intervalSourceIds)
   ));
   let classificationBasis = 'insufficient-proof';
   if (emptyEvidenceKeep) classificationBasis = 'accepted-keep-decision-empty-evidence';
@@ -398,7 +406,8 @@ function compareToSafeGrid(length) {
 }
 
 function reportFor(project, identity, eventsById) {
-  const classified = classifyInterval(project, identity);
+  const sourceIds = involvedSourceIds(eventsById, identity);
+  const classified = classifyInterval(project, identity, sourceIds);
   return freezeDeep({
     identity,
     identityKey: intervalIdentityKey(identity),
@@ -413,7 +422,7 @@ function reportFor(project, identity, eventsById) {
     evidence: classified.evidence,
     attestation: classified.attestation,
     eventIds: eventIdsFor(identity),
-    sourceIds: involvedSourceIds(eventsById, identity),
+    sourceIds,
     // C2A answers source-support only. It never certifies Final representability.
     finalRepresentable: null,
   });

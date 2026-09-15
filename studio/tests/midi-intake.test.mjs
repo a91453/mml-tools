@@ -687,3 +687,41 @@ test('sha256Hex agrees with the platform digest across padding boundaries', asyn
     assert.equal(sha256Hex(bytes), createHash('sha256').update(bytes).digest('hex'), `length ${length}`);
   }
 });
+
+// Adversarial audit (pre-Studio-Web). A whitespace-only MIDI track name is legal
+// SMF: the spec gives text meta events no encoding and no content rules. It used
+// to reach createCanonicalProject as the project title, where nonEmpty() rejects
+// it, so one blank name threw away a fully parsed file. That contradicts this
+// adapter's stated contract -- a value the schema cannot represent is recorded
+// as evidence, never allowed to destroy the ingest -- and it is reachable from
+// any user-supplied file, which is exactly what Studio Web Raw MIDI intake will
+// hand it.
+test('a blank track name cannot destroy an otherwise complete ingest', () => {
+  const blankName = meta(0x03, Array.from('   ', c => c.charCodeAt(0)));
+  const fragment = ingest(simple([
+    [0, ...blankName],
+    [0, ...noteOn(0, 60, 100)],
+    [480, ...noteOff(0, 60)],
+  ]));
+
+  // The raw name stays in the track summary as evidence; only the derived
+  // project title declines to use it.
+  assert.equal(fragment.tracks[0].name, '   ');
+  assert.equal(fragment.complete, true);
+  assert.equal(fragment.events.length, 1);
+
+  const project = midiFragmentToProject(fragment);
+  assert.equal(project.title, 'Fixture');
+  assert.equal(project.events.length, 1);
+  assert.equal(project.events[0].pitch, 60);
+
+  // A later named track is still a usable title.
+  const named = ingest(buildMidi({
+    format: 1,
+    tracks: [
+      buildTrack([[0, ...blankName]]),
+      buildTrack([[0, ...meta(0x03, Array.from('Lead', c => c.charCodeAt(0)))], [0, ...noteOn(0, 60, 100)], [480, ...noteOff(0, 60)]]),
+    ],
+  }));
+  assert.equal(midiFragmentToProject(named).title, 'Lead');
+});
