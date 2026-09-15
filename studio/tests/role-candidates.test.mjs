@@ -2001,3 +2001,199 @@ test('no automatic source authority decides the conflict', () => {
   assert.equal(second.roles.Chord1.status, 'PENDING');
   assert.deepEqual([...second.roles.Chord1.laneIds], []);
 });
+
+// ─── evidence scope: a citation speaks only for the material it names ────────
+//
+// A cited trusted symbolic role lands in tier 1 DECLARED_SOURCE_ROLE, where it
+// outranks every derived measurement and clears the Core3 interlocks. Its scope
+// is therefore load-bearing: SOURCE_POLICY.md §A/§2 makes a citation a claim
+// about specific material, and §5/§10 read provenance from source ids rather
+// than from a voice label. Reading an entry's selectors as alternatives let the
+// broadest one win, so a narrowed claim silently reached lanes it was narrowed
+// away from, and a voice-only claim crossed into a source that never made it.
+
+const SCOPE_VOICE = 'track:1/channel:1';
+
+test('scope: a narrowing selector narrows, and never widens to unnamed lanes', () => {
+  const narrowed = {
+    sourceRoleEvidence: [
+      { laneId: `lane:${SCOPE_VOICE}#0`, role: 'Chord1', citation: 'fixture:score accompaniment, upper part' },
+      // The caller names one lane and is explicit about its provenance. Nothing
+      // is said about the voice's other lanes.
+      {
+        sourceVoice: SCOPE_VOICE,
+        laneId: `lane:${SCOPE_VOICE}#1`,
+        role: 'Chord3',
+        citation: 'fixture:score inner part, marked optional',
+      },
+    ],
+  };
+  const candidate = run(concurrentInnerEvents, narrowed);
+  assertOrderIndependent(concurrentInnerEvents, narrowed);
+
+  const cited = laneId => laneOf(candidate, laneId).evidence.filter(record => record.signal === 'trusted_symbolic_role');
+
+  // The named lane carries the claim, and records every selector that had to hold.
+  const named = cited(`lane:${SCOPE_VOICE}#1`);
+  assert.equal(named.length, 1);
+  assert.deepEqual([...named[0].supportsRoles], ['Chord3']);
+  assert.deepEqual([...named[0].measurement.scopedBy], ['laneId', 'sourceVoice']);
+  assert.equal(laneOf(candidate, `lane:${SCOPE_VOICE}#1`).roleSupport.Chord3.tier, 1);
+
+  // The sibling the citation never named carries none of it.
+  assert.deepEqual(cited(`lane:${SCOPE_VOICE}#2`), []);
+  for (const role of ENRICHMENT_ROLE_NAMES) {
+    assert.equal(laneOf(candidate, `lane:${SCOPE_VOICE}#2`).roleSupport[role].tier, null,
+      `${role} must not be declared for a lane no citation names`);
+  }
+});
+
+test('scope: evidence for one lane cannot clear the Core3 interlock on another', () => {
+  // The fail-open this closes. Checkpoint 2 raises UNRESOLVED_CORE_HARMONY_SIBLING
+  // for a concurrent sibling left outside Core3, and only positive evidence
+  // naming *that lane* may clear it. Widened scope cleared it with a citation
+  // that spoke for a different lane, and Core3 then reported a completeness the
+  // evidence never supported.
+  const narrowed = {
+    sourceRoleEvidence: [
+      { laneId: `lane:${SCOPE_VOICE}#0`, role: 'Chord1', citation: 'fixture:score accompaniment, upper part' },
+      {
+        sourceVoice: SCOPE_VOICE,
+        laneId: `lane:${SCOPE_VOICE}#1`,
+        role: 'Chord3',
+        citation: 'fixture:score inner part, marked optional',
+      },
+    ],
+  };
+  const candidate = run(concurrentInnerEvents, narrowed);
+
+  assert.equal(candidate.core3.status, 'PENDING');
+  assert.equal(candidate.core3.functions.concurrentHarmonyResolution.status, 'UNRESOLVED');
+  assert.deepEqual([...candidate.core3.functions.concurrentHarmonyResolution.unresolvedLaneIds],
+    [`lane:${SCOPE_VOICE}#2`]);
+  assert.ok(diagnostic(candidate, 'UNRESOLVED_CORE_HARMONY_SIBLING'));
+
+  // Naming the remaining sibling is what clears it -- nothing else.
+  const complete = run(concurrentInnerEvents, {
+    sourceRoleEvidence: [
+      ...narrowed.sourceRoleEvidence,
+      { laneId: `lane:${SCOPE_VOICE}#2`, role: 'Chord4', citation: 'fixture:score inner part, marked optional' },
+    ],
+  });
+  assert.equal(complete.core3.status, 'COMPLETE');
+  assert.equal(complete.core3.functions.concurrentHarmonyResolution.status, 'RESOLVED');
+});
+
+// A track/channel coordinate is not provenance. Two sources of one song
+// ordinarily share it, and then a voice-only citation identifies nothing.
+const SHARED_VOICE = 'track:5/channel:5';
+// Each source holds its own steady pitch, so G11-B separates them by voice
+// continuity and every lane carries exactly one provenance. Only the label they
+// share is ambiguous -- which is precisely the question under test.
+const sharedLabelEvents = [
+  ...core3Backbone,
+  ...line('sa', [60, 60, 60, 60], SHARED_VOICE, 0, { sourceId: SRC_A }),
+  ...line('sb', [67, 67, 67, 67], SHARED_VOICE, 0, { sourceId: SRC_B }),
+];
+const lanesFromSource = (candidate, sourceId) => candidate.lanes
+  .filter(lane => lane.sourceVoice === SHARED_VOICE && lane.sourceIds.includes(sourceId));
+
+test('scope: a voice label shared by two sources is not provenance, and fails closed', () => {
+  const voiceOnly = {
+    sourceRoleEvidence: [
+      { sourceVoice: SHARED_VOICE, role: 'Chord1', citation: 'fixture:official-score accompaniment staff' },
+    ],
+  };
+  const candidate = run(sharedLabelEvents, voiceOnly);
+  assertOrderIndependent(sharedLabelEvents, voiceOnly);
+
+  // Both provenances are present under the one label.
+  assert.ok(lanesFromSource(candidate, SRC_A).length);
+  assert.ok(lanesFromSource(candidate, SRC_B).length);
+
+  // The official score's citation never becomes third-party evidence -- and is
+  // not quietly applied to the source that did make it either, because the
+  // label alone does not say which that is.
+  for (const lane of candidate.lanes.filter(item => item.sourceVoice === SHARED_VOICE)) {
+    assert.deepEqual(lane.evidence.filter(record => record.signal === 'trusted_symbolic_role'), [],
+      `${lane.id} must not inherit a claim made under an ambiguous label`);
+    assert.equal(lane.roleSupport.Chord1.tier, null);
+  }
+
+  // A withheld citation is reported, never silently dropped.
+  const reported = diagnostic(candidate, 'AMBIGUOUS_EVIDENCE_PROVENANCE');
+  assert.ok(reported);
+  assert.equal(reported.applied, false);
+  assert.equal(reported.deleted, false);
+  assert.equal(reported.claims.length, 1);
+  assert.equal(reported.claims[0].citation, 'fixture:official-score accompaniment staff');
+  assert.equal(reported.claims[0].role, 'Chord1');
+  assert.deepEqual([...reported.claims[0].spansSourceIds], [SRC_A, SRC_B].sort());
+  assert.deepEqual([...reported.claims[0].withheldFromLaneIds],
+    candidate.lanes.filter(lane => lane.sourceVoice === SHARED_VOICE).map(lane => lane.id).sort());
+});
+
+test('scope: sourceIds re-issues the claim to exactly the provenance that made it', () => {
+  const scoped = {
+    sourceRoleEvidence: [
+      {
+        sourceVoice: SHARED_VOICE,
+        sourceIds: [SRC_A],
+        role: 'Chord1',
+        citation: 'fixture:official-score accompaniment staff',
+      },
+    ],
+  };
+  const candidate = run(sharedLabelEvents, scoped);
+  assertOrderIndependent(sharedLabelEvents, scoped);
+
+  for (const lane of lanesFromSource(candidate, SRC_A)) {
+    assert.equal(lane.roleSupport.Chord1.tier, 1, `${lane.id} is what the citation names`);
+    const [record] = lane.evidence.filter(item => item.signal === 'trusted_symbolic_role');
+    assert.deepEqual([...record.measurement.declaredSourceIds], [SRC_A]);
+    assert.deepEqual([...record.measurement.scopedBy], ['sourceVoice', 'sourceIds']);
+  }
+  for (const lane of lanesFromSource(candidate, SRC_B)) {
+    assert.equal(lane.roleSupport.Chord1.tier, null, `${lane.id} belongs to the other source`);
+  }
+  assert.equal(diagnostic(candidate, 'AMBIGUOUS_EVIDENCE_PROVENANCE'), undefined);
+});
+
+test('scope: a lane reaching outside the declared provenance is not covered by it', () => {
+  // §10: a lane of mixed provenance is never treated as safely same-source.
+  const mixed = [
+    ...core3Backbone,
+    ...line('sa', [60, 60, 60, 60], SHARED_VOICE, 0, { sourceId: SRC_A }),
+    ...line('sm', [67, 67, 67, 67], SHARED_VOICE, 0, { sourceIds: [SRC_A, SRC_B] }),
+  ];
+  const candidate = run(mixed, {
+    sourceRoleEvidence: [
+      { sourceVoice: SHARED_VOICE, sourceIds: [SRC_A], role: 'Chord1', citation: 'fixture:official-score accompaniment staff' },
+    ],
+  });
+
+  const sharedLanes = candidate.lanes.filter(item => item.sourceVoice === SHARED_VOICE);
+  const partitioned = { covered: 0, outside: 0 };
+  for (const lane of sharedLanes) {
+    const covered = lane.sourceIds.every(id => id === SRC_A);
+    partitioned[covered ? 'covered' : 'outside'] += 1;
+    assert.equal(lane.roleSupport.Chord1.tier, covered ? 1 : null,
+      `${lane.id} with provenance ${JSON.stringify(lane.sourceIds)} must ${covered ? 'be' : 'not be'} covered`);
+  }
+  assert.ok(partitioned.covered > 0 && partitioned.outside > 0,
+    'the fixture must actually present both a covered and a reaching-outside lane');
+});
+
+test('scope: sourceIds is a provenance qualifier with its own input contract', () => {
+  const withScope = sourceIds => () => suggestRoleCandidates(project(sharedLabelEvents), {
+    sourceRoleEvidence: [{ sourceVoice: SHARED_VOICE, sourceIds, role: 'Chord1', citation: 'fixture:score' }],
+  });
+  assert.throws(withScope([]), /non-empty array of source id strings/);
+  assert.throws(withScope('official-score'), /non-empty array of source id strings/);
+  assert.throws(withScope([42]), /non-empty array of source id strings/);
+
+  // It narrows an existing target; it is never a target on its own.
+  assert.throws(() => suggestRoleCandidates(project(sharedLabelEvents), {
+    sourceRoleEvidence: [{ sourceIds: [SRC_A], role: 'Chord1', citation: 'fixture:score' }],
+  }), /must target a sourceVoice, laneId, or eventIds/);
+});
