@@ -193,7 +193,10 @@ function failedAnalysisReport(policy, error) {
  */
 export function enforceMicroGaps(project, { mobileSyntax } = {}) {
   if (!project || typeof project !== 'object') throw Error('Canonical project is required');
-  const policy = readMicroGapPolicy(mobileSyntax ?? EFFECTIVE_RULESET.mobileSyntax);
+  // Omitting the option reads the real contract via readMicroGapPolicy's own
+  // default; passing an explicit null or a partial object fails closed there
+  // rather than silently falling back to the published values.
+  const policy = readMicroGapPolicy(mobileSyntax);
 
   let report;
   try {
