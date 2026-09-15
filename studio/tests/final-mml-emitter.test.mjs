@@ -22,9 +22,9 @@ import {
   createCanonicalProject,
   createArbitrationDecision,
 } from '../backend/canonical/index.mjs';
-import { emitFinalMml } from '../backend/final/mml-emitter.mjs';
+import { emitFinalMml, finalizeWithRoundTrip } from '../backend/final/mml-emitter.mjs';
 import { verifyFinalReadback, projectFromFinalReadback } from '../backend/final/round-trip.mjs';
-import { EMIT_DIAGNOSTICS } from '../backend/final/emitter-contract.mjs';
+import { EMIT_DIAGNOSTICS, parserFacts } from '../backend/final/emitter-contract.mjs';
 
 const OFFICIAL = createSource({ id: 'official', label: 'Official MusicXML', kind: 'official-musicxml', authority: 'primary-symbolic' });
 
@@ -617,4 +617,40 @@ test('every result carries the published release identity and the scope notice',
   assert.equal(result.canonical.canonical_version, EFFECTIVE_RULESET.canonical.canonical_version);
   assert.equal(result.canonical.rules_snapshot_sha, EFFECTIVE_RULESET.canonical.rules_snapshot_sha);
   assert.match(result.notice, /not a Canonical verdict/);
+});
+
+test('the Final gate itself refuses output whose readback does not match', () => {
+  // Nothing the serializer produces should ever reach the gate in a failing
+  // state, which is precisely why the enforcement needs direct coverage: a
+  // redundant check that is never exercised silently stops being a check.
+  const candidate = project({ events: [note({ start: 0, end: 1 }), note({ start: 1, end: 2 })] });
+  const good = emitFinalMml(candidate);
+  assert.equal(good.status, 'PASS');
+
+  const expected = [{
+    role: 'Melody',
+    empty: false,
+    notes: [
+      { pitch: 60, start: '0', end: '1', volume: 8 },
+      { pitch: 60, start: '1', end: '2', volume: 8 },
+    ],
+    silence: [],
+    tempo: [{ beat: '0', bpm: 120 }],
+    total: '2',
+  }];
+  const roles = [{ role: 'Melody', empty: false, mml: 't120o4c&c', characters: 9, attacks: 2, end: '2' }];
+  const facts = parserFacts();
+
+  // Same pitches, same total duration, same tempo — one attack short.
+  const gated = finalizeWithRoundTrip('MML@t120o4c&c,,,,,;', expected, roles, [], null, {}, facts);
+  assert.equal(gated.status, 'FAIL');
+  assert.equal(gated.combinedMml, null);
+  assert.equal(gated.roundTrip.status, 'FAIL');
+  assert.ok(gated.diagnostics.some(item => item.code === EMIT_DIAGNOSTICS.ROUND_TRIP_MISMATCH));
+
+  // And it passes the honest one, so the test above is not just asserting that
+  // everything fails.
+  const clean = finalizeWithRoundTrip('MML@t120o4cc,,,,,;', expected, roles, [], null, {}, facts);
+  assert.equal(clean.status, 'PASS');
+  assert.equal(clean.combinedMml, 'MML@t120o4cc,,,,,;');
 });

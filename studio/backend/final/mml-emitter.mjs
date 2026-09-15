@@ -758,17 +758,28 @@ export function emitFinalMml(project, options = {}) {
     return buildResult(EMIT_STATUS.FAIL, null, roles, diagnostics, gates.microGap, null, facts);
   }
 
-  // The mandatory Final gate: read the emitted string back with the
-  // authoritative parser and compare semantics, not tokens. Nothing ships that
-  // this cannot confirm.
   const combined = `MML@${roles.map(entry => entry.mml).join(',')};`;
-  const readback = verifyFinalReadback(combined, expected, settings);
-  diagnostics.push(...readback.diagnostics);
-  if (readback.report.status !== 'PASS') {
-    return buildResult(EMIT_STATUS.FAIL, null, roles, diagnostics, gates.microGap, readback.report, facts);
-  }
+  return finalizeWithRoundTrip(combined, expected, roles, diagnostics, gates.microGap, settings, facts);
+}
 
-  return buildResult(EMIT_STATUS.PASS, combined, roles, diagnostics, gates.microGap, readback.report, facts);
+/**
+ * The mandatory Final gate: read the emitted string back with the authoritative
+ * parser, compare semantics rather than tokens, and refuse anything that does
+ * not match.
+ *
+ * It is a separate exported step so the enforcement itself is directly
+ * testable. By construction nothing the serializer produces should ever reach
+ * here in a failing state, which is exactly why the enforcement needs its own
+ * coverage: a redundant check that is never exercised silently stops being a
+ * check at all.
+ */
+export function finalizeWithRoundTrip(combinedMml, expected, roles, diagnostics, microGap, settings, facts) {
+  const readback = verifyFinalReadback(combinedMml, expected, settings);
+  const all = [...diagnostics, ...readback.diagnostics];
+  if (readback.report.status !== 'PASS') {
+    return buildResult(EMIT_STATUS.FAIL, null, roles, all, microGap, readback.report, facts);
+  }
+  return buildResult(EMIT_STATUS.PASS, combinedMml, roles, all, microGap, readback.report, facts);
 }
 
 function buildResult(status, combinedMml, roles, diagnostics, microGap, roundTrip, facts) {
