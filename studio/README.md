@@ -27,9 +27,11 @@ studio/
     bootstrap/      Manifest discovery and pinned published-document loading
     rules/          executable contract implementing Canonical docs
     canonical/      source-traceable Canonical Music IR
+    source/         source adapters including Standard MIDI File intake
     mml/            ingest parser, Final validator, source normalization
     score/          MusicXML ingestion and source completeness checks
     compare/        deterministic version/source drift reports
+    arrangement/    G11-B voice decomposition and G11-C role candidates
     arbitration/    Core3, Lead Demotion and cross-source harmony gates
     final/           per-song readiness evaluation
     audio/           Node audio-evidence bridge
@@ -56,20 +58,61 @@ The following are implemented and covered by the combined legacy + Studio CI sui
 - evidence-first Lead Demotion Gate;
 - cross-source same-pitch / m2 / M7 / m9 harmony arbitration;
 - original-audio alignment worker and Node evidence bridge;
-- per-song Project Readiness.
+- per-song Project Readiness;
+- G11-A Standard MIDI File intake into source-faithful Canonical evidence;
+- G11-B lossless, source-aware monophonic voice decomposition;
+- G11-C traceable six-role candidate suggestions with explicit pending/unassigned material;
+- local Studio Web Raw MIDI `.mid` / `.midi` intake, persistence, re-ingest and presentation;
+- content-derived Raw MIDI source identity using the full SHA-256 of the exact source bytes;
+- WebKit/Chromium regression coverage for the local Web path, including Raw MIDI.
 
-There is currently **no module-level Studio implementation blocker**. That does not certify any song. Every song still needs its own source, baseline, technical, Core3, Lead, harmony, version, audio, player and in-game evidence as applicable.
+The implemented pipeline above has no known module-level blocker that prevents
+continued Studio development on `main`. That does not certify any song and does
+not mean the Studio roadmap is complete. In particular, the current Raw MIDI path
+ends at preserved source evidence, G11-B decomposition, G11-C candidate suggestions
+and existing readiness information; later accepted-arrangement / G11-D or G12 work,
+Final MML generation, Mobile adaptation and target-client acceptance remain separate
+stages.
+
+Every song still needs its own source, baseline, technical, Core3, Lead, harmony,
+version, audio, player/readback, Mobile-adaptation and in-game evidence as applicable.
+A repository capability cannot pass a song gate automatically.
 
 MusicXML ingestion being implemented does not mean every file is complete. Repeat/navigation flow, grace realization, transposing-part concert pitch, microtones and unpitched mapping remain explicit unsupported/PENDING cases when encountered.
+
+## Raw MIDI / G11 staging
+
+The current source-to-candidate chain is intentionally separated:
+
+```text
+G11-A  Raw MIDI -> Source-Faithful Canonical evidence
+G11-B  source voices -> lossless source-aware candidate lanes
+G11-C  evidence + lanes -> traceable six-role candidate suggestions
+```
+
+G11-A preserves the source evidence rather than assigning an accepted six-role
+arrangement. G11-B preserves every source event while decomposing polyphony into
+candidate monophonic lanes. G11-C may suggest roles, but unresolved material stays
+PENDING/unassigned and its result is not Final acceptance.
+
+The Studio Web integration exposes this chain locally for `.mid` / `.midi` files.
+It does not turn a MIDI source into paste-ready Final MML automatically, does not
+perform instrument/octave/volume/drum-face mapping, and does not assert Mobile or
+in-game acceptance. See [Studio Web Raw MIDI](../docs/STUDIO_WEB_RAW_MIDI.md) for
+the implementation record and [studio/web/README.md](web/README.md) for current
+user-facing limits.
 
 ## Intended input set
 
 - official/trusted MusicXML or score export;
-- trusted/official MIDI when available;
-- third-party MuseScore export as supporting evidence;
+- trusted/official MIDI when available, including direct local `.mid` / `.midi` intake;
+- third-party MuseScore/MIDI export as supporting evidence when independently appropriate;
 - current six-track MML;
 - historical MML versions;
 - original M4A/FLAC/WAV for audio evidence.
+
+Input support does not assign evidence authority by file type alone. Source class,
+version identity, completeness and allowed claims still follow Published Canonical.
 
 ## Intended user-facing result
 
@@ -82,16 +125,21 @@ The phone/iPad UI presents evidence for questions such as:
 - Are Chord3–Chord5 additions colliding with Core3?
 - Which conflicts have explicit evidence-backed arbitration?
 - Where does the original recording disagree in timing/structure/foreground role?
+- What source voices and candidate lanes were recovered from a Raw MIDI file?
+- Which G11-C role suggestions are supported, competing, pending or left unassigned?
 - Does the final MML still pass the current Mobile technical policy?
 
 The local-first UI/PWA is implemented under `studio/web/`; see its
 [usage, local/cloud boundary and v1 limitations](web/README.md).
 Build it separately with `npm run build:studio-web`. Studio has not replaced the
-current production Railway/MCP route, and this branch performs no deployment.
+current production Railway/MCP route, and source/docs changes on `main` do not by
+themselves perform a production cutover or deployment.
 
 Use the Manifest for current policy discovery. `docs/RULES_AUDIT_2026-09-13.md`,
 `docs/STUDIO_MIGRATION.md`, and `docs/RELEASE_READINESS_2026-09-13.md` are dated
 historical/status records, not alternate rule-loading entry points. Their
-pre-Bootstrap descriptions are retained as history. References to a song
-`candidate` or `candidateReady` describe musical artifacts/readiness, not a
-candidate Canonical rules release.
+pre-Bootstrap descriptions are retained as history. The newer
+`docs/STUDIO_STATUS_READINESS_2026-09-15.md` is also a dated implementation/status
+snapshot rather than a rule source. References to a song `candidate` or
+`candidateReady` describe musical artifacts/readiness, not a candidate Canonical
+rules release.

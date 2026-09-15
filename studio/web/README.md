@@ -1,6 +1,6 @@
 # Studio Web / PWA v1
 
-Status: implementation on `studio-web-v1`; no production deployment.
+Status: implemented on Published `main`; not deployed as the production Railway/MCP path.
 This document describes the UI implementation, not Canonical rules.
 Rule loading starts only at Published main's
 [Canonical Manifest](../../docs/CANONICAL_MANIFEST.md).
@@ -9,13 +9,17 @@ Rule loading starts only at Published main's
 
 Open the separately hosted HTTPS Studio build in Safari. Use Share → Add to Home
 Screen to install. No terminal is needed for project work. Hosting is an operator
-step; this branch does not deploy a site or change Railway/MCP.
+step; the repository does not deploy a site or switch Railway/MCP traffic by
+merging Studio source.
 
 1. Create a project. Record the song/recording version, effective start/end seconds,
    source-confirmed meter map, original-audio applicability and preview usage.
 2. Use Files to select the candidate, Source-Faithful Baseline and accepted previous
    version (when available). Paste is also supported. MML remains derived evidence;
    MusicXML defaults to supporting unless the user confirms official symbolic authority.
+   A `.mid` / `.midi` file may also be selected as Raw MIDI source evidence; that path
+   is decoded locally and feeds the preserved G11-A source project, G11-B decomposition
+   and G11-C candidate suggestion described below.
 3. Inspect source authority, completeness, warnings and unsupported constructs.
    Read the Analysis Gate dashboard and event-level Version Drift tables.
 4. Review Lead/Core3 continuity, the 15 cross-track pair report, density and
@@ -25,7 +29,9 @@ step; this branch does not deploy a site or change Railway/MCP.
 5. Complete each applicable musical review. Technical PASS alone leaves the song
    Candidate. Unknown statuses remain PENDING; unsupported inputs remain blocked.
 6. Copy the complete MML@ or individual roles, and export the six-role text,
-   Canonical IR, analysis report or portable project backup.
+   Canonical IR, analysis report or portable project backup when those artifacts
+   exist for the current workflow. Raw MIDI intake by itself does not generate Final
+   MML.
 7. Only after every necessary non-game gate passes does the state become Validated.
    Explicit client/region/version, instrument setup and user evidence tied to the
    exact pasted MML are required for In-game Accepted.
@@ -51,6 +57,7 @@ readiness evidence. Imported accepted arbitration decisions need fresh review.
 | Capability | Execution / data movement |
 | --- | --- |
 | MusicXML, MML and Canonical IR intake | Local module Web Worker; original bytes never uploaded |
+| Raw MIDI `.mid` / `.midi` intake | Local browser + Worker path; original MIDI bytes remain local, are content-hashed for source identity, and feed existing G11-A/B/C modules |
 | Version Drift, Lead, Core3, Harmony, Readiness | Existing Studio modules in the local Worker |
 | Project/source files and review records | IndexedDB; user-initiated file exports |
 | M4A/FLAC/WAV selection | Local only; selection does not start a request |
@@ -64,6 +71,12 @@ audio invalidates older applicability/review state. Cancellation stops browser
 upload/waiting; an already-running remote alignment may continue until its host's
 job timeout. No automatic retry uploads occur.
 
+Raw MIDI does not reuse the audio upload path. The original MIDI bytes stay inside
+the browser/Worker pipeline and are not sent to the optional alignment endpoint.
+The Raw MIDI source id is derived from the full SHA-256 of the exact bytes; the
+separate request token exists only to suppress stale in-flight results and never
+becomes Canonical provenance.
+
 The optional `studio/audio-worker/mml_audio_worker/http_server.py` adapter wraps
 the existing audio implementation. It accepts only `POST /align`, a configured
 exact HTTPS Origin and bearer token, with 4 MiB project / 64 MiB audio limits.
@@ -73,7 +86,40 @@ The adapter attaches `symbolic.web_project_sha256` to its report and removes tem
 files on completion/failure. Existing CLI reports without this binding remain
 unverified in Web v1. An operator must supply HTTPS termination, private token
 distribution, workload timeouts and resource limits before exposing this optional
-service. This PR supplies no deployment credentials or production wiring.
+service. The repository supplies no deployment credentials or production wiring.
+
+## Raw MIDI path and scope
+
+The local Raw MIDI path on current `main` is:
+
+```text
+.mid / .midi file
+  -> browser File / ArrayBuffer
+  -> local Web Worker
+  -> existing Studio MIDI ingest (G11-A source project)
+  -> G11-B source-aware monophonic voice decomposition
+  -> G11-C traceable six-role candidate suggestion
+  -> Web report / persistence
+```
+
+The source project remains the preserved evidence layer. G11-B is lossless
+source decomposition rather than role assignment. G11-C is a candidate-suggestion
+layer rather than an accepted arrangement. Derived G11-B/G11-C material is
+re-derived from the stored source instead of being persisted as new source truth.
+Percussion/unsupported material stays separate rather than being silently emitted
+as pitched notes.
+
+This path ends before G11-D/G12, Final arrangement acceptance, Final MML emission,
+Mobile audibility/octave adaptation, instrument assignment, volume mapping,
+drum-face mapping or in-game acceptance. A Raw MIDI file therefore cannot make a
+song `VALIDATED` or `IN_GAME_ACCEPTED` by intake alone.
+
+Implementation guards currently refuse Raw MIDI input over 4 MiB or a decoded
+Canonical event set over 30,000 events. Those are implementation guards, not
+Canonical game rules. Large portable backups can also hit the existing 16 MiB
+restore ceiling. See the
+[Raw MIDI integration record](../../docs/STUDIO_WEB_RAW_MIDI.md) for implementation
+details and scope.
 
 ## Build and CI (developer / operator only)
 
@@ -116,16 +162,21 @@ npm run test:studio-web
 ```
 
 CI covers iPhone-size WebKit, iPad-size WebKit and desktop Chromium, with screenshots
-and JSON results. It exercises Files intake, review/state transitions, exact copy
-payloads, local persistence, unsupported handling, no implicit upload, viewport
-overflow and offline restart. OS clipboard permission, actual Safari Files provider
-behavior, Home Screen lifecycle and Mabinogi acceptance still require real devices.
+and JSON results. It exercises text/Files intake, Raw MIDI intake and presentation,
+review/state transitions, exact copy payloads, local persistence, unsupported
+handling, no implicit upload, viewport overflow and offline restart. OS clipboard
+permission, actual Safari Files provider behavior, Home Screen lifecycle and
+Mabinogi acceptance still require real devices.
 
 ## Explicit v1 limits
 
-- Uncompressed score-partwise MusicXML, complete six-slot MML and Canonical IR @2
-  are supported. Compressed MXL, raw MIDI intake and unrecognized IR schemas are
-  unsupported in this Web intake.
+- Uncompressed score-partwise MusicXML, complete six-slot MML, Canonical IR @2 and
+  Raw MIDI `.mid` / `.midi` intake are supported. Compressed MXL and unrecognized
+  IR schemas remain unsupported in this Web intake.
+- Raw MIDI support stops at preserved source evidence, G11-B decomposition,
+  G11-C candidate suggestions and existing readiness information. It does not
+  automatically perform Final six-role reduction, G11-D/G12, Final MML emission,
+  Mobile adaptation, instrument/octave assignment or drum-face mapping.
 - Existing MusicXML limitations (repeat/navigation expansion, grace realization,
   transposing parts, microtones, unpitched mapping) stay visible and block promotion.
 - No automatic MusicXML/IR arrangement, role assignment, six-track reduction or
@@ -141,6 +192,8 @@ behavior, Home Screen lifecycle and Mabinogi acceptance still require real devic
 - Named historical-song regressions without reproducible fixtures remain
   `FIXTURE_PENDING`. Synthetic tests never certify those songs.
 
-The [final pre-PR audit](../../docs/STUDIO_WEB_V1_FINAL_AUDIT.md) records evidenced
-findings and their tests. [Draft PR #7](https://github.com/a91453/mml-tools/pull/7)
-pins the latest reviewed branch HEAD and CI runs.
+The [final pre-PR audit](../../docs/STUDIO_WEB_V1_FINAL_AUDIT.md) remains a dated
+historical implementation record. Current Raw MIDI behavior is documented in
+[Studio Web Raw MIDI](../../docs/STUDIO_WEB_RAW_MIDI.md), and the current repository
+status/readiness baseline is recorded in
+[Studio Status / Readiness Snapshot — 2026-09-15](../../docs/STUDIO_STATUS_READINESS_2026-09-15.md).
