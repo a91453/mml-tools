@@ -65,7 +65,7 @@ prose.
 | G7 | All 15 role-pair overlap coverage | `RESOLVED` | — | `NONE` |
 | G8 | Named-song historical fixtures (P12) | `OPEN` | `NEEDS_PROJECT_DECISION` → `IMPLEMENTATION_WORK` | `NONE` |
 | G9 | Reduced 1-/2-role quality (P17) | `OPEN` | `ROADMAP_ONLY` / `NEEDS_PROJECT_DECISION` | `NONE` (see correction 1) |
-| G10 | Source-aware sub-1/64 micro-gap | `OPEN` | `DESIGN_REQUIRED` → `IMPLEMENTATION_WORK` | `NONE` |
+| G10 | Source-aware sub-1/64 micro-gap | `RESOLVED` | — | `NONE` |
 | G11 | Drum policy fails closed | `RESOLVED` | — | `NONE` |
 | G12 | Stale `workbench-source.zip` | `OPEN` | `NEEDS_PROJECT_DECISION` → `IMPLEMENTATION_WORK` | `NONE` |
 | G13 | Lockfile decision | `OPEN` | `NEEDS_PROJECT_DECISION` → `IMPLEMENTATION_WORK` | `NONE` |
@@ -151,33 +151,67 @@ later chooses to:
 Absent one of those three, reduced-role work is reporting and tooling that sits
 inside the existing published rules.
 
-### G10 — Source-aware sub-1/64 micro-gap enforcement · `OPEN`
+### G10 — Source-aware sub-1/64 micro-gap enforcement · `RESOLVED`
 
-This is **a confirmed unenforced or partially unenforced published rule found by
-this audit**. The audit did not attempt an exhaustive enforcement sweep of every
-published rule, so no uniqueness claim is made.
-
-**Evidence.** `docs/MOBILE_SYNTAX.md` §4 makes `FINAL_FORBIDDEN` "technical
-micro-gaps or decomposition components finer than 1/64 **when they have no
-source-supported musical meaning**", and §11.6 step 5 requires Final
+**Original finding.** `docs/MOBILE_SYNTAX.md` §4 makes `FINAL_FORBIDDEN`
+"technical micro-gaps or decomposition components finer than 1/64 **when they
+have no source-supported musical meaning**", and §11 step 5 requires Final
 canonicalization to "ensure no zero duration or non-musical technical micro-gap
-remains". `docs/MASTER_RULES.md:115` permits normalizing meaning-free micro-gaps.
-The executable contract declares `rejectTechnicalMicroGapsBelow64: true` at
-`studio/backend/rules/index.mjs:40`, and a repository-wide search finds no
-consumer of that flag — the nearest test asserts `shortestSafeDenominator`
-(`studio/tests/rules.test.mjs:22`), not this flag. Both dated audit records
-independently note the analyzer is incomplete
-(`docs/RELEASE_READINESS_2026-09-13.md:96`, `docs/RULES_AUDIT_2026-09-13.md:111`).
+remains". `docs/MASTER_RULES.md` §7 permits normalizing meaning-free micro-gaps
+while preserving meaningful source rests. The executable contract declared
+`rejectTechnicalMicroGapsBelow64: true` with no consumer anywhere in the
+repository, and `preserveMeaningfulRests: true` sat beside it in the same state.
 
-**Why open.** Enforcement is conditioned by Canonical on *source-supported
-musical meaning*. A naive "reject everything finer than 1/64" would itself
-violate Canonical by discarding source-supported material, and
-`preserveMeaningfulRests: true` sits directly beside the flag. The source-meaning
-signal must be threaded into the check, which is a design question before it is a
-coding question.
+**Why it could not be a threshold.** Enforcement is conditioned by Canonical on
+*source-supported musical meaning*. A naive "reject everything finer than 1/64"
+would itself violate Canonical by discarding source-supported material, so the
+source-meaning signal had to be threaded into the check.
 
-**Canonical impact.** `NONE` — the rule is already published. Only enforcement is
-missing.
+**How it was closed.** In three merged stages:
+
+| Stage | Contents |
+| --- | --- |
+| C2A | `studio/backend/canonical/micro-timing.mjs` — the source-aware classifier. Exact-rational 1/64 grid, interval identity for both event durations and inter-event gaps, and the four outcomes: source-supported, technical residue, unknown, unresolved stream identity. |
+| C2B | `microTimingGate` in `studio/backend/final/readiness.mjs` — per-song readiness consumes those outcomes without collapsing them into a boolean. |
+| C2C | `studio/backend/final/micro-gap-enforcement.mjs` — the Final policy layer. It is the single place a classification becomes a Final outcome, and the place the contract values are actually read. |
+
+The enforcement layer maps each class to one outcome — source-supported to
+`preserve`, technical residue to `reject-final`, unknown and unresolved stream
+identity to `block-pending` — and derives the safe grid from
+`shortestSafeDenominator` as an exact rational rather than restating 1/64, so
+the contract and the analyzer can no longer drift apart in silence. A contract
+that stops echoing the published rule is reported non-conformant and fails
+closed; it cannot relax the rule and cannot turn a `FAIL` into a pass. The
+report also publishes `enforcement[]`, `preservedIntervalKeys`,
+`rejectedIntervalKeys` and `blockedIntervalKeys` as the hook a later
+Canonical-aware Final emitter consumes.
+
+Regression coverage is `studio/tests/micro-timing-analyzer.test.mjs`,
+`studio/tests/micro-timing-readiness.test.mjs`,
+`studio/tests/micro-timing-performance.test.mjs` and
+`studio/tests/micro-gap-enforcement.test.mjs`. Seven deliberate mutations of the
+G10 guards — including treating every sub-grid interval as technical, treating
+unknown provenance as technical, ignoring the source-supported classification,
+moving either boundary comparison to include exactly 1/64, ignoring the contract
+flags, and letting a mismatched denominator silently become the grid — were each
+caught by at least one regression.
+
+**Canonical impact.** `NONE` — the rule was already published, and this work
+added none. Only enforcement was missing.
+
+**What this does not claim.** This closes the *implementation* gap: the published
+rule now has an executable consumer and mutation-verified coverage. It resolves
+no `PENDING` in-game question. P4 (arbitrary 1–64 length behavior) and P5 (dotted
+edge forms) remain open, and a `microTiming` `PASS` certifies source-supported
+musical meaning only — it makes no Final representability claim, which needs its
+own mechanism, and it never substitutes for the separate technical MML gate.
+
+**Out of scope, deliberately.** The complete Final MML emitter is the next
+project. G10 stops at classification, enforcement and diagnostics; it performs no
+normalization rewrite, because an exact rewrite to a canonical note/tie/rest
+decomposition belongs to that emitter. Rejecting is the fail-closed half of the
+range MASTER_RULES §7 permits, and `rejectedIntervalKeys` is the worklist the
+emitter can adopt without this contract changing meaning.
 
 ### G12 — Stale legacy `workbench-source.zip` · `OPEN`
 
@@ -397,8 +431,8 @@ change is asserted to be required.
 - **M5/D7 depends on the G8 guardrail.** The `FIXTURE_PENDING` exit criteria must
   honour the named-song rule: generic synthetic evidence is not an exit
   criterion.
-- **G10 depends on nothing else.** It is self-contained: a published rule with a
-  declared but inert flag, needing design then implementation.
+- **G10 depended on nothing else.** It was self-contained: a published rule with
+  a declared but inert flag, needing design then implementation. Now `RESOLVED`.
 - **G9 depends on a project decision only.** It blocks no other item and is
   blocked by no other item.
 - **M4 is independent and owner-side.** It gates nothing in this register
@@ -412,7 +446,7 @@ Sequenced so that no PR mixes a decision-bearing change with a mechanical one.
 | --- | --- | --- |
 | **A — documentation + CI topology** | This register; restore `ops/permanent/**` push coverage on `main` (M3a) | None. This is PR #11. |
 | **B — release semantics** | Resolve `studio-durable-release.yml` re-runnability per M3b | M3b decision |
-| **C — G10 enforcement** | Source-aware micro-gap enforcement with mutation-verified regressions, design reviewed first | G10 design review |
+| **C — G10 enforcement** ✅ | Source-aware micro-gap enforcement with mutation-verified regressions | Delivered across C2A / C2B / C2C |
 | **D — G12 / G13** | Artifact strategy and lockfile posture together | G12 + G13 decisions, after M3b |
 | **E — M5 groundwork** | Song History structure documentation only, no schema | D1–D8 decisions |
 
@@ -440,10 +474,11 @@ Recorded so the superseded readings are not reintroduced later.
    that actually represents that named regression. Generic synthetic evidence is
    not the exit criterion for a named regression.
 
-3. **G10 wording.** Described as "a confirmed unenforced or partially unenforced
-   published rule found by this audit". The earlier phrase "the only unenforced
-   published rule" is withdrawn: the audit ran no exhaustive enforcement sweep
-   across all published rules, so uniqueness was never evidenced.
+3. **G10 wording.** When G10 was open it was described as "a confirmed unenforced
+   or partially unenforced published rule found by this audit". The earlier phrase
+   "the only unenforced published rule" is withdrawn: the audit ran no exhaustive
+   enforcement sweep across all published rules, so uniqueness was never
+   evidenced. Closing G10 does not retroactively supply that sweep.
 
 4. **M5 D2/D5 are provenance / authority design decisions.** This register does
    not assume that adding a Song History structure requires a `manifest_version`

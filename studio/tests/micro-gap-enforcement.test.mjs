@@ -440,6 +440,13 @@ test('G10-5 exactly 1/64 is on the grid and is not a sub-grid interval', () => {
   const report = enforceMicroGaps(candidate);
   assert.equal(report.candidateCount, 0);
   assert.equal(report.status, 'PASS');
+
+  // The event-duration path takes the same boundary as the gap path: a note
+  // exactly 1/64 long is on the grid, so it is not a sub-grid candidate either.
+  const onGrid = note({ id: 'edge-duration', start: '0', end: EXACT_GRID.toString() });
+  const durationReport = enforceMicroGaps(project({ events: [onGrid] }));
+  assert.equal(durationReport.candidateCount, 0);
+  assert.equal(durationReport.status, 'PASS');
 });
 
 test('G10-5b a gap below 1/64 by less than float precision is still sub-grid', () => {
