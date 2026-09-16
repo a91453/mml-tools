@@ -26,12 +26,72 @@ import {
   LEAD_ROLE,
   LEAD_EVIDENCE_IDENTITY_MISMATCH,
   DECISION_REJECTION,
+  CANONICAL_PROJECT_SCHEMA,
   leadEvidenceIdentityBlockers,
+  revisionIdentityMatches,
+  candidateDigestOf,
+  baselineIdentityOf,
+  snapshotDigestOf,
 } from './decision-application.mjs';
 
-const requirePass = application => {
+/**
+ * Is this application result what it says it is?
+ *
+ * An application result is data. Its `status`, its `candidate` and its
+ * `revision` can each be edited independently after the fact, and readiness
+ * reads the Source-Faithful snapshot *embedded in the candidate* -- so a
+ * candidate whose snapshot was swapped for itself would show the baseline gate
+ * no changes at all, and the Lead gate would find nothing to require. Nothing
+ * downstream is run until the three agree with each other and with the
+ * baseline the caller actually handed in:
+ *
+ *   revision.id                      recomputes from the revision's own content
+ *   revision.candidateDigest         matches the candidate supplied
+ *   revision.baselineIdentity        matches the baseline supplied
+ *   candidate's embedded snapshot    matches the baseline supplied
+ *   candidate.metadata.g11d.revision names this revision
+ *
+ * Returns the reasons rather than throwing: a forged or stale application is a
+ * reportable condition, and the caller decides what to show.
+ */
+export function applicationIntegrity(application, against) {
+  const reasons = [];
+  if (!application || typeof application !== 'object') return Object.freeze({ ok: false, against: null, reasons: Object.freeze(['APPLICATION_MISSING']) });
+  if (application.status !== 'PASS') reasons.push('APPLICATION_NOT_PASS');
+  const candidate = application.candidate;
+  const revision = application.revision;
+  if (!candidate || typeof candidate !== 'object' || candidate.schema !== CANONICAL_PROJECT_SCHEMA) reasons.push('CANDIDATE_NOT_A_CANONICAL_PROJECT');
+  if (!revision || typeof revision !== 'object') reasons.push('REVISION_MISSING');
+  if (!against || typeof against !== 'object' || against.schema !== CANONICAL_PROJECT_SCHEMA) reasons.push('BASELINE_NOT_A_CANONICAL_PROJECT');
+  if (reasons.length) return Object.freeze({ ok: false, against: null, reasons: Object.freeze(reasons) });
+
+  if (!revisionIdentityMatches(revision)) reasons.push('REVISION_IDENTITY_TAMPERED');
+  if (candidateDigestOf(candidate) !== revision.candidateDigest) reasons.push('CANDIDATE_DIGEST_MISMATCH');
+  if (candidate.metadata?.g11d?.revision?.id !== revision.id) reasons.push('CANDIDATE_REVISION_MISMATCH');
+
+  // The project supplied must be one the revision itself names: the
+  // Source-Faithful baseline, or the accepted previous candidate it was applied
+  // onto. Anything else is not a reference this revision was made against.
+  const suppliedDigest = baselineIdentityOf(against).contentDigest;
+  const role = suppliedDigest === revision.baselineIdentity?.contentDigest ? 'baseline'
+    : suppliedDigest === revision.parentCandidateIdentity?.contentDigest ? 'parent'
+      : null;
+  if (!role) reasons.push('REVISION_BASELINE_MISMATCH');
+
+  // Both the candidate and an accepted previous carry the same Source-Faithful
+  // snapshot, so whichever reference was supplied, the candidate's snapshot has
+  // something exact to agree with.
+  const snapshot = candidate.metadata?.sourceFaithfulBaseline?.snapshot;
+  const expectedSnapshot = role === 'baseline' ? against : role === 'parent' ? against.metadata?.sourceFaithfulBaseline?.snapshot : null;
+  if (!snapshot || typeof snapshot !== 'object') reasons.push('CANDIDATE_SNAPSHOT_MISSING');
+  else if (role && (!expectedSnapshot || typeof expectedSnapshot !== 'object' || snapshotDigestOf(snapshot) !== snapshotDigestOf(expectedSnapshot))) reasons.push('CANDIDATE_SNAPSHOT_NOT_THE_BASELINE');
+
+  return Object.freeze({ ok: reasons.length === 0, against: reasons.length === 0 ? role : null, reasons: Object.freeze(reasons) });
+}
+
+const requirePass = (application, baseline) => {
   if (!application || typeof application !== 'object') throw Error('reviewAppliedCandidate requires a G11-D application result');
-  return application.status === 'PASS' && application.candidate;
+  return applicationIntegrity(application, baseline).ok;
 };
 
 const pendingReport = (eventId, destinationRole, blockers) => Object.freeze({
@@ -53,6 +113,12 @@ const pendingReport = (eventId, destinationRole, blockers) => Object.freeze({
  * decision whose evidence does not satisfy the gate produces a non-PASS report
  * here exactly as it did at application time; this never manufactures a PASS.
  *
+ * `baseline` may be the Source-Faithful baseline or the accepted previous
+ * candidate the revision was applied onto -- both are identities the revision
+ * binds -- and nothing else. Reports produced against the accepted previous are
+ * information about the step just taken; readiness keys on the Source-Faithful
+ * baseline and is handed reports made against that.
+ *
  * Defence in depth, and not redundant. An application result is data: it can be
  * restored from storage, hand-built, mutated, or produced by a caller that
  * bypassed the recording path entirely, so `status === 'PASS'` is not evidence
@@ -62,7 +128,10 @@ const pendingReport = (eventId, destinationRole, blockers) => Object.freeze({
  * citation could be re-packaged as a PASS carrying the target event's id.
  */
 export function leadDemotionReportsFromApplication(application, baseline) {
-  if (!requirePass(application)) return [];
+  // A forged or inconsistent application produces no report at all. With no
+  // report, the readiness Lead gate stays PENDING for every Lead move the
+  // baseline diff finds -- the closed direction.
+  if (!requirePass(application, baseline)) return [];
   const baselineById = new Map((baseline?.events ?? []).map(event => [event.id, event]));
   const reports = [];
   for (const entry of application.applied) {
@@ -128,10 +197,17 @@ export function reviewAppliedCandidate({
   playerReadback = 'NOT_RUN',
   inGameAcceptance = 'PENDING',
 }) {
-  if (!requirePass(application)) {
+  const checked = applicationIntegrity(application, baseline);
+  const integrity = checked.ok && checked.against !== 'baseline'
+    ? Object.freeze({ ok: false, against: null, reasons: Object.freeze(['REVIEW_REQUIRES_SOURCE_FAITHFUL_BASELINE']) })
+    : checked;
+  if (!integrity.ok) {
     return Object.freeze({
       status: 'NOT_APPLICABLE',
-      reason: 'The accepted decision set was not applied, so there is no candidate to validate.',
+      reason: integrity.reasons.includes('APPLICATION_NOT_PASS')
+        ? 'The accepted decision set was not applied, so there is no candidate to validate.'
+        : 'The application result does not agree with itself or with the supplied baseline, so nothing downstream is run against it.',
+      integrity,
       applicationStatus: application?.status ?? null,
       lineage: null,
       core3FromBaseline: null,
@@ -140,8 +216,6 @@ export function reviewAppliedCandidate({
       readiness: null,
     });
   }
-  if (!baseline?.events) throw Error('reviewAppliedCandidate requires the Source-Faithful Canonical baseline');
-
   const candidate = application.candidate;
   const lineage = compareCandidateLineage({ sourceBaseline: baseline, acceptedPrevious, candidate });
   const core3FromBaseline = evaluateCore3Continuity({ baseline, candidate, approvedChanges: core3ApprovedChanges });
@@ -164,6 +238,7 @@ export function reviewAppliedCandidate({
 
   return Object.freeze({
     status: 'REVIEWED',
+    integrity,
     applicationStatus: application.status,
     revisionId: application.revision.id,
     diffFromBaseline: application.diffFromBaseline,

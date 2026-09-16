@@ -188,6 +188,17 @@ const ACCEPTED_STATE = 'ACCEPTED';
 // ─── small validators ───────────────────────────────────────────────────────
 
 const isPlainObject = value => Boolean(value) && typeof value === 'object' && !Array.isArray(value);
+
+// A constructor failure that has a more specific name than DECISION_MALFORMED
+// carries it here, so the rejection a caller sees is the code the vocabulary
+// promised rather than a generic one with the real reason buried in a message.
+const fail = (code, message) => Object.assign(Error(message), { code });
+
+export const CANONICAL_PROJECT_SCHEMA = 'mabinogi-mobile-mml-studio/canonical-project@2';
+const isCanonicalProject = value => isPlainObject(value)
+  && value.schema === CANONICAL_PROJECT_SCHEMA
+  && Array.isArray(value.events)
+  && Array.isArray(value.sources);
 const nonEmptyString = value => typeof value === 'string' && Boolean(value.trim());
 
 function requireKeys(object, allowed, label) {
@@ -294,6 +305,14 @@ export function candidateDigestOf(project) {
   return contentDigest(projectDigestShape(project, { excludeMetadataKeys: ['g11d'] }));
 }
 
+// The digest a project and its embedded Source-Faithful snapshot must agree on.
+// The snapshot is the baseline minus the two keys that would nest a snapshot
+// inside a snapshot, so the comparison excludes exactly those.
+export function snapshotDigestOf(project) {
+  if (!isPlainObject(project)) throw Error('snapshotDigestOf requires a Canonical project');
+  return contentDigest(projectDigestShape(project, { excludeMetadataKeys: ['sourceFaithfulBaseline', 'g11d'] }));
+}
+
 export function decisionSetDigestOf(normalizedDecisions) {
   const records = normalizedDecisions
     .map(decision => ({ ...decision }))
@@ -380,9 +399,9 @@ export function revisionIdentityMatches(revision) {
 // ─── accepted decision ──────────────────────────────────────────────────────
 
 function normalizeAcceptance(acceptance) {
-  if (!isPlainObject(acceptance)) throw Error('decision.acceptance is required; a G11-C suggestion is not an acceptance');
+  if (!isPlainObject(acceptance)) throw fail(DECISION_REJECTION.DECISION_NOT_ACCEPTED, 'decision.acceptance is required; a G11-C suggestion is not an acceptance');
   requireKeys(acceptance, ACCEPTANCE_KEYS, 'decision.acceptance');
-  if (acceptance.state !== ACCEPTED_STATE) throw Error(`decision.acceptance.state must be exactly "${ACCEPTED_STATE}"`);
+  if (acceptance.state !== ACCEPTED_STATE) throw fail(DECISION_REJECTION.DECISION_NOT_ACCEPTED, `decision.acceptance.state must be exactly "${ACCEPTED_STATE}"`);
   if (!nonEmptyString(acceptance.acceptedBy)) throw Error('decision.acceptance.acceptedBy must name who accepted this decision');
   if (acceptance.reviewedRevisionId !== null && !nonEmptyString(acceptance.reviewedRevisionId)) {
     throw Error('decision.acceptance.reviewedRevisionId must be null (reviewed against the Source-Faithful Baseline) or the parent revision id');
@@ -401,7 +420,7 @@ function normalizeAcceptance(acceptance) {
     reviewedRevisionId: acceptance.reviewedRevisionId ?? null,
     baselineContentDigest: acceptance.baselineContentDigest.trim(),
     sourceIdentityDigest: acceptance.sourceIdentityDigest.trim(),
-    laneDecompositionDigest: acceptance.laneDecompositionDigest ?? null,
+    laneDecompositionDigest: typeof acceptance.laneDecompositionDigest === 'string' ? acceptance.laneDecompositionDigest.trim() : null,
     canonicalRulesSnapshotSha: acceptance.canonicalRulesSnapshotSha.trim(),
     note: nonEmptyString(acceptance.note) ? acceptance.note.trim() : null,
   });
@@ -412,8 +431,8 @@ function normalizeTarget(target) {
   requireKeys(target, TARGET_KEYS, 'decision.target');
   const hasLane = target.laneId !== undefined && target.laneId !== null;
   const hasEvents = target.eventIds !== undefined && target.eventIds !== null;
-  if (hasLane && hasEvents) throw Error('decision.target must name either laneId or eventIds, never both');
-  if (!hasLane && !hasEvents) throw Error('decision.target must name a laneId or eventIds');
+  if (hasLane && hasEvents) throw fail(DECISION_REJECTION.TARGET_AMBIGUOUS, 'decision.target must name either laneId or eventIds, never both');
+  if (!hasLane && !hasEvents) throw fail(DECISION_REJECTION.TARGET_MISSING, 'decision.target must name a laneId or eventIds');
   if (hasLane) {
     if (!nonEmptyString(target.laneId)) throw Error('decision.target.laneId must be a non-empty string');
     return Object.freeze({ laneId: target.laneId.trim(), eventIds: null });
@@ -457,7 +476,7 @@ export function createAcceptedDecision(input) {
   const type = input.type.trim();
   const known = Object.hasOwn(ACCEPTED_DECISION_TYPES, type);
   const recognizedUnsupported = Object.hasOwn(RECOGNIZED_UNSUPPORTED_DECISION_TYPES, type);
-  if (!known && !recognizedUnsupported) throw Error(`unknown decision.type: ${type}`);
+  if (!known && !recognizedUnsupported) throw fail(DECISION_REJECTION.UNKNOWN_DECISION_TYPE, `unknown decision.type: ${type}`);
 
   if (!nonEmptyString(input.reason)) throw Error('decision.reason must state a positive reason for the decision');
   const evidence = stringList(input.evidence ?? [], 'decision.evidence', { allowEmpty: true });
@@ -690,8 +709,8 @@ export function applyAcceptedArrangement({
   decisions,
   canonicalIdentity,
 } = {}) {
-  if (!isPlainObject(baseline) || !Array.isArray(baseline.events) || !Array.isArray(baseline.sources)) {
-    throw Error('applyAcceptedArrangement requires the Source-Faithful Canonical baseline project');
+  if (!isCanonicalProject(baseline)) {
+    throw Error(`applyAcceptedArrangement requires the Source-Faithful Canonical baseline project (${CANONICAL_PROJECT_SCHEMA})`);
   }
   if (!Array.isArray(decisions)) throw Error('applyAcceptedArrangement requires an array of accepted decisions');
   const canonical = normalizeCanonicalIdentity(canonicalIdentity);
@@ -720,8 +739,8 @@ export function applyAcceptedArrangement({
   let revisionIndex = 1;
   let fatalParent = false;
   if (parent !== null) {
-    if (!isPlainObject(parent) || !isPlainObject(parent.revision) || !isPlainObject(parent.candidate)) {
-      throw Error('parent must be { revision, candidate } from a previous G11-D application');
+    if (!isPlainObject(parent) || !isPlainObject(parent.revision) || !isCanonicalProject(parent.candidate)) {
+      throw Error(`parent must be { revision, candidate } from a previous G11-D application; candidate must be a ${CANONICAL_PROJECT_SCHEMA} project`);
     }
     parentRevision = parent.revision;
     if (!revisionIdentityMatches(parentRevision)) {
@@ -759,7 +778,7 @@ export function applyAcceptedArrangement({
     let decision;
     try { decision = createAcceptedDecision(input); }
     catch (error) {
-      reject(isPlainObject(input) && nonEmptyString(input.id) ? input.id : `decisions[${index}]`, DECISION_REJECTION.DECISION_MALFORMED, { detail: error.message });
+      reject(isPlainObject(input) && nonEmptyString(input.id) ? input.id : `decisions[${index}]`, error.code ?? DECISION_REJECTION.DECISION_MALFORMED, { detail: error.message });
       continue;
     }
     if (seenIds.has(decision.id)) {
@@ -823,10 +842,19 @@ export function applyAcceptedArrangement({
       if (!suggestion) { reject(decision.id, DECISION_REJECTION.LANE_TARGET_REQUIRES_SUGGESTION, { laneId: decision.target.laneId }); continue; }
       const lane = laneById.get(decision.target.laneId);
       if (!lane) { reject(decision.id, DECISION_REJECTION.LANE_TARGET_UNKNOWN, { laneId: decision.target.laneId }); continue; }
-      const laneEventIds = [...lane.eventIds].sort(cmpStr);
+      const laneEventIds = [...(lane.eventIds ?? [])].sort(cmpStr);
       const missing = laneEventIds.filter(eventId => !eventById.has(eventId));
       if (missing.length) {
         reject(decision.id, DECISION_REJECTION.LANE_TARGET_EVENTS_NOT_IN_PARENT, { laneId: lane.id, missingEventIds: Object.freeze(missing) });
+        continue;
+      }
+      // A G11-C lane only ever holds note events, but the suggestion is
+      // caller-supplied data. A lane naming a rest would otherwise resolve, be
+      // judged as if it had a role, and then be carried through *unchanged* --
+      // while the trace claimed a role had been applied to it.
+      const laneNonNotes = laneEventIds.filter(eventId => eventById.get(eventId).kind !== 'note');
+      if (laneNonNotes.length) {
+        reject(decision.id, DECISION_REJECTION.TARGET_EVENT_NOT_A_NOTE, { laneId: lane.id, eventIds: Object.freeze(laneNonNotes) });
         continue;
       }
       targetIds = laneEventIds.filter(eventId => withinSection(eventById.get(eventId), decision.section));
@@ -1221,6 +1249,25 @@ export function applyAcceptedArrangement({
   outputEvents.sort(eventOrder);
   omittedRecords.sort((a, b) => cmpStr(a.eventId, b.eventId));
 
+  // A duplicate accepted in an earlier revision is its own candidate event, so
+  // omitting its origin later does not remove it. That is a legitimate outcome
+  // of two accepted decisions, but "the reviewer omitted this and a copy of it
+  // still sounds" must never be something a reader has to notice on their own.
+  const survivingCopies = omittedRecords
+    .map(item => Object.freeze({
+      omittedEventId: item.eventId,
+      derivedEventIds: Object.freeze(outputEvents
+        .filter(event => event.metadata?.g11d?.derivedFromEventId === item.eventId)
+        .map(event => event.id)
+        .sort(cmpStr)),
+    }))
+    .filter(item => item.derivedEventIds.length);
+  if (survivingCopies.length) note('DERIVED_DUPLICATE_OUTLIVES_ORIGIN', {
+    deleted: false,
+    pairs: Object.freeze(survivingCopies),
+    notice: 'An omitted event still has derived duplicate copies in the candidate, accepted in an earlier revision. They copy the same source event and keep its provenance; whether they should remain now that the original is omitted is a review question, not something this stage decides.',
+  });
+
   // Carried-forward arbitration decisions. One that references an omitted event
   // can no longer describe this project, and is dropped loudly rather than
   // rewritten: dropping it makes the conflict it resolved re-report as
@@ -1460,6 +1507,9 @@ export const DECISION_APPLICATION_STATUS = Object.freeze({
   leadEvidenceSourceEventIdMembershipRequired: true,
   leadAffectingDecisionLimitedToOneEvent: true,
   leadEvidenceRevalidatedDownstream: true,
+  laneTargetsNoteEventsOnly: true,
+  applicationIntegrityVerifiedDownstream: true,
+  survivingDerivedCopiesReported: true,
   parentGateMetadataStripped: true,
 
   // Deliberately not done here.

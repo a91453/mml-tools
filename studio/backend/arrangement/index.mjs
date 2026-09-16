@@ -37,6 +37,8 @@ export {
   laneDecompositionDigestOf,
   decisionSetDigestOf,
   candidateDigestOf,
+  snapshotDigestOf,
+  CANONICAL_PROJECT_SCHEMA,
   derivedDuplicateEventId,
   canonicalJson,
   contentDigest,
@@ -55,4 +57,5 @@ export {
 export {
   reviewAppliedCandidate,
   leadDemotionReportsFromApplication,
+  applicationIntegrity,
 } from './decision-review.mjs';

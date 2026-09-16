@@ -360,6 +360,24 @@ Omitting Core3 material is applied when the decision is legal and evidenced, and
 is reported as `CORE3_MATERIAL_OMITTED`; whether the result is still a complete
 one-player arrangement is the Core3 gate's answer, not this stage's.
 
+## Application integrity
+
+An application result is data. `applicationIntegrity(application, against)` in
+`decision-review.mjs` is what stands between that data and every downstream
+gate:
+
+| Check | Reason on failure |
+| --- | --- |
+| `status === 'PASS'` | `APPLICATION_NOT_PASS` |
+| candidate and reference are `canonical-project@2` | `CANDIDATE_NOT_A_CANONICAL_PROJECT` / `BASELINE_NOT_A_CANONICAL_PROJECT` |
+| revision id recomputes from its own content | `REVISION_IDENTITY_TAMPERED` |
+| `revision.candidateDigest` matches the candidate | `CANDIDATE_DIGEST_MISMATCH` |
+| the reference is the baseline or the accepted previous the revision names | `REVISION_BASELINE_MISMATCH` |
+| the embedded snapshot agrees with that reference | `CANDIDATE_SNAPSHOT_MISSING` / `CANDIDATE_SNAPSHOT_NOT_THE_BASELINE` |
+| `candidate.metadata.g11d.revision` names this revision | `CANDIDATE_REVISION_MISMATCH` |
+
+Failure is reported, not thrown, and nothing downstream runs.
+
 ## Downstream validation boundary
 
 `status: 'PASS'` means one thing: the accepted decisions were applied
@@ -467,6 +485,7 @@ that are loaded, never supplied by a caller.
 | `studio/tests/decision-application.test.mjs` | immutability, determinism under rotation / reversed events / reversed keys, KEEP, ASSIGN, MOVE, OMIT, DUPLICATE, revision lineage, provenance, section windows, post-validation mutation |
 | `studio/tests/decision-application-downstream.test.mjs` | Core3, Lead and cross-source gates blocking a correctly applied candidate, and Final-emitter consumability |
 | `studio/tests/decision-application-lead-evidence.test.mjs` | Lead evidence identity binding (correct / foreign event / same source, wrong event / right event, wrong source / missing), membership over equality, derived-duplicate namespace, one-event containment for demotion, omission, promotion and lanes, the downstream re-check, and the readiness end-to-end |
+| `studio/tests/decision-application-integrity.test.mjs` | the re-read findings: a lane naming a rest, a forged embedded snapshot, every way an application can disagree with itself, the accepted previous as a report reference but not a readiness reference, JSON round-trip of an honest application, surviving derived copies, schema enforcement, specific rejection codes, digest trimming |
 | `studio/tests/g11d-pipeline.test.mjs` | raw SMF bytes → G11-A → G11-B → G11-C → accepted decisions → G11-D → diff → readiness |
 | `studio/tests/web-g11d-decisions.test.mjs` | Web recording, revision safety, tampering, import, and stored-application binding |
 
@@ -511,6 +530,20 @@ Mutation 11 is the one that matters most: removing only the `sourceEventId` half
 leaves the `sourceId` check in place, which still passes for any two events from
 the same source — the exact hole the external review found.
 
+Seven more cover the full re-read. All seven were caught, and the earlier
+fifteen were re-run against the restructured code (one anchor retargeted after
+the constructor-error change) and all still catch.
+
+| # | Mutation | Failing tests |
+| --- | --- | --- |
+| 16 | lane targets skip the note-only check | 1 |
+| 17 | the review facade trusts `application.status` | 3 |
+| 18 | the report builder trusts `application.status` | 3 |
+| 19 | snapshot agreement is not checked | 1 |
+| 20 | surviving derived copies go unreported | 1 |
+| 21 | constructor errors lose their specific codes | 1 |
+| 22 | any reference project is accepted as the baseline | 2 |
+
 ## External review P1 — Lead evidence was not bound to the targeted event
 
 Found by independent external review of PR HEAD `cc8e3b4`, after the first six
@@ -542,10 +575,72 @@ lane of Lead events in one decision. That pattern is exactly what let one
 citation stand for many events, and it is now one decision per Lead event, each
 with its own citation. The end-to-end pipeline fixture was updated accordingly.
 
+## Full re-read after the external-review P1
+
+The P1 was a class of defect -- a caller-supplied object trusted as if it were an
+outcome -- so the whole stage was re-read for the same class and for anything
+else. Each finding below was reproduced against the previous code before it was
+fixed, and each has a regression in
+`studio/tests/decision-application-integrity.test.mjs`.
+
+**R-S34 (P1 class) — the review facade trusted the application it was handed.**
+`reviewAppliedCandidate()` and `leadDemotionReportsFromApplication()` checked
+only `status === 'PASS'` and the presence of a candidate. Readiness reads the
+Source-Faithful snapshot *embedded in the candidate*, so a candidate whose
+snapshot had been swapped for itself showed the baseline gate no changes and the
+Lead gate collapsed to `N/A` — a Lead demotion vanished from readiness's view
+(Core3 still blocked, because it used the explicit baseline). Fixed:
+`applicationIntegrity(application, against)` is now required before anything
+downstream runs. It verifies that the revision id recomputes from its own
+content, that `revision.candidateDigest` matches the candidate supplied, that
+the supplied reference project is one the revision itself names (the
+Source-Faithful baseline or the accepted previous it was applied onto — nothing
+else), that the candidate's embedded snapshot agrees with that reference, and
+that `candidate.metadata.g11d.revision` names this revision. A failure is
+reported as `NOT_APPLICABLE` with the reasons, never thrown, and produces no
+Lead report. `reviewAppliedCandidate()` additionally requires the reference to
+be the Source-Faithful baseline (`REVIEW_REQUIRES_SOURCE_FAITHFUL_BASELINE`),
+because readiness keys on it; `leadDemotionReportsFromApplication()` accepts
+either bound reference.
+
+**R-S1 (P1 class) — a lane target could name a rest and lie about it.** A G11-C
+lane only ever holds note events, but the suggestion is caller-supplied data.
+A lane that named a rest resolved, was judged as if it had a role, and was then
+carried through *unchanged* — while the trace claimed `toRole` had been applied
+to it. Fixed: lane targets are held to the same note-only rule as `eventIds`
+targets (`TARGET_EVENT_NOT_A_NOTE`, now also carrying `laneId`).
+
+**R-S29 (P2) — an omitted event's surviving derived copies went unmentioned.** A
+duplicate accepted in an earlier revision is its own candidate event, so
+omitting its origin later leaves the copy sounding. Legitimate, but "the reviewer
+omitted this and a copy still sounds" must never be something a reader notices
+alone. Now reported as `DERIVED_DUPLICATE_OUTLIVES_ORIGIN`, a review signal, not
+a deletion.
+
+**R-S33 (P3) — a plain object without the Canonical project schema was accepted
+as a baseline** and failed deep inside construction with a generic error. Both
+the baseline and a parent candidate must now be `canonical-project@2`
+(`CANONICAL_PROJECT_SCHEMA`), checked up front.
+
+**R-F2 (P3) — four rejection codes in the vocabulary were never emitted.**
+`UNKNOWN_DECISION_TYPE`, `DECISION_NOT_ACCEPTED`, `TARGET_MISSING` and
+`TARGET_AMBIGUOUS` all surfaced as `DECISION_MALFORMED` with the real reason in a
+message. Constructor failures now carry their own code; anything without a more
+specific name stays `DECISION_MALFORMED`.
+
+**R-F7 (P3) — the lane-decomposition digest was the only binding not trimmed.**
+A padded digest was refused where a padded baseline or source digest was not.
+Now trimmed like the others.
+
+Recorded, not changed: the Studio Web integration only ever produces revision 1
+(it never passes a `parent`), so revision chaining is a backend capability the
+Web model does not yet expose.
+
 ## Findings from the pre-PR adversarial review
 
 No P0 or P1 was found by the pre-PR self-review; the P1 above came from
-independent external review afterwards, which is the honest reading of what a
+independent external review afterwards, and the full re-read it prompted found
+two more of the same class (R-S34, R-S1). That is the honest reading of what a
 self-review is worth. Three P2/P3 items were found and fixed before the PR:
 
 * **P2 — a duplicate's doubling with its own original was reported nowhere.**
