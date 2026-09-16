@@ -47,3 +47,10 @@ export {
   DOWNSTREAM_CONTRACT,
   DECISION_APPLICATION_STATUS,
 } from './decision-application.mjs';
+
+// G11-D downstream wiring. It computes nothing: every verdict comes from the
+// existing compare / arbitration / readiness module that already owns it.
+export {
+  reviewAppliedCandidate,
+  leadDemotionReportsFromApplication,
+} from './decision-review.mjs';

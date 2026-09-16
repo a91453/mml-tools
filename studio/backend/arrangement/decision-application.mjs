@@ -1056,6 +1056,9 @@ export function applyAcceptedArrangement({
       acceptedBy: decision.acceptance.acceptedBy,
       reason: decision.reason,
       evidence: decision.evidence,
+      // Carried so the Lead evidence a reviewer accepted can be handed to the
+      // downstream Lead gate by name, rather than re-entered or inferred.
+      leadEvidence: decision.leadEvidence ? Object.freeze(structuredClone(decision.leadEvidence)) : null,
       eventCount: perEvent.length,
       events: Object.freeze(perEvent.map(item => Object.freeze({ ...item, outputEventIds: Object.freeze(item.outputEventIds) }))),
     }));
