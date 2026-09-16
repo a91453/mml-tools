@@ -134,6 +134,7 @@ export const DECISION_REJECTION = Object.freeze({
   KEEP_CHANGES_ROLE: 'KEEP_CHANGES_ROLE',
   DUPLICATE_ON_UNASSIGNED_EVENT: 'DUPLICATE_ON_UNASSIGNED_EVENT',
   DUPLICATE_TARGETS_CURRENT_ROLE: 'DUPLICATE_TARGETS_CURRENT_ROLE',
+  DERIVED_DUPLICATE_ID_COLLISION: 'DERIVED_DUPLICATE_ID_COLLISION',
   LEAD_DEMOTION_EVIDENCE_REQUIRED: 'LEAD_DEMOTION_EVIDENCE_REQUIRED',
   LEAD_PROMOTION_EVIDENCE_REQUIRED: 'LEAD_PROMOTION_EVIDENCE_REQUIRED',
 });
@@ -710,6 +711,7 @@ export function applyAcceptedArrangement({
   // ── bind, resolve, gate ──
   const laneById = new Map((suggestion?.lanes ?? []).map(lane => [lane.id, lane]));
   const resolvedByDecision = new Map();
+  const claimedOutputIds = new Set();
 
   for (const decision of normalized) {
     // Staleness first: a decision bound to different inputs is refused before
@@ -809,6 +811,20 @@ export function applyAcceptedArrangement({
         case ACCEPTED_DECISION_TYPES.DUPLICATE_WITH_JUSTIFICATION:
           if (currentRole === null) problems.push({ code: DECISION_REJECTION.DUPLICATE_ON_UNASSIGNED_EVENT, eventId });
           else if (decision.toRoles.includes(currentRole)) problems.push({ code: DECISION_REJECTION.DUPLICATE_TARGETS_CURRENT_ROLE, eventId, currentRole });
+          else {
+            // A derived id is a function of {origin, role, decision}, so it is
+            // reproducible -- but reproducible is not the same as free. If one
+            // would land on an id the project already uses, the Canonical
+            // constructor would reject the whole project with a duplicate-id
+            // error; refusing the decision here keeps that a structured
+            // rejection instead of an exception.
+            for (const role of decision.toRoles) {
+              const derivedId = derivedDuplicateEventId(eventId, role, decision.id);
+              if (eventById.has(derivedId) || claimedOutputIds.has(derivedId)) {
+                problems.push({ code: DECISION_REJECTION.DERIVED_DUPLICATE_ID_COLLISION, eventId, derivedId, role });
+              } else claimedOutputIds.add(derivedId);
+            }
+          }
           break;
         default:
           break;
@@ -1121,6 +1137,11 @@ export function applyAcceptedArrangement({
     if (referenced.every(eventId => outputEventIdSet.has(eventId))) carriedDecisions.push(decision);
     else droppedDecisionIds.push(decision.id);
   }
+  const carriedAcceptedIds = carriedDecisions.filter(decision => decision.status === 'accepted').map(decision => decision.id).sort(cmpStr);
+  if (carriedAcceptedIds.length) note('ARBITRATION_DECISIONS_CARRIED_FORWARD', {
+    acceptedDecisionIds: Object.freeze(carriedAcceptedIds),
+    notice: 'Cross-source arbitration decisions already present on the project being applied onto are carried forward unchanged. G11-D manufactures none: an accepted arrangement decision never becomes an accepted arbitration decision, because that would let a role decision mark a harmony conflict resolved.',
+  });
   if (droppedDecisionIds.length) note('ARBITRATION_DECISION_DROPPED_WITH_OMITTED_EVENT', {
     decisionIds: Object.freeze([...droppedDecisionIds].sort(cmpStr)),
     notice: 'A carried arbitration decision referenced an event this revision omitted. It is dropped, so whatever it resolved is reported unresolved again rather than staying resolved against an event that is gone.',
@@ -1140,7 +1161,11 @@ export function applyAcceptedArrangement({
     notice: 'Source completeness, audio alignment evidence and a stored baseline snapshot are gate evidence. A derived revision never inherits them; they are recomputed or absent.',
   });
 
-  const baselineSnapshot = stripMetadataKeys(baseline, NON_INHERITABLE_METADATA_KEYS);
+  // The snapshot readiness diffs against is the baseline itself, not an edited
+  // copy of it: only the two keys that would nest a snapshot inside a snapshot
+  // are removed. Gate evidence is filtered out of the *candidate's* metadata
+  // above, which is where readiness actually reads it.
+  const baselineSnapshot = stripMetadataKeys(baseline, ['sourceFaithfulBaseline', 'g11d']);
 
   const candidateWithoutRevision = createCanonicalProject({
     id: `${baseline.id}#g11d-r${revisionIndex}`,
@@ -1213,6 +1238,27 @@ export function applyAcceptedArrangement({
     eventIds: Object.freeze(unassignedEventIds),
     notice: 'Material with no accepted role is retained in the candidate rather than dropped. Six-role capacity is a capacity fact, not permission to delete (MASTER_RULES.md §3).',
   });
+  const derivedDoublings = [];
+  for (const [eventId, duplication] of [...duplicatesByEvent.entries()].sort(([a], [b]) => cmpStr(a, b))) {
+    const origin = inputById.get(eventId);
+    if (!origin) continue;
+    derivedDoublings.push(Object.freeze({
+      eventId,
+      originalRole: origin.role ?? null,
+      duplicateRoles: Object.freeze(duplication.derived.map(item => item.role)),
+      derivedEventIds: Object.freeze(duplication.derived.map(item => item.id)),
+      pitch: origin.pitch,
+      start: beatKey(origin.start),
+      end: beatKey(origin.end),
+      decisionId: duplication.decisionId,
+    }));
+  }
+  if (derivedDoublings.length) note('DERIVED_DUPLICATE_SOUNDS_WITH_ORIGINAL', {
+    deleted: false,
+    doublings: Object.freeze(derivedDoublings),
+    notice: 'A duplicate copies one source event exactly, so it always sounds at the same pitch and time as its original in another role. Cross-source arbitration does not see it -- both carry the same sourceIds and are correctly not a cross-source conflict -- so the same-pitch doubling is reported here instead of going unmentioned. MASTER_RULES.md §6: a review signal, never an automatic deletion.',
+  });
+
   const omittedCore3 = omittedRecords.filter(item => CORE3_ROLE_NAMES.includes(item.role ?? ''));
   if (omittedCore3.length) note('CORE3_MATERIAL_OMITTED', {
     eventIds: Object.freeze(omittedCore3.map(item => item.eventId)),

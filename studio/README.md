@@ -69,10 +69,18 @@ The following are implemented and covered by the combined legacy + Studio CI sui
 The implemented pipeline above has no known module-level blocker that prevents
 continued Studio development on `main`. That does not certify any song and does
 not mean the Studio roadmap is complete. In particular, the current Raw MIDI path
-ends at preserved source evidence, G11-B decomposition, G11-C candidate suggestions
-and existing readiness information; later accepted-arrangement / G11-D or G12 work,
-Final MML generation, Mobile adaptation and target-client acceptance remain separate
-stages.
+ends at preserved source evidence, G11-B decomposition, G11-C candidate suggestions,
+G11-D application of explicitly accepted arrangement decisions, and existing
+readiness information; G12 work, Final MML generation, Mobile adaptation and
+target-client acceptance remain separate stages.
+
+G11-D produces a derived Candidate Canonical project from decisions a reviewer has
+explicitly accepted, without modifying the Source-Faithful Baseline. Its `PASS`
+means the decisions were applied faithfully, deterministically and traceably; it
+certifies no acceptance gate, and the candidate still has to pass the existing
+diff, Lead, Core3, harmony, micro-timing and readiness pipeline. `G11-D` is an
+implementation stage name used by this repository, not a Published Canonical rule
+identifier. See [docs/G11D_DECISION_APPLICATION.md](../docs/G11D_DECISION_APPLICATION.md).
 
 Every song still needs its own source, baseline, technical, Core3, Lead, harmony,
 version, audio, player/readback, Mobile-adaptation and in-game evidence as applicable.

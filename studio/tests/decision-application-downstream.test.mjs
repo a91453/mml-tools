@@ -213,3 +213,40 @@ test('an accepted arrangement decision cannot resolve a harmony conflict by exis
   assert.equal(review.harmony.unresolvedCount > 0, true);
   for (const conflict of review.harmony.conflicts) assert.equal(conflict.resolved, false);
 });
+
+// ─── the Final emitter consumes the applied candidate directly ──────────────
+
+test('an applied candidate is consumable by the existing Final MML emitter', async () => {
+  const { emitFinalMml } = await import('../backend/final/index.mjs');
+  const result = apply([{
+    id: 'a1', type: 'ASSIGN_ROLE', target: { eventIds: ['tex-1', 'tex-2'] }, toRole: 'Chord3',
+    reason: 'Reviewed: texture accepted as enrichment.', evidence: ['fixture:review'], acceptance: accept(),
+  }]);
+  assert.equal(result.status, 'PASS');
+
+  // G11-D emitted nothing. The existing emitter takes the candidate as it is,
+  // with no adapter, no re-shaping and no second identity system.
+  const emitted = emitFinalMml(result.candidate);
+  assert.equal(emitted.status, 'PASS');
+  assert.equal(emitted.canonical.rules_snapshot_sha, CANONICAL_IDENTITY.rules_snapshot_sha);
+  assert.deepEqual(emitted.roles.map(role => role.role), ['Melody', 'Chord1', 'Chord2', 'Chord3', 'Chord4', 'Chord5']);
+});
+
+test('material nobody accepted makes the emitter fail closed rather than disappear', () => {
+  const result = apply([{
+    id: 'k1', type: 'KEEP', target: { eventIds: ['lead-1'] },
+    reason: 'Reviewed: Melody as it stands.', evidence: ['fixture:review'], acceptance: accept(),
+  }]);
+  assert.equal(result.status, 'PASS');
+  assert.ok(result.diagnostics.some(item => item.code === 'UNASSIGNED_MATERIAL_RETAINED'));
+
+  // This is the point of retaining it. Six-role capacity is a capacity fact,
+  // so G11-D keeps the material and the emitter refuses to serialize a project
+  // with an event nobody placed -- instead of the material being dropped to
+  // make an emission succeed.
+  return import('../backend/final/index.mjs').then(({ emitFinalMml }) => {
+    const emitted = emitFinalMml(result.candidate);
+    assert.equal(emitted.status, 'FAIL');
+    assert.ok(emitted.diagnostics.some(item => item.code === 'EVENT_ROLE_UNASSIGNED'));
+  });
+});

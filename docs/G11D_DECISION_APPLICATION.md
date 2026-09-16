@@ -339,3 +339,135 @@ roll, drag-and-drop note editing, a verification player, automatic best-six
 optimization, automatic Mobile octave adaptation, volume balancing, instrument
 assignment, drum-face mapping, automatic collision repair and automatic source
 reduction.
+
+## Duplication and same-source doubling
+
+A duplicate copies one source event exactly, so it always sounds at the same
+pitch and time as its original in another role. `analyzeCrossSourceHarmony()`
+is right not to flag that: both events carry the same `sourceIds`, so they are
+not a cross-source conflict. Left there, the doubling would go unmentioned by
+every layer, so G11-D reports it as `DERIVED_DUPLICATE_SOUNDS_WITH_ORIGINAL`
+with the roles, the pitch and the exact window. Per `MASTER_RULES.md` §6 it is a
+review signal, never an automatic deletion.
+
+A derived id that would collide with an event already in the project is a
+structured rejection (`DERIVED_DUPLICATE_ID_COLLISION`), not a thrown Canonical
+constructor error.
+
+## Arbitration decisions
+
+G11-D writes **no** `decisions` entries into the candidate. This is deliberate:
+`analyzeCrossSourceHarmony()` marks a conflict `resolved` when an accepted
+arbitration decision covers both of its event ids, so an accepted *arrangement*
+decision that became an accepted *arbitration* decision would silently resolve
+harmony conflicts it never examined.
+
+Decisions already present on the project being applied onto are carried forward
+unchanged and reported as `ARBITRATION_DECISIONS_CARRIED_FORWARD`. One that
+references an event this revision omitted is dropped loudly
+(`ARBITRATION_DECISION_DROPPED_WITH_OMITTED_EVENT`), which makes whatever it
+resolved report as unresolved again — the safe direction.
+
+## Studio Web integration
+
+`studio/web/arrangement-decisions.mjs` is the whole Web surface. There is no
+Arrangement Editor UI in this change: decisions are recorded through the model
+API (`recordAcceptedDecision`, `clearAcceptedDecisions`), and the acceptance
+bindings are computed by `acceptedDecisionBindings()` from the project and lanes
+that are loaded, never supplied by a caller.
+
+* Decision **records** are persisted. The applied candidate is not: it is
+  re-derived on every analysis from the re-validated source project and freshly
+  computed G11-C lanes.
+* A record is bound to the workspace revision it was accepted at, and
+  `invalidate()` drops it exactly as it drops harmony decisions, Core3 approvals
+  and Lead evidence.
+* `importWorkspace()` restores no accepted decision and no applied candidate.
+  Both travel in `importedHistory`, like imported reviews and acceptance.
+* A persisted application found on a restored asset is reported through
+  `acceptedArrangementBinding()` and never displayed as current.
+* Each record carries a content digest over what the decision *does*, kept
+  separate from the acceptance block that says what it was reviewed against.
+  This is **self-consistency, not authentication**: a body edited in storage no
+  longer agrees with its digest and is refused, but anyone who can rewrite the
+  record can rewrite the digest beside it. What actually fails closed against a
+  hostile or stale workspace is the binding to the baseline content, source
+  identity, reviewed revision and Canonical rules snapshot, none of which the
+  workspace chooses.
+
+## Tests
+
+| File | Covers |
+| --- | --- |
+| `studio/tests/decision-application-contract.test.mjs` | the decision schema, mandatory acceptance, the allowlisted key set, deferred types, Canonical binding, and that no export turns a suggestion into decisions |
+| `studio/tests/decision-application-binding.test.mjs` | all five staleness bindings, parent tampering, duplicate ids, every conflict class and its order-independence, the transactional guarantee, and the Lead interlocks |
+| `studio/tests/decision-application.test.mjs` | immutability, determinism under rotation / reversed events / reversed keys, KEEP, ASSIGN, MOVE, OMIT, DUPLICATE, revision lineage, provenance, section windows, post-validation mutation |
+| `studio/tests/decision-application-downstream.test.mjs` | Core3, Lead and cross-source gates blocking a correctly applied candidate, and Final-emitter consumability |
+| `studio/tests/g11d-pipeline.test.mjs` | raw SMF bytes → G11-A → G11-B → G11-C → accepted decisions → G11-D → diff → readiness |
+| `studio/tests/web-g11d-decisions.test.mjs` | Web recording, revision safety, tampering, import, and stored-application binding |
+
+Regression families from the brief map onto these as: A immutability, B
+determinism, C KEEP, D ASSIGN, E MOVE, F OMIT, G DUPLICATE, H conflict, I stale,
+J tamper, K Lead, L Core3, M round pipeline.
+
+## Mutation exercise
+
+Ten deliberate defects were introduced one at a time into
+`decision-application.mjs` / `decision-review.mjs`, the six G11-D suites were run,
+and the source was restored. Every mutation was caught.
+
+| # | Mutation | Caught by (first of N) |
+| --- | --- | --- |
+| 1 | the baseline's event array is sorted in place | `the Source-Faithful Baseline is byte-identical before and after` (1) |
+| 2 | any `acceptance.state` is read as acceptance | `a decision without an explicit acceptance record cannot be constructed` (2) |
+| 3 | conflicting dispositions resolve by last write | `two moves of one event to different roles is reported, never resolved` (4) |
+| 4 | the reviewed-revision binding is not checked | `a decision bound to a superseded candidate revision is refused` (4) |
+| 5 | an accepted Lead move skips the Lead Demotion Gate | `a Melody demotion without the evidence chain is PENDING, not applied` (3) |
+| 6 | an omission disappears from the baseline diff | `OMIT_FROM_SIX removes from the candidate only, and can never vanish from the record` (5) |
+| 7 | derived duplicate ids are random | `duplicate identity depends on the decision, so two reviewers do not collide` (4) |
+| 8 | a duplicate claims its own source event id | `a duplicate is derived candidate material, never a second source event` (5) |
+| 9 | a failed batch applies its legal members | `one illegal decision in a batch of twenty leaves nothing applied` (26) |
+| 10 | readiness is skipped after application | `omitting Core3 material is applied, and then blocked by the Core3 gate` (9) |
+
+Mutation 1 is the interesting one: the project digest deliberately normalizes
+array order away, so it does **not** catch an in-place sort. The deep-equality
+regression does. Both checks exist because neither alone is sufficient.
+
+## Findings from the pre-PR adversarial review
+
+No P0 or P1 survived. Three P2/P3 items were found and fixed before the PR:
+
+* **P2 — a duplicate's doubling with its own original was reported nowhere.**
+  Cross-source arbitration correctly skips it (same `sourceIds`), and no other
+  layer looked. Fixed: `DERIVED_DUPLICATE_SOUNDS_WITH_ORIGINAL`.
+* **P2 — a derived duplicate id colliding with an existing event id would have
+  surfaced as a thrown Canonical duplicate-id error** rather than a structured
+  rejection. Fixed: `DERIVED_DUPLICATE_ID_COLLISION`, checked before construction.
+* **P3 — the embedded baseline snapshot was over-filtered.** It had gate-evidence
+  keys stripped from it as well as from the candidate. Gate evidence is only read
+  from the candidate, so the snapshot now keeps the baseline verbatim apart from
+  the two keys that would nest a snapshot inside a snapshot.
+
+Remaining, recorded rather than fixed:
+
+* **P3 — decision records are not authenticated.** See the Studio Web section
+  above. Local workspace storage is the reviewer's own; the bindings, not a
+  signature, are what make a decision unusable against inputs it was not
+  reviewed against.
+* **P3 — arbitration decisions already on the baseline are trusted.** G11-D
+  carries them forward unchanged and manufactures none. In the Web path
+  `readCanonical()` already forces imported decisions to `pending`; in a direct
+  backend call the caller owns the baseline.
+
+## Known limitations
+
+* No Arrangement Editor UI, piano roll, drag-and-drop editing or verification
+  player. Decisions are recorded through the model API.
+* Lane targeting requires the G11-C suggestion the decision was accepted against.
+  A lane whose events are not all present in the project being applied onto fails
+  closed rather than shrinking to the survivors.
+* Rest events are carried through unchanged and cannot be targeted.
+* Reduced one-/two-role performance questions (`PENDING.md` P17) are untouched.
+* M6 (Canonical bootstrap Git-subprocess fragility under parallel tests) is not
+  in scope and was not worked around. It reproduces on the unmodified base
+  commit; see `docs/V1_1_ROADMAP.md` M6.

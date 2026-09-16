@@ -436,3 +436,106 @@ test('a section window restricts a lane decision to the events inside it', () =>
   assert.equal(roleOf(result.candidate, 'tex-1'), 'Chord3');
   assert.equal(roleOf(result.candidate, 'tex-2'), null, 'the event outside the window is untouched');
 });
+
+// ─── a duplicate always sounds with its original, and says so ───────────────
+
+test('a declared duplication reports the doubling it creates', () => {
+  const result = apply([duplicate('d1', ['harm-1'], ['Chord3'])]);
+  assert.equal(result.status, 'PASS');
+  const doubling = result.diagnostics.find(item => item.code === 'DERIVED_DUPLICATE_SOUNDS_WITH_ORIGINAL');
+  assert.ok(doubling, 'a copy at the same pitch and time in another role is never left unmentioned');
+  assert.equal(doubling.deleted, false);
+  assert.equal(doubling.doublings[0].eventId, 'harm-1');
+  assert.equal(doubling.doublings[0].originalRole, 'Chord1');
+  assert.deepEqual([...doubling.doublings[0].duplicateRoles], ['Chord3']);
+  assert.equal(doubling.doublings[0].decisionId, 'd1');
+
+  // Cross-source arbitration is right not to see it: both events carry the same
+  // sourceIds, so they are not a cross-source conflict. That is exactly why the
+  // doubling is reported here.
+  const original = noteById(result.candidate, 'harm-1');
+  const copy = result.candidate.events.find(event => event.metadata?.g11d?.derivedFromEventId === 'harm-1');
+  assert.deepEqual([...copy.sourceIds], [...original.sourceIds]);
+  assert.equal(copy.pitch, original.pitch);
+  assert.equal(f(copy.start).cmp(original.start), 0);
+});
+
+test('a derived duplicate id that would collide with an existing event is refused', async () => {
+  const { derivedDuplicateEventId: derive } = await import('../backend/arrangement/decision-application.mjs');
+  const { createSource, createCanonicalNoteEvent, createCanonicalProject } = await import('../backend/canonical/index.mjs');
+  const { baselineIdentityOf } = await import('../backend/arrangement/decision-application.mjs');
+
+  const collidingId = derive('h1', 'Chord3', 'dup');
+  const source = createSource({ id: 'fixture:collision', label: 'Collision fixture', kind: 'official-midi', authority: 'primary-symbolic' });
+  const note = (id, pitch, role) => createCanonicalNoteEvent({ id, pitch, start: '0', end: '1', sourceIds: [source.id], sourceEventIds: [`${source.id}#${id}`], role });
+  const project = createCanonicalProject({
+    id: 'fixture:collision-project',
+    title: 'Collision fixture',
+    sources: [source],
+    // An event whose id is exactly the id the duplication below would derive.
+    events: [note('h1', 64, 'Chord1'), note(collidingId, 55, 'Chord2')],
+  });
+  const identity = baselineIdentityOf(project);
+
+  const result = applyAcceptedArrangement({
+    baseline: project,
+    canonicalIdentity: CANONICAL_IDENTITY,
+    decisions: [{
+      id: 'dup',
+      type: 'DUPLICATE_WITH_JUSTIFICATION',
+      target: { eventIds: ['h1'] },
+      toRoles: ['Chord3'],
+      reason: 'Fixture: doubled for enrichment.',
+      evidence: ['fixture:score'],
+      acceptance: {
+        state: 'ACCEPTED',
+        acceptedBy: 'fixture-reviewer',
+        reviewedRevisionId: null,
+        baselineContentDigest: identity.contentDigest,
+        sourceIdentityDigest: identity.sourceIdentityDigest,
+        laneDecompositionDigest: null,
+        canonicalRulesSnapshotSha: CANONICAL_IDENTITY.rules_snapshot_sha,
+      },
+    }],
+  });
+  assert.equal(result.status, 'FAIL', 'a colliding derived id is a structured rejection, not a thrown constructor error');
+  assert.equal(result.candidate, null);
+  const rejection = result.rejected.find(item => item.code === 'DERIVED_DUPLICATE_ID_COLLISION');
+  assert.ok(rejection);
+  assert.equal(rejection.events[0].derivedId, collidingId);
+});
+
+// ─── the caller's objects are read once, and never held ─────────────────────
+
+test('mutating a decision after validation cannot change the result', () => {
+  const decisions = [
+    { ...assign('a1', ['tex-1'], 'Chord3') },
+    { ...move('m1', ['harm-2'], 'Chord1', 'Chord4') },
+  ];
+  const before = apply(decisions);
+  assert.equal(before.status, 'PASS');
+  const snapshot = JSON.parse(JSON.stringify(before.candidate));
+
+  // Everything a hostile or careless caller could reach for after the call.
+  decisions[0].toRole = 'Melody';
+  decisions[0].target.eventIds.push('lead-1');
+  decisions[1].fromRole = 'Chord5';
+  decisions[1].acceptance.baselineContentDigest = 'f'.repeat(64);
+
+  assert.deepEqual(JSON.parse(JSON.stringify(before.candidate)), snapshot, 'the returned candidate is not a live view of its inputs');
+  assert.equal(Object.isFrozen(before.trace), true);
+  assert.equal(Object.isFrozen(before.applied), true);
+  assert.equal(Object.isFrozen(before.revision), true);
+});
+
+test('an accepted arrangement decision never becomes an accepted arbitration decision', () => {
+  const result = apply([
+    move('m1', ['harm-2'], 'Chord1', 'Chord4'),
+    assign('a1', ['tex-1', 'tex-2'], 'Chord3'),
+  ]);
+  assert.equal(result.status, 'PASS');
+  // A cross-source harmony conflict is marked resolved by an accepted decision
+  // covering both of its event ids. G11-D writes none, so it cannot resolve one.
+  assert.deepEqual([...result.candidate.decisions], []);
+  assert.equal(result.diagnostics.some(item => item.code === 'ARBITRATION_DECISIONS_CARRIED_FORWARD'), false);
+});
