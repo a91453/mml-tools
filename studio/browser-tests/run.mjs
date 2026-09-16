@@ -4,6 +4,7 @@ import { mkdir, writeFile } from 'node:fs/promises';
 import { serveStudio } from '../../scripts/serve-studio-web.mjs';
 import { installWorkerControls, runAuditChecks } from './audit.mjs';
 import { runRawMidiChecks } from './raw-midi.mjs';
+import { runFinalDeliveryChecks } from './final-delivery.mjs';
 
 // A browser build that is not installed is neither a pass nor a failed
 // assertion, so it is recorded as NOT_RUN with its reason rather than being
@@ -142,6 +143,7 @@ try {
       await page.reload();await page.locator('#app h1').waitFor();await idle();
       assert.equal(await page.evaluate(()=>window.bootAnnouncedBusy),true,'boot analysis must announce aria-busy before showing a state');
       assert.equal(await page.locator('.hero .badge').textContent(),'IN_GAME_ACCEPTED');
+      await runFinalDeliveryChecks({page,idle,file,mml});
       await runAuditChecks({page,idle,file,mml});
       await runRawMidiChecks({page,idle,base,requests,screenshot:name=>page.screenshot({path:new URL(`${profile.name}-${name}.png`,out).pathname,fullPage:true})});
       // A revision change invalidates all reviews/acceptance before re-analysis.
@@ -164,7 +166,7 @@ try {
       assert.ok((await page.locator('#gates').textContent()).includes('UNSUPPORTED'));
       assert.equal(await page.evaluate(()=>Number(sessionStorage.getItem('settledWhileRunning')||0)),0,'aria-busy must never go false with a gate still reading ANALYSIS_RUNNING');
       assert.deepEqual(errors,[]);
-      results.push({profile:profile.name,status:'PASS',checks:['Files picker','local MML/MusicXML','full review workflow','state separation','exact clipboard payload','IndexedDB reload','boot busy signal','busy-window two-waiter FIFO','boot waiter drain','project-scoped queue','stable Core3 evidence IDs','Worker failure and recovery','unsaved failure state','IndexedDB stale-token rejection','Final pitch boundary','settled state never ANALYSIS_RUNNING','source-aware micro-timing gate visible','revision invalidation','unsupported fail closed','no implicit uploads','responsive layout','offline module graph','Raw MIDI file picker','binary intake and source digest','Raw MIDI section structure','Core3 vs Full6 separation','percussion visible and never pitched','byte-exact IndexedDB reload','exact rational timing through the browser','superseded MIDI request discarded','malformed MIDI fails visibly','same-file reselect after failure','no Raw MIDI upload']});
+      results.push({profile:profile.name,status:'PASS',checks:['Files picker','Final generation panel','exact Final copy/download/display identity','role-body copy labelled','clipboard fallback exact string','attempt vs applied delivery separated','P1 character-count disclaimer','superseded Final not copyable','refused attempt beside valid pasted delivery','whole-score exports agree','pasted-whitespace delivery exports agree','local MML/MusicXML','full review workflow','state separation','exact clipboard payload','IndexedDB reload','boot busy signal','busy-window two-waiter FIFO','boot waiter drain','project-scoped queue','stable Core3 evidence IDs','Worker failure and recovery','unsaved failure state','IndexedDB stale-token rejection','Final pitch boundary','settled state never ANALYSIS_RUNNING','source-aware micro-timing gate visible','revision invalidation','unsupported fail closed','no implicit uploads','responsive layout','offline module graph','Raw MIDI file picker','binary intake and source digest','Raw MIDI section structure','Core3 vs Full6 separation','percussion visible and never pitched','byte-exact IndexedDB reload','exact rational timing through the browser','superseded MIDI request discarded','malformed MIDI fails visibly','same-file reselect after failure','no Raw MIDI upload']});
     } catch(error) {
       if(error.engineMissing){
         results.push({profile:profile.name,engine:profile.engineName,status:'NOT_RUN',reason:error.message.split('\n')[0]});

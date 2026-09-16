@@ -246,8 +246,8 @@ test('a hostile track name is rendered as text, never as markup', () => {
 
 test('the sidebar navigation numbering matches the section headings it points at', async () => {
   // The nav lives in index.html and the headings in app.mjs, so nothing but a
-  // check keeps them in step -- and inserting the Raw MIDI section moved four
-  // of them.
+  // check keeps them in step -- inserting the Raw MIDI section moved four of
+  // them, and inserting Final MML generation moved in-game acceptance to 07.
   const html = await readFile(new URL('../web/index.html', import.meta.url), 'utf8');
   const nav = [...html.matchAll(/<a href="#([a-z-]+)">(\d\d)　/g)].map(([, id, number]) => [id, number]);
   const headings = new Map([...source.matchAll(/<section id="([a-z-]+)"><div class="section-heading"><h2>(\d\d)　/g)].map(([, id, number]) => [id, number]));
@@ -255,10 +255,10 @@ test('the sidebar navigation numbering matches the section headings it points at
   // heading lives in its own function rather than the main template.
   headings.set('raw-midi', source.match(/<section id="raw-midi">[\s\S]*?<h2>(\d\d)　/)[1]);
 
-  assert.equal(nav.length, 6);
+  assert.equal(nav.length, 7);
   for (const [id, number] of nav) {
     assert.ok(headings.has(id), `nav points at #${id}, which is not a section`);
     assert.equal(headings.get(id), number, `#${id} is ${number} in the nav and ${headings.get(id)} in its heading`);
   }
-  assert.deepEqual(nav.map(([, number]) => number), ['01', '02', '03', '04', '05', '06']);
+  assert.deepEqual(nav.map(([, number]) => number), ['01', '02', '03', '04', '05', '06', '07']);
 });

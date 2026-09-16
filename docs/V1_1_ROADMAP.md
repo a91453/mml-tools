@@ -46,7 +46,7 @@ A new rules release requires an explicit, reviewed update to the release
 metadata and snapshot reference. Nothing in this register may be read as
 authorising one.
 
-## Gap register G1–G14
+## Gap register G1–G15
 
 Gap identifiers originate in the post-v1 mutation audit merged as PR #10
 (`test(studio): cover the Canonical guards that no regression asserted`,
@@ -271,6 +271,41 @@ dated audit records list candidate-level opt-in as visible debt
 **Disposition.** Closed as not-a-gap. Retained here so the identifier is not
 silently reused and so a future reader does not re-derive it as open.
 
+### G15 — Emitter and Web validator disagree on final-bar completeness · `OPEN`
+
+**Evidence.** Two implementers answer different questions about the same
+candidate. `studio/backend/final/mml-emitter.mjs` enforces the Final policy it
+implements — safe-grid decomposition, forbidden dotted forms, the
+synchronization-safe Tempo policy, the per-role character limit, and its own
+readback — but performs no final-bar-completeness check. `validateMML`
+(`studio/backend/mml/parser.mjs`), which the Web layer uses to grade a delivery,
+does require the last bar to be filled against the confirmed meter. A candidate
+whose music ends mid-bar therefore serializes cleanly and is then refused by the
+delivery check. Reproduced during the Web Final delivery integration and pinned
+as a regression in `studio/tests/web-final-delivery.test.mjs`.
+
+**What this is not.** Neither behaviour is an engine claim. The published rule
+sources do not state a final-bar-completeness requirement:
+`MOBILE_SYNTAX.md` §11 step 7 requires that meter and time alignment be
+verified without specifying this test, and `PENDING.md` P14 explicitly records
+that cross-role end-time and total-duration expectations are not yet formalised.
+The validator's check is one implementation's reading, and this register may not
+be read as promoting it to a rule.
+
+**Mitigating fact.** The integration fails closed: the emitted string is
+verified before it can become a delivery, a refusal keeps no output, and nothing
+pads a short final bar to make the check pass. The Web UI shows the validator's
+refusal in the validator's own words and labels it as current implementation
+behaviour.
+
+**Why open.** Needs a decision rather than a repair: whether the emitter should
+adopt the same test, whether the validator's test should be narrowed, or whether
+the two questions are legitimately different and only the reporting needs work.
+Any answer that would make final-bar completeness a normative finalization
+requirement is a Canonical change and must go through change control instead.
+
+**Canonical impact.** `NONE`.
+
 ## Maintenance and governance register
 
 Items surfaced by the same reconstruction that do not carry a G identifier.
@@ -432,6 +467,39 @@ judgment on past records.
 
 **Canonical impact.** Undecided by construction; see D2. No Canonical or Manifest
 change is asserted to be required.
+
+### M6 — Canonical bootstrap Git-subprocess fragility under parallel tests · `OPEN`
+
+**Evidence.** `loadPublishedCanonical` (`studio/backend/bootstrap/index.mjs`)
+resolves the published Manifest and its pinned snapshot by shelling out to
+`git`, roughly twenty-five child processes per importing process. `npm test`
+runs `node --test` over 45 test files in parallel and almost all of them import
+the rules module, so a single run can fan out to on the order of a thousand
+concurrent `git` invocations. Under that load the Manifest read intermittently
+comes back malformed and the bootstrap refuses it. Observed repeatedly during
+the Web Final delivery integration, with two different downstream messages from the same
+cause — `Unpinned snapshot locator: docs/MASTER_RULES.md` and
+`Implementation does not support the published Canonical version` — always in
+the file that happens to run last, and never reproducible in isolation.
+
+The trigger is load rather than the checkout, and not only the suite's own
+fan-out: across this work the same suite ran clean five times out of five on the
+base commit and four times out of four on an idle machine, but failed twice in
+three consecutive runs started immediately after a browser run and two builds.
+Any measured rate is therefore a property of the machine at that moment, and
+should not be quoted as a fixed flake percentage.
+
+**Mitigating fact.** It fails closed. The bootstrap refuses to load rather than
+loading partial or wrong rules, which is the designed behaviour and the safe
+direction, and a re-run on a settled machine passes.
+
+**Why open.** Needs an approach decision that does not weaken fail-closed
+loading: candidates include resolving the Manifest once per run instead of once
+per process, replacing several small `git` calls with a single batched one, or
+reducing how many test files import the rules module. Picking one is a design
+question, and none of them may relax the refusal behaviour.
+
+**Canonical impact.** `NONE`. This is loading robustness, not rule content.
 
 ## Dependencies
 

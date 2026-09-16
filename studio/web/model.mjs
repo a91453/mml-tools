@@ -6,7 +6,7 @@ import { compareCandidateLineage, compareCanonicalVersions } from '../backend/co
 import { evaluateCore3Continuity } from '../backend/arbitration/core3.mjs';
 import { evaluateLeadDemotion } from '../backend/arbitration/lead-demotion.mjs';
 import { analyzeCrossSourceHarmony } from '../backend/arbitration/harmony.mjs';
-import { evaluateProjectReadiness } from '../backend/final/readiness.mjs';
+import { evaluateProjectReadiness, emitFinalMml, EMIT_STATUS, DIAGNOSTIC_SEVERITY } from '../backend/final/index.mjs';
 import { attachAudioAlignmentEvidence } from '../backend/audio/index.mjs';
 import { alignmentProjectText } from './audio-payload.mjs';
 import { arrangementBinding, deriveArrangement, ingestMidiSource, isRawMidiAsset, reingestMidiAsset, verifyStoredProject } from './midi-source.mjs';
@@ -76,6 +76,14 @@ export function invalidate(workspace) {
   next.leadEvidence = [];
   next.audio = null;
   next.acceptance = null;
+  // A delivery MML is the exact string for one exact candidate. Once the
+  // candidate, its sources or the project settings change, that string is no
+  // longer the delivery for what is now on screen. Leaving it behind is what
+  // made a superseded delivery stay copyable as the current Final, so it is
+  // dropped here with the derived generation record that describes it.
+  delete next.deliveryMml;
+  delete next.deliveryBinding;
+  delete next.finalDelivery;
   return next;
 }
 
@@ -98,6 +106,13 @@ export function importWorkspace(raw) {
   }
   // Portable backups cannot attest who accepted an exact client test. Preserve
   // their old reviews as history, require a fresh review in this workspace.
+  //
+  // The delivery text is carried, its status is not. `deliveryBinding` and
+  // `finalDelivery` are deliberately never restored: a backup asserting
+  // `finalDelivery.status === 'PASS'` is describing a generation nobody can
+  // re-check from the file. Without a binding the carried text is treated as a
+  // pasted delivery, which is re-validated and read back against the candidate
+  // from scratch on every analysis -- the same treatment imported reviews get.
   if (typeof input.deliveryMml === 'string' && input.deliveryMml.length <= 40000) clean.deliveryMml = input.deliveryMml;
   clean.importedHistory = { reviews: input.reviews, acceptance: input.acceptance, audio: input.audio };
   return clean;
@@ -170,9 +185,72 @@ function rawMidiReport(workspace, projects) {
   return entries;
 }
 
-export function analyzeWorkspace(w) {
+// Delivery identity, decided in exactly one place.
+//
+// A candidate written in MML and a delivery MML are different things. The
+// candidate is a source representation; the delivery is the exact text that is
+// pasted into the game. Reading the candidate's own bytes while an explicit
+// delivery exists grades a string nobody delivers -- and because the readback
+// re-normalizes those same bytes with the same meter, it also reduces
+// `deliveryIdentity` to a comparison of the candidate with itself.
+//
+// An explicit delivery therefore always wins. The candidate's own text stays the
+// fallback only when no separate delivery exists, which remains the useful
+// behavior for a project whose candidate is itself the delivered score.
+function currentDelivery(w) {
+  if (typeof w.deliveryMml !== 'string' || !w.deliveryMml.trim()) return null;
+  const binding = w.deliveryBinding;
+  // A record stored before delivery binding existed, or restored from a backup,
+  // carries no binding. It is read as a pasted delivery at the current revision:
+  // nothing about it is trusted either way, because every delivery is
+  // re-validated and read back below whatever its origin.
+  if (!binding) return { mml: w.deliveryMml, origin: 'pasted' };
+  // Bound to a superseded revision. `invalidate` already drops the delivery, so
+  // this only catches a result applied across a revision change -- but a stale
+  // delivery must never be able to present itself as the current Final.
+  if (binding.revision !== w.revision) return null;
+  return { mml: w.deliveryMml, origin: binding.origin === 'generated' ? 'generated' : 'pasted' };
+}
+
+function selectDelivery(w, asset) {
+  return currentDelivery(w)
+    ?? (asset.format === 'MML' ? { mml: asset.content, origin: 'candidate-source' } : { mml: undefined, origin: null });
+}
+
+// The authoritative delivery check: technical syntax, then exact symbolic
+// readback against the candidate. Analysis and Final generation both call this
+// one function, so a generated delivery is verified by the same code that
+// verifies a pasted one. There is no second validator.
+function verifyDelivery(candidate, rawMml, meterText) {
+  const technical = rawMml ? validateMML(rawMml, { meterText }) : null;
+  let deliveryMatches = false;
+  if (technical?.ok) {
+    const delivered = mmlFragmentToProject(normalizeMMLSource(rawMml, { sourceId: 'delivery-readback', meterText }));
+    const diff = compareCanonicalVersions(candidate, delivered);
+    const meters = p => JSON.stringify(p.meterEvents.map(e => [e.beat, e.numerator, e.denominator]));
+    deliveryMatches = diff.structurallyIdentical && meters(candidate) === meters(delivered);
+  }
+  return { technical, deliveryMatches };
+}
+
+// One reconstruction, one analysis, two consumers.
+//
+// `analyzeWorkspace` reports this context; `generateFinalDelivery` emits from
+// it. Deriving the project a second time is the hazard being avoided here:
+// generation would then serialize a project subtly different from the one the
+// arbitration decisions, the Source-Faithful Baseline snapshot, the reviews, G10
+// and readiness were computed against, and nothing would report the divergence.
+//
+// The reconstructed `project` stays inside this module and the Worker. It is
+// deliberately not part of the reported result, which crosses postMessage and is
+// persisted.
+function analysisContext(w) {
   const asset = w.assets?.candidate;
-  if (!asset) return { state: 'CANDIDATE', gates: { intake: pending('CANDIDATE_MISSING') }, blockers: ['intake'], tracks: null, rawMidi: [] };
+  if (!asset) {
+    const gates = { intake: pending('CANDIDATE_MISSING') };
+    return { asset: null, candidate: null, project: null, readiness: null, gates,
+      report: { state: 'CANDIDATE', gates, blockers: ['intake'], tracks: null, rawMidi: [] } };
+  }
   // Validate even locally restored objects and disregard imported acceptance.
   const candidate = readCanonical(asset.project);
   const baseline = w.assets.baseline ? readCanonical(w.assets.baseline.project) : null;
@@ -192,15 +270,8 @@ export function analyzeWorkspace(w) {
     }
     catch (error) { audioError = error.message; }
   }
-  const rawMml = asset.format === 'MML' ? asset.content : w.deliveryMml;
-  const technical = rawMml ? validateMML(rawMml, { meterText: w.settings.meterText }) : null;
-  let deliveryMatches = false;
-  if (technical?.ok) {
-    const delivered = mmlFragmentToProject(normalizeMMLSource(rawMml, { sourceId: 'delivery-readback', meterText: w.settings.meterText }));
-    const diff = compareCanonicalVersions(candidate, delivered);
-    const meters = p => JSON.stringify(p.meterEvents.map(e => [e.beat, e.numerator, e.denominator]));
-    deliveryMatches = diff.structurallyIdentical && meters(candidate) === meters(delivered);
-  }
+  const { mml: rawMml, origin: deliveryOrigin } = selectDelivery(w, asset);
+  const { technical, deliveryMatches } = verifyDelivery(candidate, rawMml, w.settings.meterText);
   const lineage = baseline ? compareCandidateLineage({ sourceBaseline: baseline, acceptedPrevious: previous, candidate }) : null;
   const core3 = baseline ? evaluateCore3Continuity({ baseline, candidate, approvedChanges: (w.core3Approvals ?? []).filter(a => a.revision === w.revision) }) : pending('BASELINE_MISSING');
   const harmony = analyzeCrossSourceHarmony(project);
@@ -257,9 +328,131 @@ export function analyzeWorkspace(w) {
   const validated = blockers.length === 0;
   const acceptance = w.acceptance;
   const accepted = validated && acceptance?.revision === w.revision && acceptance.exactMml === rawMml?.trim() && acceptance.outcome === 'accepted' && ['client', 'instrument', 'evidence', 'at'].every(k => text(acceptance[k]));
-  return { state: accepted ? 'IN_GAME_ACCEPTED' : validated ? 'VALIDATED' : 'CANDIDATE', gates, blockers, technical, core3, harmony, lineage, leadReports, readiness, rawMidi,
-    tracks: technical?.ok && deliveryMatches ? splitMML(rawMml) : null, rawMml: technical?.ok && deliveryMatches ? rawMml.trim() : null,
+  // Every status here is recomputed from the workspace on this run. Nothing is
+  // read from `w.finalDelivery`: a stored, imported or edited generation record
+  // claiming PASS is data about a past attempt, never a gate and never a state.
+  const report = { state: accepted ? 'IN_GAME_ACCEPTED' : validated ? 'VALIDATED' : 'CANDIDATE', gates, blockers, technical, core3, harmony, lineage, leadReports, readiness, rawMidi,
+    tracks: technical?.ok && deliveryMatches ? splitMML(rawMml) : null, rawMml: technical?.ok && deliveryMatches ? rawMml.trim() : null, deliveryOrigin,
     historicalRegression: 'FIXTURE_PENDING', audioError, importedDecisions: candidate.decisions };
+  return { asset, candidate, project, readiness, gates, report };
+}
+
+export function analyzeWorkspace(w) {
+  return analysisContext(w).report;
+}
+
+// Gates that cannot be required before the Final MML exists, because they are
+// the gates that grade it. Requiring either here would be circular: generation
+// could never start, so the output they grade could never be produced. The
+// backend emitter drops `technical` from a supplied readiness report for exactly
+// this reason; `deliveryIdentity` is the Web's own equivalent, and the backend
+// never sees it.
+//
+// Nothing else is exempt. All nine human reviews, intake/version identity, the
+// Source-Faithful Baseline, G10 micro-timing, Lead demotion evidence,
+// cross-source harmony, version drift, original audio, player readback, pending
+// arbitration and Raw MIDI byte identity all stay blocking, so a clear backend
+// readiness report can never by itself authorize generation.
+export const PRE_EMISSION_EXEMPT_GATES = Object.freeze(['technical', 'deliveryIdentity']);
+export const STALE_FINAL_DELIVERY = 'STALE_FINAL_DELIVERY_DISCARDED';
+
+// Integration-level diagnostics. They use the emitter's own severity vocabulary
+// and result shape rather than a second one, and they never restate an emitter
+// verdict: each says something the emitter is not in a position to say.
+const webDiagnostic = (code, severity, message, details = {}) => Object.freeze({ code, severity, message, ...details });
+const generationResult = (w, fields) => ({
+  projectId: w.id, revision: w.revision, at: new Date().toISOString(),
+  status: EMIT_STATUS.FAIL, blockedGates: [], combinedMml: null, roles: [], characterCounts: null,
+  microGap: null, roundTrip: null, canonical: null, delivery: null, diagnostics: [], ...fields,
+});
+
+/**
+ * Canonical project -> exact Final delivery MML, or a structured refusal.
+ *
+ * The only path from this workspace to a Final string. It emits nothing and
+ * writes nothing unless every required Web gate is already satisfied, the
+ * emitter returns PASS, and the exact emitted string then passes the same
+ * delivery check a pasted delivery gets. Nothing is transformed after the
+ * emitter passes.
+ */
+export function generateFinalDelivery(w) {
+  const context = analysisContext(w);
+  const blockedGates = Object.entries(context.gates)
+    .filter(([name, gate]) => !PRE_EMISSION_EXEMPT_GATES.includes(name) && !good(gate))
+    .map(([name, gate]) => ({ name, status: gate.status, reason: gate.reason ?? null, blockers: gate.blockers ?? [] }));
+  if (blockedGates.length) return generationResult(w, { status: EMIT_STATUS.PENDING, blockedGates, diagnostics: [webDiagnostic(
+    'FINAL_GENERATION_BLOCKED', DIAGNOSTIC_SEVERITY.PENDING,
+    `Final generation is blocked on: ${blockedGates.map(gate => gate.name).join(', ')}. Required Web gates are not satisfied, so nothing was emitted.`,
+    { blocking: blockedGates.map(gate => gate.name) })] });
+
+  // Readiness is always supplied. The backend contract allows it to be omitted;
+  // omitting it here would let a song this analysis has already found unready be
+  // emitted anyway.
+  const emitted = emitFinalMml(context.project, { readiness: context.readiness });
+  const carried = { roles: emitted.roles, characterCounts: emitted.characterCounts, microGap: emitted.microGap,
+    roundTrip: emitted.roundTrip, canonical: emitted.canonical, diagnostics: [...emitted.diagnostics] };
+  // The emitter's own refusals are reported exactly as it phrased them. A
+  // bounded-search miss stays a bounded-search miss here.
+  if (emitted.status !== EMIT_STATUS.PASS) return generationResult(w, { ...carried, status: emitted.status });
+
+  const combinedMml = emitted.combinedMml;
+  // Redundant today, and therefore in need of its own coverage. The emitter
+  // builds `MML@<bodies>;` with nothing around it, so this holds; it is here so
+  // that if that ever stops being true the integration fails closed instead of
+  // quietly trimming, which would break the byte-for-byte identity between what
+  // is displayed, copied, downloaded, validated and accepted.
+  if (typeof combinedMml !== 'string' || !combinedMml.length || combinedMml !== combinedMml.trim()) {
+    return generationResult(w, { ...carried, status: EMIT_STATUS.FAIL, diagnostics: [...carried.diagnostics, webDiagnostic(
+      'FINAL_OUTPUT_NOT_EXACT', DIAGNOSTIC_SEVERITY.ERROR,
+      'The emitter reported PASS but its combined MML is not a string this integration can carry unchanged. No output was kept.')] });
+  }
+
+  // The exact emitted string, checked by the same delivery verification a pasted
+  // delivery gets. It is not normalized, repaired or reformatted first.
+  const delivery = verifyDelivery(context.candidate, combinedMml, w.settings.meterText);
+  if (!delivery.technical?.ok || !delivery.deliveryMatches) {
+    return generationResult(w, { ...carried, status: EMIT_STATUS.FAIL, delivery, diagnostics: [...carried.diagnostics, webDiagnostic(
+      'FINAL_DELIVERY_READBACK_FAILED', DIAGNOSTIC_SEVERITY.ERROR,
+      'The emitted MML did not pass the Web delivery check: it must be technically valid and read back as the same events as the candidate.',
+      { technicalOk: delivery.technical?.ok === true, deliveryMatches: delivery.deliveryMatches })] });
+  }
+  return generationResult(w, { ...carried, status: EMIT_STATUS.PASS, combinedMml, delivery });
+}
+
+/**
+ * Apply a generation result to the workspace it was computed for.
+ *
+ * Separate from generation so the result can be checked against the workspace
+ * that is actually on screen. Generation runs off the main thread and the
+ * workspace can move while it runs; a result that no longer describes the same
+ * project and revision is refused rather than written, so newer work is never
+ * overwritten by older derived output.
+ */
+export function applyFinalDelivery(w, result) {
+  if (!result || result.projectId !== w.id || result.revision !== w.revision) throw Error(STALE_FINAL_DELIVERY);
+  const next = copy(w);
+  // Derived and informational. What makes a delivery current is the analysis
+  // that runs after this, never this record: `analyzeWorkspace` does not read it.
+  next.finalDelivery = { status: result.status, at: result.at, revision: w.revision, blockedGates: result.blockedGates,
+    roles: result.roles, characterCounts: result.characterCounts, microGap: result.microGap,
+    roundTrip: result.roundTrip, canonical: result.canonical, diagnostics: result.diagnostics,
+    // The Web delivery check's own verdict, kept so a refusal can be shown in
+    // the words the validator used. The emitter can pass and this still refuse:
+    // they answer different questions, and paraphrasing the second one as the
+    // first is how a validator finding turns into an imagined engine rule.
+    deliveryCheck: result.delivery
+      ? { technicalOk: result.delivery.technical?.ok === true, deliveryMatches: result.delivery.deliveryMatches,
+        errors: (result.delivery.technical?.errors ?? []).map(error => error?.message ?? String(error)) }
+      : null };
+  // A blocked or failed attempt emits nothing and overwrites nothing: whatever
+  // delivery the workspace already held is still the delivery it holds.
+  if (result.status !== EMIT_STATUS.PASS) return next;
+  next.deliveryMml = result.combinedMml;
+  next.deliveryBinding = { revision: w.revision, origin: 'generated' };
+  // The exact delivery MML changed, so an acceptance recorded against the old
+  // one no longer describes what would be pasted.
+  next.acceptance = null;
+  return next;
 }
 
 export function recordAcceptance(w, details) {
