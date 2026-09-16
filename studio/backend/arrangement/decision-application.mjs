@@ -145,6 +145,12 @@ export const DECISION_REJECTION = Object.freeze({
 // same one, and a reviewer reading either should see one code, not two.
 export const LEAD_EVIDENCE_IDENTITY_MISMATCH = 'LEAD_EVIDENCE_EVENT_IDENTITY_MISMATCH';
 
+// The blocker a Lead evidence record earns when the target event carries more
+// than one source and the Canonical IR cannot say which source event belongs to
+// which source. Not a verdict on the music: the evidence scope cannot be proven
+// with the representation available, so it is not guessed.
+export const LEAD_EVIDENCE_PROVENANCE_PAIR_AMBIGUOUS = 'LEAD_EVIDENCE_PROVENANCE_PAIR_AMBIGUOUS';
+
 // Rejections that make the whole set invalid, versus rejections that leave the
 // set well-formed but unproven. FAIL is refusal; PENDING is "the evidence
 // Canonical requires is not here"; UNSUPPORTED is "this project recognizes the
@@ -556,14 +562,27 @@ function withinSection(event, section) {
  * that, evidence gathered about event B satisfies a gate asked about event A,
  * and the Lead Demotion Gate reports a PASS carrying A's id.
  *
- * The rule is membership, deliberately not equality: a Canonical event may
- * legitimately carry several `sourceIds` and several `sourceEventIds`, so the
- * check is that the cited identity is among them -- never that the arrays have
- * one element, and never that they equal the citation.
+ * A citation is a *pair*: this source event, of this source. The Canonical IR
+ * carries `sourceIds` and `sourceEventIds` as two independent arrays with no
+ * pairing between them, and a source event id is source-local (raw MIDI emits
+ * `track:N/event:M`), so it is not globally unique across sources. Membership
+ * in each array separately proves only that the source is among the event's
+ * sources and that the source event id is among its source events -- not that
+ * the one belongs to the other.
  *
- * Both halves are necessary. Two events from one source share a `sourceId`, so
- * matching only that would still let one event's evidence move another; the
- * `sourceEventId` is what pins the citation to a single source event.
+ * So the rule is: with exactly one source, the pair is unambiguous and the
+ * citation must name that source and one of its source events. With more than
+ * one source and no pair-preserving representation, the pairing cannot be
+ * proven from this data, and it is not guessed: not by cross-membership, not by
+ * array position, not by "it looks right". That case fails closed with
+ * `LEAD_EVIDENCE_PROVENANCE_PAIR_AMBIGUOUS`. This is implementer caution under
+ * the representation that exists; it asserts nothing about whether
+ * multi-source provenance is valid, and adds no Canonical rule.
+ *
+ * Both halves of the single-source check are necessary. Two events from one
+ * source share a `sourceId`, so matching only that would still let one event's
+ * evidence move another; the `sourceEventId` is what pins the citation to a
+ * single source event.
  *
  * A derived duplicate carries its origin's `sourceIds`/`sourceEventIds`, so it
  * binds against that origin provenance. Its own derived event id lives in a
@@ -591,7 +610,13 @@ export function leadEvidenceIdentityBlockers(leadEvidence, event) {
   if (!sourceEventIds.length) blockers.push('TARGET_EVENT_SOURCE_EVENT_IDS_MISSING');
   if (blockers.length) return blockers;
 
-  if (!sourceIds.includes(identity.sourceId.trim())) blockers.push(LEAD_EVIDENCE_IDENTITY_MISMATCH);
+  // More than one source and no (sourceId, sourceEventId) pairing in the IR:
+  // which source event belongs to which source cannot be established, so the
+  // citation's scope cannot be proven. Fail closed before any membership test,
+  // so that a citation which merely *looks* paired is never accepted either.
+  if (sourceIds.length > 1) return [LEAD_EVIDENCE_PROVENANCE_PAIR_AMBIGUOUS];
+
+  if (sourceIds[0] !== identity.sourceId.trim()) blockers.push(LEAD_EVIDENCE_IDENTITY_MISMATCH);
   else if (!sourceEventIds.includes(identity.sourceEventId.trim())) blockers.push(LEAD_EVIDENCE_IDENTITY_MISMATCH);
   return blockers;
 }
@@ -1505,6 +1530,7 @@ export const DECISION_APPLICATION_STATUS = Object.freeze({
   leadPromotionEvidenceRequired: true,
   leadEvidenceBoundToTargetEvent: true,
   leadEvidenceSourceEventIdMembershipRequired: true,
+  leadEvidenceMultiSourcePairingFailsClosed: true,
   leadAffectingDecisionLimitedToOneEvent: true,
   leadEvidenceRevalidatedDownstream: true,
   laneTargetsNoteEventsOnly: true,
@@ -1516,6 +1542,7 @@ export const DECISION_APPLICATION_STATUS = Object.freeze({
   suggestionAutoAcceptance: false,
   leadEvidenceSharedAcrossEvents: false,
   leadEvidenceBoundBySourceIdAlone: false,
+  leadEvidenceMultiSourcePairingGuessed: false,
   derivedEventIdAcceptedAsSourceEventId: false,
   highestPitchBecomesMelody: false,
   notProvenVocalDemotes: false,

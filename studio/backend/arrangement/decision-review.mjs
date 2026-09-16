@@ -25,6 +25,7 @@ import {
   ACCEPTED_DECISION_TYPES,
   LEAD_ROLE,
   LEAD_EVIDENCE_IDENTITY_MISMATCH,
+  LEAD_EVIDENCE_PROVENANCE_PAIR_AMBIGUOUS,
   DECISION_REJECTION,
   CANONICAL_PROJECT_SCHEMA,
   leadEvidenceIdentityBlockers,
@@ -160,7 +161,9 @@ export function leadDemotionReportsFromApplication(application, baseline) {
         // Never reaches evaluateLeadDemotion: that gate only asks for a present
         // source identity, so foreign-but-well-formed evidence can make it
         // answer PASS under this event's id.
-        reports.push(pendingReport(event.id, destinationRole, scope.includes(LEAD_EVIDENCE_IDENTITY_MISMATCH) ? scope : [...scope, LEAD_EVIDENCE_IDENTITY_MISMATCH]));
+        reports.push(pendingReport(event.id, destinationRole, scope.includes(LEAD_EVIDENCE_IDENTITY_MISMATCH) || scope.includes(LEAD_EVIDENCE_PROVENANCE_PAIR_AMBIGUOUS)
+          ? scope
+          : [...scope, LEAD_EVIDENCE_IDENTITY_MISMATCH]));
         continue;
       }
       try {

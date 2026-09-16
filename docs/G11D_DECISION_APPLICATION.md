@@ -303,17 +303,39 @@ moved. `leadEvidenceIdentityBlockers(leadEvidence, event)` is that check, and
 both interlocks run it *before* they call or accept the underlying gate:
 
 ```
-evidence.sourceIdentity.sourceId      ∈ event.sourceIds
-evidence.sourceIdentity.sourceEventId ∈ event.sourceEventIds
+event.sourceIds.length === 1
+evidence.sourceIdentity.sourceId      === event.sourceIds[0]
+evidence.sourceIdentity.sourceEventId ∈   event.sourceEventIds
 ```
 
-Membership, deliberately not equality. A Canonical event may legitimately carry
-several `sourceIds` and several `sourceEventIds`; the check never requires either
-array to have one element, and never compares the arrays to the citation.
+A citation is a **pair**: this source event, of this source. The Canonical IR
+carries `sourceIds` and `sourceEventIds` as two independent arrays with no
+pairing between them, and a source event id is source-local (raw MIDI emits
+`track:N/event:M`), so it is not globally unique across sources. Membership in
+each array separately proves only that the source is among the event's sources
+and that the source event id is among its source events — not that the one
+belongs to the other.
 
-Both halves are necessary. Two events from one source share a `sourceId`, so
-matching only that would still let one event's evidence move another. The
-`sourceEventId` is what pins a citation to a single source event.
+* **Exactly one source** — the pair is unambiguous, and the citation must name
+  that source and one of its source events. Every ingest path in this
+  repository (MIDI, MusicXML, MML) produces single-source events, so all
+  existing legitimate Lead evidence behaves as before.
+* **More than one source** — with no pair-preserving representation in the IR,
+  which source event belongs to which source cannot be established, and it is
+  not guessed: not by cross-membership, not by array position, not by "it looks
+  right". The citation fails closed with
+  `LEAD_EVIDENCE_PROVENANCE_PAIR_AMBIGUOUS`, and the application is `PENDING`.
+
+This is implementer caution under the representation that exists. **Canonical
+impact: NONE.** It adds no rule, and it does not claim multi-source provenance
+is invalid — only that this data model cannot prove a pairing, so the stage does
+not pretend it can. A pair-preserving provenance representation would be a
+future design question, not something this stage decides on its own.
+
+Both halves of the single-source check are necessary. Two events from one
+source share a `sourceId`, so matching only that would still let one event's
+evidence move another. The `sourceEventId` is what pins a citation to a single
+source event.
 
 An event that states no `sourceEventIds` cannot have Lead evidence bound to it
 and fails closed with `TARGET_EVENT_SOURCE_EVENT_IDS_MISSING`, rather than
@@ -484,7 +506,7 @@ that are loaded, never supplied by a caller.
 | `studio/tests/decision-application-binding.test.mjs` | all five staleness bindings, parent tampering, duplicate ids, every conflict class and its order-independence, the transactional guarantee, and the Lead interlocks |
 | `studio/tests/decision-application.test.mjs` | immutability, determinism under rotation / reversed events / reversed keys, KEEP, ASSIGN, MOVE, OMIT, DUPLICATE, revision lineage, provenance, section windows, post-validation mutation |
 | `studio/tests/decision-application-downstream.test.mjs` | Core3, Lead and cross-source gates blocking a correctly applied candidate, and Final-emitter consumability |
-| `studio/tests/decision-application-lead-evidence.test.mjs` | Lead evidence identity binding (correct / foreign event / same source, wrong event / right event, wrong source / missing), membership over equality, derived-duplicate namespace, one-event containment for demotion, omission, promotion and lanes, the downstream re-check, and the readiness end-to-end |
+| `studio/tests/decision-application-lead-evidence.test.mjs` | Lead evidence identity binding (correct / foreign event / same source, wrong event / right event, wrong source / missing), multi-source pairing fails closed, derived-duplicate namespace, one-event containment for demotion, omission, promotion and lanes, the downstream re-check, and the readiness end-to-end |
 | `studio/tests/decision-application-integrity.test.mjs` | the re-read findings: a lane naming a rest, a forged embedded snapshot, every way an application can disagree with itself, the accepted previous as a report reference but not a readiness reference, JSON round-trip of an honest application, surviving derived copies, schema enforcement, specific rejection codes, digest trimming |
 | `studio/tests/g11d-pipeline.test.mjs` | raw SMF bytes → G11-A → G11-B → G11-C → accepted decisions → G11-D → diff → readiness |
 | `studio/tests/web-g11d-decisions.test.mjs` | Web recording, revision safety, tampering, import, and stored-application binding |
@@ -635,6 +657,18 @@ Now trimmed like the others.
 Recorded, not changed: the Studio Web integration only ever produces revision 1
 (it never passes a `parent`), so revision chaining is a backend capability the
 Web model does not yet expose.
+
+## External re-review — multi-source pairing was guessed
+
+The re-review of `8b182ec` found one remaining blocker in the identity binding
+itself: for an event with several `sourceIds`, the check accepted any citation
+whose `sourceId` was in one array and whose `sourceEventId` was in the other,
+and a regression even asserted that a *cross-paired* citation was in scope.
+That proves membership, not pairing. The rule above replaces it; the regression
+was flipped so that the cross-paired case, the apparently-correct cases and the
+foreign case all fail closed on the same code, and the report builder carries
+the ambiguity as `PENDING` rather than relabelling it. Two mutations — removing
+the guard, and replacing it with index pairing — are both caught.
 
 ## Findings from the pre-PR adversarial review
 

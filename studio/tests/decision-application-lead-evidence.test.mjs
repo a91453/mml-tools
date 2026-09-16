@@ -4,6 +4,7 @@ import {
   applyAcceptedArrangement,
   leadEvidenceIdentityBlockers,
   LEAD_EVIDENCE_IDENTITY_MISMATCH,
+  LEAD_EVIDENCE_PROVENANCE_PAIR_AMBIGUOUS,
   DECISION_REJECTION,
 } from '../backend/arrangement/decision-application.mjs';
 import { leadDemotionReportsFromApplication, reviewAppliedCandidate } from '../backend/arrangement/decision-review.mjs';
@@ -144,29 +145,90 @@ test('an arbitrary non-empty identifier is not an identity', () => {
 
 // ─── membership, not equality ───────────────────────────────────────────────
 
-test('an event attested by two sources binds to either of them', () => {
+test('multi-source provenance cannot prove a (sourceId, sourceEventId) pair and fails closed', () => {
+  // The IR carries sourceIds and sourceEventIds as two independent arrays. With
+  // two sources, nothing says which source event belongs to which source, and a
+  // source event id is source-local, so it is not globally unique either.
   const multi = roleDeclaredBaseline({ multiProvenance: true });
   const target = multi.events.find(event => event.id === 'multi-1');
   assert.equal(target.sourceIds.length, 2);
   assert.equal(target.sourceEventIds.length, 2);
 
-  for (const [sourceId, sourceEventId] of [
-    [SOURCE_ID, `${SOURCE_ID}#multi-1`],
-    [SECOND_SOURCE_ID, `${SECOND_SOURCE_ID}#multi-1`],
-    // Cross-paired, and still in scope: both are this event's own provenance.
-    [SOURCE_ID, `${SECOND_SOURCE_ID}#multi-1`],
+  for (const [label, sourceId, sourceEventId] of [
+    // Cross-paired: both values are present in their arrays, and that proves
+    // nothing about the pair. This used to bind; it must not.
+    ['cross-paired', SOURCE_ID, `${SECOND_SOURCE_ID}#multi-1`],
+    // Apparently correct pairs. The program cannot tell these from the
+    // cross-paired one, so it must not guess in their favour either.
+    ['apparently correct A/a', SOURCE_ID, `${SOURCE_ID}#multi-1`],
+    ['apparently correct B/b', SECOND_SOURCE_ID, `${SECOND_SOURCE_ID}#multi-1`],
+    // A citation naming neither.
+    ['foreign', SOURCE_ID, sourceEventIdOf('lead-1')],
   ]) {
     assert.deepEqual(
       leadEvidenceIdentityBlockers({ ...leadPromotionEvidence(), sourceIdentity: { sourceId, sourceEventId } }, target),
-      [],
-      `${sourceId} / ${sourceEventId} must bind`,
+      [LEAD_EVIDENCE_PROVENANCE_PAIR_AMBIGUOUS],
+      `${label} must fail closed on pairing ambiguity`,
     );
   }
-  // ...but a citation naming neither does not.
-  assert.deepEqual(
-    leadEvidenceIdentityBlockers({ ...leadPromotionEvidence(), sourceIdentity: { sourceId: SOURCE_ID, sourceEventId: sourceEventIdOf('lead-1') } }, target),
-    [LEAD_EVIDENCE_IDENTITY_MISMATCH],
-  );
+});
+
+test('a multi-source Lead decision is PENDING, never silently applied', () => {
+  const multi = roleDeclaredBaseline({ multiProvenance: true });
+  const multiSuggestion = suggestRoleCandidates(multi);
+  const result = applyAcceptedArrangement({
+    baseline: multi, suggestion: multiSuggestion, canonicalIdentity: CANONICAL_IDENTITY,
+    decisions: [{
+      id: 'p1', type: 'MOVE_ROLE', target: { eventIds: ['multi-1'] }, fromRole: 'Chord3', toRole: 'Melody',
+      reason: 'Reviewed: this doubled line leads the phrase.', evidence: ['fixture:score'],
+      leadEvidence: leadPromotionEvidence({ sourceEventId: `${SOURCE_ID}#multi-1` }),
+      acceptance: acceptanceFor(multi, { suggestion: multiSuggestion }),
+    }],
+  });
+  assert.equal(result.status, 'PENDING');
+  assert.equal(result.candidate, null);
+  assert.deepEqual(blockersOf(result, DECISION_REJECTION.LEAD_PROMOTION_EVIDENCE_REQUIRED), [LEAD_EVIDENCE_PROVENANCE_PAIR_AMBIGUOUS]);
+  assert.equal(result.diagnostics.some(item => /PAIR_AMBIGUOUS/.test(item.code)), false, 'the ambiguity is a blocker, not a diagnostic');
+});
+
+test('the downstream report builder carries the ambiguity as PENDING, never PASS', async () => {
+  // A baseline in which the multi-source event already is the Lead, so an
+  // honest application exists against it and a report about multi-1 would not
+  // be N/A. The per-entry check is what is under test, so the honest
+  // application (lead-1 demoted) is kept and its `applied` entry is swapped to
+  // claim multi-1 was demoted with an apparently correct citation.
+  const { createCanonicalProject } = await import('../backend/canonical/index.mjs');
+  const multi = roleDeclaredBaseline({ multiProvenance: true });
+  const multiLead = createCanonicalProject({
+    ...multi,
+    events: multi.events.map(event => (event.id === 'multi-1' ? { ...event, role: 'Melody' } : event)),
+  });
+  const multiSuggestion = suggestRoleCandidates(multiLead);
+  const clean = applyAcceptedArrangement({
+    baseline: multiLead, suggestion: multiSuggestion, canonicalIdentity: CANONICAL_IDENTITY,
+    decisions: [demote('l1', ['lead-1'], {
+      leadEvidence: leadDemotionEvidence({ sourceEventId: sourceEventIdOf('lead-1') }),
+      acceptance: acceptanceFor(multiLead, { suggestion: multiSuggestion }),
+    })],
+  });
+  assert.equal(clean.status, 'PASS');
+  const forged = {
+    ...clean,
+    applied: clean.applied.map(entry => ({
+      ...entry,
+      leadEvidence: { ...leadDemotionEvidence(), sourceIdentity: { sourceId: SOURCE_ID, sourceEventId: `${SOURCE_ID}#multi-1` } },
+      events: [{ eventId: 'multi-1', fromRole: 'Melody', toRole: 'Chord3', outputEventIds: ['multi-1'] }],
+    })),
+  };
+  const reports = leadDemotionReportsFromApplication(forged, multiLead);
+  assert.equal(reports.length, 1);
+  assert.equal(reports[0].eventId, 'multi-1');
+  assert.equal(reports[0].status, 'PENDING');
+  assert.deepEqual([...reports[0].blockers], [LEAD_EVIDENCE_PROVENANCE_PAIR_AMBIGUOUS], 'the ambiguity is carried as itself, not relabelled');
+
+  // And readiness never sees a Lead PASS for it.
+  const review = reviewAppliedCandidate({ application: forged, baseline: multiLead, leadDemotionReports: reports });
+  assert.equal(review.readiness.gates.leadDemotion.status, 'PENDING');
 });
 
 test('an event stating no source-event identity cannot carry Lead evidence', () => {
