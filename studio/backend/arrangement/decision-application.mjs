@@ -236,6 +236,23 @@ export function laneDecompositionDigestOf(suggestion) {
   return contentDigest(lanes);
 }
 
+// The digest a revision addresses its candidate by.
+//
+// `metadata.g11d` is excluded because it *contains* the revision: a revision
+// cannot be content-addressed over a candidate that already carries it. Every
+// musical fact -- sources, events, roles, tempo, meter, decisions and all other
+// metadata -- is inside the digest, so a candidate whose events or roles were
+// edited no longer matches the revision that describes it.
+export function candidateDigestOf(project) {
+  if (!isPlainObject(project)) throw Error('candidateDigestOf requires a Canonical project');
+  const metadata = {};
+  for (const key of Object.keys(project.metadata ?? {}).sort(cmpStr)) {
+    if (key === 'g11d') continue;
+    metadata[key] = project.metadata[key];
+  }
+  return contentDigest({ ...project, metadata });
+}
+
 export function decisionSetDigestOf(normalizedDecisions) {
   const records = normalizedDecisions
     .map(decision => ({ ...decision }))
@@ -620,7 +637,7 @@ export function applyAcceptedArrangement({
       reject(null, 'PARENT_REVISION_IDENTITY_TAMPERED', { revisionId: parentRevision.id ?? null });
       fatalParent = true;
     }
-    const observed = contentDigest(parentCandidate);
+    const observed = candidateDigestOf(parentCandidate);
     if (parentRevision.candidateDigest !== observed) {
       reject(null, 'PARENT_CANDIDATE_DIGEST_MISMATCH', { expected: parentRevision.candidateDigest ?? null, observed });
       fatalParent = true;
@@ -1114,7 +1131,7 @@ export function applyAcceptedArrangement({
 
   // The revision is content-addressed over the candidate it describes, so it is
   // computed from a candidate that does not yet carry it, and then attached.
-  const candidateDigest = contentDigest(candidateWithoutRevision);
+  const candidateDigest = candidateDigestOf(candidateWithoutRevision);
   const revision = createArrangementRevision({
     index: revisionIndex,
     parentRevisionId: expectedReviewedRevisionId,

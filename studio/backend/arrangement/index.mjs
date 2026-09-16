@@ -36,6 +36,7 @@ export {
   baselineIdentityOf,
   laneDecompositionDigestOf,
   decisionSetDigestOf,
+  candidateDigestOf,
   derivedDuplicateEventId,
   canonicalJson,
   contentDigest,
