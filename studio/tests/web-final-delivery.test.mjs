@@ -472,3 +472,41 @@ test('a Web delivery-validation refusal is reported in the validator\'s own word
   assert.ok(next.finalDelivery.deliveryCheck.errors.every(message => typeof message === 'string' && message.length));
   assert.equal(analyzeWorkspace(next).rawMml, null);
 });
+
+test('a refused generation leaves a valid pasted delivery in place and does not relabel it', () => {
+  // This state is reachable, not hypothetical. The emitter answers a stricter
+  // question than the Web delivery check: it must *produce* a Final string under
+  // its own bounded search, while the delivery check only asks whether a string
+  // it is handed is technically valid and reads back as the candidate.
+  //
+  // A 100-beat sustain is the worked case. A hand-tied chain of 25 whole notes
+  // expresses it and reads back as one attack, so a pasted delivery carrying it
+  // is legitimately VALIDATED -- while the emitter's default 12-segment cap
+  // cannot reach that decomposition and refuses. So a FAIL attempt and a valid
+  // current delivery genuinely coexist, and the failed attempt must neither
+  // overwrite the delivery nor be mistaken for its status.
+  const events = [note({ id: 'long', pitch: 60, start: 0, end: 100 })];
+  const tied = `MML@t120o4${Array(25).fill('c1').join('&')},,,,,;`;
+  const w = { ...ready(events), deliveryMml: tied };
+  w.deliveryBinding = { revision: w.revision, origin: 'pasted' };
+
+  const before = analyzeWorkspace(w);
+  assert.equal(before.gates.deliveryIdentity.status, 'PASS', 'the pasted delivery is genuinely verified');
+  assert.equal(before.deliveryOrigin, 'pasted');
+  assert.equal(before.state, 'VALIDATED');
+
+  const result = generateFinalDelivery(w);
+  assert.equal(result.status, 'FAIL', 'the emitter refuses the same music it cannot decompose');
+  assert.ok(codes(result).includes('DURATION_SEARCH_POLICY_LIMIT'));
+  assert.equal(result.combinedMml, null);
+
+  const next = applyFinalDelivery(w, result);
+  assert.equal(next.deliveryMml, tied, 'the valid pasted delivery survives the refusal byte for byte');
+  assert.deepEqual(next.deliveryBinding, { revision: w.revision, origin: 'pasted' }, 'and is not relabelled as generated');
+  assert.equal(next.finalDelivery.status, 'FAIL', 'the attempt is recorded as what it was');
+
+  const after = analyzeWorkspace(next);
+  assert.equal(after.state, 'VALIDATED', 'a refused attempt does not demote a workspace it never touched');
+  assert.equal(after.deliveryOrigin, 'pasted');
+  assert.equal(after.rawMml, tied);
+});

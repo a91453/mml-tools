@@ -67,6 +67,11 @@ export async function runFinalDeliveryChecks({ page, idle, file, mml }) {
   const applied = section.locator('.card', { hasText: '目前套用的交付 MML' });
   assert.equal(await applied.count(), 1, 'the applied delivery is its own card, not part of the attempt');
   assert.ok((await applied.textContent()).includes('由本機 emitter 產生'), 'the applied delivery states its origin');
+  // The delivery's PASS is a delivery-verification PASS and says so, so it
+  // cannot be read as the project's state or as an in-game result.
+  const appliedText = await applied.textContent();
+  assert.ok(appliedText.includes('TECHNICAL_PASS'));
+  assert.ok(appliedText.includes('VALIDATED') && appliedText.includes('IN_GAME_ACCEPTED'), 'it disclaims both higher states by name');
 
   // ── one string everywhere ────────────────────────────────────────────────
   const shown = await page.locator('#final-mml').inputValue();
@@ -92,6 +97,12 @@ export async function runFinalDeliveryChecks({ page, idle, file, mml }) {
   const downloaded = await page.evaluate(() => window.downloadedBlob.text());
   assert.equal(downloaded, shown, 'Download must write the exact same string');
   assert.equal(await page.evaluate(() => window.downloadedBlob.type), 'text/plain');
+
+  // The other button that also offers "the complete MML" must hand over the
+  // same bytes. Two exports that read as equivalent and are not is the failure
+  // this asserts away; the acceptance record binds this same string.
+  await page.locator('#copy-mml').click();
+  assert.equal(await page.evaluate(() => window.copied), shown, 'both whole-score copies must agree');
 
   // Per-role copy is the role body only, and is labelled as such.
   assert.ok((await applied.textContent()).includes('只會複製該角色的內容'));
@@ -165,4 +176,33 @@ export async function runFinalDeliveryChecks({ page, idle, file, mml }) {
   assert.ok(blocked.includes('在產生之前即被下列 Gate 擋下，未產生任何輸出'), 'a blocked attempt says so and emits nothing');
   assert.equal(await page.locator('#final-mml').count(), 0, 'a blocked attempt writes no delivery');
   assert.equal(await page.locator('#final-delivery .badge').first().textContent(), 'PENDING');
+
+  // ── a refused attempt beside a valid pasted delivery ─────────────────────
+  //
+  // These two states genuinely coexist: the emitter must *produce* a string
+  // under its own bounded search, while the delivery check only asks whether a
+  // string it is handed is valid and reads back as the candidate. A user can
+  // therefore hold a perfectly good pasted delivery that the emitter declines to
+  // reproduce. The panel has to show both without letting the refusal read as
+  // the delivery's status, or the delivery's badge as the attempt's.
+  const superseded_mml = mml.replace('o4c1', 'o4e1');
+  await page.getByText('貼上 MML／Canonical IR，或附上交付 MML').click();
+  await page.locator('#paste [name="slot"]').selectOption('delivery');
+  await page.locator('#paste [name="content"]').fill(superseded_mml);
+  await page.getByRole('button', { name: '在本機載入', exact: true }).click();
+  await page.locator('#final-mml').waitFor();
+  await idle();
+  assert.equal(await page.locator('#final-mml').inputValue(), superseded_mml, 'the pasted delivery is shown verbatim');
+  assert.ok((await page.locator('#final-delivery').textContent()).includes('使用者提供'), 'a pasted delivery is labelled as pasted, not as generated');
+
+  await page.locator('#generate-final').click();
+  await idle();
+  const coexisting = await page.locator('#final-delivery').textContent();
+  assert.ok(coexisting.includes('在產生之前即被下列 Gate 擋下'), 'the refused attempt is still reported');
+  assert.ok(coexisting.includes('沒有覆寫任何內容'), 'and says plainly that it overwrote nothing');
+  assert.equal(await page.locator('#final-mml').inputValue(), superseded_mml, 'the valid pasted delivery is untouched by the refusal');
+  assert.ok((await page.locator('#final-delivery').textContent()).includes('使用者提供'), 'and is still not relabelled as generated');
+  assert.equal(await page.locator('#copy-final').isEnabled(), true, 'a still-valid delivery stays exportable');
+  await page.locator('#copy-final').click();
+  assert.equal(await page.evaluate(() => window.copied), superseded_mml, 'and exports the pasted string, not the refused attempt');
 }

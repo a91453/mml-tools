@@ -253,7 +253,7 @@ function rawMidiSection(entries) {
         : `${voiceSplitCard(entry.arrangement.voiceSplit)}
       <div class="card candidate-banner"><div class="row"><h3>G11-C　角色候選</h3>${badge('PENDING')}</div>
         <p>這是<strong>候選建議</strong>，不是已接受的編排。它沒有修改來源專案，來源事件仍然沒有角色，也不認證任何 Gate：TECHNICAL_PASS、SOURCE_PASS、PLAYER_READBACK_PASS、AUDIO_ALIGNMENT_PASS、MOBILE_ADAPTATION_PASS、IN_GAME_ACCEPTED 皆不成立。</p>
-        <p class="meta">來源狀態（上方）、角色候選（下方）與實際審核／接受紀錄（第 04、06 節）是三件不同的事，不會互相升級。</p>
+        <p class="meta">來源狀態（上方）、角色候選（下方）與實際審核／接受紀錄（第 04、07 節）是三件不同的事，不會互相升級。</p>
         ${facts([['階段', entry.arrangement.stage], ['種類', entry.arrangement.stageKind], ['已接受', entry.arrangement.accepted ? '是' : '否'], ['認證 Gate', entry.arrangement.certifiesGates.length ? entry.arrangement.certifiesGates.join(', ') : '無'], ['derivation', `${entry.arrangement.pipeline} · ${entry.arrangement.derivation.eventCount} events`]])}
         ${entry.persistedArrangement && !entry.persistedArrangement.current ? `<p class="note">已捨棄一份與目前來源不相符的儲存候選：${esc(entry.persistedArrangement.reasons.join(', '))}。上方顯示的是重新計算的結果。</p>` : ''}</div>
       ${core3Card(entry.arrangement.candidate)}
@@ -283,12 +283,35 @@ function diffTable(diff) {
 // Nothing here counts characters, checks syntax or repairs anything. Every
 // number shown is one the emitter reported, and the exported string is the
 // stored delivery verbatim.
-const P1_CHARACTER_NOTE = '字元單位為 JavaScript string length（emitter 回報值，未在此另行計算）。與目標 client 實際計數的等價性<strong>尚未驗證</strong>（PENDING P1），不得當作實機可貼上的保證。';
+// The published per-role limit, restated here only so a count can be displayed
+// when no emitter result is available -- a pasted delivery has none. Where an
+// emitter result exists, its own `characterCounts.limit` is used instead, so the
+// authoritative number always comes from the rules module rather than from here.
+const PUBLISHED_ROLE_CHARACTER_LIMIT = 2400;
+// Shared P1 wording. The unit is the same in both places; where the number comes
+// from is not, and saying "the emitter reported this" about a number this page
+// computed would be its own small false claim.
+const P1_CHARACTER_NOTE = '字元單位為 JavaScript string length。與目標 client 實際計數的等價性<strong>尚未驗證</strong>（PENDING P1），不得當作實機可貼上的保證。';
+const P1_EMITTER_NOTE = `${P1_CHARACTER_NOTE} 此處數字由 emitter 回報，未在本頁另行計算。`;
+const P1_LOCAL_NOTE = `${P1_CHARACTER_NOTE} 此處數字是本頁就已驗證的交付文字計算的，並非 emitter 回報值。`;
 const severityBadge = severity => (severity === 'error' ? 'FAIL' : severity === 'pending' ? 'PENDING' : 'N/A');
-// The exact applied delivery: the stored string itself, not the report's
-// trimmed copy and not a re-render of the role bodies. Copy and download both
-// read this, so what leaves the page is what the workspace holds.
-const appliedDelivery = () => (typeof workspace.deliveryMml === 'string' && workspace.deliveryMml && report.rawMml ? workspace.deliveryMml : null);
+// The exact applied delivery, decided by two questions.
+//
+// *Which* string: the one the analysis verified and `recordAcceptance` binds --
+// not a re-render, not a re-join of the role bodies, and deliberately not the
+// raw stored field. A pasted delivery can be stored with surrounding
+// whitespace, and handing that out here while `#copy-mml` and the acceptance
+// record use the trimmed form would put two different strings behind two
+// buttons that both read as "the complete MML". For a generated delivery the
+// two are byte-identical anyway: generation fails closed unless the emitter's
+// output is already free of surrounding whitespace.
+//
+// *Whether* there is one: only a delivery in its own right counts, generated or
+// user-supplied. A candidate that merely happens to be written in MML is a
+// source representation, and section 07 already offers it; treating it as this
+// panel's output would put a verified-looking Final on screen before anything
+// had been emitted.
+const appliedDelivery = () => (['generated', 'pasted'].includes(report.deliveryOrigin) ? report.rawMml ?? null : null);
 const ORIGIN_LABELS = { generated: '由本機 emitter 產生', pasted: '使用者提供（貼上或匯入）', 'candidate-source': '候選來源本身即為 MML' };
 
 function diagnosticsTable(items) {
@@ -297,8 +320,9 @@ function diagnosticsTable(items) {
 }
 
 function finalRoleTable(attempt) {
-  const limit = attempt.characterCounts?.limit ?? 2400;
-  if (!attempt.roles?.length) return '<p class="meta">這次嘗試在序列化之前就被拒絕，因此沒有逐角色結果。</p>';
+  if (!attempt.roles?.length || !attempt.characterCounts) return '<p class="meta">這次嘗試在序列化之前就被拒絕，因此沒有逐角色結果。</p>';
+  // The emitter's own limit, never a local restatement of it.
+  const limit = attempt.characterCounts.limit;
   return `<div class="scroll"><table><thead><tr><th>角色</th><th>字元 / ${limit}</th><th>起音數</th><th>結束（IR 拍）</th><th>狀態</th></tr></thead><tbody>${attempt.roles.map(entry => `<tr><th scope="row">${esc(entry.role)}</th><td class="${entry.characters > limit ? 'over' : ''}">${entry.characters === null ? '—' : `${entry.characters} / ${limit}`}</td><td>${entry.attacks ?? '—'}</td><td>${esc(entry.end ?? '—')}</td><td>${entry.empty ? '空軌（保持空白）' : entry.characters === null ? '未產生' : '有內容'}</td></tr>`).join('')}</tbody></table></div>`;
 }
 
@@ -311,7 +335,7 @@ function generationAttemptCard(attempt) {
     ${attempt.blockedGates?.length ? `<p><strong>在產生之前即被下列 Gate 擋下，未產生任何輸出：</strong></p><ul class="codes">${attempt.blockedGates.map(gate => `<li><code>${esc(gateLabels[gate.name] ?? gate.name)}</code> · ${esc(gate.status)}${gate.reason ? ` · ${esc(gate.reason)}` : ''}${gate.blockers?.length ? ` · ${esc(gate.blockers.join(', '))}` : ''}</li>`).join('')}</ul>` : ''}
     <h3>逐角色結果</h3>
     ${finalRoleTable(attempt)}
-    <p class="note">${P1_CHARACTER_NOTE}</p>
+    <p class="note">${P1_EMITTER_NOTE}</p>
     <h3>診斷</h3>
     ${diagnosticsTable(attempt.diagnostics)}
     ${attempt.deliveryCheck && !(attempt.deliveryCheck.technicalOk && attempt.deliveryCheck.deliveryMatches) ? `<h3>交付驗證拒絕理由</h3>
@@ -343,12 +367,13 @@ function appliedDeliveryCard(attempt) {
     : '';
   if (!applied) {
     return `<div class="card"><div class="attempt-head"><h3>目前套用的交付 MML</h3>${badge('PENDING')}</div>${supersededNote}
-      <div class="empty">目前沒有通過驗證的交付 MML。<br>產生成功後，完整六軌字串會顯示在此，並可原字複製與下載。</div>
+      <div class="empty">目前沒有屬於這個專案的交付 MML。<br>產生成功後，完整六軌字串會顯示在此，並可原字複製與下載。${report.deliveryOrigin === 'candidate-source' ? '<br><br>目前的候選本身就是 MML，它以<strong>來源</strong>的身分通過了驗證，並可在第 07 節複製；那不是本節產生的輸出。' : ''}</div>
       <div class="actions"><button id="copy-final" disabled>複製完整 Final MML</button><button id="download-final" class="secondary" disabled>下載 Final MML</button></div></div>`;
   }
   return `<div class="card"><div class="attempt-head"><h3>目前套用的交付 MML</h3>${badge('PASS')}<span class="meta">來源：${esc(ORIGIN_LABELS[report.deliveryOrigin] ?? report.deliveryOrigin ?? '—')}</span></div>
     ${supersededNote}
     <p class="meta">此字串已通過目前的 MML 技術語法驗證，並與候選事件逐一讀回一致。複製與下載輸出的就是這個字串本身，不做任何整理、修補、壓縮或裁切。</p>
+    <p class="note">這裡的 PASS 只代表這個字串<strong>目前通過交付驗證</strong>（相當於 <code>TECHNICAL_PASS</code> 層級）。它不是 <code>VALIDATED</code>，也不是 <code>IN_GAME_ACCEPTED</code>；整體專案狀態與實機接受紀錄在第 07 節。</p>
     <label for="final-mml">完整六軌 Final MML<textarea id="final-mml" class="code final" readonly spellcheck="false">${esc(applied)}</textarea></label>
     <div class="actions"><button id="copy-final">複製完整 Final MML</button><button id="download-final" class="secondary">下載 Final MML</button></div>
     <p class="meta">逐角色內容如下。每個「複製」<strong>只會複製該角色的內容</strong>，不是可直接貼上的完整六軌樂譜。</p>
@@ -392,7 +417,7 @@ function render() {
     </section>
     <section id="audio"><div class="section-heading"><h2>05　Audio evidence</h2><small>僅主動要求時上傳</small></div><div class="card"><p class="note safe">選取音訊只會留在本機。按下「要求 Audio Alignment」才會傳送該音訊及候選的衍生音符／時間特徵；MusicXML／MML 原始文字不會上傳。</p><p id="audio-file-status" class="meta">${audioFile?esc(`${audioFile.name} · ${(audioFile.size/1048576).toFixed(1)} MiB · 尚未上傳`):'未選取音訊。雲端未連線。'}</p><label class="file-button secondary">選擇 M4A／FLAC／WAV<input id="audio-file" type="file" accept=".m4a,.flac,.wav,audio/mp4,audio/flac,audio/wav"></label><details><summary>Audio Worker 連線（選用）</summary><label>HTTPS alignment endpoint<input id="audio-endpoint" type="url" placeholder="https://your-worker.example/align" autocomplete="off"></label><label>本次工作階段 access token<input id="audio-token" type="password" autocomplete="off"></label><p class="meta">Token 僅存於目前畫面記憶體。v1 沒有預設雲端服務；未設定時保持 PENDING。</p></details><div class="actions"><button id="request-audio" ${!audioFile || !w.assets.candidate?'disabled':''}>要求 Audio Alignment</button><button id="cancel-audio" class="quiet" ${uploadController?'':'disabled'}>取消上傳／等待</button><label class="file-button quiet">匯入既有 alignment report<input id="audio-report" type="file" accept=".json,application/json"></label></div><div id="audio-progress" role="status"></div>${detail('音訊證據、控制點、信心與漂移',w.audio?.report ?? {status:'PENDING',reason:'SONG_AUDIO_EVIDENCE_MISSING'})}<p class="meta">Audio evidence 不會修改、刪除或重排 symbolic events。信心分數本身不代表音高真值。</p></div></section>
     ${finalDeliverySection()}
-    <section id="delivery"><div class="section-heading"><h2>07　Readiness 與實機接受</h2>${badge(r.state)}</div><div class="card"><p class="note">${r.state==='CANDIDATE'?'目前為 Candidate，尚有必要 Gate 未通過。複製內容仍屬候選版本。':r.state==='VALIDATED'?'必要非實機 Gate 已通過。等待使用者於目標遊戲 client 實際接受。':'已有本輪 exact-MML 實機接受紀錄。'}</p><p class="meta">本節記錄的是<strong>實機接受</strong>。產生與匯出 Final MML 在上方第 06 節。</p><div class="actions"><button id="copy-mml" ${r.rawMml?'':'disabled'}>複製完整 MML@</button><button id="export-mml" class="secondary" ${r.rawMml?'':'disabled'}>下載六軌文字</button><button id="export-report" class="quiet">下載分析報告</button></div>${r.tracks?`${r.tracks.map((track,i)=>`<div class="track"><div class="row"><label for="track-${i}">${roles[i]} <small>${track.length} / 2400 字元</small></label><button data-copy-track="${i}" class="quiet">複製</button></div><textarea id="track-${i}" class="code" readonly spellcheck="false">${esc(track)}</textarea></div>`).join('')}<p class="note">${P1_CHARACTER_NOTE}</p>`:'<p class="empty">需有通過 Final 技術語法且與候選事件一致的六軌 MML。MusicXML／IR 不會自動縮編或猜測角色；可在第 06 節產生，或附上對應的交付 MML 進行回讀。</p>'}<details><summary>記錄 In-game Accepted</summary><form id="acceptance"><div class="field-grid">${input('client','Client／地區／版本','')}${input('instrument','樂器與軌道配置','')}${input('evidence','實機結果／截圖或紀錄定位','')}</div><button ${r.state==='CANDIDATE'?'disabled':''}>此 exact-MML 已實機接受</button></form>${w.acceptance?json(w.acceptance):''}</details></div></section>
+    <section id="delivery"><div class="section-heading"><h2>07　Readiness 與實機接受</h2>${badge(r.state)}</div><div class="card"><p class="note">${r.state==='CANDIDATE'?'目前為 Candidate，尚有必要 Gate 未通過。複製內容仍屬候選版本。':r.state==='VALIDATED'?'必要非實機 Gate 已通過。等待使用者於目標遊戲 client 實際接受。':'已有本輪 exact-MML 實機接受紀錄。'}</p><p class="meta">本節記錄的是<strong>實機接受</strong>。產生與匯出 Final MML 在上方第 06 節。「下載六軌對照文字」是含角色標題的<strong>對照用</strong>文字檔，<strong>不是</strong>可直接貼上的樂譜；可貼上的完整字串請用「複製完整 MML@」或第 06 節的匯出。</p><div class="actions"><button id="copy-mml" ${r.rawMml?'':'disabled'}>複製完整 MML@</button><button id="export-mml" class="secondary" ${r.rawMml?'':'disabled'}>下載六軌對照文字</button><button id="export-report" class="quiet">下載分析報告</button></div>${r.tracks?`${r.tracks.map((track,i)=>`<div class="track"><div class="row"><label for="track-${i}">${roles[i]} <small>${track.length} / ${PUBLISHED_ROLE_CHARACTER_LIMIT} 字元</small></label><button data-copy-track="${i}" class="quiet">複製</button></div><textarea id="track-${i}" class="code" readonly spellcheck="false">${esc(track)}</textarea></div>`).join('')}<p class="note">${P1_LOCAL_NOTE}</p>`:'<p class="empty">需有通過 Final 技術語法且與候選事件一致的六軌 MML。MusicXML／IR 不會自動縮編或猜測角色；可在第 06 節產生，或附上對應的交付 MML 進行回讀。</p>'}<details><summary>記錄 In-game Accepted</summary><form id="acceptance"><div class="field-grid">${input('client','Client／地區／版本','')}${input('instrument','樂器與軌道配置','')}${input('evidence','實機結果／截圖或紀錄定位','')}</div><button ${r.state==='CANDIDATE'?'disabled':''}>此 exact-MML 已實機接受</button></form>${w.acceptance?json(w.acceptance):''}</details></div></section>
     <details class="card"><summary>Published Canonical 與建置身分</summary><p class="meta">本機使用建置時由 Published main 取得並核驗的完整固定快照。離線模式不宣稱已確認最新 main。</p>${json(identity.metadata)}${identity.provenance?json(identity.provenance):''}${identity.documents.map(d=>`<details><summary>${esc(d.path)} · ${esc(d.authority)}</summary><a href="${esc(d.url)}" target="_blank" rel="noopener">GitHub 固定快照</a><pre>${esc(d.content)}</pre></details>`).join('')}</details>`;
   bind();
 }
