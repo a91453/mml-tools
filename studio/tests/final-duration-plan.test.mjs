@@ -15,6 +15,7 @@ import { EFFECTIVE_RULESET } from '../backend/rules/index.mjs';
 import { SAFE_GRID } from '../backend/canonical/micro-timing.mjs';
 import {
   LENGTH_CLASS,
+  PLAN_FAILURE,
   MAX_OFF_GRID_SEGMENTS,
   buildTokenLattice,
   spellDuration,
@@ -118,13 +119,15 @@ test('a multi-token duration is exact and beats the greedy tail', () => {
   assert.ok(result.plan.segments.length <= 2, `expected at most two segments, got ${written(result)}`);
 });
 
-test('an unrepresentable exact duration fails closed instead of rounding', () => {
+test('a duration the preferred lattice cannot reach fails closed instead of rounding', () => {
   // A third of a beat is not a sum of the preferred lattice. The planner must
-  // refuse rather than return the nearest legal token.
+  // refuse rather than return the nearest legal token. What it reports is a
+  // statement about its own bounded search, not about arithmetic — the planner
+  // has no completeness proof and must not imply one.
   const target = new F(1, 3);
   const result = plan(target);
   assert.equal(result.ok, false);
-  assert.equal(result.reason, 'not-representable');
+  assert.equal(result.reason, PLAN_FAILURE.SEARCH_POLICY_LIMIT);
   assert.equal(result.plan, null);
 });
 
@@ -149,7 +152,7 @@ test('a duration one part in 10^20 off a token is not accepted', () => {
   assert.equal(plan(exact).ok, true);
   const result = plan(off);
   assert.equal(result.ok, false);
-  assert.equal(result.reason, 'not-representable');
+  assert.equal(result.reason, PLAN_FAILURE.SEARCH_POLICY_LIMIT);
 });
 
 test('a sub-grid duration is never representable', () => {
@@ -162,7 +165,7 @@ test('a sub-grid duration is never representable', () => {
 test('a zero or negative duration is rejected, never emitted', () => {
   // MOBILE_SYNTAX §4 makes zero-duration events FINAL_FORBIDDEN.
   assert.equal(plan(new F(0)).ok, false);
-  assert.equal(plan(new F(0)).reason, 'non-positive-duration');
+  assert.equal(plan(new F(0)).reason, PLAN_FAILURE.NON_POSITIVE_DURATION);
   assert.equal(plan(new F(-1, 2)).ok, false);
 });
 
@@ -170,11 +173,11 @@ test('an exhausted search budget is reported as such, not as a proof', () => {
   const tiny = createPlanState({ budget: 3, maxTieSegments: 12 });
   const result = planDuration(new F(123, 64), 4, cautionLattice, tiny);
   assert.equal(result.ok, false);
-  assert.equal(result.reason, 'budget-exhausted');
+  assert.equal(result.reason, PLAN_FAILURE.BUDGET_EXHAUSTED);
   assert.equal(result.plan, null);
   // A later request on the same exhausted state must not be mistaken for a
   // representability proof by a poisoned memo entry.
-  assert.equal(planDuration(new F(1), 4, cautionLattice, tiny).reason, 'budget-exhausted');
+  assert.equal(planDuration(new F(1), 4, cautionLattice, tiny).reason, PLAN_FAILURE.BUDGET_EXHAUSTED);
 });
 
 test('planning is deterministic for the same input', () => {
@@ -250,9 +253,58 @@ test('an off-grid duration may use caution tokens, within the declared bound', (
   assert.ok(offGrid >= 1 && offGrid <= MAX_OFF_GRID_SEGMENTS);
 });
 
-test('exhausting the off-grid allowance fails closed, never approximates', () => {
+test('exhausting the off-grid allowance is reported as a search-policy limit', () => {
+  // 1/3 beat is exactly plain length 12 — one off-grid token. With the off-grid
+  // allowance set to zero the search cannot use it, so this is a bounded-policy
+  // miss of a decomposition that demonstrably exists, and it must be named as
+  // one rather than as unrepresentability.
+  const reachable = planDuration(new F(1, 3), 4, cautionLattice, createPlanState({ budget: 200000, maxTieSegments: 12 }), 2);
+  assert.equal(reachable.ok, true, 'one off-grid token expresses it exactly');
+
   const state = createPlanState({ budget: 200000, maxTieSegments: 12, maxOffGridSegments: 0 });
   const result = planDuration(new F(1, 3), 4, cautionLattice, state, 2);
   assert.equal(result.ok, false);
   assert.equal(result.plan, null);
+  assert.equal(result.reason, PLAN_FAILURE.SEARCH_POLICY_LIMIT);
+});
+
+// ── failure taxonomy ───────────────────────────────────────────────────────
+//
+// The planner has no completeness proof. These pin that it never reports one,
+// and specifically that a bounded-search miss is never dressed up as arithmetic
+// impossibility. A caller that believed such a claim might go looking for a
+// musical fix to what is only a search limit.
+
+test('a duration beyond the tie-segment cap is a policy limit, not unrepresentability', () => {
+  // The longest admitted preferred token is a dotted whole note, 6 beats. With
+  // the default 12-segment cap the search cannot reach 100 beats — yet
+  // 16 x `1.` + 1 x `1` sums to exactly 100, so an exact decomposition plainly
+  // exists. This is the case the old `not-representable` wording got wrong.
+  const target = new F(100);
+
+  const witness = { segments: [...Array(16).fill({ denominator: 1, dots: 1 }), { denominator: 1, dots: 0 }] };
+  assert.equal(planExactDuration(witness).cmp(target), 0, 'the witness must sum to the target exactly');
+  assert.ok(witness.segments.length > 12, 'and must need more than the default cap');
+
+  const missed = planDuration(target, 4, lattice, state(), 2);
+  assert.equal(missed.ok, false);
+  assert.equal(missed.plan, null, 'fail closed: no approximation');
+  assert.equal(missed.reason, PLAN_FAILURE.SEARCH_POLICY_LIMIT);
+  assert.notEqual(missed.reason, 'not-representable');
+
+  // Raising only the bound finds it, which is what proves the bound was the
+  // sole obstacle.
+  const found = planDuration(target, 4, lattice, createPlanState({ budget: 200000, maxTieSegments: 20 }), 2);
+  assert.equal(found.ok, true);
+  assert.equal(planExactDuration(found.plan).cmp(target), 0);
+});
+
+test('the three failure reasons stay distinct', () => {
+  assert.equal(plan(new F(0)).reason, PLAN_FAILURE.NON_POSITIVE_DURATION);
+  assert.equal(planDuration(new F(123, 64), 4, cautionLattice, createPlanState({ budget: 3, maxTieSegments: 12 }), 2).reason,
+    PLAN_FAILURE.BUDGET_EXHAUSTED);
+  assert.equal(plan(new F(1, 3)).reason, PLAN_FAILURE.SEARCH_POLICY_LIMIT);
+  assert.equal(new Set(Object.values(PLAN_FAILURE)).size, 3);
+  assert.equal(Object.values(PLAN_FAILURE).includes('not-representable'), false,
+    'no reason may claim a completeness proof the planner does not have');
 });

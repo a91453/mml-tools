@@ -27,6 +27,8 @@ export {
 } from './emitter-contract.mjs';
 export {
   LENGTH_CLASS,
+  PLAN_FAILURE,
+  MAX_OFF_GRID_SEGMENTS,
   buildTokenLattice,
   planDuration,
   createPlanState,

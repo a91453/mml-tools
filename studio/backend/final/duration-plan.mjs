@@ -32,6 +32,19 @@ const syntax = EFFECTIVE_RULESET.mobileSyntax;
 // it is what keeps the caution search bounded instead of combinatorial.
 export const MAX_OFF_GRID_SEGMENTS = 3;
 
+/**
+ * Why a decomposition request produced no plan.
+ *
+ * Only `NON_POSITIVE_DURATION` is a claim about the duration itself. The other
+ * two are claims about this bounded search, and neither is evidence that no
+ * exact token decomposition exists.
+ */
+export const PLAN_FAILURE = Object.freeze({
+  NON_POSITIVE_DURATION: 'non-positive-duration',
+  BUDGET_EXHAUSTED: 'budget-exhausted',
+  SEARCH_POLICY_LIMIT: 'search-policy-limit',
+});
+
 // A duration is grid-aligned when it is a whole number of 1/64 notes. `SAFE_GRID`
 // is the published grid, read from the analyzer rather than restated.
 const onGrid = value => f(value).div(SAFE_GRID).d === 1n;
@@ -163,9 +176,9 @@ export function spellDuration(duration, defaultLength, lattice, offGridAllowed =
  *
  * Greedy does not work. "Take the largest token that fits" happily produces a
  * long tail of tiny tokens where a different first token lands exactly. The
- * search is therefore exhaustive over the admitted lattice, memoized on the
- * exact remaining rational, and bounded by an explicit node budget so that a
- * pathological input fails rather than hangs.
+ * search is therefore systematic over the admitted lattice, memoized on the
+ * exact remaining rational, and bounded so that a pathological input fails
+ * rather than hangs.
  *
  * The search is organised around the 1/64 grid, and that is what keeps it
  * bounded. Every preferred token is a whole number of 1/64 notes, so a
@@ -175,34 +188,50 @@ export function spellDuration(duration, defaultLength, lattice, offGridAllowed =
  * set — so admitting all 64 of them at every step instead explodes the state
  * space into arbitrary rationals.
  *
- * Two deterministic restrictions keep that from happening, and neither can make
- * an emitted duration wrong, because everything returned is still an exact sum:
+ * Several deterministic bounds keep that from happening. None of them can make
+ * an emitted duration *wrong* — everything returned is still an exact sum — but
+ * each of them can make the search *miss* a decomposition that does exist:
  *
- *   - a grid-aligned remainder is decomposed with grid-aligned tokens only. A
- *     grid solution always exists (in the limit, repeated `64`), so exactness is
- *     never lost. Only a hypothetical mixed answer that left the grid and came
- *     back could be missed, and that needs at least two off-grid tokens with
- *     multi-character suffixes to beat a grid answer.
- *   - at most `MAX_OFF_GRID_SEGMENTS` off-grid tokens per decomposition. Off-grid
- *     material is exactly what caution lengths exist for (a triplet costs one),
- *     and a remainder that is off-grid with no allowance left is a dead end,
- *     since no grid token can ever bring it back.
+ *   - `maxTieSegments` caps how many tie segments one decomposition may use.
+ *     The longest preferred token is a dotted whole note, so a sustain longer
+ *     than `maxTieSegments` of those is missed even though repeated whole notes
+ *     would express it exactly.
+ *   - `MAX_OFF_GRID_SEGMENTS` caps how many off-grid (caution) tokens one
+ *     decomposition may use.
+ *   - a grid-aligned remainder is decomposed with grid-aligned tokens only, so
+ *     an answer that left the grid and came back is not considered.
+ *   - the node budget stops the search outright.
  *
- * Both are implementer policy for search cost, not rules, and both are reported
- * as `not-representable` rather than silently approximated.
+ * ## Failure taxonomy
  *
- * Failure modes are distinguished, because they mean different things: a
- * duration that is provably not a lattice sum is `not-representable`, while an
- * exhausted budget is `budget-exhausted` and says only that this search gave up.
- * Neither ever returns an approximate answer.
+ * This module has **no completeness proof**, so it must not claim one. The three
+ * failure reasons say exactly what is known and nothing more:
+ *
+ *   `non-positive-duration`  the input is not a duration at all. Provable, and
+ *                            MOBILE_SYNTAX §4 makes zero duration
+ *                            `FINAL_FORBIDDEN` regardless.
+ *   `budget-exhausted`       the node budget ran out mid-search.
+ *   `search-policy-limit`    the search finished within its bounds without
+ *                            finding an exact plan.
+ *
+ * `search-policy-limit` is deliberately *not* called "not representable". It is
+ * a statement about this bounded search, not about arithmetic: a duration that
+ * is plainly an exact sum of admitted tokens lands here whenever expressing it
+ * needs more segments, or more off-grid tokens, than the bounds allow. Reporting
+ * it as mathematical impossibility would be an overclaim, and a caller that
+ * believed it might go looking for a musical fix to a problem that is only a
+ * search limit.
+ *
+ * What every failure does share is the property that matters: nothing is ever
+ * approximated. The caller fails closed on all three.
  */
 export function planDuration(duration, defaultLength, lattice, state, perSegmentCost = 0) {
   const target = f(duration);
-  if (target.cmp(0) <= 0) return { ok: false, reason: 'non-positive-duration', plan: null };
+  if (target.cmp(0) <= 0) return { ok: false, reason: PLAN_FAILURE.NON_POSITIVE_DURATION, plan: null };
   // Once the budget is gone the memo may hold `null`s that mean "cut short",
   // not "impossible". Every later request on this state therefore reports the
   // exhaustion rather than mistaking a poisoned entry for a proof.
-  if (state.exhausted) return { ok: false, reason: 'budget-exhausted', plan: null };
+  if (state.exhausted) return { ok: false, reason: PLAN_FAILURE.BUDGET_EXHAUSTED, plan: null };
 
   const memo = state.memo;
   const maxSegments = state.maxTieSegments;
@@ -301,7 +330,7 @@ export function planDuration(duration, defaultLength, lattice, state, perSegment
   if (plan) return { ok: true, reason: null, plan };
   return {
     ok: false,
-    reason: state.exhausted ? 'budget-exhausted' : 'not-representable',
+    reason: state.exhausted ? PLAN_FAILURE.BUDGET_EXHAUSTED : PLAN_FAILURE.SEARCH_POLICY_LIMIT,
     plan: null,
   };
 }

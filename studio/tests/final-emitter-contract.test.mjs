@@ -85,9 +85,21 @@ test('every result carries the published release identity', () => {
 });
 
 test('diagnostics are frozen and carry a code plus a severity', () => {
-  const item = diagnostic(EMIT_DIAGNOSTICS.DURATION_NOT_REPRESENTABLE, DIAGNOSTIC_SEVERITY.ERROR, 'x', { role: 'Melody' });
+  const item = diagnostic(EMIT_DIAGNOSTICS.DURATION_SEARCH_POLICY_LIMIT, DIAGNOSTIC_SEVERITY.ERROR, 'x', { role: 'Melody' });
   assert.equal(Object.isFrozen(item), true);
-  assert.equal(item.code, 'DURATION_NOT_REPRESENTABLE');
+  assert.equal(item.code, 'DURATION_SEARCH_POLICY_LIMIT');
   assert.equal(item.severity, 'error');
   assert.equal(item.role, 'Melody');
+});
+
+test('no diagnostic code claims a duration is unrepresentable', () => {
+  // The bounded search has no completeness proof, so the vocabulary it can
+  // report must not contain a verdict it cannot justify. The one remaining
+  // "NOT_REPRESENTABLE" code is about a G10-preserved sub-grid interval, which
+  // *is* provable: no admitted Final token is shorter than the safe grid.
+  const durationCodes = Object.keys(EMIT_DIAGNOSTICS).filter(name => name.startsWith('DURATION_'));
+  assert.ok(durationCodes.length >= 3);
+  for (const name of durationCodes) {
+    assert.equal(/NOT_REPRESENTABLE|IMPOSSIBLE/.test(name), false, `${name} overclaims`);
+  }
 });

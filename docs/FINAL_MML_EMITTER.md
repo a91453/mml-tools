@@ -106,7 +106,7 @@ was ported. The file is not committed.
 
 | Legacy idea | What it actually solves | How this PR does it |
 | --- | --- | --- |
-| memoized search over tie segments instead of greedy "largest first" | greedy is genuinely suboptimal: a two-token split can beat a single long token plus a long tail | `duration-plan.mjs` runs a memoized exact search over *rational* remainders, with a deterministic candidate order and a hard node budget |
+| memoized search over tie segments instead of greedy "largest first" | greedy is genuinely suboptimal: a two-token split can beat a single long token plus a long tail | `duration-plan.mjs` runs a memoized exact search over *rational* remainders, with a deterministic candidate order and explicit bounds |
 | a token may be written with an empty length suffix when it equals the current default `lN` | the cheapest token is the one you do not write | the suffix cost function takes the current default length as an argument |
 | plan the `lN` switch points rather than fixing one default | one default for a whole role is rarely optimal | DP over (event index × default length), candidates restricted to lengths that actually occur |
 | octave state is a carried DP state, not a per-note greedy choice | the value of an enharmonic spelling is in what it saves *later* | DP over (attack index × octave), cost weighted by how many tie segments repeat the note name |
@@ -138,7 +138,7 @@ was ported. The file is not committed.
 | `N_BASE`, `OCT_BASE`, `PITCH_MIN/MAX`, `foldIntoRange` | legacy pitch model. This repo derives the mapping from its own parser. |
 | free use of `n<num>` for character savings | `Nxx` is `FINAL_ALLOWED_WITH_CAUTION` with opt-in plus evidence (P3). Never a compression device. |
 | `OPT_RULES` = `fill` / `partial` / `release` | **lossy**: they absorb rests into notes or shorten notes to create breaths. That is arrangement, and MASTER_RULES §7 protects meaningful rests. |
-| `repairItems` / `snap` / drift accounting | quantization and rounding toward a legal value. Forbidden; unrepresentable means fail closed. |
+| `repairItems` / `snap` / drift accounting | quantization and rounding toward a legal value. Forbidden; a duration the search cannot express means fail closed. |
 | `trimToToken` | truncates a track to fit a character budget. That is silent musical deletion. |
 | `maxDots` > 1, `l16.`-style dotted defaults | multiple dots are `FINAL_FORBIDDEN`; and this repo's parser does not accept a dot after `lN` at all (verified). |
 
@@ -193,8 +193,23 @@ verified an implementation, not certified a rule.
 
 ## 4. Representability policy
 
-A duration is Final-representable iff it is an exact sum of admitted token
-durations. Admitted tokens are built from the executable contract:
+Two different things have to be kept apart here, and conflating them was a real
+defect in an earlier revision of this document and of the code.
+
+**The semantic notion.** A duration is Final-representable when it is an exact
+sum of admitted token durations. That is a statement about arithmetic.
+
+**What the implementation can establish.** `duration-plan.mjs` runs a *bounded*
+search. When it returns a plan, that plan is exactly correct — the sum is checked
+as exact rationals. When it returns nothing, that is a statement about the search
+and its bounds, **not** a proof that no exact decomposition exists. The planner
+has no completeness proof and does not claim one.
+
+Both outcomes fail closed, so the safety property is unaffected either way;
+what changes is only what the diagnostics are entitled to say. See
+§4b for the failure taxonomy.
+
+Admitted tokens are built from the executable contract:
 
 - plain length `n`, duration `4/n` IR beats, for `n` in
   `preferredLengthDenominators` (`1 2 4 8 16 32 64`);
@@ -208,10 +223,13 @@ any multiple dot, any zero duration, and any `Nxx` are never produced.
 
 With the preferred lattice alone, the shortest token is `64` = `4/64` IR beats =
 `SAFE_GRID`, so every admitted token is an exact multiple of the safe grid and no
-emitted component can ever fall below it. A duration that is not a multiple of
-the grid is unrepresentable without caution lengths, and **unrepresentable fails
-closed** — it is never rounded, snapped, or approximated to the nearest legal
-token.
+emitted component can ever fall below it. This direction *is* provable: since
+every admitted token is at least `SAFE_GRID` and all are positive, no sum of them
+can be shorter than `SAFE_GRID`, which is why a G10-preserved sub-grid interval
+is genuinely unrepresentable rather than merely unfound.
+
+Everything else fails closed without such a proof. Nothing is ever rounded,
+snapped, or approximated to the nearest legal token.
 
 ### Why the search is organised around the grid
 
@@ -223,26 +241,53 @@ and admitting all 64 of them at every step instead explodes the state space into
 arbitrary rationals — a plainly representable 7/16 beats burned a 200,000-node
 budget and then poisoned every later plan sharing that search state.
 
-Two deterministic restrictions prevent that, and neither can make an emitted
-duration wrong, because everything returned is still an exact sum:
+Several deterministic bounds prevent that. None of them can make an emitted
+duration *wrong* — everything returned is still an exact sum — but each of them
+can make the search *miss* a decomposition that does exist:
 
-- a grid-aligned remainder is decomposed with grid-aligned tokens only. A grid
-  solution always exists (in the limit, repeated `64`), so exactness is never
-  lost; only a hypothetical mixed answer that left the grid and came back could
-  be missed, and that needs at least two off-grid tokens with multi-character
-  suffixes to beat a grid answer;
-- at most `MAX_OFF_GRID_SEGMENTS` (3) off-grid tokens per decomposition. A
-  triplet costs one. A remainder that is off-grid with no allowance left is a
-  dead end, since no grid token can bring it back.
+- `maxTieSegments` (12) caps the segments in one decomposition. The longest
+  preferred token is a dotted whole note, so a sustain longer than twelve of
+  those is missed even though repeated whole notes express it exactly;
+- `MAX_OFF_GRID_SEGMENTS` (3) caps the off-grid (caution) tokens in one
+  decomposition. A triplet costs one;
+- a grid-aligned remainder is decomposed with grid-aligned tokens only, so an
+  answer that left the grid and came back is not considered;
+- the node budget stops the search outright.
 
-Both are implementer policy for search cost, not rules. Both report
-`not-representable` rather than approximating.
+All are implementer policy for search cost, not rules, and all report a bounded
+search result rather than approximating.
+
+## 4b. Duration search failure taxonomy
+
+The planner distinguishes three failures, because they mean different things:
+
+| `planDuration` reason | Meaning | Emitter diagnostic |
+| --- | --- | --- |
+| `non-positive-duration` | The input is not a duration. Provable, and MOBILE_SYNTAX §4 makes zero duration `FINAL_FORBIDDEN` anyway. | `DURATION_NON_POSITIVE` |
+| `budget-exhausted` | The node budget ran out mid-search. | `DURATION_SEARCH_BUDGET_EXHAUSTED` |
+| `search-policy-limit` | The search finished within its bounds without finding an exact plan. | `DURATION_SEARCH_POLICY_LIMIT` |
+
+`search-policy-limit` is deliberately **not** called "not representable", and
+there is no diagnostic code that makes that claim about a duration. A duration
+that is plainly an exact sum of admitted tokens lands in this bucket whenever
+expressing it needs more segments, or more off-grid tokens, than the bounds
+allow. Reporting that as mathematical impossibility would be an overclaim, and a
+reader who believed it might go looking for a musical fix to a problem that is
+only a search limit.
+
+Every diagnostic in this family carries `completenessProven: false`.
+
+A worked example, pinned by regression in both the planner and the production
+`emitFinalMml` path: a 100-beat sustain is exactly 16 dotted whole notes plus one
+whole note, so an exact decomposition demonstrably exists, yet the default
+12-segment cap cannot reach it. The emitter fails closed and names it a
+search-policy limit; raising only the bound makes the same candidate emit.
 
 ## 4a. What the emitter refuses
 
 | Situation | Outcome |
 | --- | --- |
-| duration is not an exact lattice sum | `FAIL` — never rounded to the nearest token |
+| the bounded search finds no exact plan | `FAIL` — never rounded to the nearest token, and reported as a search-policy limit rather than as unrepresentability |
 | duration search budget exhausted | `FAIL`, reported as a search limit rather than a proof of impossibility |
 | two notes overlap inside one role | `FAIL` — a role is one sequential voice; neither note is dropped or truncated |
 | a note/rest event carries no six-slot role | `FAIL` — the emitter does not choose a slot |
@@ -255,7 +300,7 @@ Both are implementer policy for search cost, not rules. Both report
 | any role exceeds the 2,400-character budget | `FAIL` with role, count, overage and attack count — no note, attack or rest is removed |
 | G10 reports confirmed technical residue | `FAIL` — this PR attempts no technical timing repair |
 | G10 reports unproven sub-grid material | `PENDING` — never acted on |
-| G10 preserves source-supported sub-grid material | `FAIL` — unrepresentable, and refusing is the only answer that does not damage it |
+| G10 preserves source-supported sub-grid material | `FAIL` — provably unrepresentable (every admitted token is at least one safe-grid unit), and refusing is the only answer that does not damage it |
 | a supplied readiness report blocks on any gate but `technical` | `PENDING` |
 | a pending arbitration decision exists | `PENDING` |
 | the round-trip readback does not match | `FAIL` |
@@ -268,7 +313,8 @@ publishes, without re-deriving any threshold:
 - `preservedIntervalKeys` — source-supported sub-grid material. The emitter may
   not delete, shorten, quantize, absorb or move an attack across these. Because
   no admitted token is shorter than the grid, a preserved sub-grid interval is
-  **not representable**, so the emitter fails closed with
+  **not representable** — provably, since every admitted token is at least one
+  safe-grid unit — so the emitter fails closed with
   `SOURCE_SUPPORTED_INTERVAL_NOT_REPRESENTABLE` rather than damaging it.
 - `rejectedIntervalKeys` — confirmed technical residue. `enforceMicroGaps`
   already returns `FAIL` for these, and the emitter refuses to emit. This PR
@@ -297,7 +343,7 @@ reproducible mutation testing.
 | --- | --- | --- |
 | A | exact rational duration equality replaced with a float compare | 3 tests, incl. the 10⁻²⁰ pair whose doubles are equal |
 | B | adjacent same-pitch notes merged into one tied note | 6 tests, first `adjacent same-pitch notes stay two distinct attacks` |
-| C | unrepresentable duration rounded to the nearest legal token | 7 tests, incl. both fail-closed paths |
+| C | a duration the search could not express rounded to the nearest legal token | 7 tests, incl. both fail-closed paths |
 | D | G10 blocked/unproven intervals ignored and emitted anyway | `an unclassified micro-gap blocks Final output entirely` |
 | E | G10 preserve guard removed, destroying source-supported material | `a source-supported sub-1/64 interval is never destroyed to make output` |
 | F | round-trip enforcement branch deleted | `the Final gate itself refuses output whose readback does not match` |

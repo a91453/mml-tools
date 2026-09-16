@@ -49,9 +49,13 @@ export const EMIT_DIAGNOSTICS = Object.freeze({
   READINESS_BLOCKED: 'READINESS_BLOCKED',
   IMPLEMENTATION_BLOCKED: 'IMPLEMENTATION_BLOCKED',
   PENDING_DECISIONS_PRESENT: 'PENDING_DECISIONS_PRESENT',
-  // --- representability --------------------------------------------------
-  DURATION_NOT_REPRESENTABLE: 'DURATION_NOT_REPRESENTABLE',
+  // --- duration search ---------------------------------------------------
+  // The bounded search has no completeness proof, so it has no code that claims
+  // a duration is unrepresentable. `DURATION_SEARCH_POLICY_LIMIT` says the
+  // search found nothing within its own limits and nothing more than that.
+  DURATION_SEARCH_POLICY_LIMIT: 'DURATION_SEARCH_POLICY_LIMIT',
   DURATION_SEARCH_BUDGET_EXHAUSTED: 'DURATION_SEARCH_BUDGET_EXHAUSTED',
+  DURATION_NON_POSITIVE: 'DURATION_NON_POSITIVE',
   PITCH_NOT_SPELLABLE: 'PITCH_NOT_SPELLABLE',
   PITCH_ABOVE_OFFICIAL_RANGE: 'PITCH_ABOVE_OFFICIAL_RANGE',
   VOLUME_OUT_OF_RANGE: 'VOLUME_OUT_OF_RANGE',

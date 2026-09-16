@@ -25,6 +25,7 @@ import {
 import { emitFinalMml, finalizeWithRoundTrip } from '../backend/final/mml-emitter.mjs';
 import { verifyFinalReadback, projectFromFinalReadback } from '../backend/final/round-trip.mjs';
 import { EMIT_DIAGNOSTICS, parserFacts } from '../backend/final/emitter-contract.mjs';
+import { planExactDuration } from '../backend/final/duration-plan.mjs';
 
 const OFFICIAL = createSource({ id: 'official', label: 'Official MusicXML', kind: 'official-musicxml', authority: 'primary-symbolic' });
 
@@ -117,11 +118,11 @@ test('a multi-token duration sums to the exact original', () => {
 
 // ── 7–8. fail closed, exactly ──────────────────────────────────────────────
 
-test('an unrepresentable exact duration fails closed with no output', () => {
+test('a duration the preferred lattice cannot reach fails closed with no output', () => {
   const result = emit([note({ start: 0, end: '1/3' })]);
   assert.equal(result.status, 'FAIL');
   assert.equal(result.combinedMml, null);
-  assert.ok(codes(result).includes(EMIT_DIAGNOSTICS.DURATION_NOT_REPRESENTABLE));
+  assert.ok(codes(result).includes(EMIT_DIAGNOSTICS.DURATION_SEARCH_POLICY_LIMIT));
 });
 
 test('a duration one part in 10^20 off a token is not rounded to it', () => {
@@ -135,7 +136,7 @@ test('a duration one part in 10^20 off a token is not rounded to it', () => {
   const drifted = emit([note({ start: 0, end: offBy.toString() })]);
   assert.equal(drifted.status, 'FAIL');
   assert.equal(drifted.combinedMml, null);
-  assert.ok(codes(drifted).includes(EMIT_DIAGNOSTICS.DURATION_NOT_REPRESENTABLE));
+  assert.ok(codes(drifted).includes(EMIT_DIAGNOSTICS.DURATION_SEARCH_POLICY_LIMIT));
 });
 
 // ── 9–11. G10 consumption ──────────────────────────────────────────────────
@@ -653,4 +654,73 @@ test('the Final gate itself refuses output whose readback does not match', () =>
   const clean = finalizeWithRoundTrip('MML@t120o4cc,,,,,;', expected, roles, [], null, {}, facts);
   assert.equal(clean.status, 'PASS');
   assert.equal(clean.combinedMml, 'MML@t120o4cc,,,,,;');
+});
+
+// ── duration search failure taxonomy, through the production path ──────────
+//
+// The planner is bounded and has no completeness proof. A miss caused by one of
+// its bounds must never be reported as arithmetic impossibility: a reader who
+// believed that would go looking for a musical fix to what is only a search
+// limit. These exercise `emitFinalMml`, not the planner in isolation.
+
+test('a sustain past the tie-segment cap fails closed as a search-policy limit', () => {
+  // 100 beats is exactly 16 dotted whole notes plus one whole note — an exact
+  // sum of admitted tokens, demonstrated here rather than asserted. The default
+  // 12-segment cap cannot reach it, so the emitter must refuse; what it must not
+  // do is claim no exact decomposition exists.
+  const target = new F(100);
+  const witness = { segments: [...Array(16).fill({ denominator: 1, dots: 1 }), { denominator: 1, dots: 0 }] };
+  assert.equal(planExactDuration(witness).cmp(target), 0, 'the witness sums to 100 beats exactly');
+
+  const result = emit([note({ start: 0, end: 100 })]);
+  assert.equal(result.status, 'FAIL');
+  assert.equal(result.combinedMml, null, 'fail closed: no output, no approximation');
+
+  const finding = result.diagnostics.find(item => item.code === EMIT_DIAGNOSTICS.DURATION_SEARCH_POLICY_LIMIT);
+  assert.ok(finding, 'must be reported as a bounded-search limit');
+  assert.equal(finding.planFailure, 'search-policy-limit');
+  assert.equal(finding.completenessProven, false);
+  assert.match(finding.message, /not proof that no exact token decomposition exists/);
+  assert.equal(/has no exact Final token decomposition/.test(finding.message), false,
+    'the message must not assert unrepresentability');
+});
+
+test('the same sustain emits once the tie-segment bound is widened', () => {
+  // The bound is the only obstacle, which is exactly why naming the refusal
+  // "not representable" was wrong. Widening it here is a test-local proof, not
+  // a production default change.
+  const result = emit([note({ start: 0, end: 100 })], { maxTieSegments: 20 });
+  assert.equal(result.status, 'PASS');
+  const track = readTrack(result);
+  assert.equal(track.events.length, 1, 'still one attack');
+  assert.equal(f(track.total).cmp(100), 0);
+});
+
+test('budget exhaustion keeps its own distinct diagnostic', () => {
+  const result = emit([note({ start: 0, end: '13/16' })], { budget: 2, cautionLengthOptIn: true });
+  assert.equal(result.status, 'FAIL');
+  assert.equal(result.combinedMml, null);
+  const finding = result.diagnostics.find(item => item.code === EMIT_DIAGNOSTICS.DURATION_SEARCH_BUDGET_EXHAUSTED);
+  assert.ok(finding, 'a spent node budget is not the same finding as a policy bound');
+  assert.equal(finding.planFailure, 'budget-exhausted');
+  assert.match(finding.message, /not proof that no exact token decomposition exists/);
+});
+
+test('no emitter diagnostic message claims a duration is unrepresentable', () => {
+  // Sweep the duration-failure paths and check the wording itself, since the
+  // overclaim this fix removes lived in a message string, not in a code.
+  const cases = [
+    emit([note({ start: 0, end: '1/3' })]),
+    emit([note({ start: 0, end: 100 })]),
+    emit([note({ start: 0, end: '13/16' })], { budget: 2, cautionLengthOptIn: true }),
+  ];
+  for (const result of cases) {
+    assert.equal(result.status, 'FAIL');
+    assert.equal(result.combinedMml, null);
+    for (const item of result.diagnostics) {
+      if (!item.code.startsWith('DURATION_')) continue;
+      assert.equal(/no exact Final token decomposition|mathematically|impossible|unrepresentable/i.test(item.message), false,
+        `overclaiming message: ${item.message}`);
+    }
+  }
 });

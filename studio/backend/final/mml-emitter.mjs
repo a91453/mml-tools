@@ -38,6 +38,7 @@ import {
 } from './emitter-contract.mjs';
 import { verifyFinalReadback, expectedRoleSemantics } from './round-trip.mjs';
 import {
+  PLAN_FAILURE,
   buildTokenLattice,
   planDuration,
   createPlanState,
@@ -360,14 +361,41 @@ function serializeItems(role, items, lattice, facts, options) {
     // result condemns the duration, and the reason distinguishes a proof from a
     // give-up.
     if (results.every(result => !result.ok)) {
-      const exhausted = results.some(result => result.reason === 'budget-exhausted');
+      // Three outcomes, three meanings. Only the non-positive case is a claim
+      // about the duration; the other two are claims about the bounded search,
+      // and calling either of them "not representable" would assert a
+      // completeness proof the planner does not have.
+      const reasons = new Set(results.map(result => result.reason));
+      const failure = reasons.has(PLAN_FAILURE.BUDGET_EXHAUSTED)
+        ? PLAN_FAILURE.BUDGET_EXHAUSTED
+        : reasons.has(PLAN_FAILURE.NON_POSITIVE_DURATION)
+          ? PLAN_FAILURE.NON_POSITIVE_DURATION
+          : PLAN_FAILURE.SEARCH_POLICY_LIMIT;
+      const cautionHint = lattice.cautionLengthOptIn
+        ? ''
+        : ' FINAL_ALLOWED_WITH_CAUTION plain lengths are not admitted here; cautionLengthOptIn widens the lattice.';
+      const messages = {
+        [PLAN_FAILURE.BUDGET_EXHAUSTED]: `${role}: the exact Final duration search for ${item.duration} beats at ${item.start} ran out of node budget. This is a search limit, not proof that no exact token decomposition exists. The emitter fails closed rather than approximating.`,
+        [PLAN_FAILURE.NON_POSITIVE_DURATION]: `${role}: event ${item.eventId} has a non-positive duration ${item.duration}. MOBILE_SYNTAX §4 makes zero-duration events FINAL_FORBIDDEN.`,
+        [PLAN_FAILURE.SEARCH_POLICY_LIMIT]: `${role}: the bounded exact Final duration search found no plan for ${item.duration} beats at ${item.start} within the current implementer limits (tie-segment cap, off-grid-token cap, grid-aligned head restriction). This is not proof that no exact token decomposition exists — a duration that needs more segments or more off-grid tokens than those bounds allow lands here too. The emitter fails closed and does not approximate.${cautionHint}`,
+      };
+      const codes = {
+        [PLAN_FAILURE.BUDGET_EXHAUSTED]: EMIT_DIAGNOSTICS.DURATION_SEARCH_BUDGET_EXHAUSTED,
+        [PLAN_FAILURE.NON_POSITIVE_DURATION]: EMIT_DIAGNOSTICS.DURATION_NON_POSITIVE,
+        [PLAN_FAILURE.SEARCH_POLICY_LIMIT]: EMIT_DIAGNOSTICS.DURATION_SEARCH_POLICY_LIMIT,
+      };
       diagnostics.push(diagnostic(
-        exhausted ? EMIT_DIAGNOSTICS.DURATION_SEARCH_BUDGET_EXHAUSTED : EMIT_DIAGNOSTICS.DURATION_NOT_REPRESENTABLE,
+        codes[failure],
         DIAGNOSTIC_SEVERITY.ERROR,
-        exhausted
-          ? `${role}: the exact decomposition search for duration ${item.duration} ran out of budget. This is a search limit, not a proof that the duration is unrepresentable; the emitter fails closed either way rather than approximating.`
-          : `${role}: duration ${item.duration} (beats) at ${item.start} has no exact Final token decomposition${lattice.cautionLengthOptIn ? '' : ' under the preferred lengths; FINAL_ALLOWED_WITH_CAUTION plain lengths are available behind cautionLengthOptIn'}. It is not rounded, snapped or approximated.`,
-        { role, eventId: item.eventId, duration: item.duration.toString(), start: item.start },
+        messages[failure],
+        {
+          role,
+          eventId: item.eventId,
+          duration: item.duration.toString(),
+          start: item.start,
+          planFailure: failure,
+          completenessProven: false,
+        },
       ));
     }
   }
@@ -451,10 +479,10 @@ function serializeItems(role, items, lattice, facts, options) {
 
     if (!next.size) {
       diagnostics.push(diagnostic(
-        EMIT_DIAGNOSTICS.DURATION_NOT_REPRESENTABLE,
+        EMIT_DIAGNOSTICS.DURATION_SEARCH_POLICY_LIMIT,
         DIAGNOSTIC_SEVERITY.ERROR,
-        `${role}: no legal Final serialization state survives at event ${item.eventId ?? index}.`,
-        { role, eventId: item.eventId ?? null },
+        `${role}: no legal Final serialization state survives at event ${item.eventId ?? index} within the current implementer search limits. This is not proof that no exact serialization exists.`,
+        { role, eventId: item.eventId ?? null, planFailure: PLAN_FAILURE.SEARCH_POLICY_LIMIT, completenessProven: false },
       ));
       return { diagnostics, mml: null };
     }
