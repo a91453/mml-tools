@@ -20,7 +20,7 @@ if (log) {
     try {
       const out = original.apply(this, arguments);
       bytes = Buffer.byteLength(out);
-      if (args[0] === 'show' || args[0] === 'cat-file') hash = createHash('sha256').update(out).digest('hex').slice(0, 16);
+      if (['show', 'cat-file'].includes(Array.from(args ?? []).find(arg => !arg.startsWith('-')))) hash = createHash('sha256').update(out).digest('hex').slice(0, 16);
       return out;
     } catch (thrown) {
       ok = false;

@@ -72,7 +72,15 @@ const objectRef = (record, path) => {
   const match = text.match(new RegExp(`([0-9a-f]{40}):${path.replace(/[.\\/]/g, '\\$&')}(?![\\w/])`));
   return match ? match[1] : null;
 };
-const isRead = record => record.args[0] === 'show' || record.args[0] === 'cat-file';
+// The Git subcommand, skipping global options such as --no-replace-objects and -c key=value.
+const subcommand = record => {
+  for (let index = 0; index < record.args.length; index += 1) {
+    if (record.args[index] === '-c' || record.args[index] === '-C') { index += 1; continue; }
+    if (!record.args[index].startsWith('-')) return record.args[index];
+  }
+  return null;
+};
+const isRead = record => subcommand(record) === 'show' || subcommand(record) === 'cat-file';
 
 function analyse(logPath) {
   const lines = readFileSync(logPath, 'utf8').split('\n').filter(Boolean);
@@ -93,11 +101,14 @@ function analyse(logPath) {
   let current = 0, peak = 0;
   for (const [, delta] of events) { current += delta; peak = Math.max(peak, current); }
   const commands = {};
-  for (const record of rootRecords) commands[record.args[0]] = (commands[record.args[0]] ?? 0) + 1;
+  for (const record of rootRecords) commands[subcommand(record)] = (commands[subcommand(record)] ?? 0) + 1;
   return {
     gitSubprocesses: { total: records.length, fromThisCheckout: rootRecords.length, byCommand: commands },
+    bootstrapAttempts: manifestReads.length,
     bootstrappingProcesses: bootstrapPids.size,
-    gitSubprocessesPerBootstrap: gitPerBootstrap.length ? { min: gitPerBootstrap[0], median: gitPerBootstrap[Math.floor(gitPerBootstrap.length / 2)], max: gitPerBootstrap.at(-1) } : null,
+    // Root Git calls per bootstrapping process; a test file's own helper calls
+    // in the checkout are included, so the minimum is the loader's own cost.
+    gitSubprocessesPerBootstrappingProcess: gitPerBootstrap.length ? { min: gitPerBootstrap[0], median: gitPerBootstrap[Math.floor(gitPerBootstrap.length / 2)], max: gitPerBootstrap.at(-1) } : null,
     peakConcurrentGitSubprocesses: peak,
     publishedIdentitiesResolvedFromThisCheckout: publishedIdentities,
     snapshotIdentitiesResolvedFromThisCheckout: [...snapshotIdentities],
@@ -132,7 +143,7 @@ for (let run = 1; run <= runs; run += 1) {
   if (!report.ok) report.failingOutputTail = output.split('\n').filter(line => /^not ok|CANONICAL_NOT_LOADED:|Error:/.test(line.trim())).slice(0, 20);
   if (keepLogs) report.probeLog = logPath; else rmSync(logDir, { recursive: true, force: true });
   reports.push(report);
-  console.error(`run ${run}/${runs}: ${report.ok ? 'ok' : 'FAILED'} in ${wallSeconds.toFixed(1)}s, ${metrics.gitSubprocesses.total} git subprocesses, ${metrics.bootstrappingProcesses} bootstraps, ${publishedIdentities.length} published identit${publishedIdentities.length === 1 ? 'y' : 'ies'}, shared refs ${sharedRefsUntouched ? 'untouched' : 'WRITTEN'}`);
+  console.error(`run ${run}/${runs}: ${report.ok ? 'ok' : 'FAILED'} in ${wallSeconds.toFixed(1)}s, ${metrics.gitSubprocesses.total} git subprocesses, ${metrics.bootstrapAttempts} bootstraps, ${publishedIdentities.length} published identit${publishedIdentities.length === 1 ? 'y' : 'ies'}, shared refs ${sharedRefsUntouched ? 'untouched' : 'WRITTEN'}`);
 }
 const summary = {
   machine: { platform: process.platform, cpus: (await import('node:os')).availableParallelism(), node: process.version, git: git(['--version']) },
