@@ -273,16 +273,24 @@ function diffTable(diff) {
 //
 //   * the *latest generation attempt* — what the emitter last said about this
 //     candidate, including a FAIL or PENDING with its diagnostics;
-//   * the *currently applied delivery* — the exact string the workspace holds
-//     and that this analysis has verified against the candidate.
+//   * the *currently applied delivery* — the delivery string this analysis has
+//     verified against the candidate, which is the string `recordAcceptance`
+//     binds.
 //
 // A refused attempt writes nothing, so an earlier applied delivery survives it
 // and the two can legitimately disagree. The panel states that in words rather
 // than letting the newer badge colour the older output.
 //
-// Nothing here counts characters, checks syntax or repairs anything. Every
-// number shown is one the emitter reported, and the exported string is the
-// stored delivery verbatim.
+// Nothing here counts characters, checks syntax or repairs anything: every
+// number shown is one the emitter reported.
+//
+// What is exported is the analysis-verified, acceptance-bound delivery string --
+// deliberately not the raw stored field, because a pasted delivery is stored
+// exactly as typed and may carry surrounding whitespace that the verified and
+// bound form does not. For emitter output the distinction is inert: generation
+// fails closed unless the emitted string is already free of surrounding
+// whitespace, so a generated delivery is exported byte for byte as the emitter
+// produced it, and nothing between emitter PASS and export may alter it.
 // The published per-role limit, restated here only so a count can be displayed
 // when no emitter result is available -- a pasted delivery has none. Where an
 // emitter result exists, its own `characterCounts.limit` is used instead, so the

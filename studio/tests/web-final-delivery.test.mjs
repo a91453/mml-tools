@@ -510,3 +510,35 @@ test('a refused generation leaves a valid pasted delivery in place and does not 
   assert.equal(after.deliveryOrigin, 'pasted');
   assert.equal(after.rawMml, tied);
 });
+
+test('a pasted delivery with surrounding whitespace has one verified, acceptance-bound form', () => {
+  // The trap this pins down: a pasted delivery is stored exactly as typed, so a
+  // stray newline makes the raw stored field and the verified/bound form two
+  // different strings. Every user-facing whole-score surface has to agree on the
+  // second one, or two buttons that both read as "the complete MML" hand over
+  // different bytes. A generated delivery cannot exercise this -- emitter output
+  // never carries surrounding whitespace -- so it has to be pasted.
+  const padded = `\n  ${MML}\n\n`;
+  const w = { ...mmlWorkspace(), deliveryMml: padded };
+  w.deliveryBinding = { revision: w.revision, origin: 'pasted' };
+
+  const report = analyzeWorkspace(w);
+  assert.notEqual(w.deliveryMml, MML, 'the raw stored field really does differ from the verified form');
+  assert.equal(report.gates.technical.status, 'PASS', 'whitespace does not stop it validating');
+  assert.equal(report.gates.deliveryIdentity.status, 'PASS');
+  assert.equal(report.deliveryOrigin, 'pasted');
+
+  // The single string every whole-score surface must use. `app.mjs` exports
+  // exactly this for the displayed MML, Copy Whole, Download and #copy-mml.
+  assert.equal(report.rawMml, MML, 'the verified delivery is the trimmed form');
+  assert.equal(report.rawMml, report.rawMml.trim());
+  // The role bodies are split from the same delivery, so they cannot drift from it.
+  assert.equal(`MML@${report.tracks.join(',')};`, report.rawMml);
+
+  // ...and it is the string acceptance binds, which is what makes it the one
+  // that matters: exporting the untrimmed field would hand out a string the
+  // in-game record does not describe.
+  const accepted = recordAcceptance(w, { client: 'test-client', instrument: 'three-role piano', evidence: 'controlled fixture only' });
+  assert.equal(accepted.acceptance.exactMml, report.rawMml);
+  assert.equal(analyzeWorkspace(accepted).state, 'IN_GAME_ACCEPTED');
+});

@@ -185,15 +185,31 @@ export async function runFinalDeliveryChecks({ page, idle, file, mml }) {
   // therefore hold a perfectly good pasted delivery that the emitter declines to
   // reproduce. The panel has to show both without letting the refusal read as
   // the delivery's status, or the delivery's badge as the attempt's.
+  //
+  // It is pasted *with surrounding whitespace* on purpose. A pasted delivery is
+  // stored exactly as typed, so the raw stored field and the verified,
+  // acceptance-bound form are then two different strings -- and every whole-score
+  // surface has to agree on the second one. Generated output cannot exercise
+  // this, because generation fails closed unless its string is already clean.
   const superseded_mml = mml.replace('o4c1', 'o4e1');
   await page.getByText('貼上 MML／Canonical IR，或附上交付 MML').click();
   await page.locator('#paste [name="slot"]').selectOption('delivery');
-  await page.locator('#paste [name="content"]').fill(superseded_mml);
+  await page.locator('#paste [name="content"]').fill(`\n  ${superseded_mml}\n\n`);
   await page.getByRole('button', { name: '在本機載入', exact: true }).click();
   await page.locator('#final-mml').waitFor();
   await idle();
-  assert.equal(await page.locator('#final-mml').inputValue(), superseded_mml, 'the pasted delivery is shown verbatim');
   assert.ok((await page.locator('#final-delivery').textContent()).includes('使用者提供'), 'a pasted delivery is labelled as pasted, not as generated');
+
+  // All four whole-score surfaces, against the verified form rather than the
+  // padded text that was typed.
+  assert.equal(await page.locator('#final-mml').inputValue(), superseded_mml, 'the panel displays the verified delivery, not the raw stored field');
+  await page.locator('#copy-final').click();
+  assert.equal(await page.evaluate(() => window.copied), superseded_mml, 'Copy Whole agrees');
+  await page.evaluate(() => { window.downloadedBlob = null; });
+  await page.locator('#download-final').click();
+  assert.equal(await page.evaluate(() => window.downloadedBlob.text()), superseded_mml, 'Download agrees');
+  await page.locator('#copy-mml').click();
+  assert.equal(await page.evaluate(() => window.copied), superseded_mml, 'the acceptance section\'s whole-score copy agrees');
 
   await page.locator('#generate-final').click();
   await idle();
