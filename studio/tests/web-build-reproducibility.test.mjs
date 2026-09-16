@@ -15,8 +15,12 @@ import { readdir } from 'node:fs/promises';
 import { verifyStudioArtifact } from '../../scripts/verify-studio-artifact.mjs';
 import { computeCacheId, readServiceWorkerTemplate, renderServiceWorker } from '../../scripts/studio-artifact-identity.mjs';
 import { verifyCanonicalPackage } from '../web/canonical-package.mjs';
+import { observePublishedRef } from './support/isolated-repository.mjs';
 
 const root = fileURLToPath(new URL('../../', import.meta.url));
+// Sibling test processes bootstrap from the shared checkout's discovery ref
+// while this file runs (M6). Observed first, asserted untouched last.
+const sharedPublishedRefAtStart = observePublishedRef();
 // commit-tree needs a committer identity that a bare CI runner may not have.
 const identity = {
   GIT_AUTHOR_NAME: 'Studio artifact test', GIT_AUTHOR_EMAIL: 'artifact@example.invalid',
@@ -444,4 +448,9 @@ test('the shipped Service Worker is exactly the trusted template rendered with t
     () => verifyStudioArtifact(out, {}, { serviceWorkerTemplate: `// forged\n${HOSTILE}` }),
     /release\.cacheId does not match the trusted Service Worker template/,
   );
+});
+
+test('this file never wrote the shared published discovery ref (M6)', () => {
+  // The reflog records a rewrite even when it was restored afterwards.
+  assert.deepEqual(observePublishedRef(), sharedPublishedRefAtStart);
 });
