@@ -54,7 +54,12 @@ import {
   createCanonicalRestEvent,
 } from '../canonical/index.mjs';
 import { compareCanonicalVersions } from '../compare/version-drift.mjs';
-import { evaluateLeadDemotion } from '../arbitration/lead-demotion.mjs';
+import {
+  evaluateLeadDemotion,
+  leadEvidenceIdentityBlockers,
+  LEAD_EVIDENCE_IDENTITY_MISMATCH,
+  LEAD_EVIDENCE_PROVENANCE_PAIR_AMBIGUOUS,
+} from '../arbitration/lead-demotion.mjs';
 import { sha256Hex } from '../source/sha256.mjs';
 
 // ─── exact helpers ──────────────────────────────────────────────────────────
@@ -140,16 +145,13 @@ export const DECISION_REJECTION = Object.freeze({
   LEAD_EVIDENCE_MULTI_EVENT_SCOPE_UNSUPPORTED: 'LEAD_EVIDENCE_MULTI_EVENT_SCOPE_UNSUPPORTED',
 });
 
-// The blocker a Lead evidence record earns when it does not describe the event
-// it was attached to. Exported because the downstream report builder raises the
-// same one, and a reviewer reading either should see one code, not two.
-export const LEAD_EVIDENCE_IDENTITY_MISMATCH = 'LEAD_EVIDENCE_EVENT_IDENTITY_MISMATCH';
-
-// The blocker a Lead evidence record earns when the target event carries more
-// than one source and the Canonical IR cannot say which source event belongs to
-// which source. Not a verdict on the music: the evidence scope cannot be proven
-// with the representation available, so it is not guessed.
-export const LEAD_EVIDENCE_PROVENANCE_PAIR_AMBIGUOUS = 'LEAD_EVIDENCE_PROVENANCE_PAIR_AMBIGUOUS';
+// The Lead evidence identity binding and its blocker codes are owned by the
+// Lead Demotion Gate itself (`arbitration/lead-demotion.mjs`) and re-exported
+// here unchanged, so the G11-D application, the downstream report builder and
+// the pre-G11-D Studio Web path all raise one code from one function. This
+// module carries no copy of the binding: a second implementation is exactly the
+// drift hazard the shared boundary exists to rule out.
+export { leadEvidenceIdentityBlockers, LEAD_EVIDENCE_IDENTITY_MISMATCH, LEAD_EVIDENCE_PROVENANCE_PAIR_AMBIGUOUS };
 
 // Rejections that make the whole set invalid, versus rejections that leave the
 // set well-formed but unproven. FAIL is refusal; PENDING is "the evidence
@@ -553,82 +555,15 @@ function withinSection(event, section) {
 
 // ─── Lead interlocks ────────────────────────────────────────────────────────
 
-/**
- * Does this Lead evidence record describe *this* event?
- *
- * SOURCE_POLICY.md §4 lists source identity as the first thing a Lead move must
- * inspect. Inspecting it means confirming the identity belongs to the event
- * being moved -- not merely that two non-empty strings are present. Without
- * that, evidence gathered about event B satisfies a gate asked about event A,
- * and the Lead Demotion Gate reports a PASS carrying A's id.
- *
- * A citation is a *pair*: this source event, of this source. The Canonical IR
- * carries `sourceIds` and `sourceEventIds` as two independent arrays with no
- * pairing between them, and a source event id is source-local (raw MIDI emits
- * `track:N/event:M`), so it is not globally unique across sources. Membership
- * in each array separately proves only that the source is among the event's
- * sources and that the source event id is among its source events -- not that
- * the one belongs to the other.
- *
- * So the rule is: with exactly one source, the pair is unambiguous and the
- * citation must name that source and one of its source events. With more than
- * one source and no pair-preserving representation, the pairing cannot be
- * proven from this data, and it is not guessed: not by cross-membership, not by
- * array position, not by "it looks right". That case fails closed with
- * `LEAD_EVIDENCE_PROVENANCE_PAIR_AMBIGUOUS`. This is implementer caution under
- * the representation that exists; it asserts nothing about whether
- * multi-source provenance is valid, and adds no Canonical rule.
- *
- * Both halves of the single-source check are necessary. Two events from one
- * source share a `sourceId`, so matching only that would still let one event's
- * evidence move another; the `sourceEventId` is what pins the citation to a
- * single source event.
- *
- * A derived duplicate carries its origin's `sourceIds`/`sourceEventIds`, so it
- * binds against that origin provenance. Its own derived event id lives in a
- * different namespace and is never accepted here as a `sourceEventId`.
- *
- * Returns blocker codes; an empty array means the citation is in scope. It says
- * nothing about whether the evidence is *sufficient* -- authority, section role,
- * continuity and Core3 remain the existing gates' questions.
- */
-export function leadEvidenceIdentityBlockers(leadEvidence, event) {
-  if (!isPlainObject(leadEvidence)) return ['LEAD_EVIDENCE_MISSING'];
-  const identity = leadEvidence.sourceIdentity;
-  if (!isPlainObject(identity) || !nonEmptyString(identity.sourceId) || !nonEmptyString(identity.sourceEventId)) {
-    return ['SOURCE_IDENTITY_MISSING'];
-  }
-  if (!isPlainObject(event)) return [LEAD_EVIDENCE_IDENTITY_MISMATCH];
-
-  const sourceIds = Array.isArray(event.sourceIds) ? event.sourceIds : [];
-  const sourceEventIds = Array.isArray(event.sourceEventIds) ? event.sourceEventIds : [];
-  const blockers = [];
-  // An event that states no source-event identity cannot have a citation bound
-  // to it at all. That fails closed rather than falling back to the source id,
-  // which would re-open exactly the same-source hole this check exists to shut.
-  if (!sourceIds.length) blockers.push('TARGET_EVENT_SOURCE_IDS_MISSING');
-  if (!sourceEventIds.length) blockers.push('TARGET_EVENT_SOURCE_EVENT_IDS_MISSING');
-  if (blockers.length) return blockers;
-
-  // More than one source and no (sourceId, sourceEventId) pairing in the IR:
-  // which source event belongs to which source cannot be established, so the
-  // citation's scope cannot be proven. Fail closed before any membership test,
-  // so that a citation which merely *looks* paired is never accepted either.
-  if (sourceIds.length > 1) return [LEAD_EVIDENCE_PROVENANCE_PAIR_AMBIGUOUS];
-
-  if (sourceIds[0] !== identity.sourceId.trim()) blockers.push(LEAD_EVIDENCE_IDENTITY_MISMATCH);
-  else if (!sourceEventIds.includes(identity.sourceEventId.trim())) blockers.push(LEAD_EVIDENCE_IDENTITY_MISMATCH);
-  return blockers;
-}
-
 // Demotion runs the existing Lead Demotion Gate unchanged. G11-D adds no second
 // opinion and relaxes nothing: an accepted decision reaches the same gate an
 // unaccepted one would.
 //
-// The identity binding is checked *before* the gate, and a failure short-circuits
-// it. `evaluateLeadDemotion` only asks that a source identity be present, so a
-// foreign but well-formed evidence record can make it answer PASS; accepting
-// that answer for this event is the thing being prevented.
+// The identity binding is checked *before* the gate so that an out-of-scope
+// citation is reported as exactly that, with no musical blockers beside it. It
+// is the gate's own binding function, and the gate runs it again on the same
+// event: removing this pre-check changes the shape of the report, never the
+// verdict.
 function leadDemotionBlockers(decision, event, destinationRole) {
   const evidence = decision.leadEvidence;
   if (!isPlainObject(evidence)) return ['LEAD_DEMOTION_EVIDENCE_MISSING'];
@@ -1531,6 +1466,7 @@ export const DECISION_APPLICATION_STATUS = Object.freeze({
   leadEvidenceBoundToTargetEvent: true,
   leadEvidenceSourceEventIdMembershipRequired: true,
   leadEvidenceMultiSourcePairingFailsClosed: true,
+  leadEvidenceIdentityBoundInsideGate: true,
   leadAffectingDecisionLimitedToOneEvent: true,
   leadEvidenceRevalidatedDownstream: true,
   laneTargetsNoteEventsOnly: true,

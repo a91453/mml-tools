@@ -546,10 +546,10 @@ function bind() {
   document.querySelectorAll('[data-imported-decision]').forEach(form=>form.onsubmit=event=>{event.preventDefault();const data=Object.fromEntries(new FormData(form)),original=report.importedDecisions[Number(form.dataset.importedDecision)];run(async()=>{
     if(!data.reason?.trim()||!data.evidence?.trim())throw Error('需要本輪保留理由與證據');const next=structuredClone(workspace);next.acceptance=null;next.harmonyDecisions=next.harmonyDecisions.filter(d=>d.id!==original.id);next.harmonyDecisions.push({...original,action:'keep',status:'accepted',reason:data.reason,evidence:[data.evidence],revision:workspace.revision});await commit(next);
   });});
-  $('#lead-form').onsubmit=event=>{event.preventDefault();const d=Object.fromEntries(new FormData(event.target));run(async()=>{
-    if(![...roles.slice(1),'omitted'].includes(d.destinationRole))throw Error('目標角色必須為 Chord1–Chord5 或 omitted');const event=workspace.assets.baseline?.project.events.find(e=>e.id===d.eventId&&e.role==='Melody');if(!event)throw Error('找不到基準 Melody event');
-    const next=structuredClone(workspace);next.acceptance=null;next.leadEvidence=next.leadEvidence.filter(e=>e.eventId!==event.id);next.leadEvidence.push({eventId:event.id,destinationRole:d.destinationRole,sourceIdentity:{sourceId:event.sourceIds[0],sourceEventId:event.sourceEventIds[0]},sectionRole:d.sectionRole,scoreEvidence:{availability:d.scoreCitation?'available':'unavailable',classification:d.scoreClass,citation:d.scoreCitation},audioEvidence:{availability:d.audioCitation?'available':'unavailable',classification:d.audioClass,citation:d.audioCitation},positiveReason:d.positiveReason,continuity:{checked:d.continuity==='checked',createsLeadGap:d.continuity==='checked'?false:null,replacementEventIds:[]},core3:{checked:d.continuity==='checked',status:d.continuity==='checked'?'PASS':'PENDING'},revision:workspace.revision});await commit(next);
-  });};
+  // The Lead evidence record is built behind the Worker by the model, from the
+  // baseline event that is loaded. The page supplies the form fields only: it
+  // never constructs a source identity, so it can never pair one by array index.
+  $('#lead-form').onsubmit=event=>{event.preventDefault();const d=Object.fromEntries(new FormData(event.target));run(async()=>{await commit(await call('recordLeadEvidence',workspace,d));});};
   $('#audio-file').onchange=()=>{const file=$('#audio-file').files[0]??null;run(async()=>{audioFile=file;const next=await call('invalidate',workspace);next.settings.audioRequired='yes';await commit(next);},{revisionBound:false});};
   $('#request-audio').onclick=()=>{
     const endpoint=$('#audio-endpoint').value,token=$('#audio-token').value,file=audioFile;
