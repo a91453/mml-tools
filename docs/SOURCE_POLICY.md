@@ -131,6 +131,6 @@ Before any full-song comparison, confirm recording version, start offset, effect
 
 ## 8. Tool evidence
 
-MuScriptor, Mobibard, mml.mabi.tw, MabiIcco, 3MLE, Midify and other editors/converters produce candidates, not authority.
+External editors and converters produce candidates, not authority.
 
 A tool's parse/export/play success is not equivalent to source correctness or in-game acceptance.
