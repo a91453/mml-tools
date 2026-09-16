@@ -21,7 +21,7 @@ import {
   deriveAcceptedArrangement,
 } from '../web/arrangement-decisions.mjs';
 import { revisionIdentityMatches, candidateDigestOf, baselineIdentityOf, createAcceptedDecision } from '../backend/arrangement/decision-application.mjs';
-import { decisionContentDigest } from '../web/arrangement-decisions.mjs';
+import { acceptedDecisionRecordDigest } from '../web/arrangement-decisions.mjs';
 import * as fixtures from './fixtures/midi-fixtures.mjs';
 
 // G11-D residual B: Web revision chaining.
@@ -336,7 +336,7 @@ test('a decision is applied at exactly the step whose parent it names, and re-ad
   const moved = structuredClone(rev3Record);
   moved.decision.id = 'r4';
   moved.decision.acceptance.reviewedRevisionId = head1;
-  moved.contentDigest = decisionContentDigest(createAcceptedDecision(moved.decision));
+  moved.recordDigest = acceptedDecisionRecordDigest(moved);
   late.push(moved);
   const lateResult = deriveAcceptedArrangement({ project: context.project, suggestion: context.suggestion, revision: 0, records: late });
   assert.equal(lateResult.status, 'FAIL');

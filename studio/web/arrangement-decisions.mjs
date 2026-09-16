@@ -48,7 +48,35 @@ import {
 } from '../backend/arrangement/decision-application.mjs';
 import { canonicalIdentity } from '../backend/final/emitter-contract.mjs';
 
-export const ACCEPTED_DECISION_RECORD_SCHEMA = 'mml-studio-web/accepted-arrangement-decision@1';
+export const ACCEPTED_DECISION_RECORD_SCHEMA = 'mml-studio-web/accepted-arrangement-decision@2';
+
+// What a decision record's integrity does and does not establish, as data.
+//
+//   recordEnvelope   CONTENT_ADDRESSED_SELF_CONSISTENCY: `recordDigest` is a
+//                    SHA-256 over every field of the record -- schema, pipeline,
+//                    workspace revision and the whole normalized decision
+//                    including its acceptance block. Any single edit to any of
+//                    them leaves a record that no longer agrees with itself.
+//   bindings         RE_DERIVED_AT_APPLICATION: the baseline content digest,
+//                    source identity digest, lane decomposition digest,
+//                    Canonical rules snapshot and reviewed revision are checked
+//                    by the backend against what is loaded now, every time.
+//                    A record that agrees with itself and names other inputs
+//                    is still refused.
+//   authorship       NOT_AUTHENTICATED: `acceptedBy` and `note` are assertions.
+//                    Nothing here proves who wrote a record. A digest beside
+//                    mutable data is not a signature: anyone who can rewrite
+//                    the record can rewrite the digest. Authenticated
+//                    authorship needs a trust root (a signer, a key, a
+//                    verifier) that this product does not have and this change
+//                    does not invent.
+export const ACCEPTED_DECISION_AUTHORSHIP = 'NOT_AUTHENTICATED';
+export const ACCEPTED_DECISION_INTEGRITY = Object.freeze({
+  recordEnvelope: 'CONTENT_ADDRESSED_SELF_CONSISTENCY',
+  bindings: 'RE_DERIVED_AT_APPLICATION',
+  authorship: ACCEPTED_DECISION_AUTHORSHIP,
+  notice: 'Tamper-evident and self-consistent is not authenticated. The record digest detects an edited, stale or partially rewritten stored record; the bindings refuse a record that names inputs other than the ones loaded; neither proves who accepted the decision.',
+});
 export const ACCEPTED_ARRANGEMENT_SCHEMA = 'mml-studio-web/accepted-arrangement@1';
 
 // The derivation identity a stored application is bound to. Bump it whenever
@@ -106,52 +134,94 @@ export function buildAcceptedDecisionRecord({ project, suggestion, revision, rev
   const expected = acceptedDecisionBindings({ project, suggestion, reviewedRevisionId });
   const reasons = bindingMismatches(normalized.acceptance, expected);
   if (reasons.length) throw Error(`STALE_ACCEPTED_DECISION: ${reasons.join(', ')}`);
-  return {
-    schema: ACCEPTED_DECISION_RECORD_SCHEMA,
-    revision,
-    contentDigest: decisionContentDigest(normalized),
-    decision: JSON.parse(JSON.stringify(normalized)),
-  };
+  const envelope = { schema: ACCEPTED_DECISION_RECORD_SCHEMA, pipeline: ACCEPTED_ARRANGEMENT_PIPELINE, revision, decision: JSON.parse(JSON.stringify(normalized)) };
+  return { ...envelope, recordDigest: acceptedDecisionRecordDigest(envelope) };
 }
 
 // Self-consistency, deliberately not authentication.
 //
-// The digest covers what the decision *does* -- its type, target, roles,
-// section, reason and evidence -- separately from the acceptance block that says
-// what it was reviewed against. A record whose body was edited in storage no
-// longer agrees with its own digest and is refused rather than replayed.
+// The digest is taken over the *whole* record: schema, pipeline, the workspace
+// revision it was accepted at, and the decision exactly as the backend
+// constructor normalizes it -- type, target, roles, section, reason, evidence,
+// Lead evidence, metadata, and the acceptance block with every binding, the
+// reviewed revision, `acceptedBy` and `note`. There is no field a stored
+// record can change and still agree with its own digest, and no field whose
+// digest can be recomputed on its own after another field moved.
 //
 // It does not, and cannot, prove who wrote the record: anyone who can rewrite
-// the stored decision can rewrite the digest beside it. What actually fails
+// the stored record can rewrite the digest beside it. What actually fails
 // closed against a hostile or stale workspace is the binding to the baseline
 // content, the source identity, the reviewed revision and the Canonical rules
-// snapshot, none of which the workspace gets to choose.
-export function decisionContentDigest(normalizedDecision) {
-  const { acceptance, ...body } = normalizedDecision;
-  return contentDigest(body);
+// snapshot, none of which the workspace gets to choose. See
+// ACCEPTED_DECISION_INTEGRITY.
+export function acceptedDecisionRecordDigest({ schema, pipeline, revision, decision }) {
+  const normalized = createAcceptedDecision(decision);
+  return contentDigest({ schema, pipeline, revision, decision: JSON.parse(JSON.stringify(normalized)) });
+}
+
+/**
+ * Classify one stored record. Three separate answers, never one flag:
+ *
+ *   structural                 the record has the shape this pipeline writes and
+ *                              its decision constructs
+ *   envelope                   the record agrees with its own recordDigest
+ *   workspaceRevisionCurrent   it was accepted at the workspace revision that is
+ *                              loaded now
+ *
+ * plus `authorship`, which is always NOT_AUTHENTICATED. The bindings are not
+ * classified here because they are not this layer's to answer: the backend
+ * re-derives them at application time against the inputs that are loaded.
+ */
+export function decisionRecordIntegrity(record, revision) {
+  const reasons = [];
+  let structural = false;
+  let envelope = false;
+  if (!record || typeof record !== 'object' || Array.isArray(record)) reasons.push('DECISION_RECORD_MALFORMED');
+  else if (record.schema !== ACCEPTED_DECISION_RECORD_SCHEMA) reasons.push('DECISION_RECORD_SCHEMA_UNSUPPORTED');
+  else if (record.pipeline !== ACCEPTED_ARRANGEMENT_PIPELINE) reasons.push('DECISION_RECORD_PIPELINE_VERSION_CHANGED');
+  else if (!record.decision) reasons.push('DECISION_RECORD_EMPTY');
+  else {
+    try {
+      const digest = acceptedDecisionRecordDigest(record);
+      structural = true;
+      if (typeof record.recordDigest !== 'string' || record.recordDigest !== digest) reasons.push('DECISION_RECORD_DIGEST_MISMATCH');
+      else envelope = true;
+    } catch (error) { reasons.push(`DECISION_RECORD_MALFORMED: ${error.message}`); }
+  }
+  const workspaceRevisionCurrent = Boolean(record) && typeof record === 'object' && record.revision === revision;
+  if (structural && !workspaceRevisionCurrent) reasons.push('DECISION_RECORD_WORKSPACE_REVISION_MISMATCH');
+  return {
+    structural,
+    envelope,
+    workspaceRevisionCurrent,
+    authorship: ACCEPTED_DECISION_AUTHORSHIP,
+    usable: structural && envelope && workspaceRevisionCurrent,
+    reasons,
+  };
 }
 
 /**
  * The decision records that belong to this workspace revision.
  *
- * Returns the decisions and, separately, the records that claim this revision
- * but cannot be used. A record is never silently skipped.
+ * Returns the decisions and, separately, the records that cannot be used at
+ * this revision. A record that is malformed, carries an unsupported schema or
+ * pipeline, or does not agree with its own digest is `invalid`; one that is
+ * sound but was accepted at another workspace revision is `ignored`. Nothing is
+ * silently skipped: the two lists are reported beside the derivation.
  */
 export function acceptedDecisionsAt(records, revision) {
   const decisions = [];
   const invalid = [];
   const ignored = [];
   for (const record of Array.isArray(records) ? records : []) {
-    if (record?.schema !== ACCEPTED_DECISION_RECORD_SCHEMA) { invalid.push({ id: record?.decision?.id ?? null, reason: 'DECISION_RECORD_SCHEMA_UNSUPPORTED' }); continue; }
-    // A record left at another workspace revision is superseded, not
-    // malformed: it is not applied, and it is not silently dropped either.
-    if (record.revision !== revision) { ignored.push({ id: record.decision?.id ?? null, revision: record.revision ?? null, reason: 'DECISION_RECORD_WORKSPACE_REVISION_MISMATCH' }); continue; }
-    if (!record.decision) { invalid.push({ id: null, reason: 'DECISION_RECORD_EMPTY' }); continue; }
-    let normalized;
-    try { normalized = createAcceptedDecision(record.decision); }
-    catch (error) { invalid.push({ id: record.decision.id ?? null, reason: `DECISION_RECORD_MALFORMED: ${error.message}` }); continue; }
-    if (record.contentDigest !== decisionContentDigest(normalized)) {
-      invalid.push({ id: normalized.id, reason: 'DECISION_RECORD_CONTENT_DIGEST_MISMATCH' });
+    const integrity = decisionRecordIntegrity(record, revision);
+    const id = record?.decision?.id ?? null;
+    if (!integrity.structural || !integrity.envelope) {
+      invalid.push({ id, reason: integrity.reasons[0], integrity });
+      continue;
+    }
+    if (!integrity.workspaceRevisionCurrent) {
+      ignored.push({ id, revision: record.revision ?? null, reason: 'DECISION_RECORD_WORKSPACE_REVISION_MISMATCH' });
       continue;
     }
     decisions.push(record.decision);
@@ -165,6 +235,7 @@ const resultShape = (project, sourceSha256, revision, fields) => ({
   stage: 'G11-D',
   stageKind: 'ACCEPTED_ARRANGEMENT_APPLICATION',
   parentModel: PARENT_MODEL,
+  integrity: ACCEPTED_DECISION_INTEGRITY,
   ...fields,
   derivation: derivation(project, sourceSha256, revision, fields.chain ?? []),
 });
