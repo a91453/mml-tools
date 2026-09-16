@@ -10,6 +10,7 @@ import { evaluateProjectReadiness, emitFinalMml, EMIT_STATUS, DIAGNOSTIC_SEVERIT
 import { attachAudioAlignmentEvidence } from '../backend/audio/index.mjs';
 import { alignmentProjectText } from './audio-payload.mjs';
 import { arrangementBinding, deriveArrangement, ingestMidiSource, isRawMidiAsset, reingestMidiAsset, verifyStoredProject } from './midi-source.mjs';
+import { acceptedArrangementBinding, acceptedDecisionBindings, buildAcceptedDecisionRecord, deriveAcceptedArrangement } from './arrangement-decisions.mjs';
 
 export const WORKSPACE_SCHEMA = 'mml-studio-web/workspace@1';
 export const MAX_TEXT_BYTES = 4 * 1024 * 1024;
@@ -22,7 +23,7 @@ const pass = reason => ({ status: 'PASS', reason });
 const good = value => ['PASS', 'N/A'].includes(value?.status);
 
 export function newWorkspace() {
-  return { schema: WORKSPACE_SCHEMA, id: crypto.randomUUID(), title: '未命名專案', revision: 0, assets: {}, settings: { meterText: '', recording: '', offset: '', end: '', audioRequired: 'unknown', preview: 'unknown' }, reviews: {}, harmonyDecisions: [], core3Approvals: [], leadEvidence: [], audio: null, acceptance: null };
+  return { schema: WORKSPACE_SCHEMA, id: crypto.randomUUID(), title: '未命名專案', revision: 0, assets: {}, settings: { meterText: '', recording: '', offset: '', end: '', audioRequired: 'unknown', preview: 'unknown' }, reviews: {}, harmonyDecisions: [], core3Approvals: [], leadEvidence: [], acceptedDecisions: [], audio: null, acceptance: null };
 }
 
 // Imported JSON is data, including any old PASS flags. Reconstruct every item
@@ -74,6 +75,12 @@ export function invalidate(workspace) {
   next.harmonyDecisions = [];
   next.core3Approvals = [];
   next.leadEvidence = [];
+  // An accepted arrangement decision is bound to the exact baseline, source and
+  // lane decomposition it was reviewed against. Once the revision moves, every
+  // one of those bindings is a claim about inputs that are no longer loaded, so
+  // the records go the way harmony decisions, Core3 approvals and Lead evidence
+  // already go: dropped, to be re-accepted against what is actually there.
+  next.acceptedDecisions = [];
   next.audio = null;
   next.acceptance = null;
   // A delivery MML is the exact string for one exact candidate. Once the
@@ -114,9 +121,48 @@ export function importWorkspace(raw) {
   // pasted delivery, which is re-validated and read back against the candidate
   // from scratch on every analysis -- the same treatment imported reviews get.
   if (typeof input.deliveryMml === 'string' && input.deliveryMml.length <= 40000) clean.deliveryMml = input.deliveryMml;
-  clean.importedHistory = { reviews: input.reviews, acceptance: input.acceptance, audio: input.audio };
+  // Accepted arrangement decisions travel as history for the same reason. A
+  // backup cannot attest that its decisions were reviewed against the bytes
+  // this workspace just re-ingested, and a backup asserting an applied
+  // candidate is describing an application nobody can re-check from the file.
+  clean.importedHistory = { reviews: input.reviews, acceptance: input.acceptance, audio: input.audio, acceptedDecisions: input.acceptedDecisions };
   return clean;
 }
+
+// Record one explicitly accepted arrangement decision.
+//
+// The bindings are computed here from the project and lanes that are loaded
+// now, so a decision cannot be recorded as accepted against inputs that are not
+// on screen. `acceptedDecisionBindings` is exported for the same reason: a UI
+// fills an acceptance block from what is loaded, never from what it remembers.
+export function recordAcceptedDecision(workspace, decision, { reviewedRevisionId = null } = {}) {
+  const asset = workspace.assets?.candidate;
+  if (!isRawMidiAsset(asset)) throw Error('UNSUPPORTED: accepted arrangement decisions need a raw MIDI candidate source');
+  const project = readCanonical(asset.project);
+  const integrity = verifyStoredProject(asset, project);
+  if (!integrity.verified) throw Error(`SOURCE_INTEGRITY_UNVERIFIED: ${integrity.reasons.join(', ')}`);
+  const arrangement = deriveArrangement(project, { sourceSha256: asset.source?.sha256 });
+  const record = buildAcceptedDecisionRecord({
+    project,
+    suggestion: arrangement.candidate,
+    revision: workspace.revision,
+    reviewedRevisionId,
+    decision,
+  });
+  const next = copy(workspace);
+  next.acceptedDecisions = [...(next.acceptedDecisions ?? []), record];
+  next.acceptance = null;
+  return next;
+}
+
+export function clearAcceptedDecisions(workspace) {
+  const next = copy(workspace);
+  next.acceptedDecisions = [];
+  next.acceptance = null;
+  return next;
+}
+
+export { acceptedDecisionBindings };
 
 export function recordReview(workspace, name, note, evidence) {
   if (!REVIEW_NAMES.includes(name) || !text(note) || !text(evidence)) throw Error('請填寫審核結論及來源／段落證據');
@@ -158,10 +204,26 @@ function rawMidiReport(workspace, projects) {
     // fields defensively keeps the whole analysis from throwing on one asset.
     const source = asset.source ?? {};
     let arrangement = null;
+    let acceptedArrangement = null;
     let error = null;
     if (integrity.verified) {
       try { arrangement = deriveArrangement(projects[slot], { sourceSha256: source.sha256 }); }
       catch (failure) { error = `ARRANGEMENT_DERIVATION_FAILED: ${failure.message}`; }
+      // G11-D, re-derived from the same re-validated project and the same
+      // freshly computed G11-C lanes. A stored application is never restored:
+      // an accepted decision that survived in storage across a source change is
+      // refused by its own bindings rather than replayed.
+      if (arrangement && slot === 'candidate') {
+        try {
+          acceptedArrangement = deriveAcceptedArrangement({
+            project: projects[slot],
+            suggestion: arrangement.candidate,
+            records: workspace.acceptedDecisions,
+            revision: workspace.revision,
+            sourceSha256: source.sha256,
+          });
+        } catch (failure) { error = `ACCEPTED_ARRANGEMENT_DERIVATION_FAILED: ${failure.message}`; }
+      }
     }
     entries.push({
       slot,
@@ -179,6 +241,10 @@ function rawMidiReport(workspace, projects) {
       persistedArrangement,
       arrangementSource: 'RECOMPUTED_FROM_SOURCE_PROJECT',
       arrangement,
+      acceptedArrangement,
+      persistedAcceptedArrangement: asset.acceptedArrangement
+        ? acceptedArrangementBinding({ stored: asset.acceptedArrangement, project: projects[slot], revision: workspace.revision, sourceSha256: source.sha256 })
+        : null,
       error,
     });
   }

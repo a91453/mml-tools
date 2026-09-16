@@ -26,7 +26,7 @@ self.onmessage = async ({ data }) => {
     // Final generation stays on this side of the boundary with the rest of the
     // model: it reconstructs the Canonical project and runs the emitter, so it
     // must not be reachable unless the published Canonical package verified.
-    else if (['newWorkspace', 'intake', 'intakeMidi', 'analyzeWorkspace', 'invalidate', 'importWorkspace', 'recordReview', 'recordAcceptance', 'generateFinalDelivery', 'applyFinalDelivery'].includes(data.action)) result = model[data.action](...data.args);
+    else if (['newWorkspace', 'intake', 'intakeMidi', 'analyzeWorkspace', 'invalidate', 'importWorkspace', 'recordReview', 'recordAcceptedDecision', 'clearAcceptedDecisions', 'recordAcceptance', 'generateFinalDelivery', 'applyFinalDelivery'].includes(data.action)) result = model[data.action](...data.args);
     else throw Error('UNSUPPORTED: worker action');
     self.postMessage({ id: data.id, result });
   } catch (error) { self.postMessage({ id: data.id, error: error.message }); }
