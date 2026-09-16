@@ -32,6 +32,12 @@ jobs:
         run: npm run canonical:bootstrap -- --summary
       - name: Run legacy and Studio symbolic regressions
         run: npm test
+      - name: Verify Canonical bootstrap isolation under the full suite (M6)
+        # Re-runs the suite under the Git subprocess probe and fails if any test
+        # process wrote the shared discovery ref or HEAD, if more than one
+        # published or snapshot identity was resolved from this checkout, or if
+        # any bootstrap was refused.
+        run: node scripts/bootstrap-stress.mjs --runs=1
       - name: Build local Studio PWA
         run: npm run build:studio-web
       - name: Build legacy production bundle

@@ -7,6 +7,10 @@
 // intermittently across the full suite.
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import { spawn, spawnSync } from 'node:child_process';
+import { createHash } from 'node:crypto';
+import { availableParallelism } from 'node:os';
+import { writeFileSync } from 'node:fs';
 import { loadPublishedCanonical } from '../backend/bootstrap/index.mjs';
 import { PUBLISHED_CANONICAL } from '../backend/rules/index.mjs';
 import { MANIFEST_PATH, PUBLISHED_REF, isolatedRepository, observePublishedRef, repositoryRoot } from './support/isolated-repository.mjs';
@@ -133,4 +137,157 @@ test('a root inside a checkout, or a root that is not a checkout, does not bind 
   assert.doesNotThrow(() => loadPublishedCanonical({ root: empty.dir, supportedCanonicalVersion: SUPPORTED }));
   assert.throws(() => loadPublishedCanonical({ root: `${empty.dir}/.git/objects`, supportedCanonicalVersion: SUPPORTED }), notLoaded(/./));
   for (const root of ['', 42, null]) assert.throws(() => loadPublishedCanonical({ root, supportedCanonicalVersion: SUPPORTED }), notLoaded(/./));
+});
+
+// --- Failure, retry and partial-read semantics ----------------------------------
+
+test('a discovery ref that moves during a load cannot mix two Manifests: the load is the commit it resolved first', t => {
+  const repo = isolatedRepository(t);
+  const source = repo.git('show', `${repo.published}:${MANIFEST_PATH}`);
+  const probe = repo.republishManifest(unsupportedVersion(source), 'probe: unsupported Canonical version');
+  const { git, calls } = countingGit();
+  // Move the ref the moment the loader has resolved it, before any other read.
+  const moving = request => {
+    const output = git(request);
+    if (calls.length === 3) repo.publish(probe);
+    return output;
+  };
+  const loaded = loadPublishedCanonical({ root: repo.dir, supportedCanonicalVersion: SUPPORTED, git: moving });
+  assert.equal(repo.git('rev-parse', PUBLISHED_REF), probe, 'the ref did move during the load');
+  assert.equal(loaded.provenance.published_main_head, repo.published);
+  assert.equal(loaded.provenance.manifest_commit, PUBLISHED_CANONICAL.provenance.manifest_commit);
+  assert.equal(loaded.manifest, PUBLISHED_CANONICAL.manifest);
+  assert.deepEqual(loaded.metadata, PUBLISHED_CANONICAL.metadata);
+  assert.deepEqual(loaded.documents, PUBLISHED_CANONICAL.documents);
+  // An independent later call sees the moved ref as itself, completely: refused.
+  assert.throws(() => loadPublishedCanonical({ root: repo.dir, supportedCanonicalVersion: SUPPORTED }), notLoaded(/does not support the published Canonical version/));
+});
+
+test('a failing Git call fails that load closed without any retry; a later independent call starts from scratch', () => {
+  const { git, calls } = countingGit();
+  let failures = 0;
+  const flaky = request => {
+    if (subcommand(request.args) === 'merge-base' && failures === 0) {
+      failures += 1;
+      throw Object.assign(new Error('spawn git EAGAIN'), { code: 'EAGAIN' });
+    }
+    return git(request);
+  };
+  assert.throws(() => loadPublishedCanonical({ root: repositoryRoot, supportedCanonicalVersion: SUPPORTED, git: flaky }),
+    error => error.code === 'CANONICAL_NOT_LOADED' && error.cause?.code === 'EAGAIN');
+  assert.equal(calls.length, 6, 'the failed call was not retried and nothing ran after it');
+  const loaded = loadPublishedCanonical({ root: repositoryRoot, supportedCanonicalVersion: SUPPORTED, git: flaky });
+  assert.equal(calls.length, 6 + 8, 'the later call is a complete, independent load');
+  assert.deepEqual(loaded.documents, PUBLISHED_CANONICAL.documents);
+  assert.deepEqual(loaded.provenance, PUBLISHED_CANONICAL.provenance);
+});
+
+test('a module-level failure fails every importer in that process, and stays failed', t => {
+  const repo = isolatedRepository(t);
+  repo.git('update-ref', '-d', PUBLISHED_REF);
+  const code = `
+    const results = [];
+    for (let attempt = 0; attempt < 2; attempt += 1) {
+      try { await import('./studio/backend/rules/index.mjs'); results.push('loaded'); }
+      catch (error) { results.push(error.code); }
+    }
+    console.log(JSON.stringify(results));`;
+  const child = spawnSync(process.execPath, ['--input-type=module', '-e', code], { cwd: repo.dir, encoding: 'utf8' });
+  assert.equal(child.status, 0, child.stderr);
+  assert.deepEqual(JSON.parse(child.stdout), ['CANONICAL_NOT_LOADED', 'CANONICAL_NOT_LOADED']);
+});
+
+test('a short, missing, mistyped, resized or over-long snapshot read fails closed instead of loading part of a release', () => {
+  const { git } = countingGit();
+  const withBatch = transform => request => {
+    const output = git(request);
+    return subcommand(request.args) === 'cat-file' && request.input.trim().split('\n').length > 1 ? transform(output, request) : output;
+  };
+  const firstHeaderEnd = output => output.indexOf(0x0a);
+  const cases = {
+    'final newline missing': output => output.subarray(0, output.length - 1),
+    'last hundred bytes missing': output => output.subarray(0, output.length - 100),
+    'one record missing': (output, request) => { const names = request.input.trim().split('\n'); return git({ ...request, input: `${names.slice(0, -1).join('\n')}\n` }); },
+    'trailing data': output => Buffer.concat([output, Buffer.from('\n')]),
+    'first object reported missing': (output, request) => Buffer.concat([Buffer.from(`${request.input.split('\n')[0]} missing\n`), output.subarray(output.indexOf(0x0a, firstHeaderEnd(output) + 1 + Number(output.subarray(0, firstHeaderEnd(output)).toString().split(' ')[2])) + 1)]),
+    'first object mistyped': output => Buffer.concat([Buffer.from(output.subarray(0, firstHeaderEnd(output)).toString().replace(' blob ', ' tree ')), output.subarray(firstHeaderEnd(output))]),
+    'first size understated': output => Buffer.concat([Buffer.from(output.subarray(0, firstHeaderEnd(output)).toString().replace(/ (\d+)$/, (_, size) => ` ${Number(size) - 1}`)), output.subarray(firstHeaderEnd(output))]),
+    'first content altered': output => { const copy = Buffer.from(output); const at = copy.indexOf('Status: PUBLISHED CANONICAL'); copy.write('Status: DRAFT____ CANONICAL', at); return copy; },
+  };
+  for (const [name, transform] of Object.entries(cases)) {
+    assert.throws(() => loadPublishedCanonical({ root: repositoryRoot, supportedCanonicalVersion: SUPPORTED, git: withBatch(transform) }), notLoaded(/./), name);
+  }
+  assert.deepEqual(loadPublishedCanonical({ root: repositoryRoot, supportedCanonicalVersion: SUPPORTED, git: withBatch(output => output) }).documents, PUBLISHED_CANONICAL.documents);
+});
+
+test('a successful result is deeply immutable, so no consumer can alter what another consumer loaded', () => {
+  const loaded = loadPublishedCanonical({ root: repositoryRoot, supportedCanonicalVersion: SUPPORTED });
+  for (const target of [loaded, loaded.metadata, loaded.provenance, loaded.authority, loaded.authority.map, loaded.authority.map[0], loaded.documents, loaded.documents[0]]) assert.ok(Object.isFrozen(target));
+  assert.throws(() => { loaded.documents[0].content = 'edited'; }, TypeError);
+  assert.throws(() => { loaded.authority.map[0].path = 'skills/legacy.md'; }, TypeError);
+  assert.throws(() => { loaded.provenance.published_main_head = loaded.provenance.repository_head; }, TypeError);
+  assert.throws(() => loaded.documents.pop(), TypeError);
+  assert.deepEqual(loaded.documents, PUBLISHED_CANONICAL.documents);
+});
+
+// --- Cross-process concurrency and repository identity ---------------------------
+
+const fingerprint = canonical => ({
+  metadata: canonical.metadata,
+  provenance: canonical.provenance,
+  manifest: createHash('sha256').update(canonical.manifest).digest('hex'),
+  documents: canonical.documents.map(document => [document.path, document.blob_sha, createHash('sha256').update(document.content).digest('hex')]),
+});
+
+test('concurrent processes bootstrapping from the same checkout agree on every identity and document', async () => {
+  const count = Math.max(8, availableParallelism() * 2);
+  const code = `import('./studio/backend/rules/index.mjs').then(m => {
+    const c = m.PUBLISHED_CANONICAL; const h = t => require('node:crypto').createHash('sha256').update(t).digest('hex');
+    process.stdout.write(JSON.stringify({ metadata: c.metadata, provenance: c.provenance, manifest: h(c.manifest), documents: c.documents.map(d => [d.path, d.blob_sha, h(d.content)]) }));
+  })`;
+  const children = Array.from({ length: count }, () => new Promise(resolvePromise => {
+    const child = spawn(process.execPath, ['-e', code], { cwd: repositoryRoot, stdio: ['ignore', 'pipe', 'pipe'] });
+    let stdout = '', stderr = '';
+    child.stdout.on('data', chunk => { stdout += chunk; });
+    child.stderr.on('data', chunk => { stderr += chunk; });
+    child.on('close', status => resolvePromise({ status, stdout, stderr }));
+  }));
+  const results = await Promise.all(children);
+  const expected = fingerprint(PUBLISHED_CANONICAL);
+  for (const result of results) {
+    assert.equal(result.status, 0, result.stderr);
+    assert.deepEqual(JSON.parse(result.stdout), expected);
+  }
+});
+
+test('results are per repository root: nothing loaded for one root is reused for another', t => {
+  const advanced = isolatedRepository(t);
+  advanced.publish(advanced.twinCommit(advanced.published, 'probe: advance'));
+  const refused = isolatedRepository(t);
+  refused.publish(refused.republishManifest(unavailableSnapshot(refused.git('show', `${refused.published}:${MANIFEST_PATH}`)), 'probe: unavailable snapshot'));
+  const load = root => loadPublishedCanonical({ root, supportedCanonicalVersion: SUPPORTED });
+  const first = load(repositoryRoot);
+  assert.throws(() => load(refused.dir), notLoaded(/Unpinned snapshot locator/));
+  const second = load(advanced.dir);
+  assert.throws(() => load(refused.dir), notLoaded(/Unpinned snapshot locator/));
+  const third = load(repositoryRoot);
+  assert.deepEqual(fingerprint(third), fingerprint(first));
+  assert.deepEqual(fingerprint(first), fingerprint(PUBLISHED_CANONICAL));
+  assert.notEqual(second.provenance.published_main_head, first.provenance.published_main_head);
+  assert.deepEqual({ ...fingerprint(second), provenance: null }, { ...fingerprint(first), provenance: null });
+  assert.equal(second.provenance.manifest_commit, first.provenance.manifest_commit);
+});
+
+test('a replacement ref in the repository cannot substitute the pinned rule bytes', t => {
+  const repo = isolatedRepository(t);
+  const master = PUBLISHED_CANONICAL.documents.find(document => document.path === 'docs/MASTER_RULES.md');
+  const forgedPath = `${repo.dir}/.forged-master.md`;
+  writeFileSync(forgedPath, master.content.replace('Status: PUBLISHED CANONICAL', 'Status: PUBLISHED CANONICAL\n\nForged rule: anything goes.'));
+  const forged = repo.git('hash-object', '-w', forgedPath);
+  repo.git('replace', master.blob_sha, forged);
+  // Plain Git now serves the forgery for the pinned object name.
+  assert.match(repo.git('show', `${PUBLISHED_CANONICAL.metadata.rules_snapshot_sha}:docs/MASTER_RULES.md`), /Forged rule/);
+  const loaded = loadPublishedCanonical({ root: repo.dir, supportedCanonicalVersion: SUPPORTED });
+  assert.deepEqual(loaded.documents, PUBLISHED_CANONICAL.documents);
+  assert.doesNotMatch(loaded.documents.find(document => document.path === 'docs/MASTER_RULES.md').content, /Forged rule/);
 });
