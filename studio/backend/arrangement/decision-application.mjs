@@ -201,6 +201,42 @@ function stringList(values, label, { allowEmpty = false } = {}) {
 
 const noteEvents = project => (project?.events ?? []).filter(event => event?.kind === 'note');
 
+// Canonical ordering for events and control points. Used both to lay out a
+// derived candidate and to take a project digest, so a project handed in with
+// its arrays in a different order is the same project to every identity in this
+// module.
+const eventOrder = (a, b) =>
+  cmpB(a.start, b.start)
+  || cmpStr(a.kind, b.kind)
+  || (Number(a.pitch ?? -1) - Number(b.pitch ?? -1))
+  || cmpB(a.end, b.end)
+  || cmpStr(a.id, b.id);
+
+const controlOrder = (a, b) => cmpB(a.beat, b.beat) || cmpStr(a.id, b.id);
+const byId = (a, b) => cmpStr(a.id, b.id);
+
+// The shape every project-level digest is taken over. Array order is normalized
+// away; nothing else is. A project whose events, roles, sources, control points,
+// decisions or metadata differ still digests differently.
+function projectDigestShape(project, { excludeMetadataKeys = [] } = {}) {
+  const metadata = {};
+  for (const key of Object.keys(project.metadata ?? {}).sort(cmpStr)) {
+    if (excludeMetadataKeys.includes(key)) continue;
+    metadata[key] = project.metadata[key];
+  }
+  return {
+    schema: project.schema ?? null,
+    id: project.id ?? null,
+    title: project.title ?? null,
+    sources: [...(project.sources ?? [])].sort(byId),
+    events: [...(project.events ?? [])].sort(eventOrder),
+    tempoEvents: [...(project.tempoEvents ?? [])].sort(controlOrder),
+    meterEvents: [...(project.meterEvents ?? [])].sort(controlOrder),
+    decisions: [...(project.decisions ?? [])].sort(byId),
+    metadata,
+  };
+}
+
 // What a decision is bound to. Every field is derived from content: nothing here
 // reads a timestamp, a filename, a workspace slot or a caller-supplied id.
 export function baselineIdentityOf(project) {
@@ -217,7 +253,7 @@ export function baselineIdentityOf(project) {
     noteEventCount: noteEvents(project).length,
     eventIdDigest: contentDigest(eventIds),
     sourceIdentityDigest: contentDigest(sourceRecords),
-    contentDigest: contentDigest(project),
+    contentDigest: contentDigest(projectDigestShape(project)),
   });
 }
 
@@ -245,12 +281,7 @@ export function laneDecompositionDigestOf(suggestion) {
 // edited no longer matches the revision that describes it.
 export function candidateDigestOf(project) {
   if (!isPlainObject(project)) throw Error('candidateDigestOf requires a Canonical project');
-  const metadata = {};
-  for (const key of Object.keys(project.metadata ?? {}).sort(cmpStr)) {
-    if (key === 'g11d') continue;
-    metadata[key] = project.metadata[key];
-  }
-  return contentDigest({ ...project, metadata });
+  return contentDigest(projectDigestShape(project, { excludeMetadataKeys: ['g11d'] }));
 }
 
 export function decisionSetDigestOf(normalizedDecisions) {
@@ -568,13 +599,6 @@ function rebuildRest(event) {
   });
 }
 
-const eventOrder = (a, b) =>
-  cmpB(a.start, b.start)
-  || cmpStr(a.kind, b.kind)
-  || (Number(a.pitch ?? -1) - Number(b.pitch ?? -1))
-  || cmpB(a.end, b.end)
-  || cmpStr(a.id, b.id);
-
 // ─── entry point ────────────────────────────────────────────────────────────
 
 /**
@@ -606,9 +630,9 @@ export function applyAcceptedArrangement({
   const canonical = normalizeCanonicalIdentity(canonicalIdentity);
 
   // Immutability evidence, taken before anything else touches the inputs.
-  const baselineDigestBefore = contentDigest(baseline);
+  const baselineDigestBefore = contentDigest(projectDigestShape(baseline));
   const parentCandidate = parent?.candidate ?? null;
-  const parentDigestBefore = parentCandidate ? contentDigest(parentCandidate) : null;
+  const parentDigestBefore = parentCandidate ? contentDigest(projectDigestShape(parentCandidate)) : null;
 
   const baselineIdentity = baselineIdentityOf(baseline);
   const baselineEventIds = new Set(baseline.events.map(event => event.id));
@@ -921,8 +945,8 @@ export function applyAcceptedArrangement({
   const stale = rejected.filter(item => staleCodes.has(item.code));
 
   const inputsUnchanged = () => {
-    const after = contentDigest(baseline);
-    const parentAfter = parentCandidate ? contentDigest(parentCandidate) : null;
+    const after = contentDigest(projectDigestShape(baseline));
+    const parentAfter = parentCandidate ? contentDigest(projectDigestShape(parentCandidate)) : null;
     return Object.freeze({
       baselineDigestBefore,
       baselineDigestAfter: after,
@@ -1118,11 +1142,11 @@ export function applyAcceptedArrangement({
   const candidateWithoutRevision = createCanonicalProject({
     id: `${baseline.id}#g11d-r${revisionIndex}`,
     title: baseline.title,
-    sources: [...baseline.sources],
+    sources: [...baseline.sources].sort(byId),
     events: outputEvents,
-    tempoEvents: [...(applyTo.tempoEvents ?? [])],
-    meterEvents: [...(applyTo.meterEvents ?? [])],
-    decisions: carriedDecisions,
+    tempoEvents: [...(applyTo.tempoEvents ?? [])].sort(controlOrder),
+    meterEvents: [...(applyTo.meterEvents ?? [])].sort(controlOrder),
+    decisions: [...carriedDecisions].sort(byId),
     metadata: {
       ...inheritedMetadata,
       sourceFaithfulBaseline: { snapshot: baselineSnapshot },
@@ -1236,11 +1260,11 @@ function stripMetadataKeys(project, keys) {
   return createCanonicalProject({
     id: project.id,
     title: project.title,
-    sources: [...project.sources],
-    events: [...project.events],
-    tempoEvents: [...(project.tempoEvents ?? [])],
-    meterEvents: [...(project.meterEvents ?? [])],
-    decisions: [...(project.decisions ?? [])],
+    sources: [...project.sources].sort(byId),
+    events: [...project.events].sort(eventOrder),
+    tempoEvents: [...(project.tempoEvents ?? [])].sort(controlOrder),
+    meterEvents: [...(project.meterEvents ?? [])].sort(controlOrder),
+    decisions: [...(project.decisions ?? [])].sort(byId),
     metadata,
   });
 }
