@@ -185,17 +185,33 @@ test('a stored decision edited after it was accepted is refused, not replayed', 
   assert.equal(applied.application, null);
   assert.deepEqual(applied.invalidRecords.map(item => item.reason), ['DECISION_RECORD_CONTENT_DIGEST_MISMATCH']);
 
-  // Recomputing the digest beside it does not buy authority either: a forged
-  // promotion into Melody still has to satisfy the Lead interlock.
+  // Recomputing the digest beside it does not buy authority either. This
+  // decision targets a whole lane, so a forged promotion into Melody is refused
+  // by the one-event containment before the promotion interlock is even reached:
+  // one leadEvidence record cannot cite every source event in a lane.
   const resigned = persist(workspace);
   resigned.acceptedDecisions[0].decision.toRole = 'Melody';
   resigned.acceptedDecisions[0].contentDigest = decisionContentDigest(
     createAcceptedDecision(resigned.acceptedDecisions[0].decision),
   );
   const resignedApplied = analyzeWorkspace(resigned).rawMidi[0].acceptedArrangement;
-  assert.equal(resignedApplied.status, 'PENDING');
+  assert.equal(resignedApplied.status, 'UNSUPPORTED');
   assert.equal(resignedApplied.application.candidate, null);
-  assert.ok(resignedApplied.application.rejected.some(item => item.code === 'LEAD_PROMOTION_EVIDENCE_REQUIRED'));
+  assert.ok(resignedApplied.application.rejected.some(item => item.code === 'LEAD_EVIDENCE_MULTI_EVENT_SCOPE_UNSUPPORTED'));
+
+  // Narrowed to a single event, the same forgery reaches the promotion
+  // interlock and is refused there instead: no Lead evidence was ever accepted.
+  const single = persist(workspace);
+  const laneEventIds = [...context.suggestion.lanes[0].eventIds];
+  single.acceptedDecisions[0].decision.target = { laneId: null, eventIds: [laneEventIds[0]] };
+  single.acceptedDecisions[0].decision.toRole = 'Melody';
+  single.acceptedDecisions[0].contentDigest = decisionContentDigest(
+    createAcceptedDecision(single.acceptedDecisions[0].decision),
+  );
+  const singleApplied = analyzeWorkspace(single).rawMidi[0].acceptedArrangement;
+  assert.equal(singleApplied.status, 'PENDING');
+  assert.equal(singleApplied.application.candidate, null);
+  assert.ok(singleApplied.application.rejected.some(item => item.code === 'LEAD_PROMOTION_EVIDENCE_REQUIRED'));
 
   // An entirely invented decision type cannot be smuggled in either.
   const invented = persist(workspace);

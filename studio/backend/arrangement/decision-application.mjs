@@ -137,7 +137,13 @@ export const DECISION_REJECTION = Object.freeze({
   DERIVED_DUPLICATE_ID_COLLISION: 'DERIVED_DUPLICATE_ID_COLLISION',
   LEAD_DEMOTION_EVIDENCE_REQUIRED: 'LEAD_DEMOTION_EVIDENCE_REQUIRED',
   LEAD_PROMOTION_EVIDENCE_REQUIRED: 'LEAD_PROMOTION_EVIDENCE_REQUIRED',
+  LEAD_EVIDENCE_MULTI_EVENT_SCOPE_UNSUPPORTED: 'LEAD_EVIDENCE_MULTI_EVENT_SCOPE_UNSUPPORTED',
 });
+
+// The blocker a Lead evidence record earns when it does not describe the event
+// it was attached to. Exported because the downstream report builder raises the
+// same one, and a reviewer reading either should see one code, not two.
+export const LEAD_EVIDENCE_IDENTITY_MISMATCH = 'LEAD_EVIDENCE_EVENT_IDENTITY_MISMATCH';
 
 // Rejections that make the whole set invalid, versus rejections that leave the
 // set well-formed but unproven. FAIL is refusal; PENDING is "the evidence
@@ -147,7 +153,10 @@ const PENDING_CODES = new Set([
   DECISION_REJECTION.LEAD_DEMOTION_EVIDENCE_REQUIRED,
   DECISION_REJECTION.LEAD_PROMOTION_EVIDENCE_REQUIRED,
 ]);
-const UNSUPPORTED_CODES = new Set([DECISION_REJECTION.UNSUPPORTED_DECISION_TYPE]);
+const UNSUPPORTED_CODES = new Set([
+  DECISION_REJECTION.UNSUPPORTED_DECISION_TYPE,
+  DECISION_REJECTION.LEAD_EVIDENCE_MULTI_EVENT_SCOPE_UNSUPPORTED,
+]);
 
 export const CONFLICT_CODES = Object.freeze({
   MULTIPLE_DISPOSITIONS: 'MULTIPLE_DISPOSITIONS',
@@ -519,12 +528,68 @@ function withinSection(event, section) {
 
 // ─── Lead interlocks ────────────────────────────────────────────────────────
 
+/**
+ * Does this Lead evidence record describe *this* event?
+ *
+ * SOURCE_POLICY.md §4 lists source identity as the first thing a Lead move must
+ * inspect. Inspecting it means confirming the identity belongs to the event
+ * being moved -- not merely that two non-empty strings are present. Without
+ * that, evidence gathered about event B satisfies a gate asked about event A,
+ * and the Lead Demotion Gate reports a PASS carrying A's id.
+ *
+ * The rule is membership, deliberately not equality: a Canonical event may
+ * legitimately carry several `sourceIds` and several `sourceEventIds`, so the
+ * check is that the cited identity is among them -- never that the arrays have
+ * one element, and never that they equal the citation.
+ *
+ * Both halves are necessary. Two events from one source share a `sourceId`, so
+ * matching only that would still let one event's evidence move another; the
+ * `sourceEventId` is what pins the citation to a single source event.
+ *
+ * A derived duplicate carries its origin's `sourceIds`/`sourceEventIds`, so it
+ * binds against that origin provenance. Its own derived event id lives in a
+ * different namespace and is never accepted here as a `sourceEventId`.
+ *
+ * Returns blocker codes; an empty array means the citation is in scope. It says
+ * nothing about whether the evidence is *sufficient* -- authority, section role,
+ * continuity and Core3 remain the existing gates' questions.
+ */
+export function leadEvidenceIdentityBlockers(leadEvidence, event) {
+  if (!isPlainObject(leadEvidence)) return ['LEAD_EVIDENCE_MISSING'];
+  const identity = leadEvidence.sourceIdentity;
+  if (!isPlainObject(identity) || !nonEmptyString(identity.sourceId) || !nonEmptyString(identity.sourceEventId)) {
+    return ['SOURCE_IDENTITY_MISSING'];
+  }
+  if (!isPlainObject(event)) return [LEAD_EVIDENCE_IDENTITY_MISMATCH];
+
+  const sourceIds = Array.isArray(event.sourceIds) ? event.sourceIds : [];
+  const sourceEventIds = Array.isArray(event.sourceEventIds) ? event.sourceEventIds : [];
+  const blockers = [];
+  // An event that states no source-event identity cannot have a citation bound
+  // to it at all. That fails closed rather than falling back to the source id,
+  // which would re-open exactly the same-source hole this check exists to shut.
+  if (!sourceIds.length) blockers.push('TARGET_EVENT_SOURCE_IDS_MISSING');
+  if (!sourceEventIds.length) blockers.push('TARGET_EVENT_SOURCE_EVENT_IDS_MISSING');
+  if (blockers.length) return blockers;
+
+  if (!sourceIds.includes(identity.sourceId.trim())) blockers.push(LEAD_EVIDENCE_IDENTITY_MISMATCH);
+  else if (!sourceEventIds.includes(identity.sourceEventId.trim())) blockers.push(LEAD_EVIDENCE_IDENTITY_MISMATCH);
+  return blockers;
+}
+
 // Demotion runs the existing Lead Demotion Gate unchanged. G11-D adds no second
 // opinion and relaxes nothing: an accepted decision reaches the same gate an
 // unaccepted one would.
+//
+// The identity binding is checked *before* the gate, and a failure short-circuits
+// it. `evaluateLeadDemotion` only asks that a source identity be present, so a
+// foreign but well-formed evidence record can make it answer PASS; accepting
+// that answer for this event is the thing being prevented.
 function leadDemotionBlockers(decision, event, destinationRole) {
   const evidence = decision.leadEvidence;
   if (!isPlainObject(evidence)) return ['LEAD_DEMOTION_EVIDENCE_MISSING'];
+  const scope = leadEvidenceIdentityBlockers(evidence, event);
+  if (scope.length) return scope;
   let report;
   try {
     report = evaluateLeadDemotion({
@@ -544,12 +609,13 @@ function leadDemotionBlockers(decision, event, destinationRole) {
 // is actually the lead there. It never decides that anything *is* the lead.
 const PROMOTION_SECTION_ROLES = new Set(['vocal-active', 'vocal-rest', 'instrumental', 'intro', 'interlude', 'solo', 'outro']);
 
-function leadPromotionBlockers(decision) {
+function leadPromotionBlockers(decision, event) {
   const evidence = decision.leadEvidence;
   const blockers = [];
   if (!isPlainObject(evidence)) return ['LEAD_PROMOTION_EVIDENCE_MISSING'];
-  const identity = evidence.sourceIdentity;
-  if (!isPlainObject(identity) || !nonEmptyString(identity.sourceId) || !nonEmptyString(identity.sourceEventId)) blockers.push('SOURCE_IDENTITY_MISSING');
+  // Same obligation as demotion, and for the same reason: a citation about some
+  // other event is not evidence that *this* material is the lead here.
+  blockers.push(...leadEvidenceIdentityBlockers(evidence, event));
   if (!PROMOTION_SECTION_ROLES.has(evidence.sectionRole)) blockers.push('SECTION_ROLE_UNRESOLVED');
   const score = isPlainObject(evidence.scoreEvidence) ? evidence.scoreEvidence : {};
   const audio = isPlainObject(evidence.audioEvidence) ? evidence.audioEvidence : {};
@@ -788,6 +854,7 @@ export function applyAcceptedArrangement({
     // Per-event legality against the role the parent candidate actually carries.
     const problems = [];
     const leadBlockers = [];
+    const leadAffecting = [];
     for (const eventId of targetIds) {
       const event = eventById.get(eventId);
       const currentRole = event.role ?? null;
@@ -831,23 +898,27 @@ export function applyAcceptedArrangement({
       }
 
       // Lead interlocks. An accepted decision does not disable them.
+      //
+      // Classification only here: the evidence is one record per decision, so
+      // whether it can be bound at all depends on how many events this decision
+      // turned out to touch. That is decided once, after the loop.
       const leavesLead = currentRole === LEAD_ROLE
         && ((decision.type === ACCEPTED_DECISION_TYPES.MOVE_ROLE && decision.toRole !== LEAD_ROLE)
           || decision.type === ACCEPTED_DECISION_TYPES.OMIT_FROM_SIX);
-      if (leavesLead) {
-        const destination = decision.type === ACCEPTED_DECISION_TYPES.OMIT_FROM_SIX ? 'omitted' : decision.toRole;
-        const blockers = leadDemotionBlockers(decision, event, destination);
-        if (blockers.length) leadBlockers.push({ kind: 'demotion', eventId, destination, blockers });
-      }
+      if (leavesLead) leadAffecting.push({
+        kind: 'demotion',
+        eventId,
+        event,
+        destination: decision.type === ACCEPTED_DECISION_TYPES.OMIT_FROM_SIX ? 'omitted' : decision.toRole,
+      });
       const entersLead = currentRole !== LEAD_ROLE
         && (decision.type === ACCEPTED_DECISION_TYPES.ASSIGN_ROLE || decision.type === ACCEPTED_DECISION_TYPES.MOVE_ROLE)
         && decision.toRole === LEAD_ROLE;
       const duplicatesIntoLead = decision.type === ACCEPTED_DECISION_TYPES.DUPLICATE_WITH_JUSTIFICATION
         && decision.toRoles.includes(LEAD_ROLE);
-      if (entersLead || duplicatesIntoLead) {
-        const blockers = leadPromotionBlockers(decision);
-        if (blockers.length) leadBlockers.push({ kind: 'promotion', eventId, destination: LEAD_ROLE, blockers });
-      }
+      if (entersLead || duplicatesIntoLead) leadAffecting.push({
+        kind: 'promotion', eventId, event, destination: LEAD_ROLE,
+      });
     }
 
     if (problems.length) {
@@ -861,6 +932,31 @@ export function applyAcceptedArrangement({
       }
       continue;
     }
+    // One decision carries one `leadEvidence` record, and one source-event
+    // citation cannot describe several different source events. Rather than
+    // silently binding it to the first event, reusing it across all of them, or
+    // splitting the decision on the caller's behalf, a Lead-affecting decision
+    // that resolved to anything other than exactly one note event is refused.
+    //
+    // This is containment, not a verdict: supporting it needs an eventId -> Lead
+    // evidence contract, which is a later phase.
+    if (leadAffecting.length && targetIds.length !== 1) {
+      reject(decision.id, DECISION_REJECTION.LEAD_EVIDENCE_MULTI_EVENT_SCOPE_UNSUPPORTED, {
+        targetEventIds: Object.freeze([...targetIds]),
+        leadAffectingEventIds: Object.freeze(leadAffecting.map(item => item.eventId)),
+        kinds: Object.freeze([...new Set(leadAffecting.map(item => item.kind))].sort(cmpStr)),
+        notice: 'A Lead-affecting accepted decision must resolve to exactly one note event: one leadEvidence record cannot cite several different source events. Re-issue it as one decision per Lead event. A lane naming several Lead events is the same case -- a lane id does not bind evidence to the events inside it.',
+      });
+      continue;
+    }
+
+    for (const item of leadAffecting) {
+      const blockers = item.kind === 'demotion'
+        ? leadDemotionBlockers(decision, item.event, item.destination)
+        : leadPromotionBlockers(decision, item.event);
+      if (blockers.length) leadBlockers.push({ kind: item.kind, eventId: item.eventId, destination: item.destination, blockers });
+    }
+
     if (leadBlockers.length) {
       const demotions = leadBlockers.filter(item => item.kind === 'demotion');
       const promotions = leadBlockers.filter(item => item.kind === 'promotion');
@@ -1360,10 +1456,17 @@ export const DECISION_APPLICATION_STATUS = Object.freeze({
   deterministicDerivedEventIdentity: true,
   leadDemotionGateEnforced: true,
   leadPromotionEvidenceRequired: true,
+  leadEvidenceBoundToTargetEvent: true,
+  leadEvidenceSourceEventIdMembershipRequired: true,
+  leadAffectingDecisionLimitedToOneEvent: true,
+  leadEvidenceRevalidatedDownstream: true,
   parentGateMetadataStripped: true,
 
   // Deliberately not done here.
   suggestionAutoAcceptance: false,
+  leadEvidenceSharedAcrossEvents: false,
+  leadEvidenceBoundBySourceIdAlone: false,
+  derivedEventIdAcceptedAsSourceEventId: false,
   highestPitchBecomesMelody: false,
   notProvenVocalDemotes: false,
   lastDecisionWinsConflictResolution: false,

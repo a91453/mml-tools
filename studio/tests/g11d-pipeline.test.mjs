@@ -122,22 +122,37 @@ const eventsOfVoice = voice => suggestion.lanes
 
 // The reviewer's decisions. Every role in the candidate is here because a
 // reviewer put it here: nothing is inherited from the G11-C ranking.
+// A Lead-affecting decision must resolve to exactly one note event: one
+// leadEvidence record cites one source event, so assigning a whole six-note lane
+// to Melody in a single decision would be binding one citation to six different
+// source events. The reviewer therefore issues one decision per Lead event, each
+// carrying that event's own source identity, taken from the event itself rather
+// than typed out.
+const leadDecisions = () => {
+  const lane = suggestion.lanes.find(item => item.id === laneId(LEAD_VOICE));
+  const byId = new Map(baseline.events.map(event => [event.id, event]));
+  return [...lane.eventIds].sort().map((eventId, index) => {
+    const event = byId.get(eventId);
+    return {
+      id: `acc-lead-${index}`,
+      type: 'ASSIGN_ROLE',
+      target: { eventIds: [eventId] },
+      toRole: 'Melody',
+      reason: 'Reviewed: the flute line is the lead throughout this excerpt.',
+      evidence: ['fixture:score lead staff bars 1-2'],
+      leadEvidence: {
+        sourceIdentity: { sourceId: event.sourceIds[0], sourceEventId: event.sourceEventIds[0] },
+        sectionRole: 'instrumental',
+        scoreEvidence: { availability: 'available', classification: 'lead', citation: 'fixture:score lead staff' },
+        audioEvidence: { availability: 'available', classification: 'foreground', citation: 'fixture:audio 0:00-0:02 foreground' },
+      },
+      acceptance: acceptance(),
+    };
+  });
+};
+
 const ACCEPTED = [
-  {
-    id: 'acc-lead',
-    type: 'ASSIGN_ROLE',
-    target: { laneId: laneId(LEAD_VOICE) },
-    toRole: 'Melody',
-    reason: 'Reviewed: the flute line is the lead throughout this excerpt.',
-    evidence: ['fixture:score lead staff bars 1-2'],
-    leadEvidence: {
-      sourceIdentity: { sourceId: fragment.source.id, sourceEventId: 'track:1/channel:0/note:72@0' },
-      sectionRole: 'instrumental',
-      scoreEvidence: { availability: 'available', classification: 'lead', citation: 'fixture:score lead staff' },
-      audioEvidence: { availability: 'available', classification: 'foreground', citation: 'fixture:audio 0:00-0:02 foreground' },
-    },
-    acceptance: acceptance(),
-  },
+  ...leadDecisions(),
   ...lanesOfVoice(HARMONY_VOICE).map((lane, index) => ({
     id: `acc-harmony-${index}`,
     type: 'ASSIGN_ROLE',
@@ -171,9 +186,17 @@ const ACCEPTED = [
 
 test('the accepted decisions target the lane ids G11-C actually published', () => {
   const published = new Set(suggestion.lanes.map(lane => lane.id));
+  const known = new Set(baseline.events.map(event => event.id));
   for (const decision of ACCEPTED) {
-    assert.ok(published.has(decision.target.laneId), `${decision.target.laneId} must be a real G11-C lane`);
+    if (decision.target.laneId) assert.ok(published.has(decision.target.laneId), `${decision.target.laneId} must be a real G11-C lane`);
+    else for (const eventId of decision.target.eventIds) assert.ok(known.has(eventId), `${eventId} must be a real baseline event`);
   }
+  // Every Lead-affecting decision resolves to exactly one event, each citing its
+  // own source identity rather than sharing one citation across the lane.
+  const leadTargets = ACCEPTED.filter(decision => decision.toRole === 'Melody');
+  assert.equal(leadTargets.length, 6);
+  for (const decision of leadTargets) assert.equal(decision.target.eventIds.length, 1);
+  assert.equal(new Set(leadTargets.map(decision => decision.leadEvidence.sourceIdentity.sourceEventId)).size, 6);
   // The polyphonic accompaniment really did decompose into three lanes, so the
   // fixture exercises a multi-lane role rather than a convenient single lane.
   assert.equal(lanesOfVoice(HARMONY_VOICE).length, 3);
@@ -350,11 +373,30 @@ test('a Lead demotion in revision 2 still has to satisfy the Lead Demotion Gate 
   assert.equal(bare.status, 'PENDING');
   assert.equal(bare.candidate, null);
 
-  // With it, the move applies -- and the readiness Lead gate still asks for the
-  // same evidence, from the same gate, before it will pass.
-  const evidenced = demote({
+  // A citation naming the Canonical event id instead of the source event id is
+  // refused too: it proves nothing about which source event this is.
+  const wrongNamespace = demote({
     leadEvidence: {
       sourceIdentity: { sourceId: fragment.source.id, sourceEventId: leadEventIds[0] },
+      sectionRole: 'instrumental',
+      scoreEvidence: { availability: 'available', classification: 'inner', citation: 'fixture:score inner staff bar 1' },
+      audioEvidence: { availability: 'available', classification: 'background', citation: 'fixture:audio 0:00 background' },
+      continuity: { checked: true, createsLeadGap: false, replacementEventIds: [] },
+      core3: { checked: true, status: 'PASS' },
+      positiveReason: 'Fixture.',
+    },
+  });
+  assert.equal(wrongNamespace.status, 'PENDING');
+  assert.equal(wrongNamespace.candidate, null);
+
+  // With it, the move applies -- and the readiness Lead gate still asks for the
+  // same evidence, from the same gate, before it will pass.
+  // The citation names the source event, not the Canonical event id: those are
+  // different namespaces, and the identity binding refuses the latter.
+  const leadEvent = baseline.events.find(event => event.id === leadEventIds[0]);
+  const evidenced = demote({
+    leadEvidence: {
+      sourceIdentity: { sourceId: leadEvent.sourceIds[0], sourceEventId: leadEvent.sourceEventIds[0] },
       sectionRole: 'instrumental',
       scoreEvidence: { availability: 'available', classification: 'inner', citation: 'fixture:score inner staff bar 1' },
       audioEvidence: { availability: 'available', classification: 'background', citation: 'fixture:audio 0:00 background' },

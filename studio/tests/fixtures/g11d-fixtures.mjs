@@ -50,7 +50,7 @@ const note = (id, pitch, start, end, { role = null, voice = null, sourceId = SOU
  * is what an unassigned baseline looks like; the two share event ids so a test
  * can compare the same material with and without declared roles.
  */
-export function roleDeclaredBaseline({ withRoles = true, id = 'fixture:baseline', extraSource = false } = {}) {
+export function roleDeclaredBaseline({ withRoles = true, id = 'fixture:baseline', extraSource = false, multiProvenance = false } = {}) {
   const role = value => (withRoles ? value : null);
   const events = [
     note('lead-1', 72, '0', '1', { role: role('Melody'), voice: 'lead' }),
@@ -70,9 +70,25 @@ export function roleDeclaredBaseline({ withRoles = true, id = 'fixture:baseline'
   if (extraSource) {
     events.push(note('alt-1', 64, '0', '2', { voice: 'alt', sourceId: SECOND_SOURCE_ID }));
   }
+  // An event two sources both attest. Identity binding is membership, not
+  // equality, so a citation naming either source and either source event must
+  // still bind -- and a citation naming neither must not.
+  if (multiProvenance) {
+    events.push(createCanonicalNoteEvent({
+      id: 'multi-1',
+      pitch: 67,
+      start: '0',
+      end: '1',
+      sourceIds: [SOURCE_ID, SECOND_SOURCE_ID],
+      sourceEventIds: [`${SOURCE_ID}#multi-1`, `${SECOND_SOURCE_ID}#multi-1`],
+      role: role('Chord3'),
+      voice: 'multi',
+      metadata: {},
+    }));
+  }
   const sources = [
     createSource({ id: SOURCE_ID, label: 'Fixture official score', kind: 'official-musicxml', authority: 'primary-symbolic' }),
-    ...(extraSource ? [createSource({ id: SECOND_SOURCE_ID, label: 'Fixture third-party MIDI', kind: 'third-party-midi', authority: 'supporting' })] : []),
+    ...(extraSource || multiProvenance ? [createSource({ id: SECOND_SOURCE_ID, label: 'Fixture third-party MIDI', kind: 'third-party-midi', authority: 'supporting' })] : []),
   ];
   return createCanonicalProject({
     id,

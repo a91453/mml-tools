@@ -21,12 +21,27 @@ import { evaluateCore3Continuity } from '../arbitration/core3.mjs';
 import { evaluateLeadDemotion } from '../arbitration/lead-demotion.mjs';
 import { analyzeCrossSourceHarmony } from '../arbitration/harmony.mjs';
 import { evaluateProjectReadiness } from '../final/index.mjs';
-import { ACCEPTED_DECISION_TYPES, LEAD_ROLE } from './decision-application.mjs';
+import {
+  ACCEPTED_DECISION_TYPES,
+  LEAD_ROLE,
+  LEAD_EVIDENCE_IDENTITY_MISMATCH,
+  DECISION_REJECTION,
+  leadEvidenceIdentityBlockers,
+} from './decision-application.mjs';
 
 const requirePass = application => {
   if (!application || typeof application !== 'object') throw Error('reviewAppliedCandidate requires a G11-D application result');
   return application.status === 'PASS' && application.candidate;
 };
+
+const pendingReport = (eventId, destinationRole, blockers) => Object.freeze({
+  status: 'PENDING',
+  pass: false,
+  eventId,
+  destinationRole,
+  blockers: Object.freeze([...blockers]),
+  warnings: Object.freeze([]),
+});
 
 /**
  * The Lead Demotion reports the applied decisions' own evidence supports.
@@ -37,6 +52,14 @@ const requirePass = application => {
  * produced by `evaluateLeadDemotion()` itself against the *baseline* event. A
  * decision whose evidence does not satisfy the gate produces a non-PASS report
  * here exactly as it did at application time; this never manufactures a PASS.
+ *
+ * Defence in depth, and not redundant. An application result is data: it can be
+ * restored from storage, hand-built, mutated, or produced by a caller that
+ * bypassed the recording path entirely, so `status === 'PASS'` is not evidence
+ * that the scope checks ever ran. Both the identity binding and the one-event
+ * containment are therefore re-established here, against the baseline event the
+ * readiness Lead gate keys on -- because this is the last place a foreign
+ * citation could be re-packaged as a PASS carrying the target event's id.
  */
 export function leadDemotionReportsFromApplication(application, baseline) {
   if (!requirePass(application)) return [];
@@ -44,12 +67,33 @@ export function leadDemotionReportsFromApplication(application, baseline) {
   const reports = [];
   for (const entry of application.applied) {
     if (entry.type !== ACCEPTED_DECISION_TYPES.MOVE_ROLE && entry.type !== ACCEPTED_DECISION_TYPES.OMIT_FROM_SIX) continue;
-    for (const item of entry.events) {
-      if (item.fromRole !== LEAD_ROLE) continue;
-      if (entry.type === ACCEPTED_DECISION_TYPES.MOVE_ROLE && item.toRole === LEAD_ROLE) continue;
+    const destinationOf = item => (entry.type === ACCEPTED_DECISION_TYPES.OMIT_FROM_SIX ? 'omitted' : item.toRole);
+    const demoted = (entry.events ?? []).filter(item =>
+      item.fromRole === LEAD_ROLE
+      && !(entry.type === ACCEPTED_DECISION_TYPES.MOVE_ROLE && item.toRole === LEAD_ROLE));
+    if (!demoted.length) continue;
+
+    // One evidence record, one Lead event. An entry claiming several is not
+    // split, and its first event does not inherit the citation.
+    if ((entry.events ?? []).length !== 1) {
+      for (const item of demoted) {
+        reports.push(pendingReport(item.eventId, destinationOf(item), [DECISION_REJECTION.LEAD_EVIDENCE_MULTI_EVENT_SCOPE_UNSUPPORTED]));
+      }
+      continue;
+    }
+
+    for (const item of demoted) {
       const event = baselineById.get(item.eventId);
       if (!event) continue;
-      const destinationRole = entry.type === ACCEPTED_DECISION_TYPES.OMIT_FROM_SIX ? 'omitted' : item.toRole;
+      const destinationRole = destinationOf(item);
+      const scope = leadEvidenceIdentityBlockers(entry.leadEvidence, event);
+      if (scope.length) {
+        // Never reaches evaluateLeadDemotion: that gate only asks for a present
+        // source identity, so foreign-but-well-formed evidence can make it
+        // answer PASS under this event's id.
+        reports.push(pendingReport(event.id, destinationRole, scope.includes(LEAD_EVIDENCE_IDENTITY_MISMATCH) ? scope : [...scope, LEAD_EVIDENCE_IDENTITY_MISMATCH]));
+        continue;
+      }
       try {
         reports.push(evaluateLeadDemotion({
           ...(entry.leadEvidence ?? {}),
@@ -58,7 +102,7 @@ export function leadDemotionReportsFromApplication(application, baseline) {
           positiveReason: entry.leadEvidence?.positiveReason ?? entry.reason,
         }));
       } catch (error) {
-        reports.push(Object.freeze({ status: 'PENDING', pass: false, eventId: event.id, destinationRole, blockers: Object.freeze([`LEAD_DEMOTION_EVIDENCE_INVALID: ${error.message}`]), warnings: Object.freeze([]) }));
+        reports.push(pendingReport(event.id, destinationRole, [`LEAD_DEMOTION_EVIDENCE_INVALID: ${error.message}`]));
       }
     }
   }

@@ -289,9 +289,72 @@ An accepted decision does not disable a gate.
 * Entering Melody requires the mirror obligation: a resolved section role and a
   positive, cited score-lead or audio-foreground classification. This is an
   evidence-presence interlock; it decides nothing about what the lead *is*.
+* Both sides first require the evidence to be **in scope for the event being
+  moved** — see below.
 * G11-D never reports Core3 as complete. `certifiesCore3Complete` is `false`,
   and Core3 completeness is decided by `arbitration/core3.mjs` against the
   baseline, after application.
+
+### Lead evidence is bound to the event it is attached to
+
+`SOURCE_POLICY.md` §4 lists source identity as the first thing a Lead move must
+inspect. Inspecting it means confirming the citation belongs to the event being
+moved. `leadEvidenceIdentityBlockers(leadEvidence, event)` is that check, and
+both interlocks run it *before* they call or accept the underlying gate:
+
+```
+evidence.sourceIdentity.sourceId      ∈ event.sourceIds
+evidence.sourceIdentity.sourceEventId ∈ event.sourceEventIds
+```
+
+Membership, deliberately not equality. A Canonical event may legitimately carry
+several `sourceIds` and several `sourceEventIds`; the check never requires either
+array to have one element, and never compares the arrays to the citation.
+
+Both halves are necessary. Two events from one source share a `sourceId`, so
+matching only that would still let one event's evidence move another. The
+`sourceEventId` is what pins a citation to a single source event.
+
+An event that states no `sourceEventIds` cannot have Lead evidence bound to it
+and fails closed with `TARGET_EVENT_SOURCE_EVENT_IDS_MISSING`, rather than
+falling back to the source id.
+
+A derived duplicate carries its origin's `sourceIds`/`sourceEventIds` and binds
+against that origin provenance. Its own derived event id is a different
+namespace and is never accepted as a `sourceEventId`.
+
+Out-of-scope evidence produces `LEAD_EVIDENCE_EVENT_IDENTITY_MISMATCH` and a
+result status of `PENDING` — the evidence has not shown this event is the one it
+describes, which is not the same as proving the musical decision wrong.
+
+### One Lead event per decision
+
+A decision carries one `leadEvidence` record, and one source-event citation
+cannot describe several different source events. A Lead-affecting decision —
+Melody to another role, Melody to omitted, anything into Melody, including a
+duplication whose `toRoles` contain Melody — that resolves to anything other
+than exactly one note event is refused with
+`LEAD_EVIDENCE_MULTI_EVENT_SCOPE_UNSUPPORTED` and status `UNSUPPORTED`.
+
+Nothing is bound to the first event, reused across the rest, or split on the
+caller's behalf. A lane naming several Lead events is the same case: a lane id
+does not bind evidence to the events inside it. Multi-event support needs an
+`eventId → Lead evidence` contract, which is a later phase.
+
+Decisions that touch no Lead event are unaffected and may still target many
+events.
+
+### Downstream defence in depth
+
+`leadDemotionReportsFromApplication()` re-establishes both checks against the
+baseline event before producing any report. An application result is data — it
+can be restored, hand-built, mutated, or produced by a caller that bypassed the
+recording path — so `status === 'PASS'` is not evidence that the scope checks
+ever ran. This is the last place a foreign citation could be re-packaged as a
+PASS carrying the target event's id, because the readiness Lead gate matches
+reports to required Lead events by `eventId`. A mismatch yields a `PENDING`
+report carrying `LEAD_EVIDENCE_EVENT_IDENTITY_MISMATCH`; the underlying gate is
+never called.
 
 Omitting Core3 material is applied when the decision is legal and evidenced, and
 is reported as `CORE3_MATERIAL_OMITTED`; whether the result is still a complete
@@ -403,6 +466,7 @@ that are loaded, never supplied by a caller.
 | `studio/tests/decision-application-binding.test.mjs` | all five staleness bindings, parent tampering, duplicate ids, every conflict class and its order-independence, the transactional guarantee, and the Lead interlocks |
 | `studio/tests/decision-application.test.mjs` | immutability, determinism under rotation / reversed events / reversed keys, KEEP, ASSIGN, MOVE, OMIT, DUPLICATE, revision lineage, provenance, section windows, post-validation mutation |
 | `studio/tests/decision-application-downstream.test.mjs` | Core3, Lead and cross-source gates blocking a correctly applied candidate, and Final-emitter consumability |
+| `studio/tests/decision-application-lead-evidence.test.mjs` | Lead evidence identity binding (correct / foreign event / same source, wrong event / right event, wrong source / missing), membership over equality, derived-duplicate namespace, one-event containment for demotion, omission, promotion and lanes, the downstream re-check, and the readiness end-to-end |
 | `studio/tests/g11d-pipeline.test.mjs` | raw SMF bytes → G11-A → G11-B → G11-C → accepted decisions → G11-D → diff → readiness |
 | `studio/tests/web-g11d-decisions.test.mjs` | Web recording, revision safety, tampering, import, and stored-application binding |
 
@@ -433,9 +497,56 @@ Mutation 1 is the interesting one: the project digest deliberately normalizes
 array order away, so it does **not** catch an in-place sort. The deep-equality
 regression does. Both checks exist because neither alone is sufficient.
 
+Five further mutations cover the external-review P1 fix. All five were caught.
+
+| # | Mutation | Failing tests |
+| --- | --- | --- |
+| 11 | the `sourceEventId` membership check is removed | 10 |
+| 12 | promotion does not check identity | 3 |
+| 13 | downstream report generation trusts the applied evidence | 2 |
+| 14 | one-event containment is removed | 5 |
+| 15 | demotion accepts the existing gate's answer without binding | 4 |
+
+Mutation 11 is the one that matters most: removing only the `sourceEventId` half
+leaves the `sourceId` check in place, which still passes for any two events from
+the same source — the exact hole the external review found.
+
+## External review P1 — Lead evidence was not bound to the targeted event
+
+Found by independent external review of PR HEAD `cc8e3b4`, after the first six
+checkpoints. Recorded here rather than quietly folded in.
+
+**Finding.** `evaluateLeadDemotion()` asks only that a source identity be
+present, and `leadPromotionBlockers()` asked the same. Neither confirmed the
+identity belonged to the event under decision.
+
+**Exploit.** Event A is moved out of Melody, or promoted into it, while carrying
+event B's `sourceIdentity` and B's score/audio evidence. The gate accepts it.
+Worse, `leadDemotionReportsFromApplication()` then re-ran the gate with A's
+baseline event and produced `{eventId: 'A', status: 'PASS'}`, and the readiness
+Lead gate matches reports to required Lead events by `eventId` — so B's evidence
+became A's Lead PASS. Reproduced before the fix on all three vectors, including
+`readiness.gates.leadDemotion === 'PASS'` for a Melody event whose only evidence
+described a different one.
+
+**Root cause.** Presence of an identity was treated as proof of identity. Two
+events from one source share a `sourceId`, so even a `sourceId` comparison would
+not have closed it; the `sourceEventId` binding is the necessary condition.
+
+**Fix.** The shared `leadEvidenceIdentityBlockers()` above, enforced in the
+backend application path so no caller can bypass it, on demotion and promotion
+alike, plus the one-event containment and the downstream re-check.
+
+**Consequence for callers.** A reviewer can no longer assign or demote a whole
+lane of Lead events in one decision. That pattern is exactly what let one
+citation stand for many events, and it is now one decision per Lead event, each
+with its own citation. The end-to-end pipeline fixture was updated accordingly.
+
 ## Findings from the pre-PR adversarial review
 
-No P0 or P1 survived. Three P2/P3 items were found and fixed before the PR:
+No P0 or P1 was found by the pre-PR self-review; the P1 above came from
+independent external review afterwards, which is the honest reading of what a
+self-review is worth. Three P2/P3 items were found and fixed before the PR:
 
 * **P2 — a duplicate's doubling with its own original was reported nowhere.**
   Cross-source arbitration correctly skips it (same `sourceIds`), and no other
@@ -466,6 +577,15 @@ Remaining, recorded rather than fixed:
 * Lane targeting requires the G11-C suggestion the decision was accepted against.
   A lane whose events are not all present in the project being applied onto fails
   closed rather than shrinking to the survivors.
+* A Lead-affecting decision must resolve to exactly one note event. Multi-event
+  Lead decisions need an `eventId → Lead evidence` contract and are deferred.
+* An event carrying no `sourceEventIds` cannot be the target of a Lead-affecting
+  decision at all. That is the fail-closed consequence of requiring the binding,
+  and it is a real restriction for any adapter that leaves the field empty.
+* The Lead evidence path in `studio/web/model.mjs` that predates G11-D calls
+  `evaluateLeadDemotion()` directly and is **not** covered by this binding. It is
+  outside this stage's application path and was left alone rather than widened
+  into; it is recorded here so the gap is visible rather than assumed closed.
 * Rest events are carried through unchanged and cannot be targeted.
 * Reduced one-/two-role performance questions (`PENDING.md` P17) are untouched.
 * M6 (Canonical bootstrap Git-subprocess fragility under parallel tests) is not
