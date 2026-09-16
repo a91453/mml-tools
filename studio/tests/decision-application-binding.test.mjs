@@ -269,6 +269,33 @@ test('a revision that claims a different baseline cannot be used as a parent', (
   assert.ok(result.rejected.some(item => item.code === 'PARENT_BASELINE_MISMATCH'));
 });
 
+test('a parent revision made under a different Canonical release cannot be chained onto', () => {
+  const first = apply([assign('a1', ['tex-1'], 'Chord3')]);
+  // A revision that is internally honest -- it recomputes to its own id, names
+  // this baseline and this candidate -- but was produced under another rules
+  // snapshot. Only the Canonical binding stands between it and revision 2.
+  const otherCanonical = { ...CANONICAL_IDENTITY, rules_snapshot_sha: 'f'.repeat(40) };
+  const foreignRevision = createArrangementRevision({
+    index: first.revision.index,
+    parentRevisionId: null,
+    baselineIdentity: first.revision.baselineIdentity,
+    parentCandidateIdentity: null,
+    decisionSetDigest: first.revision.decisionSetDigest,
+    canonicalIdentity: otherCanonical,
+    laneDecompositionDigest: first.revision.laneDecompositionDigest,
+    candidateDigest: first.revision.candidateDigest,
+  });
+  assert.equal(revisionIdentityMatches(foreignRevision), true);
+  const result = applyAcceptedArrangement({
+    baseline, suggestion, canonicalIdentity: CANONICAL_IDENTITY,
+    parent: { revision: foreignRevision, candidate: first.candidate },
+    decisions: [move('m1', ['tex-1'], 'Chord3', 'Chord4', { acceptance: accept({ reviewedRevisionId: foreignRevision.id }) })],
+  });
+  assert.equal(result.status, 'FAIL');
+  assert.ok(result.rejected.some(item => item.code === 'PARENT_CANONICAL_MISMATCH'));
+  assert.equal(result.candidate, null);
+});
+
 test('two decisions sharing an id are refused rather than deduplicated', () => {
   const result = apply([assign('a1', ['tex-1'], 'Chord3'), assign('a1', ['tex-2'], 'Chord4')]);
   assert.equal(result.status, 'FAIL');

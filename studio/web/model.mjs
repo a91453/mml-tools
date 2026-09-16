@@ -11,7 +11,7 @@ import { evaluateProjectReadiness, emitFinalMml, EMIT_STATUS, DIAGNOSTIC_SEVERIT
 import { attachAudioAlignmentEvidence } from '../backend/audio/index.mjs';
 import { alignmentProjectText } from './audio-payload.mjs';
 import { arrangementBinding, deriveArrangement, ingestMidiSource, isRawMidiAsset, reingestMidiAsset, verifyStoredProject } from './midi-source.mjs';
-import { acceptedArrangementBinding, acceptedDecisionBindings, buildAcceptedDecisionRecord, deriveAcceptedArrangement } from './arrangement-decisions.mjs';
+import { acceptedArrangementBinding, acceptedDecisionBindings, acceptedRevisionHead, buildAcceptedDecisionRecord, deriveAcceptedArrangement } from './arrangement-decisions.mjs';
 
 export const WORKSPACE_SCHEMA = 'mml-studio-web/workspace@1';
 export const MAX_TEXT_BYTES = 4 * 1024 * 1024;
@@ -136,6 +136,14 @@ export function importWorkspace(raw) {
 // now, so a decision cannot be recorded as accepted against inputs that are not
 // on screen. `acceptedDecisionBindings` is exported for the same reason: a UI
 // fills an acceptance block from what is loaded, never from what it remembers.
+//
+// `reviewedRevisionId` is the caller's statement of which G11-D revision the
+// reviewer looked at. It is checked against the head of the chain this call
+// re-derives from the stored records: null when no revision exists yet, the
+// last PASS revision's id otherwise. A decision cannot be recorded against a
+// revision that is not the verified head -- not a superseded one, not a
+// sibling, not one an import claims -- so the chain stays linear and every
+// recorded decision names a parent the backend has actually built.
 export function recordAcceptedDecision(workspace, decision, { reviewedRevisionId = null } = {}) {
   const asset = workspace.assets?.candidate;
   if (!isRawMidiAsset(asset)) throw Error('UNSUPPORTED: accepted arrangement decisions need a raw MIDI candidate source');
@@ -143,6 +151,17 @@ export function recordAcceptedDecision(workspace, decision, { reviewedRevisionId
   const integrity = verifyStoredProject(asset, project);
   if (!integrity.verified) throw Error(`SOURCE_INTEGRITY_UNVERIFIED: ${integrity.reasons.join(', ')}`);
   const arrangement = deriveArrangement(project, { sourceSha256: asset.source?.sha256 });
+  const current = deriveAcceptedArrangement({
+    project,
+    suggestion: arrangement.candidate,
+    records: workspace.acceptedDecisions,
+    revision: workspace.revision,
+    sourceSha256: asset.source?.sha256,
+  });
+  const head = acceptedRevisionHead(current);
+  if (reviewedRevisionId !== head) {
+    throw Error(`STALE_ACCEPTED_DECISION: DECISION_REVIEWED_REVISION_NOT_CHAIN_HEAD (expected ${head ?? 'null'}, observed ${reviewedRevisionId ?? 'null'})`);
+  }
   const record = buildAcceptedDecisionRecord({
     project,
     suggestion: arrangement.candidate,
@@ -285,7 +304,7 @@ function rawMidiReport(workspace, projects) {
       arrangement,
       acceptedArrangement,
       persistedAcceptedArrangement: asset.acceptedArrangement
-        ? acceptedArrangementBinding({ stored: asset.acceptedArrangement, project: projects[slot], revision: workspace.revision, sourceSha256: source.sha256 })
+        ? acceptedArrangementBinding({ stored: asset.acceptedArrangement, project: projects[slot], revision: workspace.revision, sourceSha256: source.sha256, derived: acceptedArrangement })
         : null,
       error,
     });
