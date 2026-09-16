@@ -10,7 +10,8 @@ import assert from 'node:assert/strict';
 import { spawn, spawnSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
 import { availableParallelism } from 'node:os';
-import { writeFileSync } from 'node:fs';
+import { chownSync, readdirSync, writeFileSync } from 'node:fs';
+import { join } from 'node:path';
 import { loadPublishedCanonical } from '../backend/bootstrap/index.mjs';
 import { PUBLISHED_CANONICAL } from '../backend/rules/index.mjs';
 import { MANIFEST_PATH, PUBLISHED_REF, isolatedRepository, observePublishedRef, repositoryRoot } from './support/isolated-repository.mjs';
@@ -113,8 +114,7 @@ test('ambient Git redirection cannot move discovery away from the requested root
   const redirected = {
     GIT_DIR: `${other.dir}/.git`, GIT_WORK_TREE: other.dir, GIT_COMMON_DIR: `${other.dir}/.git`,
     GIT_OBJECT_DIRECTORY: `${other.dir}/.git/objects`, GIT_CEILING_DIRECTORIES: repositoryRoot,
-    GIT_CONFIG_COUNT: '1', GIT_CONFIG_KEY_0: 'core.bare', GIT_CONFIG_VALUE_0: 'true',
-    GIT_CONFIG_PARAMETERS: "'core.bare=true'", GIT_NAMESPACE: 'probe', GIT_INDEX_FILE: `${other.dir}/.probe-index`,
+    GIT_NAMESPACE: 'probe', GIT_INDEX_FILE: `${other.dir}/.probe-index`,
   };
   const previous = {};
   for (const [key, value] of Object.entries(redirected)) { previous[key] = process.env[key]; process.env[key] = value; }
@@ -290,4 +290,62 @@ test('a replacement ref in the repository cannot substitute the pinned rule byte
   const loaded = loadPublishedCanonical({ root: repo.dir, supportedCanonicalVersion: SUPPORTED });
   assert.deepEqual(loaded.documents, PUBLISHED_CANONICAL.documents);
   assert.doesNotMatch(loaded.documents.find(document => document.path === 'docs/MASTER_RULES.md').content, /Forged rule/);
+});
+
+// --- Configuration injection and observation guards -----------------------------
+
+function withEnvironment(env, run) {
+  const previous = {};
+  for (const [key, value] of Object.entries(env)) { previous[key] = process.env[key]; process.env[key] = value; }
+  try { return run(); }
+  finally { for (const [key, value] of Object.entries(previous)) { if (value === undefined) delete process.env[key]; else process.env[key] = value; } }
+}
+const inject = (key, value) => ({ GIT_CONFIG_COUNT: '1', GIT_CONFIG_KEY_0: key, GIT_CONFIG_VALUE_0: value });
+
+test('injected configuration cannot relocate discovery: the load is the requested root or fails closed', t => {
+  const other = isolatedRepository(t);
+  const source = other.git('show', `${other.published}:${MANIFEST_PATH}`);
+  other.publish(other.republishManifest(unsupportedVersion(source), 'probe: unsupported Canonical version'));
+  for (const [key, value] of [['core.worktree', other.dir], ['core.bare', 'true'], ['core.repositoryformatversion', '1'], ['extensions.worktreeConfig', 'true']]) {
+    withEnvironment(inject(key, value), () => {
+      let loaded;
+      try { loaded = loadPublishedCanonical({ root: repositoryRoot, supportedCanonicalVersion: SUPPORTED }); }
+      catch (error) { assert.equal(error.code, 'CANONICAL_NOT_LOADED', key); return; }
+      assert.deepEqual(loaded.provenance, PUBLISHED_CANONICAL.provenance, key);
+      assert.deepEqual(loaded.documents, PUBLISHED_CANONICAL.documents, key);
+    });
+  }
+  // The channel itself reaches Git: it carries safe.directory for foreign-owned checkouts.
+  const carried = gitEnvironment({ ...process.env, ...inject('safe.directory', '*'), GIT_CONFIG_PARAMETERS: "'safe.directory=*'" });
+  assert.equal(carried.GIT_CONFIG_COUNT, '1');
+  assert.equal(carried.GIT_CONFIG_KEY_0, 'safe.directory');
+  assert.equal(carried.GIT_CONFIG_PARAMETERS, "'safe.directory=*'");
+  assert.deepEqual(loadPublishedCanonical({ root: repositoryRoot, supportedCanonicalVersion: SUPPORTED }).metadata, PUBLISHED_CANONICAL.metadata);
+});
+
+test('a foreign-owned checkout is refused by Git unless safe.directory arrives through the injection channel',
+  { skip: process.getuid?.() !== 0 && 'creating a foreign-owned checkout needs root' }, t => {
+  const foreign = isolatedRepository(t);
+  const chownTree = path => { chownSync(path, 65534, 65534); for (const entry of readdirSync(path, { withFileTypes: true })) { const child = join(path, entry.name); if (entry.isDirectory()) chownTree(child); else if (!entry.isSymbolicLink()) chownSync(child, 65534, 65534); } };
+  chownTree(foreign.dir);
+  assert.throws(() => loadPublishedCanonical({ root: foreign.dir, supportedCanonicalVersion: SUPPORTED }), error => error.code === 'CANONICAL_NOT_LOADED' && /dubious ownership/.test(String(error.cause?.stderr ?? error.cause?.message ?? '')));
+  withEnvironment(inject('safe.directory', '*'), () => {
+    assert.deepEqual(loadPublishedCanonical({ root: foreign.dir, supportedCanonicalVersion: SUPPORTED }).metadata, PUBLISHED_CANONICAL.metadata);
+  });
+});
+
+test('the published-ref observation sees a delete-and-recreate, not only a rewrite-and-restore', t => {
+  const repo = isolatedRepository(t);
+  const before = observePublishedRef(repo.dir);
+  assert.deepEqual(observePublishedRef(repo.dir), before, 'observing is read-only and stable');
+  repo.git('update-ref', '-d', PUBLISHED_REF);
+  repo.publish(repo.published);
+  const recreated = observePublishedRef(repo.dir);
+  assert.equal(recreated.value, before.value);
+  assert.notDeepEqual(recreated, before);
+  const twin = repo.twinCommit(repo.published, 'probe');
+  const settled = observePublishedRef(repo.dir);
+  repo.publish(twin);
+  repo.publish(repo.published);
+  assert.notDeepEqual(observePublishedRef(repo.dir), settled);
 });

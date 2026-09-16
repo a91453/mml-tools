@@ -58,7 +58,7 @@ export function parseCanonicalManifest(text) {
     const row = line.match(/^\| \[([^\]]+)\]\(([^)]+)\) \| `([A-Z_]+)` \| [^|]+ \|$/);
     requireValue(row, `Invalid Manifest authority row: ${line}`);
     const [, path, url, authority] = row;
-    requireValue(/^[A-Za-z0-9_./-]+$/.test(path) && !path.startsWith('/') && !path.split('/').some(part => part === '..' || part === '.'), 'Invalid snapshot path');
+    requireValue(/^[A-Za-z0-9_./-]+$/.test(path) && !path.startsWith('/') && !path.includes('//') && !path.split('/').some(part => part === '..' || part === '.'), 'Invalid snapshot path');
     requireValue(authorityKinds.has(authority), `Unknown authority: ${authority}`);
     const type = path.endsWith('/') ? 'tree' : 'blob';
     requireValue(url === `https://github.com/${BOOTSTRAP_CONTRACT.repository}/${type}/${metadata.rules_snapshot_sha}/${path}`, `Unpinned snapshot locator: ${path}`);
@@ -73,12 +73,16 @@ export function parseCanonicalManifest(text) {
 // --- Git access ---------------------------------------------------------------
 //
 // Every Git command is bound to the requested repository root. Ambient variables
-// that would point Git at another repository, object store, index, namespace or
-// injected configuration are dropped, so neither a parent process (a hook, a
-// wrapper, a test harness) nor a caller-supplied environment can redirect
-// discovery. Objects are read as stored, without replacement refs, and the
-// Manifest pathspec is literal.
-const REDIRECTING_GIT_ENVIRONMENT = /^GIT_(DIR|WORK_TREE|COMMON_DIR|INDEX_FILE|INDEX_VERSION|OBJECT_DIRECTORY|ALTERNATE_OBJECT_DIRECTORIES|QUARANTINE_PATH|NAMESPACE|CEILING_DIRECTORIES|DISCOVERY_ACROSS_FILESYSTEM|IMPLICIT_WORK_TREE|PREFIX|GRAFT_FILE|SHALLOW_FILE|REPLACE_REF_BASE|NO_REPLACE_OBJECTS|CONFIG_PARAMETERS|CONFIG_COUNT|CONFIG_KEY_\d+|CONFIG_VALUE_\d+|GLOB_PATHSPECS|NOGLOB_PATHSPECS|ICASE_PATHSPECS|LITERAL_PATHSPECS)$/;
+// that would point Git at another repository, object store, index or namespace
+// are dropped, so neither a parent process (a hook, a wrapper, a test harness)
+// nor a caller-supplied environment can redirect discovery. Objects are read as
+// stored, without replacement refs, and the Manifest pathspec is literal.
+// Configuration injection (GIT_CONFIG_PARAMETERS, GIT_CONFIG_COUNT/KEY/VALUE) is
+// deliberately left in place: it is the only per-process channel for
+// `safe.directory` in a foreign-owned checkout, and no configuration value can
+// move discovery past the root binding below or change object content once
+// replacement refs are disabled; at worst it makes the load fail closed.
+const REDIRECTING_GIT_ENVIRONMENT = /^GIT_(DIR|WORK_TREE|COMMON_DIR|INDEX_FILE|INDEX_VERSION|OBJECT_DIRECTORY|ALTERNATE_OBJECT_DIRECTORIES|QUARANTINE_PATH|NAMESPACE|CEILING_DIRECTORIES|DISCOVERY_ACROSS_FILESYSTEM|IMPLICIT_WORK_TREE|PREFIX|GRAFT_FILE|SHALLOW_FILE|REPLACE_REF_BASE|NO_REPLACE_OBJECTS|GLOB_PATHSPECS|NOGLOB_PATHSPECS|ICASE_PATHSPECS|LITERAL_PATHSPECS)$/;
 
 export function gitEnvironment(environment = process.env) {
   const bound = {};

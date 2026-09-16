@@ -14,7 +14,7 @@
 // shared refs were untouched. Numbers here are measurements of one machine at
 // one moment: report them as such, never as a fixed failure rate.
 import { spawnSync, execFileSync } from 'node:child_process';
-import { mkdtempSync, readdirSync, readFileSync, realpathSync, rmSync } from 'node:fs';
+import { mkdtempSync, readdirSync, readFileSync, realpathSync, rmSync, statSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { resolve } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
@@ -48,14 +48,28 @@ const command = custom.length ? custom : [
 ];
 
 const git = args => execFileSync('git', args, { cwd: root, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] }).trim();
+// A delete-and-recreate can leave the same value and reflog count behind, so the
+// identity (inode, size, change time) of each ref file, its reflog and
+// packed-refs is observed too; read-only Git commands never touch them.
+const fileIdentity = path => {
+  try {
+    const stat = statSync(path, { bigint: true });
+    return { ino: String(stat.ino), size: String(stat.size), ctimeNs: String(stat.ctimeNs), mtimeNs: String(stat.mtimeNs) };
+  } catch { return null; }
+};
 function observeSharedRefs() {
-  const headReflog = git(['reflog', 'show', '--format=%H', 'HEAD']);
-  const publishedReflog = git(['reflog', 'show', '--format=%H', PUBLISHED_REF]);
+  const headReflog = git(['reflog', 'show', '--date=iso', '--format=%H %gd %gs', 'HEAD']);
+  const publishedReflog = git(['reflog', 'show', '--date=iso', '--format=%H %gd %gs', PUBLISHED_REF]);
+  const files = Object.fromEntries(['HEAD', 'logs/HEAD', PUBLISHED_REF, `logs/${PUBLISHED_REF}`, 'packed-refs']
+    .map(path => [path, fileIdentity(resolve(root, git(['rev-parse', '--git-path', path])))]));
   return {
     head: git(['rev-parse', '--verify', '--end-of-options', 'HEAD^{commit}']),
     headReflogEntries: headReflog ? headReflog.split('\n').length : 0,
+    headReflog,
     published: git(['rev-parse', '--verify', '--end-of-options', `${PUBLISHED_REF}^{commit}`]),
     publishedReflogEntries: publishedReflog ? publishedReflog.split('\n').length : 0,
+    publishedReflog,
+    files,
   };
 }
 // Reflog-based detection needs reflogs on; refuse to report "untouched" blindly.
@@ -135,10 +149,7 @@ for (let run = 1; run <= runs; run += 1) {
   for (const match of output.matchAll(/CANONICAL_NOT_LOADED: ([^\n'"]+)/g)) refusals[match[1].trim()] = (refusals[match[1].trim()] ?? 0) + 1;
   const tap = { pass: Number(output.match(/^# pass (\d+)/m)?.[1] ?? NaN), fail: Number(output.match(/^# fail (\d+)/m)?.[1] ?? NaN) };
   const metrics = analyse(logPath);
-  const sharedRefsUntouched = before.head === after.head
-    && before.headReflogEntries === after.headReflogEntries
-    && before.published === after.published
-    && before.publishedReflogEntries === after.publishedReflogEntries;
+  const sharedRefsUntouched = JSON.stringify(before) === JSON.stringify(after);
   const publishedIdentities = Object.keys(metrics.publishedIdentitiesResolvedFromThisCheckout);
   const report = {
     run, command: command.join(' '), exitCode: result.status, signal: result.signal, wallSeconds, tap,
