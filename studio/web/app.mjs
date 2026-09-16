@@ -267,6 +267,108 @@ function diffTable(diff) {
   if (!diff) return '<p class="empty">加入來源基準後顯示事件層級差異。</p>';
   return `<div class="scroll"><table><thead><tr><th>新增音</th><th>移除音</th><th>音高／時值／力度修改</th><th>角色移動</th><th>Tempo 變化</th></tr></thead><tbody><tr><td>${diff.summary.noteAdded}</td><td>${diff.summary.noteRemoved}</td><td>${diff.summary.noteModified}</td><td>${diff.summary.roleMoved}</td><td>${diff.summary.tempoChanged + diff.summary.tempoAdded + diff.summary.tempoRemoved}</td></tr></tbody></table></div>${detail('逐事件差異（音高、起訖拍、角色、力度）', diff)}`;
 }
+// ─── Final MML generation and export ────────────────────────────────────────
+//
+// Two states live in this section and must never be read as one:
+//
+//   * the *latest generation attempt* — what the emitter last said about this
+//     candidate, including a FAIL or PENDING with its diagnostics;
+//   * the *currently applied delivery* — the exact string the workspace holds
+//     and that this analysis has verified against the candidate.
+//
+// A refused attempt writes nothing, so an earlier applied delivery survives it
+// and the two can legitimately disagree. The panel states that in words rather
+// than letting the newer badge colour the older output.
+//
+// Nothing here counts characters, checks syntax or repairs anything. Every
+// number shown is one the emitter reported, and the exported string is the
+// stored delivery verbatim.
+const P1_CHARACTER_NOTE = '字元單位為 JavaScript string length（emitter 回報值，未在此另行計算）。與目標 client 實際計數的等價性<strong>尚未驗證</strong>（PENDING P1），不得當作實機可貼上的保證。';
+const severityBadge = severity => (severity === 'error' ? 'FAIL' : severity === 'pending' ? 'PENDING' : 'N/A');
+// The exact applied delivery: the stored string itself, not the report's
+// trimmed copy and not a re-render of the role bodies. Copy and download both
+// read this, so what leaves the page is what the workspace holds.
+const appliedDelivery = () => (typeof workspace.deliveryMml === 'string' && workspace.deliveryMml && report.rawMml ? workspace.deliveryMml : null);
+const ORIGIN_LABELS = { generated: '由本機 emitter 產生', pasted: '使用者提供（貼上或匯入）', 'candidate-source': '候選來源本身即為 MML' };
+
+function diagnosticsTable(items) {
+  if (!items?.length) return '<p class="meta">沒有診斷訊息。</p>';
+  return `<div class="scroll"><table><thead><tr><th>代碼</th><th>嚴重性</th><th>角色</th><th>訊息</th></tr></thead><tbody>${items.map(item => `<tr><td><code>${esc(item.code)}</code></td><td>${badge(severityBadge(item.severity))}</td><td>${esc(item.role ?? '—')}</td><td>${esc(item.message)}${detail('結構化細節', item)}</td></tr>`).join('')}</tbody></table></div>`;
+}
+
+function finalRoleTable(attempt) {
+  const limit = attempt.characterCounts?.limit ?? 2400;
+  if (!attempt.roles?.length) return '<p class="meta">這次嘗試在序列化之前就被拒絕，因此沒有逐角色結果。</p>';
+  return `<div class="scroll"><table><thead><tr><th>角色</th><th>字元 / ${limit}</th><th>起音數</th><th>結束（IR 拍）</th><th>狀態</th></tr></thead><tbody>${attempt.roles.map(entry => `<tr><th scope="row">${esc(entry.role)}</th><td class="${entry.characters > limit ? 'over' : ''}">${entry.characters === null ? '—' : `${entry.characters} / ${limit}`}</td><td>${entry.attacks ?? '—'}</td><td>${esc(entry.end ?? '—')}</td><td>${entry.empty ? '空軌（保持空白）' : entry.characters === null ? '未產生' : '有內容'}</td></tr>`).join('')}</tbody></table></div>`;
+}
+
+function generationAttemptCard(attempt) {
+  if (!attempt) return '<div class="card"><h3>最近一次產生嘗試</h3><div class="empty">尚未產生 Final MML。<br>按上方「產生 Final MML」開始；所有必要 Gate 通過前不會產生任何輸出。</div></div>';
+  const g10 = attempt.microGap ?? {};
+  return `<div class="card">
+    <div class="attempt-head"><h3>最近一次產生嘗試</h3>${badge(attempt.status)}<span class="meta">${esc(new Date(attempt.at).toLocaleString())} · Revision ${attempt.revision}</span></div>
+    <p class="note">這是 <strong>emitter／技術產生狀態</strong>，不是 <code>IN_GAME_ACCEPTED</code>，也不是 <code>VALIDATED</code>。技術上產生成功不代表這份樂譜在目標 client 可被接受。</p>
+    ${attempt.blockedGates?.length ? `<p><strong>在產生之前即被下列 Gate 擋下，未產生任何輸出：</strong></p><ul class="codes">${attempt.blockedGates.map(gate => `<li><code>${esc(gateLabels[gate.name] ?? gate.name)}</code> · ${esc(gate.status)}${gate.reason ? ` · ${esc(gate.reason)}` : ''}${gate.blockers?.length ? ` · ${esc(gate.blockers.join(', '))}` : ''}</li>`).join('')}</ul>` : ''}
+    <h3>逐角色結果</h3>
+    ${finalRoleTable(attempt)}
+    <p class="note">${P1_CHARACTER_NOTE}</p>
+    <h3>診斷</h3>
+    ${diagnosticsTable(attempt.diagnostics)}
+    ${attempt.deliveryCheck && !(attempt.deliveryCheck.technicalOk && attempt.deliveryCheck.deliveryMatches) ? `<h3>交付驗證拒絕理由</h3>
+    <p class="note">emitter 已產出字串，但目前的 Web 交付驗證拒絕了它，因此<strong>沒有套用任何輸出</strong>。以下是驗證器原文：這是<strong>目前驗證器的判定</strong>，不是 Published Canonical 規則，也不是已證實的引擎限制。</p>
+    ${facts([['技術語法', attempt.deliveryCheck.technicalOk ? 'PASS' : 'FAIL'], ['與候選事件讀回一致', attempt.deliveryCheck.deliveryMatches ? 'PASS' : 'FAIL']])}
+    ${attempt.deliveryCheck.errors.length ? `<ul class="codes">${attempt.deliveryCheck.errors.map(error => `<li>${esc(error)}</li>`).join('')}</ul>` : ''}` : ''}
+    <h3>G10　來源感知微時值</h3>
+    ${facts([
+      ['G10 狀態', g10.status],
+      ['安全格線（IR 拍）', g10.safeGrid],
+      ['保留區間（來源支持）', g10.preservedIntervalKeys?.length],
+      ['拒絕區間（技術殘留）', g10.rejectedIntervalKeys?.length],
+      ['封鎖區間（未證實）', g10.blockedIntervalKeys?.length],
+      ['政策一致', g10.policyConformant === null || g10.policyConformant === undefined ? null : g10.policyConformant ? '是' : '否'],
+    ])}
+    <h3>往返讀回（emitter 內建）</h3>
+    ${attempt.roundTrip
+      ? `${facts([['狀態', attempt.roundTrip.status], ['不一致項目', attempt.roundTrip.mismatches?.length ?? 0]])}${detail('比對欄位與不一致明細', attempt.roundTrip)}`
+      : '<p class="meta">未進入往返讀回階段：更早的 Gate 已拒絕這次嘗試。</p>'}
+    <h3>emitter 使用的 Published Canonical</h3>
+    ${attempt.canonical ? facts([['canonical_version', attempt.canonical.canonical_version], ['canonical_status', attempt.canonical.canonical_status], ['rules_snapshot_sha', attempt.canonical.rules_snapshot_sha]]) : '<p class="meta">這次嘗試未進入 emitter，因此沒有記錄 Canonical 身分。</p>'}
+  </div>`;
+}
+
+function appliedDeliveryCard(attempt) {
+  const applied = appliedDelivery();
+  const supersededNote = attempt && attempt.status !== 'PASS' && applied
+    ? '<p class="note">最近一次產生<strong>未通過</strong>，因此沒有覆寫任何內容。下方顯示的是<strong>先前已套用</strong>的交付 MML，與上方那次失敗的嘗試無關。</p>'
+    : '';
+  if (!applied) {
+    return `<div class="card"><div class="attempt-head"><h3>目前套用的交付 MML</h3>${badge('PENDING')}</div>${supersededNote}
+      <div class="empty">目前沒有通過驗證的交付 MML。<br>產生成功後，完整六軌字串會顯示在此，並可原字複製與下載。</div>
+      <div class="actions"><button id="copy-final" disabled>複製完整 Final MML</button><button id="download-final" class="secondary" disabled>下載 Final MML</button></div></div>`;
+  }
+  return `<div class="card"><div class="attempt-head"><h3>目前套用的交付 MML</h3>${badge('PASS')}<span class="meta">來源：${esc(ORIGIN_LABELS[report.deliveryOrigin] ?? report.deliveryOrigin ?? '—')}</span></div>
+    ${supersededNote}
+    <p class="meta">此字串已通過目前的 MML 技術語法驗證，並與候選事件逐一讀回一致。複製與下載輸出的就是這個字串本身，不做任何整理、修補、壓縮或裁切。</p>
+    <label for="final-mml">完整六軌 Final MML<textarea id="final-mml" class="code final" readonly spellcheck="false">${esc(applied)}</textarea></label>
+    <div class="actions"><button id="copy-final">複製完整 Final MML</button><button id="download-final" class="secondary">下載 Final MML</button></div>
+    <p class="meta">逐角色內容如下。每個「複製」<strong>只會複製該角色的內容</strong>，不是可直接貼上的完整六軌樂譜。</p>
+    ${(report.tracks ?? []).map((track, index) => `<div class="role-body"><div class="row"><label for="final-role-${index}">${roles[index]}${track ? '' : ' <small>（空軌）</small>'}</label><button data-copy-role="${index}" class="quiet" ${track ? '' : 'disabled'}>複製此角色內容</button></div><textarea id="final-role-${index}" class="code" readonly spellcheck="false">${esc(track)}</textarea></div>`).join('')}
+  </div>`;
+}
+
+function finalDeliverySection() {
+  const attempt = workspace.finalDelivery ?? null;
+  const blocked = (report.blockers ?? []).filter(name => !['technical', 'deliveryIdentity'].includes(name));
+  return `<section id="final-delivery"><div class="section-heading"><h2>06　Final MML 產生與匯出</h2><small>本機 emitter</small></div>
+    <div class="card">
+      <p class="meta">從目前候選的 Canonical 專案產生六軌 Final MML。使用的是分析當下重建的<strong>同一份</strong>專案，並且會把 readiness 一併交給 emitter；任何必要 Gate 未通過就不會產生輸出。</p>
+      ${blocked.length ? `<p class="note">目前仍有 ${blocked.length} 項必要 Gate 未通過，產生會被擋下並回報原因。<code>MML 技術語法</code>與<code>交付事件一致性</code>不在此列：它們評分的正是尚未存在的輸出。</p>` : ''}
+      <div class="actions"><button id="generate-final">產生 Final MML</button></div>
+    </div>
+    ${generationAttemptCard(attempt)}
+    ${appliedDeliveryCard(attempt)}
+  </section>`;
+}
 function render() {
   const r = report, w = workspace, s = w.settings;
   const gates = Object.entries(r.gates ?? {});
@@ -289,7 +391,8 @@ function render() {
       <div class="card"><h3>記錄本輪人工審核</h3><p class="meta">只在已完成對照／聽驗時記錄；原因與證據綁定目前 revision。紀錄不會清除工具找到的未解決缺口或 unsupported。</p><form id="review-form"><div class="field-grid"><label>審核項目<select name="name">${options(Object.entries(reviewLabels),'source')}</select></label>${input('evidence','來源 ID、event、時間窗或實機紀錄','')}<label class="wide">審核結論與理由<textarea name="note" required></textarea></label></div><button>記錄已完成審核</button></form>${Object.entries(w.reviews).map(([name,v])=>`<div class="review-log"><strong>${esc(reviewLabels[name])}</strong> · ${esc(v.note)}<br><span class="muted">${esc(v.evidence)}</span></div>`).join('')}</div>
     </section>
     <section id="audio"><div class="section-heading"><h2>05　Audio evidence</h2><small>僅主動要求時上傳</small></div><div class="card"><p class="note safe">選取音訊只會留在本機。按下「要求 Audio Alignment」才會傳送該音訊及候選的衍生音符／時間特徵；MusicXML／MML 原始文字不會上傳。</p><p id="audio-file-status" class="meta">${audioFile?esc(`${audioFile.name} · ${(audioFile.size/1048576).toFixed(1)} MiB · 尚未上傳`):'未選取音訊。雲端未連線。'}</p><label class="file-button secondary">選擇 M4A／FLAC／WAV<input id="audio-file" type="file" accept=".m4a,.flac,.wav,audio/mp4,audio/flac,audio/wav"></label><details><summary>Audio Worker 連線（選用）</summary><label>HTTPS alignment endpoint<input id="audio-endpoint" type="url" placeholder="https://your-worker.example/align" autocomplete="off"></label><label>本次工作階段 access token<input id="audio-token" type="password" autocomplete="off"></label><p class="meta">Token 僅存於目前畫面記憶體。v1 沒有預設雲端服務；未設定時保持 PENDING。</p></details><div class="actions"><button id="request-audio" ${!audioFile || !w.assets.candidate?'disabled':''}>要求 Audio Alignment</button><button id="cancel-audio" class="quiet" ${uploadController?'':'disabled'}>取消上傳／等待</button><label class="file-button quiet">匯入既有 alignment report<input id="audio-report" type="file" accept=".json,application/json"></label></div><div id="audio-progress" role="status"></div>${detail('音訊證據、控制點、信心與漂移',w.audio?.report ?? {status:'PENDING',reason:'SONG_AUDIO_EVIDENCE_MISSING'})}<p class="meta">Audio evidence 不會修改、刪除或重排 symbolic events。信心分數本身不代表音高真值。</p></div></section>
-    <section id="delivery"><div class="section-heading"><h2>06　Readiness 與交付</h2>${badge(r.state)}</div><div class="card"><p class="note">${r.state==='CANDIDATE'?'目前為 Candidate，尚有必要 Gate 未通過。複製內容仍屬候選版本。':r.state==='VALIDATED'?'必要非實機 Gate 已通過。等待使用者於目標遊戲 client 實際接受。':'已有本輪 exact-MML 實機接受紀錄。'}</p><div class="actions"><button id="copy-mml" ${r.rawMml?'':'disabled'}>複製完整 MML@</button><button id="export-mml" class="secondary" ${r.rawMml?'':'disabled'}>下載六軌文字</button><button id="export-report" class="quiet">下載分析報告</button></div>${r.tracks?r.tracks.map((track,i)=>`<div class="track"><div class="row"><label for="track-${i}">${roles[i]} <small>${track.length} / 2400</small></label><button data-copy-track="${i}" class="quiet">複製</button></div><textarea id="track-${i}" class="code" readonly spellcheck="false">${esc(track)}</textarea></div>`).join(''):'<p class="empty">需有通過 Final 技術語法且與候選事件一致的六軌 MML。MusicXML／IR 不會自動縮編或猜測角色；可附上對應的交付 MML 進行回讀。</p>'}<details><summary>記錄 In-game Accepted</summary><form id="acceptance"><div class="field-grid">${input('client','Client／地區／版本','')}${input('instrument','樂器與軌道配置','')}${input('evidence','實機結果／截圖或紀錄定位','')}</div><button ${r.state==='CANDIDATE'?'disabled':''}>此 exact-MML 已實機接受</button></form>${w.acceptance?json(w.acceptance):''}</details></div></section>
+    ${finalDeliverySection()}
+    <section id="delivery"><div class="section-heading"><h2>07　Readiness 與實機接受</h2>${badge(r.state)}</div><div class="card"><p class="note">${r.state==='CANDIDATE'?'目前為 Candidate，尚有必要 Gate 未通過。複製內容仍屬候選版本。':r.state==='VALIDATED'?'必要非實機 Gate 已通過。等待使用者於目標遊戲 client 實際接受。':'已有本輪 exact-MML 實機接受紀錄。'}</p><p class="meta">本節記錄的是<strong>實機接受</strong>。產生與匯出 Final MML 在上方第 06 節。</p><div class="actions"><button id="copy-mml" ${r.rawMml?'':'disabled'}>複製完整 MML@</button><button id="export-mml" class="secondary" ${r.rawMml?'':'disabled'}>下載六軌文字</button><button id="export-report" class="quiet">下載分析報告</button></div>${r.tracks?`${r.tracks.map((track,i)=>`<div class="track"><div class="row"><label for="track-${i}">${roles[i]} <small>${track.length} / 2400 字元</small></label><button data-copy-track="${i}" class="quiet">複製</button></div><textarea id="track-${i}" class="code" readonly spellcheck="false">${esc(track)}</textarea></div>`).join('')}<p class="note">${P1_CHARACTER_NOTE}</p>`:'<p class="empty">需有通過 Final 技術語法且與候選事件一致的六軌 MML。MusicXML／IR 不會自動縮編或猜測角色；可在第 06 節產生，或附上對應的交付 MML 進行回讀。</p>'}<details><summary>記錄 In-game Accepted</summary><form id="acceptance"><div class="field-grid">${input('client','Client／地區／版本','')}${input('instrument','樂器與軌道配置','')}${input('evidence','實機結果／截圖或紀錄定位','')}</div><button ${r.state==='CANDIDATE'?'disabled':''}>此 exact-MML 已實機接受</button></form>${w.acceptance?json(w.acceptance):''}</details></div></section>
     <details class="card"><summary>Published Canonical 與建置身分</summary><p class="meta">本機使用建置時由 Published main 取得並核驗的完整固定快照。離線模式不宣稱已確認最新 main。</p>${json(identity.metadata)}${identity.provenance?json(identity.provenance):''}${identity.documents.map(d=>`<details><summary>${esc(d.path)} · ${esc(d.authority)}</summary><a href="${esc(d.url)}" target="_blank" rel="noopener">GitHub 固定快照</a><pre>${esc(d.content)}</pre></details>`).join('')}</details>`;
   bind();
 }
@@ -336,9 +439,41 @@ async function putMidiSource(slot, file, authority, token) {
   next.assets[slot] = asset;
   await commit(next);
 }
+// Clipboard, with a visible fallback for the browsers that refuse it.
+//
+// The fallback exists to hand over the *same string* the clipboard would have
+// received, so it renders `value` verbatim into a read-only field -- never a
+// re-derived or re-formatted copy of it. An existing fallback is replaced
+// rather than stacked, because a page showing two boxes both captioned "the
+// MML" is a page that cannot say which one is the delivery.
+function dismissCopyFallback() { document.querySelector('#copy-fallback')?.remove(); }
+function showCopyFallback(value, textarea) {
+  dismissCopyFallback();
+  // Reuse a field already on screen only when it holds exactly this string.
+  if (textarea && textarea.value === value) { textarea.focus(); textarea.select(); }
+  else {
+    const box = document.createElement('div');
+    box.id = 'copy-fallback'; box.className = 'card';
+    const label = document.createElement('p');
+    label.className = 'meta';
+    label.textContent = '瀏覽器未授予剪貼簿權限。以下是完全相同的文字，已為你選取：';
+    const area = document.createElement('textarea');
+    area.className = 'code'; area.readOnly = true; area.spellcheck = false;
+    // Assigned, not templated: nothing between the source string and the field.
+    area.value = value;
+    const close = document.createElement('button');
+    close.className = 'quiet'; close.type = 'button'; close.textContent = '關閉';
+    close.onclick = dismissCopyFallback;
+    box.append(label, area, close);
+    (document.querySelector('#final-delivery') ?? document.querySelector('#delivery')).append(box);
+    area.focus(); area.select();
+  }
+  message('瀏覽器未授予剪貼簿權限。文字已選取，可手動複製。', true);
+}
 async function copyText(value, textarea) {
-  try { await navigator.clipboard.writeText(value); message('已複製'); }
-  catch { if (textarea) { textarea.focus(); textarea.select(); } else { const box=document.createElement('textarea');box.value=value;$('#delivery').append(box);box.focus();box.select(); } message('Safari 未授予剪貼簿權限。已選取文字，可長按複製。',true); }
+  if (typeof value !== 'string' || !value) return message('沒有可複製的內容');
+  try { await navigator.clipboard.writeText(value); dismissCopyFallback(); message('已複製'); }
+  catch { showCopyFallback(value, textarea); }
 }
 function bind() {
   $('#settings').onsubmit = event => { event.preventDefault(); const data=Object.fromEntries(new FormData(event.target)); run(async()=>{
@@ -395,6 +530,23 @@ function bind() {
   };
   $('#cancel-audio').onclick=()=>uploadController?.abort();
   $('#audio-report').onchange=()=>{const file=$('#audio-report').files[0];if(file)run(async()=>{if(file.size>4194304)throw Error('Report exceeds 4 MiB');const next=structuredClone(workspace);const alignment=JSON.parse(await file.text());const {verifyAudioBinding}=await import('./audio-client.mjs');next.audio={revision:workspace.revision,report:alignment,projectIdentity:await verifyAudioBinding(alignment,workspace.assets.candidate.project)};delete next.reviews.audio;next.acceptance=null;await commit(next);});};
+  // Final generation. The request is bound to the project and revision it was
+  // made against *before* it leaves for the Worker, and that binding is checked
+  // again when the answer comes back: generation runs off the main thread, so
+  // the workspace on screen can move while it runs, and derived output must
+  // never be written onto a newer one. `run` already refuses a queued action
+  // whose revision moved; this covers the request that was already in flight.
+  $('#generate-final').onclick=()=>run(async()=>{
+    const projectId=workspace.id,revision=workspace.revision;
+    const result=await call('generateFinalDelivery',workspace);
+    if(workspace.id!==projectId||workspace.revision!==revision) return message('\u5c08\u6848\u6216\u5167\u5bb9\u5df2\u8b8a\u66f4\uff0c\u5df2\u6368\u68c4\u904e\u671f\u7684 Final \u7522\u751f\u7d50\u679c\u3002\u8acb\u4f9d\u76ee\u524d\u5167\u5bb9\u91cd\u65b0\u7522\u751f\u3002',true);
+    await commit(await call('applyFinalDelivery',workspace,result));
+    message(result.status==='PASS'?'Final MML \u5df2\u7522\u751f\u4e26\u5957\u7528':`Final \u7522\u751f\u672a\u901a\u904e\uff1a${result.status}\u3002\u8a3a\u65b7\u5df2\u5217\u65bc\u7b2c 06 \u7bc0\uff0c\u6c92\u6709\u5beb\u5165\u4efb\u4f55\u8f38\u51fa\u3002`,result.status!=='PASS');
+  });
+  // Exactly the stored delivery string. No re-render, no re-join of role bodies.
+  $('#copy-final').onclick=()=>copyText(appliedDelivery(),$('#final-mml'));
+  $('#download-final').onclick=()=>download('final-delivery.mml',appliedDelivery(),'text/plain');
+  document.querySelectorAll('[data-copy-role]').forEach(button=>button.onclick=()=>{const i=Number(button.dataset.copyRole);copyText(report.tracks[i],$(`#final-role-${i}`));});
   $('#copy-mml').onclick=()=>copyText(report.rawMml);
   document.querySelectorAll('[data-copy-track]').forEach(button=>button.onclick=()=>{const i=Number(button.dataset.copyTrack);copyText(report.tracks[i],$(`#track-${i}`));});
   $('#export-mml').onclick=()=>download('six-track-mml.txt',`${report.rawMml}\n\n${report.tracks.map((t,i)=>`${roles[i]}\n${t}`).join('\n\n')}`,'text/plain');

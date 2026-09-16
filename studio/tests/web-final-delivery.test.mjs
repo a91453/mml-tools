@@ -446,3 +446,29 @@ test('acceptance still requires VALIDATED and binds the exact generated string',
   assert.equal(regenerated.acceptance, null);
   assert.equal(analyzeWorkspace(regenerated).state, 'VALIDATED');
 });
+
+test('a Web delivery-validation refusal is reported in the validator\'s own words', () => {
+  // The emitter has no final-bar-completeness check and the Web technical
+  // validation does, so a candidate whose music stops mid-bar serializes
+  // cleanly and is then refused here. That disagreement is a current
+  // implementation finding, not a published rule and not a proven engine limit,
+  // so the refusal is carried verbatim rather than paraphrased -- and nothing
+  // pads the music to make it go away.
+  const events = [
+    note({ id: 'half1', pitch: 60, start: 0, end: 1 }),
+    note({ id: 'half2', pitch: 62, start: 1, end: 2 }),
+  ];
+  const w = ready(events);
+  const result = generateFinalDelivery(w);
+  assert.equal(result.status, 'FAIL');
+  assert.equal(result.combinedMml, null, 'a refused delivery keeps no output');
+  assert.ok(codes(result).includes('FINAL_DELIVERY_READBACK_FAILED'));
+  assert.equal(result.delivery.technical.ok, false, 'the Web validator is what refused it');
+
+  const next = applyFinalDelivery(w, result);
+  assert.equal(next.deliveryMml, undefined, 'nothing is written');
+  assert.equal(next.finalDelivery.deliveryCheck.technicalOk, false);
+  assert.ok(next.finalDelivery.deliveryCheck.errors.length > 0, 'the validator messages are kept so the UI can show them');
+  assert.ok(next.finalDelivery.deliveryCheck.errors.every(message => typeof message === 'string' && message.length));
+  assert.equal(analyzeWorkspace(next).rawMml, null);
+});

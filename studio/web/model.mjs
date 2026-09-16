@@ -435,7 +435,15 @@ export function applyFinalDelivery(w, result) {
   // that runs after this, never this record: `analyzeWorkspace` does not read it.
   next.finalDelivery = { status: result.status, at: result.at, revision: w.revision, blockedGates: result.blockedGates,
     roles: result.roles, characterCounts: result.characterCounts, microGap: result.microGap,
-    roundTrip: result.roundTrip, canonical: result.canonical, diagnostics: result.diagnostics };
+    roundTrip: result.roundTrip, canonical: result.canonical, diagnostics: result.diagnostics,
+    // The Web delivery check's own verdict, kept so a refusal can be shown in
+    // the words the validator used. The emitter can pass and this still refuse:
+    // they answer different questions, and paraphrasing the second one as the
+    // first is how a validator finding turns into an imagined engine rule.
+    deliveryCheck: result.delivery
+      ? { technicalOk: result.delivery.technical?.ok === true, deliveryMatches: result.delivery.deliveryMatches,
+        errors: (result.delivery.technical?.errors ?? []).map(error => error?.message ?? String(error)) }
+      : null };
   // A blocked or failed attempt emits nothing and overwrites nothing: whatever
   // delivery the workspace already held is still the delivery it holds.
   if (result.status !== EMIT_STATUS.PASS) return next;

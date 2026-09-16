@@ -23,3 +23,22 @@ code.digest,.facts dd code,table code{font-family:ui-monospace,SFMono-Regular,Me
    wrapper scrolls, so the page body still never scrolls horizontally. */
 #raw-midi .scroll>table{min-width:600px}
 @media(max-width:720px){.facts{grid-template-columns:1fr}}
+
+/* Final MML generation and export. The attempt and the applied delivery are
+   separate cards on purpose; nothing here should let one read as the other. */
+#final-delivery .attempt-head{display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin-bottom:10px}
+#final-delivery .attempt-head h3{margin:0}
+#final-delivery h3{margin-top:22px}
+#final-delivery .card>h3:first-child,#final-delivery .attempt-head h3{margin-top:0}
+#final-delivery textarea.final{min-height:120px}
+#final-delivery td.over{color:#943a30;font-weight:700}
+#final-delivery .role-body{margin-top:12px}
+#final-delivery .role-body textarea{min-height:60px}
+#final-delivery .role-body .row{margin-bottom:6px}
+#final-delivery .role-body label{font-family:ui-monospace,SFMono-Regular,Menlo,monospace}
+#final-delivery td,#final-delivery th{padding:8px 10px;border-bottom:1px solid var(--line);vertical-align:top}
+#final-delivery th[scope=row]{white-space:nowrap;font-weight:600}
+#final-delivery .scroll>table{min-width:520px}
+#copy-fallback{margin-top:16px;border-color:#d5ae6f;background:#fbf5e9}
+#copy-fallback textarea{min-height:120px;margin:8px 0}
+@media(max-width:720px){#final-delivery .attempt-head{align-items:flex-start}}
