@@ -319,6 +319,7 @@ Items surfaced by the same reconstruction that do not carry a G identifier.
 | M3b | Historical release workflow re-runnability | `OPEN` | `NEEDS_PROJECT_DECISION` | `NONE` |
 | M4 | Governance / branch protection | `OPEN` | `OWNER_ACTION_REQUIRED` | `NONE` |
 | M5 | Song History / Regression Evidence structure | `OPEN` | `NEEDS_PROJECT_DECISION` | Undecided — see M5 |
+| M6 | Canonical bootstrap Git-subprocess fragility under parallel tests | `RESOLVED` in PR #29 | — | `NONE` |
 
 ### M1 — Durable roadmap register · `RESOLVED`
 
@@ -468,44 +469,53 @@ judgment on past records.
 **Canonical impact.** Undecided by construction; see D2. No Canonical or Manifest
 change is asserted to be required.
 
-### M6 — Canonical bootstrap Git-subprocess fragility under parallel tests · `OPEN`
+### M6 — Canonical bootstrap Git-subprocess fragility under parallel tests · `RESOLVED` in PR #29
 
-**Evidence.** `loadPublishedCanonical` (`studio/backend/bootstrap/index.mjs`)
-resolves the published Manifest and its pinned snapshot by shelling out to
-`git`, roughly twenty-five child processes per importing process. `npm test`
-runs `node --test` over 45 test files in parallel and almost all of them import
-the rules module, so a single run can fan out to on the order of a thousand
-concurrent `git` invocations. Under that load the Manifest read intermittently
-comes back malformed and the bootstrap refuses it. Observed repeatedly during
-the Web Final delivery integration, with two different downstream messages from the same
-cause — `Unpinned snapshot locator: docs/MASTER_RULES.md` and
-`Implementation does not support the published Canonical version` — always in
-the file that happens to run last, and never reproducible in isolation.
+**Verified root cause.** The Manifest was not intermittently corrupted by Git
+under load. `studio/tests/web-build-reproducibility.test.mjs` temporarily rewrote
+the **shared checkout's** `refs/remotes/origin/main` to probe commits while
+checking fail-closed build behaviour. Every `node --test` file runs in its own
+process and many bootstrap from that same discovery ref during module import. A
+sibling process resolving the ref inside one of those probe windows therefore
+loaded the probe Manifest and correctly refused it. Instrumentation captured the
+failing process resolving the published ref to the probe commit during the
+window, reproducing the observed `Unpinned snapshot locator` and unsupported
+Canonical-version failures. High Git subprocess volume widened the race window;
+it did not corrupt a read.
 
-The trigger is load rather than the checkout, and not only the suite's own
-fan-out: across this work the same suite ran clean five times out of five on the
-base commit and four times out of four on an idle machine, but failed twice in
-three consecutive runs started immediately after a browser run and two builds.
-Any measured rate is therefore a property of the machine at that moment, and
-should not be quoted as a fixed flake percentage.
+**Resolution.** PR #29 moves all build-reproducibility probes that publish a
+Manifest, move the discovery ref, or edit source inputs into private isolated Git
+repositories. The shared checkout stays read-only and both the in-file guard and
+the full-suite stress runner assert that its discovery ref is never rewritten.
+The production loader is also hardened without changing its authority contract:
+it binds every Git command to the requested repository root, removes ambient Git
+redirection/config-injection variables, disables replacement refs, resolves the
+published discovery ref to one commit before reading the Manifest, and reads the
+Manifest and pinned snapshot resources with strict `cat-file --batch` parsing.
+There is no cache, retry, fallback to working HEAD, hardcoded snapshot bypass, or
+legacy-rule fallback. A failed load still fails that caller closed; a later
+independent load starts cleanly.
 
-Re-observed during the G11-D accepted-decision work. To separate it from a new
-defect it was reproduced on the unmodified base commit `e3ad55c` in a detached
-worktree: three of twelve full-suite runs failed, with the same two downstream
-messages and a different test file each time. No change was made for it here.
+**Measured / regression evidence.** One bootstrap fell from 29 Git subprocesses
+to 8. In the pre-fix instrumented full run, the suite issued 2,443 Git
+subprocesses, resolved four published identities and rewrote the shared discovery
+ref six times. After isolation and loader hardening, the corresponding measured
+run used 973 Git subprocesses, resolved one published identity and left the
+shared ref untouched. Fourteen deliberate mutations of the new guards were
+caught. Five default-concurrency full-suite stress runs and three runs at
+concurrency 12 observed zero failures, one published identity per run and no
+shared-ref writes. Exact-head Studio CI run `35136363244` on PR head
+`9963386106a317d56376d83c04afd1b371897c8b` passed `symbolic`, the dedicated M6
+full-suite isolation step, `audio-worker`, and `studio-web`.
 
+**Failure semantics.** The safety direction is unchanged: malformed or
+unpublished Manifest data, unavailable or wrong snapshots, identity mismatch,
+short/missing/mistyped batch objects and unavailable required Git history remain
+`CANONICAL_NOT_LOADED`. No lower-authority source is substituted.
 
-**Mitigating fact.** It fails closed. The bootstrap refuses to load rather than
-loading partial or wrong rules, which is the designed behaviour and the safe
-direction, and a re-run on a settled machine passes.
-
-**Why open.** Needs an approach decision that does not weaken fail-closed
-loading: candidates include resolving the Manifest once per run instead of once
-per process, replacing several small `git` calls with a single batched one, or
-reducing how many test files import the rules module. Picking one is a design
-question, and none of them may relax the refusal behaviour.
-
-**Canonical impact.** `NONE`. This is loading robustness, not rule content.
+**Canonical impact.** `NONE`. This is loading/test-isolation robustness only; it
+changes no music rule, syntax rule, acceptance gate or Published Canonical
+release identity.
 
 ## Dependencies
 
