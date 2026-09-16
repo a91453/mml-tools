@@ -8,7 +8,7 @@
 // Manifest identity and rules snapshot identity that a bootstrap from this
 // checkout resolved, CANONICAL_NOT_LOADED reasons seen in the output, and
 // whether anything in the run wrote the shared published discovery ref or HEAD
-// (the reflog records a rewrite even after it is restored). A run passes only
+// (the reflogs record a rewrite even after it is restored). A run passes only
 // when the command succeeded, exactly one published identity and one snapshot
 // identity were resolved from this checkout, no bootstrap refused, and the
 // shared refs were untouched. Numbers here are measurements of one machine at
@@ -49,11 +49,13 @@ const command = custom.length ? custom : [
 
 const git = args => execFileSync('git', args, { cwd: root, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] }).trim();
 function observeSharedRefs() {
-  const reflog = git(['reflog', 'show', '--format=%H', PUBLISHED_REF]);
+  const headReflog = git(['reflog', 'show', '--format=%H', 'HEAD']);
+  const publishedReflog = git(['reflog', 'show', '--format=%H', PUBLISHED_REF]);
   return {
     head: git(['rev-parse', '--verify', '--end-of-options', 'HEAD^{commit}']),
+    headReflogEntries: headReflog ? headReflog.split('\n').length : 0,
     published: git(['rev-parse', '--verify', '--end-of-options', `${PUBLISHED_REF}^{commit}`]),
-    publishedReflogEntries: reflog ? reflog.split('\n').length : 0,
+    publishedReflogEntries: publishedReflog ? publishedReflog.split('\n').length : 0,
   };
 }
 // Reflog-based detection needs reflogs on; refuse to report "untouched" blindly.
@@ -133,7 +135,10 @@ for (let run = 1; run <= runs; run += 1) {
   for (const match of output.matchAll(/CANONICAL_NOT_LOADED: ([^\n'"]+)/g)) refusals[match[1].trim()] = (refusals[match[1].trim()] ?? 0) + 1;
   const tap = { pass: Number(output.match(/^# pass (\d+)/m)?.[1] ?? NaN), fail: Number(output.match(/^# fail (\d+)/m)?.[1] ?? NaN) };
   const metrics = analyse(logPath);
-  const sharedRefsUntouched = before.head === after.head && before.published === after.published && before.publishedReflogEntries === after.publishedReflogEntries;
+  const sharedRefsUntouched = before.head === after.head
+    && before.headReflogEntries === after.headReflogEntries
+    && before.published === after.published
+    && before.publishedReflogEntries === after.publishedReflogEntries;
   const publishedIdentities = Object.keys(metrics.publishedIdentitiesResolvedFromThisCheckout);
   const report = {
     run, command: command.join(' '), exitCode: result.status, signal: result.signal, wallSeconds, tap,
