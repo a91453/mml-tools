@@ -109,10 +109,19 @@ re-derived from the stored source instead of being persisted as new source truth
 Percussion/unsupported material stays separate rather than being silently emitted
 as pitched notes.
 
-This path ends before G11-D/G12, Final arrangement acceptance, Final MML emission,
-Mobile audibility/octave adaptation, instrument assignment, volume mapping,
-drum-face mapping or in-game acceptance. A Raw MIDI file therefore cannot make a
-song `VALIDATED` or `IN_GAME_ACCEPTED` by intake alone.
+G11-D applies arrangement decisions a reviewer has explicitly accepted, producing
+a derived Candidate Canonical project and a content-addressed revision record.
+Decision records are persisted; the applied candidate is not. It is re-derived
+from the re-validated source project on every analysis, and every decision is
+re-checked against the baseline, source, revision and Canonical identity it was
+accepted under, so a record that outlives its inputs is refused rather than
+replayed. A suggestion never becomes an acceptance, and an accepted application
+never moves a workspace to `VALIDATED`.
+
+This path ends before G12, Final MML emission, Mobile audibility/octave
+adaptation, instrument assignment, volume mapping, drum-face mapping or in-game
+acceptance. A Raw MIDI file therefore cannot make a song `VALIDATED` or
+`IN_GAME_ACCEPTED` by intake alone, and neither can an accepted arrangement.
 
 Implementation guards currently refuse Raw MIDI input over 4 MiB or a decoded
 Canonical event set over 30,000 events. Those are implementation guards, not
@@ -174,9 +183,13 @@ Mabinogi acceptance still require real devices.
   Raw MIDI `.mid` / `.midi` intake are supported. Compressed MXL and unrecognized
   IR schemas remain unsupported in this Web intake.
 - Raw MIDI support stops at preserved source evidence, G11-B decomposition,
-  G11-C candidate suggestions and existing readiness information. It does not
-  automatically perform Final six-role reduction, G11-D/G12, Final MML emission,
-  Mobile adaptation, instrument/octave assignment or drum-face mapping.
+  G11-C candidate suggestions, G11-D application of explicitly accepted
+  arrangement decisions, and existing readiness information. It does not
+  automatically perform Final six-role reduction, G12, Final MML emission,
+  Mobile adaptation, instrument/octave assignment or drum-face mapping. No
+  arrangement decision is ever accepted on the reviewer's behalf, and this
+  release ships no Arrangement Editor UI: decisions are recorded through the
+  model API, not by dragging notes.
 - Existing MusicXML limitations (repeat/navigation expansion, grace realization,
   transposing parts, microtones, unpitched mapping) stay visible and block promotion.
 - No automatic MusicXML/IR arrangement, role assignment, six-track reduction or

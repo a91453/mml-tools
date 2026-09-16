@@ -489,6 +489,12 @@ three consecutive runs started immediately after a browser run and two builds.
 Any measured rate is therefore a property of the machine at that moment, and
 should not be quoted as a fixed flake percentage.
 
+Re-observed during the G11-D accepted-decision work. To separate it from a new
+defect it was reproduced on the unmodified base commit `e3ad55c` in a detached
+worktree: three of twelve full-suite runs failed, with the same two downstream
+messages and a different test file each time. No change was made for it here.
+
+
 **Mitigating fact.** It fails closed. The bootstrap refuses to load rather than
 loading partial or wrong rules, which is the designed behaviour and the safe
 direction, and a re-run on a settled machine passes.

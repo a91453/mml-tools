@@ -1400,18 +1400,25 @@ test('an unresolved sibling is reported as unresolved, never as proven essential
     'the known-essential question is answered; the concurrent one is separate');
 });
 
-test('M: the G11 roadmap names only A, B and C', () => {
+test('M: the G11-C stage claims no part of the stage after it', () => {
+  // This guard originally read "the G11 roadmap names only A, B and C", which
+  // held while G11-C was the last stage. Accepted-decision application now
+  // exists as its own module, so what the guard protects is narrower and still
+  // worth protecting: G11-C's implementation, its regressions and its document
+  // must not start describing, performing or certifying it. The arrangement
+  // facade is deliberately no longer in this list -- exporting the next stage
+  // is what a facade is for, and the facade's own claims are asserted by that
+  // stage's regressions instead.
   const files = [
     'studio/backend/arrangement/role-candidates.mjs',
-    'studio/backend/arrangement/index.mjs',
     'studio/tests/role-candidates.test.mjs',
     'docs/G11C_CANDIDATE_ARRANGEMENT.md',
   ];
   for (const file of files) {
     const text = readFileSync(new URL(`../../${file}`, import.meta.url), 'utf8');
     assert.equal(/G11[-_ ]?D/i.test(text), false,
-      `${file} names a fourth numbered G11 stage; this project defines G11-A, G11-B and G11-C only, `
-      + 'and later verification/player work is unnamed and out of scope here');
+      `${file} names the stage after G11-C; G11-C suggests roles and accepts nothing, `
+      + 'and accepted-arrangement application lives in its own module');
   }
 });
 
