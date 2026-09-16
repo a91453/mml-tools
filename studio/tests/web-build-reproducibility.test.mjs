@@ -15,53 +15,47 @@ import { readdir } from 'node:fs/promises';
 import { verifyStudioArtifact } from '../../scripts/verify-studio-artifact.mjs';
 import { computeCacheId, readServiceWorkerTemplate, renderServiceWorker } from '../../scripts/studio-artifact-identity.mjs';
 import { verifyCanonicalPackage } from '../web/canonical-package.mjs';
+import { MANIFEST_PATH, PUBLISHED_REF, isolatedRepository, observePublishedRef } from './support/isolated-repository.mjs';
 
 const root = fileURLToPath(new URL('../../', import.meta.url));
-// commit-tree needs a committer identity that a bare CI runner may not have.
-const identity = {
-  GIT_AUTHOR_NAME: 'Studio artifact test', GIT_AUTHOR_EMAIL: 'artifact@example.invalid',
-  GIT_COMMITTER_NAME: 'Studio artifact test', GIT_COMMITTER_EMAIL: 'artifact@example.invalid',
+// Sibling test processes bootstrap from the shared checkout's discovery ref
+// while this file runs (M6). Observed first, asserted untouched last. The
+// shared checkout is read-only here: a probe that moves the published ref,
+// republishes a Manifest or edits a source runs in an isolated repository.
+const sharedPublishedRefAtStart = observePublishedRef();
+const checkout = { dir: root };
+const git = (...args) => {
+  assert.equal(args[0], 'rev-parse', 'the shared checkout is read-only in this file');
+  return execFileSync('git', args, { cwd: root, encoding: 'utf8' }).trim();
 };
-const git = (...args) => execFileSync('git', args, { cwd: root, encoding: 'utf8', env: { ...process.env, ...identity } }).trim();
 const scratch = async () => mkdtemp(resolve(tmpdir(), 'mml-artifact-'));
 
 // Each build writes to its own directory so concurrent test files never race.
-async function build(t, env = {}) {
+// `repo` is the shared checkout (a read-only build) or an isolated repository.
+async function build(t, repo = checkout, env = {}) {
   const out = await scratch();
   t.after(() => rm(out, { recursive: true, force: true }));
   const summary = JSON.parse(execFileSync(process.execPath, ['scripts/build-studio-web.mjs'], {
-    cwd: root, encoding: 'utf8', env: { ...process.env, STUDIO_WEB_BUILD_OUT: out },
+    cwd: repo.dir, encoding: 'utf8', env: { ...process.env, ...env, STUDIO_WEB_BUILD_OUT: out },
   }));
   const manifest = JSON.parse(await readFile(resolve(out, 'build.json'), 'utf8'));
   return { out, summary, manifest };
 }
 
-const buildFails = (env = {}) => {
+const buildFails = (repo, env = {}) => {
   try {
     execFileSync(process.execPath, ['scripts/build-studio-web.mjs'], {
-      cwd: root, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'], env: { ...process.env, ...env },
+      cwd: repo.dir, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'], env: { ...process.env, ...env },
     });
   } catch (error) { return `${error.stdout ?? ''}${error.stderr ?? ''}`; }
   return null;
 };
 
-// A commit carrying main's exact tree: Git identity moves, sources do not.
-function twinCommit(parent, message) {
-  return git('commit-tree', `${parent}^{tree}`, '-p', parent, '-m', message);
-}
-
-async function withPublishedMain(commit, run) {
-  const original = git('rev-parse', 'refs/remotes/origin/main');
-  try {
-    git('update-ref', 'refs/remotes/origin/main', commit);
-    return await run();
-  } finally { git('update-ref', 'refs/remotes/origin/main', original); }
-}
-
 test('advancing published main leaves the runtime artifact and buildId unchanged', async t => {
-  const before = await build(t);
-  const twin = twinCommit(git('rev-parse', 'refs/remotes/origin/main'), 'reproducibility probe: advance published main');
-  const after = await withPublishedMain(twin, () => build(t));
+  const repo = isolatedRepository(t);
+  const before = await build(t, repo);
+  repo.publish(repo.twinCommit(repo.published, 'reproducibility probe: advance published main'));
+  const after = await build(t, repo);
 
   assert.notEqual(after.manifest.audit.published_main_head, before.manifest.audit.published_main_head);
   assert.equal(after.summary.buildId, before.summary.buildId);
@@ -70,20 +64,15 @@ test('advancing published main leaves the runtime artifact and buildId unchanged
 });
 
 test('a different CI checkout identity leaves the runtime artifact and buildId unchanged', async t => {
-  const before = await build(t);
+  const repo = isolatedRepository(t);
+  const before = await build(t, repo);
   const dir = await scratch();
   t.after(() => rm(dir, { recursive: true, force: true }));
-  const prHead = twinCommit(git('rev-parse', 'refs/remotes/origin/main'), 'reproducibility probe: synthetic merge identity');
+  const prHead = repo.twinCommit(repo.published, 'reproducibility probe: synthetic merge identity');
   const eventPath = resolve(dir, 'event.json');
   await writeFile(eventPath, JSON.stringify({ pull_request: { head: { sha: prHead } } }));
 
-  const out = await scratch();
-  t.after(() => rm(out, { recursive: true, force: true }));
-  const summary = JSON.parse(execFileSync(process.execPath, ['scripts/build-studio-web.mjs'], {
-    cwd: root, encoding: 'utf8',
-    env: { ...process.env, STUDIO_WEB_BUILD_OUT: out, GITHUB_EVENT_NAME: 'pull_request', GITHUB_EVENT_PATH: eventPath },
-  }));
-  const manifest = JSON.parse(await readFile(resolve(out, 'build.json'), 'utf8'));
+  const { summary, manifest } = await build(t, repo, { GITHUB_EVENT_NAME: 'pull_request', GITHUB_EVENT_PATH: eventPath });
 
   assert.equal(manifest.audit.pr_head, prHead);
   assert.notEqual(manifest.audit.pr_head, before.manifest.audit.pr_head);
@@ -97,7 +86,7 @@ test('build.json still preserves the dynamic provenance that no longer moves bui
     assert.match(manifest.audit[field] ?? '', /^[a-f0-9]{40}$/, field);
   }
   assert.equal(manifest.audit.repository_head, git('rev-parse', 'HEAD'));
-  assert.equal(manifest.audit.published_main_head, git('rev-parse', 'refs/remotes/origin/main'));
+  assert.equal(manifest.audit.published_main_head, git('rev-parse', PUBLISHED_REF));
   // Audit provenance must never masquerade as release identity.
   assert.equal(manifest.release.canonical.rules_snapshot_sha, manifest.release.rules_snapshot_sha);
   assert.notEqual(manifest.release.rules_snapshot_sha, manifest.audit.published_main_head);
@@ -105,41 +94,26 @@ test('build.json still preserves the dynamic provenance that no longer moves bui
 });
 
 test('changing a runtime source changes buildId', async t => {
-  const before = await build(t);
-  const path = resolve(root, 'studio/web/style.css');
-  const original = await readFile(path);
-  try {
-    await appendFile(path, '\n/* reproducibility probe */\n');
-    const after = await build(t);
-    assert.notEqual(after.summary.buildId, before.summary.buildId);
-  } finally { await writeFile(path, original); }
+  const repo = isolatedRepository(t);
+  const before = await build(t, repo);
+  await appendFile(resolve(repo.dir, 'studio/web/style.css'), '\n/* reproducibility probe */\n');
+  const after = await build(t, repo);
+  assert.notEqual(after.summary.buildId, before.summary.buildId);
 });
 
 test('an unsupported Canonical release fails closed instead of silently reusing the artifact', async t => {
-  const manifestPath = 'docs/CANONICAL_MANIFEST.md';
-  const published = git('rev-parse', 'refs/remotes/origin/main');
-  const source = git('show', `${published}:${manifestPath}`);
+  const repo = isolatedRepository(t);
+  const source = repo.git('show', `${repo.published}:${MANIFEST_PATH}`);
 
-  const republish = async (text, message) => {
-    const dir = await scratch();
-    t.after(() => rm(dir, { recursive: true, force: true }));
-    const blobPath = resolve(dir, 'manifest.md');
-    await writeFile(blobPath, text);
-    const blob = git('hash-object', '-w', blobPath);
-    const index = resolve(dir, 'index');
-    const withIndex = (...args) => execFileSync('git', args, { cwd: root, encoding: 'utf8', env: { ...process.env, ...identity, GIT_INDEX_FILE: index } }).trim();
-    withIndex('read-tree', published);
-    withIndex('update-index', '--add', '--cacheinfo', `100644,${blob},${manifestPath}`);
-    return git('commit-tree', withIndex('write-tree'), '-p', published, '-m', message);
-  };
+  repo.publish(repo.republishManifest(
+    source.replace('canonical_version: 2026-09-13-v1', 'canonical_version: 2999-01-01-v9').replace('manifest_version: 2026-09-13-v1-manifest1', 'manifest_version: 2999-01-01-v9-manifest1'),
+    'probe: unsupported Canonical version'));
+  assert.match(buildFails(repo) ?? '', /CANONICAL_NOT_LOADED/);
 
-  const renamed = await republish(source.replace('canonical_version: 2026-09-13-v1', 'canonical_version: 2999-01-01-v9').replace('manifest_version: 2026-09-13-v1-manifest1', 'manifest_version: 2999-01-01-v9-manifest1'), 'probe: unsupported Canonical version');
-  const versionFailure = await withPublishedMain(renamed, () => buildFails());
-  assert.match(versionFailure ?? '', /CANONICAL_NOT_LOADED/);
-
-  const moved = await republish(source.replace(/rules_snapshot_sha: [0-9a-f]{40}/, `rules_snapshot_sha: ${'0'.repeat(40)}`), 'probe: unavailable rules snapshot');
-  const snapshotFailure = await withPublishedMain(moved, () => buildFails());
-  assert.match(snapshotFailure ?? '', /CANONICAL_NOT_LOADED/);
+  repo.publish(repo.republishManifest(
+    source.replace(/rules_snapshot_sha: [0-9a-f]{40}/, `rules_snapshot_sha: ${'0'.repeat(40)}`),
+    'probe: unavailable rules snapshot'));
+  assert.match(buildFails(repo) ?? '', /CANONICAL_NOT_LOADED/);
 });
 
 test('the verifier rejects a tampered asset, manifest, identity or stowaway file', async t => {
@@ -294,15 +268,12 @@ test('the release manifest covers the generated Service Worker', async t => {
 });
 
 test('changing the Service Worker template changes cacheId and buildId', async t => {
-  const before = await build(t);
-  const path = resolve(root, 'studio/web/sw.js');
-  const original = await readFile(path);
-  try {
-    await appendFile(path, '\n// reproducibility probe\n');
-    const after = await build(t);
-    assert.notEqual(after.manifest.release.cacheId, before.manifest.release.cacheId);
-    assert.notEqual(after.summary.buildId, before.summary.buildId);
-  } finally { await writeFile(path, original); }
+  const repo = isolatedRepository(t);
+  const before = await build(t, repo);
+  await appendFile(resolve(repo.dir, 'studio/web/sw.js'), '\n// reproducibility probe\n');
+  const after = await build(t, repo);
+  assert.notEqual(after.manifest.release.cacheId, before.manifest.release.cacheId);
+  assert.notEqual(after.summary.buildId, before.summary.buildId);
 });
 
 test('repeating a build reproduces the same cacheId and the same Service Worker bytes', async t => {
@@ -444,4 +415,9 @@ test('the shipped Service Worker is exactly the trusted template rendered with t
     () => verifyStudioArtifact(out, {}, { serviceWorkerTemplate: `// forged\n${HOSTILE}` }),
     /release\.cacheId does not match the trusted Service Worker template/,
   );
+});
+
+test('this file never wrote the shared published discovery ref (M6)', () => {
+  // The reflog records a rewrite even when it was restored afterwards.
+  assert.deepEqual(observePublishedRef(), sharedPublishedRefAtStart);
 });
