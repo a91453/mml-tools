@@ -71,7 +71,9 @@ function checkShape(input, shape) {
   if (!input || typeof input !== 'object' || Array.isArray(input)) fail(ERROR_CODES.INVALID_REQUEST, 'A technical check takes a JSON object.');
   for (const key of REQUIRED) if (input[key] === undefined) fail(ERROR_CODES.INVALID_REQUEST, `${key} is required`, { required: REQUIRED });
   for (const [key, value] of Object.entries(input)) {
-    const rule = shape[key];
+    // Own keys only: a JSON key such as `__proto__` or `constructor` resolves
+    // through the prototype and is not an accepted field either.
+    const rule = Object.hasOwn(shape, key) ? shape[key] : null;
     if (!rule) fail(ERROR_CODES.INVALID_REQUEST, `${key} is not an accepted technical-check field`, { accepted: Object.keys(shape) });
     if (value === undefined) continue;
     if (rule.type === 'string') {

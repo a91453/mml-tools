@@ -40,6 +40,8 @@ test('a malformed technical-check request is refused over HTTP exactly where MCP
     { ...VALID, title: 'x'.repeat(121) },
     { mml: 'MML@' + 'c'.repeat(40001) + ',,,,,;', meter_text: '0 4/4' },
     { ...VALID, unexpected: true },
+    JSON.parse('{"mml":"MML@t120o4c1,,,,,;","meter_text":"0 4/4","__proto__":{"polluted":true}}'),
+    JSON.parse('{"mml":"MML@t120o4c1,,,,,;","meter_text":"0 4/4","constructor":{"polluted":true}}'),
   ];
   for (const [index, payload] of cases.entries()) {
     for (const path of ['/technical/validate', '/technical/overlaps']) {
