@@ -1,6 +1,22 @@
-# Standalone MML OAuth service
+# Agent Control Plane — MML OAuth, MCP and Application API service
 
-This deployment uses the same MML core and tools as the Sites workbench. It does not trust Sites identity headers. The original workbench remains a separate browser application with its own Sites access policy.
+Railway project `mml-tools-allen`, service `mml-tools`. This deployment serves OAuth, the MCP endpoint at `/mcp`, and the Application HTTP API at `/api/v1/*`. It does not trust Sites identity headers. The original Sites workbench remains a separate browser application with its own Sites access policy.
+
+## This is not the Studio Web deployment
+
+There are two Railway planes, and this README describes only the second:
+
+| | Permanent Studio Web plane | Agent Control Plane (this one) |
+| --- | --- | --- |
+| Railway project | `mml-tools-studio-permanent` | `mml-tools-allen` |
+| Service | `studio-web-permanent` | `mml-tools` |
+| Serves | the Studio PWA | OAuth, `/mcp`, `/api/v1/*` |
+| Release model | pinned artifact + trust bundle, SHA256-verified, atomically published to a durable cache | container image built from this repository |
+| Volume | `/studio-cache` — verified runtime-release bytes | `/data` — project, asset, artifact and job records |
+
+`/studio-cache` and `/data` are never interchangeable. `/studio-cache` holds release bytes for the Web plane and never user song data; `/data` holds this service's working storage and is never the Web plane's release cache. The private `studio-release-artifacts` bucket belongs to the release mechanism and is **not** this service's upload store.
+
+The Permanent Studio Web deployment, its pinned artifact, its trust bundle and its verification mechanism are documented in [ops/permanent/](../ops/permanent/MIGRATION_RESULT.md) and are not changed, replaced or bypassed by anything here. Studio Web does not call the Application Service; it reaches the same `studio/backend/**` engines directly in the browser. Migrating it is possible later and is follow-up work.
 
 ## Required deployment settings
 

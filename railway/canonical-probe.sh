@@ -1,5 +1,11 @@
 #!/bin/sh
-# Published Canonical bootstrap probe for a built image.
+# Published Canonical bootstrap probe for the Agent backend image.
+#
+# Scope: the Agent Control Plane only -- Railway project `mml-tools-allen`,
+# service `mml-tools`. This probes the Agent backend's v1 Canonical LOADING
+# implementation. It is not the Permanent Studio Web release architecture, and
+# says nothing about `studio-web-permanent`, its pinned artifact, its trust
+# bundle or `/studio-cache`.
 #
 # Status: IMPLEMENTATION NOTES. Deployment diagnostics only. This grants
 # nothing and certifies nothing: the bootstrap re-establishes every one of
@@ -19,7 +25,7 @@
 # a deployment that still serves its existing tools down over a degraded
 # capability. Silence is the only outcome it rules out.
 #
-# Run from the image root (the directory holding .git and studio/).
+# Run from the Agent backend image root (the directory holding .git and studio/).
 
 set -u
 

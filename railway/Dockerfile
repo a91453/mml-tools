@@ -1,3 +1,10 @@
+# Agent Control Plane image: Railway project `mml-tools-allen`, service
+# `mml-tools`. Serves OAuth, MCP `/mcp` and the Application API `/api/v1/*`.
+#
+# This is NOT the Permanent Studio Web deployment. That plane
+# (`mml-tools-studio-permanent` / `studio-web-permanent`) serves a pinned,
+# SHA256-verified release artifact from its own durable `/studio-cache`, and is
+# neither built nor affected by this Dockerfile.
 FROM node:24-bookworm-slim
 
 # The Published Canonical bootstrap shells out to git to read the Manifest from
@@ -24,10 +31,16 @@ COPY . ./
 # safe here is the one configuration git needs to read its own objects.
 RUN git config --system --add safe.directory /app || true
 
-# Record in the build log whether this build context actually carried what
-# the Published Canonical bootstrap needs. Non-fatal by design: see the
-# script header for why a degraded context must still produce a working
-# image, and why silence is the one outcome that is not acceptable.
+# Record in the build log whether this build context actually carried what the
+# Agent backend's Canonical bootstrap needs. Non-fatal by design: see the script
+# header for why a degraded context must still produce a working image, and why
+# silence is the one outcome that is not acceptable.
+#
+# Note the Agent backend's Canonical view is pinned at build: `.git` is copied
+# here and nothing fetches at runtime, so publishing a new Canonical release
+# does not reach this service until the image is rebuilt. The deployment watch
+# patterns must include the Manifest and rule sources for that reason; see
+# railway/README.md.
 RUN sh railway/canonical-probe.sh /app
 
 ENV NODE_ENV=production \

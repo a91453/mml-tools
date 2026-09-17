@@ -4,23 +4,35 @@
 // Published Canonical-aware Studio capabilities. It does not define or modify
 // Canonical rules.
 //
-// This is the only orchestration boundary. HTTP, MCP, the Studio Web app, a
-// CLI, a local agent and any future transport are adapters over it: they parse
-// their own wire format, name an operation, and render the result. None of them
-// holds arrangement logic, Canonical logic, Final logic or a second workflow,
-// and no operation is reachable from one transport and not another.
+// This is the orchestration boundary for server-side and agent callers. The
+// HTTP adapter, the MCP adapter and any future server transport go through it:
+// they parse their own wire format, name an operation, and render the result.
+// None of them holds arrangement logic, Canonical logic, Final logic or a
+// second workflow, and no operation is reachable from one transport and not
+// another.
 //
 //     ChatGPT · Claude · Codex · future models · local agents
 //                            │
-//                       MCP adapter
-//                            │
-//     Studio Web · CLI · PWA ─┼─ HTTP adapter
+//                    MCP adapter · HTTP adapter
 //                            │
 //                  Application Service   ← this module
 //                            │
 //                  existing Studio backend modules
 //                            │
 //                     Published Canonical
+//
+// What this is NOT the boundary for, today: the Permanent Studio Web/PWA. That
+// is a separate, already-verified deployment plane (Railway project
+// `mml-tools-studio-permanent`, service `studio-web-permanent`) which serves a
+// pinned, SHA256-verified release artifact from its own durable cache and
+// reaches the same Canonical-aware engines directly, in the browser, through
+// its own Web Worker. It does not call this service, and nothing here changes
+// how it is built, verified, released or served.
+//
+// Both planes consume the same `studio/backend/**` engines and obey the same
+// Published Canonical. Neither deployment defines Canonical. Migrating Studio
+// Web onto this service is possible later and is explicitly follow-up work; it
+// is not what this module does or claims.
 //
 // The service calls no model. It holds no OpenAI, Anthropic or Gemini
 // credential, imports no provider SDK, and has no provider-specific branch: a
@@ -30,10 +42,10 @@
 // things depending on who asked.
 //
 // Deployment is likewise not a dependency. Nothing in this layer knows about
-// Railway, a container, a public origin or an OAuth grant: the caller's owner
-// identity arrives as a string and the store's directory arrives as a path, so
-// the same service runs unchanged in a test, on a laptop, on the deployed
-// service and in whatever hosts it next.
+// Railway, a container, a public origin, an OAuth grant, a release artifact or
+// a verified cache: the caller's owner identity arrives as a string and the
+// store's directory arrives as a path, so the same service runs unchanged in a
+// test, on a laptop, on the agent backend and in whatever hosts it next.
 
 import { buildCapabilities } from './capabilities.mjs';
 import {

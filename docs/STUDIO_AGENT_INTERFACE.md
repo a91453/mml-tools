@@ -10,40 +10,103 @@ behaviour the published rule sources do not state, that behaviour is an
 **implementer decision** and is chosen to be strictly narrower than the rule,
 never wider.
 
+## 0. Deployment topology: two planes, one Canonical
+
+This interface adds an **Agent Control Plane**. It does not replace, migrate or
+redefine the Permanent Studio Web/PWA deployment, which was separately built and
+verified on 2026-09-14 and is untouched by this work.
+
+```
+                        Published Canonical
+                   docs/CANONICAL_MANIFEST.md
+                    + pinned rules snapshot
+                                │
+              ┌─────────────────┴─────────────────┐
+              │                                   │
+   Presentation / Web plane            Agent Control Plane
+   mml-tools-studio-permanent          mml-tools-allen
+   └─ studio-web-permanent             └─ mml-tools
+      pinned release artifact             Application Service
+      trust bundle + SHA256               HTTP /api/v1/*
+      fail-closed verification            MCP /mcp
+      durable verified cache              OAuth
+      /studio-cache                       /data
+              │                                   │
+              └──── future integration ───────────┤
+                         (follow-up)              ▼
+                                        existing Studio backend
+                                         studio/backend/**
+```
+
+| | Permanent Studio Web plane | Agent Control Plane |
+| --- | --- | --- |
+| Railway project | `mml-tools-studio-permanent` | `mml-tools-allen` |
+| Service | `studio-web-permanent` | `mml-tools` |
+| Serves | the Studio PWA | OAuth, `/mcp`, `/api/v1/*` |
+| Release model | pinned artifact + trust bundle, SHA256-verified, atomically published | container image built from the repository |
+| Volume | `/studio-cache` | `/data` |
+| Volume holds | verified runtime-release bytes | project, asset, artifact and job records |
+| Changed by this PR | **nothing** | the Application Service and its two adapters |
+
+**Studio Web does not use the Application Service.** It reaches the same
+`studio/backend/**` engines directly, in the browser, through its own Web
+Worker. Migrating it onto this service is possible later and is follow-up work
+(§18); this document never claims it has happened.
+
+Both planes obey the same Published Canonical, and neither deployment defines
+it. `ops/permanent/` is deployment evidence and operations material — useful
+context, and **not** a Canonical authority.
+
+### Storage responsibility
+
+These two are never interchangeable and this PR moves nothing between them:
+
+- **`/studio-cache`** — the Permanent Studio Web verified runtime-release cache.
+  Release bytes, owned by `studio-web-permanent`. Never user song data. Nothing
+  in the Agent Control Plane reads, writes, or knows about it.
+- **`/data`** — the Agent backend's working storage. Project records, uploaded
+  source assets, derived artifacts and job state, owned by `mml-tools`. Never
+  the Studio Web release cache.
+
+The private `studio-release-artifacts` bucket belongs to the release mechanism
+and is **not** the Agent backend's upload store. No new bucket, volume,
+database, queue or object store is introduced anywhere in this work.
+
 ## 1. What was missing
 
 The Canonical-aware engines — source intake, score intake, voice decomposition,
 role candidates, decision application, arbitration, version drift, readiness,
 micro-gap enforcement, Technical Timing Repair, the Final MML emitter — all
-existed and were all reachable from exactly one place: the browser workspace
-model, behind a Web Worker.
+existed, and were reachable from exactly one place: the browser workspace model,
+behind a Web Worker. That is fine for the Web plane, which runs in a browser.
 
-The deployed service reached past them entirely. `server/mcp.mjs` ran three
-read-only tools on the legacy `dist/core.js` engine and never imported
-`studio/backend/**` at all. So there was no orchestration boundary: a second
+It left the Agent backend with nothing. `server/mcp.mjs` ran three read-only
+tools on the legacy `dist/core.js` engine and never imported `studio/backend/**`
+at all, so there was no server-side orchestration boundary: a second server
 caller would have meant a second workflow, and a third would have meant a third.
 
-That is the shape this stage removes. There is now one orchestration interface,
-and every caller is an adapter over it.
+That is the shape this stage removes, for server and agent callers.
 
 ```
 ChatGPT · Claude · Codex · future models · local agents
                         │
-                   MCP adapter
+            MCP adapter · HTTP adapter        server/{mcp,mcp-studio,api}.mjs
                         │
-Studio Web · CLI · PWA ─┼─ HTTP adapter
+              Application Service             studio/backend/application/
                         │
-              Application Service          studio/backend/application/
-                        │
-              existing Studio backend      studio/backend/{source,score,mml,
-                        │                   canonical,arrangement,arbitration,
-                Published Canonical         compare,audio,final}
+              existing Studio backend         studio/backend/{source,score,mml,
+                        │                      canonical,arrangement,arbitration,
+                Published Canonical            compare,audio,final}
 ```
 
 The arrows only point downward. The Application Service consumes the backend; it
 re-implements no parser, no arrangement algorithm, no readiness gate, no repair
 and no Final policy. The backend does not know the Application Service exists,
 and neither layer knows which transport — or which model — is calling.
+
+The Permanent Studio Web/PWA is not in this picture, deliberately: it reaches
+the same backend engines directly in the browser, and this stage neither changes
+nor routes it (§0).
 
 ## 2. Model-agnostic by construction
 
@@ -438,7 +501,10 @@ oracle over another owner's identifiers.
 - No new database, object storage, queue, cache, vector store, CDN or monitoring
   service.
 - No new domain, plan tier or paid serverless provider.
-- Storage reuses the volume the existing Railway service already has.
+- Storage reuses the `/data` volume the Agent backend service already has. The
+  Permanent Studio Web plane's `/studio-cache` volume and its
+  `studio-release-artifacts` bucket are untouched and are not used as agent
+  storage.
 - Jobs run in-process; no queue service is introduced.
 - Tests make no network call and no paid API call.
 
@@ -495,7 +561,13 @@ rendered as a generic 500 with no message, path or stack.
 - Multi-user authentication and per-user isolation at the transport.
 - A Studio UI over the new API.
 - Server-side invocation of the audio worker.
-- Studio Web migration onto the Application Service.
+- **Studio Web migration onto the Application Service.** The Permanent Studio
+  Web/PWA does not use this service today (§0). If it ever should, that is its
+  own change, with its own review against the verified release mechanism — it is
+  not started, implied or prepared for here.
+- A preverified Canonical source for the Agent backend bootstrap, if its builder
+  cannot supply Git history (§20). Authority would not change; only the Agent
+  backend's loading implementation would.
 
 ## 19. Authority
 
@@ -508,7 +580,21 @@ authority.
 Published Canonical, loaded from `docs/CANONICAL_MANIFEST.md` on published
 `main`, remains the only rule authority.
 
-## 20. Railway image: Canonical bootstrap audit
+## 20. Agent backend image: Canonical bootstrap audit
+
+**Scope: the Agent Control Plane only** — Railway project `mml-tools-allen`,
+service `mml-tools`, built from `railway/Dockerfile`. This section describes the
+Agent backend's v1 Canonical *loading implementation*. It is **not** the
+Permanent Studio Web release architecture, and nothing in it applies to
+`studio-web-permanent`, its pinned artifact, its trust bundle or `/studio-cache`.
+
+Three related but distinct things, kept apart throughout:
+
+| | What it is |
+| --- | --- |
+| Published Canonical **authority** | `docs/CANONICAL_MANIFEST.md` on published `main` plus the pinned rules snapshot. The sole authority for both planes. |
+| Permanent Studio Web **release delivery** | Pinned verified artifact, trust bundle and durable cache. Untouched by this PR. |
+| Agent backend **Canonical loading** | The repository bootstrap reading Git history inside the Agent backend image. What this section audits. |
 
 Status: audit performed at `df0fe13`, without production credentials and
 without any paid change. No Docker daemon was available, so the image
@@ -571,9 +657,10 @@ snapshot commit was truncated away. Shallowness alone is not the test — the
 authoring sandbox for this change is itself a shallow clone that loads fine,
 because its 168 retained commits happen to include the snapshot.
 
-Whether Railway's build context satisfies this **has not been confirmed**, and
-cannot be from here: it would take either a Docker daemon or the owner's
-service password in production. Neither was used, and neither was guessed.
+Whether the Agent backend's build context satisfies this **has not been
+confirmed**, and cannot be from here: it would take either a Docker daemon or
+the owner's service password in production. Neither was used, and neither was
+guessed.
 
 ### Post-deploy verification
 
@@ -602,7 +689,8 @@ curl -s https://<public-origin>/ | jq .canonical
 Expect `status: "CANONICAL_LOADED"` and the five identities, distinct.
 `canonical_notice` states the remedy when it is not loaded. `/healthz` is
 deliberately **not** coupled to this: a Canonical problem must never fail
-Railway's healthcheck and roll back a deployment that is otherwise serving.
+the Agent backend's healthcheck and roll back a deployment that is otherwise
+serving.
 
 ### If it reports `CANONICAL_NOT_LOADED`
 
@@ -614,18 +702,41 @@ The probe line names which precondition failed.
 - `rules snapshot …: MISSING` — history was truncated before the snapshot
   commit.
 
-All three are deployment-side, not code: the image needs a source checkout
-carrying this repository's history and published ref. Nothing in the service may
-paper over it — forging `refs/remotes/origin/main` from `HEAD` at build time
-would let any branch build declare itself published Canonical, which is exactly
-the substitution the bootstrap contract forbids, so it is **not** done.
+All three are deployment-side, not code: the Agent backend image needs a source
+checkout carrying this repository's history and published ref. Nothing in the
+service may paper over it — forging `refs/remotes/origin/main` from `HEAD` at
+build time would let any branch build declare itself published Canonical, which
+is exactly the substitution the bootstrap contract forbids, so it is **not**
+done.
 
-If Railway cannot be made to supply that history, the identified follow-up is
-the approach the clean public export already uses: resolve the Canonical package
-in an environment that *can* load it and vendor it into the image as
-`canonical/published.json` with `distribution_mode: vendored-static`, alongside a
-static loader. That changes the deployment's provenance model, so it is a
-decision for the project owner rather than something to adopt silently here.
+If the Agent backend's builder cannot be made to supply that history, the
+identified follow-up is the approach the clean public export already uses:
+resolve the Canonical package in an environment that *can* load it and vendor it
+into the image as `canonical/published.json` with
+`distribution_mode: vendored-static`, alongside a static loader. That changes
+the Agent backend's provenance model, so it is a decision for the project owner
+rather than something to adopt silently here. It is a change to the Agent
+backend's loading implementation only, and would not touch the Permanent Studio
+release mechanism.
+
+### The Agent backend's Canonical view is pinned at image build
+
+`.git` is copied into the image at build time and nothing fetches at runtime, so
+`refs/remotes/origin/main` inside a running container resolves to whatever
+`main` was when the image was built. A running Agent backend therefore reports
+the `published_main_head` of its build, not of `main` right now.
+
+That is safe — it is a pinned, reproducible view, and the snapshot it loads is
+immutable — but it has one operational consequence: **publishing a new Canonical
+release does not reach the Agent backend until the image is rebuilt.** The
+deployment watch patterns must therefore include
+`docs/CANONICAL_MANIFEST.md` and the Canonical rule sources, so a Canonical
+publication triggers a rebuild rather than leaving the backend silently serving
+an obsolete Manifest view. See `railway/README.md` for the exact set.
+
+An operator can check for drift without credentials by comparing the
+`canonical.published_main_head` reported by the Agent backend's public root
+endpoint against the current `main`.
 
 Until then the behaviour is honest and safe: the legacy technical tools keep
 working, and every Canonical-aware operation refuses.
