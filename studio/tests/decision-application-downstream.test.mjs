@@ -181,6 +181,52 @@ test('a duplicate promoted into Melody is graded under its derived candidate eve
   assert.equal(review.readiness.gates.leadPromotion.status, 'PASS');
 });
 
+test('a later revision can promote an earlier derived duplicate without losing its baseline evidence chain', () => {
+  const first = apply([{
+    id: 'd-prev', type: 'DUPLICATE_WITH_JUSTIFICATION', target: { eventIds: ['harm-1'] }, toRoles: ['Chord3'],
+    reason: 'Reviewed: keep an exact enrichment copy for a later hand-off.',
+    evidence: ['fixture:score'],
+    acceptance: accept(),
+  }]);
+  assert.equal(first.status, 'PASS');
+  const derived = first.candidate.events.find(event => event.metadata?.g11d?.derivedFromEventId === 'harm-1');
+  assert.ok(derived);
+
+  const second = applyAcceptedArrangement({
+    baseline,
+    suggestion,
+    canonicalIdentity: CANONICAL_IDENTITY,
+    parent: { revision: first.revision, candidate: first.candidate },
+    decisions: [{
+      id: 'p-derived-later',
+      type: 'MOVE_ROLE',
+      target: { eventIds: [derived.id] },
+      fromRole: 'Chord3',
+      toRole: 'Melody',
+      reason: 'Reviewed: the derived copy becomes the foreground instrumental hand-off here.',
+      evidence: ['fixture:score top line', 'fixture:audio foreground'],
+      leadEvidence: leadPromotionEvidence({ sourceEventId: 'fixture:symbolic#harm-1' }),
+      acceptance: acceptanceFor(baseline, { suggestion, reviewedRevisionId: first.revision.id }),
+    }],
+  });
+  assert.equal(second.status, 'PASS');
+
+  const reports = leadPromotionReportsFromApplication(second, baseline);
+  assert.equal(reports.length, 1);
+  assert.equal(reports[0].status, 'PASS');
+  assert.equal(reports[0].eventId, derived.id);
+  assert.equal(reports[0].originEventId, 'harm-1');
+
+  const review = reviewAppliedCandidate({
+    application: second,
+    baseline,
+    acceptedPrevious: first.candidate,
+    leadPromotionReports: reports,
+  });
+  assert.ok(review.readiness.gates.baseline.leadEventDiff.added.includes(derived.id));
+  assert.equal(review.readiness.gates.leadPromotion.status, 'PASS');
+});
+
 test('omitting a Melody event leaves a source-supported Lead gap the Core3 gate finds', () => {
   const result = apply([omit('o1', ['lead-2'], {
     fromRole: 'Melody',
