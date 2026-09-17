@@ -536,6 +536,25 @@ short/missing/mistyped batch objects and unavailable required Git history remain
 changes no music rule, syntax rule, acceptance gate or Published Canonical
 release identity.
 
+**Follow-up after merge (post-merge adversarial review).** Two of the review's
+lenses completed before its budget ran out; their raw findings were checked by
+hand. Three were real and are fixed in the follow-up PR: the loader no longer
+strips `GIT_CONFIG_PARAMETERS` / `GIT_CONFIG_COUNT`-`KEY`-`VALUE`, because that
+is the only per-process channel for `safe.directory` in a foreign-owned checkout
+and injected configuration cannot move discovery past the root binding
+(regressions: injection loads the requested root or fails closed; a chowned
+checkout loads only through the channel); a Manifest locator with an empty path
+segment (`studio/tests//`) is rejected instead of aliasing another locator; and
+the shared-ref observation in the in-file guard and the stress runner now
+includes the identity (inode, size, change time) of the ref, its reflog and
+`packed-refs`, so a delete-and-recreate is seen, not only a rewrite-and-restore.
+One finding was refuted by experiment (`log.showSignature` does not pollute
+`git log --format=%H` stdout). One is recorded as a non-blocking residual: a
+symlink entry in the pinned snapshot reads as a `blob` for `IMPLEMENTER` /
+`VERIFIER` locators, unchanged from the previous loader; rule documents are
+content-checked and unaffected.
+
+
 ## Dependencies
 
 - **G13 depends on M3b.** The lockfile posture and the durable release intent both

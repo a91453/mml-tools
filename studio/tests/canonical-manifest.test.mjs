@@ -103,3 +103,9 @@ test('an unrelated Git HEAD advance leaves the loaded release and Manifest commi
   assert.equal(after.manifestCommit, before.manifestCommit);
   assert.deepEqual(after.release, before.release);
 });
+
+test('a locator with an empty path segment is rejected instead of aliasing another locator', () => {
+  const doubled = manifest.replace('[studio/tests/](', '[studio/tests//](').replace('/studio/tests/)', '/studio/tests//)');
+  assert.notEqual(doubled, manifest);
+  assert.throws(() => parseCanonicalManifest(doubled), /Invalid snapshot path/);
+});

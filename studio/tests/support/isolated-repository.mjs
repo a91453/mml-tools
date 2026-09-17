@@ -12,7 +12,7 @@
 // reads the shared object store through alternates and writes its own objects
 // only into itself.
 import { execFileSync } from 'node:child_process';
-import { cpSync, mkdtempSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
+import { cpSync, mkdtempSync, rmSync, statSync, symlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -31,13 +31,24 @@ export function gitIn(cwd, args, env = {}) {
   return execFileSync('git', args, { cwd, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'], env: { ...process.env, ...identity, ...env } }).trim();
 }
 
-// Read-only observation of the shared checkout's published discovery ref. Tests
-// use it to prove they left the ref alone: the reflog records every update, so
-// a transient rewrite-and-restore is visible even after the restore.
+// Read-only observation of a checkout's published discovery ref. Tests use it
+// to prove they left the ref alone. The reflog records every update, so a
+// transient rewrite-and-restore is visible after the restore; a delete-and-
+// recreate that leaves the same value and entry count behind is caught by the
+// identity (inode, size, change time) of the ref, its reflog and packed-refs,
+// which read-only Git commands never touch.
+const fileIdentity = path => {
+  try {
+    const stat = statSync(path, { bigint: true });
+    return { ino: String(stat.ino), size: String(stat.size), ctimeNs: String(stat.ctimeNs), mtimeNs: String(stat.mtimeNs) };
+  } catch { return null; }
+};
 export function observePublishedRef(root = repositoryRoot) {
   const value = gitIn(root, ['rev-parse', '--verify', '--end-of-options', `${PUBLISHED_REF}^{commit}`]);
-  const reflog = gitIn(root, ['reflog', 'show', '--format=%H', PUBLISHED_REF]);
-  return { value, reflogEntries: reflog ? reflog.split('\n').length : 0 };
+  const reflog = gitIn(root, ['reflog', 'show', '--date=iso', '--format=%H %gd %gs', PUBLISHED_REF]);
+  const files = Object.fromEntries([`logs/${PUBLISHED_REF}`, PUBLISHED_REF, 'packed-refs']
+    .map(path => [path, fileIdentity(resolve(root, gitIn(root, ['rev-parse', '--git-path', path])))]));
+  return { value, reflogEntries: reflog ? reflog.split('\n').length : 0, reflog, files };
 }
 
 // Default sources a build or loader needs from the working tree. The copies are
