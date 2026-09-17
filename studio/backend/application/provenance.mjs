@@ -99,12 +99,23 @@ export class EngineUnavailableError extends Error {
 /**
  * The Canonical provenance envelope carried by every significant response.
  *
- * The five identities stay five fields. `rules_snapshot_sha` selects the
+ * The identities stay separate fields. `rules_snapshot_sha` selects the
  * reviewed rules; `manifest_commit` is the commit that introduced the loaded
  * Manifest revision; `published_main_head`, `repository_head` and `pr_head` are
  * Git provenance for the process that answered. None of them is a Canonical
  * version, none substitutes for another, and none may be folded into a single
  * "version" field.
+ *
+ * `checkout_identity` says how `repository_head` was established, and exists
+ * because a deployment whose source tree arrives without Git metadata has no
+ * checkout identity of its own: the build materializes the published history
+ * and sets HEAD to the published main head it captured, which makes
+ * `repository_head` equal `published_main_head` by construction. Reporting that
+ * pair without saying why they are equal would look like an independently
+ * verified checkout. `build_source_head` is the deploying platform's own record
+ * of the commit that produced the source tree, or null when it supplied none;
+ * it is provenance and nothing else -- it selects no Manifest, no snapshot and
+ * no rule document.
  */
 export function provenanceOf(published) {
   const metadata = published?.metadata ?? {};
@@ -119,6 +130,8 @@ export function provenanceOf(published) {
     published_main_head: git.published_main_head ?? null,
     repository_head: git.repository_head ?? null,
     pr_head: git.pr_head ?? null,
+    checkout_identity: git.checkout_identity ?? null,
+    build_source_head: git.build_source_head ?? null,
     entry_point: published?.authority?.entryPoint ?? null,
     authority_notice: 'Executable contracts, schemas, this interface, its transports and its tests are implementers and verifiers. They cannot define or amend Canonical rules in reverse.',
   });
@@ -135,6 +148,8 @@ export function unloadedProvenance(reason) {
     published_main_head: null,
     repository_head: null,
     pr_head: null,
+    checkout_identity: null,
+    build_source_head: null,
     entry_point: 'docs/CANONICAL_MANIFEST.md',
     reason: reason ?? 'Published Canonical was not loaded',
     legacy_fallback_allowed: false,

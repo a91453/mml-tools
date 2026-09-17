@@ -1,5 +1,6 @@
 import { execFileSync } from 'node:child_process';
-import { realpathSync } from 'node:fs';
+import { readFileSync, realpathSync } from 'node:fs';
+import { resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 const repositoryRoot = fileURLToPath(new URL('../../../', import.meta.url));
@@ -13,10 +14,17 @@ function freeze(value) {
 }
 
 // Discovery/consumer contract only. Musical policy belongs to the loaded documents.
+//
+// `publishedRef` is the only discovery source this loader reads. `publishedBranch`
+// is the branch on the published repository that `publishedRef` tracks; it is
+// named here so the build-time materializer in `./materialize.mjs` and this
+// loader cannot drift onto two different published identities. This loader never
+// contacts it — it reads local objects only.
 export const BOOTSTRAP_CONTRACT = freeze({
   repository: 'a91453/mml-tools',
   entryPoint: 'docs/CANONICAL_MANIFEST.md',
   publishedRef: 'refs/remotes/origin/main',
+  publishedBranch: 'refs/heads/main',
   role: 'CONSUMER',
   localSkillAuthority: 'WORKFLOW_ONLY',
   executableContractDefinesRules: false,
@@ -123,6 +131,58 @@ function readObjects(run, requests) {
 
 const samePath = (left, right) => realpathSync(left) === realpathSync(right);
 
+// --- Checkout identity --------------------------------------------------------
+//
+// `repository_head` answers "which commit is this checkout at". A normal clone
+// answers it from Git. A deployment whose source tree arrived *without* Git
+// metadata has no such answer of its own: the build-time materializer in
+// `./materialize.mjs` builds the object store from published GitHub and then
+// sets HEAD to the published main head it captured. `repository_head` is then
+// equal to `published_main_head` by construction, and saying so is the whole
+// point of this record — an equal pair that looks independently verified would
+// be a quieter lie than one that names how it came to be equal.
+//
+// The record is provenance labelling and nothing else. It cannot name a
+// Manifest, a snapshot, a rules document or an authority; every identity that
+// selects what is loaded is still resolved from Git objects above. The only
+// value it contributes is `build_source_head` — what the deploying platform
+// says produced the source tree — which is reported and never acted on. A
+// record that disagrees with the Git identities this load already resolved
+// fails closed rather than being ignored, so a stale one cannot ride along.
+export const BOOTSTRAP_RECORD_PATH = '.canonical-bootstrap.json';
+
+export const CHECKOUT_IDENTITY = freeze({
+  gitCheckout: 'git-checkout',
+  materialized: 'materialized-published-main',
+});
+
+const RECORD_FIELDS = 'bootstrap_version,build_source_head,checkout_identity,published_main_head,published_source';
+
+function readBootstrapRecord(root, publishedHead, repositoryHead) {
+  let text;
+  try {
+    text = readFileSync(resolve(root, BOOTSTRAP_RECORD_PATH), 'utf8');
+  } catch (error) {
+    requireValue(error?.code === 'ENOENT', 'Bootstrap record is present but unreadable');
+    return { checkout_identity: CHECKOUT_IDENTITY.gitCheckout, build_source_head: null };
+  }
+  let record;
+  try {
+    record = JSON.parse(text);
+  } catch (error) {
+    throw new CanonicalNotLoadedError('Bootstrap record is not valid JSON', error);
+  }
+  requireValue(record !== null && typeof record === 'object' && !Array.isArray(record), 'Bootstrap record must be an object');
+  requireValue(Object.keys(record).sort().join(',') === RECORD_FIELDS, 'Unexpected bootstrap record fields');
+  requireValue(record.bootstrap_version === 1, 'Unsupported bootstrap record version');
+  requireValue(record.checkout_identity === CHECKOUT_IDENTITY.materialized, 'Unknown bootstrap checkout identity');
+  requireValue(typeof record.published_source === 'string' && record.published_source !== '', 'Bootstrap record must name the published source it was built from');
+  requireValue(record.published_main_head === publishedHead, 'Bootstrap record names a different published main than this load resolved');
+  requireValue(repositoryHead === publishedHead, 'A materialized checkout must report the captured published main head');
+  requireValue(record.build_source_head === null || shaPattern.test(record.build_source_head), 'Build source head must be a full commit SHA or null');
+  return { checkout_identity: record.checkout_identity, build_source_head: record.build_source_head };
+}
+
 // One call is one complete, independent load. Nothing is memoised across calls:
 // a caller receives an immutable result built entirely from Git reads made for
 // that call, so no caller can observe another caller's partial state, and a
@@ -158,6 +218,7 @@ export function loadPublishedCanonical({ root = repositoryRoot, prHead = null, s
     const { metadata, entries } = parseCanonicalManifest(manifest);
     const snapshot = metadata.rules_snapshot_sha;
     requireValue(resolveCommit(snapshot) === snapshot, 'Snapshot is not an available commit');
+    const checkout = readBootstrapRecord(root, publishedHead, repositoryHead);
     const manifestCommit = line(['log', '-1', '--format=%H', publishedHead, '--', BOOTSTRAP_CONTRACT.entryPoint]);
     requireValue(shaPattern.test(manifestCommit) && snapshot !== manifestCommit, 'Invalid or self-referencing Manifest provenance');
     run(['merge-base', '--is-ancestor', snapshot, manifestCommit]);
@@ -179,7 +240,14 @@ export function loadPublishedCanonical({ root = repositoryRoot, prHead = null, s
     return freeze({
       status: 'CANONICAL_LOADED',
       metadata,
-      provenance: { manifest_commit: manifestCommit, repository_head: repositoryHead, pr_head: prHead, published_main_head: publishedHead },
+      provenance: {
+        manifest_commit: manifestCommit,
+        repository_head: repositoryHead,
+        pr_head: prHead,
+        published_main_head: publishedHead,
+        checkout_identity: checkout.checkout_identity,
+        build_source_head: checkout.build_source_head,
+      },
       authority: {
         entryPoint: BOOTSTRAP_CONTRACT.entryPoint,
         humanReadable: paths('CANONICAL_RULE_SOURCE'),

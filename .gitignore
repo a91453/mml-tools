@@ -11,3 +11,4 @@ __pycache__/
 *.sqlite-shm
 *.sqlite-wal
 .oss-export/
+.canonical-bootstrap.json

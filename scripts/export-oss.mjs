@@ -110,6 +110,16 @@ for (const path of ['studio/tests/song-reference-packages.test.mjs']) {
   await rm(resolve(output, path), { force: true });
 }
 
+// The Git-backed build-time materialization, and its regression, belong to the
+// private Agent Control Plane image: they exist to give a Railway build context
+// the published Git history it arrived without. This distribution vendors the
+// resolved Canonical package below instead and has no Git-backed bootstrap to
+// materialize for, so shipping either would leave a module that cannot import
+// and a test that can never run.
+for (const path of ['studio/backend/bootstrap/materialize.mjs', 'studio/tests/bootstrap-materialize.test.mjs']) {
+  await rm(resolve(output, path), { force: true });
+}
+
 // Resolve the Published Canonical from the private source checkout once, then
 // vendor the resulting immutable package. The public distribution therefore
 // does not require access to the private repository's Git history.

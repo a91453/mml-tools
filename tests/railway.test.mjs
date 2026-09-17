@@ -359,26 +359,20 @@ test('the healthcheck is not coupled to the Canonical bootstrap', async t => {
   assert.ok(!Object.hasOwn(body, 'canonical'), '/healthz must not gate on, or report, the Canonical load');
 });
 
-test('the deployment image contract keeps what the bootstrap needs', async () => {
-  // The bootstrap reads the Manifest from refs/remotes/origin/main and the rule
-  // documents from the pinned snapshot, both out of Git history. If the image
-  // stops shipping git, or the allowlist stops admitting .git or the backend,
-  // every Canonical-aware operation silently degrades in production while every
-  // test here still passes. These are the four things that must not drift.
+test('the deployment image still runs the Canonical build gate', async () => {
+  // The image contract moved to tests/railway-canonical-image.test.mjs, which
+  // reproduces the real production condition — the allowlisted source tree with
+  // no `.git` — rather than asserting on the descriptor text alone, and covers
+  // what this test used to: git installed, the allowlist entries, the pinned
+  // snapshot check. The one claim worth repeating beside the OAuth service is
+  // that the build still refuses to ship an image that cannot load the
+  // Published Canonical. It shipped one once, operationally green, with every
+  // Canonical-aware operation refusing.
   const { readFile } = await import('node:fs/promises');
   const root = new URL('../', import.meta.url);
   const dockerfile = await readFile(new URL('railway/Dockerfile', root), 'utf8');
-  const dockerignore = await readFile(new URL('.dockerignore', root), 'utf8');
-
-  assert.match(dockerfile, /install[^\n]*\bgit\b/, 'the image must install git');
-  assert.match(dockerfile, /canonical-probe\.sh/, 'the build must record the bootstrap outcome in its log');
-  for (const entry of ['!.git/', '!studio/backend/', '!railway/canonical-probe.sh']) {
-    assert.ok(dockerignore.includes(entry), `.dockerignore must admit ${entry}`);
-  }
-
-  // The probe is a diagnostic, never a gate: it must not be able to fail a
-  // build that would otherwise deploy a working service.
   const probe = await readFile(new URL('railway/canonical-probe.sh', root), 'utf8');
-  assert.match(probe, /exit 0/, 'the probe must be non-fatal');
-  assert.ok(probe.includes('0a172900a01fdf39c2e9e84cf176961320b779ea'), 'the probe must check the pinned rules snapshot');
+
+  assert.match(dockerfile, /canonical-probe\.sh/, 'the build must prove the bootstrap outcome');
+  assert.match(probe, /exit 1/, 'the probe must be able to fail the build');
 });

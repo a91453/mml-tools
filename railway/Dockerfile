@@ -7,6 +7,12 @@
 # neither built nor affected by this Dockerfile.
 FROM node:24-bookworm-slim
 
+# The deploying platform's own record of which commit produced the source tree.
+# Railway supplies it as a build argument; it is carried into provenance and
+# never acted on -- it selects no Manifest, no snapshot and no rule document.
+# When it is absent, provenance reports null rather than guessing.
+ARG RAILWAY_GIT_COMMIT_SHA=
+
 # The Published Canonical bootstrap shells out to git to read the Manifest from
 # the published main ref and every rule document from the pinned rules snapshot.
 # No git, no Canonical-aware operation -- the service would start and then
@@ -31,18 +37,39 @@ COPY . ./
 # safe here is the one configuration git needs to read its own objects.
 RUN git config --system --add safe.directory /app || true
 
-# Record in the build log whether this build context actually carried what the
-# Agent backend's Canonical bootstrap needs. Non-fatal by design: see the script
-# header for why a degraded context must still produce a working image, and why
-# silence is the one outcome that is not acceptable.
+# Make the published history available to the runtime bootstrap.
 #
-# Note the Agent backend's Canonical view is pinned at build: `.git` is copied
-# here and nothing fetches at runtime, so publishing a new Canonical release
-# does not reach this service until the image is rebuilt. The deployment watch
-# patterns must include the Manifest for that reason. The rule sources stay
-# unwatched on purpose -- they are read from the immutable snapshot the Manifest
-# pins, never from main, so a change to one cannot alter what this image loads.
-# See railway/README.md.
+# Railway's GitHub source snapshot delivers this repository's files without
+# `.git`, so `COPY . ./` above cannot carry an object store however the
+# allowlist is written, and the merged #35 deployment proved it: a SUCCESS
+# deployment whose build log read `git-metadata: MISSING` and
+# `status=CANONICAL_NOT_LOADED`. This step builds the object store instead, from
+# the published GitHub repository: it captures the published main SHA first,
+# fetches that history, points `refs/remotes/origin/main` at the captured commit,
+# reads the Manifest from that same commit and requires the exact
+# `rules_snapshot_sha` it pins to be present. It fails the build if any of that
+# cannot be proven, and it takes no fallback -- see
+# studio/backend/bootstrap/materialize.mjs for why forging the published ref out
+# of the build context is the one thing it must never do.
+#
+# No argument is passed for the published source, so the published GitHub
+# repository is always what is used.
+RUN MML_BUILD_SOURCE_HEAD="$RAILWAY_GIT_COMMIT_SHA" node scripts/materialize-canonical.mjs
+
+# Prove, on the same capability path the runtime serves, that this image loads
+# the Published Canonical. FATAL: a build that cannot prove it must not become a
+# deployment, because nothing downstream -- not /healthz, not the Railway
+# deployment status, not the restart policy -- can tell a healthy service from
+# one whose every Canonical-aware operation refuses. See the script header for
+# the production failure that made this a gate rather than a warning.
+#
+# Note the Agent backend's Canonical view is pinned at build: the history is
+# materialized here and nothing fetches at runtime, so publishing a new
+# Canonical release does not reach this service until the image is rebuilt. The
+# deployment watch patterns must include the Manifest for that reason. The rule
+# sources stay unwatched on purpose -- they are read from the immutable snapshot
+# the Manifest pins, never from main, so a change to one cannot alter what this
+# image loads. See railway/README.md.
 RUN sh railway/canonical-probe.sh /app
 
 ENV NODE_ENV=production \
