@@ -89,6 +89,16 @@ for (const path of [
 // list may not carry a document no shipped test reads.
 for (const path of ['docs/G11C_CANDIDATE_ARRANGEMENT.md']) await copyFile(path);
 
+// Regressions whose subject this export refuses to carry are removed from it
+// rather than merely skipped: song-reference-packages.test.mjs exists to police
+// imports/, which is never exported, and names a private song package while
+// doing so. Shipping it would publish that name and leave a test that can never
+// run. It is unchanged and still enforced in the source repository, and
+// audit-oss-export.mjs refuses an export that carries it.
+for (const path of ['studio/tests/song-reference-packages.test.mjs']) {
+  await rm(resolve(output, path), { force: true });
+}
+
 // Resolve the Published Canonical from the private source checkout once, then
 // vendor the resulting immutable package. The public distribution therefore
 // does not require access to the private repository's Git history.
@@ -116,13 +126,13 @@ const publicBootstrap = `import { readFileSync } from 'node:fs';\n\nexport const
 await writeFile(resolve(output, 'studio/backend/bootstrap/index.mjs'), publicBootstrap);
 
 // Public tests omit only what a vendored distribution cannot observe: the
-// Git-backed bootstrap and Manifest regressions, the build-reproducibility
-// regression, and the song-reference package regression, whose subject
-// (imports/) is deliberately never exported. Canonical IR merge behaviour is
-// run here -- it imports only exported modules and needs no source repository.
-// All parser, canonical IR, arrangement, Final, web and browser behaviour
-// remains covered by the exported suite.
-const publicRunner = `import { readdirSync } from 'node:fs';\nimport { spawnSync } from 'node:child_process';\nconst excluded = new Set(['bootstrap-concurrency.test.mjs','bootstrap.test.mjs','canonical-manifest.test.mjs','song-reference-packages.test.mjs','web-build-reproducibility.test.mjs']);\nconst legacy = readdirSync('tests').filter(x => x.endsWith('.test.mjs')).map(x => 'tests/' + x);\nconst studio = readdirSync('studio/tests').filter(x => x.endsWith('.test.mjs') && !excluded.has(x)).map(x => 'studio/tests/' + x);\nconst onlyStudio = process.argv.includes('--studio');\nconst files = onlyStudio ? studio : [...legacy, ...studio];\nconst result = spawnSync(process.execPath, ['--test', ...files], { stdio: 'inherit' });\nprocess.exit(result.status ?? 1);\n`;
+// Git-backed bootstrap and Manifest regressions and the build-reproducibility
+// regression. The song-reference package regression needs no entry because the
+// export does not carry it at all. Canonical IR merge behaviour is run here --
+// it imports only exported modules and needs no source repository. All parser,
+// canonical IR, arrangement, Final, web and browser behaviour remains covered
+// by the exported suite.
+const publicRunner = `import { readdirSync } from 'node:fs';\nimport { spawnSync } from 'node:child_process';\nconst excluded = new Set(['bootstrap-concurrency.test.mjs','bootstrap.test.mjs','canonical-manifest.test.mjs','web-build-reproducibility.test.mjs']);\nconst legacy = readdirSync('tests').filter(x => x.endsWith('.test.mjs')).map(x => 'tests/' + x);\nconst studio = readdirSync('studio/tests').filter(x => x.endsWith('.test.mjs') && !excluded.has(x)).map(x => 'studio/tests/' + x);\nconst onlyStudio = process.argv.includes('--studio');\nconst files = onlyStudio ? studio : [...legacy, ...studio];\nconst result = spawnSync(process.execPath, ['--test', ...files], { stdio: 'inherit' });\nprocess.exit(result.status ?? 1);\n`;
 await writeFile(resolve(output, 'scripts/run-public-tests.mjs'), publicRunner);
 
 const metadata = {
