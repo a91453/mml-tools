@@ -338,8 +338,29 @@ test('an unloadable Canonical is visible publicly and names the remedy', async t
   assert.equal(body.canonical.legacy_fallback_allowed, false);
   assert.equal(body.canonical.rules_snapshot_sha, null, 'a failed load must not report a snapshot');
   assert.match(body.canonical_notice, /NOT loaded/);
-  assert.match(body.canonical_notice, /refs\/remotes\/origin\/main/);
-  assert.match(body.canonical_notice, /pinned rules snapshot commit/);
+
+  // The remedy has to match the architecture that is actually deployed. This
+  // notice used to tell an operator the build context had to arrive carrying
+  // `.git`, `refs/remotes/origin/main` and the pinned snapshot commit — advice
+  // that can never be acted on, because Railway's source snapshot does not carry
+  // Git metadata and that is precisely the defect the image build now fixes for
+  // itself. Sending an operator after an impossible precondition is worse than
+  // saying nothing.
+  for (const stale of [/refs\/remotes\/origin\/main/, /pinned rules snapshot commit/, /build context/, /Git metadata/]) {
+    assert.doesNotMatch(body.canonical_notice, stale, 'the notice still names the superseded build-context remedy');
+  }
+  // What it must say instead: which step failed, what to check, and that there
+  // is no fallback.
+  assert.match(body.canonical_notice, /materialization and build gate/);
+  assert.match(body.canonical_notice, /\[canonical-bootstrap\]/, 'the notice must point at the build log lines that name the failure');
+  assert.match(body.canonical_notice, /published source/);
+  assert.match(body.canonical_notice, /no working-tree, cached or legacy fallback/);
+  assert.match(body.canonical_notice, /railway\/README\.md/);
+
+  // Public and unauthenticated: it may name what to check, never a credential,
+  // a value, or an internal path.
+  assert.doesNotMatch(body.canonical_notice, /MML_CANONICAL_SOURCE_TOKEN|ghp_|github_pat_|token=/i, 'the public notice must not name or carry a credential');
+  assert.doesNotMatch(body.canonical_notice, /\/app\/|\/data\//, 'the public notice must not disclose container paths');
 
   // The legacy technical tools are unaffected by a Canonical failure.
   const grant = await tokens(send);

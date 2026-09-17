@@ -274,15 +274,23 @@ test('the running service drops the build credential and never hands it to a chi
   // Railway has no build-only variable scope: its docs say a service variable is
   // provided to the build AND to the running deployment, and sealing one changes
   // who can read it back, not where it is injected. So the credential arrives in
-  // the container at runtime, where nothing needs it.
-  const { scrubBuildOnlyVariables, BUILD_ONLY_VARIABLES, gitSubprocess } = await import('../studio/backend/bootstrap/index.mjs');
-  assert.deepEqual([...BUILD_ONLY_VARIABLES], ['MML_CANONICAL_SOURCE_TOKEN']);
+  // the container at runtime, where nothing needs it. The exports are named for
+  // what they hold — credentials the build consumes — rather than for a platform
+  // scope that does not exist.
+  const bootstrap = await import('../studio/backend/bootstrap/index.mjs');
+  const { scrubBuildCredentialVariables, BUILD_CREDENTIAL_VARIABLES, gitSubprocess } = bootstrap;
+  assert.deepEqual([...BUILD_CREDENTIAL_VARIABLES], ['MML_CANONICAL_SOURCE_TOKEN']);
+  // The old names claimed a scope Railway does not provide, so they must not
+  // linger as aliases that keep the misleading term reachable.
+  for (const retired of ['BUILD_ONLY_VARIABLES', 'scrubBuildOnlyVariables']) {
+    assert.equal(bootstrap[retired], undefined, `${retired} names a scope Railway has no such thing as`);
+  }
 
   const environment = { MML_CANONICAL_SOURCE_TOKEN: 'ghp_SYNTHETIC_TEST_TOKEN_NEVER_REAL', PATH: process.env.PATH };
-  assert.deepEqual(scrubBuildOnlyVariables(environment), ['MML_CANONICAL_SOURCE_TOKEN']);
+  assert.deepEqual(scrubBuildCredentialVariables(environment), ['MML_CANONICAL_SOURCE_TOKEN']);
   assert.ok(!Object.hasOwn(environment, 'MML_CANONICAL_SOURCE_TOKEN'));
   assert.equal(environment.PATH, process.env.PATH, 'nothing else may be removed');
-  assert.deepEqual(scrubBuildOnlyVariables({}), [], 'absent is not an error');
+  assert.deepEqual(scrubBuildCredentialVariables({}), [], 'absent is not an error');
 
   // The runtime Git adapter is the second, independent removal: even an entry
   // point that skipped the scrub cannot leak the credential into a Git child.
@@ -321,10 +329,10 @@ test('the running service drops the build credential and never hands it to a chi
 
   // The entry point performs the removal before it serves anything.
   const server = read('railway/server.mjs');
-  assert.match(server, /scrubBuildOnlyVariables\(\)/, 'the service must drop the build credential at startup');
+  assert.match(server, /scrubBuildCredentialVariables\(\)/, 'the service must drop the build credential at startup');
   const body = server.slice(server.lastIndexOf('import '));
   assert.ok(
-    body.indexOf('scrubBuildOnlyVariables()') < body.indexOf('export function createApplication'),
+    body.indexOf('scrubBuildCredentialVariables()') < body.indexOf('export function createApplication'),
     'the removal must precede anything that reads the environment',
   );
 });
@@ -357,8 +365,14 @@ test('the runtime still fetches nothing; only the build does', () => {
       `the runtime loader runs git ${networkOperation}; the Canonical view would stop being pinned`,
     );
   }
-  // And the server never reaches the build-time module.
+  // And no runtime module reaches the build-time one. The property is reaching
+  // it — importing it or calling into it — not naming it: the public failure
+  // notice tells an operator which build step did not complete, and has to be
+  // able to say so in words.
   for (const path of ['railway/server.mjs', 'server/api.mjs', 'server/mcp-studio.mjs', 'studio/backend/rules/index.mjs']) {
-    assert.ok(!read(path).includes('materialize'), `${path} must not reach the build-time materialization`);
+    const source = read(path);
+    assert.doesNotMatch(source, /(?:^|\n)\s*import[^\n]*bootstrap\/materialize/, `${path} imports the build-time materialization`);
+    assert.doesNotMatch(source, /import\s*\(\s*['"][^'"]*materialize/, `${path} dynamically imports the build-time materialization`);
+    assert.doesNotMatch(source, /materializePublishedCanonical|materializeSubprocess/, `${path} calls into the build-time materialization`);
   }
 });

@@ -828,7 +828,10 @@ service variable regardless. An earlier revision of this section and of
 `railway/README.md` called the token "build-time only" and was wrong. The service
 therefore removes it in two independent places: `railway/server.mjs` drops it
 from the process environment before serving anything, and the runtime Git adapter
-strips it from every child process it spawns.
+strips it from every child process it spawns. Those exports are named
+`BUILD_CREDENTIAL_VARIABLES` / `scrubBuildCredentialVariables()` — credentials
+the build consumes — rather than for a build-only scope the platform does not
+have; the earlier names made this removal read as redundant.
 
 The credential `ARG` is declared only in the `canonical` builder stage, and the
 `RUN` that uses it assigns nothing inline — BuildKit prints the expanded command

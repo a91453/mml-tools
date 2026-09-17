@@ -69,11 +69,11 @@ Set **`MML_CANONICAL_SOURCE_TOKEN`** on `mml-tools-allen` / `mml-tools`:
 
 #### There is no build-only variable scope on Railway
 
-Earlier revisions of this document called the token "build-time only". That was wrong, and it matters. Railway's documentation states that a variable is made available "for the build process for each service deployment" **and** "the running service deployment". A Dockerfile build only sees it if an `ARG` opts in, but the *running container* receives every service variable regardless.
+Earlier revisions of this document called the token "build-time only". That was wrong, and it matters. (The code once carried the same mistake in its names — `BUILD_ONLY_VARIABLES`, `scrubBuildOnlyVariables()` — which made the runtime removal look like belt-and-braces rather than the necessary step it is. They are now `BUILD_CREDENTIAL_VARIABLES` and `scrubBuildCredentialVariables()`: credentials the *build consumes*, not variables the platform scopes to it.) Railway's documentation states that a variable is made available "for the build process for each service deployment" **and** "the running service deployment". A Dockerfile build only sees it if an `ARG` opts in, but the *running container* receives every service variable regardless.
 
 So the credential arrives in the running service's environment even though nothing there needs it — the Canonical view is pinned at image build and the runtime loader reads local Git objects only. The service therefore removes it, in two independent places, because either alone is a single point of failure:
 
-- `railway/server.mjs` calls `scrubBuildOnlyVariables()` at module scope, before it serves anything, which also keeps the value out of every child process spawned from `process.env`;
+- `railway/server.mjs` calls `scrubBuildCredentialVariables()` at module scope, before it serves anything, which also keeps the value out of every child process spawned from `process.env`;
 - the runtime Git adapter in `studio/backend/bootstrap/index.mjs` strips it from every `git` child it spawns, even if some other entry point skipped the first step.
 
 Measured in the built container: `process.env` carries it before `railway/server.mjs` is imported and not after, and a child process spawned afterwards does not see it. One honest limit — `/proc/<pid>/environ` is a snapshot taken at `exec` and still contains it, as it does for every variable the platform injects. Nothing in the process can change that.
@@ -153,6 +153,8 @@ The claim itself is a ref in the image's object store (`refs/canonical-bootstrap
 ```
 curl -s https://<public-origin>/ | jq .canonical
 ```
+
+If it reports `CANONICAL_NOT_LOADED`, `canonical_notice` names the current remedy: the image did not complete the Canonical materialization and build gate, so read the `[canonical-bootstrap]` lines in that deployment's build log, confirm the build can reach the published source with its configured read access, and rebuild. The notice is public and unauthenticated, so it never names a credential, a value or a container path.
 
 Expect `"status": "CANONICAL_LOADED"` and the distinct identities: `canonical_version`, `canonical_status`, `manifest_version`, `rules_snapshot_sha`, `manifest_commit`, `published_main_head` and `repository_head`, none standing in for another; `checkout_identity`, saying how the last of those was established; and `build_source_head` / `published_source`, which the build recorded and this load did not verify. `checkout_notice` states that split in the response itself. When it is not loaded, `canonical_notice` states the remedy.
 

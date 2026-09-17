@@ -99,14 +99,16 @@ export function gitEnvironment(environment = process.env) {
   return bound;
 }
 
-// Credentials the image build needs and the running service must not hold.
+// Credentials the image build consumes and the running service must not hold.
 //
-// Railway has no build-only variable scope: its own documentation says a service
+// Named for what they are rather than for a scope that does not exist. Railway
+// has no build-only variable scope: its own documentation says a service
 // variable is provided to "the build process for each service deployment" AND
 // "the running service deployment", and sealing one changes who can read it
 // back, not where it is injected. So the read credential the build uses to fetch
 // the published history arrives in the running container's environment too,
-// with nothing at runtime that needs it.
+// with nothing at runtime that needs it -- which is exactly the removal that a
+// name like "build-only" would make look redundant.
 //
 // Two independent removals, because either one alone is a single point of
 // failure: `railway/server.mjs` drops it from the process environment before it
@@ -115,11 +117,11 @@ export function gitEnvironment(environment = process.env) {
 // materializer deliberately does not use this adapter -- it is the one caller
 // that must still pass the credential through.
 export const SOURCE_TOKEN_VARIABLE = 'MML_CANONICAL_SOURCE_TOKEN';
-export const BUILD_ONLY_VARIABLES = freeze([SOURCE_TOKEN_VARIABLE]);
+export const BUILD_CREDENTIAL_VARIABLES = freeze([SOURCE_TOKEN_VARIABLE]);
 
-export function scrubBuildOnlyVariables(environment = process.env) {
+export function scrubBuildCredentialVariables(environment = process.env) {
   const removed = [];
-  for (const name of BUILD_ONLY_VARIABLES) {
+  for (const name of BUILD_CREDENTIAL_VARIABLES) {
     if (Object.hasOwn(environment, name)) {
       delete environment[name];
       removed.push(name);
@@ -132,7 +134,7 @@ export function scrubBuildOnlyVariables(environment = process.env) {
 // pass a wrapper to count, delay or fail calls; production callers pass nothing.
 export function gitSubprocess({ root, args, input }) {
   const environment = gitEnvironment();
-  scrubBuildOnlyVariables(environment);
+  scrubBuildCredentialVariables(environment);
   const options = { cwd: root, env: environment, stdio: [input === undefined ? 'ignore' : 'pipe', 'pipe', 'pipe'], maxBuffer: 16 * 1024 * 1024 };
   if (input !== undefined) options.input = input;
   return execFileSync('git', ['--no-replace-objects', '--literal-pathspecs', ...args], options);
