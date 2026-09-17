@@ -48,6 +48,8 @@ The build now establishes the history itself, in two steps that run in this orde
 
 1. **`node scripts/materialize-canonical.mjs`** captures the published `main` SHA from `https://github.com/a91453/mml-tools` with `git ls-remote`, fetches that history, points `refs/remotes/origin/main` at the **captured** commit, reads the Manifest from that same immutable commit, and requires the exact `rules_snapshot_sha` it pins to be present as a real object. It then runs the real loader and fails the build if the answer is not `CANONICAL_LOADED`.
 
+   **This repository is private, so the step needs a read credential** — see [Build variable: read access to the published source](#build-variable-read-access-to-the-published-source) below. Without one it fails the build, which is the correct outcome.
+
    The capture happens before anything is read, so a `main` that advances mid-build changes nothing, and one rewritten past the captured commit fails closed rather than being followed. There is no fallback: an unreachable published source fails the build. It never reads a working-tree file as Canonical content, and it never manufactures the published ref out of the build context — see [the module header](../studio/backend/bootstrap/materialize.mjs) for why that substitution is the one thing it must not do.
 
 2. **`sh railway/canonical-probe.sh`** proves the result on the same capability path the runtime serves, and **fails the build** if it cannot.
@@ -55,6 +57,24 @@ The build now establishes the history itself, in two steps that run in this orde
 A build context that *does* carry `.git` keeps its own checkout identity; the published discovery ref is established the same way either way, so what the image loads never depends on whether it was there.
 
 Two properties are worth stating plainly. The runtime loader is unchanged and still offline — it reads local Git objects only and imports nothing from the build-time module, which is why the Canonical view stays pinned at image build. And a running container that somehow had no loadable Canonical would still start, answer `/healthz` and serve the three legacy technical tools, refusing only Canonical-aware operations with `CANONICAL_NOT_LOADED` and no fallback. That remains the correct runtime behaviour; what changed is that such an image no longer gets built.
+
+### Build variable: read access to the published source
+
+`a91453/mml-tools` is a **private** repository. A builder with no credential cannot resolve `refs/heads/main` on it at all, so the materialization step above cannot run and the build fails closed. This is the one setting the new mechanism requires.
+
+Set **`MML_CANONICAL_SOURCE_TOKEN`** as a Railway **build** variable on `mml-tools-allen` / `mml-tools`:
+
+- a GitHub fine-grained personal access token (or a GitHub App installation token) whose only permission is **Contents: Read** on **`a91453/mml-tools`** and nothing else;
+- **build-time only.** The running service never reads it. It is not in `requiredVariables`, and nothing outside the materialization step touches it.
+
+How the token is handled, so a review can check it rather than take it on trust:
+
+- it is **never put in the published source URL**, so it cannot reach the bootstrap record, the build summary, a Git error message or the build log;
+- it is **never written to a file** — no credential store, no askpass script, nothing in an image layer;
+- it is **never in an argument vector.** Git receives `-c credential.helper=<shell snippet naming the variable>`; the shell expands `$MML_CANONICAL_SOURCE_TOKEN` from the inherited environment, so a process listing shows the variable name, not its value;
+- it is carried only by the two calls that actually contact the published source (`ls-remote` and `fetch`), which is asserted in `studio/tests/bootstrap-materialize.test.mjs`.
+
+One caveat worth stating plainly: Docker build arguments can be recoverable from an image's build history, so treat this token as scoped and rotatable rather than as a long-lived secret. Read-only on one repository is the point of the scope above. If the repository is ever made public, drop the variable — the build works without it and nothing else changes.
 
 ## Verifying a deployment
 
@@ -98,26 +118,32 @@ Expect `"status": "CANONICAL_LOADED"` and the distinct identities: `canonical_ve
 
 Nothing in this repository changes a running Railway service. After the Studio Agent Interface work merges, apply these by hand in the **`mml-tools-allen` / `mml-tools`** service settings. Do not apply them to `studio-web-permanent`; that plane is configured separately and is not affected.
 
-1. **Update the build watch patterns** to the set in [`service-settings.json`](service-settings.json). Three additions matter:
+1. **Set the `MML_CANONICAL_SOURCE_TOKEN` build variable.** Required: this repository is private, and without it the build fails at the Canonical gate. See [Build variable: read access to the published source](#build-variable-read-access-to-the-published-source) for the exact scope and how the value is handled. This is the only new variable, it is build-time only, and it adds no recurring cost.
+
+2. **Update the build watch patterns** to the set in [`service-settings.json`](service-settings.json). Three additions matter:
    - `/railway/canonical-probe.sh` — shipped in the image and previously unwatched.
    - `/scripts/materialize-canonical.mjs` — the build-time step that establishes the published history; shipped in the image, so a change to it must rebuild.
    - `/docs/CANONICAL_MANIFEST.md` — see below. Without it, a Canonical release does not reach this service.
 
    The Canonical rule sources are deliberately **not** watched: they are read from the immutable rules snapshot the Manifest pins, never from `main`, so editing one cannot change what this service loads.
 
-2. **Optionally set the Studio storage variables.** Both are optional and the service starts without them:
+3. **Optionally set the Studio storage variables.** Both are optional and the service starts without them:
    - `MML_STUDIO_DATA_DIR=/data/studio` (already the image default)
    - `MML_STUDIO_DURABILITY=persistent` — set this **only** if `/data` really is the mounted volume. Nothing detects a real mount; durability is reported from this declaration, so an inaccurate value makes the capability endpoint lie.
 
-3. **Verify the deploy** using the two credential-free checks above.
+4. **Verify the deploy** using the two credential-free checks above.
 
-4. **Re-verify after any Canonical release.** Because the Canonical view is pinned at image build, compare the `canonical.published_main_head` reported by this service's public root endpoint against the current `main`. If they differ, the service is serving an older Manifest view and needs a rebuild.
+5. **Re-verify after any Canonical release.** Because the Canonical view is pinned at image build, compare the `canonical.published_main_head` reported by this service's public root endpoint against the current `main`. If they differ, the service is serving an older Manifest view and needs a rebuild.
 
 No variable rotation, volume change, bucket change, service creation or migration is required or implied by this work.
 
 ### If the build fails at the Canonical gate
 
-A failing build is the gate working. The probe lines name what was missing, and the materialization step's own JSON names the step that could not be proven. The usual causes are reachability of `https://github.com/a91453/mml-tools` from the builder, and a published `main` whose Manifest pins a snapshot the fetch did not reach.
+A failing build is the gate working. The probe lines name what was missing, and the materialization step's own JSON names the step that could not be proven. The usual causes, in order of likelihood:
+
+1. **`MML_CANONICAL_SOURCE_TOKEN` is unset, expired, or scoped to the wrong repository.** The step's JSON says so directly, naming the variable. This repository is private; without read access there is nothing to capture.
+2. the builder cannot reach `https://github.com/a91453/mml-tools`;
+3. published `main` pins a snapshot the fetch did not reach.
 
 Do **not** work around it by creating `refs/remotes/origin/main` from `HEAD`, from the build source commit, or from a working-tree Manifest. That would let a build of any branch declare itself published Canonical, which is precisely the substitution the bootstrap contract forbids, and it is why the materialization captures the published SHA from the published repository and reads everything from that commit. Copying the working tree's Canonical documents into the image, or hard-coding the Manifest, is the same substitution wearing a different hat.
 

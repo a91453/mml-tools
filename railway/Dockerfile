@@ -13,6 +13,15 @@ FROM node:24-bookworm-slim
 # When it is absent, provenance reports null rather than guessing.
 ARG RAILWAY_GIT_COMMIT_SHA=
 
+# Read access to the published source. `a91453/mml-tools` is a private
+# repository, so the build cannot resolve its published main without a
+# credential; without one the build fails closed rather than producing an image
+# whose Canonical-aware operations all refuse. Set it as a Railway build
+# variable, scoped read-only to this repository's contents and nothing else --
+# see railway/README.md. The token is never put in a URL, never written to a
+# file, never placed in an argument vector and never printed.
+ARG MML_CANONICAL_SOURCE_TOKEN=
+
 # The Published Canonical bootstrap shells out to git to read the Manifest from
 # the published main ref and every rule document from the pinned rules snapshot.
 # No git, no Canonical-aware operation -- the service would start and then
@@ -54,7 +63,9 @@ RUN git config --system --add safe.directory /app || true
 #
 # No argument is passed for the published source, so the published GitHub
 # repository is always what is used.
-RUN MML_BUILD_SOURCE_HEAD="$RAILWAY_GIT_COMMIT_SHA" node scripts/materialize-canonical.mjs
+RUN MML_BUILD_SOURCE_HEAD="$RAILWAY_GIT_COMMIT_SHA" \
+    MML_CANONICAL_SOURCE_TOKEN="$MML_CANONICAL_SOURCE_TOKEN" \
+    node scripts/materialize-canonical.mjs
 
 # Prove, on the same capability path the runtime serves, that this image loads
 # the Published Canonical. FATAL: a build that cannot prove it must not become a

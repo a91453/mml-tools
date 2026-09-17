@@ -809,6 +809,23 @@ Every failure is terminal, and there is no mode in which an unreachable
 published source becomes "use what is here". Availability selects nothing: the
 step always contacts the published source it was given.
 
+### The one deployment setting this needs
+
+`a91453/mml-tools` is a **private** repository, so a builder with no credential
+cannot resolve `refs/heads/main` on it at all. The build reads a read-only
+credential from `$MML_CANONICAL_SOURCE_TOKEN`, supplied as a Railway build
+variable, scoped to Contents: Read on this repository and nothing else. Without
+one the build fails closed — which is the correct outcome, and is the whole
+difference from the merged deployment, which shipped instead.
+
+The token is never put in the published source URL, never written to a file,
+never placed in an argument vector, and is carried only by the two calls that
+contact the published source. Git receives a credential-helper snippet naming
+the variable; the shell expands it from the environment. `railway/README.md`
+records the scope, the handling and the one caveat (Docker build arguments can be
+recoverable from image build history, so the token is scoped and rotatable rather
+than long-lived). The running service never reads it. No recurring cost.
+
 `railway/canonical-probe.sh` is now a gate. It fails the build unless the
 capability path reports `CANONICAL_LOADED`, and reports an engine-import failure
 as the separate defect it is rather than folding it into the Canonical signal.

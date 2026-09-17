@@ -18,9 +18,14 @@
 // into provenance and never acted on: it selects no Manifest, no snapshot and no
 // rule document. When the platform supplies none, provenance says `null` rather
 // than guessing.
+//
+// `a91453/mml-tools` is private, so reaching the published source needs a
+// read-only credential in `$MML_CANONICAL_SOURCE_TOKEN`. Without one the build
+// fails here rather than producing an image whose Canonical-aware operations all
+// refuse. The token is never printed, never written and never put in a URL.
 import { fileURLToPath } from 'node:url';
 
-import { materializePublishedCanonical, PUBLISHED_SOURCE } from '../studio/backend/bootstrap/materialize.mjs';
+import { materializePublishedCanonical, PUBLISHED_SOURCE, SOURCE_TOKEN_VARIABLE } from '../studio/backend/bootstrap/materialize.mjs';
 
 const OPTIONS = new Set(['--root', '--published-source', '--build-source-head']);
 
@@ -46,6 +51,18 @@ try {
   });
   console.log(JSON.stringify(summary, null, 2));
 } catch (error) {
-  console.error(JSON.stringify({ status: 'CANONICAL_NOT_LOADED', message: error.message, legacyFallbackAllowed: false }));
+  // The reason, plus — when the published source could not be reached and no
+  // credential was supplied — the one thing an operator most likely needs to
+  // set. The token's value is never read here, only whether one exists.
+  const missingCredential = /published source/.test(error.message)
+    && !(process.env[SOURCE_TOKEN_VARIABLE] ?? '');
+  console.error(JSON.stringify({
+    status: 'CANONICAL_NOT_LOADED',
+    message: error.message,
+    legacyFallbackAllowed: false,
+    ...(missingCredential
+      ? { hint: `${PUBLISHED_SOURCE} is a private repository and $${SOURCE_TOKEN_VARIABLE} is not set; supply a read-only credential for it.` }
+      : {}),
+  }));
   process.exitCode = 1;
 }

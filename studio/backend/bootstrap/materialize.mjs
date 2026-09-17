@@ -66,6 +66,24 @@ import {
 // choice is never made for the caller by what happens to be reachable.
 export const PUBLISHED_SOURCE = `https://github.com/${BOOTSTRAP_CONTRACT.repository}.git`;
 
+// Read access to the published source.
+//
+// `a91453/mml-tools` is a private repository, so a builder with no credential
+// cannot resolve `refs/heads/main` on it at all. The deployment supplies a
+// read-only credential in this variable and the build uses it; without one the
+// build fails closed, which is the correct outcome — an image that cannot reach
+// the published source must not become a deployment.
+//
+// The token is never written anywhere. It stays out of the published source URL
+// (so it cannot reach the bootstrap record, the build summary or a Git error
+// message), and out of every argument vector: the credential helper below is a
+// literal shell snippet naming the variable, which Git hands to `sh -c` and the
+// shell expands from the inherited environment. Nothing in the image, and
+// nothing this module returns, contains it.
+export const SOURCE_TOKEN_VARIABLE = 'MML_CANONICAL_SOURCE_TOKEN';
+const SOURCE_TOKEN_USER = 'x-access-token';
+const CREDENTIAL_HELPER = `!f() { printf '%s\\n' "username=${SOURCE_TOKEN_USER}" "password=$${SOURCE_TOKEN_VARIABLE}"; }; f`;
+
 // Where the branch is fetched to. The captured commit is what `publishedRef`
 // ends up pointing at; this ref only keeps the fetched objects reachable in
 // between, and is released immediately afterwards.
@@ -85,10 +103,20 @@ const requireValue = (condition, reason) => {
 export function materializeSubprocess({ root, args }) {
   return execFileSync('git', args, {
     cwd: root,
-    env: gitEnvironment(),
+    // Never wait on a terminal: a builder with no credential must fail the build
+    // in seconds, not hang until the platform kills it.
+    env: { ...gitEnvironment(), GIT_TERMINAL_PROMPT: '0' },
     stdio: ['ignore', 'pipe', 'pipe'],
     maxBuffer: 64 * 1024 * 1024,
   });
+}
+
+// The credential configuration for the calls that contact the published source,
+// or nothing when the deployment supplied no token. Returned as Git arguments so
+// the caller can see exactly which calls carry it; the token itself is not here.
+export function sourceCredentialArguments(environment = process.env) {
+  const token = environment[SOURCE_TOKEN_VARIABLE];
+  return typeof token === 'string' && token !== '' ? ['-c', `credential.helper=${CREDENTIAL_HELPER}`] : [];
 }
 
 /**
@@ -134,8 +162,11 @@ export function materializePublishedCanonical({
   //    itself, and hold it for the rest of the load. Everything below names this
   //    commit. `main` may advance a second later; this identity does not, so no
   //    two reads in this build can come from two different published mains.
+  // Read access to a private published source, if the deployment supplied it.
+  // Only the two calls that actually contact the source carry it.
+  const credential = sourceCredentialArguments();
   const advertised = line(
-    ['ls-remote', '--exit-code', publishedSource, BOOTSTRAP_CONTRACT.publishedBranch],
+    [...credential, 'ls-remote', '--exit-code', publishedSource, BOOTSTRAP_CONTRACT.publishedBranch],
     'Published main could not be resolved from the published source',
   );
   const captured = advertised
@@ -153,7 +184,7 @@ export function materializePublishedCanonical({
   //    therefore changes nothing; a main that was rewritten past the captured
   //    commit fails closed.
   run(
-    ['fetch', '--quiet', '--no-tags', '--no-recurse-submodules', publishedSource, `+${BOOTSTRAP_CONTRACT.publishedBranch}:${FETCH_REF}`],
+    [...credential, 'fetch', '--quiet', '--no-tags', '--no-recurse-submodules', publishedSource, `+${BOOTSTRAP_CONTRACT.publishedBranch}:${FETCH_REF}`],
     'Published main history could not be obtained from the published source',
   );
   requireValue(

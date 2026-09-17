@@ -31,7 +31,12 @@ import {
   CHECKOUT_IDENTITY,
   loadPublishedCanonical,
 } from '../backend/bootstrap/index.mjs';
-import { materializePublishedCanonical, PUBLISHED_SOURCE } from '../backend/bootstrap/materialize.mjs';
+import {
+  materializePublishedCanonical,
+  PUBLISHED_SOURCE,
+  SOURCE_TOKEN_VARIABLE,
+  sourceCredentialArguments,
+} from '../backend/bootstrap/materialize.mjs';
 import { createCanonicalGate } from '../backend/application/provenance.mjs';
 import { PUBLISHED_CANONICAL } from '../backend/rules/index.mjs';
 
@@ -444,4 +449,72 @@ test('the build entry point defaults to the published GitHub repository and fail
 
   const misused = run(['--not-an-option', 'x']);
   assert.equal(misused.status, 1);
+});
+
+// ─── read access to a private published source ──────────────────────────────
+
+test('a read credential reaches only the calls that contact the published source, and is never written down', t => {
+  const token = 'ghp_SYNTHETIC_TEST_TOKEN_NEVER_REAL_0123456789';
+  const published = publishedSource(t);
+  const root = sourceTreeWithoutGit(t);
+
+  // With no token, no credential configuration is produced at all.
+  assert.deepEqual(sourceCredentialArguments({}), []);
+  assert.deepEqual(sourceCredentialArguments({ [SOURCE_TOKEN_VARIABLE]: '' }), []);
+
+  // With one, the configuration names the variable rather than carrying its
+  // value, so the token is never in an argument vector a process listing shows.
+  const configured = sourceCredentialArguments({ [SOURCE_TOKEN_VARIABLE]: token });
+  assert.equal(configured[0], '-c');
+  assert.ok(configured[1].startsWith('credential.helper='));
+  assert.ok(!configured.join(' ').includes(token), 'the token must never appear in Git arguments');
+  assert.ok(configured[1].includes(`$${SOURCE_TOKEN_VARIABLE}`), 'the helper must read the token from the environment');
+
+  // End to end: only ls-remote and fetch carry it, and nothing the build
+  // produces contains the token.
+  const calls = [];
+  process.env[SOURCE_TOKEN_VARIABLE] = token;
+  t.after(() => { delete process.env[SOURCE_TOKEN_VARIABLE]; });
+  const summary = materializePublishedCanonical({
+    root,
+    publishedSource: published.url,
+    git({ root: cwd, args }) {
+      calls.push(args);
+      return execFileSync('git', args, { cwd, env: process.env, stdio: ['ignore', 'pipe', 'pipe'], maxBuffer: 64 * 1024 * 1024 });
+    },
+  });
+  assert.equal(summary.status, 'CANONICAL_LOADED');
+
+  const contactsSource = args => args.includes('ls-remote') || args.includes('fetch');
+  for (const args of calls) {
+    assert.ok(!args.join(' ').includes(token), `the token reached a Git argument vector: ${args[0]}`);
+    assert.equal(
+      args.some(argument => String(argument).startsWith('credential.helper=')),
+      contactsSource(args),
+      `credential configuration must appear on exactly the calls that contact the published source: ${args.join(' ')}`,
+    );
+  }
+  assert.ok(!JSON.stringify(summary).includes(token), 'the build summary must not carry the token');
+  assert.ok(!readFileSync(resolve(root, BOOTSTRAP_RECORD_PATH), 'utf8').includes(token), 'the bootstrap record must not carry the token');
+  assert.ok(!summary.published_source.includes(token), 'the published source URL must not carry the token');
+});
+
+test('an unreachable private published source fails the build and names the credential it needs', t => {
+  const root = sourceTreeWithoutGit(t);
+  const absent = `file://${resolve(temporary(t, 'mml-private-'), 'unreachable.git')}`;
+  const env = { ...process.env };
+  delete env[SOURCE_TOKEN_VARIABLE];
+
+  const result = spawnSync(process.execPath, [
+    'scripts/materialize-canonical.mjs', '--root', root, '--published-source', absent,
+  ], { cwd: root, encoding: 'utf8', env });
+
+  assert.equal(result.status, 1);
+  const reported = JSON.parse(result.stderr);
+  assert.equal(reported.status, 'CANONICAL_NOT_LOADED');
+  assert.equal(reported.legacyFallbackAllowed, false);
+  assert.match(reported.hint, new RegExp(SOURCE_TOKEN_VARIABLE));
+  assert.ok(reported.hint.includes(PUBLISHED_SOURCE), 'the hint must name the published repository');
+  // No fallback was taken on the way out.
+  assert.throws(() => loadPublishedCanonical({ root }), notLoaded);
 });

@@ -43,6 +43,12 @@
     "sizeMB": 512
   },
   "port": 3000,
+  "requiredBuildVariables": [
+    "MML_CANONICAL_SOURCE_TOKEN"
+  ],
+  "buildVariableNotes": {
+    "MML_CANONICAL_SOURCE_TOKEN": "Read-only credential for a91453/mml-tools, which is a private repository. The build-time Published Canonical materialization resolves the published main SHA and fetches that history through it; without it the build fails closed rather than deploying an image whose Canonical-aware operations all refuse. Scope it to this repository's contents, read-only, and nothing else. It is a build variable only: the running service never uses it, and the token is never placed in a URL, a file, an argument vector or a log line."
+  },
   "requiredVariables": [
     "MML_AUTH_DB",
     "MML_OWNER_PASSWORD",
