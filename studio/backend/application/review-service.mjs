@@ -32,7 +32,7 @@
 // successful emit and not by a passing test. It is recorded only by the user or
 // a controlled target-client test, and this build records none.
 
-import { ERROR_CODES, GATE_STATUS, GATE_NOTICE, fail, requireString } from './contracts.mjs';
+import { ERROR_CODES, GATE_STATUS, GATE_NOTICE, fail, isCandidateId, requireString } from './contracts.mjs';
 
 const now = () => new Date().toISOString();
 
@@ -81,6 +81,11 @@ export function createReviewService({ canonical, projects, intake, arrangement, 
 
   /** Everything review and finalize both need, assembled once. */
   const context = async (owner, projectId, candidateId) => {
+    // Checked by shape first, before the Canonical engines are loaded or the
+    // baseline is read. A malformed identifier is refused for what it is rather
+    // than producing whichever error the next step happens to raise, so a
+    // caller is told the actual problem and nothing is done on its behalf.
+    if (!isCandidateId(candidateId)) fail(ERROR_CODES.CANDIDATE_NOT_FOUND, 'Unknown candidate', { candidate_id: String(candidateId).slice(0, 96) });
     const engines = await canonical.engines();
     const { record, baseline, project: baselineProject } = await intake.project(owner, projectId);
     const { entry, application } = arrangement.loadCandidate(record, candidateId);

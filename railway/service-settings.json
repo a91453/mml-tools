@@ -11,6 +11,9 @@
     "watchPatterns": [
       "/dist/core.js",
       "/server/mcp.mjs",
+      "/server/mcp-studio.mjs",
+      "/server/api.mjs",
+      "/studio/backend/**",
       "/railway/auth.mjs",
       "/railway/server.mjs",
       "/railway/Dockerfile",
@@ -37,5 +40,9 @@
     "MML_PUBLIC_ORIGIN",
     "NODE_ENV",
     "PORT"
+  ],
+  "optionalVariables": [
+    "MML_STUDIO_DATA_DIR",
+    "MML_STUDIO_DURABILITY"
   ]
 }

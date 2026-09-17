@@ -9,14 +9,20 @@ This deployment uses the same MML core and tools as the Sites workbench. It does
 - `MML_PUBLIC_ORIGIN`: exact generated HTTPS origin, without a path.
 - `MML_OWNER_PASSWORD`: a randomly generated 32–256 character service password; set only in Railway Variables, never in Git, a URL, a report, or the source ZIP.
 - `MML_AUTH_DB`: `/data/mml-auth.sqlite`.
+- `MML_STUDIO_DATA_DIR`: `/data/studio` for the Studio Agent Interface's project, asset and artifact records. Unset, those records stay in memory and the capability endpoint reports `asset_storage.durability: "ephemeral"`.
+- `MML_STUDIO_DURABILITY`: `persistent` only when `/data` really is a mounted volume. Nothing in the service detects a real mount, so durability is reported from this declaration rather than assumed.
 - `PORT`: Railway's supplied port, or 3000.
 - Healthcheck: `/healthz`.
+
+Both Studio variables are optional: the service starts, serves `/healthz` and answers `GET /api/v1/capabilities` without them.
 
 Configure these values through Railway service settings. `service-settings.json` is a non-executable reference snapshot, not a Railway Config as Code file. New services cannot opt into the deprecated `railway.toml` / `railway.json` mechanism; do not set a config-file override or point Nixpacks at such a file. See [Railway's migration notice](https://docs.railway.com/config-as-code). The source-controlled Dockerfile remains portable to other Docker-capable hosts.
 
 The official Node image runs as root so it can write the root-mounted Railway volume. The application sets a restrictive file creation mask. No request can select a file path, run a shell command, install packages, or access other services. A non-root deployment needs the volume's ownership configured separately.
 
-The image installs no npm packages and runs no package install scripts. Build from the root of the same source commit that passed the tests. A GitHub source must be explicitly selected for Railway's GitHub deployment tool; alternatively `railway up` requires its own authenticated CLI session.
+The image installs exactly one npm package — `fast-xml-parser`, already pinned to an exact version in `package.json` and already required by the MusicXML adapter the Studio backend uses — with `--omit=dev --ignore-scripts`, so no package install script runs. It installs nothing else and contacts no paid service. Build from the root of the same source commit that passed the tests.
+
+The image also carries the repository's Git metadata and the `git` binary. This is not incidental: the Published Canonical bootstrap reads `docs/CANONICAL_MANIFEST.md` from `refs/remotes/origin/main` and every rule document from the pinned rules snapshot, so without Git history no Canonical-aware operation can run. A build context without it still produces a working image — the service starts, serves `/healthz`, and `GET /api/v1/capabilities` reports `CANONICAL_NOT_LOADED` — but the Studio Agent Interface's Canonical-aware operations will refuse. Check the capability endpoint after any deployment change rather than assuming. A GitHub source must be explicitly selected for Railway's GitHub deployment tool; alternatively `railway up` requires its own authenticated CLI session.
 
 ## ChatGPT connection
 
