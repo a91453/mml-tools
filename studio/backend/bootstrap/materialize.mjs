@@ -58,7 +58,10 @@ import {
   gitEnvironment,
   loadPublishedCanonical,
   parseCanonicalManifest,
+  SOURCE_TOKEN_VARIABLE,
 } from './index.mjs';
+
+export { SOURCE_TOKEN_VARIABLE };
 
 // The published repository, and the only default. A caller may name a different
 // source -- deterministic regressions point this at a local fixture rather than
@@ -88,7 +91,10 @@ const PUBLISHED_SOURCE_SCHEMES = ['https://', 'file://'];
 // literal shell snippet naming the variable, which Git hands to `sh -c` and the
 // shell expands from the inherited environment. Nothing in the image, and
 // nothing this module returns, contains it.
-export const SOURCE_TOKEN_VARIABLE = 'MML_CANONICAL_SOURCE_TOKEN';
+//
+// This module is the one caller allowed to pass the credential to Git. The
+// runtime adapter in `./index.mjs` strips it, which is why this file has its own
+// subprocess adapter rather than reusing that one.
 const SOURCE_TOKEN_USER = 'x-access-token';
 const CREDENTIAL_HELPER = `!f() { printf '%s\\n' "username=${SOURCE_TOKEN_USER}" "password=$${SOURCE_TOKEN_VARIABLE}"; }; f`;
 

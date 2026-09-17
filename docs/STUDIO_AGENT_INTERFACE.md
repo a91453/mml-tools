@@ -812,28 +812,43 @@ Every failure is terminal, and there is no mode in which an unreachable
 published source becomes "use what is here". Availability selects nothing: the
 step always contacts the published source it was given.
 
-### The one deployment setting this needs
+### The one deployment setting this needs, and its residual risk
 
 `a91453/mml-tools` is a **private** repository, so a builder with no credential
 cannot resolve `refs/heads/main` on it at all. The build reads a read-only
-credential from `$MML_CANONICAL_SOURCE_TOKEN`, supplied as a Railway build
-variable, scoped to Contents: Read on this repository and nothing else. Without
-one the build fails closed — which is the correct outcome, and is the whole
-difference from the merged deployment, which shipped instead.
+credential from `$MML_CANONICAL_SOURCE_TOKEN`, scoped to Contents: Read on this
+repository and nothing else and set as a Railway **Sealed** variable. Without one
+the build fails closed — the correct outcome, and the whole difference from the
+merged deployment, which shipped instead.
 
-The token is never put in the published source URL, never written to a file,
-never placed in an argument vector, and is carried only by the two calls that
-contact the published source; Git receives a credential-helper snippet naming
-the variable and the shell expands it from the environment. It is cleared before
-the build gate runs, since an `ARG` is otherwise exported into every later `RUN`.
+**Railway has no build-only variable scope.** Its documentation states a variable
+is provided to the build process *and* to the running deployment; a Dockerfile
+build sees it only if an `ARG` opts in, but the running container receives every
+service variable regardless. An earlier revision of this section and of
+`railway/README.md` called the token "build-time only" and was wrong. The service
+therefore removes it in two independent places: `railway/server.mjs` drops it
+from the process environment before serving anything, and the runtime Git adapter
+strips it from every child process it spawns.
 
-Those properties hold below the `ARG`, not at it, and that is the real limit: a
-Docker build argument can be recovered from an image's build history and appears
-in the builder's process list. Railway passes build variables this way and offers
-no BuildKit secret mount, so this is the available channel rather than the ideal
-one, and `railway/README.md` says plainly to scope the token to one repository's
-contents and rotate it rather than treat it as long-lived. The running service
-never reads it. No recurring cost.
+The credential `ARG` is declared only in the `canonical` builder stage, and the
+`RUN` that uses it assigns nothing inline — BuildKit prints the expanded command
+as the step title, so an inline assignment publishes the value to the build log.
+Measured on BuildKit 29.3.1 against this Dockerfile's structure, with a canary:
+zero occurrences of the value in the build log, in `docker history`, in any blob
+of the exported image, and in the shipping container's filesystem; in a
+single-stage build of the same thing, four history entries and one image blob.
+
+What that does **not** eliminate, and what needs owner acceptance:
+Railway provides no BuildKit secret mount, so `ARG` is the available channel
+rather than an equivalent one, and Docker's own linter emits
+`SecretsUsedInArgOrEnv` on every build of this file. A BuildKit provenance
+attestation at `mode=max` records build arguments — the canary was recovered from
+one in testing — and whether Railway emits provenance attestations, at which
+mode, and whether they are retrievable could not be determined. The builder host
+holds the value while the build runs, and Railway stores it. `railway/README.md`
+records all of it, along with the alternative that removes the requirement
+outright: making the repository public, which the Manifest's own GitHub blob URLs
+already assume of its readers. No recurring cost either way.
 
 `railway/canonical-probe.sh` is now a gate. It fails the build unless the
 capability path reports `CANONICAL_LOADED`, and reports an engine-import failure

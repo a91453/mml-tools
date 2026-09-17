@@ -43,11 +43,16 @@
     "sizeMB": 512
   },
   "port": 3000,
-  "requiredBuildVariables": [
+  "requiredVariables_addedByCanonicalBootstrap": [
     "MML_CANONICAL_SOURCE_TOKEN"
   ],
-  "buildVariableNotes": {
-    "MML_CANONICAL_SOURCE_TOKEN": "Read-only credential for a91453/mml-tools, which is a private repository. The build-time Published Canonical materialization resolves the published main SHA and fetches that history through it; without it the build fails closed rather than deploying an image whose Canonical-aware operations all refuse. Scope it to this repository's contents, read-only, and nothing else. It is a build variable only: the running service never uses it, and the token is never placed in a URL, a file, an argument vector or a log line."
+  "canonicalSourceTokenNotes": {
+    "purpose": "Read-only credential for a91453/mml-tools, which is a private repository. The build-time Published Canonical materialization resolves the published main SHA and fetches that history through it; without it the build fails closed rather than deploying an image whose Canonical-aware operations all refuse.",
+    "scope": "A GitHub fine-grained token with Contents: Read on a91453/mml-tools and nothing else, with a short expiry. Rotate on a schedule and immediately if the image is ever shared outside this deployment.",
+    "sealed": "Set it as a Railway Sealed variable. Sealing prevents read-back through the dashboard and the API. Per Railway's documentation it changes visibility, not availability, so it does not change where the value is injected.",
+    "lifecycle": "NOT build-only. Railway has no build-only variable scope: a service variable is provided to the build process AND to the running deployment. The Dockerfile opts in with ARG only in the `canonical` builder stage, and the running service removes the variable at startup (railway/server.mjs) while the runtime Git adapter strips it from every child process (studio/backend/bootstrap/index.mjs).",
+    "handling": "Measured on BuildKit 29.3.1 against this Dockerfile's structure: zero occurrences of the value in the build log, in docker history, in any blob of the exported image, and in the shipping container filesystem. The value is never placed in a URL, a file or an argument vector.",
+    "residualRisk": "Railway provides no BuildKit secret mount, so ARG is the available channel rather than an equivalent one, and Docker's linter emits SecretsUsedInArgOrEnv on every build. A BuildKit provenance attestation at mode=max records build arguments; whether Railway emits provenance attestations, at which mode, and whether they are retrievable could not be determined. The builder host holds the value while the build runs, and Railway stores it. Requires owner acceptance. Making the repository public removes the requirement entirely."
   },
   "requiredVariables": [
     "MML_AUTH_DB",

@@ -5,6 +5,20 @@ import { createAuth } from './auth.mjs';
 import { handleMcp, SERVICE_VERSION } from '../server/mcp.mjs';
 import { createApiRouter } from '../server/api.mjs';
 import { createStudioApplication } from '../studio/backend/application/index.mjs';
+import { scrubBuildOnlyVariables } from '../studio/backend/bootstrap/index.mjs';
+
+// Railway provides a service variable to the build AND to the running
+// deployment -- there is no build-only scope, and sealing a variable changes who
+// can read it back, not where it is injected. The credential the image build
+// uses to fetch the published history therefore arrives here too, where nothing
+// needs it: the Canonical view is pinned at build and the runtime loader reads
+// local objects only.
+//
+// So it is removed before this process serves anything, which also keeps it out
+// of every child process spawned from `process.env`. Done at module scope
+// deliberately: nothing imported above reads the environment while it evaluates,
+// and everything that does read it runs later.
+scrubBuildOnlyVariables();
 
 // The owner subject this deployment isolates records by.
 //

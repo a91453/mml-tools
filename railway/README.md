@@ -60,22 +60,60 @@ Two properties are worth stating plainly. The runtime loader is unchanged and st
 
 ### Build variable: read access to the published source
 
-`a91453/mml-tools` is a **private** repository. A builder with no credential cannot resolve `refs/heads/main` on it at all, so the materialization step above cannot run and the build fails closed. This is the one setting the new mechanism requires.
+`a91453/mml-tools` is a **private** repository. A builder with no credential cannot resolve `refs/heads/main` on it at all, so the materialization step cannot run and the build fails closed. This is the one setting the new mechanism requires.
 
-Set **`MML_CANONICAL_SOURCE_TOKEN`** as a Railway **build** variable on `mml-tools-allen` / `mml-tools`:
+Set **`MML_CANONICAL_SOURCE_TOKEN`** on `mml-tools-allen` / `mml-tools`:
 
-- a GitHub fine-grained personal access token (or a GitHub App installation token) whose only permission is **Contents: Read** on **`a91453/mml-tools`** and nothing else;
-- **build-time only.** The running service never reads it. It is not in `requiredVariables`, and nothing outside the materialization step touches it.
+- a GitHub fine-grained personal access token (or a GitHub App installation token) whose only permission is **Contents: Read** on **`a91453/mml-tools`** and nothing else, with the shortest expiry you are willing to rotate on;
+- **seal it.** Railway's [Sealed variables](https://docs.railway.com/variables#sealed-variables) are provided to builds and deployments like any other variable but can never be read back from the dashboard or the API. That closes the read-back vector; per Railway's own wording, sealing "changes visibility, not availability", so it does *not* change anything below.
 
-How the token is handled, so a review can check it rather than take it on trust:
+#### There is no build-only variable scope on Railway
 
-- it is **never put in the published source URL**, so it cannot reach the bootstrap record, the build summary, a Git error message or the build log;
-- it is **never written to a file** — no credential store, no askpass script, nothing in an image layer;
-- it is **never in an argument vector.** Git receives `-c credential.helper=<shell snippet naming the variable>`; the shell expands `$MML_CANONICAL_SOURCE_TOKEN` from the inherited environment, so a process listing shows the variable name, not its value;
-- it is carried only by the two calls that actually contact the published source (`ls-remote` and `fetch`), which is asserted in `studio/tests/bootstrap-materialize.test.mjs`;
-- it is **cleared before the build gate runs**, since a Dockerfile `ARG` is otherwise exported into every later `RUN` and nothing in the gate needs it.
+Earlier revisions of this document called the token "build-time only". That was wrong, and it matters. Railway's documentation states that a variable is made available "for the build process for each service deployment" **and** "the running service deployment". A Dockerfile build only sees it if an `ARG` opts in, but the *running container* receives every service variable regardless.
 
-One caveat, and it is the real limit of the above: those properties hold below the `ARG`, not at it. **A Docker build argument can be recovered from an image's build history and appears in the builder's process list.** Railway passes build variables this way and offers no BuildKit secret mount, so this is the available channel rather than the ideal one. Treat the token as scoped and rotatable rather than as a long-lived secret — read-only on one repository is the point of the scope above — and rotate it if the image is ever shared outside the deployment. If the repository is ever made public, drop the variable entirely: the build works without it and nothing else changes.
+So the credential arrives in the running service's environment even though nothing there needs it — the Canonical view is pinned at image build and the runtime loader reads local Git objects only. The service therefore removes it, in two independent places, because either alone is a single point of failure:
+
+- `railway/server.mjs` calls `scrubBuildOnlyVariables()` at module scope, before it serves anything, which also keeps the value out of every child process spawned from `process.env`;
+- the runtime Git adapter in `studio/backend/bootstrap/index.mjs` strips it from every `git` child it spawns, even if some other entry point skipped the first step.
+
+Measured in the built container: `process.env` carries it before `railway/server.mjs` is imported and not after, and a child process spawned afterwards does not see it. One honest limit — `/proc/<pid>/environ` is a snapshot taken at `exec` and still contains it, as it does for every variable the platform injects. Nothing in the process can change that.
+
+#### How the token is handled during the build, and what that does not cover
+
+Verified by building this Dockerfile's exact structure on BuildKit 29.3.1 with a canary token, then scanning the build log, `docker history`, every blob of the exported image, and the running container's filesystem:
+
+| Vector | Result |
+| --- | --- |
+| Build log (`--progress=plain`, `--no-cache`) | **0 occurrences** of the value. Only the variable *name* appears, in Docker's own lint warning. |
+| `docker history` of the shipping image | **0 occurrences** (single-stage: 4). |
+| Every blob, manifest and layer of the exported image | **0 occurrences** (single-stage: 1). |
+| Files in the shipping container's `/app` (388 scanned) | **0 occurrences**. |
+| Running service's `process.env` after startup | **absent**; absent in child processes too. |
+
+Two design choices earn those zeros, and both are one line away from being undone:
+
+- **The credential `ARG` is declared only in the `canonical` builder stage.** The stage that ships never names it, so it is in neither that stage's environment nor the final image's history. Adding `ARG MML_CANONICAL_SOURCE_TOKEN` to the second stage would put the value straight back into `docker history` for anyone who can pull the image.
+- **The `RUN` assigns nothing inline.** BuildKit prints the *expanded* `RUN` command as the step title, so `RUN MML_CANONICAL_SOURCE_TOKEN="$MML_CANONICAL_SOURCE_TOKEN" node …` publishes the value to the build log on every build — measured, before this was changed. An `ARG` is already exported into the command's environment, so the step names neither variable and reads both itself.
+
+`tests/railway-canonical-image.test.mjs` pins both.
+
+#### Residual risk — this needs owner acceptance
+
+**Railway provides no BuildKit secret mount.** Its documentation supports `--mount=type=cache` and documents `ARG` as the only way to get a variable into a Dockerfile build; there is no documented `--secret` mechanism, so `RUN --mount=type=secret` cannot be supplied a value. `ARG` is therefore the available channel, not an equivalent one, and Docker's own linter says so on every build of this file:
+
+```
+WARN: SecretsUsedInArgOrEnv: Do not use ARG or ENV instructions for sensitive data (ARG "MML_CANONICAL_SOURCE_TOKEN")
+```
+
+What the two-stage design does **not** eliminate:
+
+1. **BuildKit provenance attestations.** A build run with `--provenance=mode=max` records build arguments in its SLSA predicate; the canary was recovered from that attestation in testing. `mode=min` and provenance-disabled builds did not contain it. **Whether Railway's builder emits provenance attestations, at which mode, and whether they are retrievable, could not be determined** — Railway documents neither. This is unresolved, not ruled out.
+2. **The builder host.** The value exists in the build environment and in the builder's process state while the build runs. Nothing in this repository can affect that.
+3. **Railway's own storage.** The value is held by Railway. Sealing prevents read-back through the dashboard and API; it does not remove the value from the platform.
+
+Given those, treat this token as **scoped and rotatable, never long-lived**: Contents: Read on one repository, short expiry, rotated on a schedule and immediately if the image is ever shared outside the deployment. The blast radius of the worst case is read access to this repository's contents.
+
+**The alternative that removes the requirement entirely is to make the repository public.** The Published Canonical Manifest already publishes `github.com/a91453/mml-tools/blob/<snapshot>/…` URLs as its authority map, so its contents are already written as though readers can open them. If that happens, delete the variable: the build works without it and nothing else changes.
 
 ## Verifying a deployment
 
@@ -124,7 +162,7 @@ Expect `"status": "CANONICAL_LOADED"` and the distinct identities: `canonical_ve
 
 Nothing in this repository changes a running Railway service. After the Studio Agent Interface work merges, apply these by hand in the **`mml-tools-allen` / `mml-tools`** service settings. Do not apply them to `studio-web-permanent`; that plane is configured separately and is not affected.
 
-1. **Set the `MML_CANONICAL_SOURCE_TOKEN` build variable.** Required: this repository is private, and without it the build fails at the Canonical gate. See [Build variable: read access to the published source](#build-variable-read-access-to-the-published-source) for the exact scope and how the value is handled. This is the only new variable, it is build-time only, and it adds no recurring cost.
+1. **Set the `MML_CANONICAL_SOURCE_TOKEN` variable, sealed.** Required: this repository is private, and without it the build fails at the Canonical gate. Scope it to Contents: Read on this repository and nothing else. Read [Build variable: read access to the published source](#build-variable-read-access-to-the-published-source) in full before setting it — it records what is measured, what is not covered, and the residual risk that needs your acceptance. Railway has no build-only scope, so the running service receives it too and removes it at startup. It adds no recurring cost.
 
 2. **Update the build watch patterns** to the set in [`service-settings.json`](service-settings.json). Three additions matter:
    - `/railway/canonical-probe.sh` — shipped in the image and previously unwatched.
@@ -147,7 +185,7 @@ No variable rotation, volume change, bucket change, service creation or migratio
 
 A failing build is the gate working. The probe lines name what was missing, and the materialization step's own JSON names the step that could not be proven. The usual causes, in order of likelihood:
 
-1. **`MML_CANONICAL_SOURCE_TOKEN` is unset, expired, or scoped to the wrong repository.** This repository is private; without read access there is nothing to capture. The step's JSON names the variable in its `hint` and carries Git's own error in `gitError`, so an expired token (401) reads differently from a DNS, TLS or proxy failure. The token is redacted from that output.
+1. **`MML_CANONICAL_SOURCE_TOKEN` is unset, expired, or scoped to the wrong repository.** (Also check it exists in the environment being deployed: sealed variables are not copied into PR environments or duplicated environments, so a build there fails closed rather than leaking.) This repository is private; without read access there is nothing to capture. The step's JSON names the variable in its `hint` and carries Git's own error in `gitError`, so an expired token (401) reads differently from a DNS, TLS or proxy failure. The token is redacted from that output.
 2. the builder cannot reach `https://github.com/a91453/mml-tools`;
 3. published `main` pins a snapshot the fetch did not reach.
 

@@ -7,7 +7,8 @@
 //   node scripts/materialize-canonical.mjs
 //     [--root <path>]                  default: this checkout
 //     [--published-source <url>]       default: the published GitHub repository
-//     [--build-source-head <sha>]      default: $MML_BUILD_SOURCE_HEAD
+//     [--build-source-head <sha>]      default: $MML_BUILD_SOURCE_HEAD,
+//                                      then $RAILWAY_GIT_COMMIT_SHA
 //
 // `--published-source` exists so regressions can point the materialization at a
 // deterministic local fixture instead of depending on live GitHub. The image
@@ -44,11 +45,17 @@ function parseArguments(argv) {
   return values;
 }
 
-const supplied = (values, name, variable) => (values[name] ?? process.env[variable] ?? '').trim();
+// Read straight from the environment rather than having the Dockerfile assign
+// them inline: BuildKit prints the *expanded* RUN command as the step title, so
+// `RUN FOO="$FOO" node ...` publishes FOO's value to the build log. An ARG is
+// already exported into the RUN's environment, so naming nothing there keeps the
+// value out of the log entirely -- measured, see railway/README.md.
+const supplied = (values, name, variables) =>
+  (values[name] ?? variables.map(variable => process.env[variable]).find(value => value) ?? '').trim();
 
 try {
   const values = parseArguments(process.argv.slice(2));
-  const rawBuildSourceHead = supplied(values, '--build-source-head', 'MML_BUILD_SOURCE_HEAD');
+  const rawBuildSourceHead = supplied(values, '--build-source-head', ['MML_BUILD_SOURCE_HEAD', 'RAILWAY_GIT_COMMIT_SHA']);
   const buildSourceHead = /^[0-9a-f]{40}$/.test(rawBuildSourceHead.toLowerCase()) ? rawBuildSourceHead.toLowerCase() : null;
   const summary = materializePublishedCanonical({
     root: values['--root'] ?? fileURLToPath(new URL('../', import.meta.url)),

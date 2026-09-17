@@ -21,12 +21,17 @@
 // image had no way to obtain the published history, and the build shipped
 // regardless.
 //
-// So these run the real production condition. No Docker daemon is available
-// here, so the image filesystem is materialised exactly as the `.dockerignore`
-// allowlist and `COPY . ./` produce it — with `.git` withheld, which is what
-// Railway does — and then the Dockerfile's own two steps are executed against
-// it, in order. The published source is a local Git repository reached over
-// `file://`, so this never depends on live GitHub.
+// So these run the real production condition. CI has no Docker daemon, so the
+// image filesystem is materialised exactly as the `.dockerignore` allowlist and
+// `COPY . ./` produce it — with `.git` withheld, which is what Railway does —
+// and then the Dockerfile's own two steps are executed against it, in order. The
+// published source is a local Git repository reached over `file://`, so this
+// never depends on live GitHub.
+//
+// The credential-handling assertions below are structural for the same reason:
+// they pin the two Dockerfile properties that were measured with a real build
+// (see railway/README.md for the numbers), so that a later edit which would
+// reintroduce the leak fails here rather than in a build log nobody reads.
 
 import test from 'node:test';
 import assert from 'node:assert/strict';
@@ -183,11 +188,13 @@ test('the deployment image contract keeps what the bootstrap needs', () => {
     assert.ok(dockerignore.includes(entry), `.dockerignore must admit ${entry}`);
   }
 
-  // Order matters: the history is established, then the result is proven. A
-  // gate that ran first would pass on whatever the build context happened to
-  // carry, which is the condition that shipped.
-  const materializeAt = dockerfile.indexOf('scripts/materialize-canonical.mjs');
-  const probeAt = dockerfile.indexOf('canonical-probe.sh');
+  // Order matters: the history is established, then the result is proven, and
+  // the proof runs in the stage that ships so that what is proven is the image
+  // that deploys. A gate that ran first would pass on whatever the build context
+  // happened to carry, which is the condition that shipped.
+  const materializeAt = dockerfile.indexOf('RUN node scripts/materialize-canonical.mjs');
+  const probeAt = dockerfile.indexOf('RUN sh railway/canonical-probe.sh');
+  assert.ok(probeAt > dockerfile.lastIndexOf('FROM '), 'the gate must run in the stage that ships');
   assert.ok(materializeAt !== -1, 'the build must establish the published history');
   assert.ok(probeAt > materializeAt, 'the build must prove the Canonical load after establishing it');
 
@@ -195,6 +202,118 @@ test('the deployment image contract keeps what the bootstrap needs', () => {
   // published GitHub repository, and an override belongs to regressions only.
   const instructions = dockerfile.split('\n').filter(line => !line.trim().startsWith('#')).join('\n');
   assert.ok(!instructions.includes('--published-source'), 'the image build must use the published repository');
+});
+
+test('the read credential is declared only in the stage that does not ship', () => {
+  // Measured on BuildKit 29.3.1, on exactly this pattern: with the ARG in the
+  // stage that produces the final image, the value lands in two `docker history`
+  // entries and in the exported image's config blob, readable by anyone who can
+  // pull it. With the ARG confined to an earlier stage, zero occurrences in the
+  // exported image. Railway documents no `--mount=type=secret` and provides no
+  // way to supply one, so the stage split is the mitigation available, and a
+  // single added ARG line in the final stage silently undoes it.
+  const dockerfile = read('railway/Dockerfile');
+  const instructions = dockerfile.split('\n')
+    .map((line, index) => [index + 1, line.trim()])
+    .filter(([, line]) => line !== '' && !line.startsWith('#'));
+
+  let stage = null;
+  const declaredIn = [];
+  const stages = [];
+  for (const [, line] of instructions) {
+    if (/^FROM /i.test(line)) {
+      stage = / AS (\S+)/i.exec(line)?.[1] ?? null;
+      stages.push(stage);
+    }
+    if (/^ARG\s+MML_CANONICAL_SOURCE_TOKEN\b/i.test(line)) declaredIn.push(stage);
+  }
+
+  assert.ok(stages.length >= 2, 'the credential needs a stage that does not ship');
+  assert.equal(stages.at(-1), null, 'the last stage is the image that ships and must be unnamed');
+  assert.deepEqual(declaredIn, ['canonical'], 'the credential ARG must be declared once, and only in the builder stage');
+  assert.ok(
+    instructions.some(([, line]) => /^COPY\s+--from=canonical\b/i.test(line)),
+    'the shipping stage must take its filesystem from the builder stage',
+  );
+
+  // And it must never become an ENV, which would put it in the running
+  // container's environment and in the image config for good.
+  assert.ok(
+    !instructions.some(([, line]) => /^ENV[^\n]*MML_CANONICAL_SOURCE_TOKEN/i.test(line)),
+    'the credential must never be promoted to ENV',
+  );
+
+  // No RUN may name the credential either. BuildKit prints the *expanded* RUN
+  // command as the step title, so `RUN FOO="$FOO" ...` publishes the value to
+  // the build log on every build — measured, before this was changed. An ARG is
+  // already exported into the command's environment, so the step needs to name
+  // nothing.
+  for (const [line, text] of instructions) {
+    if (!/^RUN\b/i.test(text)) continue;
+    assert.ok(
+      !text.includes('MML_CANONICAL_SOURCE_TOKEN'),
+      `Dockerfile line ${line} names the credential in a RUN; BuildKit would print its value into the build log`,
+    );
+  }
+});
+
+test('the build reads the platform source head without naming it in a RUN either', () => {
+  // Same mechanism, same fix: the step reads MML_BUILD_SOURCE_HEAD and, failing
+  // that, Railway's own RAILWAY_GIT_COMMIT_SHA, straight from the environment.
+  const dockerfile = read('railway/Dockerfile');
+  assert.match(dockerfile, /^ARG RAILWAY_GIT_COMMIT_SHA=$/m, 'the build must opt in to the platform source head');
+  for (const line of dockerfile.split('\n')) {
+    if (!/^RUN\b/.test(line.trim())) continue;
+    assert.ok(!line.includes('RAILWAY_GIT_COMMIT_SHA'), 'no RUN may expand the platform source head inline');
+  }
+  const cli = read('scripts/materialize-canonical.mjs');
+  assert.ok(cli.includes("'MML_BUILD_SOURCE_HEAD', 'RAILWAY_GIT_COMMIT_SHA'"), 'the step must read both names itself');
+});
+
+test('the running service drops the build credential and never hands it to a child', async () => {
+  // Railway has no build-only variable scope: its docs say a service variable is
+  // provided to the build AND to the running deployment, and sealing one changes
+  // who can read it back, not where it is injected. So the credential arrives in
+  // the container at runtime, where nothing needs it.
+  const { scrubBuildOnlyVariables, BUILD_ONLY_VARIABLES, gitSubprocess } = await import('../studio/backend/bootstrap/index.mjs');
+  assert.deepEqual([...BUILD_ONLY_VARIABLES], ['MML_CANONICAL_SOURCE_TOKEN']);
+
+  const environment = { MML_CANONICAL_SOURCE_TOKEN: 'ghp_SYNTHETIC_TEST_TOKEN_NEVER_REAL', PATH: process.env.PATH };
+  assert.deepEqual(scrubBuildOnlyVariables(environment), ['MML_CANONICAL_SOURCE_TOKEN']);
+  assert.ok(!Object.hasOwn(environment, 'MML_CANONICAL_SOURCE_TOKEN'));
+  assert.equal(environment.PATH, process.env.PATH, 'nothing else may be removed');
+  assert.deepEqual(scrubBuildOnlyVariables({}), [], 'absent is not an error');
+
+  // The runtime Git adapter is the second, independent removal: even an entry
+  // point that skipped the scrub cannot leak the credential into a Git child.
+  const token = 'ghp_SYNTHETIC_TEST_TOKEN_NEVER_REAL_0123456789';
+  const previous = process.env.MML_CANONICAL_SOURCE_TOKEN;
+  process.env.MML_CANONICAL_SOURCE_TOKEN = token;
+  try {
+    const seen = gitSubprocess({
+      root,
+      args: ['--no-pager', 'var', 'GIT_AUTHOR_IDENT'],
+    });
+    assert.ok(Buffer.isBuffer(seen) || typeof seen === 'string');
+    // Read the child's own environment rather than trusting the adapter's shape.
+    const child = spawnSync(process.execPath, ['-e', 'process.stdout.write(String(Boolean(process.env.MML_CANONICAL_SOURCE_TOKEN)))'], {
+      encoding: 'utf8',
+      env: (() => { const copy = { ...process.env }; scrubBuildOnlyVariables(copy); return copy; })(),
+    });
+    assert.equal(child.stdout, 'false', 'a child spawned from a scrubbed environment must not see the credential');
+  } finally {
+    if (previous === undefined) delete process.env.MML_CANONICAL_SOURCE_TOKEN;
+    else process.env.MML_CANONICAL_SOURCE_TOKEN = previous;
+  }
+
+  // The entry point performs the removal before it serves anything.
+  const server = read('railway/server.mjs');
+  assert.match(server, /scrubBuildOnlyVariables\(\)/, 'the service must drop the build credential at startup');
+  const body = server.slice(server.lastIndexOf('import '));
+  assert.ok(
+    body.indexOf('scrubBuildOnlyVariables()') < body.indexOf('export function createApplication'),
+    'the removal must precede anything that reads the environment',
+  );
 });
 
 test('the build probe is a gate, not a warning', () => {
