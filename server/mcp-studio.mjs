@@ -113,12 +113,12 @@ export const STUDIO_MCP_TOOLS = [
   {
     name: 'studio_decisions_apply',
     title: '套用已接受的編排決定',
-    description: '將明確接受的決定集合交給既有 G11-D 套用流程，全有或全無。acceptance 綁定由服務依現在載入的 baseline 與聲部拆解計算，呼叫端不得提供。Lead 相關決定仍需要既有 Gate 要求的證據。',
+    description: '將明確接受的決定集合交給既有 G11-D 套用流程，全有或全無。acceptance 綁定由服務依現在載入的 baseline 與聲部拆解計算，呼叫端不得提供。任何 Lead move（Melody→其他角色、其他角色→Melody、複製進 Melody）都必須提供 leadEvidence：精確 sourceIdentity、sectionRole、可用的 scoreEvidence/audioEvidence、continuity.checked、core3.checked/status，以及正面的目的角色理由；來源衝突保持 PENDING。',
     inputSchema: {
       type: 'object',
       properties: {
         project_id: projectId,
-        decisions: { type: 'array', minItems: 1, maxItems: 500, items: structuredPayload(), description: 'KEEP／ASSIGN_ROLE／MOVE_ROLE／OMIT_FROM_SIX／DUPLICATE_WITH_JUSTIFICATION，含 target、reason、evidence、acceptedBy。' },
+        decisions: { type: 'array', minItems: 1, maxItems: 500, items: structuredPayload(), description: 'KEEP／ASSIGN_ROLE／MOVE_ROLE／OMIT_FROM_SIX／DUPLICATE_WITH_JUSTIFICATION，含 target、reason、evidence、acceptedBy；Lead move 另帶完整 leadEvidence。sourceIdentity 請先用 studio_baseline_events 取得，不可猜測。' },
         parent_candidate_id: candidateId,
         accepted_by: { type: 'string', minLength: 1, maxLength: 120 },
       },
@@ -146,7 +146,7 @@ export const STUDIO_MCP_TOOLS = [
   {
     name: 'studio_candidate_review',
     title: '候選審查',
-    description: '以既有 compare／Core3／harmony／Lead demotion／readiness 模組重新檢查候選，回報各自的判定、阻擋項與六個獨立 gate。指標僅供診斷，不得為了讓數字歸零而刪掉來源支持的音樂。',
+    description: '以既有 compare／Core3／harmony／共享 Lead role grader（demotion + promotion）／readiness 模組重新檢查候選。Lead promotion 不信任 decision application 的 PASS，而是從已套用決定重新產生 grader report；任何未證實的 Lead move 都保持 PENDING。指標僅供診斷，不得為了讓數字歸零而刪掉來源支持的音樂。',
     inputSchema: {
       type: 'object',
       properties: {
