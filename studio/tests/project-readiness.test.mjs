@@ -74,6 +74,51 @@ function project({
   });
 }
 
+function promotionProject() {
+  const source = createSource({
+    id: 'official',
+    label: 'Official score',
+    kind: 'official-musicxml',
+    authority: 'primary-symbolic',
+  });
+  const before = createCanonicalNoteEvent({
+    id: 'official:p1',
+    pitch: 67,
+    start: '0',
+    end: '1',
+    sourceIds: ['official'],
+    sourceEventIds: ['official#p1'],
+    role: 'Chord1',
+  });
+  const after = createCanonicalNoteEvent({
+    id: 'official:p1',
+    pitch: 67,
+    start: '0',
+    end: '1',
+    sourceIds: ['official'],
+    sourceEventIds: ['official#p1'],
+    role: 'Melody',
+  });
+  const baselineProject = createCanonicalProject({
+    id: 'baseline:promotion',
+    title: 'Promotion baseline',
+    sources: [source],
+    events: [before],
+    metadata: { sourceComplete: true, baselineKind: 'source-faithful' },
+  });
+  return createCanonicalProject({
+    id: 'song:promotion',
+    title: 'Promotion candidate',
+    sources: [source],
+    events: [after],
+    metadata: {
+      sourceComplete: true,
+      sourceFaithfulBaseline: { snapshot: baselineProject },
+      audioAlignmentEvidence: [{ sourceId: 'original-audio', warnings: [], metrics: { confidence: 0.9 } }],
+    },
+  });
+}
+
 function readyInput(overrides = {}) {
   return {
     project: project(),
@@ -81,6 +126,7 @@ function readyInput(overrides = {}) {
     core3Report: { status: 'PASS', blockers: [] },
     harmonyReport: { status: 'PASS', unresolvedCount: 0 },
     leadDemotionReports: [],
+    leadPromotionReports: [],
     lineageReport: null,
     versionDriftReviewed: false,
     playerReadback: 'PASS',
@@ -177,6 +223,33 @@ test('baseline Lead removal can pass only with a matching evidence-backed PASS r
   }));
   assert.equal(result.gates.leadDemotion.status, 'PASS');
   assert.deepEqual(result.gates.leadDemotion.requiredEventIds, ['official:n1']);
+  assert.equal(result.candidateReady, true);
+});
+
+test('Lead promotion is not misclassified as a demotion and fails closed without its own report', () => {
+  const result = evaluateProjectReadiness(readyInput({ project: promotionProject() }));
+  assert.equal(result.gates.baseline.status, 'PASS');
+  assert.equal(result.gates.baseline.leadEventDiff.roleMoved.length, 1);
+  assert.deepEqual(
+    result.gates.baseline.leadEventDiff.roleMoved.map(move => [move.beforeRole, move.afterRole]),
+    [['Chord1', 'Melody']],
+  );
+  assert.equal(result.gates.leadDemotion.status, 'N/A');
+  assert.equal(result.gates.leadPromotion.status, 'PENDING');
+  assert.deepEqual(result.gates.leadPromotion.blockers, ['LEAD_PROMOTION_EVIDENCE_REQUIRED']);
+  assert.deepEqual(result.gates.leadPromotion.pendingEventIds, ['official:p1']);
+  assert.ok(result.preGameBlocking.includes('leadPromotion'));
+  assert.ok(!result.preGameBlocking.includes('leadDemotion'));
+});
+
+test('Lead promotion passes readiness only with the matching promotion grader PASS', () => {
+  const result = evaluateProjectReadiness(readyInput({
+    project: promotionProject(),
+    leadPromotionReports: [{ eventId: 'official:p1', status: 'PASS' }],
+  }));
+  assert.equal(result.gates.leadDemotion.status, 'N/A');
+  assert.equal(result.gates.leadPromotion.status, 'PASS');
+  assert.deepEqual(result.gates.leadPromotion.requiredEventIds, ['official:p1']);
   assert.equal(result.candidateReady, true);
 });
 
