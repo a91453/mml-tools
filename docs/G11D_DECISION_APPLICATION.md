@@ -904,18 +904,18 @@ it, and it never gains independent source support.
 | `studio/tests/decision-application-carry-forward.test.mjs` | classes A–F, omitted/moved/duplicated events, gate metadata, parent forgery, history across revisions |
 | `studio/tests/decision-application-binding.test.mjs` | adds `PARENT_CANONICAL_MISMATCH` (found by mutation: the check existed with no test) |
 
-Deliberate mutations executed, one at a time, each restored afterwards
-(two more after the external review: allowlist removed; marker overwritten —
-both caught):
+Deliberate mutations executed, one at a time, each restored afterwards:
 A 4/4 caught (gate check removed; sourceId-only; cross-membership pairing;
 index-pairing constructor); B 7/7 caught after one gap was closed (skip parent
 identity, candidate digest, baseline, Canonical; skip reviewed-revision
 staleness; skip record-time head check; apply orphans against the baseline);
-C 6/6 caught (acceptance out of envelope; revision out of envelope; digest
+C 7/7 caught (acceptance out of envelope; revision out of envelope; digest
 comparison skipped; stored PASS trusted; digest labelled authentication;
-unknown schema skipped); D 5/5 caught (inherit gate metadata; no role-change
-detection; duplicate does not re-ask; touched decision stays accepted; keep
-decisions naming omitted events). 22 mutations total, 22 caught.
+unknown schema skipped; and, after the external review, record-key allowlist
+removed); D 7/7 caught (inherit gate metadata; no role-change detection;
+duplicate does not re-ask; touched decision stays accepted; keep decisions
+naming omitted events; and, after the external review, sticky non-current
+state dropped; carry-forward history dropped). 25 mutations total, 25 caught.
 
 ## Known limitations
 
