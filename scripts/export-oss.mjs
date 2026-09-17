@@ -81,6 +81,14 @@ for (const path of [
   'scripts/audit-oss-export.mjs',
 ]) await copyFile(path);
 
+// Implementation documents that a shipped regression opens by path. The export
+// carries code and the documents its own tests read; the repository's process
+// records -- audits, roadmap, readiness and migration notes -- stay private.
+// audit-oss-export.mjs checks both directions: a shipped test may not name a
+// document outside the Canonical locator set that this list omits, and this
+// list may not carry a document no shipped test reads.
+for (const path of ['docs/G11C_CANDIDATE_ARRANGEMENT.md']) await copyFile(path);
+
 // Resolve the Published Canonical from the private source checkout once, then
 // vendor the resulting immutable package. The public distribution therefore
 // does not require access to the private repository's Git history.
@@ -107,10 +115,14 @@ for (const document of canonical.documents) {
 const publicBootstrap = `import { readFileSync } from 'node:fs';\n\nexport const STATIC_VENDORED_CANONICAL = true;\nconst loaded = JSON.parse(readFileSync(new URL('../../../canonical/published.json', import.meta.url), 'utf8'));\nfunction freeze(value) { for (const child of Object.values(value)) if (child && typeof child === 'object') freeze(child); return Object.freeze(value); }\nfreeze(loaded);\nexport const BOOTSTRAP_CONTRACT = freeze({ repository: 'a91453/mml-tools-oss', entryPoint: 'canonical/published.json', publishedRef: null, role: 'VENDORED_CONSUMER', localSkillAuthority: 'WORKFLOW_ONLY', executableContractDefinesRules: false, failureStatus: 'CANONICAL_NOT_LOADED', legacyFallbackAllowed: false });\nexport class CanonicalNotLoadedError extends Error { constructor(reason, cause) { super('CANONICAL_NOT_LOADED: ' + reason, { cause }); this.name = 'CanonicalNotLoadedError'; this.code = 'CANONICAL_NOT_LOADED'; } }\nexport function loadPublishedCanonical({ supportedCanonicalVersion = null } = {}) { if (supportedCanonicalVersion !== null && supportedCanonicalVersion !== loaded.metadata.canonical_version) throw new CanonicalNotLoadedError('Unsupported vendored Canonical version'); return loaded; }\nexport function parseCanonicalManifest() { throw new CanonicalNotLoadedError('Manifest parsing is a source-repository concern; this distribution uses canonical/published.json'); }\nexport function gitEnvironment(environment = process.env) { return { ...environment, GIT_OPTIONAL_LOCKS: '0' }; }\nexport function gitSubprocess() { throw new CanonicalNotLoadedError('Git-backed Canonical discovery is unavailable in the public vendored distribution'); }\n`;
 await writeFile(resolve(output, 'studio/backend/bootstrap/index.mjs'), publicBootstrap);
 
-// Public tests intentionally omit source-repository Git-history/bootstrap tests;
-// all parser, canonical IR, arrangement, Final, web and browser behavior remains
-// covered by the exported suite.
-const publicRunner = `import { readdirSync } from 'node:fs';\nimport { spawnSync } from 'node:child_process';\nconst excluded = new Set(['bootstrap-concurrency.test.mjs','bootstrap.test.mjs','canonical-manifest.test.mjs','canonical-merge.test.mjs','web-build-reproducibility.test.mjs']);\nconst legacy = readdirSync('tests').filter(x => x.endsWith('.test.mjs')).map(x => 'tests/' + x);\nconst studio = readdirSync('studio/tests').filter(x => x.endsWith('.test.mjs') && !excluded.has(x)).map(x => 'studio/tests/' + x);\nconst onlyStudio = process.argv.includes('--studio');\nconst files = onlyStudio ? studio : [...legacy, ...studio];\nconst result = spawnSync(process.execPath, ['--test', ...files], { stdio: 'inherit' });\nprocess.exit(result.status ?? 1);\n`;
+// Public tests omit only what a vendored distribution cannot observe: the
+// Git-backed bootstrap and Manifest regressions, the build-reproducibility
+// regression, and the song-reference package regression, whose subject
+// (imports/) is deliberately never exported. Canonical IR merge behaviour is
+// run here -- it imports only exported modules and needs no source repository.
+// All parser, canonical IR, arrangement, Final, web and browser behaviour
+// remains covered by the exported suite.
+const publicRunner = `import { readdirSync } from 'node:fs';\nimport { spawnSync } from 'node:child_process';\nconst excluded = new Set(['bootstrap-concurrency.test.mjs','bootstrap.test.mjs','canonical-manifest.test.mjs','song-reference-packages.test.mjs','web-build-reproducibility.test.mjs']);\nconst legacy = readdirSync('tests').filter(x => x.endsWith('.test.mjs')).map(x => 'tests/' + x);\nconst studio = readdirSync('studio/tests').filter(x => x.endsWith('.test.mjs') && !excluded.has(x)).map(x => 'studio/tests/' + x);\nconst onlyStudio = process.argv.includes('--studio');\nconst files = onlyStudio ? studio : [...legacy, ...studio];\nconst result = spawnSync(process.execPath, ['--test', ...files], { stdio: 'inherit' });\nprocess.exit(result.status ?? 1);\n`;
 await writeFile(resolve(output, 'scripts/run-public-tests.mjs'), publicRunner);
 
 const metadata = {

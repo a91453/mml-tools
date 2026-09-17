@@ -20,6 +20,19 @@ const FORBIDDEN_EXTENSIONS = new Set([
   '.mid', '.midi', '.m4a', '.mp3', '.wav', '.flac', '.pdf', '.zip', '.mxl', '.sqlite', '.db',
 ]);
 
+// The six Manifest-indexed documents and the Manifest itself appear in shipped
+// tests as Canonical locator strings, not as files to open: the vendored
+// package carries their content in canonical/published.json and docs/canonical/.
+const CANONICAL_LOCATOR_DOCUMENTS = new Set([
+  'docs/MASTER_RULES.md',
+  'docs/SOURCE_POLICY.md',
+  'docs/MOBILE_SYNTAX.md',
+  'docs/ACCEPTANCE_CRITERIA.md',
+  'docs/PENDING.md',
+  'docs/OFFICIAL_EVIDENCE.md',
+  'docs/CANONICAL_MANIFEST.md',
+]);
+
 const SKIP_DIRECTORIES = new Set(['.git', 'node_modules', 'web-build', 'browser-results', '__pycache__']);
 
 const SECRET_PATTERNS = Object.freeze([
@@ -69,6 +82,32 @@ export async function auditOssExport(root) {
     for (const [name, pattern] of SECRET_PATTERNS) {
       if (pattern.test(text)) violations.push({ type: 'secret-pattern', name, path });
     }
+  }
+
+  // Documents, both directions. A shipped regression that opens a document the
+  // export left behind fails publicly for a private reason; a document no
+  // shipped regression reads is publication by accident. Checking both pins the
+  // exported document set to exactly the Canonical vendoring plus what the
+  // suite actually needs, so it cannot drift either way.
+  const shipped = new Set(files);
+  const readByTests = new Set();
+  for (const path of files.filter(file => file.endsWith('.test.mjs'))) {
+    let text;
+    try {
+      text = await readFile(resolve(root, path), 'utf8');
+    } catch {
+      continue;
+    }
+    for (const match of text.matchAll(/["'`](docs\/[A-Za-z0-9_][A-Za-z0-9_./-]*\.md)["'`]/g)) {
+      const referenced = match[1];
+      if (CANONICAL_LOCATOR_DOCUMENTS.has(referenced)) continue;
+      readByTests.add(referenced);
+      if (!shipped.has(referenced)) violations.push({ type: 'test-reads-unexported-document', path, referenced });
+    }
+  }
+  for (const path of files) {
+    if (!path.startsWith('docs/') || path.startsWith('docs/canonical/')) continue;
+    if (!readByTests.has(path)) violations.push({ type: 'unreferenced-exported-document', path });
   }
 
   for (const required of ['README.md', 'LICENSE', 'NOTICE.md', 'package.json', 'PUBLIC_EXPORT.json', 'canonical/published.json', 'studio/backend/bootstrap/index.mjs']) {
