@@ -603,6 +603,13 @@ filesystem was materialised exactly as the `.dockerignore` allowlist and
 `npm install --omit=dev --ignore-scripts`, and the real capability path was
 executed inside it.
 
+> **Superseded in part.** The risk this audit identified and could not confirm
+> — a build context arriving without the published Git history — is what the
+> merged deployment then hit. §20.1 below records the production failure and the
+> fix. Everything in this section about *what the bootstrap requires* still
+> holds; what changed is where that history comes from, and that a build which
+> cannot load it no longer becomes a deployment.
+
 ### What the bootstrap actually requires
 
 Reading the Manifest is not a file read. `loadPublishedCanonical` runs Git, and
@@ -662,6 +669,10 @@ confirmed**, and cannot be from here: it would take either a Docker daemon or
 the owner's service password in production. Neither was used, and neither was
 guessed.
 
+*(It did not. The build log of the merged deployment reported the first row of
+that table — no `.git` at all. §20.1 records it, and the build no longer depends
+on the context satisfying any of these.)*
+
 ### Post-deploy verification
 
 Two checks, in order. Neither needs the service password.
@@ -674,11 +685,15 @@ Two checks, in order. Neither needs the service password.
 [canonical-bootstrap] refs/remotes/origin/main: present | MISSING
 [canonical-bootstrap] rules snapshot 0a172900…: present | MISSING
 [canonical-bootstrap] status=CANONICAL_LOADED | CANONICAL_NOT_LOADED
+[canonical-bootstrap] checkout_identity=git-checkout | materialized-published-main
+[canonical-bootstrap] gate: PASS
 ```
 
-The probe is non-fatal and always exits 0: a degraded context must still deploy
-an image that serves `/healthz` and the three legacy technical tools. Silence is
-the only outcome it rules out.
+The probe is a gate: anything other than `gate: PASS` fails the build. See §20.1
+for the production failure that made it one. A running container that somehow had
+no loadable Canonical would still serve `/healthz` and the three legacy technical
+tools — that remains correct fail-closed runtime behaviour; what changed is that
+such an image no longer gets built.
 
 **2. The public root endpoint.**
 
@@ -686,7 +701,8 @@ the only outcome it rules out.
 curl -s https://<public-origin>/ | jq .canonical
 ```
 
-Expect `status: "CANONICAL_LOADED"` and the five identities, distinct.
+Expect `status: "CANONICAL_LOADED"` and the identities, distinct, with
+`checkout_identity` saying how `repository_head` was established (§20.1).
 `canonical_notice` states the remedy when it is not loaded. `/healthz` is
 deliberately **not** coupled to this: a Canonical problem must never fail
 the Agent backend's healthcheck and roll back a deployment that is otherwise
@@ -702,12 +718,17 @@ The probe line names which precondition failed.
 - `rules snapshot …: MISSING` — history was truncated before the snapshot
   commit.
 
-All three are deployment-side, not code: the Agent backend image needs a source
-checkout carrying this repository's history and published ref. Nothing in the
-service may paper over it — forging `refs/remotes/origin/main` from `HEAD` at
-build time would let any branch build declare itself published Canonical, which
-is exactly the substitution the bootstrap contract forbids, so it is **not**
-done.
+At the time of this audit all three were deployment-side, not code: the Agent
+backend image needed a source checkout carrying this repository's history and
+published ref. Nothing in the service may paper over it — forging
+`refs/remotes/origin/main` from `HEAD` at build time would let any branch build
+declare itself published Canonical, which is exactly the substitution the
+bootstrap contract forbids, so it is **not** done, and still is not.
+
+*(As of §20.1 the image obtains that history itself, from the published GitHub
+repository, at build time. The prohibition above is unchanged and is precisely
+what shapes how: the published SHA is captured from the published repository and
+everything is read from that commit, never from `HEAD` or the build context.)*
 
 If the Agent backend's builder cannot be made to supply that history, the
 identified follow-up is the approach the clean public export already uses:
@@ -718,6 +739,120 @@ the Agent backend's provenance model, so it is a decision for the project owner
 rather than something to adopt silently here. It is a change to the Agent
 backend's loading implementation only, and would not touch the Permanent Studio
 release mechanism.
+
+*(The builder could not be made to supply it. The vendored follow-up was **not**
+taken — see §20.1.)*
+
+## 20.1 The production failure, and the build-time materialization
+
+**Scope: the Agent Control Plane only.** Nothing here touches
+`studio-web-permanent`, its pinned artifact, its trust bundle or `/studio-cache`.
+The Studio Web release identity is unchanged by this work: `buildId`, `cacheId`
+and every hashed asset are byte-identical, because the build-time module is
+excluded from the browser bundle and Git provenance was already outside
+`buildId`.
+
+### What happened
+
+The merged deployment succeeded operationally — `/healthz` PASS, container start
+PASS, Railway deployment status SUCCESS — and its own build log said:
+
+```
+[canonical-bootstrap] git-metadata: MISSING
+[canonical-bootstrap] refs/remotes/origin/main: MISSING
+[canonical-bootstrap] rules snapshot 0a172900a01fdf39c2e9e84cf176961320b779ea: MISSING
+status=CANONICAL_NOT_LOADED
+```
+
+Railway's GitHub source snapshot delivers the repository's *files* and no `.git`,
+so `COPY . ./` could not carry an object store however the allowlist was
+written. That is the first defect. The second is that the probe exited 0 and the
+image shipped: a green deployment whose every Canonical-aware operation refuses
+is indistinguishable, to `/healthz`, to the deployment status and to the restart
+policy, from a healthy one.
+
+### What was not done
+
+- The rules snapshot was **not** unpinned, and current `main` is never
+  substituted for it.
+- The working tree's Canonical documents were **not** copied into the image and
+  called Published Canonical. `docs/` is still absent from the image.
+- The Manifest was **not** hard-coded, and the vendored-static package above was
+  **not** adopted: both replace publication discovery with a build-time constant,
+  which is what §20's follow-up would have cost and why it needed an owner
+  decision.
+- The probe was **not** merely silenced.
+- No `refs/remotes/origin/main` is manufactured from `HEAD`, from the build
+  source commit, or from any branch the build happens to sit on.
+
+### What was done
+
+`studio/backend/bootstrap/materialize.mjs`, run once at image build by
+`scripts/materialize-canonical.mjs`, makes the image's object store carry the
+published history. In order:
+
+1. `git ls-remote https://github.com/a91453/mml-tools refs/heads/main` — the
+   published main identity is **captured first** and held for the rest of the
+   build.
+2. the published history is fetched, and the captured commit must be present in
+   what arrived. `refs/remotes/origin/main` is set to the **captured** commit,
+   never to the branch tip: a `main` that advances mid-build changes nothing, and
+   one rewritten past the capture fails closed instead of being followed.
+3. the Manifest is read from that same immutable commit, so the pinned
+   `rules_snapshot_sha` cannot come from one `main` while the rules come from
+   another.
+4. the exact snapshot commit the Manifest names must resolve as a real object.
+5. the **real loader** runs. Its answer, not the fetch's exit code, is the
+   build's claim.
+
+Every failure is terminal, and there is no mode in which an unreachable
+published source becomes "use what is here". Availability selects nothing: the
+step always contacts the published source it was given.
+
+`railway/canonical-probe.sh` is now a gate. It fails the build unless the
+capability path reports `CANONICAL_LOADED`, and reports an engine-import failure
+as the separate defect it is rather than folding it into the Canonical signal.
+
+### Provenance
+
+The runtime loader is unchanged and still offline — local Git objects only, no
+import of the build-time module — which is why the Canonical view stays pinned at
+image build and why `/docs/CANONICAL_MANIFEST.md` must stay in the watch
+patterns.
+
+Its one addition is honesty about the checkout. A materialized image has no
+checkout identity of its own, so HEAD is set to the captured published main head
+and `repository_head` equals `published_main_head` *by construction*.
+`checkout_identity` names that, because an equal pair that looks independently
+verified would be a quieter lie than one that says how it came to be equal:
+
+| Value | Meaning |
+| --- | --- |
+| `git-checkout` | HEAD came from a real checkout of this repository. |
+| `materialized-published-main` | the source tree arrived without Git metadata; HEAD is the captured published main head. |
+
+`build_source_head` carries the deploying platform's own record of the commit
+that produced the source tree (`RAILWAY_GIT_COMMIT_SHA`), or `null` when it
+supplied none. It is provenance and nothing else: it selects no Manifest, no
+snapshot and no rule document. A bootstrap record that disagrees with the Git
+identities a load already resolved fails closed rather than being ignored.
+
+### Verification
+
+`tests/railway-canonical-image.test.mjs` builds the image filesystem exactly as
+the allowlist and `COPY . ./` produce it — with `.git` withheld, which is what
+Railway does — and runs the Dockerfile's two steps against it, proving
+`CANONICAL_LOADED` with the exact published identities, and proving the gate
+refuses the merged deployment's own image.
+`studio/tests/bootstrap-materialize.test.mjs` covers capture-before-read
+ordering against a `main` that moves mid-build, snapshot exactness against a
+`main` carrying substituted rule bytes, every unprovable step failing closed, and
+`ENGINE_UNAVAILABLE` staying distinct from `CANONICAL_NOT_LOADED`. The published
+source in both is a real Git repository reached over `file://`, so ordinary CI
+never depends on a live GitHub fetch.
+
+No paid service, database, queue, object store, domain or LLM dependency is
+added.
 
 ### The Agent backend's Canonical view is pinned at image build
 

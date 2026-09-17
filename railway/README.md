@@ -38,15 +38,23 @@ The official Node image runs as root so it can write the root-mounted Railway vo
 
 The image installs exactly one npm package — `fast-xml-parser`, already pinned to an exact version in `package.json` and already required by the MusicXML adapter the Studio backend uses — with `--omit=dev --ignore-scripts`, so no package install script runs. It installs nothing else and contacts no paid service. Build from the root of the same source commit that passed the tests.
 
-The image also carries the repository's Git metadata and the `git` binary. This is not incidental: the Published Canonical bootstrap reads `docs/CANONICAL_MANIFEST.md` from `refs/remotes/origin/main` and every rule document from the pinned rules snapshot commit `0a172900a01fdf39c2e9e84cf176961320b779ea`, so without Git history no Canonical-aware operation can run.
+The image carries a Git object store and the `git` binary. This is not incidental: the Published Canonical bootstrap reads `docs/CANONICAL_MANIFEST.md` from `refs/remotes/origin/main` and every rule document from the pinned rules snapshot commit `0a172900a01fdf39c2e9e84cf176961320b779ea`, so without Git history no Canonical-aware operation can run.
 
-Three things must all be true of the **build context**, not just of the Dockerfile:
+### How the image gets that history
 
-1. `.git` is present;
-2. `refs/remotes/origin/main` exists — a checkout with no remote-tracking ref for the published branch fails even with full history;
-3. the pinned rules snapshot commit is a reachable object. A shallow clone is the trap here: `--depth 1` *does* create `refs/remotes/origin/main` and still fails, because the snapshot commit was truncated away. Shallowness alone is not the test — a shallow clone deep enough to retain the snapshot loads fine.
+It used to depend entirely on the build context carrying `.git`, and Railway's GitHub source snapshot does not. The result was a deployment that was operationally green — `/healthz` PASS, container start PASS, Railway status SUCCESS — while its own build log read `git-metadata: MISSING` and `status=CANONICAL_NOT_LOADED`, and every Canonical-aware operation refused. The probe that noticed exited 0, so nothing stopped it.
 
-A context missing any of these still produces a working image. The service starts, `/healthz` answers, and the three legacy technical tools keep working; only the Canonical-aware Studio operations refuse, reporting `CANONICAL_NOT_LOADED` with no fallback.
+The build now establishes the history itself, in two steps that run in this order:
+
+1. **`node scripts/materialize-canonical.mjs`** captures the published `main` SHA from `https://github.com/a91453/mml-tools` with `git ls-remote`, fetches that history, points `refs/remotes/origin/main` at the **captured** commit, reads the Manifest from that same immutable commit, and requires the exact `rules_snapshot_sha` it pins to be present as a real object. It then runs the real loader and fails the build if the answer is not `CANONICAL_LOADED`.
+
+   The capture happens before anything is read, so a `main` that advances mid-build changes nothing, and one rewritten past the captured commit fails closed rather than being followed. There is no fallback: an unreachable published source fails the build. It never reads a working-tree file as Canonical content, and it never manufactures the published ref out of the build context — see [the module header](../studio/backend/bootstrap/materialize.mjs) for why that substitution is the one thing it must not do.
+
+2. **`sh railway/canonical-probe.sh`** proves the result on the same capability path the runtime serves, and **fails the build** if it cannot.
+
+A build context that *does* carry `.git` keeps its own checkout identity; the published discovery ref is established the same way either way, so what the image loads never depends on whether it was there.
+
+Two properties are worth stating plainly. The runtime loader is unchanged and still offline — it reads local Git objects only and imports nothing from the build-time module, which is why the Canonical view stays pinned at image build. And a running container that somehow had no loadable Canonical would still start, answer `/healthz` and serve the three legacy technical tools, refusing only Canonical-aware operations with `CANONICAL_NOT_LOADED` and no fallback. That remains the correct runtime behaviour; what changed is that such an image no longer gets built.
 
 ## Verifying a deployment
 
@@ -61,13 +69,20 @@ Two checks, in order. **Neither needs the service password.**
 [canonical-bootstrap] rules snapshot 0a172900…: present
 [canonical-bootstrap] status=CANONICAL_LOADED
 [canonical-bootstrap] canonical_version=2026-09-13-v1
+[canonical-bootstrap] canonical_status=PUBLISHED
+[canonical-bootstrap] manifest_version=2026-09-13-v1-manifest1
 [canonical-bootstrap] rules_snapshot_sha=0a172900…
 [canonical-bootstrap] manifest_commit=…
 [canonical-bootstrap] published_main_head=…
 [canonical-bootstrap] repository_head=…
+[canonical-bootstrap] checkout_identity=materialized-published-main
+[canonical-bootstrap] build_source_head=…
+[canonical-bootstrap] gate: PASS
 ```
 
-The probe is non-fatal and always exits 0. Failing the build would take a deployment that still serves its existing tools down over a degraded capability; silence is the only outcome it rules out.
+The probe is a **gate**: anything other than `gate: PASS` fails the build. It used to exit 0 unconditionally, on the reasoning that a degraded context must still produce an image serving its existing tools. Production showed the cost: nothing downstream — not `/healthz`, not the Railway deployment status, not the restart policy — can tell a healthy service from one whose every Canonical-aware operation refuses, so the warning went unnoticed and the image deployed.
+
+`checkout_identity` says how `repository_head` was established. `materialized-published-main` means the source tree arrived without Git metadata and HEAD was set to the captured published main head, which is why those two identities are equal here; `git-checkout` means the context carried a real checkout. `build_source_head` is Railway's own record of the commit that produced the source tree, or `null` when it supplied none; it is provenance and selects nothing.
 
 **2. The public root endpoint.**
 
@@ -75,7 +90,7 @@ The probe is non-fatal and always exits 0. Failing the build would take a deploy
 curl -s https://<public-origin>/ | jq .canonical
 ```
 
-Expect `"status": "CANONICAL_LOADED"` and five distinct identities: `canonical_version`, `rules_snapshot_sha`, `manifest_commit`, `published_main_head`, `repository_head`. When it is not loaded, `canonical_notice` states the remedy.
+Expect `"status": "CANONICAL_LOADED"` and the distinct identities: `canonical_version`, `canonical_status`, `manifest_version`, `rules_snapshot_sha`, `manifest_commit`, `published_main_head`, `repository_head`, and the `checkout_identity` / `build_source_head` pair that says how the last of those was established. None stands in for another. When it is not loaded, `canonical_notice` states the remedy.
 
 `/healthz` is deliberately **not** coupled to the Canonical load: a Canonical problem must never fail Railway's healthcheck and roll back a deployment that is otherwise serving correctly.
 
@@ -83,8 +98,9 @@ Expect `"status": "CANONICAL_LOADED"` and five distinct identities: `canonical_v
 
 Nothing in this repository changes a running Railway service. After the Studio Agent Interface work merges, apply these by hand in the **`mml-tools-allen` / `mml-tools`** service settings. Do not apply them to `studio-web-permanent`; that plane is configured separately and is not affected.
 
-1. **Update the build watch patterns** to the set in [`service-settings.json`](service-settings.json). Two additions matter:
+1. **Update the build watch patterns** to the set in [`service-settings.json`](service-settings.json). Three additions matter:
    - `/railway/canonical-probe.sh` — shipped in the image and previously unwatched.
+   - `/scripts/materialize-canonical.mjs` — the build-time step that establishes the published history; shipped in the image, so a change to it must rebuild.
    - `/docs/CANONICAL_MANIFEST.md` — see below. Without it, a Canonical release does not reach this service.
 
    The Canonical rule sources are deliberately **not** watched: they are read from the immutable rules snapshot the Manifest pins, never from `main`, so editing one cannot change what this service loads.
@@ -99,11 +115,13 @@ Nothing in this repository changes a running Railway service. After the Studio A
 
 No variable rotation, volume change, bucket change, service creation or migration is required or implied by this work.
 
-### If it reports `CANONICAL_NOT_LOADED`
+### If the build fails at the Canonical gate
 
-The probe line names which precondition failed, and all three remedies are deployment-side rather than code: the image needs a source checkout carrying this repository's history and its published ref.
+A failing build is the gate working. The probe lines name what was missing, and the materialization step's own JSON names the step that could not be proven. The usual causes are reachability of `https://github.com/a91453/mml-tools` from the builder, and a published `main` whose Manifest pins a snapshot the fetch did not reach.
 
-Do **not** work around it by creating `refs/remotes/origin/main` from `HEAD` at build time. That would let a build of any branch declare itself published Canonical, which is precisely the substitution the bootstrap contract forbids. If Railway cannot supply the history, see §20 of [docs/STUDIO_AGENT_INTERFACE.md](../docs/STUDIO_AGENT_INTERFACE.md) for the vendored-package follow-up, which is a project-owner decision rather than a silent change. A GitHub source must be explicitly selected for Railway's GitHub deployment tool; alternatively `railway up` requires its own authenticated CLI session.
+Do **not** work around it by creating `refs/remotes/origin/main` from `HEAD`, from the build source commit, or from a working-tree Manifest. That would let a build of any branch declare itself published Canonical, which is precisely the substitution the bootstrap contract forbids, and it is why the materialization captures the published SHA from the published repository and reads everything from that commit. Copying the working tree's Canonical documents into the image, or hard-coding the Manifest, is the same substitution wearing a different hat.
+
+If it reports `CANONICAL_NOT_LOADED` at **runtime** instead — the service is up, `/healthz` answers, and the root endpoint says the rules are unavailable — the image was built before this gate existed, or `/app/.git` was lost after the build. Rebuild it.
 
 ## ChatGPT connection
 
