@@ -4,12 +4,17 @@ import {
   applyAcceptedArrangement,
   DECISION_APPLICATION_STATUS,
 } from '../backend/arrangement/decision-application.mjs';
-import { reviewAppliedCandidate, leadDemotionReportsFromApplication } from '../backend/arrangement/decision-review.mjs';
+import {
+  reviewAppliedCandidate,
+  leadDemotionReportsFromApplication,
+  leadPromotionReportsFromApplication,
+} from '../backend/arrangement/decision-review.mjs';
 import { suggestRoleCandidates } from '../backend/arrangement/role-candidates.mjs';
 import {
   roleDeclaredBaseline,
   acceptanceFor,
   leadDemotionEvidence,
+  leadPromotionEvidence,
   CANONICAL_IDENTITY,
   SECOND_SOURCE_ID,
 } from './fixtures/g11d-fixtures.mjs';
@@ -118,6 +123,62 @@ test('a Lead demotion that G11-D applied still needs its evidence at the readine
   assert.equal(evidenced.readiness.gates.leadDemotion.status, 'PASS');
   // ...and the song is still not ready, on every other gate.
   assert.equal(evidenced.readiness.candidateReady, false);
+});
+
+test('a lawful Lead promotion is independently re-graded at readiness', () => {
+  const result = apply([{
+    id: 'p1', type: 'ASSIGN_ROLE', target: { eventIds: ['tex-1'] }, toRole: 'Melody',
+    reason: 'Reviewed: the cited texture becomes the foreground instrumental lead here.',
+    evidence: ['fixture:score top line', 'fixture:audio foreground'],
+    leadEvidence: leadPromotionEvidence(),
+    acceptance: accept(),
+  }]);
+  assert.equal(result.status, 'PASS');
+
+  const unevidenced = reviewAppliedCandidate({ application: result, baseline });
+  assert.equal(unevidenced.readiness.gates.leadDemotion.status, 'N/A');
+  assert.equal(unevidenced.readiness.gates.leadPromotion.status, 'PENDING');
+  assert.ok(unevidenced.readiness.gates.leadPromotion.blockers.includes('LEAD_PROMOTION_EVIDENCE_REQUIRED'));
+  assert.deepEqual(unevidenced.readiness.gates.leadPromotion.pendingEventIds, ['tex-1']);
+
+  const reports = leadPromotionReportsFromApplication(result, baseline);
+  assert.equal(reports.length, 1);
+  assert.equal(reports[0].status, 'PASS');
+  assert.equal(reports[0].eventId, 'tex-1');
+  assert.equal(reports[0].originEventId, 'tex-1');
+
+  const evidenced = reviewAppliedCandidate({
+    application: result,
+    baseline,
+    leadPromotionReports: reports,
+  });
+  assert.equal(evidenced.readiness.gates.leadPromotion.status, 'PASS');
+});
+
+test('a duplicate promoted into Melody is graded under its derived candidate event id', () => {
+  const result = apply([{
+    id: 'p2', type: 'DUPLICATE_WITH_JUSTIFICATION', target: { eventIds: ['harm-1'] }, toRoles: ['Melody'],
+    reason: 'Reviewed: this cited harmony voice doubles as the foreground lead in the section.',
+    evidence: ['fixture:score top line', 'fixture:audio foreground'],
+    leadEvidence: leadPromotionEvidence({ sourceEventId: 'fixture:symbolic#harm-1' }),
+    acceptance: accept(),
+  }]);
+  assert.equal(result.status, 'PASS');
+
+  const reports = leadPromotionReportsFromApplication(result, baseline);
+  assert.equal(reports.length, 1);
+  assert.equal(reports[0].status, 'PASS');
+  assert.equal(reports[0].originEventId, 'harm-1');
+  assert.notEqual(reports[0].eventId, 'harm-1');
+  assert.equal(result.candidate.events.find(event => event.id === reports[0].eventId)?.role, 'Melody');
+
+  const review = reviewAppliedCandidate({
+    application: result,
+    baseline,
+    leadPromotionReports: reports,
+  });
+  assert.ok(review.readiness.gates.baseline.leadEventDiff.added.includes(reports[0].eventId));
+  assert.equal(review.readiness.gates.leadPromotion.status, 'PASS');
 });
 
 test('omitting a Melody event leaves a source-supported Lead gap the Core3 gate finds', () => {
