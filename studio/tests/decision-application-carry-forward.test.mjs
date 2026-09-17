@@ -219,12 +219,39 @@ test('8/9: a demoted decision stays non-current through later revisions, and the
   assert.deepEqual(JSON.parse(JSON.stringify(second.diagnostics.find(item => item.code === 'ARBITRATION_DECISION_STILL_NON_CURRENT').decisions)), [{ decisionId: 'h1', status: 'pending', currentStatus: 'REQUIRES_REREVIEW', reasons: ['EVENT_ROLE_CHANGED'], nonCurrentSince: { fromRevisionId: null, intoRevisionIndex: 1 } }]);
   assert.equal(reviewAppliedCandidate({ application: second, baseline }).readiness.gates.pendingDecisions.status, 'PENDING');
 
-  // A third untouched revision keeps the same non-current state and grows the history.
+  // Revision 2 did not resolve the conflict either: harmony still reports it.
+  assert.equal(conflictOf(analyzeCrossSourceHarmony(second.candidate), 'harm-1', 'alt-1').resolved, false);
+
+  // baseline -> rev1 (h1 made stale) -> rev2 (unrelated) -> rev3 (unrelated).
+  // At revision 3 everything revision 1 established must still be readable:
+  // the decision is pending and non-current, the original reason and the
+  // affected events are intact, the revision that made it stale is named, and
+  // no re-review has happened.
   const third = apply([assign('a3', ['tex-2'], 'Chord5', { acceptance: accept({ reviewedRevisionId: second.revision.id }) })], { parent: { revision: second.revision, candidate: second.candidate } });
   assert.equal(third.status, 'PASS', JSON.stringify(third.rejected));
-  assert.equal(marker(decisionIn(third.candidate, 'h1')).currentStatus, 'REQUIRES_REREVIEW');
-  assert.deepEqual(marker(decisionIn(third.candidate, 'h1')).nonCurrentSince, { fromRevisionId: null, intoRevisionIndex: 1 });
-  assert.equal(marker(decisionIn(third.candidate, 'h1')).history.length, 2);
+  const h1AtThree = decisionIn(third.candidate, 'h1');
+  assert.equal(h1AtThree.status, 'pending', 'never promoted back to accepted by an unrelated revision');
+  assert.equal(marker(h1AtThree).currentStatus, 'REQUIRES_REREVIEW');
+  assert.deepEqual([...marker(h1AtThree).reasons], ['EVENT_ROLE_CHANGED'], 'the original stale reason survives two unrelated revisions');
+  assert.deepEqual([...marker(h1AtThree).affectedEventIds], ['harm-1']);
+  assert.deepEqual(marker(h1AtThree).nonCurrentSince, { fromRevisionId: null, intoRevisionIndex: 1 }, 'the revision that made it stale is still named');
+  assert.equal(marker(h1AtThree).fromRevisionId, second.revision.id);
+  assert.equal(marker(h1AtThree).history.length, 2);
+  assert.deepEqual(marker(h1AtThree).history.map(entry => entry.currentStatus), ['REQUIRES_REREVIEW', 'REQUIRES_REREVIEW'], 'no entry records a re-review');
+  assert.deepEqual(marker(h1AtThree).history.map(entry => [...entry.reasons]), [['EVENT_ROLE_CHANGED'], ['EVENT_ROLE_CHANGED']]);
+  assert.ok(marker(h1AtThree).history.every(entry => !Object.hasOwn(entry, 'history')), 'history entries never nest');
+  // The gates still fail closed at revision 3.
+  assert.equal(conflictOf(analyzeCrossSourceHarmony(third.candidate), 'harm-1', 'alt-1').resolved, false);
+  const reviewThree = reviewAppliedCandidate({ application: third, baseline });
+  assert.equal(reviewThree.readiness.gates.pendingDecisions.status, 'PENDING');
+  assert.deepEqual([...reviewThree.readiness.gates.pendingDecisions.decisionIds], ['h1']);
+  assert.equal(reviewThree.readiness.gates.crossSourceHarmony.status, 'PENDING');
+  assert.deepEqual(JSON.parse(JSON.stringify(third.diagnostics.find(item => item.code === 'ARBITRATION_DECISION_STILL_NON_CURRENT').decisions.map(item => item.decisionId))), ['h1']);
+  // And the marker is deterministic content: re-deriving revision 3 reproduces
+  // the same candidate and the same revision id.
+  const thirdAgain = apply([assign('a3', ['tex-2'], 'Chord5', { acceptance: accept({ reviewedRevisionId: second.revision.id }) })], { parent: { revision: second.revision, candidate: second.candidate } });
+  assert.equal(thirdAgain.revision.id, third.revision.id);
+  assert.equal(JSON.stringify(thirdAgain.candidate.decisions), JSON.stringify(third.candidate.decisions));
 
   // Only a fresh arbitration review -- the decision re-accepted on the parent --
   // makes it current again.
