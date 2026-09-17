@@ -58,7 +58,7 @@ export const FINAL_ARTIFACT_SCHEMA = 'mabinogi-mobile-mml-studio/application-fin
 // emission would be circular: generation could never start, so the output that
 // gate reads could never exist. Everything else stays blocking — source
 // completeness, the baseline snapshot, micro-timing, Core3, Lead demotion,
-// cross-source harmony, version drift, original audio, player readback and
+// Lead promotion, cross-source harmony, version drift, original audio, player readback and
 // pending arbitration all still have to be satisfied before a single character
 // is emitted.
 export const PRE_EMISSION_EXEMPT_GATES = Object.freeze(['technical']);
