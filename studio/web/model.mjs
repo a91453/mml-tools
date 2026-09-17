@@ -4,13 +4,14 @@ import { validateMML, splitMML } from '../backend/mml/parser.mjs';
 import { ingestMusicXML, musicXMLFragmentToProject } from '../backend/score/index.mjs';
 import { compareCandidateLineage, compareCanonicalVersions } from '../backend/compare/version-drift.mjs';
 import { evaluateCore3Continuity } from '../backend/arbitration/core3.mjs';
-import { evaluateLeadDemotion } from '../backend/arbitration/lead-demotion.mjs';
+import { evaluateLeadDemotion, singleSourceIdentityOf } from '../backend/arbitration/lead-demotion.mjs';
+import { SIX_ROLES } from '../backend/arrangement/decision-application.mjs';
 import { analyzeCrossSourceHarmony } from '../backend/arbitration/harmony.mjs';
 import { evaluateProjectReadiness, emitFinalMml, EMIT_STATUS, DIAGNOSTIC_SEVERITY } from '../backend/final/index.mjs';
 import { attachAudioAlignmentEvidence } from '../backend/audio/index.mjs';
 import { alignmentProjectText } from './audio-payload.mjs';
 import { arrangementBinding, deriveArrangement, ingestMidiSource, isRawMidiAsset, reingestMidiAsset, verifyStoredProject } from './midi-source.mjs';
-import { acceptedArrangementBinding, acceptedDecisionBindings, buildAcceptedDecisionRecord, deriveAcceptedArrangement } from './arrangement-decisions.mjs';
+import { acceptedArrangementBinding, acceptedDecisionBindings, acceptedRevisionHead, buildAcceptedDecisionRecord, deriveAcceptedArrangement } from './arrangement-decisions.mjs';
 
 export const WORKSPACE_SCHEMA = 'mml-studio-web/workspace@1';
 export const MAX_TEXT_BYTES = 4 * 1024 * 1024;
@@ -135,6 +136,14 @@ export function importWorkspace(raw) {
 // now, so a decision cannot be recorded as accepted against inputs that are not
 // on screen. `acceptedDecisionBindings` is exported for the same reason: a UI
 // fills an acceptance block from what is loaded, never from what it remembers.
+//
+// `reviewedRevisionId` is the caller's statement of which G11-D revision the
+// reviewer looked at. It is checked against the head of the chain this call
+// re-derives from the stored records: null when no revision exists yet, the
+// last PASS revision's id otherwise. A decision cannot be recorded against a
+// revision that is not the verified head -- not a superseded one, not a
+// sibling, not one an import claims -- so the chain stays linear and every
+// recorded decision names a parent the backend has actually built.
 export function recordAcceptedDecision(workspace, decision, { reviewedRevisionId = null } = {}) {
   const asset = workspace.assets?.candidate;
   if (!isRawMidiAsset(asset)) throw Error('UNSUPPORTED: accepted arrangement decisions need a raw MIDI candidate source');
@@ -142,6 +151,17 @@ export function recordAcceptedDecision(workspace, decision, { reviewedRevisionId
   const integrity = verifyStoredProject(asset, project);
   if (!integrity.verified) throw Error(`SOURCE_INTEGRITY_UNVERIFIED: ${integrity.reasons.join(', ')}`);
   const arrangement = deriveArrangement(project, { sourceSha256: asset.source?.sha256 });
+  const current = deriveAcceptedArrangement({
+    project,
+    suggestion: arrangement.candidate,
+    records: workspace.acceptedDecisions,
+    revision: workspace.revision,
+    sourceSha256: asset.source?.sha256,
+  });
+  const head = acceptedRevisionHead(current);
+  if (reviewedRevisionId !== head) {
+    throw Error(`STALE_ACCEPTED_DECISION: DECISION_REVIEWED_REVISION_NOT_CHAIN_HEAD (expected ${head ?? 'null'}, observed ${reviewedRevisionId ?? 'null'})`);
+  }
   const record = buildAcceptedDecisionRecord({
     project,
     suggestion: arrangement.candidate,
@@ -163,6 +183,47 @@ export function clearAcceptedDecisions(workspace) {
 }
 
 export { acceptedDecisionBindings };
+
+// Record the Lead Demotion Gate evidence for one baseline Melody event.
+//
+// The pre-G11-D Lead path. The page used to build this record itself, reaching
+// into `event.sourceIds[0]` / `event.sourceEventIds[0]`; that was array-index
+// pairing, which the shared identity binding refuses for a multi-source event.
+// The record is now constructed here, behind the Worker, from the baseline
+// event that is loaded: the identity comes from `singleSourceIdentityOf()`, the
+// one constructor the gate module offers, and is bound to the event at analysis
+// time by the gate itself. A form never supplies an identity.
+//
+// Nothing here evaluates the evidence. The gate runs on every analysis against
+// the baseline event the record names, so a stored record that was edited
+// afterwards is judged by what it says then, not by what was recorded now.
+export const LEAD_DESTINATIONS = Object.freeze([...SIX_ROLES.filter(role => role !== 'Melody'), 'omitted']);
+
+export function recordLeadEvidence(workspace, form) {
+  if (!form || typeof form !== 'object') throw Error('Lead evidence form is required');
+  if (!LEAD_DESTINATIONS.includes(form.destinationRole)) throw Error('目標角色必須為 Chord1–Chord5 或 omitted');
+  const event = workspace.assets?.baseline?.project?.events?.find(item => item.id === form.eventId && item.role === 'Melody');
+  if (!event) throw Error('找不到基準 Melody event');
+  const checked = form.continuity === 'checked';
+  const record = {
+    eventId: event.id,
+    destinationRole: form.destinationRole,
+    // null for a multi-source event: the pairing cannot be proven from the IR,
+    // and the gate reports it rather than this record guessing it.
+    sourceIdentity: singleSourceIdentityOf(event) ? { ...singleSourceIdentityOf(event) } : null,
+    sectionRole: form.sectionRole,
+    scoreEvidence: { availability: text(form.scoreCitation) ? 'available' : 'unavailable', classification: form.scoreClass, citation: form.scoreCitation },
+    audioEvidence: { availability: text(form.audioCitation) ? 'available' : 'unavailable', classification: form.audioClass, citation: form.audioCitation },
+    positiveReason: form.positiveReason,
+    continuity: { checked, createsLeadGap: checked ? false : null, replacementEventIds: [] },
+    core3: { checked, status: checked ? 'PASS' : 'PENDING' },
+    revision: workspace.revision,
+  };
+  const next = copy(workspace);
+  next.acceptance = null;
+  next.leadEvidence = [...(next.leadEvidence ?? []).filter(item => item.eventId !== event.id), record];
+  return next;
+}
 
 export function recordReview(workspace, name, note, evidence) {
   if (!REVIEW_NAMES.includes(name) || !text(note) || !text(evidence)) throw Error('請填寫審核結論及來源／段落證據');
@@ -243,7 +304,7 @@ function rawMidiReport(workspace, projects) {
       arrangement,
       acceptedArrangement,
       persistedAcceptedArrangement: asset.acceptedArrangement
-        ? acceptedArrangementBinding({ stored: asset.acceptedArrangement, project: projects[slot], revision: workspace.revision, sourceSha256: source.sha256 })
+        ? acceptedArrangementBinding({ stored: asset.acceptedArrangement, project: projects[slot], revision: workspace.revision, sourceSha256: source.sha256, derived: acceptedArrangement })
         : null,
       error,
     });
@@ -341,14 +402,24 @@ function analysisContext(w) {
   const lineage = baseline ? compareCandidateLineage({ sourceBaseline: baseline, acceptedPrevious: previous, candidate }) : null;
   const core3 = baseline ? evaluateCore3Continuity({ baseline, candidate, approvedChanges: (w.core3Approvals ?? []).filter(a => a.revision === w.revision) }) : pending('BASELINE_MISSING');
   const harmony = analyzeCrossSourceHarmony(project);
+  // Stored Lead evidence is data. Each record is judged on every analysis by
+  // the Lead Demotion Gate against the baseline event it names; the gate binds
+  // the record's source identity to that exact event itself, so a record whose
+  // citation belongs to another event, or whose identity was rewritten in
+  // storage, is PENDING here under this event's id rather than PASS. A record
+  // the gate cannot even read (an unknown baseline event, an invalid section
+  // role) is a PENDING report too, never a thrown analysis: fail closed, and
+  // visibly, instead of taking the whole workspace down with the record.
   const leadReports = (w.leadEvidence ?? []).filter(e => e.revision === w.revision).map(e => {
-    const event = baseline?.events.find(event => event.id === e.eventId);
-    if (!event) throw Error('Lead evidence references an unknown baseline event');
+    const eventId = typeof e?.eventId === 'string' ? e.eventId : null;
+    const event = eventId ? baseline?.events.find(event => event.id === eventId) : null;
+    if (!event) return { status: 'PENDING', pass: false, eventId, destinationRole: e?.destinationRole ?? null, blockers: ['LEAD_EVIDENCE_EVENT_NOT_IN_BASELINE'], warnings: [] };
     const move = lineage.sourceToCandidate.notes.roleMoved.find(pair => pair.before.id === event.id);
     const removed = lineage.sourceToCandidate.notes.removed.some(item => item.id === event.id);
     const destination = move?.after.role ?? (removed ? 'omitted' : null);
-    if (destination !== e.destinationRole) return { status: 'PENDING', eventId: event.id, blockers: ['LEAD_DESTINATION_DOES_NOT_MATCH_CANDIDATE'] };
-    return evaluateLeadDemotion({ ...e, event });
+    if (destination !== e.destinationRole) return { status: 'PENDING', pass: false, eventId: event.id, destinationRole: e.destinationRole ?? null, blockers: ['LEAD_DESTINATION_DOES_NOT_MATCH_CANDIDATE'], warnings: [] };
+    try { return evaluateLeadDemotion({ ...e, event }); }
+    catch (error) { return { status: 'PENDING', pass: false, eventId: event.id, destinationRole: e.destinationRole ?? null, blockers: [`LEAD_DEMOTION_EVIDENCE_INVALID: ${error.message}`], warnings: [] }; }
   });
   const audioPresent = Object.values(w.assets).some(a => a.project.sources.some(s => s.kind === 'original-audio')) || Boolean(w.audio);
   const audioRequired = audioPresent || w.settings.audioRequired !== 'no';

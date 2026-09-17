@@ -13,8 +13,11 @@ import * as fixtures from './fixtures/midi-fixtures.mjs';
 // lands, and the answer has to be held by a regression rather than by a claim
 // in a report.
 //
-//   P2-A  evaluateLeadDemotion does not independently verify that a supplied
-//         sourceIdentity matches the target event's own provenance.
+//   P2-A  evaluateLeadDemotion did not independently verify that a supplied
+//         sourceIdentity matches the target event's own provenance. Closed by
+//         the G11-D residual hardening: the gate now binds the identity itself
+//         (see the last test below); the reachability proofs are kept as they
+//         were, because they still hold.
 //   P2-B  createCanonicalProject freezes the project object but not the arrays
 //         it contains, so a later caller could mutate Canonical material after
 //         construction.
@@ -102,6 +105,33 @@ test('P2-A: a Raw MIDI baseline carries no Melody role, so the gate is never ent
     assert.equal(gate.status, 'N/A');
     assert.equal(gate.reason, 'Event is not currently assigned to Melody/Lead.');
   }
+});
+
+test('P2-A closed: a Raw MIDI Melody event judged with another event\'s identity is PENDING at the gate itself', () => {
+  const project = ingest(fixtures.format1());
+  const notes = project.events.filter(event => event.kind === 'note');
+  assert.ok(notes.length >= 2);
+  const [target, other] = notes;
+  const asLead = { ...target, role: 'Melody' };
+  const evidence = sourceIdentity => evaluateLeadDemotion({
+    event: asLead,
+    destinationRole: 'Chord1',
+    sourceIdentity,
+    sectionRole: 'instrumental',
+    scoreEvidence: { availability: 'available', classification: 'accompaniment', citation: 'fixture' },
+    audioEvidence: { availability: 'available', classification: 'background', citation: 'fixture' },
+    continuity: { checked: true, createsLeadGap: false, replacementEventIds: [] },
+    core3: { checked: true, status: 'PASS' },
+    positiveReason: 'fixture',
+  });
+  // Every note of one MIDI file shares the one source id, so the source id
+  // alone can never tell two events apart; the source event id does.
+  assert.equal(target.sourceIds[0], other.sourceIds[0]);
+  assert.equal(evidence({ sourceId: target.sourceIds[0], sourceEventId: target.sourceEventIds[0] }).status, 'PASS');
+  const foreign = evidence({ sourceId: other.sourceIds[0], sourceEventId: other.sourceEventIds[0] });
+  assert.equal(foreign.status, 'PENDING');
+  assert.equal(foreign.eventId, target.id, 'the refusal is reported under the target event id');
+  assert.ok(foreign.blockers.includes('LEAD_EVIDENCE_EVENT_IDENTITY_MISMATCH'));
 });
 
 test('P2-A: replacing a source clears the recorded Lead evidence it was bound to', () => {

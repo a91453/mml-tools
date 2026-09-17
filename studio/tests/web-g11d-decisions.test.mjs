@@ -17,7 +17,7 @@ import {
   ACCEPTED_ARRANGEMENT_PIPELINE,
   acceptedArrangementBinding,
   acceptedDecisionsAt,
-  decisionContentDigest,
+  acceptedDecisionRecordDigest,
   deriveAcceptedArrangement,
 } from '../web/arrangement-decisions.mjs';
 import { createAcceptedDecision } from '../backend/arrangement/decision-application.mjs';
@@ -183,7 +183,7 @@ test('a stored decision edited after it was accepted is refused, not replayed', 
   const applied = analyzeWorkspace(forged).rawMidi[0].acceptedArrangement;
   assert.equal(applied.status, 'FAIL');
   assert.equal(applied.application, null);
-  assert.deepEqual(applied.invalidRecords.map(item => item.reason), ['DECISION_RECORD_CONTENT_DIGEST_MISMATCH']);
+  assert.deepEqual(applied.invalidRecords.map(item => item.reason), ['DECISION_RECORD_DIGEST_MISMATCH']);
 
   // Recomputing the digest beside it does not buy authority either. This
   // decision targets a whole lane, so a forged promotion into Melody is refused
@@ -191,9 +191,7 @@ test('a stored decision edited after it was accepted is refused, not replayed', 
   // one leadEvidence record cannot cite every source event in a lane.
   const resigned = persist(workspace);
   resigned.acceptedDecisions[0].decision.toRole = 'Melody';
-  resigned.acceptedDecisions[0].contentDigest = decisionContentDigest(
-    createAcceptedDecision(resigned.acceptedDecisions[0].decision),
-  );
+  resigned.acceptedDecisions[0].recordDigest = acceptedDecisionRecordDigest(resigned.acceptedDecisions[0]);
   const resignedApplied = analyzeWorkspace(resigned).rawMidi[0].acceptedArrangement;
   assert.equal(resignedApplied.status, 'UNSUPPORTED');
   assert.equal(resignedApplied.application.candidate, null);
@@ -205,9 +203,7 @@ test('a stored decision edited after it was accepted is refused, not replayed', 
   const laneEventIds = [...context.suggestion.lanes[0].eventIds];
   single.acceptedDecisions[0].decision.target = { laneId: null, eventIds: [laneEventIds[0]] };
   single.acceptedDecisions[0].decision.toRole = 'Melody';
-  single.acceptedDecisions[0].contentDigest = decisionContentDigest(
-    createAcceptedDecision(single.acceptedDecisions[0].decision),
-  );
+  single.acceptedDecisions[0].recordDigest = acceptedDecisionRecordDigest(single.acceptedDecisions[0]);
   const singleApplied = analyzeWorkspace(single).rawMidi[0].acceptedArrangement;
   assert.equal(singleApplied.status, 'PENDING');
   assert.equal(singleApplied.application.candidate, null);
@@ -233,9 +229,12 @@ test('a stored decision whose bindings were rewritten to look fresh is still ref
   const workspace = recordAcceptedDecision(context.workspace, decisionFor(context));
   const forged = persist(workspace);
   // Pretend the decision was reviewed against a revision that does not exist.
-  // The acceptance block is outside the content digest on purpose, so this
-  // record is self-consistent and still has to be caught by its binding.
+  // The acceptance block is inside the record digest, so the edit alone is a
+  // digest mismatch; re-signing the record makes it self-consistent again, and
+  // it still has to be caught by its binding.
   forged.acceptedDecisions[0].decision.acceptance.reviewedRevisionId = 'g11d:rev:invented';
+  assert.equal(analyzeWorkspace(forged).rawMidi[0].acceptedArrangement.invalidRecords[0].reason, 'DECISION_RECORD_DIGEST_MISMATCH');
+  forged.acceptedDecisions[0].recordDigest = acceptedDecisionRecordDigest(forged.acceptedDecisions[0]);
   const applied = analyzeWorkspace(forged).rawMidi[0].acceptedArrangement;
   assert.equal(applied.status, 'FAIL');
   assert.equal(applied.application.requiresFreshReview, true);
@@ -316,12 +315,8 @@ test('deriveAcceptedArrangement never mutates the project it is handed', () => {
   const decision = createAcceptedDecision(
     decisionFor(context, { acceptance: { ...acceptedDecisionBindings(context), acceptedBy: 'fixture-reviewer' } }),
   );
-  const records = [{
-    schema: 'mml-studio-web/accepted-arrangement-decision@1',
-    revision: 0,
-    contentDigest: decisionContentDigest(decision),
-    decision: JSON.parse(JSON.stringify(decision)),
-  }];
+  const envelope = { schema: 'mml-studio-web/accepted-arrangement-decision@2', pipeline: ACCEPTED_ARRANGEMENT_PIPELINE, revision: 0, decision: JSON.parse(JSON.stringify(decision)) };
+  const records = [{ ...envelope, recordDigest: acceptedDecisionRecordDigest(envelope) }];
   const result = deriveAcceptedArrangement({ project: context.project, suggestion: context.suggestion, records, revision: 0 });
   assert.equal(result.status, 'PASS');
   assert.equal(JSON.stringify(context.project), before);
