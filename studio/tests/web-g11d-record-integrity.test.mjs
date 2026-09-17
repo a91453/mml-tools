@@ -13,6 +13,7 @@ import {
 import { deriveArrangement } from '../web/midi-source.mjs';
 import {
   ACCEPTED_DECISION_RECORD_SCHEMA,
+  ACCEPTED_DECISION_RECORD_KEYS,
   ACCEPTED_ARRANGEMENT_PIPELINE,
   ACCEPTED_DECISION_AUTHORSHIP,
   ACCEPTED_DECISION_INTEGRITY,
@@ -141,7 +142,26 @@ test('15: the pre-hardening body-only digest is not an envelope: recomputing it 
   });
   const result = applied(forged);
   assert.equal(result.status, 'FAIL');
-  assert.deepEqual(result.invalidRecords.map(item => item.reason), ['DECISION_RECORD_DIGEST_MISMATCH']);
+  // The old digest is an unknown key now, and the acceptance edit is inside the
+  // envelope either way: with the stray key removed the edit itself is caught.
+  assert.deepEqual(result.invalidRecords.map(item => item.reason), ['DECISION_RECORD_UNSUPPORTED_FIELD: contentDigest']);
+  delete forged.acceptedDecisions[0].contentDigest;
+  assert.deepEqual(applied(forged).invalidRecords.map(item => item.reason), ['DECISION_RECORD_DIGEST_MISMATCH']);
+});
+
+test('the record key set is an exact allowlist, and the digest refuses anything outside it', () => {
+  const { workspace } = recorded();
+  const record = workspace.acceptedDecisions[0];
+  assert.deepEqual(Object.keys(record).sort(), [...ACCEPTED_DECISION_RECORD_KEYS].sort());
+  for (const key of ['status', 'trusted', 'candidate', 'application', 'contentDigest', 'signature']) {
+    const forged = edited(workspace, item => { item[key] = 'anything'; });
+    const integrity = decisionRecordIntegrity(forged.acceptedDecisions[0], forged.revision);
+    assert.equal(integrity.structural, false, key);
+    assert.equal(integrity.usable, false, key);
+    assert.match(integrity.reasons[0], new RegExp(`^DECISION_RECORD_UNSUPPORTED_FIELD: ${key}$`));
+    assert.throws(() => acceptedDecisionRecordDigest(forged.acceptedDecisions[0]), /unsupported field/, key);
+    assert.equal(applied(forged).status, 'FAIL', key);
+  }
 });
 
 // ─── re-signed records reach the bindings, and the bindings refuse them ─────

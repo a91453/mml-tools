@@ -1271,23 +1271,47 @@ export function applyAcceptedArrangement({
   const currentAcceptedIds = [];
   const rereviewRequired = [];
   const historicalIds = [];
-  const carryMarker = (decision, currentStatus, reasons, affectedEventIds) => Object.freeze({
-    ...structuredClone(decision.metadata ?? {}),
-    g11d: {
-      ...(decision.metadata?.g11d ?? {}),
-      carriedForward: {
-        fromRevisionId: expectedReviewedRevisionId,
-        intoRevisionIndex: revisionIndex,
-        previousStatus: decision.status,
-        currentStatus,
-        reasons: [...reasons].sort(cmpStr),
-        affectedEventIds: [...affectedEventIds].sort(cmpStr),
-        notice: currentStatus === 'CURRENT'
-          ? 'Carried forward unchanged: every event this decision names is present with the same identity, properties and role it was reviewed with.'
-          : 'Not current. An event this decision names was changed by this revision, so the decision is retained as history and re-reported as unresolved; it must be reviewed again against the new candidate.',
+  const stillNonCurrent = [];
+  // The marker is never overwritten in a way that loses why a decision became
+  // non-current. Every earlier marker is kept in `history`, and a decision
+  // that was made non-current stays non-current -- same status, same reasons,
+  // same affected events -- through later revisions that leave its events
+  // alone, until a reviewer re-accepts it. Only an `accepted` decision whose
+  // events this revision did not touch is CURRENT.
+  const stripHistory = marker => { const { history, ...rest } = marker; return rest; };
+  const carryMarker = (decision, touchedStatus, reasons, affectedEventIds) => {
+    const previous = isPlainObject(decision.metadata?.g11d?.carriedForward) ? decision.metadata.g11d.carriedForward : null;
+    const sticky = touchedStatus === 'CURRENT' && previous && previous.currentStatus !== 'CURRENT' && decision.status !== 'accepted';
+    const currentStatus = sticky ? previous.currentStatus : touchedStatus;
+    const carriedReasons = sticky ? [...(previous.reasons ?? [])] : [...reasons];
+    const carriedAffected = sticky ? [...(previous.affectedEventIds ?? [])] : [...affectedEventIds];
+    const nonCurrentSince = currentStatus === 'CURRENT'
+      ? null
+      : sticky && previous.nonCurrentSince
+        ? { ...previous.nonCurrentSince }
+        : { fromRevisionId: expectedReviewedRevisionId, intoRevisionIndex: revisionIndex };
+    return Object.freeze({
+      ...structuredClone(decision.metadata ?? {}),
+      g11d: {
+        ...(decision.metadata?.g11d ?? {}),
+        carriedForward: {
+          fromRevisionId: expectedReviewedRevisionId,
+          intoRevisionIndex: revisionIndex,
+          previousStatus: decision.status,
+          currentStatus,
+          reasons: carriedReasons.sort(cmpStr),
+          affectedEventIds: carriedAffected.sort(cmpStr),
+          nonCurrentSince,
+          history: previous ? [...(Array.isArray(previous.history) ? previous.history : []), stripHistory(structuredClone(previous))] : [],
+          notice: currentStatus === 'CURRENT'
+            ? 'Carried forward unchanged: every event this decision names is present with the same identity, properties and role it was reviewed with.'
+            : sticky
+              ? 'Still not current. This revision changed none of the events this decision names, but the decision was made non-current by an earlier revision (see nonCurrentSince and history) and has not been reviewed again since.'
+              : 'Not current. An event this decision names was changed by this revision, so the decision is retained as history and re-reported as unresolved; it must be reviewed again against the new candidate.',
+        },
       },
-    },
-  });
+    });
+  };
   for (const decision of applyTo.decisions ?? []) {
     const referenced = [...(decision.eventIds ?? [])].sort(cmpStr);
     if (!referenced.every(eventId => outputEventIdSet.has(eventId))) { droppedDecisionIds.push(decision.id); continue; }
@@ -1298,8 +1322,10 @@ export function applyAcceptedArrangement({
       if (duplicatesByEvent.has(eventId)) { reasons.add('EVENT_DUPLICATED'); affected.add(eventId); }
     }
     if (!reasons.size) {
-      carriedDecisions.push(createArbitrationDecision({ ...decision, metadata: carryMarker(decision, 'CURRENT', [], []) }));
+      const carried = createArbitrationDecision({ ...decision, metadata: carryMarker(decision, 'CURRENT', [], []) });
+      carriedDecisions.push(carried);
       if (decision.status === 'accepted') currentAcceptedIds.push(decision.id);
+      else if (carried.metadata.g11d.carriedForward.currentStatus !== 'CURRENT') stillNonCurrent.push(Object.freeze({ decisionId: decision.id, status: decision.status, currentStatus: carried.metadata.g11d.carriedForward.currentStatus, reasons: Object.freeze([...carried.metadata.g11d.carriedForward.reasons]), nonCurrentSince: { ...carried.metadata.g11d.carriedForward.nonCurrentSince } }));
       continue;
     }
     if (decision.status === 'accepted') {
@@ -1320,6 +1346,11 @@ export function applyAcceptedArrangement({
   if (rereviewRequired.length) note('ARBITRATION_DECISION_REREVIEW_REQUIRED', {
     decisions: Object.freeze(rereviewRequired),
     notice: 'An accepted arbitration decision names an event whose role this revision changed or that this revision duplicated. It is carried as pending with a carriedForward marker, so the conflict it resolved is reported unresolved again and readiness blocks on it until it is reviewed against the new candidate. Whether the old decision still holds is not decided here.',
+  });
+  stillNonCurrent.sort((a, b) => cmpStr(a.decisionId, b.decisionId));
+  if (stillNonCurrent.length) note('ARBITRATION_DECISION_STILL_NON_CURRENT', {
+    decisions: Object.freeze(stillNonCurrent),
+    notice: 'A decision made non-current by an earlier revision is carried through this one unchanged: this revision touched none of its events, but nobody has reviewed it again. Its original reasons are preserved in the marker.',
   });
   if (historicalIds.length) note('ARBITRATION_DECISION_HISTORICAL', {
     decisionIds: Object.freeze(historicalIds),

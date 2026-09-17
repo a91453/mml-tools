@@ -817,13 +817,20 @@ body minus its acceptance block. Every acceptance field (`state`, `acceptedBy`,
 `revision` and its `schema` could be edited without detection, and the body
 digest could be recomputed after an envelope edit.
 
-**Now.** Record schema `@2` carries `recordDigest`, a SHA-256 over the whole
-record: schema, pipeline, workspace revision and the decision exactly as the
-backend constructor normalizes it, acceptance included. Every field edit in the
-threat list (target, type, roles, section, reason, evidence, Lead evidence,
-each acceptance field, record revision, schema/pipeline, metadata) leaves a
-record that no longer agrees with itself; nothing is applied from it. Records of
-unknown schema, pipeline or shape are reported as invalid, never skipped.
+**Now.** Record schema `@2` carries `recordDigest`, a SHA-256 over the record's
+other four keys — schema, pipeline, workspace revision and the decision exactly
+as the backend constructor normalizes it, acceptance included — and the record's
+key set is an exact allowlist (`ACCEPTED_DECISION_RECORD_KEYS`): a record
+carrying any other top-level key is refused (`DECISION_RECORD_UNSUPPORTED_FIELD`)
+and cannot be signed, so no field can exist outside the digest for a later
+consumer to read. Every field edit in the threat list (target, type, roles,
+section, reason, evidence, Lead evidence, each acceptance field, record
+revision, schema/pipeline, metadata) leaves a record that no longer agrees with
+itself, and every added field is refused; nothing is applied from either.
+Records of unknown schema, pipeline or shape are reported as invalid, never
+skipped. (External review of the first PR head found the allowlist missing:
+extra keys were then outside the digest and ignored. Closed in the follow-up
+commit.)
 
 **Classification.** `decisionRecordIntegrity()` answers three separate
 questions — `structural`, `envelope`, `workspaceRevisionCurrent` — and states
@@ -862,9 +869,17 @@ dropped loudly; a named event re-roled or duplicated by this revision → an
 `carriedForward: { previousStatus, currentStatus: 'REQUIRES_REREVIEW', reasons,
 affectedEventIds }`, so cross-source harmony reports the pair unresolved and the
 readiness `pendingDecisions` gate blocks; a `pending`/`rejected` one keeps its
-status with a `HISTORICAL` marker. This is a staleness rule of the same kind as
-the acceptance bindings: it decides nothing about the music and re-asks the
-question. Canonical (MASTER_RULES.md §6, SOURCE_POLICY.md §5) requires an
+status with a `HISTORICAL` marker. The marker is never overwritten in a way
+that loses history: every earlier marker is kept in `carriedForward.history[]`,
+and a decision made non-current stays non-current — same `currentStatus`, same
+`reasons`, same `affectedEventIds`, with `nonCurrentSince` naming the revision
+that made it so — through later revisions that leave its events alone
+(`ARBITRATION_DECISION_STILL_NON_CURRENT`), until a reviewer re-accepts it.
+(External review of the first PR head found the marker being replaced with
+`CURRENT` and empty reasons on the next untouched revision; readiness still
+blocked on the `pending` status, but the audit trail was lost. Closed in the
+follow-up commit.) This is a staleness rule of the same kind as the acceptance
+bindings: it decides nothing about the music and re-asks the question. Canonical (MASTER_RULES.md §6, SOURCE_POLICY.md §5) requires an
 explicit decision per meaningful conflict and is silent on survival across a
 role move, so the stage does not guess.
 
@@ -889,7 +904,9 @@ it, and it never gains independent source support.
 | `studio/tests/decision-application-carry-forward.test.mjs` | classes A–F, omitted/moved/duplicated events, gate metadata, parent forgery, history across revisions |
 | `studio/tests/decision-application-binding.test.mjs` | adds `PARENT_CANONICAL_MISMATCH` (found by mutation: the check existed with no test) |
 
-Deliberate mutations executed, one at a time, each restored afterwards:
+Deliberate mutations executed, one at a time, each restored afterwards
+(two more after the external review: allowlist removed; marker overwritten —
+both caught):
 A 4/4 caught (gate check removed; sourceId-only; cross-membership pairing;
 index-pairing constructor); B 7/7 caught after one gap was closed (skip parent
 identity, candidate digest, baseline, Canonical; skip reviewed-revision

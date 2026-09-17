@@ -62,21 +62,25 @@ test('missing fields: a record without a digest, decision, revision or schema is
   assert.equal(applied(bare).status, 'NOT_REQUESTED');
 });
 
-test('unknown fields: an extra field on the record or the decision is not silently honoured', () => {
+test('unknown fields: an extra field on the record or the decision is refused, never silently carried outside the envelope', () => {
   const { workspace } = twoRevisions();
   const onRecord = persist(workspace);
   onRecord.acceptedDecisions[0].trusted = true;
   onRecord.acceptedDecisions[0].status = 'PASS';
-  // Record-level extras are outside the envelope and outside what is read;
-  // the record still applies exactly as before, and the extras do nothing.
-  assert.equal(applied(onRecord).status, 'PASS');
-  assert.equal(JSON.stringify(applied(onRecord)), JSON.stringify(applied(workspace)));
+  // The record's key set is an exact allowlist: a field the digest does not
+  // cover cannot exist on a valid record, so no later consumer can ever read
+  // one that was smuggled in beside an intact digest.
+  const result = applied(onRecord);
+  assert.equal(result.status, 'FAIL');
+  assert.equal(result.application, null);
+  assert.equal(result.invalidRecords[0].reason, 'DECISION_RECORD_UNSUPPORTED_FIELD: status, trusted');
+  assert.throws(() => acceptedDecisionRecordDigest(onRecord.acceptedDecisions[0]), /unsupported field: status/, 'such a record cannot even be signed');
   const onDecision = persist(workspace);
   onDecision.acceptedDecisions[0].decision.octaveShift = -1;
   assert.throws(() => acceptedDecisionRecordDigest(onDecision.acceptedDecisions[0]), /unsupported field: octaveShift/, 'a decision with an unknown field cannot even be signed');
-  const result = applied(onDecision);
-  assert.equal(result.status, 'FAIL');
-  assert.match(result.invalidRecords[0].reason, /DECISION_RECORD_MALFORMED.*unsupported field/);
+  const decisionResult = applied(onDecision);
+  assert.equal(decisionResult.status, 'FAIL');
+  assert.match(decisionResult.invalidRecords[0].reason, /DECISION_RECORD_MALFORMED.*unsupported field/);
 });
 
 test('wrong or stale schema: a record from another schema or pipeline is reported, not read', () => {

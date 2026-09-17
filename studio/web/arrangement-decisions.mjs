@@ -55,8 +55,10 @@ export const ACCEPTED_DECISION_RECORD_SCHEMA = 'mml-studio-web/accepted-arrangem
 //   recordEnvelope   CONTENT_ADDRESSED_SELF_CONSISTENCY: `recordDigest` is a
 //                    SHA-256 over every field of the record -- schema, pipeline,
 //                    workspace revision and the whole normalized decision
-//                    including its acceptance block. Any single edit to any of
-//                    them leaves a record that no longer agrees with itself.
+//                    including its acceptance block -- and the record's key set
+//                    is an exact allowlist, so no field can exist outside the
+//                    digest. Any single edit to any of them, or any added
+//                    field, leaves a record that is refused.
 //   bindings         RE_DERIVED_AT_APPLICATION: the baseline content digest,
 //                    source identity digest, lane decomposition digest,
 //                    Canonical rules snapshot and reviewed revision are checked
@@ -154,7 +156,19 @@ export function buildAcceptedDecisionRecord({ project, suggestion, revision, rev
 // content, the source identity, the reviewed revision and the Canonical rules
 // snapshot, none of which the workspace gets to choose. See
 // ACCEPTED_DECISION_INTEGRITY.
-export function acceptedDecisionRecordDigest({ schema, pipeline, revision, decision }) {
+// The only keys a record may carry. An unknown top-level key is refused, not
+// ignored and not silently left outside the digest: a field the envelope does
+// not cover is a field a later consumer could read without its edit ever
+// being detected. `recordDigest` is the digest itself and is the one key the
+// digest is not taken over.
+export const ACCEPTED_DECISION_RECORD_KEYS = Object.freeze(['schema', 'pipeline', 'revision', 'decision', 'recordDigest']);
+
+export function acceptedDecisionRecordDigest(record) {
+  if (!record || typeof record !== 'object' || Array.isArray(record)) throw Error('an accepted-decision record must be an object');
+  for (const key of Object.keys(record).sort()) {
+    if (!ACCEPTED_DECISION_RECORD_KEYS.includes(key)) throw Error(`accepted-decision record carries an unsupported field: ${key}`);
+  }
+  const { schema, pipeline, revision, decision } = record;
   const normalized = createAcceptedDecision(decision);
   return contentDigest({ schema, pipeline, revision, decision: JSON.parse(JSON.stringify(normalized)) });
 }
@@ -180,7 +194,9 @@ export function decisionRecordIntegrity(record, revision) {
   else if (record.schema !== ACCEPTED_DECISION_RECORD_SCHEMA) reasons.push('DECISION_RECORD_SCHEMA_UNSUPPORTED');
   else if (record.pipeline !== ACCEPTED_ARRANGEMENT_PIPELINE) reasons.push('DECISION_RECORD_PIPELINE_VERSION_CHANGED');
   else if (!record.decision) reasons.push('DECISION_RECORD_EMPTY');
-  else {
+  else if (Object.keys(record).some(key => !ACCEPTED_DECISION_RECORD_KEYS.includes(key))) {
+    reasons.push(`DECISION_RECORD_UNSUPPORTED_FIELD: ${Object.keys(record).filter(key => !ACCEPTED_DECISION_RECORD_KEYS.includes(key)).sort().join(', ')}`);
+  } else {
     try {
       const digest = acceptedDecisionRecordDigest(record);
       structural = true;

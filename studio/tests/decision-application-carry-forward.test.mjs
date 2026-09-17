@@ -96,6 +96,8 @@ test('4: an accepted arbitration decision naming an event whose role moved is re
     currentStatus: 'REQUIRES_REREVIEW',
     reasons: ['EVENT_ROLE_CHANGED'],
     affectedEventIds: ['harm-1'],
+    nonCurrentSince: { fromRevisionId: null, intoRevisionIndex: 1 },
+    history: [],
     notice: marker(h1).notice,
   });
   assert.match(marker(h1).notice, /Not current/);
@@ -201,12 +203,45 @@ test('8/9: a demoted decision stays non-current through later revisions, and the
   assert.equal(second.status, 'PASS', JSON.stringify(second.rejected));
   const h1 = decisionIn(second.candidate, 'h1');
   // Revision 2 touched nothing h1 names, so it is carried as it was -- and as
-  // it was is pending, with the history of why.
+  // it was is non-current: the status, the reasons and the revision that made
+  // it non-current all survive, and the earlier marker is kept as history.
   assert.equal(h1.status, 'pending');
-  assert.equal(marker(h1).currentStatus, 'CURRENT');
+  assert.equal(marker(h1).currentStatus, 'REQUIRES_REREVIEW', 'an untouched revision does not make a stale decision current again');
+  assert.deepEqual([...marker(h1).reasons], ['EVENT_ROLE_CHANGED']);
+  assert.deepEqual([...marker(h1).affectedEventIds], ['harm-1']);
+  assert.deepEqual(marker(h1).nonCurrentSince, { fromRevisionId: null, intoRevisionIndex: 1 });
   assert.equal(marker(h1).previousStatus, 'pending');
   assert.equal(marker(h1).fromRevisionId, first.revision.id);
+  assert.equal(marker(h1).history.length, 1);
+  assert.equal(marker(h1).history[0].currentStatus, 'REQUIRES_REREVIEW');
+  assert.deepEqual([...marker(h1).history[0].reasons], ['EVENT_ROLE_CHANGED']);
+  assert.equal(Object.hasOwn(marker(h1).history[0], 'history'), false, 'history entries do not nest');
+  assert.deepEqual(JSON.parse(JSON.stringify(second.diagnostics.find(item => item.code === 'ARBITRATION_DECISION_STILL_NON_CURRENT').decisions)), [{ decisionId: 'h1', status: 'pending', currentStatus: 'REQUIRES_REREVIEW', reasons: ['EVENT_ROLE_CHANGED'], nonCurrentSince: { fromRevisionId: null, intoRevisionIndex: 1 } }]);
   assert.equal(reviewAppliedCandidate({ application: second, baseline }).readiness.gates.pendingDecisions.status, 'PENDING');
+
+  // A third untouched revision keeps the same non-current state and grows the history.
+  const third = apply([assign('a3', ['tex-2'], 'Chord5', { acceptance: accept({ reviewedRevisionId: second.revision.id }) })], { parent: { revision: second.revision, candidate: second.candidate } });
+  assert.equal(third.status, 'PASS', JSON.stringify(third.rejected));
+  assert.equal(marker(decisionIn(third.candidate, 'h1')).currentStatus, 'REQUIRES_REREVIEW');
+  assert.deepEqual(marker(decisionIn(third.candidate, 'h1')).nonCurrentSince, { fromRevisionId: null, intoRevisionIndex: 1 });
+  assert.equal(marker(decisionIn(third.candidate, 'h1')).history.length, 2);
+
+  // Only a fresh arbitration review -- the decision re-accepted on the parent --
+  // makes it current again.
+  const reReviewed = createCanonicalProject({ ...second.candidate, decisions: second.candidate.decisions.map(item => (item.id === 'h1' ? createArbitrationDecision({ ...item, status: 'accepted' }) : item)) });
+  const reReviewedRevision = { ...second.revision };
+  // The re-accepted parent no longer matches its revision's candidate digest,
+  // so it is refused as a parent: a reviewer's re-acceptance is a new baseline-
+  // level fact, not something a revision chain can absorb silently.
+  const refused = apply([assign('a3', ['tex-2'], 'Chord5', { acceptance: accept({ reviewedRevisionId: reReviewedRevision.id }) })], { parent: { revision: reReviewedRevision, candidate: reReviewed } });
+  assert.equal(refused.status, 'FAIL');
+  assert.ok(refused.rejected.some(item => item.code === 'PARENT_CANDIDATE_DIGEST_MISMATCH'));
+  // As a baseline-level decision it is accepted and untouched, so it is CURRENT.
+  const fresh = withDecisions(roleDeclaredBaseline({ extraSource: true }), [{ ...keep('h1', ['harm-1', 'alt-1']), metadata: { g11d: { carriedForward: { currentStatus: 'REQUIRES_REREVIEW', reasons: ['EVENT_ROLE_CHANGED'], affectedEventIds: ['harm-1'], history: [] } } } }]);
+  const freshResult = applyAcceptedArrangement({ baseline: fresh, canonicalIdentity: CANONICAL_IDENTITY, decisions: [assign('a1', ['tex-1'], 'Chord3', { acceptance: acceptanceFor(fresh) })] });
+  assert.equal(freshResult.status, 'PASS');
+  assert.equal(marker(decisionIn(freshResult.candidate, 'h1')).currentStatus, 'CURRENT');
+  assert.equal(marker(decisionIn(freshResult.candidate, 'h1')).history.length, 1, 'the earlier non-current marker is kept as history');
   assert.ok(second.diffFromParent);
   assert.equal(second.diffFromParent.summary.roleMoved, 1);
   assert.equal(second.diffFromBaseline.summary.roleMoved, 2);
