@@ -342,7 +342,10 @@ changes: the original verdict stands and the refusal is recorded as
 Repair never answers a gate — it only changes which candidate the gates are asked
 about. A preserved interval still fails closed, unproven material still blocks, a
 blocking readiness report still returns `PENDING`, and the character budget still
-refuses without a note being dropped. The round-trip gate compares against the
+refuses without a note being dropped. The repair layer touches no note at all: a
+technical hole whose preceding span is a **note** is refused rather than closed,
+because extending that note's release is not proven neutral by anything the
+Canonical IR carries. The round-trip gate compares against the
 **repaired** semantics, because that is what the emitted string means; the
 pre-repair timing stays in `result.technicalTimingRepair` and
 `result.microGap.gradedProjectId` names which project the key lists describe.

@@ -253,16 +253,28 @@ enforcement report it verifies against a freshly computed one; it imports the
 analyzer's `SAFE_GRID` rather than restating 1/64, and refuses to run at all if
 `enforceMicroGaps` reports the executable contract non-conformant.
 
-Two operations, both absorbing meaning-free silence leftward — the direction
-Canonical fixes by requiring note-on identity preserved (`MOBILE_SYNTAX §8`,
-`§11 step 1`; `MASTER_RULES §6`; `ACCEPTANCE_CRITERIA` Gate 1):
-`close-technical-gap-into-preceding-span` and
+Two operations, both of which touch **no note at all**:
+`close-technical-gap-into-preceding-rest` and
 `coalesce-technical-rest-with-preceding-rest`. Everything else is a structured
 refusal. Exact rational throughout — no epsilon, float, rounding, snapping or
 quantization. The input project is never mutated; the repaired candidate is a
 distinct project carrying per-event before/after provenance and a reversal
 record, with the Source-Faithful Baseline copied through untouched so the
 transformation appears in the baseline diff.
+
+**Correction applied during review.** A first revision claimed Published
+Canonical uniquely determines leftward absorption for *every* inter-event hole,
+and therefore licenses extending a preceding **note**'s release. Re-reading the
+snapshot, none of its four supports carries that weight: `MASTER_RULES §6` is
+about repairing a confirmed non-musical *overlap* and forbids *delaying* an
+onset; `MOBILE_SYNTAX §8` constrains what an optimizer must not break rather than
+licensing a release change; and both `MOBILE_SYNTAX §4` ("preserves event timing
+**and** attack identity") and `ACCEPTANCE_CRITERIA` Gate 1 ("**exact timing** and
+note-on identity preserved") name two requirements each, the first of which a
+release move fails. A gap classified meaning-free proves it *may* be normalized,
+not that a particular rewrite is neutral, and attack identity surviving is half
+the test. The claim was withdrawn and the note case now fails closed with
+`NOTE_RELEASE_NOT_PROVEN_NEUTRAL`.
 
 The Final emitter consumes it behind an opt-in `technicalTimingRepair` option.
 Off — the default — the emitter is byte-for-byte what it was. On, repair never
@@ -272,23 +284,29 @@ rejected the original. Preserved intervals, unproven material, blocking
 readiness and the character budget all still refuse exactly as before.
 
 Regression coverage is `studio/tests/technical-timing-repair.test.mjs` and
-`studio/tests/technical-timing-repair-emitter.test.mjs`. Fourteen deliberate
-mutations were applied and reverted one at a time and all fourteen were caught;
-one — replacing exact-rational timing comparison with a float epsilon —
-initially survived and a regression was written for it. Details and the
-mutation-to-regression table are in
+`studio/tests/technical-timing-repair-emitter.test.mjs`. Seventeen deliberate
+mutations were applied and reverted one at a time and all seventeen were caught.
+Three initially survived and produced new regressions rather than a shrug:
+replacing exact-rational timing comparison with a float epsilon, and the two
+invariant checks added by the correction above, which the primary guard makes
+unreachable in production and which a regression therefore drives directly.
+Details and the mutation-to-regression table are in
 [TECHNICAL_TIMING_REPAIR.md](TECHNICAL_TIMING_REPAIR.md).
 
 **Canonical impact.** `NONE` — the rule was already published and this work added
 none. Only the permitted half of the enforcement range was unimplemented.
 
-**Still open, by design.** A sub-grid *note* duration, and a sub-grid rest event
-whose predecessor is a note, have no unique semantically neutral repair on the
-evidence the Canonical IR carries. Both fail closed. That is recorded as an
-unresolved implementation question rather than a Canonical ambiguity: failing
-closed is already a Canonical-valid answer, so no published rule is missing, and
-supporting either shape would need an explicit project decision. It resolves no
-`PENDING` item.
+**Still open, by design.** Three shapes have no proven semantically neutral
+repair on the evidence the Canonical IR carries: an inter-event hole preceded by
+a note, a sub-grid *note* duration, and a sub-grid rest whose predecessor is a
+note. All three fail closed. That is recorded as an unresolved implementation
+question rather than a Canonical ambiguity: failing closed is already a
+Canonical-valid answer, so no published rule is missing. Supporting any of them
+would need either the C2 artifact-attestation channel that `micro-timing.mjs`
+documents as deliberately unavailable, or an explicit project decision. **A
+project decision is required** if the note-preceded hole is to be repairable —
+it is the shape a MIDI ingest produces when a note-off lands a few ticks before
+the next note-on. It resolves no `PENDING` item.
 
 ### G11-D-R — G11-D residual integrity hardening · `RESOLVED` (pending review)
 
@@ -650,7 +668,7 @@ Sequenced so that no PR mixes a decision-bearing change with a mechanical one.
 | **D — G12 / G13** | Artifact strategy and lockfile posture together | G12 + G13 decisions, after M3b |
 | **E — M5 groundwork** | Song History structure documentation only, no schema | D1–D8 decisions |
 | **F — Final MML emitter** ✅ | Canonical-aware Final MML emitter: exact-rational duration decomposition, attack/tie semantics, tempo placement, pitch/octave and character planning, G10 consumption, round-trip Final gate | C. Foundation delivered; no `Nxx` opt-in output |
-| **G — Technical Timing Repair** ✅ | Canonical-aware Technical Timing Repair (G16): consumes `rejectedIntervalKeys`, two exact leftward-absorption operations, structured refusal for everything else, opt-in emitter integration | C and F |
+| **G — Technical Timing Repair** ✅ | Canonical-aware Technical Timing Repair (G16): consumes `rejectedIntervalKeys`, two exact rest-only operations whose neutrality the IR proves, structured refusal for everything else, opt-in emitter integration | C and F |
 
 G8 and G9 receive no PR row: neither is unblocked, and G9 is `ROADMAP_ONLY`.
 M4 receives no PR row: it is applied in repository settings by the owner.
