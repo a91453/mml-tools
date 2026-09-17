@@ -68,6 +68,25 @@ test('capabilities report what this build does, not what it wishes it did', asyn
   assert.ok(caps.gates.never_settable_by_this_service.includes('in_game'));
   assert.ok(!caps.gates.settable_by_this_service.includes('in_game'));
   assert.deepEqual([...caps.gates.axes], [...GATE_NAMES]);
+
+  // `mobile_adaptation` has no gate implementing it in this build, so claiming
+  // it is settable here would be an overclaim in the one record an agent reads
+  // to find out what this service can actually do. It is reported as
+  // unimplemented, and kept apart from `in_game`: one is a missing
+  // implementation, the other is a standing prohibition, and folding them
+  // together would either invent a rule or weaken the one that exists.
+  assert.ok(!caps.gates.settable_by_this_service.includes('mobile_adaptation'));
+  assert.ok(caps.gates.not_implemented_in_this_build.includes('mobile_adaptation'));
+  assert.ok(!caps.gates.not_implemented_in_this_build.includes('in_game'));
+  assert.ok(!caps.gates.never_settable_by_this_service.includes('mobile_adaptation'));
+  // Every axis is accounted for by exactly one of the three lists, so a future
+  // axis cannot be added without saying which it is.
+  const classified = [
+    ...caps.gates.settable_by_this_service,
+    ...caps.gates.not_implemented_in_this_build,
+    ...caps.gates.never_settable_by_this_service,
+  ];
+  assert.deepEqual([...classified].sort(), [...GATE_NAMES].sort());
 });
 
 test('capabilities state the zero-cost and no-LLM position as facts', async () => {

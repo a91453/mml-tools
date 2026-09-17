@@ -15,7 +15,7 @@
 // own `sourceComplete`, `warnings` and `unsupported` are carried through
 // unchanged, and nothing in this layer can raise them.
 
-import { ASSET_KIND_INTAKE, ERROR_CODES, fail } from './contracts.mjs';
+import { ASSET_KIND_INTAKE, ERROR_CODES, LIMITS, fail } from './contracts.mjs';
 
 const now = () => new Date().toISOString();
 
@@ -117,6 +117,23 @@ export function createIntakeService({ canonical, projects, assets, store }) {
      * itself — a merge of incomplete inputs cannot present itself as complete.
      */
     async run(owner, projectId, { assetIds = null, meterText = '' } = {}) {
+      // Checked by shape here, before the Canonical engines are loaded, because
+      // a selection that is not a list of asset ids is a malformed request and
+      // has to be reported as one. Left unchecked it reaches `.map` further
+      // down and raises a TypeError, which a transport can only render as an
+      // internal failure — telling a caller the server broke when it was the
+      // request that was wrong. The MCP surface already refuses it through its
+      // declared schema; this is the same refusal for every other caller, and
+      // it belongs here rather than in a transport so that direct callers and
+      // any future transport inherit it.
+      if (assetIds !== null && !Array.isArray(assetIds)) {
+        fail(ERROR_CODES.INVALID_REQUEST, 'asset_ids must be an array of asset ids, or omitted to ingest every symbolic asset in the project.', { received: typeof assetIds });
+      }
+      // A project cannot hold more assets than this, so a longer selection can
+      // never resolve and is refused before it can drive a lookup per entry.
+      if (assetIds !== null && assetIds.length > LIMITS.maxAssetsPerProject) {
+        fail(ERROR_CODES.INVALID_REQUEST, `asset_ids is limited to ${LIMITS.maxAssetsPerProject} entries.`, { received: assetIds.length, max: LIMITS.maxAssetsPerProject });
+      }
       const engines = await canonical.engines();
       const record = projects.load(owner, projectId);
 

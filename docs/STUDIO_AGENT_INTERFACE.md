@@ -729,10 +729,16 @@ the `published_main_head` of its build, not of `main` right now.
 That is safe — it is a pinned, reproducible view, and the snapshot it loads is
 immutable — but it has one operational consequence: **publishing a new Canonical
 release does not reach the Agent backend until the image is rebuilt.** The
-deployment watch patterns must therefore include
-`docs/CANONICAL_MANIFEST.md` and the Canonical rule sources, so a Canonical
-publication triggers a rebuild rather than leaving the backend silently serving
-an obsolete Manifest view. See `railway/README.md` for the exact set.
+deployment watch patterns must therefore include `docs/CANONICAL_MANIFEST.md`,
+so a Canonical publication triggers a rebuild rather than leaving the backend
+silently serving an obsolete Manifest view.
+
+The Canonical rule sources are deliberately **not** watched. They are read from
+the immutable rules snapshot the Manifest pins, never from `main`, so editing
+one cannot change what this service loads and watching it would force rebuilds
+that change nothing. Only a Manifest that selects a different snapshot can move
+the Agent backend's Canonical view, which is exactly the file that is watched.
+See `railway/README.md` for the exact set.
 
 An operator can check for drift without credentials by comparing the
 `canonical.published_main_head` reported by the Agent backend's public root

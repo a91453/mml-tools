@@ -39,8 +39,10 @@ RUN git config --system --add safe.directory /app || true
 # Note the Agent backend's Canonical view is pinned at build: `.git` is copied
 # here and nothing fetches at runtime, so publishing a new Canonical release
 # does not reach this service until the image is rebuilt. The deployment watch
-# patterns must include the Manifest and rule sources for that reason; see
-# railway/README.md.
+# patterns must include the Manifest for that reason. The rule sources stay
+# unwatched on purpose -- they are read from the immutable snapshot the Manifest
+# pins, never from main, so a change to one cannot alter what this image loads.
+# See railway/README.md.
 RUN sh railway/canonical-probe.sh /app
 
 ENV NODE_ENV=production \

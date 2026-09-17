@@ -347,3 +347,17 @@ test('the legacy technical check is reachable over HTTP with the same report', a
   assert.equal(body.gates.in_game_acceptance, 'PENDING');
   assert.equal(body.pair_count, 15);
 });
+
+test('a malformed source selection is a client error, not an internal failure', async () => {
+  // The Application Service refuses a non-array `asset_ids`; what this pins is
+  // the transport consequence. A 500 would say the service broke, when the
+  // request was the thing that was wrong — and it is the one status an
+  // operator's monitoring should be able to read as an incident.
+  const { json } = setup();
+  const project = (await json('POST', '/projects', { title: 'selection' })).body.project;
+  for (const selection of ['ast_00000000000000000000000000000000', 7, true, { asset_id: 'x' }]) {
+    const { response, body } = await json('POST', `/projects/${project.project_id}/intake`, { asset_ids: selection });
+    assert.equal(response.status, 400, `asset_ids ${JSON.stringify(selection)} must be a client error`);
+    assert.equal(body.error.code, 'INVALID_REQUEST');
+  }
+});

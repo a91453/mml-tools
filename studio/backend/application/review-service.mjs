@@ -44,8 +44,6 @@ const CONFIRMATIONS = Object.freeze({
   original_audio_required: 'readiness `originalAudio` applicability. Setting it false states the song-specific workflow does not require original audio, and must say why.',
 });
 
-const PASS_LIKE = new Set([GATE_STATUS.PASS, GATE_STATUS.NOT_APPLICABLE]);
-
 export function createReviewService({ canonical, projects, intake, arrangement, store }) {
   const audioKey = (projectId, candidateId) => `audio:${projectId}:${candidateId}`;
 
@@ -266,20 +264,19 @@ function normalizeEvidence(evidence) {
  *
  *   technical   Readiness answers this from an MML validation it was given. At
  *               review time there is no emitted MML yet, so it is `NOT_RUN`.
- *               After emission the Final emitter's own verdict is the answer —
- *               it serialized the candidate and re-parsed it to identical
- *               semantics under the authoritative Final parser — so `emit` is
- *               passed in and used instead of a readiness gate that graded
- *               nothing.
+ *               After emission the caller re-evaluates readiness with the
+ *               emitted MML and passes that in, so the gate is always a
+ *               readiness verdict over something readiness actually graded —
+ *               never the Final emitter's own PASS copied across.
  *   mobile_adaptation  No gate implements it in this build. It stays `PENDING`
  *               rather than borrowing `technical`, because Gate 8 adaptation is
  *               a different question from serialization.
  *   in_game     `PENDING`, unconditionally and by construction.
  */
-export function gatesFrom(readiness, { emit = null, emitPassStatus = 'PASS' } = {}) {
+export function gatesFrom(readiness) {
   const status = name => readiness?.gates?.[name]?.status ?? GATE_STATUS.NOT_RUN;
   return Object.freeze({
-    technical: emit === null ? status('technical') : (emit === emitPassStatus ? GATE_STATUS.PASS : GATE_STATUS.FAIL),
+    technical: status('technical'),
     source: status('source'),
     audio: status('originalAudio'),
     player_readback: status('playerReadback'),
@@ -289,4 +286,4 @@ export function gatesFrom(readiness, { emit = null, emitPassStatus = 'PASS' } = 
   });
 }
 
-export { PASS_LIKE, CONFIRMATIONS };
+export { CONFIRMATIONS };

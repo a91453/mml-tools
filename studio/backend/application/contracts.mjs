@@ -166,17 +166,6 @@ export const OPERATION_STATUS = freeze({
   FAILED: 'failed',
 });
 
-// Every gates block starts here. A caller reading a result can therefore never
-// see a gate that was merely omitted and read it as satisfied.
-export const unknownGates = () => freeze({
-  technical: GATE_STATUS.NOT_RUN,
-  source: GATE_STATUS.PENDING,
-  audio: GATE_STATUS.PENDING,
-  player_readback: GATE_STATUS.NOT_RUN,
-  mobile_adaptation: GATE_STATUS.PENDING,
-  in_game: GATE_STATUS.PENDING,
-});
-
 export const GATE_NOTICE = 'Gate axes are independent. A technical PASS certifies serialization and readback under this implementation only: it never establishes source completeness, audio alignment, player readback, Mobile adaptation or in-game acceptance. No operation result, emitter result, parser result, transport result or model call can set in_game.';
 
 // ─── errors ─────────────────────────────────────────────────────────────────
@@ -240,6 +229,11 @@ export const ERROR_HTTP_STATUS = freeze({
   [ERROR_CODES.STORAGE_FULL]: 507,
 });
 
+// `FORBIDDEN` maps to 404 on purpose. A caller who names a record they do not
+// own learns only that it is not theirs to see; distinguishing "exists but
+// forbidden" from "does not exist" is an existence oracle over another owner's
+// identifiers.
+
 /**
  * A structured Application Service failure.
  *
@@ -264,17 +258,6 @@ export class StudioApplicationError extends Error {
 export const fail = (code, message, details = {}) => {
   throw new StudioApplicationError(code, message, details);
 };
-
-// `FORBIDDEN` maps to 404 above on purpose. A caller who names a record they do
-// not own learns only that it is not theirs to see; distinguishing "exists but
-// forbidden" from "does not exist" is an existence oracle over another owner's
-// identifiers.
-export const notFoundFor = kind => ({
-  project: ERROR_CODES.PROJECT_NOT_FOUND,
-  asset: ERROR_CODES.ASSET_NOT_FOUND,
-  job: ERROR_CODES.JOB_NOT_FOUND,
-  artifact: ERROR_CODES.ARTIFACT_NOT_FOUND,
-}[kind] ?? ERROR_CODES.INVALID_REQUEST);
 
 // ─── bounded input ──────────────────────────────────────────────────────────
 //

@@ -218,16 +218,6 @@ export function createFinalService({ canonical, projects, review, store }) {
       };
     },
 
-    /** One stored artifact, by id. */
-    get(owner, projectId, artifactId) {
-      const record = projects.load(owner, projectId);
-      const entry = record.artifacts.find(item => item.artifact_id === artifactId);
-      if (!entry) fail(ERROR_CODES.ARTIFACT_NOT_FOUND, 'Unknown artifact', { artifact_id: String(artifactId).slice(0, 96) });
-      const body = store.getJson(artifactKey(record.project_id, artifactId));
-      if (!body) fail(ERROR_CODES.ARTIFACT_NOT_FOUND, 'The stored artifact is no longer available', { artifact_id: artifactId });
-      return Object.freeze(body);
-    },
-
     /**
      * An artifact named by id alone, scoped to the owner's own projects.
      *

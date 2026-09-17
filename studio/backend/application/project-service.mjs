@@ -76,11 +76,6 @@ export function createProjectService({ store }) {
     get(owner, projectId) {
       return view(load(owner, projectId));
     },
-
-    rename(owner, projectId, title) {
-      const record = load(owner, projectId);
-      return view(save({ ...record, title: requireString(title, 'title', { max: LIMITS.maxTitleLength }) }));
-    },
   });
 }
 

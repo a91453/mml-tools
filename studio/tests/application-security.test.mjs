@@ -221,3 +221,35 @@ test('no module in the interface imports a model provider SDK', async () => {
     assert.doesNotMatch(source, /process\.env\.(OPENAI|ANTHROPIC|GOOGLE|GEMINI)_API_KEY/, `${name} reads a model provider credential`);
   }
 });
+
+test('a source selection that is not a list of asset ids is refused as a bad request', async () => {
+  // `asset_ids` reaches a per-entry lookup. Anything that is not an array used
+  // to reach it unchecked and raise a TypeError, which a transport can only
+  // render as an internal failure — telling a caller the server broke when the
+  // request was malformed. The refusal belongs to the Application Service so
+  // every transport and every direct caller inherits it, and it happens before
+  // the Canonical engines are loaded.
+  const service = createStudioApplication({});
+  const project = (await service.createProject(ALICE, { title: 'selection' })).project;
+
+  for (const selection of ['ast_' + 'a'.repeat(32), 7, true, { asset_id: 'x' }]) {
+    const error = await rejects(
+      service.analyzeSources(ALICE, project.project_id, { assetIds: selection }),
+      ERROR_CODES.INVALID_REQUEST,
+    );
+    assert.match(error.message, /asset_ids must be an array/);
+  }
+
+  // A project cannot hold more assets than the per-project ceiling, so a longer
+  // selection can never resolve and is refused before it drives a lookup each.
+  await rejects(
+    service.analyzeSources(ALICE, project.project_id, { assetIds: new Array(LIMITS.maxAssetsPerProject + 1).fill('ast_' + 'a'.repeat(32)) }),
+    ERROR_CODES.INVALID_REQUEST,
+  );
+
+  // An array is still refused on its contents, not on its shape alone.
+  await rejects(
+    service.analyzeSources(ALICE, project.project_id, { assetIds: ['/etc/passwd'] }),
+    ERROR_CODES.ASSET_NOT_FOUND,
+  );
+});
