@@ -50,6 +50,7 @@ import { existsSync, rmSync, writeFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 
 import {
+  BOOTSTRAP_ATTESTATION_REF,
   BOOTSTRAP_CONTRACT,
   BOOTSTRAP_RECORD_PATH,
   CHECKOUT_IDENTITY,
@@ -65,6 +66,13 @@ import {
 // used is recorded in the bootstrap record and printed by the build probe. The
 // choice is never made for the caller by what happens to be reachable.
 export const PUBLISHED_SOURCE = `https://github.com/${BOOTSTRAP_CONTRACT.repository}.git`;
+
+// Git transports this step will use. `https://` is production; `file://` is how
+// regressions point it at a deterministic local fixture instead of live GitHub.
+// The allowlist is not decoration: Git's `ext::` transport runs an arbitrary
+// command, and several others reach a helper binary, so a published source is
+// checked for what it is rather than only for not looking like an option.
+const PUBLISHED_SOURCE_SCHEMES = ['https://', 'file://'];
 
 // Read access to the published source.
 //
@@ -135,6 +143,7 @@ export function materializePublishedCanonical({
 } = {}) {
   requireValue(typeof root === 'string' && root !== '' && existsSync(root), 'Materialization root must be an existing directory');
   requireValue(typeof publishedSource === 'string' && publishedSource !== '' && !publishedSource.startsWith('-'), 'The published source must be named explicitly');
+  requireValue(PUBLISHED_SOURCE_SCHEMES.some(scheme => publishedSource.startsWith(scheme)), `The published source must use one of: ${PUBLISHED_SOURCE_SCHEMES.join(', ')}`);
   requireValue(buildSourceHead === null || shaPattern.test(buildSourceHead), 'Build source head must be a full commit SHA or null');
 
   const run = (args, reason) => {
@@ -154,7 +163,13 @@ export function materializePublishedCanonical({
   };
 
   // 1. An object store to put the published history in. An existing one is used
-  //    as it stands; nothing here rewrites a real checkout's branches.
+  //    as it stands. This step writes `refs/remotes/origin/main` in whatever
+  //    repository `root` names -- the same ref `git fetch origin` would move --
+  //    and, only when there is no HEAD to keep, HEAD and the attestation. It
+  //    writes no local branch and rewrites no history. In the image those writes
+  //    land in a layer that is discarded if the proof at the end fails; run
+  //    against a working clone they persist, which is why the build is the only
+  //    caller that passes no explicit root.
   if (!existsSync(resolve(root, '.git'))) {
     line(['init', '--quiet'], 'Could not create a Git object store for the Published Canonical');
   }
@@ -215,18 +230,41 @@ export function materializePublishedCanonical({
 
   // 6. Checkout identity. A real checkout already has one and keeps it. A source
   //    tree that arrived without Git metadata has none, so HEAD is set to the
-  //    captured published main head and the record below says that is where it
-  //    came from.
+  //    captured published main head and the attestation below says that is where
+  //    it came from.
+  //
+  //    A tree this step already materialized also has a HEAD -- the one it set
+  //    -- so "HEAD resolves" alone would make a second run treat it as a real
+  //    checkout and strip the attestation, quietly downgrading its provenance.
+  //    The attestation already in the store answers that: running again on the
+  //    same tree refreshes it to the newly captured head instead.
+  const priorAttestation = line(['for-each-ref', '--format=%(objectname)', '--', BOOTSTRAP_ATTESTATION_REF], 'Could not read the checkout attestation');
   let existingHead = null;
   try {
     existingHead = resolved('HEAD', 'HEAD does not resolve');
-  } catch {
-    existingHead = null;
+  } catch (error) {
+    // `rev-parse --verify --quiet` exits 1 with no output for a revision that
+    // simply does not resolve -- an unborn HEAD in the store this step just
+    // created. Everything else (a corrupt object store, a partial checkout, Git
+    // failing outright, exit 128) is a real fault, and reading it as "this tree
+    // has no checkout identity" would relabel a damaged real checkout as a
+    // materialized one. That fails closed instead.
+    const cause = error?.cause;
+    requireValue(
+      cause?.status === 1 && String(cause?.stdout ?? '').trim() === '',
+      'HEAD is present but could not be resolved; refusing to relabel this checkout',
+    );
   }
-  const materialized = existingHead === null;
+  const materialized = existingHead === null || priorAttestation !== '';
   const recordPath = resolve(root, BOOTSTRAP_RECORD_PATH);
   if (materialized) {
+    // Both halves are rewritten together on every run, so a re-materialization
+    // cannot leave one naming an older published head than the other.
     line(['update-ref', '--no-deref', 'HEAD', publishedHead], 'Could not record the materialized checkout identity');
+    // The attestation lives in the object store, not in the record, so that
+    // deleting the record cannot quietly turn this into a claimed ordinary
+    // checkout. The loader requires the two to agree.
+    line(['update-ref', BOOTSTRAP_ATTESTATION_REF, publishedHead], 'Could not attest the materialized checkout identity');
     writeFileSync(recordPath, `${JSON.stringify({
       bootstrap_version: 1,
       checkout_identity: CHECKOUT_IDENTITY.materialized,
@@ -235,13 +273,19 @@ export function materializePublishedCanonical({
       build_source_head: buildSourceHead,
     }, null, 2)}\n`);
   } else {
-    // A checkout with its own HEAD must not carry a record claiming otherwise.
+    // A checkout with its own HEAD must not carry an attestation claiming
+    // otherwise. Both halves go, so neither can outlive the other.
     rmSync(recordPath, { force: true });
+    line(['update-ref', '-d', BOOTSTRAP_ATTESTATION_REF], 'Could not clear a stale checkout attestation');
   }
 
-  // 7. Prove it. The build's claim is not "the fetch succeeded" but "the real
-  //    loader returns CANONICAL_LOADED from this object store", so the real
-  //    loader is what answers. Any failure throws out of here.
+  // 7. Prove the object store is readable by the real loader, rather than
+  //    inferring it from the fetch's exit code. This is not yet the build's
+  //    whole claim: the loader is called as this module can call it, without the
+  //    implementation's supported-version pin, and nothing here imports the
+  //    Canonical-aware engines. `railway/canonical-probe.sh` runs immediately
+  //    after and asks the real capability path, which applies both. That gate,
+  //    not this call, is what a production candidate rests on.
   const loaded = loadPublishedCanonical({ root });
   requireValue(loaded.status === 'CANONICAL_LOADED', 'The materialized object store did not produce a Published Canonical load');
   requireValue(loaded.provenance.published_main_head === publishedHead, 'The load resolved a different published main than the one captured');

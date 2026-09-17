@@ -84,21 +84,24 @@ function countingGit() {
 }
 const subcommand = args => args.find(arg => !arg.startsWith('-'));
 
-test('one bootstrap is exactly eight bound Git subprocesses, and every read after discovery names a SHA', () => {
+test('one bootstrap is exactly nine bound Git subprocesses, and every read after discovery names a SHA', () => {
   const { git, calls } = countingGit();
   const loaded = loadPublishedCanonical({ root: repositoryRoot, supportedCanonicalVersion: SUPPORTED, git });
   assert.deepEqual(loaded.metadata, PUBLISHED_CANONICAL.metadata);
   assert.deepEqual(loaded.documents, PUBLISHED_CANONICAL.documents);
-  assert.equal(calls.length, 8);
-  assert.deepEqual(calls.map(call => subcommand(call.args)), ['rev-parse', 'rev-parse', 'rev-parse', 'cat-file', 'rev-parse', 'log', 'merge-base', 'cat-file']);
+  assert.equal(calls.length, 9);
+  // The `for-each-ref` reads the checkout attestation — provenance labelling,
+  // never authority — and is deliberately placed before discovery so that the
+  // property below still holds over everything that follows it.
+  assert.deepEqual(calls.map(call => subcommand(call.args)), ['rev-parse', 'rev-parse', 'for-each-ref', 'rev-parse', 'cat-file', 'rev-parse', 'log', 'merge-base', 'cat-file']);
   assert.ok(calls.every(call => call.root === repositoryRoot), 'every call is bound to the requested root');
   // The discovery ref is named exactly once; after that, only SHAs are read.
   const named = calls.map(call => `${call.args.join(' ')}\n${call.input ?? ''}`);
   assert.equal(named.filter(text => text.includes(BOOTSTRAP_CONTRACT.publishedRef)).length, 1);
-  assert.equal(named.findIndex(text => text.includes(BOOTSTRAP_CONTRACT.publishedRef)), 2);
-  for (const text of named.slice(3)) assert.doesNotMatch(text, /refs\/|HEAD/, text);
+  assert.equal(named.findIndex(text => text.includes(BOOTSTRAP_CONTRACT.publishedRef)), 3);
+  for (const text of named.slice(4)) assert.doesNotMatch(text, /refs\/|HEAD/, text);
   // The batch reads name the pinned snapshot for every indexed resource.
-  const batch = calls[7];
+  const batch = calls[8];
   assert.equal(subcommand(batch.args), 'cat-file');
   assert.deepEqual(batch.input.trim().split('\n'), loaded.authority.map.map(entry => `${loaded.metadata.rules_snapshot_sha}:${entry.path.replace(/\/$/, '')}`));
 });
@@ -147,9 +150,11 @@ test('a discovery ref that moves during a load cannot mix two Manifests: the loa
   const probe = repo.republishManifest(unsupportedVersion(source), 'probe: unsupported Canonical version');
   const { git, calls } = countingGit();
   // Move the ref the moment the loader has resolved it, before any other read.
+  // Discovery is the fourth call: --show-toplevel, HEAD, the checkout
+  // attestation, then the published ref.
   const moving = request => {
     const output = git(request);
-    if (calls.length === 3) repo.publish(probe);
+    if (calls.length === 4) repo.publish(probe);
     return output;
   };
   const loaded = loadPublishedCanonical({ root: repo.dir, supportedCanonicalVersion: SUPPORTED, git: moving });
@@ -175,9 +180,9 @@ test('a failing Git call fails that load closed without any retry; a later indep
   };
   assert.throws(() => loadPublishedCanonical({ root: repositoryRoot, supportedCanonicalVersion: SUPPORTED, git: flaky }),
     error => error.code === 'CANONICAL_NOT_LOADED' && error.cause?.code === 'EAGAIN');
-  assert.equal(calls.length, 6, 'the failed call was not retried and nothing ran after it');
+  assert.equal(calls.length, 7, 'the failed call was not retried and nothing ran after it');
   const loaded = loadPublishedCanonical({ root: repositoryRoot, supportedCanonicalVersion: SUPPORTED, git: flaky });
-  assert.equal(calls.length, 6 + 8, 'the later call is a complete, independent load');
+  assert.equal(calls.length, 7 + 9, 'the later call is a complete, independent load');
   assert.deepEqual(loaded.documents, PUBLISHED_CANONICAL.documents);
   assert.deepEqual(loaded.provenance, PUBLISHED_CANONICAL.provenance);
 });

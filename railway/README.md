@@ -54,7 +54,7 @@ The build now establishes the history itself, in two steps that run in this orde
 
 2. **`sh railway/canonical-probe.sh`** proves the result on the same capability path the runtime serves, and **fails the build** if it cannot.
 
-A build context that *does* carry `.git` keeps its own checkout identity; the published discovery ref is established the same way either way, so what the image loads never depends on whether it was there.
+A build context that *does* carry `.git` keeps its own checkout identity, and no local branch is rewritten. What the step does write, in whatever repository it is pointed at, is `refs/remotes/origin/main` — set to the captured commit, which is the same ref `git fetch origin` moves — plus HEAD and the checkout attestation when there was no HEAD to keep. The published discovery ref is established the same way either way, so what the image loads never depends on whether `.git` was there.
 
 Two properties are worth stating plainly. The runtime loader is unchanged and still offline — it reads local Git objects only and imports nothing from the build-time module, which is why the Canonical view stays pinned at image build. And a running container that somehow had no loadable Canonical would still start, answer `/healthz` and serve the three legacy technical tools, refusing only Canonical-aware operations with `CANONICAL_NOT_LOADED` and no fallback. That remains the correct runtime behaviour; what changed is that such an image no longer gets built.
 
@@ -72,9 +72,10 @@ How the token is handled, so a review can check it rather than take it on trust:
 - it is **never put in the published source URL**, so it cannot reach the bootstrap record, the build summary, a Git error message or the build log;
 - it is **never written to a file** — no credential store, no askpass script, nothing in an image layer;
 - it is **never in an argument vector.** Git receives `-c credential.helper=<shell snippet naming the variable>`; the shell expands `$MML_CANONICAL_SOURCE_TOKEN` from the inherited environment, so a process listing shows the variable name, not its value;
-- it is carried only by the two calls that actually contact the published source (`ls-remote` and `fetch`), which is asserted in `studio/tests/bootstrap-materialize.test.mjs`.
+- it is carried only by the two calls that actually contact the published source (`ls-remote` and `fetch`), which is asserted in `studio/tests/bootstrap-materialize.test.mjs`;
+- it is **cleared before the build gate runs**, since a Dockerfile `ARG` is otherwise exported into every later `RUN` and nothing in the gate needs it.
 
-One caveat worth stating plainly: Docker build arguments can be recoverable from an image's build history, so treat this token as scoped and rotatable rather than as a long-lived secret. Read-only on one repository is the point of the scope above. If the repository is ever made public, drop the variable — the build works without it and nothing else changes.
+One caveat, and it is the real limit of the above: those properties hold below the `ARG`, not at it. **A Docker build argument can be recovered from an image's build history and appears in the builder's process list.** Railway passes build variables this way and offers no BuildKit secret mount, so this is the available channel rather than the ideal one. Treat the token as scoped and rotatable rather than as a long-lived secret — read-only on one repository is the point of the scope above — and rotate it if the image is ever shared outside the deployment. If the repository is ever made public, drop the variable entirely: the build works without it and nothing else changes.
 
 ## Verifying a deployment
 
@@ -97,12 +98,17 @@ Two checks, in order. **Neither needs the service password.**
 [canonical-bootstrap] repository_head=…
 [canonical-bootstrap] checkout_identity=materialized-published-main
 [canonical-bootstrap] build_source_head=…
+[canonical-bootstrap] published_source=https://github.com/a91453/mml-tools.git
 [canonical-bootstrap] gate: PASS
 ```
 
 The probe is a **gate**: anything other than `gate: PASS` fails the build. It used to exit 0 unconditionally, on the reasoning that a degraded context must still produce an image serving its existing tools. Production showed the cost: nothing downstream — not `/healthz`, not the Railway deployment status, not the restart policy — can tell a healthy service from one whose every Canonical-aware operation refuses, so the warning went unnoticed and the image deployed.
 
-`checkout_identity` says how `repository_head` was established. `materialized-published-main` means the source tree arrived without Git metadata and HEAD was set to the captured published main head, which is why those two identities are equal here; `git-checkout` means the context carried a real checkout. `build_source_head` is Railway's own record of the commit that produced the source tree, or `null` when it supplied none; it is provenance and selects nothing.
+`checkout_identity` says how `repository_head` was established. `materialized-published-main` means the source tree arrived without Git metadata and HEAD was set to the captured published main head, which is why those two identities are equal here; `git-checkout` means the context carried a real checkout.
+
+The claim itself is a ref in the image's object store (`refs/canonical-bootstrap/checkout-identity`), not the `.canonical-bootstrap.json` file beside it. A plain file would make its own deletion an upgrade — without it the answer falls back to `git-checkout`, exactly the independently-verified-looking claim it exists to prevent. The loader requires the ref and the record to agree and to name the published main it just resolved; either half alone fails closed.
+
+`build_source_head` (Railway's record of the commit that produced the source tree, or `null`) and `published_source` (where the build obtained the published history) are **recorded by the build and not verified at load time**. The endpoint's `checkout_notice` says which fields are which, so a reader is not left inferring it.
 
 **2. The public root endpoint.**
 
@@ -110,7 +116,7 @@ The probe is a **gate**: anything other than `gate: PASS` fails the build. It us
 curl -s https://<public-origin>/ | jq .canonical
 ```
 
-Expect `"status": "CANONICAL_LOADED"` and the distinct identities: `canonical_version`, `canonical_status`, `manifest_version`, `rules_snapshot_sha`, `manifest_commit`, `published_main_head`, `repository_head`, and the `checkout_identity` / `build_source_head` pair that says how the last of those was established. None stands in for another. When it is not loaded, `canonical_notice` states the remedy.
+Expect `"status": "CANONICAL_LOADED"` and the distinct identities: `canonical_version`, `canonical_status`, `manifest_version`, `rules_snapshot_sha`, `manifest_commit`, `published_main_head` and `repository_head`, none standing in for another; `checkout_identity`, saying how the last of those was established; and `build_source_head` / `published_source`, which the build recorded and this load did not verify. `checkout_notice` states that split in the response itself. When it is not loaded, `canonical_notice` states the remedy.
 
 `/healthz` is deliberately **not** coupled to the Canonical load: a Canonical problem must never fail Railway's healthcheck and roll back a deployment that is otherwise serving correctly.
 
@@ -141,7 +147,7 @@ No variable rotation, volume change, bucket change, service creation or migratio
 
 A failing build is the gate working. The probe lines name what was missing, and the materialization step's own JSON names the step that could not be proven. The usual causes, in order of likelihood:
 
-1. **`MML_CANONICAL_SOURCE_TOKEN` is unset, expired, or scoped to the wrong repository.** The step's JSON says so directly, naming the variable. This repository is private; without read access there is nothing to capture.
+1. **`MML_CANONICAL_SOURCE_TOKEN` is unset, expired, or scoped to the wrong repository.** This repository is private; without read access there is nothing to capture. The step's JSON names the variable in its `hint` and carries Git's own error in `gitError`, so an expired token (401) reads differently from a DNS, TLS or proxy failure. The token is redacted from that output.
 2. the builder cannot reach `https://github.com/a91453/mml-tools`;
 3. published `main` pins a snapshot the fetch did not reach.
 

@@ -18,8 +18,17 @@ ARG RAILWAY_GIT_COMMIT_SHA=
 # credential; without one the build fails closed rather than producing an image
 # whose Canonical-aware operations all refuse. Set it as a Railway build
 # variable, scoped read-only to this repository's contents and nothing else --
-# see railway/README.md. The token is never put in a URL, never written to a
-# file, never placed in an argument vector and never printed.
+# see railway/README.md.
+#
+# Below this line the token is never put in a URL, never written to a file,
+# never placed in an argument vector and never printed: Git receives a
+# credential-helper snippet naming the variable and the shell expands it from
+# the environment. The `ARG` itself is a different matter and is not covered by
+# that claim -- a build argument can be recovered from an image's build history
+# and appears in the builder's process list, which is why railway/README.md says
+# to scope this token to one repository's contents and to rotate it rather than
+# treat it as long-lived. Railway passes build variables this way and offers no
+# BuildKit secret mount, so this is the available channel, not the ideal one.
 ARG MML_CANONICAL_SOURCE_TOKEN=
 
 # The Published Canonical bootstrap shells out to git to read the Manifest from
@@ -81,7 +90,9 @@ RUN MML_BUILD_SOURCE_HEAD="$RAILWAY_GIT_COMMIT_SHA" \
 # sources stay unwatched on purpose -- they are read from the immutable snapshot
 # the Manifest pins, never from main, so a change to one cannot alter what this
 # image loads. See railway/README.md.
-RUN sh railway/canonical-probe.sh /app
+# The token is cleared here: an ARG is exported into every later RUN in the
+# stage, and nothing in the gate needs read access to the published source.
+RUN MML_CANONICAL_SOURCE_TOKEN= sh railway/canonical-probe.sh /app
 
 ENV NODE_ENV=production \
     PORT=3000 \

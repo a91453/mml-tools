@@ -802,8 +802,11 @@ published history. In order:
    `rules_snapshot_sha` cannot come from one `main` while the rules come from
    another.
 4. the exact snapshot commit the Manifest names must resolve as a real object.
-5. the **real loader** runs. Its answer, not the fetch's exit code, is the
-   build's claim.
+5. the **real loader** runs, so the object store is proven readable rather than
+   inferred from a fetch's exit code. The build's claim is completed by the gate
+   immediately after, which asks the real capability path and therefore applies
+   the implementation's supported-version pin and the Canonical-aware engine
+   imports that this step does not.
 
 Every failure is terminal, and there is no mode in which an unreachable
 published source becomes "use what is here". Availability selects nothing: the
@@ -820,11 +823,17 @@ difference from the merged deployment, which shipped instead.
 
 The token is never put in the published source URL, never written to a file,
 never placed in an argument vector, and is carried only by the two calls that
-contact the published source. Git receives a credential-helper snippet naming
-the variable; the shell expands it from the environment. `railway/README.md`
-records the scope, the handling and the one caveat (Docker build arguments can be
-recoverable from image build history, so the token is scoped and rotatable rather
-than long-lived). The running service never reads it. No recurring cost.
+contact the published source; Git receives a credential-helper snippet naming
+the variable and the shell expands it from the environment. It is cleared before
+the build gate runs, since an `ARG` is otherwise exported into every later `RUN`.
+
+Those properties hold below the `ARG`, not at it, and that is the real limit: a
+Docker build argument can be recovered from an image's build history and appears
+in the builder's process list. Railway passes build variables this way and offers
+no BuildKit secret mount, so this is the available channel rather than the ideal
+one, and `railway/README.md` says plainly to scope the token to one repository's
+contents and rotate it rather than treat it as long-lived. The running service
+never reads it. No recurring cost.
 
 `railway/canonical-probe.sh` is now a gate. It fails the build unless the
 capability path reports `CANONICAL_LOADED`, and reports an engine-import failure
@@ -848,11 +857,27 @@ verified would be a quieter lie than one that says how it came to be equal:
 | `git-checkout` | HEAD came from a real checkout of this repository. |
 | `materialized-published-main` | the source tree arrived without Git metadata; HEAD is the captured published main head. |
 
-`build_source_head` carries the deploying platform's own record of the commit
-that produced the source tree (`RAILWAY_GIT_COMMIT_SHA`), or `null` when it
-supplied none. It is provenance and nothing else: it selects no Manifest, no
-snapshot and no rule document. A bootstrap record that disagrees with the Git
-identities a load already resolved fails closed rather than being ignored.
+The claim lives in the object store, as the ref
+`refs/canonical-bootstrap/checkout-identity`, rather than in the
+`.canonical-bootstrap.json` file beside it. A plain file would make its own
+deletion an upgrade: without it the answer falls back to `git-checkout` while
+`repository_head` still equals `published_main_head` by construction, which is
+precisely the independently-verified-looking claim the attestation exists to
+prevent, and a missing file is not something a load can notice. So the claim
+sits where every identity that selects what is loaded comes from, and the record
+must agree with it and with the published main this load resolved. Either half
+alone fails closed. Re-running the step on an already-materialized tree
+refreshes both together rather than stripping them.
+
+`build_source_head` (the platform's record of the commit that produced the
+source tree, `RAILWAY_GIT_COMMIT_SHA`) and `published_source` (where the build
+obtained the published history) cannot be re-derived from Git at load time, so
+they are reported as what they are — recorded by the build, not verified here —
+and the envelope's `checkout_notice` states that split rather than leaving a
+reader to infer it. Neither selects a Manifest, a snapshot or a rule document,
+and neither can fail a build: a malformed `RAILWAY_GIT_COMMIT_SHA` is reported
+and dropped, because a field that selects nothing must not be able to block a
+deployment.
 
 ### Verification
 

@@ -144,12 +144,23 @@ const samePath = (left, right) => realpathSync(left) === realpathSync(right);
 //
 // The record is provenance labelling and nothing else. It cannot name a
 // Manifest, a snapshot, a rules document or an authority; every identity that
-// selects what is loaded is still resolved from Git objects above. The only
-// value it contributes is `build_source_head` — what the deploying platform
-// says produced the source tree — which is reported and never acted on. A
-// record that disagrees with the Git identities this load already resolved
-// fails closed rather than being ignored, so a stale one cannot ride along.
+// selects what is loaded is still resolved from Git objects above. The values
+// it contributes — `build_source_head`, what the deploying platform says
+// produced the source tree, and `published_source`, where the build obtained
+// the published history — are reported and never acted on. Neither can be
+// re-derived here, so both are reported as what they are: recorded by the
+// build, not verified by this load.
+//
+// The attestation itself does not live in the record. A plain file that says
+// "this is a materialized checkout" makes its own deletion an upgrade: without
+// it the answer falls back to `git-checkout`, which is exactly the
+// unverified-looking claim the record exists to prevent, and a missing file is
+// not something the load can notice. So the claim is a ref in the object store
+// — the same place every identity that selects what is loaded comes from — and
+// the record must agree with it. The file alone, or the ref alone, fails
+// closed. Neither is an attestation on its own.
 export const BOOTSTRAP_RECORD_PATH = '.canonical-bootstrap.json';
+export const BOOTSTRAP_ATTESTATION_REF = 'refs/canonical-bootstrap/checkout-identity';
 
 export const CHECKOUT_IDENTITY = freeze({
   gitCheckout: 'git-checkout',
@@ -158,14 +169,20 @@ export const CHECKOUT_IDENTITY = freeze({
 
 const RECORD_FIELDS = 'bootstrap_version,build_source_head,checkout_identity,published_main_head,published_source';
 
-function readBootstrapRecord(root, publishedHead, repositoryHead) {
-  let text;
+const UNATTESTED = freeze({ checkout_identity: CHECKOUT_IDENTITY.gitCheckout, build_source_head: null, published_source: null });
+
+function readBootstrapRecord(root, publishedHead, repositoryHead, attestedHead) {
+  let text = null;
   try {
     text = readFileSync(resolve(root, BOOTSTRAP_RECORD_PATH), 'utf8');
   } catch (error) {
     requireValue(error?.code === 'ENOENT', 'Bootstrap record is present but unreadable');
-    return { checkout_identity: CHECKOUT_IDENTITY.gitCheckout, build_source_head: null };
   }
+  if (attestedHead === null) {
+    requireValue(text === null, 'A bootstrap record is present without its attestation in the object store');
+    return UNATTESTED;
+  }
+  requireValue(text !== null, 'The object store attests a materialized checkout but its bootstrap record is missing');
   let record;
   try {
     record = JSON.parse(text);
@@ -178,9 +195,10 @@ function readBootstrapRecord(root, publishedHead, repositoryHead) {
   requireValue(record.checkout_identity === CHECKOUT_IDENTITY.materialized, 'Unknown bootstrap checkout identity');
   requireValue(typeof record.published_source === 'string' && record.published_source !== '', 'Bootstrap record must name the published source it was built from');
   requireValue(record.published_main_head === publishedHead, 'Bootstrap record names a different published main than this load resolved');
+  requireValue(attestedHead === publishedHead, 'The object store attests a different published main than this load resolved');
   requireValue(repositoryHead === publishedHead, 'A materialized checkout must report the captured published main head');
   requireValue(record.build_source_head === null || shaPattern.test(record.build_source_head), 'Build source head must be a full commit SHA or null');
-  return { checkout_identity: record.checkout_identity, build_source_head: record.build_source_head };
+  return { checkout_identity: record.checkout_identity, build_source_head: record.build_source_head, published_source: record.published_source };
 }
 
 // One call is one complete, independent load. Nothing is memoised across calls:
@@ -208,6 +226,12 @@ export function loadPublishedCanonical({ root = repositoryRoot, prHead = null, s
     // enclosing checkout that happens to contain it.
     requireValue(samePath(line(['rev-parse', '--show-toplevel']), root), 'Repository root does not bind to the requested checkout');
     const repositoryHead = resolveCommit('HEAD');
+    // Read before discovery, so that everything after the published ref is
+    // resolved still names only SHAs. Empty output with exit 0 when the ref does
+    // not exist: an ordinary checkout is the common case, not an exception path.
+    const attestedRef = line(['for-each-ref', '--format=%(objectname)', '--', BOOTSTRAP_ATTESTATION_REF]);
+    requireValue(attestedRef === '' || shaPattern.test(attestedRef), 'Invalid bootstrap checkout attestation');
+    const attested = attestedRef === '' ? null : attestedRef;
     // Only the fetched published main is a discovery source. Never substitute a
     // worktree/PR Manifest, a standalone rules file, or a legacy Skill on failure.
     // The ref is resolved to one commit first; every later read names that commit
@@ -218,7 +242,7 @@ export function loadPublishedCanonical({ root = repositoryRoot, prHead = null, s
     const { metadata, entries } = parseCanonicalManifest(manifest);
     const snapshot = metadata.rules_snapshot_sha;
     requireValue(resolveCommit(snapshot) === snapshot, 'Snapshot is not an available commit');
-    const checkout = readBootstrapRecord(root, publishedHead, repositoryHead);
+    const checkout = readBootstrapRecord(root, publishedHead, repositoryHead, attested);
     const manifestCommit = line(['log', '-1', '--format=%H', publishedHead, '--', BOOTSTRAP_CONTRACT.entryPoint]);
     requireValue(shaPattern.test(manifestCommit) && snapshot !== manifestCommit, 'Invalid or self-referencing Manifest provenance');
     run(['merge-base', '--is-ancestor', snapshot, manifestCommit]);
@@ -247,6 +271,7 @@ export function loadPublishedCanonical({ root = repositoryRoot, prHead = null, s
         published_main_head: publishedHead,
         checkout_identity: checkout.checkout_identity,
         build_source_head: checkout.build_source_head,
+        published_source: checkout.published_source,
       },
       authority: {
         entryPoint: BOOTSTRAP_CONTRACT.entryPoint,

@@ -17,7 +17,10 @@
 // produced the source tree (on Railway, `RAILWAY_GIT_COMMIT_SHA`). It is carried
 // into provenance and never acted on: it selects no Manifest, no snapshot and no
 // rule document. When the platform supplies none, provenance says `null` rather
-// than guessing.
+// than guessing -- and when it supplies something that is not a full commit SHA
+// (abbreviated, upper-cased, padded), that is reported and dropped rather than
+// failing the build. A field the module itself documents as selecting nothing
+// must not be able to block a deployment.
 //
 // `a91453/mml-tools` is private, so reaching the published source needs a
 // read-only credential in `$MML_CANONICAL_SOURCE_TOKEN`. Without one the build
@@ -41,27 +44,47 @@ function parseArguments(argv) {
   return values;
 }
 
+const supplied = (values, name, variable) => (values[name] ?? process.env[variable] ?? '').trim();
+
 try {
   const values = parseArguments(process.argv.slice(2));
-  const buildSourceHead = values['--build-source-head'] ?? process.env.MML_BUILD_SOURCE_HEAD ?? '';
+  const rawBuildSourceHead = supplied(values, '--build-source-head', 'MML_BUILD_SOURCE_HEAD');
+  const buildSourceHead = /^[0-9a-f]{40}$/.test(rawBuildSourceHead.toLowerCase()) ? rawBuildSourceHead.toLowerCase() : null;
   const summary = materializePublishedCanonical({
     root: values['--root'] ?? fileURLToPath(new URL('../', import.meta.url)),
     publishedSource: values['--published-source'] ?? PUBLISHED_SOURCE,
-    buildSourceHead: buildSourceHead === '' ? null : buildSourceHead,
+    buildSourceHead,
   });
-  console.log(JSON.stringify(summary, null, 2));
+  console.log(JSON.stringify({
+    ...summary,
+    ...(rawBuildSourceHead !== '' && buildSourceHead === null
+      ? { build_source_head_ignored: 'the platform supplied a value that is not a full commit SHA; provenance reports null' }
+      : {}),
+  }, null, 2));
 } catch (error) {
-  // The reason, plus — when the published source could not be reached and no
-  // credential was supplied — the one thing an operator most likely needs to
-  // set. The token's value is never read here, only whether one exists.
-  const missingCredential = /published source/.test(error.message)
-    && !(process.env[SOURCE_TOKEN_VARIABLE] ?? '');
+  // The reason, the underlying Git failure, and — when the published source
+  // could not be reached — what to check first.
+  //
+  // Git's own stderr is the difference between a build an operator can fix and
+  // one they can only guess at: a 401 from an expired token, a DNS failure, a
+  // TLS failure and a proxy refusal all produce the same fixed reason above.
+  // The token is not in the URL Git prints and not in the argument vector it
+  // reports, so its stderr does not carry it; the redaction below is a belt on
+  // top of that, not the reason it is safe.
+  const token = process.env[SOURCE_TOKEN_VARIABLE] ?? '';
+  const gitStderr = String(error?.cause?.stderr ?? '').trim();
+  const reachability = /published source/.test(error.message);
   console.error(JSON.stringify({
     status: 'CANONICAL_NOT_LOADED',
     message: error.message,
     legacyFallbackAllowed: false,
-    ...(missingCredential
-      ? { hint: `${PUBLISHED_SOURCE} is a private repository and $${SOURCE_TOKEN_VARIABLE} is not set; supply a read-only credential for it.` }
+    ...(gitStderr === '' ? {} : { gitError: (token === '' ? gitStderr : gitStderr.replaceAll(token, '<redacted>')).slice(0, 2000) }),
+    ...(reachability
+      ? {
+        hint: token === ''
+          ? `${PUBLISHED_SOURCE} is a private repository and $${SOURCE_TOKEN_VARIABLE} is not set; supply a read-only credential for it.`
+          : `$${SOURCE_TOKEN_VARIABLE} is set; check that it has not expired and that it grants Contents: Read on ${PUBLISHED_SOURCE}.`,
+      }
       : {}),
   }));
   process.exitCode = 1;

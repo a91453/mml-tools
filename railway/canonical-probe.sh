@@ -92,7 +92,7 @@ import('./studio/backend/application/index.mjs').then(async m => {
     say('FATAL: Canonical-aware Studio operations would refuse in this image.');
     process.exit(2);
   }
-  for (const field of ['canonical_version', 'canonical_status', 'manifest_version', 'rules_snapshot_sha', 'manifest_commit', 'published_main_head', 'repository_head', 'checkout_identity', 'build_source_head']) {
+  for (const field of ['canonical_version', 'canonical_status', 'manifest_version', 'rules_snapshot_sha', 'manifest_commit', 'published_main_head', 'repository_head', 'checkout_identity', 'build_source_head', 'published_source']) {
     say(field + '=' + c.canonical[field]);
   }
   if (c.canonical.engine_status) {

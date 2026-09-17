@@ -26,6 +26,7 @@ import { resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 import {
+  BOOTSTRAP_ATTESTATION_REF,
   BOOTSTRAP_CONTRACT,
   BOOTSTRAP_RECORD_PATH,
   CHECKOUT_IDENTITY,
@@ -156,9 +157,108 @@ test('a materialized checkout reports how its checkout identity was established'
   assert.notEqual(metadata.rules_snapshot_sha, provenance.manifest_commit);
   assert.notEqual(provenance.manifest_commit, provenance.published_main_head);
 
+  assert.equal(provenance.published_source, published.url);
+
   const record = JSON.parse(readFileSync(resolve(root, BOOTSTRAP_RECORD_PATH), 'utf8'));
   assert.equal(record.published_source, published.url);
   assert.equal(record.published_main_head, published.head);
+  // The claim itself lives in the object store, not in the record.
+  assert.equal(git(root, 'rev-parse', BOOTSTRAP_ATTESTATION_REF), published.head);
+});
+
+test('deleting the bootstrap record cannot downgrade a materialized image to a claimed checkout', t => {
+  const published = publishedSource(t);
+  const root = sourceTreeWithoutGit(t);
+  materializePublishedCanonical({ root, publishedSource: published.url });
+  const recordPath = resolve(root, BOOTSTRAP_RECORD_PATH);
+  const record = readFileSync(recordPath, 'utf8');
+
+  // The failure this guards: with the record gone, repository_head still equals
+  // published_main_head by construction, and reporting `git-checkout` would
+  // publish that pair as if it were an independently verified checkout. So the
+  // attestation the record belongs to lives where the identities do, and half
+  // of it is not an answer.
+  rmSync(recordPath);
+  assert.throws(() => loadPublishedCanonical({ root }), notLoaded);
+
+  // The other half alone is refused too, so neither can outlive the other.
+  writeFileSync(recordPath, record);
+  git(root, 'update-ref', '-d', BOOTSTRAP_ATTESTATION_REF);
+  assert.throws(() => loadPublishedCanonical({ root }), notLoaded);
+
+  // An attestation naming a different published main is refused rather than
+  // trusted over the ref this load resolved.
+  git(root, 'update-ref', BOOTSTRAP_ATTESTATION_REF, PUBLISHED_CANONICAL.metadata.rules_snapshot_sha);
+  assert.throws(() => loadPublishedCanonical({ root }), notLoaded);
+
+  git(root, 'update-ref', BOOTSTRAP_ATTESTATION_REF, published.head);
+  const restored = loadPublishedCanonical({ root });
+  assert.equal(restored.provenance.checkout_identity, CHECKOUT_IDENTITY.materialized);
+});
+
+test('a real checkout that has no attestation is not asked to carry a record', t => {
+  // The ordinary case stays the ordinary case: no attestation, no record, and
+  // repository_head equal to published_main_head is normal on a checkout of
+  // published main rather than something to refuse.
+  const published = publishedSource(t);
+  const dir = temporary(t, 'mml-plain-');
+  const clone = resolve(dir, 'checkout');
+  git(repositoryRoot, 'clone', '--quiet', '--shared', '--no-checkout', repositoryRoot, clone);
+  git(clone, 'update-ref', '--no-deref', 'HEAD', published.head);
+  git(clone, 'update-ref', BOOTSTRAP_CONTRACT.publishedRef, published.head);
+  for (const path of IMAGE_SOURCES) cpSync(resolve(repositoryRoot, path), resolve(clone, path), { recursive: true });
+
+  const loaded = loadPublishedCanonical({ root: clone });
+  assert.equal(loaded.provenance.checkout_identity, CHECKOUT_IDENTITY.gitCheckout);
+  assert.equal(loaded.provenance.repository_head, loaded.provenance.published_main_head);
+  assert.equal(loaded.provenance.published_source, null);
+  assert.equal(loaded.provenance.build_source_head, null);
+
+  // A record with no attestation behind it is refused, not ignored.
+  writeFileSync(resolve(clone, BOOTSTRAP_RECORD_PATH), JSON.stringify({
+    bootstrap_version: 1,
+    checkout_identity: CHECKOUT_IDENTITY.materialized,
+    published_main_head: published.head,
+    published_source: 'https://evil.example/not-the-published-repo.git',
+    build_source_head: null,
+  }));
+  assert.throws(() => loadPublishedCanonical({ root: clone }), notLoaded);
+});
+
+test('a published source must use a transport that cannot execute a command', t => {
+  const root = sourceTreeWithoutGit(t);
+  for (const hostile of [
+    'ext::sh -c echo%20pwned',
+    'ssh://git@example.invalid/x.git',
+    'http://example.invalid/x.git',
+    '/absolute/path/x.git',
+    'example.invalid:x.git',
+  ]) {
+    assert.throws(() => materializePublishedCanonical({ root, publishedSource: hostile }), notLoaded, hostile);
+  }
+  assert.throws(() => loadPublishedCanonical({ root }), notLoaded);
+});
+
+test('a damaged checkout is refused rather than relabelled as materialized', t => {
+  const published = publishedSource(t);
+  const root = sourceTreeWithoutGit(t);
+  assert.throws(() => materializePublishedCanonical({
+    root,
+    publishedSource: published.url,
+    git({ root: cwd, args }) {
+      // HEAD fails for a reason that is not "unborn": a corrupt object store
+      // reports 128, and reading that as "this tree has no checkout identity"
+      // would set HEAD to the published head and attest a materialization.
+      if (args.includes('HEAD^{commit}')) {
+        const error = Error('fatal: bad object HEAD');
+        error.status = 128;
+        error.stdout = Buffer.alloc(0);
+        throw error;
+      }
+      return execFileSync('git', args, { cwd, env: process.env, stdio: ['ignore', 'pipe', 'pipe'], maxBuffer: 64 * 1024 * 1024 });
+    },
+  }), notLoaded);
+  assert.equal(existsSync(resolve(root, BOOTSTRAP_RECORD_PATH)), false, 'no attestation may be written for a checkout that could not be read');
 });
 
 test('the record cannot introduce an identity the load did not resolve', t => {
@@ -517,4 +617,82 @@ test('an unreachable private published source fails the build and names the cred
   assert.ok(reported.hint.includes(PUBLISHED_SOURCE), 'the hint must name the published repository');
   // No fallback was taken on the way out.
   assert.throws(() => loadPublishedCanonical({ root }), notLoaded);
+});
+
+// ─── the build entry point stays diagnosable and never gates on provenance ──
+
+test('a platform-supplied source head that is not a commit SHA is reported and dropped, never fatal', t => {
+  const published = publishedSource(t);
+  const root = sourceTreeWithoutGit(t);
+  const run = value => spawnSync(process.execPath, [
+    'scripts/materialize-canonical.mjs', '--root', root, '--published-source', published.url,
+  ], { cwd: root, encoding: 'utf8', env: { ...process.env, MML_BUILD_SOURCE_HEAD: value } });
+
+  // `build_source_head` selects no Manifest, no snapshot and no rule document,
+  // so a platform that reports it abbreviated or upper-cased must not be able
+  // to fail the deployment over it.
+  for (const malformed of ['abc1234', 'not-a-sha', `${'a'.repeat(39)}`, `${'a'.repeat(41)}`]) {
+    const result = run(malformed);
+    assert.equal(result.status, 0, `${malformed}: ${result.stderr}`);
+    const summary = JSON.parse(result.stdout);
+    assert.equal(summary.status, 'CANONICAL_LOADED');
+    assert.equal(summary.provenance.build_source_head, null);
+    assert.match(summary.build_source_head_ignored, /not a full commit SHA/);
+  }
+
+  // A real one, however it is cased or padded, is carried through as itself.
+  const upper = run(`  ${'A'.repeat(40)}  `);
+  assert.equal(upper.status, 0, upper.stderr);
+  assert.equal(JSON.parse(upper.stdout).provenance.build_source_head, 'a'.repeat(40));
+  assert.ok(!Object.hasOwn(JSON.parse(upper.stdout), 'build_source_head_ignored'));
+});
+
+test('re-materializing the same tree refreshes its attestation rather than downgrading it', t => {
+  const published = publishedSource(t);
+  const root = sourceTreeWithoutGit(t);
+  const first = materializePublishedCanonical({ root, publishedSource: published.url, buildSourceHead: 'c'.repeat(40) });
+  assert.equal(first.materialized, true);
+
+  // The second run finds the HEAD the first one set. Reading that as "this is a
+  // real checkout" would strip the attestation and republish an equal
+  // repository_head / published_main_head pair as an ordinary checkout.
+  const moved = published.twinCommit(published.head, 'published main advanced between builds');
+  published.publish(moved);
+  const second = materializePublishedCanonical({ root, publishedSource: published.url });
+  assert.equal(second.materialized, true);
+
+  const loaded = loadPublishedCanonical({ root });
+  assert.equal(loaded.provenance.checkout_identity, CHECKOUT_IDENTITY.materialized);
+  assert.equal(loaded.provenance.published_main_head, moved);
+  assert.equal(loaded.provenance.repository_head, moved);
+  assert.equal(loaded.provenance.build_source_head, null, 'the refreshed record carries the second run\'s inputs, not the first\'s');
+  assert.equal(git(root, 'rev-parse', BOOTSTRAP_ATTESTATION_REF), moved, 'both halves must name the newly captured head');
+});
+
+test('a failing build reports the underlying Git error, with the token redacted', t => {
+  const root = sourceTreeWithoutGit(t);
+  const absent = `file://${resolve(temporary(t, 'mml-diagnose-'), 'unreachable.git')}`;
+  const token = 'ghp_SYNTHETIC_TEST_TOKEN_NEVER_REAL_0123456789';
+  const run = env => spawnSync(process.execPath, [
+    'scripts/materialize-canonical.mjs', '--root', root, '--published-source', absent,
+  ], { cwd: root, encoding: 'utf8', env: { ...process.env, ...env } });
+
+  // Without Git's own stderr, an expired token, a DNS failure and a proxy
+  // refusal are the same single line, and the gate is undiagnosable in exactly
+  // the situation it exists for.
+  const withoutToken = run({ [SOURCE_TOKEN_VARIABLE]: '' });
+  assert.equal(withoutToken.status, 1);
+  const bare = JSON.parse(withoutToken.stderr);
+  assert.equal(bare.status, 'CANONICAL_NOT_LOADED');
+  assert.ok(bare.gitError && bare.gitError.length > 0, 'the underlying Git failure must be reported');
+  assert.match(bare.hint, new RegExp(`\\$${SOURCE_TOKEN_VARIABLE} is not set`));
+
+  // With one supplied, the hint points at expiry and scope instead, and nothing
+  // in the output carries the value.
+  const withToken = run({ [SOURCE_TOKEN_VARIABLE]: token });
+  assert.equal(withToken.status, 1);
+  const reported = JSON.parse(withToken.stderr);
+  assert.match(reported.hint, /has not expired/);
+  assert.ok(!withToken.stderr.includes(token), 'the token must never be echoed');
+  assert.ok(!withToken.stdout.includes(token));
 });
