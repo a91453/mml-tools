@@ -85,6 +85,34 @@ import { createTechnicalService } from './technical-service.mjs';
 
 export const APPLICATION_VERSION = '1.0.0';
 
+// One writer per project at a time.
+//
+// The service runs in one Node process, but every mutating operation awaits
+// the Canonical engines and the stored baseline between reading the project
+// record and writing it back. Two overlapping calls on one project — a
+// retrying agent, a duplicate request, two clients — would otherwise each
+// load the same record, and the second save would drop the first one's entry
+// while both answered success. Mutations are therefore serialized per project
+// id at this boundary, which is the only place every transport passes through.
+// Reads are not serialized; they observe whatever is committed.
+function createProjectSerializer() {
+  const chains = new Map();
+  return async function serialized(key, work) {
+    const previous = chains.get(key) ?? Promise.resolve();
+    let release;
+    const current = new Promise(resolve => { release = resolve; });
+    const chain = previous.then(() => current);
+    chains.set(key, chain);
+    await previous;
+    try {
+      return await work();
+    } finally {
+      release();
+      if (chains.get(key) === chain) chains.delete(key);
+    }
+  };
+}
+
 /**
  * Build a Studio Application Service.
  *
@@ -116,6 +144,8 @@ export function createStudioApplication({
   const review = createReviewService({ canonical, projects, intake, arrangement, store });
   const final = createFinalService({ canonical, projects, review, store });
   const technical = createTechnicalService({ serviceVersion });
+  const serialized = createProjectSerializer();
+  const mutate = (projectId, work) => serialized(String(projectId), work);
 
   // Every significant result carries the Canonical provenance of the process
   // that produced it, with its five identities kept separate. A result that
@@ -153,7 +183,7 @@ export function createStudioApplication({
     // ── assets ──────────────────────────────────────────────────────────────
 
     async uploadAsset(owner, projectId, input) {
-      return envelope({ operation: OPERATION_STATUS.SUCCEEDED, asset: assets.upload(owner, projectId, input) });
+      return mutate(projectId, () => envelope({ operation: OPERATION_STATUS.SUCCEEDED, asset: assets.upload(owner, projectId, input) }));
     },
 
     async listAssets(owner, projectId) {
@@ -178,11 +208,27 @@ export function createStudioApplication({
      * caller should be able to look up rather than hold a request open for.
      */
     async analyzeSources(owner, projectId, options = {}) {
-      const { job, result } = await jobs.run(owner, projectId, JOB_TYPES.INTAKE, async () => {
-        const { baseline } = await intake.run(owner, projectId, options);
-        return { result: baseline, reference: baseline.baseline_id };
+      return mutate(projectId, async () => {
+        const { job, result } = await jobs.run(owner, projectId, JOB_TYPES.INTAKE, async () => {
+          const { baseline } = await intake.run(owner, projectId, options);
+          return { result: baseline, reference: baseline.baseline_id };
+        });
+        return envelope({ operation: OPERATION_STATUS.SUCCEEDED, job, baseline: result });
       });
-      return envelope({ operation: OPERATION_STATUS.SUCCEEDED, job, baseline: result });
+    },
+
+    /**
+     * The Source-Faithful Baseline's events, with their provenance.
+     *
+     * A read-only projection of what intake produced: event identity, role,
+     * pitch, timing and the source ids the event is traceable to. It exists
+     * because the evidence a Lead decision must carry is bound to exactly these
+     * source identities, and an agent confined to the transports had no way to
+     * read them. Optionally narrowed to one lane of the current suggestion or
+     * to named events, and paged so a long piece does not arrive in one answer.
+     */
+    async listBaselineEvents(owner, projectId, options = {}) {
+      return envelope({ operation: OPERATION_STATUS.SUCCEEDED, ...(await arrangement.baselineEvents(owner, projectId, options)) });
     },
 
     /**
@@ -194,35 +240,39 @@ export function createStudioApplication({
      * confidence and coverage warnings are carried through unchanged.
      */
     async attachAudioAlignment(owner, projectId, input) {
-      const { job, result } = await jobs.run(owner, projectId, JOB_TYPES.AUDIO_ALIGNMENT, async () => {
-        const attached = await review.attachAudioAlignment(owner, projectId, input);
-        return { result: attached, reference: input.candidateId ?? null };
+      return mutate(projectId, async () => {
+        const { job, result } = await jobs.run(owner, projectId, JOB_TYPES.AUDIO_ALIGNMENT, async () => {
+          const attached = await review.attachAudioAlignment(owner, projectId, input);
+          return { result: attached, reference: input.candidateId ?? null };
+        });
+        return envelope({ operation: OPERATION_STATUS.SUCCEEDED, job, ...result });
       });
-      return envelope({ operation: OPERATION_STATUS.SUCCEEDED, job, ...result });
     },
 
     async suggestArrangement(owner, projectId, options = {}) {
-      return envelope({ operation: OPERATION_STATUS.SUCCEEDED, suggestion: await arrangement.suggest(owner, projectId, options) });
+      return mutate(projectId, async () => envelope({ operation: OPERATION_STATUS.SUCCEEDED, suggestion: await arrangement.suggest(owner, projectId, options) }));
     },
 
     async applyDecisions(owner, projectId, input) {
-      const result = await arrangement.applyDecisions(owner, projectId, input);
-      return envelope({
-        // The application either applied the whole set or applied nothing. A
-        // refused set is a real answer about the decisions, so it is reported
-        // with its own codes rather than raised as a transport failure.
-        operation: result.applied ? OPERATION_STATUS.SUCCEEDED : OPERATION_STATUS.BLOCKED,
-        code: result.applied ? null : ERROR_CODES.DECISION_REQUIRED,
-        decisions: result,
+      return mutate(projectId, async () => {
+        const result = await arrangement.applyDecisions(owner, projectId, input);
+        return envelope({
+          // The application either applied the whole set or applied nothing. A
+          // refused set is a real answer about the decisions, so it is reported
+          // with its own codes rather than raised as a transport failure.
+          operation: result.applied ? OPERATION_STATUS.SUCCEEDED : OPERATION_STATUS.BLOCKED,
+          code: result.applied ? null : ERROR_CODES.DECISION_REQUIRED,
+          decisions: result,
+        });
       });
     },
 
     async reviewCandidate(owner, projectId, input) {
-      return envelope({ operation: OPERATION_STATUS.SUCCEEDED, review: await review.review(owner, projectId, input) });
+      return mutate(projectId, async () => envelope({ operation: OPERATION_STATUS.SUCCEEDED, review: await review.review(owner, projectId, input) }));
     },
 
     async recordConfirmations(owner, projectId, confirmations) {
-      return envelope({ operation: OPERATION_STATUS.SUCCEEDED, ...review.record(owner, projectId, confirmations) });
+      return mutate(projectId, async () => envelope({ operation: OPERATION_STATUS.SUCCEEDED, ...review.record(owner, projectId, confirmations) }));
     },
 
     /**
@@ -232,11 +282,13 @@ export function createStudioApplication({
      * record as well as from the result.
      */
     async finalize(owner, projectId, input) {
-      const { job, result } = await jobs.run(owner, projectId, JOB_TYPES.FINALIZE, async () => {
-        const outcome = await final.finalize(owner, projectId, input);
-        return { result: outcome, artifactId: outcome.artifact_id, reference: outcome.candidate_id };
+      return mutate(projectId, async () => {
+        const { job, result } = await jobs.run(owner, projectId, JOB_TYPES.FINALIZE, async () => {
+          const outcome = await final.finalize(owner, projectId, input);
+          return { result: outcome, artifactId: outcome.artifact_id, reference: outcome.candidate_id };
+        });
+        return envelope({ ...result, job });
       });
-      return envelope({ ...result, job });
     },
 
     // ── jobs and artifacts ──────────────────────────────────────────────────
@@ -300,6 +352,6 @@ export {
 export { buildCapabilities, INTERFACE_VERSION } from './capabilities.mjs';
 export { createCanonicalGate, provenanceOf, unloadedProvenance } from './provenance.mjs';
 export { PRE_EMISSION_EXEMPT_GATES, FINAL_ARTIFACT_SCHEMA } from './final-service.mjs';
-export { CONFIRMATIONS, gatesFrom } from './review-service.mjs';
+export { CONFIRMATIONS, CONFIRMATION_SCOPE, PLAYER_READBACK_VALUES, STALE_CONFIRMATION, gatesFrom } from './review-service.mjs';
 export { PROJECT_RECORD_SCHEMA } from './project-service.mjs';
 export { ACCEPTED_MEDIA_TYPES } from './asset-service.mjs';

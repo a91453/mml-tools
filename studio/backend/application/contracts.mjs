@@ -271,6 +271,7 @@ export const LIMITS = freeze({
   maxAssetsPerProject: 64,
   maxProjectsPerOwner: 256,
   maxDecisionsPerRequest: 500,
+  maxEventsPerPage: 500,
   maxTitleLength: 120,
   maxFilenameLength: 255,
   maxStoreBytes: 400 * 1024 * 1024,

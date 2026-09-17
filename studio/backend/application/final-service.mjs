@@ -25,12 +25,32 @@
 // adaptation and no in-game acceptance. The artifact carries the gate axes
 // beside the MML so that reading one can never be mistaken for the other.
 
-import { ERROR_CODES, GATE_STATUS, OPERATION_STATUS, fail } from './contracts.mjs';
+import { ERROR_CODES, GATE_STATUS, OPERATION_STATUS, fail, requireString } from './contracts.mjs';
 import { sha256Of } from './store.mjs';
 import { gatesFrom } from './review-service.mjs';
 
 const now = () => new Date().toISOString();
 const encoder = new TextEncoder();
+
+// Source-confirmed bar-closure inputs for the authoritative Final parser. The
+// parser refuses to guess how a piece that does not end on a bar line closes
+// (`末小節剩N拍，請依來源明確填寫末小節長度`), exactly as the legacy technical
+// check does; a caller states the pickup and final partial bar from the source,
+// in the same grammar the legacy tools accept. They are validated here, never
+// derived, and recorded in the artifact beside the meter map that was used.
+const BAR_INPUT = /^\d+(?:\/\d+|\.\d{1,9})?$/;
+function barInput(value, label) {
+  // Absent means "the piece ends on a bar line". An empty string is not that
+  // statement; it is a malformed one, and is refused rather than read as absent.
+  if (value === undefined || value === null) return null;
+  const text = requireString(value, label, { max: 32 });
+  if (/\d{10}/.test(text) || !BAR_INPUT.test(text)) {
+    fail(ERROR_CODES.INVALID_REQUEST, `${label} must be a non-negative integer, decimal or fraction of beats, confirmed from the source.`);
+  }
+  return text;
+}
+
+const mmlDigest = mml => sha256Of(encoder.encode(mml));
 
 export const FINAL_ARTIFACT_SCHEMA = 'mabinogi-mobile-mml-studio/application-final-artifact@1';
 
@@ -75,14 +95,57 @@ export function createFinalService({ canonical, projects, review, store }) {
      * and the two must not arrive as the same thing. `operation` says whether
      * the orchestration ran; `gates` says what the song satisfies.
      */
-    async finalize(owner, projectId, { candidateId, technicalTimingRepair = false, confirmations = null } = {}) {
+    async finalize(owner, projectId, { candidateId, technicalTimingRepair = false, confirmations = null, pickup = null, finalPartial = null } = {}) {
       if (technicalTimingRepair !== true && technicalTimingRepair !== false) {
         fail(ERROR_CODES.INVALID_REQUEST, 'technical_timing_repair must be true or false. There is no automatic mode: the repair transforms the musical candidate and stays an explicit opt-in.');
       }
-      if (confirmations) review.record(owner, projectId, confirmations);
+      const barInputs = { pickup: barInput(pickup, 'pickup'), final_partial: barInput(finalPartial, 'final_partial') };
+      if (confirmations) review.record(owner, projectId, confirmations, { candidateId });
 
       const ctx = await review.context(owner, projectId, candidateId);
       const { engines, record, baseline, entry, application, baselineProject, project, parent, confirmations: recorded } = ctx;
+
+      const identity = {
+        project_id: record.project_id,
+        baseline_id: baseline.baseline_id,
+        candidate_id: candidateId,
+        parent_candidate_id: entry.parent_candidate_id,
+        revision_index: entry.revision_index,
+      };
+      const refused = (blockers, extra, notice) => ({
+        operation: OPERATION_STATUS.BLOCKED,
+        code: ERROR_CODES.FINALIZATION_BLOCKED,
+        ...identity,
+        artifact_id: null,
+        mml: null,
+        emit_status: null,
+        technical_timing_repair: { requested: technicalTimingRepair, applied: false },
+        final_bar: barInputs,
+        blockers,
+        ...extra,
+        notice,
+      });
+
+      // The stored application must agree with itself and with the project's
+      // own Source-Faithful Baseline before anything is emitted from it. A
+      // record that was edited, truncated or restored from another pipeline is
+      // reported as inconsistent, exactly as review reports it, rather than
+      // being trusted as current.
+      const integrity = engines.arrangement.applicationIntegrity(application, baselineProject);
+      if (!integrity.ok || integrity.against !== 'baseline') {
+        return refused(['integrity'], { integrity, gates: gatesFrom(null), readiness: null }, 'Nothing was emitted. The stored candidate does not agree with itself or with the Source-Faithful Baseline, so it cannot be finalized.');
+      }
+      // A candidate accepted under one Published Canonical release is not a
+      // candidate reviewed under another. G11-D already refuses to chain onto
+      // it; delivery refuses for the same reason.
+      if (ctx.candidateRulesSnapshot !== ctx.loadedRulesSnapshot) {
+        return refused(['canonical'], {
+          candidate_rules_snapshot_sha: ctx.candidateRulesSnapshot,
+          loaded_rules_snapshot_sha: ctx.loadedRulesSnapshot,
+          gates: gatesFrom(null),
+          readiness: null,
+        }, 'Nothing was emitted. This candidate was accepted under a different Published Canonical rules snapshot than the one loaded now; re-run the suggestion and decisions under the loaded release.');
+      }
 
       const leadDemotionReports = engines.arrangement.leadDemotionReportsFromApplication(application, baselineProject);
       const lineage = engines.compare.compareCandidateLineage({ sourceBaseline: baselineProject, acceptedPrevious: parent, candidate: project });
@@ -105,28 +168,9 @@ export function createFinalService({ canonical, projects, review, store }) {
       const readiness = engines.final.evaluateProjectReadiness({ ...readinessInputs, mmlValidation: null });
 
       const blocked = readiness.preGameBlocking.filter(name => !PRE_EMISSION_EXEMPT_GATES.includes(name));
-      const identity = {
-        project_id: record.project_id,
-        baseline_id: baseline.baseline_id,
-        candidate_id: candidateId,
-        parent_candidate_id: entry.parent_candidate_id,
-        revision_index: entry.revision_index,
-      };
 
       if (blocked.length) {
-        return {
-          operation: OPERATION_STATUS.BLOCKED,
-          code: ERROR_CODES.FINALIZATION_BLOCKED,
-          ...identity,
-          artifact_id: null,
-          mml: null,
-          emit_status: null,
-          technical_timing_repair: { requested: technicalTimingRepair, applied: false },
-          gates: gatesFrom(readiness),
-          blockers: blocked,
-          readiness,
-          notice: 'Nothing was emitted. Required Canonical gates are not satisfied, and the Final emitter was not run.',
-        };
+        return refused(blocked, { gates: gatesFrom(readiness), readiness }, 'Nothing was emitted. Required Canonical gates are not satisfied, and the Final emitter was not run.');
       }
 
       // One call. The emitter owns micro-gap enforcement, the optional repair,
@@ -145,14 +189,33 @@ export function createFinalService({ canonical, projects, review, store }) {
         .map(event => `${event.beat} ${event.numerator}/${event.denominator}`)
         .join('\n');
       const mmlValidation = passed && meterText
-        ? engines.mml.validateMML(emitted.combinedMml, { meterText })
+        ? engines.mml.validateMML(emitted.combinedMml, { meterText, pickup: barInputs.pickup ?? undefined, finalPartial: barInputs.final_partial ?? undefined })
         : null;
+      // A player readback PASS that named the MML it read back counts only for
+      // that exact MML. The emitted string is now known, so the claim can be
+      // checked; a readback of some other string is not a readback of this one
+      // and leaves the gate NOT_RUN.
+      const readback = recorded.player_readback ?? null;
+      const emittedDigest = passed ? mmlDigest(emitted.combinedMml) : null;
+      const readbackMatched = readback?.value === 'PASS' && readback.mml_sha256
+        ? readback.mml_sha256 === emittedDigest
+        : null;
+      const playerReadbackBinding = {
+        recorded: readback?.value ?? 'NOT_RUN',
+        expected_mml_sha256: readback?.mml_sha256 ?? null,
+        emitted_mml_sha256: emittedDigest,
+        matched: readbackMatched,
+      };
       // Deliberately the post-emission readiness, including when the emitter
       // passed and the parser then disagreed: two modules contradicting each
       // other is reported as the unsatisfied gate it is, not resolved in favour
       // of the more convenient one.
       const finalReadiness = passed
-        ? engines.final.evaluateProjectReadiness({ ...readinessInputs, mmlValidation })
+        ? engines.final.evaluateProjectReadiness({
+          ...readinessInputs,
+          playerReadback: readbackMatched === false ? 'NOT_RUN' : readinessInputs.playerReadback,
+          mmlValidation,
+        })
         : readiness;
       // The emitter reports no repair block at all when the repair was not
       // requested. The opt-in state is exactly what a caller needs to see, so
@@ -180,7 +243,13 @@ export function createFinalService({ canonical, projects, review, store }) {
       // blocks, NOT_RUN included — an emitted string nobody graded is not a
       // graded one, and this fails closed.
       const technicalSatisfied = emitGates.technical === GATE_STATUS.PASS;
-      const delivered = passed && technicalSatisfied;
+      // Post-emission readiness is the whole verdict, not only its technical
+      // row. The readback gate can also change after emission — a readback
+      // PASS that named a different MML digest falls back to NOT_RUN once the
+      // emitted string is known — and a Final that readiness calls not ready
+      // is not delivered whichever gate said so.
+      const gatesSatisfied = finalReadiness.preGameBlocking.length === 0;
+      const delivered = passed && technicalSatisfied && gatesSatisfied;
 
       // Why the two are still reported separately below rather than reconciled:
       // the disagreement is the finding. A reader has to be able to see that
@@ -200,6 +269,9 @@ export function createFinalService({ canonical, projects, review, store }) {
         character_counts: emitted.characterCounts,
         micro_gap: emitted.microGap,
         technical_timing_repair: repairReport,
+        final_bar: { ...barInputs, meter_text: meterText },
+        player_readback_binding: playerReadbackBinding,
+        candidate_rules_snapshot_sha: ctx.candidateRulesSnapshot,
         round_trip: emitted.roundTrip,
         diagnostics: emitted.diagnostics,
         warnings: emitted.diagnostics.filter(item => item.severity === engines.final.DIAGNOSTIC_SEVERITY.WARNING),
@@ -236,6 +308,9 @@ export function createFinalService({ canonical, projects, review, store }) {
         mml: artifact.mml,
         emit_status: emitStatus,
         technical_timing_repair: repairReport,
+        final_bar: artifact.final_bar,
+        player_readback_binding: playerReadbackBinding,
+        candidate_rules_snapshot_sha: ctx.candidateRulesSnapshot,
         micro_gap: emitted.microGap,
         round_trip: emitted.roundTrip,
         character_counts: emitted.characterCounts,
@@ -253,7 +328,7 @@ export function createFinalService({ canonical, projects, review, store }) {
         readiness: finalReadiness,
         notice: delivered
           ? artifact.acceptance_notice
-          : 'No Final was delivered. The emitted MML did not satisfy the technical gate under the authoritative Final parser, so no MML and no artifact were returned. in_game is unaffected and remains PENDING.',
+          : nonDeliveryNotice({ passed, emitStatus, mmlValidation, readbackMatched }),
       };
     },
 
@@ -274,4 +349,15 @@ export function createFinalService({ canonical, projects, review, store }) {
       return fail(ERROR_CODES.ARTIFACT_NOT_FOUND, 'Unknown artifact', { artifact_id: artifactId });
     },
   });
+}
+
+// Why nothing was delivered, said for the path that was actually taken. One
+// sentence for every non-delivery would tell a caller the parser rejected MML
+// the parser never saw.
+function nonDeliveryNotice({ passed, emitStatus, mmlValidation, readbackMatched }) {
+  if (!passed) return `No Final was delivered. The Final emitter reported ${emitStatus} for this candidate, so nothing was emitted and the authoritative Final parser did not run. in_game is unaffected and remains PENDING.`;
+  if (mmlValidation === null) return 'No Final was delivered. The candidate declares no meter events, so the emitted MML could not be re-validated under the authoritative Final parser; the technical gate stays NOT_RUN and no MML and no artifact were returned. in_game is unaffected and remains PENDING.';
+  if (!mmlValidation.ok) return 'No Final was delivered. The emitted MML did not satisfy the technical gate under the authoritative Final parser, so no MML and no artifact were returned. If the piece does not end on a bar line, state the source-confirmed pickup and final_partial. in_game is unaffected and remains PENDING.';
+  if (readbackMatched === false) return 'No Final was delivered. The recorded player readback names a different MML than the one emitted for this candidate, so the readback gate stays NOT_RUN and no MML and no artifact were returned. in_game is unaffected and remains PENDING.';
+  return 'No Final was delivered. A required gate did not pass after emission, so no MML and no artifact were returned. in_game is unaffected and remains PENDING.';
 }
