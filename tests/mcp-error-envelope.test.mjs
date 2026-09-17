@@ -1,0 +1,58 @@
+// MCP adapter — a refusal still says which rules snapshot answered.
+//
+// The HTTP adapter attaches the Canonical provenance envelope to every error
+// response. An agent working over MCP needs the same fact for the same reason:
+// a blocked or refused call has to be read against the right rules release.
+
+import test from 'node:test';
+import assert from 'node:assert/strict';
+
+import { handleMcp } from '../server/mcp.mjs';
+import { API_PREFIX, createApiRouter } from '../server/api.mjs';
+import { createStudioApplication } from '../studio/backend/application/index.mjs';
+
+const ORIGIN = 'https://mml.example';
+const OWNER = 'owner:service';
+const headers = { 'content-type': 'application/json', accept: 'application/json, text/event-stream' };
+
+const call = (application, name, args) => handleMcp(new Request(`${ORIGIN}/mcp`, { method: 'POST', headers, body: JSON.stringify({ jsonrpc: '2.0', id: 1, method: 'tools/call', params: { name, arguments: args } }) }), { application, owner: OWNER });
+
+test('a structured MCP refusal carries the same Canonical envelope as the HTTP refusal', async () => {
+  const application = createStudioApplication({});
+  const missing = `prj_${'0'.repeat(32)}`;
+  const mcp = (await (await call(application, 'studio_project_get', { project_id: missing })).json()).result;
+  assert.equal(mcp.isError, true);
+  assert.equal(mcp.structuredContent.error.code, 'PROJECT_NOT_FOUND');
+  assert.equal(mcp.structuredContent.canonical?.status, 'CANONICAL_LOADED');
+  assert.match(mcp.structuredContent.canonical.rules_snapshot_sha, /^[0-9a-f]{40}$/);
+
+  const route = createApiRouter({ application, ownerOf: () => OWNER });
+  const http = await (await route(new Request(`${ORIGIN}${API_PREFIX}/projects/${missing}`), { authenticated: true })).json();
+  assert.deepEqual(mcp.structuredContent.canonical, http.canonical, 'both transports must name the same provenance on failure');
+  assert.deepEqual(mcp.structuredContent.error, http.error);
+  // The text content mirrors the structured content, as for every other result.
+  assert.deepEqual(JSON.parse(mcp.content[0].text), mcp.structuredContent);
+});
+
+test('the envelope is honest when Published Canonical is unavailable, and absent for the bare technical tools', async () => {
+  const unavailable = createStudioApplication({ loadEngines: async () => { throw Error('no published history'); } });
+  const project = (await unavailable.createProject(OWNER, { title: 'x' })).project;
+  const refused = (await (await call(unavailable, 'studio_sources_analyze', { project_id: project.project_id })).json()).result;
+  assert.equal(refused.isError, true);
+  assert.equal(refused.structuredContent.error.code, 'CANONICAL_NOT_LOADED');
+  assert.equal(refused.structuredContent.canonical.status, 'CANONICAL_NOT_LOADED');
+  assert.equal(refused.structuredContent.canonical.legacy_fallback_allowed, false);
+
+  // A sanitized internal fault still carries the envelope and nothing else.
+  const faulty = Object.freeze({ ...createStudioApplication({}), getProject: async () => { throw Error('ENOENT /data/private'); } });
+  const fault = (await (await call(faulty, 'studio_project_get', { project_id: `prj_${'1'.repeat(32)}` })).json()).result;
+  assert.equal(fault.structuredContent.error.code, 'INTERNAL_ERROR');
+  assert.equal(fault.structuredContent.canonical.status, 'CANONICAL_LOADED');
+  assert.doesNotMatch(JSON.stringify(fault), /ENOENT|\/data\/private/);
+
+  // Without an Application Service there is no provenance to report, and the
+  // legacy tools' refusals keep their original shape.
+  const legacy = (await (await handleMcp(new Request(`${ORIGIN}/mcp`, { method: 'POST', headers, body: JSON.stringify({ jsonrpc: '2.0', id: 1, method: 'tools/call', params: { name: 'mml_validate', arguments: { mml: 'MML@c1234,,,,,;', meter_text: '0 4/4' } } }) }))).json()).result;
+  assert.equal(legacy.isError, true);
+  assert.equal(legacy.structuredContent.canonical, undefined);
+});

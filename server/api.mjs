@@ -205,7 +205,7 @@ async function readUpload(request) {
  * Service's: the service takes a subject string and isolates records by it,
  * whatever the deployment's identity model happens to be.
  */
-export function createApiRouter({ application, ownerOf }) {
+export function createApiRouter({ application, ownerOf, challenge = null }) {
   const routes = [
     ['GET', /^\/capabilities$/, async () => json(await application.capabilities())],
 
@@ -232,6 +232,20 @@ export function createApiRouter({ application, ownerOf }) {
       });
     }],
 
+    ['GET', /^\/projects\/([^/]+)\/baseline\/events$/, async (m, request, owner) => {
+      const query = new URL(request.url).searchParams;
+      const integer = (name, fallback) => {
+        const raw = query.get(name);
+        if (raw === null || raw === '') return fallback;
+        return /^\d{1,9}$/.test(raw) ? Number(raw) : NaN;
+      };
+      return json(await application.listBaselineEvents(owner, m[1], {
+        laneId: query.get('lane_id'),
+        eventIds: query.has('event_ids') ? query.get('event_ids').split(',').map(id => id.trim()).filter(Boolean) : null,
+        offset: integer('offset', 0),
+        limit: integer('limit', LIMITS.maxEventsPerPage),
+      }));
+    }],
     ['POST', /^\/projects\/([^/]+)\/intake$/, async (m, request, owner) => {
       const body = await readJson(request);
       return json(await application.analyzeSources(owner, m[1], { assetIds: body.asset_ids ?? null, meterText: body.meter_text ?? '' }));
@@ -271,6 +285,10 @@ export function createApiRouter({ application, ownerOf }) {
         // the repair on, and there is no automatic mode.
         technicalTimingRepair: body.technical_timing_repair ?? false,
         confirmations: body.confirmations ?? null,
+        // Source-confirmed bar closure for the authoritative Final parser, as
+        // supplied. Never derived.
+        pickup: body.pickup ?? null,
+        finalPartial: body.final_partial ?? null,
       }));
     }],
 
@@ -300,7 +318,9 @@ export function createApiRouter({ application, ownerOf }) {
     }
 
     if (!authenticated) {
-      return json({ error: { code: ERROR_CODES.NOT_AUTHENTICATED, message: 'Studio service sign-in required' } }, 401);
+      // The same challenge the MCP endpoint issues, so an HTTP client discovers
+      // the authorization server the same way (RFC 9728 resource metadata).
+      return json({ error: { code: ERROR_CODES.NOT_AUTHENTICATED, message: 'Studio service sign-in required' } }, 401, challenge ? { 'www-authenticate': challenge } : {});
     }
 
     try {

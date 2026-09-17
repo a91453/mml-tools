@@ -201,10 +201,16 @@ async function mcpReadBody(request) {
  * the existing regressions pin. With them, the `studio_*` control surface is
  * advertised and dispatched too.
  */
-export async function handleMcp(request, { application = null, owner = null } = {}) {
+// Browser-hosted MCP clients send an Origin; hosted connectors and CLI clients
+// do not. Only the server's own origin and the origins of the approved OAuth
+// callback hosts are accepted. The Sites worker attaches no Application Service
+// and keeps the ChatGPT-only default it always had.
+export const DEFAULT_MCP_ORIGINS = Object.freeze(['https://chatgpt.com']);
+
+export async function handleMcp(request, { application = null, owner = null, allowedOrigins = DEFAULT_MCP_ORIGINS } = {}) {
   const context = { application, owner };
   const origin = request.headers.get('origin');
-  if (origin && origin !== new URL(request.url).origin && origin !== 'https://chatgpt.com') return mcpRpcError(null, -32000, 'Origin not allowed', 403);
+  if (origin && origin !== new URL(request.url).origin && !allowedOrigins.includes(origin)) return mcpRpcError(null, -32000, 'Origin not allowed', 403);
   if (request.method !== 'POST') return new Response(null, { status: 405, headers: { allow: 'POST', 'cache-control': 'no-store' } });
   if (!/^application\/json(?:\s*;|$)/i.test(request.headers.get('content-type') ?? '')) return mcpRpcError(null, -32600, 'Content-Type must be application/json', 415);
   const accept = (request.headers.get('accept') ?? '').split(',').map(s => s.trim().split(';')[0]);
@@ -262,9 +268,17 @@ export async function handleMcp(request, { application = null, owner = null } = 
       // is reduced to a stable generic code here, exactly as the HTTP adapter
       // already does, so the two transports leak the same amount: nothing.
       // Neither the raw message, the cause chain nor the stack is sent.
-      const structured = error?.name === 'StudioApplicationError'
-        ? { error: { code: error.code, message: error.message, details: error.details } }
-        : { error: { code: 'INTERNAL_ERROR', message: 'The request could not be completed.' } };
+      //
+      // A refusal still says which rules snapshot answered it, exactly as the
+      // HTTP adapter's error responses do: an agent that is told a call failed
+      // has to read that failure against the right release.
+      const canonical = application ? await application.canonical.provenance().catch(() => null) : null;
+      const structured = {
+        ...(error?.name === 'StudioApplicationError'
+          ? { error: { code: error.code, message: error.message, details: error.details } }
+          : { error: { code: 'INTERNAL_ERROR', message: 'The request could not be completed.' } }),
+        ...(canonical ? { canonical } : {}),
+      };
       result = { content: [{ type: 'text', text: JSON.stringify(structured) }], structuredContent: structured, isError: true };
     }
   } else return mcpRpcError(id, -32601, 'Method not found');
