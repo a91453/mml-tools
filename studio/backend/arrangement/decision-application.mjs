@@ -52,6 +52,7 @@ import {
   createCanonicalProject,
   createCanonicalNoteEvent,
   createCanonicalRestEvent,
+  createArbitrationDecision,
 } from '../canonical/index.mjs';
 import { compareCanonicalVersions } from '../compare/version-drift.mjs';
 import {
@@ -1228,22 +1229,101 @@ export function applyAcceptedArrangement({
     notice: 'An omitted event still has derived duplicate copies in the candidate, accepted in an earlier revision. They copy the same source event and keep its provenance; whether they should remain now that the original is omitted is a review question, not something this stage decides.',
   });
 
-  // Carried-forward arbitration decisions. One that references an omitted event
-  // can no longer describe this project, and is dropped loudly rather than
-  // rewritten: dropping it makes the conflict it resolved re-report as
-  // unresolved, which is the safe direction.
+  // Carried-forward arbitration decisions.
+  //
+  // The project being applied onto -- the Source-Faithful Baseline for
+  // revision 1, the accepted previous candidate afterwards -- may carry
+  // cross-source arbitration decisions (`project.decisions[]`). Each one is a
+  // claim about specific events *as they were when it was reviewed*. This
+  // revision may have changed exactly those events, and a claim that was
+  // reviewed against other content must not stay authoritative by inertia.
+  //
+  // The question asked of every carried decision is not "does it still parse"
+  // but "is it still a claim about the exact events and roles it named". Only
+  // three answers exist, and none of them is a musical judgement:
+  //
+  //   every referenced event is present, keeps its role and was not duplicated
+  //     -> carried as it was (`CURRENT`). The pair it describes is byte-for-byte
+  //        the pair that was reviewed: same ids, same pitch/onset/duration/
+  //        volume (G11-D changes none), same roles.
+  //   a referenced event was omitted by this revision
+  //     -> dropped loudly, as before. A decision about an event that is no
+  //        longer in the candidate cannot describe the candidate.
+  //   a referenced event had its role changed, or was duplicated, by this
+  //     revision
+  //     -> an *accepted* decision is carried with `status: 'pending'` and an
+  //        explicit `metadata.g11d.carriedForward` marker naming why. The
+  //        harmony analysis then reports the conflict unresolved again and the
+  //        readiness `pendingDecisions` gate blocks -- the closed direction.
+  //        A pending or rejected one keeps its status and gains the same
+  //        marker as history. Nothing here decides whether the old decision is
+  //        still right; it records that nobody has looked since the events
+  //        moved.
+  //
+  // This is an implementation staleness rule of the same kind as the
+  // acceptance bindings, not a Canonical arbitration policy. Canonical asks that
+  // every meaningful cross-source conflict carry an explicit decision
+  // (MASTER_RULES.md §6, SOURCE_POLICY.md §5); it does not say whether a
+  // decision survives a role move, so the stage does not guess -- it re-asks.
   const outputEventIdSet = new Set(outputEvents.map(event => event.id));
   const carriedDecisions = [];
   const droppedDecisionIds = [];
+  const currentAcceptedIds = [];
+  const rereviewRequired = [];
+  const historicalIds = [];
+  const carryMarker = (decision, currentStatus, reasons, affectedEventIds) => Object.freeze({
+    ...structuredClone(decision.metadata ?? {}),
+    g11d: {
+      ...(decision.metadata?.g11d ?? {}),
+      carriedForward: {
+        fromRevisionId: expectedReviewedRevisionId,
+        intoRevisionIndex: revisionIndex,
+        previousStatus: decision.status,
+        currentStatus,
+        reasons: [...reasons].sort(cmpStr),
+        affectedEventIds: [...affectedEventIds].sort(cmpStr),
+        notice: currentStatus === 'CURRENT'
+          ? 'Carried forward unchanged: every event this decision names is present with the same identity, properties and role it was reviewed with.'
+          : 'Not current. An event this decision names was changed by this revision, so the decision is retained as history and re-reported as unresolved; it must be reviewed again against the new candidate.',
+      },
+    },
+  });
   for (const decision of applyTo.decisions ?? []) {
-    const referenced = decision.eventIds ?? [];
-    if (referenced.every(eventId => outputEventIdSet.has(eventId))) carriedDecisions.push(decision);
-    else droppedDecisionIds.push(decision.id);
+    const referenced = [...(decision.eventIds ?? [])].sort(cmpStr);
+    if (!referenced.every(eventId => outputEventIdSet.has(eventId))) { droppedDecisionIds.push(decision.id); continue; }
+    const reasons = new Set();
+    const affected = new Set();
+    for (const eventId of referenced) {
+      if (roleByEvent.has(eventId) && roleByEvent.get(eventId) !== (eventById.get(eventId)?.role ?? null)) { reasons.add('EVENT_ROLE_CHANGED'); affected.add(eventId); }
+      if (duplicatesByEvent.has(eventId)) { reasons.add('EVENT_DUPLICATED'); affected.add(eventId); }
+    }
+    if (!reasons.size) {
+      carriedDecisions.push(createArbitrationDecision({ ...decision, metadata: carryMarker(decision, 'CURRENT', [], []) }));
+      if (decision.status === 'accepted') currentAcceptedIds.push(decision.id);
+      continue;
+    }
+    if (decision.status === 'accepted') {
+      carriedDecisions.push(createArbitrationDecision({ ...decision, status: 'pending', metadata: carryMarker(decision, 'REQUIRES_REREVIEW', reasons, affected) }));
+      rereviewRequired.push(Object.freeze({ decisionId: decision.id, previousStatus: 'accepted', reasons: Object.freeze([...reasons].sort(cmpStr)), affectedEventIds: Object.freeze([...affected].sort(cmpStr)) }));
+    } else {
+      carriedDecisions.push(createArbitrationDecision({ ...decision, metadata: carryMarker(decision, 'HISTORICAL', reasons, affected) }));
+      historicalIds.push(decision.id);
+    }
   }
-  const carriedAcceptedIds = carriedDecisions.filter(decision => decision.status === 'accepted').map(decision => decision.id).sort(cmpStr);
-  if (carriedAcceptedIds.length) note('ARBITRATION_DECISIONS_CARRIED_FORWARD', {
-    acceptedDecisionIds: Object.freeze(carriedAcceptedIds),
-    notice: 'Cross-source arbitration decisions already present on the project being applied onto are carried forward unchanged. G11-D manufactures none: an accepted arrangement decision never becomes an accepted arbitration decision, because that would let a role decision mark a harmony conflict resolved.',
+  currentAcceptedIds.sort(cmpStr);
+  rereviewRequired.sort((a, b) => cmpStr(a.decisionId, b.decisionId));
+  historicalIds.sort(cmpStr);
+  if (currentAcceptedIds.length) note('ARBITRATION_DECISIONS_CARRIED_FORWARD', {
+    acceptedDecisionIds: Object.freeze(currentAcceptedIds),
+    notice: 'Cross-source arbitration decisions already present on the project being applied onto are carried forward when every event they name is present with the same identity, properties and role. G11-D manufactures none: an accepted arrangement decision never becomes an accepted arbitration decision, because that would let a role decision mark a harmony conflict resolved.',
+  });
+  if (rereviewRequired.length) note('ARBITRATION_DECISION_REREVIEW_REQUIRED', {
+    decisions: Object.freeze(rereviewRequired),
+    notice: 'An accepted arbitration decision names an event whose role this revision changed or that this revision duplicated. It is carried as pending with a carriedForward marker, so the conflict it resolved is reported unresolved again and readiness blocks on it until it is reviewed against the new candidate. Whether the old decision still holds is not decided here.',
+  });
+  if (historicalIds.length) note('ARBITRATION_DECISION_HISTORICAL', {
+    decisionIds: Object.freeze(historicalIds),
+    notice: 'A pending or rejected arbitration decision names an event this revision changed. It keeps its status and carries a carriedForward marker as history.',
   });
   if (droppedDecisionIds.length) note('ARBITRATION_DECISION_DROPPED_WITH_OMITTED_EVENT', {
     decisionIds: Object.freeze([...droppedDecisionIds].sort(cmpStr)),
@@ -1255,13 +1335,23 @@ export function applyAcceptedArrangement({
   // without them.
   const inheritedMetadata = {};
   const strippedMetadataKeys = [];
+  const inheritedMetadataKeys = [];
   for (const key of Object.keys(applyTo.metadata ?? {}).sort(cmpStr)) {
     if (NON_INHERITABLE_METADATA_KEYS.includes(key)) { strippedMetadataKeys.push(key); continue; }
     inheritedMetadata[key] = structuredClone(applyTo.metadata[key]);
+    inheritedMetadataKeys.push(key);
   }
   if (strippedMetadataKeys.length) note('PARENT_GATE_METADATA_NOT_INHERITED', {
     keys: Object.freeze(strippedMetadataKeys),
-    notice: 'Source completeness, audio alignment evidence and a stored baseline snapshot are gate evidence. A derived revision never inherits them; they are recomputed or absent.',
+    notice: 'Source completeness, audio alignment evidence, incomplete-input evidence, a stored baseline snapshot and a previous G11-D provenance record are gate evidence or revision identity. A derived revision never inherits them; they are recomputed, replaced or absent.',
+  });
+  // Every other key is carried as data and named here, so that a key a gate
+  // starts reading later is visible as inherited rather than assumed fresh.
+  // No readiness gate reads any key outside the stripped list (see
+  // final/readiness.mjs); this is the representation limit, stated.
+  if (inheritedMetadataKeys.length) note('PARENT_METADATA_INHERITED', {
+    keys: Object.freeze(inheritedMetadataKeys),
+    notice: 'Project metadata outside the gate-evidence list is carried from the project being applied onto as descriptive data. It is not read as evidence by any readiness gate.',
   });
 
   // The snapshot readiness diffs against is the baseline itself, not an edited
@@ -1473,9 +1563,16 @@ export const DECISION_APPLICATION_STATUS = Object.freeze({
   applicationIntegrityVerifiedDownstream: true,
   survivingDerivedCopiesReported: true,
   parentGateMetadataStripped: true,
+  parentMetadataInheritanceReported: true,
+  arbitrationDecisionsReboundToUnchangedEvents: true,
+  staleArbitrationDecisionsDemotedToPending: true,
+  arbitrationDecisionsDroppedWithOmittedEvents: true,
 
   // Deliberately not done here.
   suggestionAutoAcceptance: false,
+  staleArbitrationDecisionsCarriedAsAccepted: false,
+  derivedDuplicateInheritsArbitrationDecision: false,
+  parentGatePassInherited: false,
   leadEvidenceSharedAcrossEvents: false,
   leadEvidenceBoundBySourceIdAlone: false,
   leadEvidenceMultiSourcePairingGuessed: false,
