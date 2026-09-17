@@ -27,6 +27,8 @@ The Permanent Studio Web deployment, its pinned artifact, its trust bundle and i
 - `MML_AUTH_DB`: `/data/mml-auth.sqlite`.
 - `MML_STUDIO_DATA_DIR`: `/data/studio` for the Studio Agent Interface's project, asset and artifact records. Unset, those records stay in memory and the capability endpoint reports `asset_storage.durability: "ephemeral"`.
 - `MML_STUDIO_DURABILITY`: `persistent` only when `/data` really is a mounted volume. Nothing in the service detects a real mount, so durability is reported from this declaration rather than assumed.
+- `MML_OAUTH_REDIRECT_HOSTS` (optional): comma-separated bare hostnames whose exact HTTPS callbacks may register. Unset, the default is `chatgpt.com,chat.openai.com,claude.ai,claude.com`. A value that is not a bare hostname list refuses to start.
+- `MML_OAUTH_LOOPBACK_REDIRECTS` (optional): `false` to refuse RFC 8252 loopback callbacks from native clients. Unset or `true`, they are accepted.
 - `PORT`: Railway's supplied port, or 3000.
 - Healthcheck: `/healthz`.
 
@@ -205,7 +207,7 @@ Only after a successful deploy and HTTPS verification:
 - The service login form requests the generated MML service password from Railway Variables. It never requests a ChatGPT, GitHub, or Railway account password.
 - OAuth resource: the same complete `/mcp` URL.
 
-Initial metadata and the password form are public; tool requests require an OAuth token. Registered callbacks are restricted to exact HTTPS URLs on `chatgpt.com` or `chat.openai.com`, with no custom ports or fragments. An additional client requires explicit configuration and tests for its callback host.
+Initial metadata and the password form are public; tool requests require an OAuth token. Registered callbacks are restricted to exact HTTPS URLs, with no custom ports, userinfo or fragments, on the approved connector hosts — by default `chatgpt.com`, `chat.openai.com`, `claude.ai` and `claude.com` — plus RFC 8252 loopback redirects (`http://127.0.0.1`, `http://[::1]`, `http://localhost`, any port) for native clients such as a local agent. `MML_OAUTH_REDIRECT_HOSTS` (comma-separated bare hostnames) replaces the default host list, and `MML_OAUTH_LOOPBACK_REDIRECTS=false` switches loopback off; the MCP `Origin` allowlist follows the same hosts. The same flow — exact registered URI, PKCE S256, CSRF, the owner password — applies to every client, and a regression walks it for each default host and for loopback.
 
 ### Login form origin compatibility
 

@@ -40,7 +40,8 @@
   },
   "volume": {
     "mountPath": "/data",
-    "sizeMB": 512
+    "sizeMB": 500,
+    "sizeNote": "500 MB as observed on the mounted volume (railway/deployment-target.json volumeSizeMB); an earlier copy of this file said 512."
   },
   "port": 3000,
   "requiredVariables_addedByCanonicalBootstrap": [
@@ -63,7 +64,9 @@
   ],
   "optionalVariables": [
     "MML_STUDIO_DATA_DIR",
-    "MML_STUDIO_DURABILITY"
+    "MML_STUDIO_DURABILITY",
+    "MML_OAUTH_REDIRECT_HOSTS",
+    "MML_OAUTH_LOOPBACK_REDIRECTS"
   ],
   "plane": "agent-control-plane",
   "note": "Agent Control Plane only (project mml-tools-allen / service mml-tools). The Permanent Studio Web plane (mml-tools-studio-permanent / studio-web-permanent) is configured separately and is not described by this file."
