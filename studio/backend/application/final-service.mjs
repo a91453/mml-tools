@@ -88,9 +88,11 @@ export function createFinalService({ canonical, projects, review, store }) {
       const lineage = engines.compare.compareCandidateLineage({ sourceBaseline: baselineProject, acceptedPrevious: parent, candidate: project });
       const core3 = engines.core3.evaluateCore3Continuity({ baseline: baselineProject, candidate: project, approvedChanges: [] });
       const harmony = engines.harmony.analyzeCrossSourceHarmony(project);
-      const readiness = engines.final.evaluateProjectReadiness({
+      // One set of readiness inputs, evaluated twice: once before emission with
+      // no MML to grade, and once after with the emitted string. Nothing else
+      // differs between the two calls.
+      const readinessInputs = {
         project,
-        mmlValidation: null,
         core3Report: core3,
         harmonyReport: harmony,
         lineageReport: lineage,
@@ -99,7 +101,8 @@ export function createFinalService({ canonical, projects, review, store }) {
         originalAudioRequired: recorded.original_audio_required?.value !== false,
         playerReadback: recorded.player_readback?.value ?? 'NOT_RUN',
         inGameAcceptance: 'PENDING',
-      });
+      };
+      const readiness = engines.final.evaluateProjectReadiness({ ...readinessInputs, mmlValidation: null });
 
       const blocked = readiness.preGameBlocking.filter(name => !PRE_EMISSION_EXEMPT_GATES.includes(name));
       const identity = {
@@ -131,6 +134,26 @@ export function createFinalService({ canonical, projects, review, store }) {
       const emitted = engines.final.emitFinalMml(project, { readiness, technicalTimingRepair });
       const emitStatus = emitted.status;
       const passed = emitStatus === engines.final.EMIT_STATUS.PASS;
+
+      // The technical gate asks whether the emitted MML is valid under the
+      // authoritative Final parser. Before emission there was no MML, so
+      // readiness could only report NOT_RUN. Now there is one, so readiness is
+      // asked again with it — rather than the emitter's own PASS being copied
+      // across as if it were the readiness answer. The meter map comes from the
+      // candidate's own meter events, never from a caller.
+      const meterText = (project.meterEvents ?? [])
+        .map(event => `${event.beat} ${event.numerator}/${event.denominator}`)
+        .join('\n');
+      const mmlValidation = passed && meterText
+        ? engines.mml.validateMML(emitted.combinedMml, { meterText })
+        : null;
+      // Deliberately the post-emission readiness, including when the emitter
+      // passed and the parser then disagreed: two modules contradicting each
+      // other is reported as the unsatisfied gate it is, not resolved in favour
+      // of the more convenient one.
+      const finalReadiness = passed
+        ? engines.final.evaluateProjectReadiness({ ...readinessInputs, mmlValidation })
+        : readiness;
       // The emitter reports no repair block at all when the repair was not
       // requested. The opt-in state is exactly what a caller needs to see, so
       // it is always reported rather than left as a null a reader has to guess
@@ -141,7 +164,7 @@ export function createFinalService({ canonical, projects, review, store }) {
         status: null,
         reason: technicalTimingRepair ? 'the emitter reported no repair block' : 'Technical Timing Repair was not requested',
       };
-      const emitGates = gatesFrom(readiness, { emit: emitStatus, emitPassStatus: engines.final.EMIT_STATUS.PASS });
+      const emitGates = gatesFrom(finalReadiness);
 
       const artifact = {
         schema: FINAL_ARTIFACT_SCHEMA,
@@ -158,9 +181,12 @@ export function createFinalService({ canonical, projects, review, store }) {
         diagnostics: emitted.diagnostics,
         warnings: emitted.diagnostics.filter(item => item.severity === engines.final.DIAGNOSTIC_SEVERITY.WARNING),
         readiness_summary: {
-          candidate_ready: readiness.candidateReady,
-          pre_game_blocking: [...readiness.preGameBlocking],
-          gates: Object.fromEntries(Object.entries(readiness.gates).map(([name, gate]) => [name, gate.status])),
+          candidate_ready: finalReadiness.candidateReady,
+          pre_game_blocking: [...finalReadiness.preGameBlocking],
+          gates: Object.fromEntries(Object.entries(finalReadiness.gates).map(([name, gate]) => [name, gate.status])),
+          technical_validation: mmlValidation === null
+            ? { run: false, reason: passed ? 'the candidate declares no meter events, so the emitted MML could not be re-validated' : 'nothing was emitted' }
+            : { run: true, ok: mmlValidation.ok, error_count: mmlValidation.errors.length },
         },
         gates: emitGates,
         remaining_pending_gates: Object.entries(emitGates)
@@ -186,8 +212,8 @@ export function createFinalService({ canonical, projects, review, store }) {
         character_counts: emitted.characterCounts,
         diagnostics: emitted.diagnostics,
         gates: artifact.gates,
-        blockers: [],
-        readiness,
+        blockers: [...finalReadiness.preGameBlocking].filter(name => !PRE_EMISSION_EXEMPT_GATES.includes(name)),
+        readiness: finalReadiness,
         notice: artifact.acceptance_notice,
       };
     },

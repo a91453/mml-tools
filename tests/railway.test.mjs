@@ -243,3 +243,57 @@ test('production configuration fails closed without credentials or HTTPS', () =>
   assert.throws(() => createApplication({ ...options, origin: 'http://example.com' }), /HTTPS/);
   assert.throws(() => createApplication({ ...options, database: undefined }), /Persistent/);
 });
+
+// ─── the Studio Agent Interface on the deployed service ─────────────────────
+
+test('the Application HTTP API sits behind the same OAuth check as /mcp', async t => {
+  const send = setup(t);
+  // Unauthenticated, every /api/v1 route is refused before it reaches the
+  // Application Service, and nothing about the owner's records is disclosed.
+  for (const [path, method] of [['/api/v1/capabilities', 'GET'], ['/api/v1/projects', 'GET'], ['/api/v1/projects', 'POST'], ['/api/v1/artifacts/art_' + '0'.repeat(64), 'GET']]) {
+    const response = await send(req(path, method, method === 'POST' ? '{}' : undefined, { 'content-type': 'application/json' }));
+    assert.equal(response.status, 401, `${method} ${path} must require authentication`);
+    assert.equal((await response.json()).error.code, 'NOT_AUTHENTICATED');
+  }
+
+  const grant = await tokens(send);
+  const authorized = await send(req('/api/v1/capabilities', 'GET', undefined, { authorization: 'Bearer ' + grant.access_token }));
+  assert.equal(authorized.status, 200);
+  const capabilities = await authorized.json();
+  assert.equal(capabilities.interface, 'studio-application/v1');
+  assert.deepEqual(capabilities.transports, ['http', 'mcp']);
+  assert.equal(capabilities.cost.additional_recurring_cost, 'NONE');
+  assert.equal(capabilities.cost.llm_api_dependency, 'NONE');
+});
+
+test('an authorized session sees the studio control surface and reports one service version', async t => {
+  const send = setup(t);
+  const grant = await tokens(send);
+  const authorization = { authorization: 'Bearer ' + grant.access_token };
+
+  const list = await (await send(req('/mcp', 'POST', JSON.stringify({ jsonrpc: '2.0', id: 1, method: 'tools/list' }), { ...rpcHeaders, ...authorization }))).json();
+  const names = list.result.tools.map(tool => tool.name);
+  assert.ok(names.includes('mml_validate'), 'the original tools must survive');
+  assert.ok(names.includes('studio_finalize'), 'the studio surface must be advertised to an authorized session');
+
+  // The same deployed service answers on both transports, so the version it
+  // reports must not depend on which door the caller used.
+  const overMcp = await (await send(req('/mcp', 'POST', JSON.stringify({ jsonrpc: '2.0', id: 2, method: 'tools/call', params: { name: 'mml_validate', arguments: { mml: 'MML@t120o4c1,,,,,;', meter_text: '0 4/4' } } }), { ...rpcHeaders, ...authorization }))).json();
+  const overHttp = await (await send(req('/api/v1/technical/validate', 'POST', JSON.stringify({ mml: 'MML@t120o4c1,,,,,;', meter_text: '0 4/4' }), { 'content-type': 'application/json', ...authorization }))).json();
+  assert.equal(overHttp.service_version, overMcp.result.structuredContent.service_version);
+  assert.deepEqual(overHttp, overMcp.result.structuredContent);
+});
+
+test('a project created over HTTP is the same project the MCP tools see', async t => {
+  const send = setup(t);
+  const grant = await tokens(send);
+  const authorization = { authorization: 'Bearer ' + grant.access_token };
+
+  const created = await (await send(req('/api/v1/projects', 'POST', JSON.stringify({ title: 'Shared' }), { 'content-type': 'application/json', ...authorization }))).json();
+  const projectId = created.project.project_id;
+
+  const overMcp = await (await send(req('/mcp', 'POST', JSON.stringify({ jsonrpc: '2.0', id: 1, method: 'tools/call', params: { name: 'studio_project_get', arguments: { project_id: projectId } } }), { ...rpcHeaders, ...authorization }))).json();
+  assert.equal(overMcp.result.isError, false);
+  assert.equal(overMcp.result.structuredContent.project.project_id, projectId);
+  assert.equal(overMcp.result.structuredContent.project.title, 'Shared');
+});

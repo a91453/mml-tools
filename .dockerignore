@@ -1,13 +1,36 @@
+# Allowlist. Everything is excluded, then exactly what the service needs is
+# re-included, so a new file in the repository never silently enters the image.
 *
+
 !package.json
+
+# The legacy core the original technical tools run on.
 !dist/
 dist/*
 !dist/core.js
+
+# Transports.
 !server/
 server/*
 !server/mcp.mjs
+!server/mcp-studio.mjs
+!server/api.mjs
 !railway/
 railway/*
 !railway/Dockerfile
 !railway/auth.mjs
 !railway/server.mjs
+
+# The Canonical-aware Studio backend the Application Service orchestrates.
+# Tests, fixtures, the browser app and the audio worker stay out: the service
+# imports none of them.
+!studio/
+studio/*
+!studio/backend/
+
+# The Published Canonical bootstrap reads the Manifest and the pinned rules
+# snapshot out of Git history, so the repository metadata has to be present for
+# any Canonical-aware operation to run. Without it the service still starts and
+# still serves capability discovery -- it reports CANONICAL_NOT_LOADED, which is
+# the honest answer -- but nothing Canonical-aware will work.
+!.git/

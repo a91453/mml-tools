@@ -35,7 +35,15 @@ export function createIntakeService({ canonical, projects, assets, store }) {
     }
     const options = {
       sourceId: sourceIdFor(wiring.adapter, asset.sha256),
-      label: asset.filename ?? `${asset.kind} asset`,
+      // Deliberately derived from the kind and the digest rather than from the
+      // upload filename. The Canonical source label reaches
+      // `baselineIdentityOf`, so a filename here would make the baseline
+      // identity a function of what the file happened to be called: the same
+      // bytes re-uploaded under a different name would mint a different
+      // baseline and silently invalidate every decision accepted against the
+      // old one. The filename a human reads stays on the asset record, which
+      // `baseline.formats` links to by asset_id.
+      label: `${asset.kind} sha256:${asset.sha256.slice(0, 16)}`,
       sha256: asset.sha256,
     };
 

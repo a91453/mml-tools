@@ -3,12 +3,39 @@ import { Readable } from 'node:stream';
 import { pathToFileURL } from 'node:url';
 import { createAuth } from './auth.mjs';
 import { handleMcp, SERVICE_VERSION } from '../server/mcp.mjs';
+import { createApiRouter } from '../server/api.mjs';
+import { createStudioApplication } from '../studio/backend/application/index.mjs';
+
+// The owner subject this deployment isolates records by.
+//
+// The current authorization model has exactly one principal: whoever holds the
+// service password. Every grant it issues therefore represents the same person,
+// so the subject is constant — deriving it from a grant or client id instead
+// would silently orphan a project the moment the owner reconnected ChatGPT or
+// added a second client.
+//
+// The Application Service takes an arbitrary subject string and isolates
+// records by it, so a future deployment with real multi-user identity changes
+// this line and nothing below it.
+export const SERVICE_OWNER = 'owner:service';
 
 export function createApplication(options) {
   const auth = createAuth(options);
+  // Constructing the service performs no Canonical load and touches no engine:
+  // a deployment missing the published Git history still starts, serves
+  // /healthz and answers capability discovery saying Canonical is unavailable,
+  // instead of failing to boot with nothing able to explain why.
+  const studio = createStudioApplication({
+    dataDirectory: options.studioDataDirectory ?? null,
+    durability: options.studioDurability ?? 'unknown',
+    serviceVersion: SERVICE_VERSION,
+    transports: ['http', 'mcp'],
+  });
+  const api = createApiRouter({ application: studio, ownerOf: () => SERVICE_OWNER });
   return {
     close: auth.close,
     origin: auth.issuer,
+    studio,
     async fetch(request) {
       const url = new URL(request.url);
       if (url.origin !== auth.issuer) return new Response('Unexpected server origin', { status: 400 });
@@ -19,8 +46,14 @@ export function createApplication(options) {
         // Only locally issued, audience-bound OAuth access tokens authorize this
         // standalone service. Sites identity headers have no authority here.
         if (!auth.authenticated(request)) return auth.unauthorized();
-        return handleMcp(request);
+        return handleMcp(request, { application: studio, owner: SERVICE_OWNER });
       }
+      // The Application HTTP surface, behind the same OAuth check. The router
+      // is told whether the request is authenticated rather than deciding it:
+      // authorization stays in one place, and an unauthenticated request is
+      // refused before any owner subject is derived.
+      const apiResponse = await api(request, { authenticated: auth.authenticated(request) });
+      if (apiResponse) return apiResponse;
       if (url.pathname === '/' && request.method === 'GET') return Response.json({ service: 'MML Tools', authentication: 'OAuth with PKCE', status: 'Sign in from your ChatGPT plugin connection to use this service.' }, { headers: { 'cache-control': 'no-store' } });
       return new Response('Not found', { status: 404 });
     },
@@ -45,7 +78,16 @@ if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) 
   process.umask(0o077);
   const port = Number(process.env.PORT ?? '3000');
   if (!Number.isSafeInteger(port) || port < 1 || port > 65535) throw Error('Invalid PORT');
-  const application = createApplication({ origin: process.env.MML_PUBLIC_ORIGIN ?? '', ownerPassword: process.env.MML_OWNER_PASSWORD, database: process.env.MML_AUTH_DB });
+  const application = createApplication({
+    origin: process.env.MML_PUBLIC_ORIGIN ?? '',
+    ownerPassword: process.env.MML_OWNER_PASSWORD,
+    database: process.env.MML_AUTH_DB,
+    // Studio records live beside the OAuth database on the volume this service
+    // already has. Unset, the store stays in memory and says so; durability is
+    // only claimed when the operator declares the mount is persistent.
+    studioDataDirectory: process.env.MML_STUDIO_DATA_DIR ?? null,
+    studioDurability: process.env.MML_STUDIO_DURABILITY ?? 'unknown',
+  });
   const server = createHttpServer(application);
   server.listen(port, '0.0.0.0', () => console.log('MML OAuth service is ready'));
   const shutdown = () => server.close(() => { application.close(); process.exit(0); });
