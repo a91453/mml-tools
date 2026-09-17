@@ -46,7 +46,7 @@ A new rules release requires an explicit, reviewed update to the release
 metadata and snapshot reference. Nothing in this register may be read as
 authorising one.
 
-## Gap register G1–G15
+## Gap register G1–G16
 
 Gap identifiers originate in the post-v1 mutation audit merged as PR #10
 (`test(studio): cover the Canonical guards that no regression asserted`,
@@ -219,11 +219,76 @@ emitter can adopt without this contract changing meaning.
 reads `enforceMicroGaps` rather than re-deriving a threshold, refuses to emit on
 a rejected or blocked interval, and refuses rather than damaging a preserved
 source-supported one — no Final token is shorter than the 1/64 grid, so such an
-interval cannot be written at all. It performs **no** technical timing repair,
-so `rejectedIntervalKeys` remains an unconsumed worklist and that part of the
-paragraph above still stands. See [FINAL_MML_EMITTER.md](FINAL_MML_EMITTER.md).
-It resolves no `PENDING`: P1, P2, P3, P4, P5, P6, P10 and P16 are all still
-open, and the emitter is deliberately narrower than each of them.
+interval cannot be written at all. See
+[FINAL_MML_EMITTER.md](FINAL_MML_EMITTER.md). It resolves no `PENDING`: P1, P2,
+P3, P4, P5, P6, P10 and P16 are all still open, and the emitter is deliberately
+narrower than each of them.
+
+**Second follow-up, as built.** `rejectedIntervalKeys` is no longer an unconsumed
+worklist. `studio/backend/final/technical-timing-repair.mjs` consumes it — see
+[G16](#g16--technical-timing-repair--resolved) — so the sentence above about the
+emitter performing no technical timing repair now holds only with the opt-in
+switched off, which remains the default.
+
+### G16 — Technical Timing Repair · `RESOLVED` (pending review)
+
+**Origin.** G10 delivered classification and enforcement and stopped there,
+recording that `rejectedIntervalKeys` was "the worklist the emitter can adopt
+without this contract changing meaning". The Final MML emitter then became G10's
+second consumer and refused rather than adopting it, so the repository carried a
+published rule (`MASTER_RULES §7` permits normalizing a meaning-free technical
+micro-gap) whose permitted half had no executable consumer anywhere — the same
+shape as the original G10 finding about the contract flags.
+
+**Why it could not be a quantizer.** Only an interval the source-aware analyzer
+has already classified as `TECHNICAL_RESIDUE`, and micro-gap enforcement has
+already rejected, may be normalized. A pass that re-derived a threshold, snapped
+onsets, or rounded durations would violate Canonical by damaging source-supported
+material — which is exactly what G10 exists to prevent.
+
+**How it was closed.** One layer,
+`studio/backend/final/technical-timing-repair.mjs`, with no classification
+authority of its own. Its entire worklist is `rejectedIntervalKeys` from an
+enforcement report it verifies against a freshly computed one; it imports the
+analyzer's `SAFE_GRID` rather than restating 1/64, and refuses to run at all if
+`enforceMicroGaps` reports the executable contract non-conformant.
+
+Two operations, both absorbing meaning-free silence leftward — the direction
+Canonical fixes by requiring note-on identity preserved (`MOBILE_SYNTAX §8`,
+`§11 step 1`; `MASTER_RULES §6`; `ACCEPTANCE_CRITERIA` Gate 1):
+`close-technical-gap-into-preceding-span` and
+`coalesce-technical-rest-with-preceding-rest`. Everything else is a structured
+refusal. Exact rational throughout — no epsilon, float, rounding, snapping or
+quantization. The input project is never mutated; the repaired candidate is a
+distinct project carrying per-event before/after provenance and a reversal
+record, with the Source-Faithful Baseline copied through untouched so the
+transformation appears in the baseline diff.
+
+The Final emitter consumes it behind an opt-in `technicalTimingRepair` option.
+Off — the default — the emitter is byte-for-byte what it was. On, repair never
+answers a gate: it only changes which candidate the gates grade, and only when
+the repaired candidate is re-graded `PASS` by the same enforcement pass that
+rejected the original. Preserved intervals, unproven material, blocking
+readiness and the character budget all still refuse exactly as before.
+
+Regression coverage is `studio/tests/technical-timing-repair.test.mjs` and
+`studio/tests/technical-timing-repair-emitter.test.mjs`. Fourteen deliberate
+mutations were applied and reverted one at a time and all fourteen were caught;
+one — replacing exact-rational timing comparison with a float epsilon —
+initially survived and a regression was written for it. Details and the
+mutation-to-regression table are in
+[TECHNICAL_TIMING_REPAIR.md](TECHNICAL_TIMING_REPAIR.md).
+
+**Canonical impact.** `NONE` — the rule was already published and this work added
+none. Only the permitted half of the enforcement range was unimplemented.
+
+**Still open, by design.** A sub-grid *note* duration, and a sub-grid rest event
+whose predecessor is a note, have no unique semantically neutral repair on the
+evidence the Canonical IR carries. Both fail closed. That is recorded as an
+unresolved implementation question rather than a Canonical ambiguity: failing
+closed is already a Canonical-valid answer, so no published rule is missing, and
+supporting either shape would need an explicit project decision. It resolves no
+`PENDING` item.
 
 ### G11-D-R — G11-D residual integrity hardening · `RESOLVED` (pending review)
 
@@ -566,6 +631,8 @@ content-checked and unaffected.
   criterion.
 - **G10 depended on nothing else.** It was self-contained: a published rule with
   a declared but inert flag, needing design then implementation. Now `RESOLVED`.
+- **G16 depends on G10 and on PR F.** It consumes G10's enforcement result and
+  integrates with the emitter delivered by F; it can add neither authority.
 - **G9 depends on a project decision only.** It blocks no other item and is
   blocked by no other item.
 - **M4 is independent and owner-side.** It gates nothing in this register
@@ -582,7 +649,8 @@ Sequenced so that no PR mixes a decision-bearing change with a mechanical one.
 | **C — G10 enforcement** ✅ | Source-aware micro-gap enforcement with mutation-verified regressions | Delivered across C2A / C2B / C2C |
 | **D — G12 / G13** | Artifact strategy and lockfile posture together | G12 + G13 decisions, after M3b |
 | **E — M5 groundwork** | Song History structure documentation only, no schema | D1–D8 decisions |
-| **F — Final MML emitter** ✅ | Canonical-aware Final MML emitter: exact-rational duration decomposition, attack/tie semantics, tempo placement, pitch/octave and character planning, G10 consumption, round-trip Final gate | C. Foundation delivered; no technical timing repair, no `Nxx` opt-in output |
+| **F — Final MML emitter** ✅ | Canonical-aware Final MML emitter: exact-rational duration decomposition, attack/tie semantics, tempo placement, pitch/octave and character planning, G10 consumption, round-trip Final gate | C. Foundation delivered; no `Nxx` opt-in output |
+| **G — Technical Timing Repair** ✅ | Canonical-aware Technical Timing Repair (G16): consumes `rejectedIntervalKeys`, two exact leftward-absorption operations, structured refusal for everything else, opt-in emitter integration | C and F |
 
 G8 and G9 receive no PR row: neither is unblocked, and G9 is `ROADMAP_ONLY`.
 M4 receives no PR row: it is applied in repository settings by the owner.

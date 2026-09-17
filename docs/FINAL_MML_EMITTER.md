@@ -298,8 +298,8 @@ search-policy limit; raising only the bound makes the same candidate emit.
 | no tempo at beat 0, or two tempi on one beat | `FAIL` — nothing is invented or deduplicated |
 | a tempo position falls past a non-empty role's end | `FAIL` — the role is **not** padded with filler rests (P2 / P14 stay open) |
 | any role exceeds the 2,400-character budget | `FAIL` with role, count, overage and attack count — no note, attack or rest is removed |
-| G10 reports confirmed technical residue | `FAIL` — this PR attempts no technical timing repair |
-| G10 reports unproven sub-grid material | `PENDING` — never acted on |
+| G10 reports confirmed technical residue | `FAIL` — unless `technicalTimingRepair` is opted into *and* the repair layer normalizes it exactly (§5a) |
+| G10 reports unproven sub-grid material | `PENDING` — never acted on, with or without the repair opt-in |
 | G10 preserves source-supported sub-grid material | `FAIL` — provably unrepresentable (every admitted token is at least one safe-grid unit), and refusing is the only answer that does not damage it |
 | a supplied readiness report blocks on any gate but `technical` | `PENDING` |
 | a pending arbitration decision exists | `PENDING` |
@@ -317,11 +317,38 @@ publishes, without re-deriving any threshold:
   safe-grid unit — so the emitter fails closed with
   `SOURCE_SUPPORTED_INTERVAL_NOT_REPRESENTABLE` rather than damaging it.
 - `rejectedIntervalKeys` — confirmed technical residue. `enforceMicroGaps`
-  already returns `FAIL` for these, and the emitter refuses to emit. This PR
-  deliberately does **not** attempt technical timing repair: a correct refusal is
-  better than a guessed normalization.
+  returns `FAIL` for these and the emitter refuses to emit, unless Technical
+  Timing Repair is opted into and normalizes them exactly (§5a). A correct
+  refusal is still better than a guessed normalization, and the repair layer
+  refuses rather than guessing wherever Canonical does not determine the
+  transformation.
 - `blockedIntervalKeys` — unproven. The emitter returns `PENDING` and emits
-  nothing.
+  nothing. The repair layer cannot reach these at all.
+
+## 5a. Technical Timing Repair consumption
+
+`emitFinalMml(project, { technicalTimingRepair: true })` is opt-in and defaults
+to off, so the default path is byte-for-byte what §5 describes. Opt-in because
+the repair transforms the musical candidate, and that must be a caller's explicit
+decision rather than a side effect of asking for MML.
+
+When it is on and G10 rejected something, `final/technical-timing-repair.mjs`
+runs between the enforcement pass and the gates. The repaired candidate is used
+only when the repair returns `PASS` **and** the same `enforceMicroGaps` re-grades
+the repaired candidate clean **and** nothing preserved remains. Otherwise nothing
+changes: the original verdict stands and the refusal is recorded as
+`TECHNICAL_TIMING_REPAIR_UNAVAILABLE`.
+
+Repair never answers a gate — it only changes which candidate the gates are asked
+about. A preserved interval still fails closed, unproven material still blocks, a
+blocking readiness report still returns `PENDING`, and the character budget still
+refuses without a note being dropped. The round-trip gate compares against the
+**repaired** semantics, because that is what the emitted string means; the
+pre-repair timing stays in `result.technicalTimingRepair` and
+`result.microGap.gradedProjectId` names which project the key lists describe.
+
+Full design, refusal taxonomy and mutation table:
+[TECHNICAL_TIMING_REPAIR.md](TECHNICAL_TIMING_REPAIR.md).
 
 ## 6. Determinism and idempotence
 
