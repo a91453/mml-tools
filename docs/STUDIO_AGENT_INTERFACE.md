@@ -375,9 +375,12 @@ upload assets (HTTP)  →  studio_sources_analyze   →  Source-Faithful Baselin
 ```
 
 A suggestion is not an acceptance. This layer will not convert one into the
-other, will not resolve a `PENDING` on a caller's behalf, will not accept a Lead
-demotion because one was suggested, and will not invent the evidence a demotion
-requires.
+other, will not resolve a `PENDING` on a caller's behalf, and will not invent
+evidence for a Lead move. Any move out of Melody, into Melody, or duplicate into
+Melody is re-graded through the shared Lead-role evidence boundary: exact source
+identity, section role, usable score/audio role evidence, continuity after the
+move, Core3 integrity, and an explicit positive reason for the destination role.
+Conflicting source-role evidence remains `PENDING`.
 
 The acceptance bindings — baseline digest, source identity digest, lane
 decomposition digest, Canonical rules snapshot, reviewed revision — are computed
@@ -388,6 +391,24 @@ against different inputs.
 
 Intake never removes a note, quantizes source timing, performs Mobile
 adaptation, assigns a role or emits Final MML.
+
+### Lead promotion readiness
+
+`studio_decisions_apply` may apply a Lead promotion only when the accepted
+decision already carries a complete `leadEvidence` chain. That application PASS
+is not itself a readiness PASS. `studio_candidate_review` and
+`studio_finalize` rebuild promotion reports from the stored application and
+run the shared promotion grader again. Role moves into Melody are keyed by the
+candidate event id; a justified duplicate into Melody is keyed by its derived
+Melody event id while retaining the source/origin event id for evidence audit.
+This is what lets the Source-Faithful baseline diff enumerate
+`other-track-to-T1` promotions without allowing a derived id to become source
+evidence.
+
+The Final readiness gate treats Lead demotion and Lead promotion as independent
+requirements. A promotion can therefore never satisfy a missing demotion report
+or vice versa, and a candidate with an ungraded promotion is blocked before the
+Final emitter is called.
 
 ## 10. Finalize
 
