@@ -1,0 +1,143 @@
+import { cp, mkdir, readFile, readdir, rm, writeFile } from 'node:fs/promises';
+import { dirname, extname, relative, resolve, sep } from 'node:path';
+import { fileURLToPath } from 'node:url';
+import { loadPublishedCanonical } from '../studio/backend/bootstrap/index.mjs';
+
+const root = resolve(fileURLToPath(new URL('../', import.meta.url)));
+const output = resolve(root, process.argv[2] ?? '.oss-export');
+const publicTemplate = resolve(root, 'oss/public');
+
+if (output === root || !output.startsWith(`${root}${sep}`)) {
+  throw new Error('OSS export target must be a directory inside the repository checkout.');
+}
+
+const blockedPathFragments = [
+  '/ops/', '/railway/', '/.openai/', '/docs/history/', '/dist/workbench-source.zip',
+  '/node_modules/', '/studio/web-build/', '/studio/browser-results/', '/.git/',
+];
+const blockedExtensions = new Set(['.m4a', '.mp3', '.flac', '.wav', '.mid', '.midi', '.musicxml', '.mxl', '.pdf', '.zip', '.sqlite', '.db']);
+
+function normalized(path) {
+  return `/${relative(root, path).split(sep).join('/')}`;
+}
+function allowedSource(path) {
+  const rel = normalized(path);
+  if (blockedPathFragments.some(fragment => rel.includes(fragment))) return false;
+  if (blockedExtensions.has(extname(path).toLowerCase())) return false;
+  return true;
+}
+
+async function copyFile(sourceRelative, targetRelative = sourceRelative) {
+  const source = resolve(root, sourceRelative);
+  if (!allowedSource(source)) throw new Error(`Refusing blocked source path: ${sourceRelative}`);
+  const target = resolve(output, targetRelative);
+  await mkdir(dirname(target), { recursive: true });
+  await cp(source, target);
+}
+
+async function copyTree(sourceRelative, targetRelative = sourceRelative) {
+  const source = resolve(root, sourceRelative);
+  const target = resolve(output, targetRelative);
+  await cp(source, target, {
+    recursive: true,
+    filter: path => allowedSource(path),
+  });
+}
+
+async function overlayTree(sourceDir, targetDir) {
+  for (const entry of await readdir(sourceDir, { withFileTypes: true })) {
+    const source = resolve(sourceDir, entry.name);
+    const target = resolve(targetDir, entry.name);
+    if (entry.isDirectory()) {
+      await mkdir(target, { recursive: true });
+      await overlayTree(source, target);
+    } else {
+      await mkdir(dirname(target), { recursive: true });
+      await cp(source, target);
+    }
+  }
+}
+
+await rm(output, { recursive: true, force: true });
+await mkdir(output, { recursive: true });
+
+// Public distribution templates are maintained separately from the private
+// repository root so deployment notes and private-only metadata cannot leak by
+// accident.
+await overlayTree(publicTemplate, output);
+
+// Explicit allowlist: production/source code only. Private deployment and
+// operational directories are intentionally absent.
+await copyFile('dist/core.js');
+await copyFile('dist/player.js');
+await copyTree('server');
+await copyTree('studio');
+for (const path of ['tests/core.test.mjs', 'tests/mcp.test.mjs', 'tests/player.test.mjs']) await copyFile(path);
+for (const path of [
+  'scripts/build-studio-web.mjs',
+  'scripts/serve-studio-web.mjs',
+  'scripts/studio-artifact-identity.mjs',
+  'scripts/verify-studio-artifact.mjs',
+  'scripts/audit-oss-export.mjs',
+]) await copyFile(path);
+
+// Resolve the Published Canonical from the private source checkout once, then
+// vendor the resulting immutable package. The public distribution therefore
+// does not require access to the private repository's Git history.
+const canonical = loadPublishedCanonical({ root, supportedCanonicalVersion: '2026-09-13-v1' });
+const vendored = {
+  ...canonical,
+  provenance: {
+    ...canonical.provenance,
+    distribution_mode: 'vendored-static',
+    source_repository: 'a91453/mml-tools',
+  },
+};
+await mkdir(resolve(output, 'canonical'), { recursive: true });
+await writeFile(resolve(output, 'canonical/published.json'), `${JSON.stringify(vendored, null, 2)}\n`);
+
+// Keep the human-readable rule sources alongside the machine-readable package.
+for (const document of canonical.documents) {
+  const name = document.path.replace(/^docs\//, '');
+  const target = resolve(output, 'docs/canonical', name);
+  await mkdir(dirname(target), { recursive: true });
+  await writeFile(target, document.content);
+}
+
+const publicBootstrap = `import { readFileSync } from 'node:fs';\n\nexport const STATIC_VENDORED_CANONICAL = true;\nconst loaded = JSON.parse(readFileSync(new URL('../../../canonical/published.json', import.meta.url), 'utf8'));\nfunction freeze(value) { for (const child of Object.values(value)) if (child && typeof child === 'object') freeze(child); return Object.freeze(value); }\nfreeze(loaded);\nexport const BOOTSTRAP_CONTRACT = freeze({ repository: 'a91453/mml-tools-oss', entryPoint: 'canonical/published.json', publishedRef: null, role: 'VENDORED_CONSUMER', localSkillAuthority: 'WORKFLOW_ONLY', executableContractDefinesRules: false, failureStatus: 'CANONICAL_NOT_LOADED', legacyFallbackAllowed: false });\nexport class CanonicalNotLoadedError extends Error { constructor(reason, cause) { super('CANONICAL_NOT_LOADED: ' + reason, { cause }); this.name = 'CanonicalNotLoadedError'; this.code = 'CANONICAL_NOT_LOADED'; } }\nexport function loadPublishedCanonical({ supportedCanonicalVersion = null } = {}) { if (supportedCanonicalVersion !== null && supportedCanonicalVersion !== loaded.metadata.canonical_version) throw new CanonicalNotLoadedError('Unsupported vendored Canonical version'); return loaded; }\nexport function parseCanonicalManifest() { throw new CanonicalNotLoadedError('Manifest parsing is a source-repository concern; this distribution uses canonical/published.json'); }\nexport function gitEnvironment(environment = process.env) { return { ...environment, GIT_OPTIONAL_LOCKS: '0' }; }\nexport function gitSubprocess() { throw new CanonicalNotLoadedError('Git-backed Canonical discovery is unavailable in the public vendored distribution'); }\n`;
+await writeFile(resolve(output, 'studio/backend/bootstrap/index.mjs'), publicBootstrap);
+
+// Public tests intentionally omit source-repository Git-history/bootstrap tests;
+// all parser, canonical IR, arrangement, Final, web and browser behavior remains
+// covered by the exported suite.
+const publicRunner = `import { readdirSync } from 'node:fs';\nimport { spawnSync } from 'node:child_process';\nconst excluded = new Set(['bootstrap-concurrency.test.mjs','bootstrap.test.mjs','canonical-manifest.test.mjs','canonical-merge.test.mjs','web-build-reproducibility.test.mjs']);\nconst legacy = readdirSync('tests').filter(x => x.endsWith('.test.mjs')).map(x => 'tests/' + x);\nconst studio = readdirSync('studio/tests').filter(x => x.endsWith('.test.mjs') && !excluded.has(x)).map(x => 'studio/tests/' + x);\nconst onlyStudio = process.argv.includes('--studio');\nconst files = onlyStudio ? studio : [...legacy, ...studio];\nconst result = spawnSync(process.execPath, ['--test', ...files], { stdio: 'inherit' });\nprocess.exit(result.status ?? 1);\n`;
+await writeFile(resolve(output, 'scripts/run-public-tests.mjs'), publicRunner);
+
+const metadata = {
+  format_version: 1,
+  generated_at: new Date().toISOString(),
+  source_repository: 'a91453/mml-tools',
+  source_head: canonical.provenance.repository_head,
+  published_main_head: canonical.provenance.published_main_head,
+  manifest_commit: canonical.provenance.manifest_commit,
+  canonical_version: canonical.metadata.canonical_version,
+  manifest_version: canonical.metadata.manifest_version,
+  rules_snapshot_sha: canonical.metadata.rules_snapshot_sha,
+  distribution_mode: 'clean-public-export',
+  private_git_history_included: false,
+};
+await writeFile(resolve(output, 'PUBLIC_EXPORT.json'), `${JSON.stringify(metadata, null, 2)}\n`);
+
+// Fill public README provenance placeholders after the Canonical identity is
+// known. Refuse silently stale placeholders by checking the final result.
+const readmePath = resolve(output, 'README.md');
+let readme = await readFile(readmePath, 'utf8');
+readme = readme
+  .replaceAll('{{CANONICAL_VERSION}}', metadata.canonical_version)
+  .replaceAll('{{RULES_SNAPSHOT_SHA}}', metadata.rules_snapshot_sha)
+  .replaceAll('{{SOURCE_HEAD}}', metadata.source_head)
+  .replace('See `PUBLIC_EXPORT.json` and `docs/UPSTREAM_CANONICAL_PROVENANCE.json`.', 'See `PUBLIC_EXPORT.json`, `canonical/published.json`, and `docs/canonical/`.');
+if (/\{\{[A-Z0-9_]+\}\}/.test(readme)) throw new Error('Unresolved public README placeholder');
+await writeFile(readmePath, readme);
+
+console.log(JSON.stringify({ output: relative(root, output), ...metadata }, null, 2));
