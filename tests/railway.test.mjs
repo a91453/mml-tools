@@ -338,8 +338,29 @@ test('an unloadable Canonical is visible publicly and names the remedy', async t
   assert.equal(body.canonical.legacy_fallback_allowed, false);
   assert.equal(body.canonical.rules_snapshot_sha, null, 'a failed load must not report a snapshot');
   assert.match(body.canonical_notice, /NOT loaded/);
-  assert.match(body.canonical_notice, /refs\/remotes\/origin\/main/);
-  assert.match(body.canonical_notice, /pinned rules snapshot commit/);
+
+  // The remedy has to match the architecture that is actually deployed. This
+  // notice used to tell an operator the build context had to arrive carrying
+  // `.git`, `refs/remotes/origin/main` and the pinned snapshot commit — advice
+  // that can never be acted on, because Railway's source snapshot does not carry
+  // Git metadata and that is precisely the defect the image build now fixes for
+  // itself. Sending an operator after an impossible precondition is worse than
+  // saying nothing.
+  for (const stale of [/refs\/remotes\/origin\/main/, /pinned rules snapshot commit/, /build context/, /Git metadata/]) {
+    assert.doesNotMatch(body.canonical_notice, stale, 'the notice still names the superseded build-context remedy');
+  }
+  // What it must say instead: which step failed, what to check, and that there
+  // is no fallback.
+  assert.match(body.canonical_notice, /materialization and build gate/);
+  assert.match(body.canonical_notice, /\[canonical-bootstrap\]/, 'the notice must point at the build log lines that name the failure');
+  assert.match(body.canonical_notice, /published source/);
+  assert.match(body.canonical_notice, /no working-tree, cached or legacy fallback/);
+  assert.match(body.canonical_notice, /railway\/README\.md/);
+
+  // Public and unauthenticated: it may name what to check, never a credential,
+  // a value, or an internal path.
+  assert.doesNotMatch(body.canonical_notice, /MML_CANONICAL_SOURCE_TOKEN|ghp_|github_pat_|token=/i, 'the public notice must not name or carry a credential');
+  assert.doesNotMatch(body.canonical_notice, /\/app\/|\/data\//, 'the public notice must not disclose container paths');
 
   // The legacy technical tools are unaffected by a Canonical failure.
   const grant = await tokens(send);
@@ -359,26 +380,20 @@ test('the healthcheck is not coupled to the Canonical bootstrap', async t => {
   assert.ok(!Object.hasOwn(body, 'canonical'), '/healthz must not gate on, or report, the Canonical load');
 });
 
-test('the deployment image contract keeps what the bootstrap needs', async () => {
-  // The bootstrap reads the Manifest from refs/remotes/origin/main and the rule
-  // documents from the pinned snapshot, both out of Git history. If the image
-  // stops shipping git, or the allowlist stops admitting .git or the backend,
-  // every Canonical-aware operation silently degrades in production while every
-  // test here still passes. These are the four things that must not drift.
+test('the deployment image still runs the Canonical build gate', async () => {
+  // The image contract moved to tests/railway-canonical-image.test.mjs, which
+  // reproduces the real production condition — the allowlisted source tree with
+  // no `.git` — rather than asserting on the descriptor text alone, and covers
+  // what this test used to: git installed, the allowlist entries, the pinned
+  // snapshot check. The one claim worth repeating beside the OAuth service is
+  // that the build still refuses to ship an image that cannot load the
+  // Published Canonical. It shipped one once, operationally green, with every
+  // Canonical-aware operation refusing.
   const { readFile } = await import('node:fs/promises');
   const root = new URL('../', import.meta.url);
   const dockerfile = await readFile(new URL('railway/Dockerfile', root), 'utf8');
-  const dockerignore = await readFile(new URL('.dockerignore', root), 'utf8');
-
-  assert.match(dockerfile, /install[^\n]*\bgit\b/, 'the image must install git');
-  assert.match(dockerfile, /canonical-probe\.sh/, 'the build must record the bootstrap outcome in its log');
-  for (const entry of ['!.git/', '!studio/backend/', '!railway/canonical-probe.sh']) {
-    assert.ok(dockerignore.includes(entry), `.dockerignore must admit ${entry}`);
-  }
-
-  // The probe is a diagnostic, never a gate: it must not be able to fail a
-  // build that would otherwise deploy a working service.
   const probe = await readFile(new URL('railway/canonical-probe.sh', root), 'utf8');
-  assert.match(probe, /exit 0/, 'the probe must be non-fatal');
-  assert.ok(probe.includes('0a172900a01fdf39c2e9e84cf176961320b779ea'), 'the probe must check the pinned rules snapshot');
+
+  assert.match(dockerfile, /canonical-probe\.sh/, 'the build must prove the bootstrap outcome');
+  assert.match(probe, /exit 1/, 'the probe must be able to fail the build');
 });

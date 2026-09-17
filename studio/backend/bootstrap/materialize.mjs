@@ -1,0 +1,307 @@
+// Build-time Published Canonical materialization.
+//
+// Scope: the Agent Control Plane image only -- Railway project `mml-tools-allen`,
+// service `mml-tools`. It is not the Permanent Studio Web release architecture
+// and says nothing about `studio-web-permanent`, its pinned artifact, its trust
+// bundle or `/studio-cache`.
+//
+// Why this exists
+// ---------------
+// `loadPublishedCanonical` reads the Manifest from `refs/remotes/origin/main`
+// and every rule document from the pinned rules snapshot, out of local Git
+// objects. Railway's GitHub source snapshot delivers the repository's *files*
+// and no `.git`, so the deployed image had no object store to read: the service
+// started, answered `/healthz`, served the legacy technical tools, and reported
+// CANONICAL_NOT_LOADED for everything Canonical-aware. Fail-closed and correct,
+// and useless.
+//
+// This module is the missing step. It runs once, at image build, and makes the
+// local object store contain the published history the loader needs. It does
+// not change what counts as published, and it is not a loader: the runtime
+// loader is untouched, still offline, still reads only Git objects.
+//
+// What it must never become
+// -------------------------
+// The one substitution the bootstrap contract forbids is manufacturing
+// `refs/remotes/origin/main` out of whatever the build context happened to
+// carry -- HEAD, a branch, a working-tree Manifest -- because that lets any
+// build declare itself published Canonical. So:
+//
+//   * the published identity is captured from the published repository itself,
+//     by `ls-remote` on `BOOTSTRAP_CONTRACT.publishedBranch`, before anything is
+//     read;
+//   * `refs/remotes/origin/main` is set to that captured commit and nothing
+//     else -- never to HEAD, never to the fetched tip if the branch moved
+//     underneath us;
+//   * the Manifest is read from that same captured commit, so the pinned
+//     `rules_snapshot_sha` cannot come from one main and the rules from another;
+//   * the snapshot commit the Manifest names must be present as a real object,
+//     or the build fails. Current main is never substituted for it;
+//   * no working-tree file is read as Canonical content at any point;
+//   * every failure is terminal. There is no fallback path, and no mode in
+//     which an unreachable published source quietly becomes "use what is here".
+//
+// Availability decides nothing. This function always contacts the published
+// source it was given; if it cannot, it throws, and the build that called it
+// fails rather than producing an image with an unusable Canonical-aware service.
+
+import { execFileSync } from 'node:child_process';
+import { existsSync, rmSync, writeFileSync } from 'node:fs';
+import { resolve } from 'node:path';
+
+import {
+  BOOTSTRAP_ATTESTATION_REF,
+  BOOTSTRAP_CONTRACT,
+  BOOTSTRAP_RECORD_PATH,
+  CHECKOUT_IDENTITY,
+  CanonicalNotLoadedError,
+  gitEnvironment,
+  loadPublishedCanonical,
+  parseCanonicalManifest,
+  SOURCE_TOKEN_VARIABLE,
+} from './index.mjs';
+
+export { SOURCE_TOKEN_VARIABLE };
+
+// The published repository, and the only default. A caller may name a different
+// source -- deterministic regressions point this at a local fixture rather than
+// depending on live GitHub -- but only by passing it explicitly, and the value
+// used is recorded in the bootstrap record and printed by the build probe. The
+// choice is never made for the caller by what happens to be reachable.
+export const PUBLISHED_SOURCE = `https://github.com/${BOOTSTRAP_CONTRACT.repository}.git`;
+
+// Git transports this step will use. `https://` is production; `file://` is how
+// regressions point it at a deterministic local fixture instead of live GitHub.
+// The allowlist is not decoration: Git's `ext::` transport runs an arbitrary
+// command, and several others reach a helper binary, so a published source is
+// checked for what it is rather than only for not looking like an option.
+const PUBLISHED_SOURCE_SCHEMES = ['https://', 'file://'];
+
+// Read access to the published source.
+//
+// `a91453/mml-tools` is a private repository, so a builder with no credential
+// cannot resolve `refs/heads/main` on it at all. The deployment supplies a
+// read-only credential in this variable and the build uses it; without one the
+// build fails closed, which is the correct outcome — an image that cannot reach
+// the published source must not become a deployment.
+//
+// The token is never written anywhere. It stays out of the published source URL
+// (so it cannot reach the bootstrap record, the build summary or a Git error
+// message), and out of every argument vector: the credential helper below is a
+// literal shell snippet naming the variable, which Git hands to `sh -c` and the
+// shell expands from the inherited environment. Nothing in the image, and
+// nothing this module returns, contains it.
+//
+// This module is the one caller allowed to pass the credential to Git. The
+// runtime adapter in `./index.mjs` strips it, which is why this file has its own
+// subprocess adapter rather than reusing that one.
+const SOURCE_TOKEN_USER = 'x-access-token';
+const CREDENTIAL_HELPER = `!f() { printf '%s\\n' "username=${SOURCE_TOKEN_USER}" "password=$${SOURCE_TOKEN_VARIABLE}"; }; f`;
+
+// Where the branch is fetched to. The captured commit is what `publishedRef`
+// ends up pointing at; this ref only keeps the fetched objects reachable in
+// between, and is released immediately afterwards.
+const FETCH_REF = 'refs/canonical-bootstrap/fetched-main';
+
+const shaPattern = /^[0-9a-f]{40}$/;
+
+const requireValue = (condition, reason) => {
+  if (!condition) throw new CanonicalNotLoadedError(reason);
+};
+
+// One synchronous child process per call, bound to the target root, with the
+// same redirecting-variable scrubbing the runtime loader uses. Tests may pass a
+// wrapper to observe ordering or to fail a specific call; the build passes
+// nothing. Unlike the loader's adapter this one is allowed to reach the network,
+// which is exactly why it lives here and not in `index.mjs`.
+export function materializeSubprocess({ root, args }) {
+  // Objects are read as stored, matching the runtime loader. Anything this step
+  // writes is re-verified by that loader before the build is allowed to pass.
+  return execFileSync('git', ['--no-replace-objects', ...args], {
+    cwd: root,
+    // Never wait on a terminal: a builder with no credential must fail the build
+    // in seconds, not hang until the platform kills it.
+    env: { ...gitEnvironment(), GIT_TERMINAL_PROMPT: '0' },
+    stdio: ['ignore', 'pipe', 'pipe'],
+    maxBuffer: 64 * 1024 * 1024,
+  });
+}
+
+// The credential configuration for the calls that contact the published source,
+// or nothing when the deployment supplied no token. Returned as Git arguments so
+// the caller can see exactly which calls carry it; the token itself is not here.
+export function sourceCredentialArguments(environment = process.env) {
+  const token = environment[SOURCE_TOKEN_VARIABLE];
+  return typeof token === 'string' && token !== '' ? ['-c', `credential.helper=${CREDENTIAL_HELPER}`] : [];
+}
+
+/**
+ * Make `root` carry the published history, then prove the real loader can read it.
+ *
+ * Returns the loaded Published Canonical summary. Throws CanonicalNotLoadedError
+ * if any step cannot be proven.
+ */
+export function materializePublishedCanonical({
+  root,
+  publishedSource = PUBLISHED_SOURCE,
+  buildSourceHead = null,
+  git = materializeSubprocess,
+} = {}) {
+  requireValue(typeof root === 'string' && root !== '' && existsSync(root), 'Materialization root must be an existing directory');
+  requireValue(typeof publishedSource === 'string' && publishedSource !== '' && !publishedSource.startsWith('-'), 'The published source must be named explicitly');
+  requireValue(PUBLISHED_SOURCE_SCHEMES.some(scheme => publishedSource.startsWith(scheme)), `The published source must use one of: ${PUBLISHED_SOURCE_SCHEMES.join(', ')}`);
+  requireValue(buildSourceHead === null || shaPattern.test(buildSourceHead), 'Build source head must be a full commit SHA or null');
+
+  const run = (args, reason) => {
+    let output;
+    try {
+      output = git({ root, args });
+    } catch (error) {
+      throw new CanonicalNotLoadedError(reason, error);
+    }
+    return Buffer.isBuffer(output) ? output : Buffer.from(String(output ?? ''), 'utf8');
+  };
+  const line = (args, reason) => run(args, reason).toString('utf8').trim();
+  const resolved = (revision, reason) => {
+    const commit = line(['rev-parse', '--verify', '--quiet', '--end-of-options', `${revision}^{commit}`], reason);
+    requireValue(shaPattern.test(commit), reason);
+    return commit;
+  };
+
+  // 1. An object store to put the published history in. An existing one is used
+  //    as it stands. This step writes `refs/remotes/origin/main` in whatever
+  //    repository `root` names -- the same ref `git fetch origin` would move --
+  //    and, only when there is no HEAD to keep, HEAD and the attestation. It
+  //    writes no local branch and rewrites no history. In the image those writes
+  //    land in a layer that is discarded if the proof at the end fails; run
+  //    against a working clone they persist, which is why the build is the only
+  //    caller that passes no explicit root.
+  if (!existsSync(resolve(root, '.git'))) {
+    line(['init', '--quiet'], 'Could not create a Git object store for the Published Canonical');
+  }
+  requireValue(line(['rev-parse', '--git-dir'], 'Materialization root is not a Git repository') !== '', 'Materialization root is not a Git repository');
+
+  // 2. Capture the published main identity FIRST, from the published source
+  //    itself, and hold it for the rest of the load. Everything below names this
+  //    commit. `main` may advance a second later; this identity does not, so no
+  //    two reads in this build can come from two different published mains.
+  // Read access to a private published source, if the deployment supplied it.
+  // Only the two calls that actually contact the source carry it.
+  const credential = sourceCredentialArguments();
+  const advertised = line(
+    [...credential, 'ls-remote', '--exit-code', publishedSource, BOOTSTRAP_CONTRACT.publishedBranch],
+    'Published main could not be resolved from the published source',
+  );
+  const captured = advertised
+    .split('\n')
+    .map(entry => entry.match(/^([0-9a-f]{40})\s+(\S+)$/))
+    .filter(entry => entry && entry[2] === BOOTSTRAP_CONTRACT.publishedBranch)
+    .map(entry => entry[1]);
+  requireValue(captured.length === 1, 'Published main did not advertise exactly one commit');
+  const publishedHead = captured[0];
+
+  // 3. Fetch the published history. The branch is fetched by name because that
+  //    is what a server reliably serves, but the branch tip is never trusted as
+  //    the identity: the captured commit must be present in what arrived, and
+  //    that is what the discovery ref is set to. A main that advanced mid-build
+  //    therefore changes nothing; a main that was rewritten past the captured
+  //    commit fails closed.
+  run(
+    [...credential, 'fetch', '--quiet', '--no-tags', '--no-recurse-submodules', publishedSource, `+${BOOTSTRAP_CONTRACT.publishedBranch}:${FETCH_REF}`],
+    'Published main history could not be obtained from the published source',
+  );
+  requireValue(
+    resolved(publishedHead, 'The captured published main commit is absent from the fetched history') === publishedHead,
+    'The captured published main commit is absent from the fetched history',
+  );
+  line(['update-ref', BOOTSTRAP_CONTRACT.publishedRef, publishedHead], 'Could not record the published discovery ref');
+  line(['update-ref', '-d', FETCH_REF], 'Could not release the fetch ref');
+
+  // 4. Read the Manifest from the captured commit, and take the rules snapshot
+  //    it declares. Not main, not HEAD, not the working tree.
+  const manifest = run(
+    ['cat-file', 'blob', `${publishedHead}:${BOOTSTRAP_CONTRACT.entryPoint}`],
+    'The Published Manifest is absent from the captured published main commit',
+  ).toString('utf8');
+  const snapshot = parseCanonicalManifest(manifest).metadata.rules_snapshot_sha;
+
+  // 5. The exact snapshot the Manifest pins must be a real commit here. If the
+  //    fetched history does not reach it, the build fails: substituting main or
+  //    HEAD for the reviewed snapshot is the failure mode this whole contract
+  //    exists to prevent.
+  requireValue(
+    resolved(snapshot, `The pinned rules snapshot ${snapshot} is absent from the fetched history`) === snapshot,
+    `The pinned rules snapshot ${snapshot} is absent from the fetched history`,
+  );
+
+  // 6. Checkout identity. A real checkout already has one and keeps it. A source
+  //    tree that arrived without Git metadata has none, so HEAD is set to the
+  //    captured published main head and the attestation below says that is where
+  //    it came from.
+  //
+  //    A tree this step already materialized also has a HEAD -- the one it set
+  //    -- so "HEAD resolves" alone would make a second run treat it as a real
+  //    checkout and strip the attestation, quietly downgrading its provenance.
+  //    The attestation already in the store answers that: running again on the
+  //    same tree refreshes it to the newly captured head instead.
+  const priorAttestation = line(['for-each-ref', '--format=%(objectname)', '--', BOOTSTRAP_ATTESTATION_REF], 'Could not read the checkout attestation');
+  let existingHead = null;
+  try {
+    existingHead = resolved('HEAD', 'HEAD does not resolve');
+  } catch (error) {
+    // `rev-parse --verify --quiet` exits 1 with no output for a revision that
+    // simply does not resolve -- an unborn HEAD in the store this step just
+    // created. Everything else (a corrupt object store, a partial checkout, Git
+    // failing outright, exit 128) is a real fault, and reading it as "this tree
+    // has no checkout identity" would relabel a damaged real checkout as a
+    // materialized one. That fails closed instead.
+    const cause = error?.cause;
+    requireValue(
+      cause?.status === 1 && String(cause?.stdout ?? '').trim() === '',
+      'HEAD is present but could not be resolved; refusing to relabel this checkout',
+    );
+  }
+  const materialized = existingHead === null || priorAttestation !== '';
+  const recordPath = resolve(root, BOOTSTRAP_RECORD_PATH);
+  if (materialized) {
+    // Both halves are rewritten together on every run, so a re-materialization
+    // cannot leave one naming an older published head than the other.
+    line(['update-ref', '--no-deref', 'HEAD', publishedHead], 'Could not record the materialized checkout identity');
+    // The attestation lives in the object store, not in the record, so that
+    // deleting the record cannot quietly turn this into a claimed ordinary
+    // checkout. The loader requires the two to agree.
+    line(['update-ref', BOOTSTRAP_ATTESTATION_REF, publishedHead], 'Could not attest the materialized checkout identity');
+    writeFileSync(recordPath, `${JSON.stringify({
+      bootstrap_version: 1,
+      checkout_identity: CHECKOUT_IDENTITY.materialized,
+      published_main_head: publishedHead,
+      published_source: publishedSource,
+      build_source_head: buildSourceHead,
+    }, null, 2)}\n`);
+  } else {
+    // A checkout with its own HEAD must not carry an attestation claiming
+    // otherwise. Both halves go, so neither can outlive the other.
+    rmSync(recordPath, { force: true });
+    line(['update-ref', '-d', BOOTSTRAP_ATTESTATION_REF], 'Could not clear a stale checkout attestation');
+  }
+
+  // 7. Prove the object store is readable by the real loader, rather than
+  //    inferring it from the fetch's exit code. This is not yet the build's
+  //    whole claim: the loader is called as this module can call it, without the
+  //    implementation's supported-version pin, and nothing here imports the
+  //    Canonical-aware engines. `railway/canonical-probe.sh` runs immediately
+  //    after and asks the real capability path, which applies both. That gate,
+  //    not this call, is what a production candidate rests on.
+  const loaded = loadPublishedCanonical({ root });
+  requireValue(loaded.status === 'CANONICAL_LOADED', 'The materialized object store did not produce a Published Canonical load');
+  requireValue(loaded.provenance.published_main_head === publishedHead, 'The load resolved a different published main than the one captured');
+  requireValue(loaded.metadata.rules_snapshot_sha === snapshot, 'The load resolved a different rules snapshot than the Manifest pinned');
+
+  return Object.freeze({
+    status: loaded.status,
+    materialized,
+    published_source: publishedSource,
+    metadata: loaded.metadata,
+    provenance: loaded.provenance,
+  });
+}

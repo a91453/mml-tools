@@ -29,9 +29,18 @@ railway/*
 studio/*
 !studio/backend/
 
-# The Published Canonical bootstrap reads the Manifest and the pinned rules
-# snapshot out of Git history, so the repository metadata has to be present for
-# any Canonical-aware operation to run. Without it the service still starts and
-# still serves capability discovery -- it reports CANONICAL_NOT_LOADED, which is
-# the honest answer -- but nothing Canonical-aware will work.
+# The build-time step that makes the published history available. Railway's
+# GitHub source snapshot carries no `.git`, so the image builds the object store
+# from the published GitHub repository instead; this is the entry point that
+# does it, and the build fails if it cannot.
+!scripts/
+scripts/*
+!scripts/materialize-canonical.mjs
+
+# Still admitted, and no longer depended on. When a build context does carry the
+# repository metadata, its checkout identity is kept; the published discovery ref
+# is established by the materialization step above either way, so what the image
+# loads never depends on whether this was present. Without a proven load the
+# service reports CANONICAL_NOT_LOADED -- the honest answer -- and the build gate
+# refuses to ship it.
 !.git/

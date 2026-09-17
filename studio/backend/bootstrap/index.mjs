@@ -1,5 +1,6 @@
 import { execFileSync } from 'node:child_process';
-import { realpathSync } from 'node:fs';
+import { readFileSync, realpathSync } from 'node:fs';
+import { resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 const repositoryRoot = fileURLToPath(new URL('../../../', import.meta.url));
@@ -13,10 +14,17 @@ function freeze(value) {
 }
 
 // Discovery/consumer contract only. Musical policy belongs to the loaded documents.
+//
+// `publishedRef` is the only discovery source this loader reads. `publishedBranch`
+// is the branch on the published repository that `publishedRef` tracks; it is
+// named here so the build-time materializer in `./materialize.mjs` and this
+// loader cannot drift onto two different published identities. This loader never
+// contacts it — it reads local objects only.
 export const BOOTSTRAP_CONTRACT = freeze({
   repository: 'a91453/mml-tools',
   entryPoint: 'docs/CANONICAL_MANIFEST.md',
   publishedRef: 'refs/remotes/origin/main',
+  publishedBranch: 'refs/heads/main',
   role: 'CONSUMER',
   localSkillAuthority: 'WORKFLOW_ONLY',
   executableContractDefinesRules: false,
@@ -91,10 +99,43 @@ export function gitEnvironment(environment = process.env) {
   return bound;
 }
 
+// Credentials the image build consumes and the running service must not hold.
+//
+// Named for what they are rather than for a scope that does not exist. Railway
+// has no build-only variable scope: its own documentation says a service
+// variable is provided to "the build process for each service deployment" AND
+// "the running service deployment", and sealing one changes who can read it
+// back, not where it is injected. So the read credential the build uses to fetch
+// the published history arrives in the running container's environment too,
+// with nothing at runtime that needs it -- which is exactly the removal that a
+// name like "build-only" would make look redundant.
+//
+// Two independent removals, because either one alone is a single point of
+// failure: `railway/server.mjs` drops it from the process environment before it
+// serves anything, and the adapter below drops it from every Git child this
+// loader spawns even if some other entry point skipped that. The build-time
+// materializer deliberately does not use this adapter -- it is the one caller
+// that must still pass the credential through.
+export const SOURCE_TOKEN_VARIABLE = 'MML_CANONICAL_SOURCE_TOKEN';
+export const BUILD_CREDENTIAL_VARIABLES = freeze([SOURCE_TOKEN_VARIABLE]);
+
+export function scrubBuildCredentialVariables(environment = process.env) {
+  const removed = [];
+  for (const name of BUILD_CREDENTIAL_VARIABLES) {
+    if (Object.hasOwn(environment, name)) {
+      delete environment[name];
+      removed.push(name);
+    }
+  }
+  return removed;
+}
+
 // The production adapter: one synchronous child process per call. Tests may
 // pass a wrapper to count, delay or fail calls; production callers pass nothing.
 export function gitSubprocess({ root, args, input }) {
-  const options = { cwd: root, env: gitEnvironment(), stdio: [input === undefined ? 'ignore' : 'pipe', 'pipe', 'pipe'], maxBuffer: 16 * 1024 * 1024 };
+  const environment = gitEnvironment();
+  scrubBuildCredentialVariables(environment);
+  const options = { cwd: root, env: environment, stdio: [input === undefined ? 'ignore' : 'pipe', 'pipe', 'pipe'], maxBuffer: 16 * 1024 * 1024 };
   if (input !== undefined) options.input = input;
   return execFileSync('git', ['--no-replace-objects', '--literal-pathspecs', ...args], options);
 }
@@ -123,6 +164,76 @@ function readObjects(run, requests) {
 
 const samePath = (left, right) => realpathSync(left) === realpathSync(right);
 
+// --- Checkout identity --------------------------------------------------------
+//
+// `repository_head` answers "which commit is this checkout at". A normal clone
+// answers it from Git. A deployment whose source tree arrived *without* Git
+// metadata has no such answer of its own: the build-time materializer in
+// `./materialize.mjs` builds the object store from published GitHub and then
+// sets HEAD to the published main head it captured. `repository_head` is then
+// equal to `published_main_head` by construction, and saying so is the whole
+// point of this record — an equal pair that looks independently verified would
+// be a quieter lie than one that names how it came to be equal.
+//
+// The record is provenance labelling and nothing else. It cannot name a
+// Manifest, a snapshot, a rules document or an authority; every identity that
+// selects what is loaded is still resolved from Git objects above. The values
+// it contributes — `build_source_head`, what the deploying platform says
+// produced the source tree, and `published_source`, where the build obtained
+// the published history — are reported and never acted on. Neither can be
+// re-derived here, so both are reported as what they are: recorded by the
+// build, not verified by this load.
+//
+// The attestation itself does not live in the record. A plain file that says
+// "this is a materialized checkout" makes its own deletion an upgrade: without
+// it the answer falls back to `git-checkout`, which is exactly the
+// unverified-looking claim the record exists to prevent, and a missing file is
+// not something the load can notice. So the claim is a ref in the object store
+// — the same place every identity that selects what is loaded comes from — and
+// the record must agree with it. The file alone, or the ref alone, fails
+// closed. Neither is an attestation on its own.
+export const BOOTSTRAP_RECORD_PATH = '.canonical-bootstrap.json';
+export const BOOTSTRAP_ATTESTATION_REF = 'refs/canonical-bootstrap/checkout-identity';
+
+export const CHECKOUT_IDENTITY = freeze({
+  gitCheckout: 'git-checkout',
+  materialized: 'materialized-published-main',
+});
+
+const RECORD_FIELDS = 'bootstrap_version,build_source_head,checkout_identity,published_main_head,published_source';
+
+const UNATTESTED = freeze({ checkout_identity: CHECKOUT_IDENTITY.gitCheckout, build_source_head: null, published_source: null });
+
+function readBootstrapRecord(root, publishedHead, repositoryHead, attestedHead) {
+  let text = null;
+  try {
+    text = readFileSync(resolve(root, BOOTSTRAP_RECORD_PATH), 'utf8');
+  } catch (error) {
+    requireValue(error?.code === 'ENOENT', 'Bootstrap record is present but unreadable');
+  }
+  if (attestedHead === null) {
+    requireValue(text === null, 'A bootstrap record is present without its attestation in the object store');
+    return UNATTESTED;
+  }
+  requireValue(text !== null, 'The object store attests a materialized checkout but its bootstrap record is missing');
+  let record;
+  try {
+    record = JSON.parse(text);
+  } catch (error) {
+    throw new CanonicalNotLoadedError('Bootstrap record is not valid JSON', error);
+  }
+  requireValue(record !== null && typeof record === 'object' && !Array.isArray(record), 'Bootstrap record must be an object');
+  requireValue(Object.keys(record).sort().join(',') === RECORD_FIELDS, 'Unexpected bootstrap record fields');
+  requireValue(record.bootstrap_version === 1, 'Unsupported bootstrap record version');
+  requireValue(record.checkout_identity === CHECKOUT_IDENTITY.materialized, 'Unknown bootstrap checkout identity');
+  requireValue(typeof record.published_source === 'string' && record.published_source !== '', 'Bootstrap record must name the published source it was built from');
+  requireValue(record.published_main_head === publishedHead, 'Bootstrap record names a different published main than this load resolved');
+  requireValue(attestedHead === publishedHead, 'The object store attests a different published main than this load resolved');
+  requireValue(repositoryHead === publishedHead, 'A materialized checkout must report the captured published main head');
+  requireValue(record.build_source_head === null || shaPattern.test(record.build_source_head), 'Build source head must be a full commit SHA or null');
+  return { checkout_identity: record.checkout_identity, build_source_head: record.build_source_head, published_source: record.published_source };
+}
+
 // One call is one complete, independent load. Nothing is memoised across calls:
 // a caller receives an immutable result built entirely from Git reads made for
 // that call, so no caller can observe another caller's partial state, and a
@@ -148,6 +259,12 @@ export function loadPublishedCanonical({ root = repositoryRoot, prHead = null, s
     // enclosing checkout that happens to contain it.
     requireValue(samePath(line(['rev-parse', '--show-toplevel']), root), 'Repository root does not bind to the requested checkout');
     const repositoryHead = resolveCommit('HEAD');
+    // Read before discovery, so that everything after the published ref is
+    // resolved still names only SHAs. Empty output with exit 0 when the ref does
+    // not exist: an ordinary checkout is the common case, not an exception path.
+    const attestedRef = line(['for-each-ref', '--format=%(objectname)', '--', BOOTSTRAP_ATTESTATION_REF]);
+    requireValue(attestedRef === '' || shaPattern.test(attestedRef), 'Invalid bootstrap checkout attestation');
+    const attested = attestedRef === '' ? null : attestedRef;
     // Only the fetched published main is a discovery source. Never substitute a
     // worktree/PR Manifest, a standalone rules file, or a legacy Skill on failure.
     // The ref is resolved to one commit first; every later read names that commit
@@ -158,6 +275,7 @@ export function loadPublishedCanonical({ root = repositoryRoot, prHead = null, s
     const { metadata, entries } = parseCanonicalManifest(manifest);
     const snapshot = metadata.rules_snapshot_sha;
     requireValue(resolveCommit(snapshot) === snapshot, 'Snapshot is not an available commit');
+    const checkout = readBootstrapRecord(root, publishedHead, repositoryHead, attested);
     const manifestCommit = line(['log', '-1', '--format=%H', publishedHead, '--', BOOTSTRAP_CONTRACT.entryPoint]);
     requireValue(shaPattern.test(manifestCommit) && snapshot !== manifestCommit, 'Invalid or self-referencing Manifest provenance');
     run(['merge-base', '--is-ancestor', snapshot, manifestCommit]);
@@ -179,7 +297,15 @@ export function loadPublishedCanonical({ root = repositoryRoot, prHead = null, s
     return freeze({
       status: 'CANONICAL_LOADED',
       metadata,
-      provenance: { manifest_commit: manifestCommit, repository_head: repositoryHead, pr_head: prHead, published_main_head: publishedHead },
+      provenance: {
+        manifest_commit: manifestCommit,
+        repository_head: repositoryHead,
+        pr_head: prHead,
+        published_main_head: publishedHead,
+        checkout_identity: checkout.checkout_identity,
+        build_source_head: checkout.build_source_head,
+        published_source: checkout.published_source,
+      },
       authority: {
         entryPoint: BOOTSTRAP_CONTRACT.entryPoint,
         humanReadable: paths('CANONICAL_RULE_SOURCE'),

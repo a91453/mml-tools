@@ -172,11 +172,12 @@ test('every file the Agent backend image ships is covered by a watch pattern', a
 });
 
 test('a Canonical release rebuilds the Agent backend', async () => {
-  // The Agent backend's Canonical view is pinned at image build: .git is copied
-  // in and nothing fetches at runtime, so refs/remotes/origin/main resolves to
-  // whatever main was when the image was built. Without this watch pattern a
-  // Canonical publication would leave the service serving an obsolete Manifest
-  // view with no signal that it had.
+  // The Agent backend's Canonical view is pinned at image build: the published
+  // history is materialized during the build and nothing fetches at runtime, so
+  // refs/remotes/origin/main resolves to the published main head captured when
+  // the image was built. Without this watch pattern a Canonical publication
+  // would leave the service serving an obsolete Manifest view with no signal
+  // that it had.
   const settings = JSON.parse(await readFile(join(root, 'railway/service-settings.json'), 'utf8'));
   assert.ok(
     settings.build.watchPatterns.includes('/docs/CANONICAL_MANIFEST.md'),
@@ -195,15 +196,30 @@ test('a Canonical release rebuilds the Agent backend', async () => {
 });
 
 test('the runtime confirms nothing fetches Git at request time', async () => {
-  // The pinned-at-build property above is only true while the bootstrap stays
-  // read-only against local objects. A fetch, clone or remote update appearing
-  // in it would silently change the Agent backend's Canonical view mid-life.
+  // The pinned-at-build property above is only true while the runtime loader
+  // stays read-only against local objects. A fetch, clone or remote update
+  // appearing in it would silently change the Agent backend's Canonical view
+  // mid-life.
+  //
+  // Obtaining the published history is a build-time concern and lives in a
+  // separate module, `backend/bootstrap/materialize.mjs`, which the runtime
+  // never imports. The split is the point: one module may reach the network and
+  // runs once while the image is built; the other is what a request touches and
+  // may not. Both properties are asserted, so merging them back together fails
+  // here rather than in production.
   const bootstrap = await readFile(join(root, 'studio/backend/bootstrap/index.mjs'), 'utf8');
   for (const networkOperation of ['fetch', 'clone', 'remote', 'pull', 'ls-remote']) {
     assert.ok(
       !new RegExp(`['"]${networkOperation}['"]`).test(bootstrap),
       `the bootstrap runs git ${networkOperation}; the Canonical view would stop being pinned`,
     );
+  }
+  assert.ok(
+    !/^\s*import[^\n]*materialize/m.test(bootstrap),
+    'the runtime loader imports the build-time materialization; the Canonical view would stop being pinned',
+  );
+  for (const [path, source] of await sourcesUnder('railway', ['.mjs'])) {
+    assert.ok(!withoutComments(source).includes('materialize'), `${path} reaches the build-time materialization at runtime`);
   }
 });
 

@@ -18,13 +18,14 @@
       "/railway/server.mjs",
       "/railway/canonical-probe.sh",
       "/railway/Dockerfile",
+      "/scripts/materialize-canonical.mjs",
       "/.dockerignore",
       "/package.json",
       "/docs/CANONICAL_MANIFEST.md"
     ],
     "watchPatternNotes": {
       "imageContents": "Every path the .dockerignore allowlist admits is watched, so a change to anything the image actually ships rebuilds it.",
-      "canonicalManifest": "The Agent backend's Canonical view is pinned at image build: .git is copied in and nothing fetches at runtime, so refs/remotes/origin/main resolves to whatever main was when the image was built. Publishing a Canonical release therefore does not reach this service until it is rebuilt, and docs/CANONICAL_MANIFEST.md is watched so that a publication triggers one.",
+      "canonicalManifest": "The Agent backend's Canonical view is pinned at image build: the published history is materialized by scripts/materialize-canonical.mjs during the build and nothing fetches at runtime, so refs/remotes/origin/main resolves to the published main head captured when the image was built. Publishing a Canonical release therefore does not reach this service until it is rebuilt, and docs/CANONICAL_MANIFEST.md is watched so that a publication triggers one.",
       "ruleSourcesDeliberatelyNotWatched": "The Canonical rule documents are read from the immutable rules snapshot the Manifest pins, never from main, so editing one on main cannot change what this service loads. Watching them would force rebuilds that change nothing.",
       "volume": "/data is this service working storage. It is not /studio-cache, which belongs to the Permanent Studio Web plane and holds verified release bytes."
     }
@@ -42,6 +43,17 @@
     "sizeMB": 512
   },
   "port": 3000,
+  "requiredVariables_addedByCanonicalBootstrap": [
+    "MML_CANONICAL_SOURCE_TOKEN"
+  ],
+  "canonicalSourceTokenNotes": {
+    "purpose": "Read-only credential for a91453/mml-tools, which is a private repository. The build-time Published Canonical materialization resolves the published main SHA and fetches that history through it; without it the build fails closed rather than deploying an image whose Canonical-aware operations all refuse.",
+    "scope": "A GitHub fine-grained token with Contents: Read on a91453/mml-tools and nothing else, with a short expiry. Rotate on a schedule and immediately if the image is ever shared outside this deployment.",
+    "sealed": "Set it as a Railway Sealed variable. Sealing prevents read-back through the dashboard and the API. Per Railway's documentation it changes visibility, not availability, so it does not change where the value is injected.",
+    "lifecycle": "NOT build-only. Railway has no build-only variable scope: a service variable is provided to the build process AND to the running deployment. The Dockerfile opts in with ARG only in the `canonical` builder stage, and the running service removes the variable at startup (railway/server.mjs, scrubBuildCredentialVariables) while the runtime Git adapter strips it from every child process (studio/backend/bootstrap/index.mjs).",
+    "handling": "Measured on BuildKit 29.3.1 against this Dockerfile's structure: zero occurrences of the value in the build log, in docker history, in any blob of the exported image, and in the shipping container filesystem. The value is never placed in a URL, a file or an argument vector.",
+    "residualRisk": "Railway provides no BuildKit secret mount, so ARG is the available channel rather than an equivalent one, and Docker's linter emits SecretsUsedInArgOrEnv on every build. A BuildKit provenance attestation at mode=max records build arguments; whether Railway emits provenance attestations, at which mode, and whether they are retrievable could not be determined. The builder host holds the value while the build runs, and Railway stores it. Requires owner acceptance. Making the repository public removes the requirement entirely."
+  },
   "requiredVariables": [
     "MML_AUTH_DB",
     "MML_OWNER_PASSWORD",

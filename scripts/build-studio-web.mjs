@@ -24,13 +24,22 @@ const put = async (path, text) => { await mkdir(dirname(resolve(out, path)), { r
 // no capability from the PWA — and shipping it would put Node imports into an
 // offline bundle that is asserted to have none.
 const SERVER_ONLY_MODULES = new Set(['studio/backend/application']);
+// Build-time-only backend modules, excluded for the same reason as the
+// directories above. `bootstrap/materialize.mjs` gives an Agent backend image
+// the published Git history its build context arrived without: it shells out to
+// git over the network, runs once while that image is built, and is imported by
+// nothing the browser loads. The PWA has no Git-backed bootstrap to materialize
+// for at all -- its loader is replaced below by the resolved static package --
+// so shipping it would put node:child_process into an offline bundle that is
+// asserted to carry no Node imports, and would remove no capability by leaving.
+const SERVER_ONLY_FILES = new Set(['studio/backend/bootstrap/materialize.mjs']);
 
 async function copyModules(directory) {
   if (SERVER_ONLY_MODULES.has(directory)) return;
   for (const entry of await readdir(resolve(root, directory), { withFileTypes: true })) {
     const path = `${directory}/${entry.name}`;
     if (entry.isDirectory()) await copyModules(path);
-    else if (entry.name.endsWith('.mjs')) await put(path, await readFile(resolve(root, path)));
+    else if (entry.name.endsWith('.mjs') && !SERVER_ONLY_FILES.has(path)) await put(path, await readFile(resolve(root, path)));
   }
 }
 await copyModules('studio/backend');

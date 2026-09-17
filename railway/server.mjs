@@ -5,6 +5,22 @@ import { createAuth } from './auth.mjs';
 import { handleMcp, SERVICE_VERSION } from '../server/mcp.mjs';
 import { createApiRouter } from '../server/api.mjs';
 import { createStudioApplication } from '../studio/backend/application/index.mjs';
+import { scrubBuildCredentialVariables } from '../studio/backend/bootstrap/index.mjs';
+
+// Railway provides a service variable to the build AND to the running
+// deployment -- there is no build-only scope, and sealing a variable changes who
+// can read it back, not where it is injected. The credential the image build
+// uses to fetch the published history therefore arrives here too, where nothing
+// needs it: the Canonical view is pinned at build and the runtime loader reads
+// local objects only. These are credentials the build consumes, not variables
+// the platform scopes to it -- the naming says so, because calling them
+// "build-only" is what made this removal look unnecessary in the first place.
+//
+// So it is removed before this process serves anything, which also keeps it out
+// of every child process spawned from `process.env`. Done at module scope
+// deliberately: nothing imported above reads the environment while it evaluates,
+// and everything that does read it runs later.
+scrubBuildCredentialVariables();
 
 // The owner subject this deployment isolates records by.
 //
@@ -92,9 +108,19 @@ export function createApplication(options) {
           authentication: 'OAuth with PKCE',
           status: 'Sign in from your ChatGPT plugin connection to use this service.',
           canonical,
+          // The unloaded notice is public and unauthenticated, so it says what to
+          // check without naming a credential, a value or an internal path.
+          //
+          // It used to tell an operator the build context had to arrive carrying
+          // .git, refs/remotes/origin/main and the pinned snapshot. That was the
+          // old architecture's remedy and it is now unreachable advice: Railway's
+          // source snapshot never carries Git metadata, which is the defect this
+          // deployment was changed to fix. The image materializes the published
+          // history during its build instead, so an unloaded Canonical here means
+          // that build step or its gate did not do what it should have.
           canonical_notice: canonical.status === 'CANONICAL_LOADED'
             ? 'Published Canonical loaded. Canonical-aware Studio operations are available to an authenticated caller.'
-            : 'Published Canonical is NOT loaded, so every Canonical-aware operation refuses. The deployment needs a build context carrying this repository\u2019s Git metadata, refs/remotes/origin/main, and the pinned rules snapshot commit. See railway/README.md.',
+            : 'Published Canonical is NOT loaded, so every Canonical-aware operation refuses. This image did not complete the Canonical materialization and build gate: check the deployment build log for the [canonical-bootstrap] lines, confirm the build can reach the published source repository with its configured read access, and rebuild. There is no working-tree, cached or legacy fallback, and /healthz is deliberately unaffected. See railway/README.md.',
         }, { headers: { 'cache-control': 'no-store' } });
       }
       return new Response('Not found', { status: 404 });

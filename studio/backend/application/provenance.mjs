@@ -39,6 +39,11 @@ import {
 
 const freeze = Object.freeze;
 
+// Which of the provenance fields this process resolved from Git, and which it
+// is only repeating. Stated in the envelope because the two kinds sit side by
+// side and look alike.
+const CHECKOUT_NOTICE = 'canonical_version, canonical_status, manifest_version, rules_snapshot_sha, manifest_commit, published_main_head and repository_head are resolved from Git by the process answering. checkout_identity says how repository_head was established: git-checkout is an ordinary checkout, materialized-published-main means the source tree carried no Git metadata and HEAD was set to the captured published main head, so the two are equal by construction. build_source_head and published_source are recorded by the build that produced this image and are not verified here.';
+
 // The Canonical-aware engines this layer orchestrates. Every entry is an
 // existing backend module; this list is a wiring manifest, not an abstraction
 // over them, and the Application Service calls their exported functions
@@ -99,12 +104,29 @@ export class EngineUnavailableError extends Error {
 /**
  * The Canonical provenance envelope carried by every significant response.
  *
- * The five identities stay five fields. `rules_snapshot_sha` selects the
+ * The identities stay separate fields. `rules_snapshot_sha` selects the
  * reviewed rules; `manifest_commit` is the commit that introduced the loaded
  * Manifest revision; `published_main_head`, `repository_head` and `pr_head` are
  * Git provenance for the process that answered. None of them is a Canonical
  * version, none substitutes for another, and none may be folded into a single
  * "version" field.
+ *
+ * `checkout_identity` says how `repository_head` was established, and exists
+ * because a deployment whose source tree arrives without Git metadata has no
+ * checkout identity of its own: the build materializes the published history
+ * and sets HEAD to the published main head it captured, which makes
+ * `repository_head` equal `published_main_head` by construction. Reporting that
+ * pair without saying why they are equal would look like an independently
+ * verified checkout.
+ *
+ * `build_source_head` (the deploying platform's record of the commit that
+ * produced the source tree) and `published_source` (where the build obtained
+ * the published history) are recorded by that build and cannot be re-derived
+ * from Git here. They are reported as exactly that, never as verified
+ * identities, and `checkout_notice` says so in the envelope rather than only in
+ * this comment -- a consumer reading the public endpoint has no other way to
+ * tell them apart from the Git-resolved identities beside them. Neither selects
+ * a Manifest, a snapshot or a rule document.
  */
 export function provenanceOf(published) {
   const metadata = published?.metadata ?? {};
@@ -119,6 +141,10 @@ export function provenanceOf(published) {
     published_main_head: git.published_main_head ?? null,
     repository_head: git.repository_head ?? null,
     pr_head: git.pr_head ?? null,
+    checkout_identity: git.checkout_identity ?? null,
+    build_source_head: git.build_source_head ?? null,
+    published_source: git.published_source ?? null,
+    checkout_notice: CHECKOUT_NOTICE,
     entry_point: published?.authority?.entryPoint ?? null,
     authority_notice: 'Executable contracts, schemas, this interface, its transports and its tests are implementers and verifiers. They cannot define or amend Canonical rules in reverse.',
   });
@@ -135,6 +161,10 @@ export function unloadedProvenance(reason) {
     published_main_head: null,
     repository_head: null,
     pr_head: null,
+    checkout_identity: null,
+    build_source_head: null,
+    published_source: null,
+    checkout_notice: CHECKOUT_NOTICE,
     entry_point: 'docs/CANONICAL_MANIFEST.md',
     reason: reason ?? 'Published Canonical was not loaded',
     legacy_fallback_allowed: false,
