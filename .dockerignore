@@ -20,6 +20,7 @@ railway/*
 !railway/Dockerfile
 !railway/auth.mjs
 !railway/server.mjs
+!railway/canonical-probe.sh
 
 # The Canonical-aware Studio backend the Application Service orchestrates.
 # Tests, fixtures, the browser app and the audio worker stay out: the service

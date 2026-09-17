@@ -462,16 +462,9 @@ rendered as a generic 500 with no message, path or stack.
 
 ## 17. Known limitations
 
-1. **The deployed image's Canonical status is unverified.** The bootstrap reads
-   the Manifest from `refs/remotes/origin/main` and the rule documents from the
-   pinned snapshot, so the image carries `.git`. Whether Railway's build context
-   provides a clone with that remote-tracking ref and full history has not been
-   confirmed against the running service — doing so requires submitting the
-   owner's service password in production. If it does not, the service still
-   starts, still serves `/healthz` and still answers capability discovery,
-   reporting `CANONICAL_NOT_LOADED` honestly; only the Canonical-aware
-   operations are unavailable. **Verify `GET /api/v1/capabilities` on the
-   deployed service before relying on it.**
+1. **The deployed image's Canonical status depends on the build context's Git
+   history, and cannot be confirmed from here.** See §20 for the audit, what it
+   established, and the exact post-deploy check.
 2. **Jobs are synchronous.** Reported as `background_execution: false`. A very
    large score or a long alignment still occupies one request.
 3. **Asset durability is whatever the operator declares.** With
@@ -514,3 +507,125 @@ authority.
 
 Published Canonical, loaded from `docs/CANONICAL_MANIFEST.md` on published
 `main`, remains the only rule authority.
+
+## 20. Railway image: Canonical bootstrap audit
+
+Status: audit performed at `df0fe13`, without production credentials and
+without any paid change. No Docker daemon was available, so the image
+filesystem was materialised exactly as the `.dockerignore` allowlist and
+`COPY . ./` produce it, dependencies were installed with the Dockerfile's own
+`npm install --omit=dev --ignore-scripts`, and the real capability path was
+executed inside it.
+
+### What the bootstrap actually requires
+
+Reading the Manifest is not a file read. `loadPublishedCanonical` runs Git, and
+needs all of:
+
+1. a Git repository whose top level **is** the image root (`/app`);
+2. `refs/remotes/origin/main`, resolved to one commit — the only discovery
+   source, never a worktree or PR Manifest;
+3. the blob `<published main>:docs/CANONICAL_MANIFEST.md`;
+4. the rules snapshot commit `0a172900a01fdf39c2e9e84cf176961320b779ea` as a
+   real object, plus every tree and blob the authority map names;
+5. `git log -1 -- docs/CANONICAL_MANIFEST.md` over published main, for
+   `manifest_commit`;
+6. `git merge-base --is-ancestor <snapshot> <manifest commit>`.
+
+`docs/` is deliberately **not** in the image's working tree. Every document is
+read from Git objects, so the worktree copy would prove nothing.
+
+### Result
+
+With a build context carrying this repository's Git history, the simulated
+image returns exactly the expected answer:
+
+```
+status=CANONICAL_LOADED
+canonical_version=2026-09-13-v1
+rules_snapshot_sha=0a172900a01fdf39c2e9e84cf176961320b779ea
+manifest_commit=5e7666b850a37f1c85ee2dd8cd0f4fac037a9e14
+published_main_head=e81a45b21f990872928bfcdf26c4a4fe1b40b7fd
+repository_head=df0fe13dc7c07c66ed40389ac2d167d9b9714d87
+```
+
+Five separate identities, none standing in for another. The image layout,
+allowlist, `git` install, `safe.directory` binding and dependency install are
+therefore correct.
+
+### The risk that remains
+
+The load is a property of the **build context**, not of the Dockerfile. Three
+contexts were simulated; each fails closed, reports `CANONICAL_NOT_LOADED`, and
+takes no fallback:
+
+| Context | `origin/main` | Snapshot commit | Result |
+| --- | --- | --- | --- |
+| No `.git` | — | — | `CANONICAL_NOT_LOADED` |
+| `.git`, no remote-tracking ref | missing | present | `CANONICAL_NOT_LOADED` |
+| Depth-1 clone of `main` | present | **missing** | `CANONICAL_NOT_LOADED` |
+
+The third is the one to watch: a shallow clone is the common CI default, it
+*does* create `refs/remotes/origin/main`, and it still fails because the
+snapshot commit was truncated away. Shallowness alone is not the test — the
+authoring sandbox for this change is itself a shallow clone that loads fine,
+because its 168 retained commits happen to include the snapshot.
+
+Whether Railway's build context satisfies this **has not been confirmed**, and
+cannot be from here: it would take either a Docker daemon or the owner's
+service password in production. Neither was used, and neither was guessed.
+
+### Post-deploy verification
+
+Two checks, in order. Neither needs the service password.
+
+**1. The build log.** Every build runs `railway/canonical-probe.sh` and prints:
+
+```
+[canonical-bootstrap] git-metadata: present | MISSING
+[canonical-bootstrap] clone depth: complete | SHALLOW
+[canonical-bootstrap] refs/remotes/origin/main: present | MISSING
+[canonical-bootstrap] rules snapshot 0a172900…: present | MISSING
+[canonical-bootstrap] status=CANONICAL_LOADED | CANONICAL_NOT_LOADED
+```
+
+The probe is non-fatal and always exits 0: a degraded context must still deploy
+an image that serves `/healthz` and the three legacy technical tools. Silence is
+the only outcome it rules out.
+
+**2. The public root endpoint.**
+
+```
+curl -s https://<public-origin>/ | jq .canonical
+```
+
+Expect `status: "CANONICAL_LOADED"` and the five identities, distinct.
+`canonical_notice` states the remedy when it is not loaded. `/healthz` is
+deliberately **not** coupled to this: a Canonical problem must never fail
+Railway's healthcheck and roll back a deployment that is otherwise serving.
+
+### If it reports `CANONICAL_NOT_LOADED`
+
+The probe line names which precondition failed.
+
+- `git-metadata: MISSING` — the build context shipped no `.git`.
+- `refs/remotes/origin/main: MISSING` — the checkout has no remote-tracking ref
+  for the published branch.
+- `rules snapshot …: MISSING` — history was truncated before the snapshot
+  commit.
+
+All three are deployment-side, not code: the image needs a source checkout
+carrying this repository's history and published ref. Nothing in the service may
+paper over it — forging `refs/remotes/origin/main` from `HEAD` at build time
+would let any branch build declare itself published Canonical, which is exactly
+the substitution the bootstrap contract forbids, so it is **not** done.
+
+If Railway cannot be made to supply that history, the identified follow-up is
+the approach the clean public export already uses: resolve the Canonical package
+in an environment that *can* load it and vendor it into the image as
+`canonical/published.json` with `distribution_mode: vendored-static`, alongside a
+static loader. That changes the deployment's provenance model, so it is a
+decision for the project owner rather than something to adopt silently here.
+
+Until then the behaviour is honest and safe: the legacy technical tools keep
+working, and every Canonical-aware operation refuses.

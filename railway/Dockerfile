@@ -24,6 +24,12 @@ COPY . ./
 # safe here is the one configuration git needs to read its own objects.
 RUN git config --system --add safe.directory /app || true
 
+# Record in the build log whether this build context actually carried what
+# the Published Canonical bootstrap needs. Non-fatal by design: see the
+# script header for why a degraded context must still produce a working
+# image, and why silence is the one outcome that is not acceptable.
+RUN sh railway/canonical-probe.sh /app
+
 ENV NODE_ENV=production \
     PORT=3000 \
     MML_AUTH_DB=/data/mml-auth.sqlite \

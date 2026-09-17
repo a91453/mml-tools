@@ -297,3 +297,88 @@ test('a project created over HTTP is the same project the MCP tools see', async 
   assert.equal(overMcp.result.structuredContent.project.project_id, projectId);
   assert.equal(overMcp.result.structuredContent.project.title, 'Shared');
 });
+
+// ─── deployment readiness, verifiable without a credential ──────────────────
+
+test('the public root endpoint reports the Published Canonical bootstrap status', async t => {
+  // The deployment's Canonical status has to be checkable without submitting
+  // the owner's service password, or confirming a deploy would require
+  // production credentials. /api/v1/capabilities is behind OAuth; this is not.
+  const send = setup(t);
+  const response = await send(req('/'));
+  assert.equal(response.status, 200);
+  const body = await response.json();
+
+  assert.equal(body.canonical.status, 'CANONICAL_LOADED');
+  assert.equal(body.canonical.canonical_version, '2026-09-13-v1');
+  assert.equal(body.canonical.canonical_status, 'PUBLISHED');
+  // The five identities stay five fields, and none stands in for another.
+  assert.match(body.canonical.rules_snapshot_sha, /^[0-9a-f]{40}$/);
+  assert.match(body.canonical.manifest_commit, /^[0-9a-f]{40}$/);
+  assert.match(body.canonical.published_main_head, /^[0-9a-f]{40}$/);
+  assert.match(body.canonical.repository_head, /^[0-9a-f]{40}$/);
+  assert.notEqual(body.canonical.rules_snapshot_sha, body.canonical.manifest_commit);
+  assert.notEqual(body.canonical.rules_snapshot_sha, body.canonical.published_main_head);
+  assert.ok(!Object.hasOwn(body.canonical, 'version'), 'the identities must not collapse into one field');
+  assert.match(body.canonical_notice, /Published Canonical loaded/);
+
+  // It is a status page, not a data leak: no song, project or credential.
+  const text = JSON.stringify(body);
+  assert.ok(!text.includes(password));
+  assert.ok(!/MML@/.test(text));
+});
+
+test('an unloadable Canonical is visible publicly and names the remedy', async t => {
+  const send = setup(t, { studioLoadEngines: async () => { throw Error('no published history in this image'); } });
+  const response = await send(req('/'));
+  assert.equal(response.status, 200, 'the service still answers; only Canonical-aware work refuses');
+  const body = await response.json();
+
+  assert.equal(body.canonical.status, 'CANONICAL_NOT_LOADED');
+  assert.equal(body.canonical.legacy_fallback_allowed, false);
+  assert.equal(body.canonical.rules_snapshot_sha, null, 'a failed load must not report a snapshot');
+  assert.match(body.canonical_notice, /NOT loaded/);
+  assert.match(body.canonical_notice, /refs\/remotes\/origin\/main/);
+  assert.match(body.canonical_notice, /pinned rules snapshot commit/);
+
+  // The legacy technical tools are unaffected by a Canonical failure.
+  const grant = await tokens(send);
+  const legacy = await (await send(req('/mcp', 'POST', JSON.stringify({ jsonrpc: '2.0', id: 1, method: 'tools/call', params: { name: 'mml_validate', arguments: { mml: 'MML@t120o4c1,,,,,;', meter_text: '0 4/4' } } }), { ...rpcHeaders, authorization: 'Bearer ' + grant.access_token }))).json();
+  assert.equal(legacy.result.isError, false);
+  assert.equal(legacy.result.structuredContent.technical_ok, true);
+});
+
+test('the healthcheck is not coupled to the Canonical bootstrap', async t => {
+  // Railway health-checks /healthz. A Canonical problem must never be able to
+  // fail it and roll back a deploy that is otherwise serving correctly.
+  const broken = setup(t, { studioLoadEngines: async () => { throw Error('no published history'); } });
+  const response = await broken(req('/healthz'));
+  assert.equal(response.status, 200);
+  const body = await response.json();
+  assert.equal(body.status, 'ok');
+  assert.ok(!Object.hasOwn(body, 'canonical'), '/healthz must not gate on, or report, the Canonical load');
+});
+
+test('the deployment image contract keeps what the bootstrap needs', async () => {
+  // The bootstrap reads the Manifest from refs/remotes/origin/main and the rule
+  // documents from the pinned snapshot, both out of Git history. If the image
+  // stops shipping git, or the allowlist stops admitting .git or the backend,
+  // every Canonical-aware operation silently degrades in production while every
+  // test here still passes. These are the four things that must not drift.
+  const { readFile } = await import('node:fs/promises');
+  const root = new URL('../', import.meta.url);
+  const dockerfile = await readFile(new URL('railway/Dockerfile', root), 'utf8');
+  const dockerignore = await readFile(new URL('.dockerignore', root), 'utf8');
+
+  assert.match(dockerfile, /install[^\n]*\bgit\b/, 'the image must install git');
+  assert.match(dockerfile, /canonical-probe\.sh/, 'the build must record the bootstrap outcome in its log');
+  for (const entry of ['!.git/', '!studio/backend/', '!railway/canonical-probe.sh']) {
+    assert.ok(dockerignore.includes(entry), `.dockerignore must admit ${entry}`);
+  }
+
+  // The probe is a diagnostic, never a gate: it must not be able to fail a
+  // build that would otherwise deploy a working service.
+  const probe = await readFile(new URL('railway/canonical-probe.sh', root), 'utf8');
+  assert.match(probe, /exit 0/, 'the probe must be non-fatal');
+  assert.ok(probe.includes('0a172900a01fdf39c2e9e84cf176961320b779ea'), 'the probe must check the pinned rules snapshot');
+});

@@ -30,6 +30,11 @@ export function createApplication(options) {
     durability: options.studioDurability ?? 'unknown',
     serviceVersion: SERVICE_VERSION,
     transports: ['http', 'mcp'],
+    // Test seam only, mirroring the one the Application Service already has:
+    // it lets a regression prove what this service reports when Published
+    // Canonical cannot load, without breaking the repository it runs in.
+    // Production passes nothing.
+    loadEngines: options.studioLoadEngines,
   });
   const api = createApiRouter({ application: studio, ownerOf: () => SERVICE_OWNER });
   return {
@@ -54,7 +59,44 @@ export function createApplication(options) {
       // refused before any owner subject is derived.
       const apiResponse = await api(request, { authenticated: auth.authenticated(request) });
       if (apiResponse) return apiResponse;
-      if (url.pathname === '/' && request.method === 'GET') return Response.json({ service: 'MML Tools', authentication: 'OAuth with PKCE', status: 'Sign in from your ChatGPT plugin connection to use this service.' }, { headers: { 'cache-control': 'no-store' } });
+      // Deployment readiness, without a credential.
+      //
+      // The Published Canonical bootstrap reads the Manifest from
+      // `refs/remotes/origin/main` and the rule documents from the pinned rules
+      // snapshot, both out of Git history. A deployment whose build context
+      // arrived without that history -- no `.git`, no `origin/main`, or a
+      // shallow clone that truncated the snapshot commit away -- still starts
+      // and still serves the legacy technical tools, and reports
+      // CANONICAL_NOT_LOADED for everything Canonical-aware.
+      //
+      // That state used to be observable only through `/api/v1/capabilities`,
+      // which is behind OAuth, so confirming a deployment meant submitting the
+      // owner's service password. It is reported here instead, on the endpoint
+      // that already exists and is already public, so an operator can verify a
+      // deploy with one unauthenticated request.
+      //
+      // `/healthz` is deliberately left alone: it is Railway's healthcheck, and
+      // a Canonical problem must not be able to fail it and roll back a deploy
+      // that is otherwise serving correctly.
+      //
+      // The five identities stay five fields. Publishing them is consistent
+      // with what this project already publishes: the clean public export ships
+      // `canonical/published.json` carrying the same release metadata and Git
+      // provenance. Nothing here is a credential, and no song or project data
+      // is exposed.
+      if (url.pathname === '/' && request.method === 'GET') {
+        const canonical = await studio.canonical.provenance();
+        return Response.json({
+          service: 'MML Tools',
+          version: SERVICE_VERSION,
+          authentication: 'OAuth with PKCE',
+          status: 'Sign in from your ChatGPT plugin connection to use this service.',
+          canonical,
+          canonical_notice: canonical.status === 'CANONICAL_LOADED'
+            ? 'Published Canonical loaded. Canonical-aware Studio operations are available to an authenticated caller.'
+            : 'Published Canonical is NOT loaded, so every Canonical-aware operation refuses. The deployment needs a build context carrying this repository\u2019s Git metadata, refs/remotes/origin/main, and the pinned rules snapshot commit. See railway/README.md.',
+        }, { headers: { 'cache-control': 'no-store' } });
+      }
       return new Response('Not found', { status: 404 });
     },
   };

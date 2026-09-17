@@ -22,7 +22,52 @@ The official Node image runs as root so it can write the root-mounted Railway vo
 
 The image installs exactly one npm package — `fast-xml-parser`, already pinned to an exact version in `package.json` and already required by the MusicXML adapter the Studio backend uses — with `--omit=dev --ignore-scripts`, so no package install script runs. It installs nothing else and contacts no paid service. Build from the root of the same source commit that passed the tests.
 
-The image also carries the repository's Git metadata and the `git` binary. This is not incidental: the Published Canonical bootstrap reads `docs/CANONICAL_MANIFEST.md` from `refs/remotes/origin/main` and every rule document from the pinned rules snapshot, so without Git history no Canonical-aware operation can run. A build context without it still produces a working image — the service starts, serves `/healthz`, and `GET /api/v1/capabilities` reports `CANONICAL_NOT_LOADED` — but the Studio Agent Interface's Canonical-aware operations will refuse. Check the capability endpoint after any deployment change rather than assuming. A GitHub source must be explicitly selected for Railway's GitHub deployment tool; alternatively `railway up` requires its own authenticated CLI session.
+The image also carries the repository's Git metadata and the `git` binary. This is not incidental: the Published Canonical bootstrap reads `docs/CANONICAL_MANIFEST.md` from `refs/remotes/origin/main` and every rule document from the pinned rules snapshot commit `0a172900a01fdf39c2e9e84cf176961320b779ea`, so without Git history no Canonical-aware operation can run.
+
+Three things must all be true of the **build context**, not just of the Dockerfile:
+
+1. `.git` is present;
+2. `refs/remotes/origin/main` exists — a checkout with no remote-tracking ref for the published branch fails even with full history;
+3. the pinned rules snapshot commit is a reachable object. A shallow clone is the trap here: `--depth 1` *does* create `refs/remotes/origin/main` and still fails, because the snapshot commit was truncated away. Shallowness alone is not the test — a shallow clone deep enough to retain the snapshot loads fine.
+
+A context missing any of these still produces a working image. The service starts, `/healthz` answers, and the three legacy technical tools keep working; only the Canonical-aware Studio operations refuse, reporting `CANONICAL_NOT_LOADED` with no fallback.
+
+## Verifying a deployment
+
+Two checks, in order. **Neither needs the service password.**
+
+**1. The build log.** Every build runs `railway/canonical-probe.sh`, which prints one line per precondition and then the real capability answer:
+
+```
+[canonical-bootstrap] git-metadata: present
+[canonical-bootstrap] clone depth: complete
+[canonical-bootstrap] refs/remotes/origin/main: present
+[canonical-bootstrap] rules snapshot 0a172900…: present
+[canonical-bootstrap] status=CANONICAL_LOADED
+[canonical-bootstrap] canonical_version=2026-09-13-v1
+[canonical-bootstrap] rules_snapshot_sha=0a172900…
+[canonical-bootstrap] manifest_commit=…
+[canonical-bootstrap] published_main_head=…
+[canonical-bootstrap] repository_head=…
+```
+
+The probe is non-fatal and always exits 0. Failing the build would take a deployment that still serves its existing tools down over a degraded capability; silence is the only outcome it rules out.
+
+**2. The public root endpoint.**
+
+```
+curl -s https://<public-origin>/ | jq .canonical
+```
+
+Expect `"status": "CANONICAL_LOADED"` and five distinct identities: `canonical_version`, `rules_snapshot_sha`, `manifest_commit`, `published_main_head`, `repository_head`. When it is not loaded, `canonical_notice` states the remedy.
+
+`/healthz` is deliberately **not** coupled to the Canonical load: a Canonical problem must never fail Railway's healthcheck and roll back a deployment that is otherwise serving correctly.
+
+### If it reports `CANONICAL_NOT_LOADED`
+
+The probe line names which precondition failed, and all three remedies are deployment-side rather than code: the image needs a source checkout carrying this repository's history and its published ref.
+
+Do **not** work around it by creating `refs/remotes/origin/main` from `HEAD` at build time. That would let a build of any branch declare itself published Canonical, which is precisely the substitution the bootstrap contract forbids. If Railway cannot supply the history, see §20 of [docs/STUDIO_AGENT_INTERFACE.md](../docs/STUDIO_AGENT_INTERFACE.md) for the vendored-package follow-up, which is a project-owner decision rather than a silent change. A GitHub source must be explicitly selected for Railway's GitHub deployment tool; alternatively `railway up` requires its own authenticated CLI session.
 
 ## ChatGPT connection
 
