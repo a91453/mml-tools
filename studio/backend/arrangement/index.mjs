@@ -58,5 +58,6 @@ export {
 export {
   reviewAppliedCandidate,
   leadDemotionReportsFromApplication,
+  leadPromotionReportsFromApplication,
   applicationIntegrity,
 } from './decision-review.mjs';
