@@ -153,7 +153,6 @@ export const REPAIR_UNSUPPORTED = Object.freeze({
   ROLE_UNRESOLVED: 'interval-events-do-not-share-one-assigned-role',
   DECISION_BOUND_REMOVAL: 'absorbed-event-is-referenced-by-a-decision',
   INTERACTING_REPAIRS: 'repair-interacts-with-another-repair-on-the-same-event',
-  DELTA_NOT_SUB_GRID: 'interval-length-does-not-agree-with-the-analyzer-safe-grid',
 });
 
 const PERMITTED_BECAUSE = Object.freeze({
@@ -265,6 +264,15 @@ export function readRejectedTechnicalRecords(report) {
       malformed.push({ identityKey: key, reason: 'interval identity does not encode to its own key' });
       continue;
     }
+    // The analyzer only ever produces sub-grid intervals, so a rejected record
+    // that is not below the grid means the two modules disagree about the grid
+    // itself. Exactly-on-grid timing is not a sub-grid violation, and this is the
+    // one place the repair layer restates that — against the analyzer's own
+    // SAFE_GRID, never against a separately invented constant.
+    if (f(identity.length).cmp(SAFE_GRID) >= 0) {
+      malformed.push({ identityKey: key, reason: `interval length ${identity.length} is not below the analyzer safe grid ${SAFE_GRID.toString()}` });
+      continue;
+    }
     records.push({ identityKey: key, identity, record });
   }
 
@@ -345,10 +353,8 @@ function planGapClosure({ identityKey, identity, record }, context) {
     });
   }
 
+  // Admission already established this interval is positive and below the grid.
   const delta = f(identity.end).sub(f(identity.start));
-  if (delta.cmp(0) <= 0 || delta.cmp(SAFE_GRID) >= 0) {
-    return unsupported(identityKey, identity, REPAIR_UNSUPPORTED.DELTA_NOT_SUB_GRID, { detail: `delta ${delta.toString()} against safe grid ${SAFE_GRID.toString()}` });
-  }
 
   return {
     ok: true,
@@ -423,11 +429,6 @@ function planRestCoalesce({ identityKey, identity, record }, context) {
     return unsupported(identityKey, identity, REPAIR_UNSUPPORTED.DECISION_BOUND_REMOVAL, {
       detail: `${previous.id} is referenced by an arbitration decision`,
     });
-  }
-
-  const delta = f(identity.end).sub(f(identity.start));
-  if (delta.cmp(0) <= 0 || delta.cmp(SAFE_GRID) >= 0) {
-    return unsupported(identityKey, identity, REPAIR_UNSUPPORTED.DELTA_NOT_SUB_GRID, { detail: `delta ${delta.toString()} against safe grid ${SAFE_GRID.toString()}` });
   }
 
   return {

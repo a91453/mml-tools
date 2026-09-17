@@ -643,6 +643,42 @@ test('TTR-22a the rejected-record reader admits nothing it cannot verify', () =>
   reject([{ ...record, identity: null }], 'a record with no interval identity is refused');
   reject([{ ...record, identity: { ...record.identity, length: undefined, start: '0', end: '1/1024' } }],
     'an identity that does not encode to its own key is refused');
+
+  // Exactly-on-grid timing is not a sub-grid violation. A rejected record that is
+  // not below the grid means the analyzer and this layer disagree about the grid
+  // itself, which is a contradiction to refuse rather than a repair to perform.
+  const onGrid = createIntervalIdentity({
+    type: INTERVAL_TYPES.INTER_EVENT_GAP,
+    previousEventId: 'grid-a',
+    nextEventId: 'grid-b',
+    start: '0',
+    end: SAFE_GRID.toString(),
+  });
+  const onGridKey = intervalIdentityKey(onGrid);
+  const onGridResult = readRejectedTechnicalRecords({
+    rejectedIntervalKeys: [onGridKey],
+    enforcement: [{ ...record, identityKey: onGridKey, identity: onGrid, length: onGrid.length, eventIds: ['grid-a', 'grid-b'] }],
+  });
+  assert.deepEqual(onGridResult.records, [], 'an exactly-on-grid interval is never admitted for repair');
+  assert.equal(onGridResult.malformed.length, 1);
+  assert.match(onGridResult.malformed[0].reason, /not below the analyzer safe grid/);
+
+  // One safe-grid unit finer than the grid is admitted, so the comparison is a
+  // strict boundary and not a blanket refusal.
+  const belowGrid = createIntervalIdentity({
+    type: INTERVAL_TYPES.INTER_EVENT_GAP,
+    previousEventId: 'grid-a',
+    nextEventId: 'grid-b',
+    start: '0',
+    end: SAFE_GRID.sub(new F(1, 10n ** 20n)).toString(),
+  });
+  const belowKey = intervalIdentityKey(belowGrid);
+  const belowResult = readRejectedTechnicalRecords({
+    rejectedIntervalKeys: [belowKey],
+    enforcement: [{ ...record, identityKey: belowKey, identity: belowGrid, length: belowGrid.length, eventIds: ['grid-a', 'grid-b'] }],
+  });
+  assert.deepEqual(belowResult.malformed, []);
+  assert.equal(belowResult.records.length, 1);
 });
 
 test('TTR-22 a malformed enforcement record is refused before any repair is planned', () => {
