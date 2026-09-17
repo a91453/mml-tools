@@ -1,8 +1,22 @@
-import { VERSION, PROFILE, ROLES, validateMML, secondsAt } from '../dist/core.js';
+import { VERSION, PROFILE, ROLES } from '../dist/core.js';
+import { createTechnicalService } from '../studio/backend/application/technical-service.mjs';
+import { ERROR_CODES, StudioApplicationError } from '../studio/backend/application/contracts.mjs';
+import { STUDIO_MCP_TOOLS, UPLOAD_INSTRUCTION, runStudioTool } from './mcp-studio.mjs';
 
 // A deliberately small, stateless Streamable HTTP implementation. No sessions,
 // background work, network requests, file writes, model calls or song repair.
-export const SERVICE_VERSION = '0.2.0';
+//
+// This transport is an adapter. It validates a JSON-RPC envelope, checks the
+// declared input schema, names one Application Service operation and renders
+// what comes back. It holds no MML logic of its own: the three original tools
+// now call the same `technical-service.mjs` the HTTP surface calls, and the
+// `studio_*` tools call the Application Service, so no workflow exists here
+// that exists nowhere else.
+//
+// Nothing large travels through it. The 128 KiB body ceiling below is what
+// keeps a recording out of a model's context: an agent that needs bytes in a
+// project uploads them over the HTTP asset endpoint and passes the `asset_id`.
+export const SERVICE_VERSION = '0.3.0';
 export const MCP_VERSIONS = ['2025-11-25', '2025-06-18', '2025-03-26'];
 export const MAX_BODY_BYTES = 131072;
 const mcpTextEncoder = new TextEncoder();
@@ -17,6 +31,12 @@ const mcpSongProperties = {
   title: { type: 'string', maxLength: 120 },
 };
 const mcpPageProperty = { type: 'integer', minimum: 0, maximum: 100000 };
+
+// The three original tools, unchanged. Their names, descriptions, schemas,
+// annotations and report shape are a published contract that existing clients
+// and the existing regression suite read; a rename dressed up as a cleanup
+// would be a breaking change. They are listed on their own so that a server
+// with no Application Service attached advertises exactly these three.
 export const MCP_TOOLS = [
   {
     name: 'mml_service_info', title: 'MML 工具服務資訊',
@@ -47,6 +67,22 @@ function mcpRpcError(id, code, message, status = 200) {
 function mcpCheckSchema(schema, value, path = 'arguments') {
   if (schema.type === 'object') {
     if (value === null || typeof value !== 'object' || Array.isArray(value)) throw Error(`${path} must be an object`);
+    // An object schema with no declared properties and `additionalProperties`
+    // open is a structured payload the Application Service validates itself: a
+    // decision set, a confirmation block, an alignment report. That is ordinary
+    // JSON Schema, and it is what `tools/list` advertises — no private type
+    // value an external MCP host would have to understand.
+    //
+    // Reading it here as "any JSON object" is exactly what the schema says. The
+    // additional plain-JSON check below is a transport safety property, not a
+    // schema claim: it refuses anything JSON.parse can produce that is not
+    // plain data, bounds depth and width, and rejects prototype-polluting keys.
+    // The real vocabulary check belongs to the module that owns the vocabulary,
+    // and duplicating it here would create a second contract to keep in step.
+    if (!schema.properties) {
+      mcpCheckPlainJson(value, path);
+      return;
+    }
     for (const key of schema.required ?? []) if (!Object.hasOwn(value, key)) throw Error(`${path}.${key} is required`);
     for (const key of Object.keys(value)) {
       if (!Object.hasOwn(schema.properties, key)) throw Error(`${path}: unknown property`);
@@ -60,8 +96,27 @@ function mcpCheckSchema(schema, value, path = 'arguments') {
   } else if (schema.type === 'array') {
     if (!Array.isArray(value) || value.length < schema.minItems || value.length > schema.maxItems) throw Error(`${path}: invalid array length or type`);
     for (const item of value) mcpCheckSchema(schema.items, item, path);
+  } else if (schema.type === 'boolean') {
+    if (typeof value !== 'boolean') throw Error(`${path}: must be true or false`);
   } else throw Error('Unsupported schema');
 }
+// Rejects anything JSON.parse can produce that is not plain data, and any
+// attempt to smuggle a prototype through a passthrough field.
+function mcpCheckPlainJson(value, path, depth = 0) {
+  if (depth > 12) throw Error(`${path}: nested too deeply`);
+  if (value === null || ['string', 'number', 'boolean'].includes(typeof value)) return;
+  if (Array.isArray(value)) {
+    if (value.length > 5000) throw Error(`${path}: array too long`);
+    for (const item of value) mcpCheckPlainJson(item, path, depth + 1);
+    return;
+  }
+  if (typeof value !== 'object') throw Error(`${path}: unsupported value`);
+  for (const key of Object.keys(value)) {
+    if (key === '__proto__' || key === 'constructor' || key === 'prototype') throw Error(`${path}: forbidden property name`);
+    mcpCheckPlainJson(value[key], `${path}.${key}`, depth + 1);
+  }
+}
+
 function mcpPreflight(args) {
   // Protect the rational parser from pathological integer inputs before any
   // arithmetic. These bounds do not change the six-track musical rules.
@@ -75,55 +130,48 @@ function mcpPreflight(args) {
     if (s && !/^\d+(?:\/\d+|\.\d{1,9})?$/.test(s)) throw Error(`${key} 需為非負整數、小數或分數。`);
   }
 }
-function mcpGates(ok) {
+// The legacy tools' business logic now lives in the Application Service's
+// `technical-service.mjs`, which the HTTP surface calls too, so there is one
+// implementation rather than two.
+//
+// This transport binds its own instance rather than reaching through an
+// attached Application Service for these two tools, for one reason: the report
+// carries `service_version`, which is a fact about the service answering the
+// call, not about the orchestration layer. Routing it through an application
+// constructed with a different version string would make the same tool report
+// two different versions depending on how the process was wired. The logic is
+// identical either way — same module, same factory, same code path — and it
+// reaches for no filesystem and no Published Canonical, exactly as the original
+// tools did.
+const legacyTechnical = createTechnicalService({ serviceVersion: SERVICE_VERSION });
+
+function mcpServiceInfo(tools) {
   return {
-    strict_mobile_technical: ok ? 'PASS' : 'FAIL',
-    original_source_identity: 'PENDING', original_audio_listening: 'PENDING',
-    player_readback: 'NOT_RUN', in_game_acceptance: 'PENDING',
-  };
-}
-function mcpPairSummary(review) {
-  return review?.pairs.map(p => ({ left: p.left, right: p.right, status: p.status, overlap_count: p.overlaps.length })) ?? [];
-}
-function mcpReport(validation, offset = 0) {
-  const song = validation.song;
-  return {
-    service_version: SERVICE_VERSION, core_version: VERSION, profile: PROFILE,
-    technical_ok: validation.ok, gates: mcpGates(validation.ok),
-    error_count: validation.errors.length,
-    errors: validation.errors.slice(offset, offset + 200), error_offset: offset,
-    next_error_offset: offset + 200 < validation.errors.length ? offset + 200 : null,
-    warnings: validation.warnings,
-    tracks: song?.tracks.map(t => ({ role: t.role, empty: t.empty, characters: t.characters, character_limit: 2400, total_beats: t.total, note_events: t.events.length, error_count: t.errors.length })) ?? [],
-    total_beats: song?.total ?? null,
-    estimated_seconds: validation.ok ? secondsAt(song.total, song.tempo) : null,
-    tempo_map: song?.tempo ?? [], meter_map: song?.meter ?? [], bar_count: song?.bars.length ?? 0,
-    pair_count: song?.review?.pairs.length ?? 0, pairs: mcpPairSummary(song?.review),
-    low_mid_interval_count: song?.review?.crowding.length ?? null,
-    max_simultaneous_attacks: song?.review?.maxSimultaneousAttacks ?? null,
-    changed_input: false,
-    evidence_notice: '技術 PASS 只針對本 Strict Mobile profile。來源、鼓面證據、聽驗、播放器回讀及遊戲結果未由此服務確認。',
-  };
-}
-function mcpRunTool(name, args) {
-  if (name === 'mml_service_info') return {
     name: 'MML Workbench Tools', service_version: SERVICE_VERSION, core_version: VERSION, profile: PROFILE,
     transport: 'stateless-streamable-http', protocol_versions: MCP_VERSIONS,
     roles: ROLES, per_track_character_limit: 2400,
-    tools: MCP_TOOLS.map(t => t.name),
-    privacy: '僅處理本次工具呼叫傳入的 MML。服務程式不保存或記錄歌曲、不讀取歷史對話、不呼叫外部服務；平台自身的資料政策仍適用。',
-    limits: '沒有伺服器端音訊播放、MIDI／ABC 轉檔、曲譜自動修復或實機驗收。網站原有試聽與匯出仍在瀏覽器執行。',
+    tools: tools.map(t => t.name),
+    privacy: '僅處理本次工具呼叫傳入的內容與本服務自有的專案紀錄。服務程式不呼叫任何外部或付費 AI API、不讀取歷史對話；平台自身的資料政策仍適用。',
+    limits: '沒有伺服器端音訊播放、MIDI／ABC 轉檔、曲譜自動修復或實機驗收。MCP 不承載檔案位元組；大型素材請改用 HTTP 上傳端點取得 asset_id。',
+    binary_data_plane: UPLOAD_INSTRUCTION,
   };
-  mcpPreflight(args);
-  const result = validateMML(args.mml, { meterText: args.meter_text, pickup: args.pickup, finalPartial: args.final_partial, drumText: args.drum_profile, programs: args.programs, title: args.title });
-  if (name === 'mml_validate' || !result.ok) return mcpReport(result, args.error_offset ?? 0);
-  const review = result.song.review;
-  const items = [];
-  if (args.kind !== 'low_mid_intervals') for (const pair of review.pairs) for (const overlap of pair.overlaps) items.push({ category: 'same_pitch', left: pair.left, right: pair.right, ...overlap });
-  if (args.kind !== 'same_pitch') for (const overlap of review.crowding) items.push({ category: 'low_mid_intervals', ...overlap });
-  const offset = args.offset ?? 0, limit = args.limit ?? 100;
-  return { service_version: SERVICE_VERSION, core_version: VERSION, profile: PROFILE, technical_ok: true, gates: mcpGates(true), pair_count: 15, pairs: mcpPairSummary(review), total_items: items.length, offset, limit, items: items.slice(offset, offset + limit), next_offset: offset + limit < items.length ? offset + limit : null, changed_input: false };
 }
+
+async function mcpRunTool(name, args, context) {
+  if (name === 'mml_service_info') return mcpServiceInfo(mcpToolsFor(context));
+  if (name === 'mml_validate') return legacyTechnical.validate(args);
+  if (name === 'mml_overlap_details') return legacyTechnical.overlapDetails(args);
+  return runStudioTool(name, args, context);
+}
+
+// The advertised tool list. The `studio_*` tools require an Application Service
+// (project records, asset storage, the Canonical-aware engines), so a transport
+// without one advertises exactly the three original tools rather than offering
+// tools it cannot run.
+function mcpToolsFor(context) {
+  return context.application ? [...MCP_TOOLS, ...STUDIO_MCP_TOOLS] : MCP_TOOLS;
+}
+
 async function mcpReadBody(request) {
   const size = request.headers.get('content-length');
   if (size !== null && (!/^\d+$/.test(size) || Number(size) > MAX_BODY_BYTES)) throw Error('BODY_TOO_LARGE');
@@ -145,7 +193,16 @@ async function mcpReadBody(request) {
   return new TextDecoder('utf-8', { fatal: true }).decode(bytes);
 }
 
-export async function handleMcp(request) {
+/**
+ * Handle one MCP request.
+ *
+ * `application` and `owner` are optional: without them this serves exactly the
+ * three original read-only tools, which is what the Sites worker needs and what
+ * the existing regressions pin. With them, the `studio_*` control surface is
+ * advertised and dispatched too.
+ */
+export async function handleMcp(request, { application = null, owner = null } = {}) {
+  const context = { application, owner };
   const origin = request.headers.get('origin');
   if (origin && origin !== new URL(request.url).origin && origin !== 'https://chatgpt.com') return mcpRpcError(null, -32000, 'Origin not allowed', 403);
   if (request.method !== 'POST') return new Response(null, { status: 405, headers: { allow: 'POST', 'cache-control': 'no-store' } });
@@ -170,22 +227,46 @@ export async function handleMcp(request) {
   let result;
   if (message.method === 'initialize') {
     if (!params || typeof params.protocolVersion !== 'string' || !params.clientInfo || typeof params.clientInfo.name !== 'string' || typeof params.clientInfo.version !== 'string' || !params.capabilities || typeof params.capabilities !== 'object' || Array.isArray(params.capabilities)) return mcpRpcError(id, -32602, 'Invalid initialize parameters');
-    result = { protocolVersion: MCP_VERSIONS.includes(params.protocolVersion) ? params.protocolVersion : MCP_VERSIONS[0], capabilities: { tools: { listChanged: false } }, serverInfo: { name: 'mml-workbench-tools', version: SERVICE_VERSION }, instructions: 'Only technical MML checks. Pass MML and source-confirmed meter explicitly. Never interpret technical_ok as listening, source, player, or game acceptance. Tools do not rewrite songs or access conversation history.' };
+    const instructions = application
+      ? `Studio control surface plus the original technical MML checks. Work in this order: studio_capabilities, studio_project_get, studio_sources_analyze, studio_arrangement_suggest, resolve every pending decision explicitly, studio_decisions_apply, studio_candidate_review, then studio_finalize once nothing blocks it. A suggestion is never an acceptance and PENDING is never a default. Gate axes are independent: technical success never establishes source, audio, player or in-game acceptance, and nothing you can call sets in_game. ${UPLOAD_INSTRUCTION}`
+      : 'Only technical MML checks. Pass MML and source-confirmed meter explicitly. Never interpret technical_ok as listening, source, player, or game acceptance. Tools do not rewrite songs or access conversation history.';
+    result = { protocolVersion: MCP_VERSIONS.includes(params.protocolVersion) ? params.protocolVersion : MCP_VERSIONS[0], capabilities: { tools: { listChanged: false } }, serverInfo: { name: 'mml-workbench-tools', version: SERVICE_VERSION }, instructions };
   } else if (message.method === 'ping') result = {};
   else if (message.method === 'tools/list') {
     if (params?.cursor !== undefined) return mcpRpcError(id, -32602, 'This tool list is not paginated');
-    result = { tools: MCP_TOOLS };
+    result = { tools: mcpToolsFor(context) };
   } else if (message.method === 'tools/call') {
-    const tool = MCP_TOOLS.find(t => t.name === params?.name);
+    const tool = mcpToolsFor(context).find(t => t.name === params?.name);
     if (!tool) return mcpRpcError(id, -32602, 'Unknown tool');
     const args = params.arguments ?? {};
     try { mcpCheckSchema(tool.inputSchema, args); }
     catch (error) { return mcpRpcError(id, -32602, error.message); }
     try {
-      const data = mcpRunTool(tool.name, args), serialized = JSON.stringify(data);
-      if (mcpTextEncoder.encode(serialized).byteLength > 524288) throw Error('回應超過安全大小限制，請縮小输入或明細範圍。');
+      const data = await mcpRunTool(tool.name, args, context), serialized = JSON.stringify(data);
+      // A deliberate, caller-actionable refusal rather than a fault, so it is
+      // raised in the structured form that survives the sanitizer below.
+      if (mcpTextEncoder.encode(serialized).byteLength > 524288) {
+        throw new StudioApplicationError(ERROR_CODES.PAYLOAD_TOO_LARGE, '回應超過安全大小限制，請縮小输入或明細範圍。', { max_bytes: 524288 });
+      }
       result = { content: [{ type: 'text', text: serialized }], structuredContent: data, isError: false };
-    } catch (error) { result = { content: [{ type: 'text', text: error.message }], isError: true }; }
+    } catch (error) {
+      // A structured Application Service refusal keeps its code and details: a
+      // model that is told only "failed" cannot tell a blocked gate from a
+      // malformed request, and would retry the wrong thing. These messages are
+      // written to be read by a caller, and the legacy technical tools' own
+      // argument refusals are the same kind of thing.
+      //
+      // Anything else is an unexpected fault, and its message is not written
+      // for a caller: an import failure, a filesystem error or an internal
+      // assertion names modules, container paths and dependency internals. It
+      // is reduced to a stable generic code here, exactly as the HTTP adapter
+      // already does, so the two transports leak the same amount: nothing.
+      // Neither the raw message, the cause chain nor the stack is sent.
+      const structured = error?.name === 'StudioApplicationError'
+        ? { error: { code: error.code, message: error.message, details: error.details } }
+        : { error: { code: 'INTERNAL_ERROR', message: 'The request could not be completed.' } };
+      result = { content: [{ type: 'text', text: JSON.stringify(structured) }], structuredContent: structured, isError: true };
+    }
   } else return mcpRpcError(id, -32601, 'Method not found');
   return mcpReply({ jsonrpc: '2.0', id, result });
 }

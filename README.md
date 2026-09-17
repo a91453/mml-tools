@@ -1,6 +1,6 @@
 # MML Workbench
 
-可自行修改的瑪奇 Mobile 六軌 MML 檢查與預覽工作台。網站核心 v0.1.0，工具服務 v0.2.0。
+可自行修改的瑪奇 Mobile 六軌 MML 檢查與預覽工作台。網站核心 v0.1.0，工具服務 v0.3.0。
 
 > Studio v1 的來源、Published Canonical v1 文件與測試會與既有 Workbench 並存；**把 Studio 原始碼納入 `main` 不會自動切換正式 Railway/MCP 部署**。目前 production Railway/MCP 仍使用既有 Workbench 路徑。舊版工作基準凍結於 `legacy-v0.2.0`。唯一規則載入入口是 [docs/CANONICAL_MANIFEST.md](docs/CANONICAL_MANIFEST.md)，再依其快照與 authority map 載入 Published Canonical；本 README、Workbench 與舊 Skill 均不是規則權威。
 
@@ -28,9 +28,29 @@ Railway 已於 2026-09-08 22:48 UTC 完成部署，GitHub 來源為 `a91453/mml-
 - `mml_validate`：完整六軌技術檢查、字數、Tempo Map、拍長、小節及全部 15 對重疊摘要。
 - `mml_overlap_details`：同音重疊與低中音小二度／大七度區間，完整計數並可分頁取得明細。
 
-所有工具均唯讀，不改寫歌曲、不自動下載、不呼叫模型 API。呼叫檢查時，需明確提供 `mml` 與來源確認的 `meter_text`；例如 `0 4/4`，不能在來源未知時假設拍號。工具只處理本次傳入的資料，不會自動讀取其他對話、網站編輯器或使用者音檔。程式不保存或記錄工具傳入的歌曲；平台自身的資料政策仍適用。
+這三個工具均唯讀，不改寫歌曲、不自動下載、不呼叫模型 API。呼叫檢查時，需明確提供 `mml` 與來源確認的 `meter_text`；例如 `0 4/4`，不能在來源未知時假設拍號。工具只處理本次傳入的資料，不會自動讀取其他對話、網站編輯器或使用者音檔。程式不保存或記錄工具傳入的歌曲；平台自身的資料政策仍適用。
 
-`technical_ok` 和技術 PASS 不代表來源比對、聽驗、播放器回讀或遊戲驗收完成。MCP 首版沒有音訊播放與 MIDI／ABC 匯出工具；現有瀏覽器工作台仍提供這些功能。
+`technical_ok` 和技術 PASS 不代表來源比對、聽驗、播放器回讀或遊戲驗收完成。MCP 沒有音訊播放與 MIDI／ABC 匯出工具；現有瀏覽器工作台仍提供這些功能。
+
+### Studio Agent Interface
+
+Agent Control Plane（Railway 專案 `mml-tools-allen`／服務 `mml-tools`）在通過 OAuth 後另外提供十個 `studio_*` 工具與 `/api/v1/*` HTTP 介面，讓 ChatGPT、Claude、Codex、未來模型或本地 agent 透過同一套介面操作既有 Studio：專案、素材、來源匯入、編排建議、明確接受的決定、候選審查與 Final 產出。上述三個原有工具維持不變；未接上 Application Service 的 Sites Worker 仍只提供那三個。
+
+**這不是 Studio Web 部署。** 目前 Railway 上有兩個各自獨立的平面：
+
+| | Permanent Studio Web 平面 | Agent Control Plane |
+| --- | --- | --- |
+| Railway 專案 | `mml-tools-studio-permanent` | `mml-tools-allen` |
+| 服務 | `studio-web-permanent` | `mml-tools` |
+| 提供 | Studio PWA | OAuth、`/mcp`、`/api/v1/*` |
+| 發布方式 | 釘選的已驗證 release artifact＋trust bundle，SHA256 驗證後原子發布 | 由本程式庫建置的容器映像 |
+| Volume | `/studio-cache`（release 位元組） | `/data`（專案／素材／產出／工作紀錄） |
+
+Permanent Studio Web 的釘選發布與驗證機制記錄於 [ops/permanent/](ops/permanent/MIGRATION_RESULT.md)，本介面不取代、不遷移、不繞過它。Studio Web **目前不使用** Application Service：它在瀏覽器中直接呼叫同一套 `studio/backend/**` 引擎。未來若要遷移，屬於後續工作。`/studio-cache` 與 `/data` 責任不可互換。
+
+業務邏輯只有一份，位於 `studio/backend/application/`；HTTP 與 MCP 都只是 adapter，不重寫 Canonical、編排或 Final 邏輯，也不夾帶任何模型供應商相依。MCP 不承載檔案位元組：素材一律經 HTTP 上傳取得 `asset_id`。技術 PASS 不代表 source／audio／player／Mobile adaptation／實機驗收通過，`in_game` 無法由本服務設定。
+
+介面契約、資產與工作生命週期、Canonical provenance、成本模型、安全邊界與已知限制見 [docs/STUDIO_AGENT_INTERFACE.md](docs/STUDIO_AGENT_INTERFACE.md)（實作筆記，非規則權威）。
 
 Sites 版本依賴 Sites 的私人存取閘道。Worker 僅在閘道提供可信身分標頭後接受 MCP 呼叫；不可將 Worker 直接放到會接受任意身分標頭的公開主機。Railway 版本則使用 `railway/server.mjs` 與自己的 OAuth，不信任 Sites 身分標頭。兩者的正式 MCP URL 與 OAuth resource 不可混用；本機路由測試不能證明使用者 OAuth 連接已完成。
 

@@ -72,7 +72,18 @@ await copyFile('dist/core.js');
 await copyFile('dist/player.js');
 await copyTree('server');
 await copyTree('studio');
-for (const path of ['tests/core.test.mjs', 'tests/mcp.test.mjs', 'tests/player.test.mjs']) await copyFile(path);
+// The legacy suites that cover exported code. `api.test.mjs` and
+// `mcp-studio.test.mjs` cover `server/api.mjs` and `server/mcp-studio.mjs`,
+// which the tree copy above already exports, so leaving them behind would ship
+// two transports with no public regressions. `railway.test.mjs` stays out: it
+// covers the private deployment's OAuth service, which is not exported.
+for (const path of [
+  'tests/core.test.mjs',
+  'tests/mcp.test.mjs',
+  'tests/player.test.mjs',
+  'tests/api.test.mjs',
+  'tests/mcp-studio.test.mjs',
+]) await copyFile(path);
 for (const path of [
   'scripts/build-studio-web.mjs',
   'scripts/serve-studio-web.mjs',

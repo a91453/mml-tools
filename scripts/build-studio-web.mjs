@@ -16,7 +16,17 @@ const canonical = loadPublishedCanonical({ root, prHead, supportedCanonicalVersi
 const digest = value => createHash('sha256').update(value).digest('hex');
 await rm(out, { recursive: true, force: true });
 const put = async (path, text) => { await mkdir(dirname(resolve(out, path)), { recursive: true }); await writeFile(resolve(out, path), text); };
+// Server-only backend directories. The browser bundle carries the Canonical
+// engines; it must not carry the transport-facing layers built on top of them.
+// `application/` orchestrates the engines for HTTP and MCP callers and reaches
+// for node:fs, node:crypto and a filesystem store, none of which exist in a
+// browser. Nothing the Studio Web app loads imports it, so excluding it removes
+// no capability from the PWA — and shipping it would put Node imports into an
+// offline bundle that is asserted to have none.
+const SERVER_ONLY_MODULES = new Set(['studio/backend/application']);
+
 async function copyModules(directory) {
+  if (SERVER_ONLY_MODULES.has(directory)) return;
   for (const entry of await readdir(resolve(root, directory), { withFileTypes: true })) {
     const path = `${directory}/${entry.name}`;
     if (entry.isDirectory()) await copyModules(path);
