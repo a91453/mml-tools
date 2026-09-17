@@ -200,6 +200,22 @@ export function leadPromotionReportsFromApplication(application, baseline) {
   const candidateById = new Map((application?.candidate?.events ?? []).map(event => [event.id, event]));
   const reports = [];
 
+  // A later revision may promote a duplicate created by an earlier revision.
+  // Its candidate event id is intentionally not a source-event id, but the
+  // derived metadata keeps a reversible chain back to the Source-Faithful
+  // baseline. Walk only that chain; never guess by pitch/time or array order.
+  const baselineOriginOf = eventId => {
+    const seen = new Set();
+    let currentId = eventId;
+    while (typeof currentId === 'string' && currentId && !seen.has(currentId)) {
+      if (baselineById.has(currentId)) return baselineById.get(currentId);
+      seen.add(currentId);
+      const event = candidateById.get(currentId);
+      currentId = event?.metadata?.g11d?.derivedFromEventId ?? null;
+    }
+    return null;
+  };
+
   for (const entry of application.applied) {
     if (![ACCEPTED_DECISION_TYPES.ASSIGN_ROLE, ACCEPTED_DECISION_TYPES.MOVE_ROLE, ACCEPTED_DECISION_TYPES.DUPLICATE_WITH_JUSTIFICATION].includes(entry.type)) continue;
 
@@ -230,9 +246,20 @@ export function leadPromotionReportsFromApplication(application, baseline) {
     }
 
     for (const { item, promotedEventId } of promoted) {
-      const origin = baselineById.get(item.eventId);
-      if (!origin || origin.role === LEAD_ROLE) continue;
-      const scope = leadEvidenceIdentityBlockers(entry.leadEvidence, origin);
+      const origin = baselineOriginOf(item.eventId);
+      if (!origin) {
+        reports.push(Object.freeze({
+          ...pendingReport(promotedEventId, LEAD_ROLE, ['LEAD_PROMOTION_ORIGIN_NOT_IN_BASELINE']),
+          originEventId: null,
+        }));
+        continue;
+      }
+      // Grade the event as it existed immediately before this role move, while
+      // binding its citation to the source-faithful origin provenance. This is
+      // necessary for a derived event whose origin was already Melody: the
+      // derived copy is currently non-Lead even though its source ancestor was.
+      const evidenceEvent = { ...origin, id: item.eventId, role: item.fromRole ?? null };
+      const scope = leadEvidenceIdentityBlockers(entry.leadEvidence, evidenceEvent);
       if (scope.length) {
         reports.push(Object.freeze({
           ...pendingReport(promotedEventId, LEAD_ROLE, scope.includes(LEAD_EVIDENCE_IDENTITY_MISMATCH) || scope.includes(LEAD_EVIDENCE_PROVENANCE_PAIR_AMBIGUOUS)
@@ -245,7 +272,7 @@ export function leadPromotionReportsFromApplication(application, baseline) {
       try {
         const report = evaluateLeadPromotion({
           ...(entry.leadEvidence ?? {}),
-          event: origin,
+          event: evidenceEvent,
           destinationRole: LEAD_ROLE,
           positiveReason: entry.leadEvidence?.positiveReason ?? entry.reason,
         });
