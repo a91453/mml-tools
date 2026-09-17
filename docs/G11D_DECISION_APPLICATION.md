@@ -409,8 +409,8 @@ must still run (`downstream.mustRerun`), and `decision-review.mjs` wires the
 existing modules:
 
 event-level diff (baseline and previous) · Core3 continuity and false Lead gaps ·
-Lead Demotion Gate for every Lead removal/role move in the diff · cross-source
-harmony arbitration · source-aware micro-timing · per-song readiness.
+shared Lead-role grading for every Lead demotion and promotion in the diff ·
+cross-source harmony arbitration · source-aware micro-timing · per-song readiness.
 
 A derived revision never inherits `sourceComplete`, `audioAlignmentEvidence`, a
 stored `sourceFaithfulBaseline` snapshot or a previous `g11d` block from its
