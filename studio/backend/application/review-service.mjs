@@ -305,8 +305,10 @@ export function createReviewService({ canonical, projects, intake, arrangement, 
       const { engines, application, baselineProject, confirmations: recorded, project, parent } = ctx;
 
       const leadDemotionReports = engines.arrangement.leadDemotionReportsFromApplication(application, baselineProject);
+      const leadPromotionReports = engines.arrangement.leadPromotionReportsFromApplication(application, baselineProject);
       const readinessInputs = {
         leadDemotionReports,
+        leadPromotionReports,
         versionDriftReviewed: recorded.version_drift_reviewed?.value === true,
         originalAudioRequired: recorded.original_audio_required?.value !== false,
         playerReadback: recorded.player_readback?.value ?? 'NOT_RUN',
@@ -345,6 +347,7 @@ export function createReviewService({ canonical, projects, intake, arrangement, 
         core3,
         harmony,
         lead_demotion: leadDemotionReports,
+        lead_promotion: leadPromotionReports,
         readiness,
         audio: {
           reports: ctx.audioReports.length,
