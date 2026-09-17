@@ -1,0 +1,101 @@
+{
+  "song_reference_import_manifest_version": "1.1-imported",
+  "song_id": "back-number-mabataki",
+  "import_path": "imports/song-reference/back-number-mabataki/",
+  "current_accepted_version": "v29R",
+  "current_accepted_sha256": "bfbfb8b77416e6abca47f75ce7687b43dded6fd9f72ef848d1e129ae1fab15ed",
+  "accepted_mml_modified": false,
+  "source_binaries_included": false,
+  "prohibited_source_binary_extensions": [
+    ".m4a",
+    ".mp3",
+    ".wav",
+    ".flac",
+    ".pdf",
+    ".mid",
+    ".midi"
+  ],
+  "song_context_mode": "normalized-staging-index",
+  "song_context_note": "The original portable song-context.json contained duplicated prose already preserved in sibling files. The staging import uses a compact machine-readable index and preserves detailed history/evidence in source-inventory.json, history-audit.md, arrangement-notes.md, and validation-summary.md.",
+  "original_portable_song_context_sha256": "00ab62147098886a7c2cf299dea3b8ca1b5aba5e2ad2f1ce77aa26c4270fe008",
+  "import_record": {
+    "imported_from_branch": "import/song-reference-back-number-mabataki-20260914",
+    "imported_from_commit": "191b808fee2df75b4f79d153c6b5347f7c6336ad",
+    "reconciled_against_branch": "import/song-reference-back-number-mabataki-20260914-clean",
+    "reconciled_against_commit": "38582bd720427f680e1e50b64bbbf6957f6a016a",
+    "published_main_head_at_verification": "95c774e19d057d9834318e7652b4f796e4ce2031",
+    "manifest_commit": "5e7666b850a37f1c85ee2dd8cd0f4fac037a9e14",
+    "rules_snapshot_sha": "0a172900a01fdf39c2e9e84cf176961320b779ea",
+    "details_in": "import-record.md",
+    "package_files_unchanged_from_source_branch": true
+  },
+  "files": [
+    {
+      "path": "README.md",
+      "bytes": 2517,
+      "sha256": "3a2ba344d9fb00c76fe96339f365756cfbbb3ef7ed7414b346a72aea20f9cc64",
+      "git_blob_sha1": "4dfc53cec28a66af9ef9d65369fc8ace21a34b58"
+    },
+    {
+      "path": "arrangement-notes.md",
+      "bytes": 3625,
+      "sha256": "0169c21469ae66b7924c55a5d811f4d0690c2cceb13559ac905dce4be5df57e3",
+      "git_blob_sha1": "8cb697e7d671648604a060567517ba88117e01b2"
+    },
+    {
+      "path": "current-accepted.mml",
+      "bytes": 7090,
+      "sha256": "bfbfb8b77416e6abca47f75ce7687b43dded6fd9f72ef848d1e129ae1fab15ed",
+      "git_blob_sha1": "2548772e88bcb66fbb0dc180d61650e89c08f1de"
+    },
+    {
+      "path": "historical/SF6R-source-faithful-6track-reference.mml",
+      "bytes": 7061,
+      "sha256": "07653c49db7cf182dac4d43613eaa48c64f13af30381db228a177f94780b4c6e",
+      "git_blob_sha1": "392ebf9e04820da7c0c4b54991f861a702c6d83c"
+    },
+    {
+      "path": "historical/TL1-source-near-mobile.mml",
+      "bytes": 7074,
+      "sha256": "7481b335b846321abbf94e57a73eaed7d3b34c954dfc08b967b697bd9954ac39",
+      "git_blob_sha1": "331821203d7b25f398004e216963ba69f48ebe8d"
+    },
+    {
+      "path": "historical/v13-original-pitch-source-faithful-reference.mml",
+      "bytes": 7054,
+      "sha256": "f71ffdf2f51d1047c325248bd434cd2f1ec2e69c07c8f3598581bb8a6b91876a",
+      "git_blob_sha1": "a8f79797263b9e6d050d30282010ddb8304b94e4"
+    },
+    {
+      "path": "history-audit.md",
+      "bytes": 4166,
+      "sha256": "8b8690dd1cd334201b8ccfb47b6737166f3c84cf49e840aa301460ad23503eea",
+      "git_blob_sha1": "aa6612f7d48ec955826e4784b040906ca243e74e"
+    },
+    {
+      "path": "import-record.md",
+      "bytes": 4985,
+      "sha256": "103ae0677ce2c699250282d2c6686d35e813c5cefcabf0e28dabcd834a6cbf81",
+      "git_blob_sha1": "55aecbacb51fc498204cc32767bed4f55c9b828f"
+    },
+    {
+      "path": "song-context.json",
+      "bytes": 13168,
+      "sha256": "1a96d3174d60cdc7c11bd3909308cc0ae2becdacc3daa1a9efad9f098e6c063d",
+      "git_blob_sha1": "dad449ee5da09abcb2dcf557c9562fa682ee3d56"
+    },
+    {
+      "path": "source-inventory.json",
+      "bytes": 9970,
+      "sha256": "d4546d389c3664271d8f9d698b1a98ecd78c68c8a1dd450d904d8e6461dbe545",
+      "git_blob_sha1": "202789be943f5f4eb0a7b8a848c7a66143132e82"
+    },
+    {
+      "path": "validation-summary.md",
+      "bytes": 3732,
+      "sha256": "8b1a09b53904d73211a96e5fdb08430aa17c9c0e5240287475056c70ec9b06fb",
+      "git_blob_sha1": "ce449690448307f208fafc30dbb642632fcbd8f5"
+    }
+  ],
+  "authority_note": "Song-specific context and evidence only. Not a Canonical rule source; canonical_context is export provenance, not a snapshot to load."
+}
