@@ -1,0 +1,248 @@
+{
+  "song_reference_export_version": "1.0-portable",
+  "song_id": "back-number-mabataki",
+  "source_count": 9,
+  "sources": [
+    {
+      "source_id": "official-audio-full",
+      "filename": "back number - 瞬き (full).m4a",
+      "title": "瞬き",
+      "artist": "back number",
+      "provider_or_origin": "User-provided official recording; exact storefront/provider not recorded",
+      "source_type": "OFFICIAL_AUDIO",
+      "provenance_class": "OFFICIAL_AUDIO",
+      "claim_type": "SOURCE_FACT",
+      "duration_seconds": 324.893605,
+      "hash": null,
+      "validation_role": [
+        "recording structure",
+        "foreground/background prominence",
+        "practical register evidence",
+        "tempo/alignment evidence"
+      ],
+      "derived_observations": [
+        "Recorded song-level alignment history used an offset around +2.915 to +2.92 s.",
+        "Historical full-song analysis reported no sustained cumulative tempo drift.",
+        "Binary intentionally omitted from package."
+      ],
+      "exported_in_package": false,
+      "local_presence_at_export": true
+    },
+    {
+      "source_id": "trusted-midi-e",
+      "filename": "E.mid",
+      "title": "瞬き source-role symbolic reference",
+      "artist": "back number",
+      "provider_or_origin": "User-provided trusted/source MIDI; exact provider not recorded",
+      "source_type": "TRUSTED_MIDI",
+      "provenance_class": "TRUSTED_MIDI",
+      "claim_type": "SOURCE_FACT",
+      "duration_seconds": 311.1,
+      "hash": null,
+      "validation_role": [
+        "primary symbolic reference used for Melody/Chord1/Bass/Chord3 provenance",
+        "pitch/onset/duration source reference in historical audits"
+      ],
+      "derived_observations": [
+        "Historical source counts: 555 / 229 / 275 / 625 meaningful pitched events across four roles.",
+        "Not claimed to be an official publisher MIDI in this package.",
+        "Original binary is not available at its former runtime path during package assembly and is not exported."
+      ],
+      "exported_in_package": false,
+      "local_presence_at_export": false
+    },
+    {
+      "source_id": "trusted-midi-piano",
+      "filename": "Mabataki__Back_Number_Piano.mid",
+      "title": "瞬き piano symbolic reference",
+      "artist": "back number",
+      "provider_or_origin": "User-provided trusted piano MIDI; exact provider not recorded",
+      "source_type": "TRUSTED_MIDI",
+      "provenance_class": "TRUSTED_MIDI",
+      "claim_type": "SOURCE_FACT",
+      "duration_seconds": 311.1,
+      "hash": null,
+      "validation_role": [
+        "piano voicing/register arbitration",
+        "historical source support for Track5/Track6 source-faithful selections"
+      ],
+      "derived_observations": [
+        "Historical analysis reported roughly 879 + 1158 notes across piano hands.",
+        "Not claimed to prove final-recording prominence by itself.",
+        "Original binary is not available at its former runtime path during package assembly and is not exported."
+      ],
+      "exported_in_package": false,
+      "local_presence_at_export": false
+    },
+    {
+      "source_id": "trusted-midi-solo-piano-secondary",
+      "filename": "back_number__solo_piano.mid",
+      "title": "瞬き solo piano secondary reference",
+      "artist": "back number",
+      "provider_or_origin": "User-provided symbolic reference; exact provider not recorded",
+      "source_type": "TRUSTED_MIDI",
+      "provenance_class": "TRUSTED_MIDI",
+      "claim_type": "SOURCE_FACT",
+      "duration_seconds": null,
+      "hash": null,
+      "validation_role": [
+        "secondary symbolic comparison",
+        "historical context"
+      ],
+      "derived_observations": [
+        "Exact use in final v29R arbitration is not fully documented in the retained local reports.",
+        "Original binary is not available during package assembly and is not exported."
+      ],
+      "exported_in_package": false,
+      "local_presence_at_export": false
+    },
+    {
+      "source_id": "third-party-arrangement-shun",
+      "filename": "瞬.mid",
+      "title": "瞬き third-party arrangement",
+      "artist": "back number",
+      "provider_or_origin": "Third-party arrangement supplied in conversation; exact provider not recorded",
+      "source_type": "THIRD_PARTY_ARRANGEMENT",
+      "provenance_class": "THIRD_PARTY_ARRANGEMENT",
+      "claim_type": "SOURCE_FACT",
+      "duration_seconds": null,
+      "hash": null,
+      "validation_role": [
+        "supporting voicing/role-allocation ideas only",
+        "community-style arrangement comparison"
+      ],
+      "derived_observations": [
+        "Used as supporting evidence, never as source truth.",
+        "Historical lesson was coherent voice allocation/voicing, not literal pitch authority.",
+        "Original binary is not available during package assembly and is not exported."
+      ],
+      "exported_in_package": false,
+      "local_presence_at_export": false
+    },
+    {
+      "source_id": "current-accepted-v29r",
+      "filename": "current-accepted.mml",
+      "title": "瞬き v29R",
+      "artist": "back number",
+      "provider_or_origin": "This conversation / project artifact",
+      "source_type": "CURRENT_ACCEPTED_MML",
+      "provenance_class": "CURRENT_ACCEPTED_MML",
+      "claim_type": "SONG_SPECIFIC_ARRANGEMENT_DECISION",
+      "duration_seconds": 311.125,
+      "hash": {
+        "algorithm": "sha256",
+        "value": "bfbfb8b77416e6abca47f75ce7687b43dded6fd9f72ef848d1e129ae1fab15ed"
+      },
+      "validation_role": [
+        "current accepted Mabinogi Mobile six-role arrangement",
+        "future regression baseline for song-specific comparisons"
+      ],
+      "derived_observations": [
+        "Byte-identical to v29 according to the retained v29R validation report.",
+        "Latest user decision restored v29R as current Final because it sounded cleaner than fuller same-instrument alternatives."
+      ],
+      "exported_in_package": true,
+      "local_presence_at_export": true
+    },
+    {
+      "source_id": "historical-v13",
+      "filename": "historical/v13-original-pitch-source-faithful-reference.mml",
+      "title": "瞬き v13",
+      "artist": "back number",
+      "provider_or_origin": "Historical project MML",
+      "source_type": "HISTORICAL_MML",
+      "provenance_class": "HISTORICAL_MML",
+      "claim_type": "DERIVED_ANALYSIS",
+      "duration_seconds": null,
+      "hash": {
+        "algorithm": "sha256",
+        "value": "f71ffdf2f51d1047c325248bd434cd2f1ec2e69c07c8f3598581bb8a6b91876a"
+      },
+      "validation_role": [
+        "early original-pitch/source-faithful historical reference",
+        "version-drift zero point in older audits"
+      ],
+      "derived_observations": [
+        "Historical liking is not treated as source truth.",
+        "Retained only as a milestone, not as current Final."
+      ],
+      "exported_in_package": true,
+      "local_presence_at_export": true
+    },
+    {
+      "source_id": "historical-sf6r",
+      "filename": "historical/SF6R-source-faithful-6track-reference.mml",
+      "title": "瞬き SF6R",
+      "artist": "back number",
+      "provider_or_origin": "This conversation / project artifact",
+      "source_type": "HISTORICAL_MML",
+      "provenance_class": "HISTORICAL_MML",
+      "claim_type": "DERIVED_ANALYSIS",
+      "duration_seconds": 311.125,
+      "hash": {
+        "algorithm": "sha256",
+        "value": "07653c49db7cf182dac4d43613eaa48c64f13af30381db228a177f94780b4c6e"
+      },
+      "validation_role": [
+        "Source-Faithful six-track reduction reference",
+        "A/B bridge between event-level source baseline and Mobile Final"
+      ],
+      "derived_observations": [
+        "Preserves 555/229/625/275 E-source roles plus 115/53 piano-derived selections in historical source verification.",
+        "Reference only; not a Source-Faithful Baseline replacement and not current Final."
+      ],
+      "exported_in_package": true,
+      "local_presence_at_export": true
+    },
+    {
+      "source_id": "historical-tl1",
+      "filename": "historical/TL1-source-near-mobile.mml",
+      "title": "瞬き TL1",
+      "artist": "back number",
+      "provider_or_origin": "This conversation / project artifact",
+      "source_type": "HISTORICAL_MML",
+      "provenance_class": "HISTORICAL_MML",
+      "claim_type": "MOBILE_ADAPTATION",
+      "duration_seconds": 311.125,
+      "hash": {
+        "algorithm": "sha256",
+        "value": "7481b335b846321abbf94e57a73eaed7d3b34c954dfc08b967b697bd9954ac39"
+      },
+      "validation_role": [
+        "A/B milestone isolating prominence reduction without pitch/onset/duration deletion",
+        "previously accepted then superseded by latest v29R preference"
+      ],
+      "derived_observations": [
+        "Only three Chord3 logical notes had volume/prominence reduced relative to SF6R.",
+        "User reported TL1 improved over SF6R, but later preferred v29R overall for cleaner same-instrument texture."
+      ],
+      "exported_in_package": true,
+      "local_presence_at_export": true
+    }
+  ],
+  "source_gaps": [
+    {
+      "category": "OFFICIAL_SCORE",
+      "status": "not_available",
+      "note": "No packageable official/commercial score artifact is retained here. Do not infer an official score source from MIDI provenance."
+    },
+    {
+      "category": "SOURCE_FAITHFUL_EVENT_MAP",
+      "status": "not_exported",
+      "note": "A detailed event-level source-faithful baseline artifact existed in the working runtime, but it is intentionally omitted because it may reproduce too much source MIDI content. Only provenance/diff summaries are exported."
+    }
+  ],
+  "binary_policy": {
+    "included_binary_source_files": [],
+    "omitted_extensions": [
+      ".m4a",
+      ".mp3",
+      ".wav",
+      ".flac",
+      ".pdf",
+      ".mid",
+      ".midi"
+    ],
+    "reason": "Portable package preserves metadata/provenance, not copyrighted or third-party source binaries."
+  }
+}
