@@ -45,6 +45,10 @@ export const EMIT_DIAGNOSTICS = Object.freeze({
   // --- Canonical / G10 ---------------------------------------------------
   MICRO_GAP_TECHNICAL_RESIDUE: 'MICRO_GAP_TECHNICAL_RESIDUE',
   MICRO_GAP_BLOCKED_PENDING: 'MICRO_GAP_BLOCKED_PENDING',
+  // Technical Timing Repair. Both are notices: the repair layer changes what the
+  // emitter is looking at, never what any gate demands of it.
+  TECHNICAL_TIMING_REPAIR_APPLIED: 'TECHNICAL_TIMING_REPAIR_APPLIED',
+  TECHNICAL_TIMING_REPAIR_UNAVAILABLE: 'TECHNICAL_TIMING_REPAIR_UNAVAILABLE',
   SOURCE_SUPPORTED_INTERVAL_NOT_REPRESENTABLE: 'SOURCE_SUPPORTED_INTERVAL_NOT_REPRESENTABLE',
   READINESS_BLOCKED: 'READINESS_BLOCKED',
   IMPLEMENTATION_BLOCKED: 'IMPLEMENTATION_BLOCKED',
@@ -167,6 +171,14 @@ export const DEFAULT_EMIT_OPTIONS = Object.freeze({
   // never approaches this; it exists so a pathological duration cannot hang.
   maxTieSegments: 12,
   readiness: null,
+  // Technical Timing Repair is opt-in. Off, this emitter behaves exactly as it
+  // did before the repair layer existed: a candidate carrying Canonically
+  // confirmed technical residue is refused, not transformed. On, the repair is
+  // attempted and its result is re-graded by micro-gap enforcement before any
+  // serialization is considered. It is opt-in because it transforms the musical
+  // candidate, and that must be a caller's explicit decision rather than a
+  // side effect of asking for MML.
+  technicalTimingRepair: false,
 });
 
 export function normalizeEmitOptions(options = {}) {
@@ -182,6 +194,7 @@ export function normalizeEmitOptions(options = {}) {
     budget,
     maxTieSegments,
     readiness: options.readiness ?? null,
+    technicalTimingRepair: options.technicalTimingRepair === true,
   });
 }
 
@@ -192,4 +205,4 @@ export function canonicalIdentity() {
   return EFFECTIVE_RULESET.canonical;
 }
 
-export const EMITTER_NOTICE = 'Emitter status is an implementation result, not a Canonical verdict. PASS means the candidate was serialized exactly and re-parsed to identical semantics under the authoritative Final parser; it does not certify source completeness, arrangement correctness, Canonical compliance or in-game acceptance. Character counts are JavaScript string lengths (PENDING P1). Emitted MML never uses Nxx (PENDING P3), never uses forbidden dotted forms (PENDING P5), and treats the octave mapping as an implementation mapping (PENDING P6).';
+export const EMITTER_NOTICE = 'Emitter status is an implementation result, not a Canonical verdict. PASS means the candidate was serialized exactly and re-parsed to identical semantics under the authoritative Final parser — the repaired candidate when Technical Timing Repair ran, with the pre-repair timing recorded in the result; it does not certify source completeness, arrangement correctness, Canonical compliance or in-game acceptance. Character counts are JavaScript string lengths (PENDING P1). Emitted MML never uses Nxx (PENDING P3), never uses forbidden dotted forms (PENDING P5), and treats the octave mapping as an implementation mapping (PENDING P6).';

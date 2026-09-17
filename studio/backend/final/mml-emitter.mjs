@@ -26,6 +26,7 @@
 import { F, f, ROLES } from '../mml/index.mjs';
 import { EFFECTIVE_RULESET, studioFinalBlockers } from '../rules/index.mjs';
 import { enforceMicroGaps } from './micro-gap-enforcement.mjs';
+import { REPAIR_STATUS, repairTechnicalTiming } from './technical-timing-repair.mjs';
 import {
   EMIT_STATUS,
   DIAGNOSTIC_SEVERITY,
@@ -597,6 +598,12 @@ function normalizeTempoEvents(project) {
  * G10 is consumed here rather than re-derived: `enforceMicroGaps` owns the
  * published sub-1/64 policy and this emitter is its second declared consumer.
  * No threshold, grid or per-class outcome is re-implemented.
+ *
+ * When Technical Timing Repair is enabled it runs *between* the enforcement pass
+ * and these gates, and the gates then grade the repaired candidate. That
+ * ordering matters: repair never answers a gate, it only changes which candidate
+ * the gates are asked about, and the candidate it produces is re-graded by the
+ * same `enforceMicroGaps` that rejected the original.
  */
 function evaluateGates(project, options) {
   const diagnostics = [];
@@ -613,12 +620,55 @@ function evaluateGates(project, options) {
     status = EMIT_STATUS.PENDING;
   }
 
-  const microGap = enforceMicroGaps(project);
+  let microGap = enforceMicroGaps(project);
+  let candidate = project;
+  const repair = { requested: options.technicalTimingRepair === true, applied: false, result: null };
+
+  // Opt-in, and never a shortcut. A repair that does not reach PASS, or that
+  // leaves the candidate ineligible for Final emission, changes nothing at all:
+  // `microGap` keeps the original verdict and the gates below refuse exactly as
+  // they did before this layer existed.
+  if (repair.requested && microGap.rejectedIntervalKeys.length) {
+    repair.result = repairTechnicalTiming(project, { enforcement: microGap });
+    if (repair.result.status === REPAIR_STATUS.PASS
+      && repair.result.finalEmissionEligible
+      && repair.result.repairedProject) {
+      candidate = repair.result.repairedProject;
+      // The re-grade of the repaired candidate by the authoritative enforcement
+      // pass, not this module's own opinion of its own output.
+      microGap = repair.result.verification;
+      repair.applied = true;
+      diagnostics.push(diagnostic(
+        EMIT_DIAGNOSTICS.TECHNICAL_TIMING_REPAIR_APPLIED,
+        DIAGNOSTIC_SEVERITY.NOTICE,
+        `Technical Timing Repair normalized ${repair.result.repairedIntervalKeys.length} Canonically classified technical interval(s). Everything below grades the repaired candidate "${candidate.id}"; the pre-repair timing is recorded in this result and in the candidate's own provenance.`,
+        {
+          repairedProjectId: candidate.id,
+          baselineProjectId: project.id,
+          repairedIntervalKeys: repair.result.repairedIntervalKeys,
+        },
+      ));
+    } else {
+      // A notice, not a verdict. The unrepaired original is still graded below,
+      // and its own blockers decide the outcome.
+      diagnostics.push(diagnostic(
+        EMIT_DIAGNOSTICS.TECHNICAL_TIMING_REPAIR_UNAVAILABLE,
+        DIAGNOSTIC_SEVERITY.NOTICE,
+        `Technical Timing Repair returned ${repair.result.status} and did not produce a Final-eligible candidate. The original candidate is graded unchanged.`,
+        {
+          repairStatus: repair.result.status,
+          unrepairedIntervalKeys: repair.result.unrepairedIntervalKeys,
+          repairDiagnostics: Object.freeze(repair.result.diagnostics.map(item => item.code)),
+        },
+      ));
+    }
+  }
+
   if (microGap.status === 'FAIL') {
     diagnostics.push(diagnostic(
       EMIT_DIAGNOSTICS.MICRO_GAP_TECHNICAL_RESIDUE,
       DIAGNOSTIC_SEVERITY.ERROR,
-      `G10 rejected ${microGap.rejectedIntervalKeys.length} confirmed technical sub-1/64 interval(s). This PR does not attempt technical timing repair: a correct refusal is preferred to a guessed normalization.`,
+      `G10 rejected ${microGap.rejectedIntervalKeys.length} confirmed technical sub-1/64 interval(s). ${repair.requested ? 'Technical Timing Repair could not normalize them exactly, and a correct refusal is preferred to a guessed normalization.' : 'Technical Timing Repair was not requested; a correct refusal is preferred to a guessed normalization.'}`,
       { blockers: microGap.blockers, rejectedIntervalKeys: microGap.rejectedIntervalKeys },
     ));
     status = EMIT_STATUS.FAIL;
@@ -673,7 +723,7 @@ function evaluateGates(project, options) {
     }
   }
 
-  return { status, diagnostics, microGap };
+  return { status, diagnostics, microGap, repair, candidate };
 }
 
 /**
@@ -692,10 +742,15 @@ export function emitFinalMml(project, options = {}) {
   const gates = evaluateGates(project, settings);
   const diagnostics = [...gates.diagnostics];
   if (gates.status !== EMIT_STATUS.PASS) {
-    return buildResult(gates.status, null, [], diagnostics, gates.microGap, null, facts);
+    return buildResult(gates.status, null, [], diagnostics, gates.microGap, null, facts, gates.repair);
   }
 
-  const spans = collectSpanEvents(project);
+  // Everything below serializes `candidate`: the input project, or the repaired
+  // one when Technical Timing Repair produced a Final-eligible result. The
+  // round-trip gate therefore compares against the repaired semantics, which is
+  // what the emitted string actually claims to mean.
+  const candidate = gates.candidate;
+  const spans = collectSpanEvents(candidate);
   const unassigned = spans.filter(event => !ROLE_SET.has(event.role));
   if (unassigned.length) {
     diagnostics.push(diagnostic(
@@ -704,13 +759,13 @@ export function emitFinalMml(project, options = {}) {
       `${unassigned.length} note/rest event(s) carry no six-slot role. The emitter will not choose a slot for them.`,
       { eventIds: Object.freeze(unassigned.slice(0, 20).map(event => event.id)) },
     ));
-    return buildResult(EMIT_STATUS.FAIL, null, [], diagnostics, gates.microGap, null, facts);
+    return buildResult(EMIT_STATUS.FAIL, null, [], diagnostics, gates.microGap, null, facts, gates.repair);
   }
 
-  const tempo = normalizeTempoEvents(project);
+  const tempo = normalizeTempoEvents(candidate);
   diagnostics.push(...tempo.diagnostics);
   if (tempo.diagnostics.some(item => item.severity === DIAGNOSTIC_SEVERITY.ERROR)) {
-    return buildResult(EMIT_STATUS.FAIL, null, [], diagnostics, gates.microGap, null, facts);
+    return buildResult(EMIT_STATUS.FAIL, null, [], diagnostics, gates.microGap, null, facts, gates.repair);
   }
 
   const roles = [];
@@ -757,10 +812,10 @@ export function emitFinalMml(project, options = {}) {
   }
 
   if (diagnostics.some(item => item.severity === DIAGNOSTIC_SEVERITY.ERROR)) {
-    return buildResult(EMIT_STATUS.FAIL, null, roles, diagnostics, gates.microGap, null, facts);
+    return buildResult(EMIT_STATUS.FAIL, null, roles, diagnostics, gates.microGap, null, facts, gates.repair);
   }
   if (diagnostics.some(item => item.severity === DIAGNOSTIC_SEVERITY.PENDING)) {
-    return buildResult(EMIT_STATUS.PENDING, null, roles, diagnostics, gates.microGap, null, facts);
+    return buildResult(EMIT_STATUS.PENDING, null, roles, diagnostics, gates.microGap, null, facts, gates.repair);
   }
 
   // Character budget is checked against the one existing contract value. P1
@@ -783,11 +838,11 @@ export function emitFinalMml(project, options = {}) {
     ));
   }
   if (overBudget.length) {
-    return buildResult(EMIT_STATUS.FAIL, null, roles, diagnostics, gates.microGap, null, facts);
+    return buildResult(EMIT_STATUS.FAIL, null, roles, diagnostics, gates.microGap, null, facts, gates.repair);
   }
 
   const combined = `MML@${roles.map(entry => entry.mml).join(',')};`;
-  return finalizeWithRoundTrip(combined, expected, roles, diagnostics, gates.microGap, settings, facts);
+  return finalizeWithRoundTrip(combined, expected, roles, diagnostics, gates.microGap, settings, facts, gates.repair);
 }
 
 /**
@@ -801,16 +856,64 @@ export function emitFinalMml(project, options = {}) {
  * coverage: a redundant check that is never exercised silently stops being a
  * check at all.
  */
-export function finalizeWithRoundTrip(combinedMml, expected, roles, diagnostics, microGap, settings, facts) {
+export function finalizeWithRoundTrip(combinedMml, expected, roles, diagnostics, microGap, settings, facts, repair = null) {
   const readback = verifyFinalReadback(combinedMml, expected, settings);
   const all = [...diagnostics, ...readback.diagnostics];
   if (readback.report.status !== 'PASS') {
-    return buildResult(EMIT_STATUS.FAIL, null, roles, all, microGap, readback.report, facts);
+    return buildResult(EMIT_STATUS.FAIL, null, roles, all, microGap, readback.report, facts, repair);
   }
-  return buildResult(EMIT_STATUS.PASS, combinedMml, roles, all, microGap, readback.report, facts);
+  return buildResult(EMIT_STATUS.PASS, combinedMml, roles, all, microGap, readback.report, facts, repair);
 }
 
-function buildResult(status, combinedMml, roles, diagnostics, microGap, roundTrip, facts) {
+/**
+ * The repair block of an emit result.
+ *
+ * `microGap` above reports the *graded* candidate, which after a successful
+ * repair is the repaired one and is therefore clean. This block is what keeps the
+ * original visible: what was presented, what was normalized, the exact
+ * before/after timing of each change, and which project the emitted MML
+ * describes. The two must never collapse into one another.
+ */
+function repairBlock(repair) {
+  if (!repair?.requested) return null;
+  const result = repair.result;
+  if (!result) {
+    return Object.freeze({
+      requested: true,
+      applied: false,
+      status: null,
+      reason: 'no interval was rejected as technical residue, so no repair was attempted',
+      presentedIntervalKeys: Object.freeze([]),
+      repairedIntervalKeys: Object.freeze([]),
+      unrepairedIntervalKeys: Object.freeze([]),
+      repairs: Object.freeze([]),
+      preRepair: null,
+      baselineProjectId: null,
+      repairedProjectId: null,
+      diagnostics: Object.freeze([]),
+    });
+  }
+  return Object.freeze({
+    requested: true,
+    applied: repair.applied === true,
+    status: result.status,
+    reason: null,
+    presentedIntervalKeys: result.presentedIntervalKeys,
+    repairedIntervalKeys: result.repairedIntervalKeys,
+    unrepairedIntervalKeys: result.unrepairedIntervalKeys,
+    repairs: result.repairs,
+    // The pre-repair verdict, kept beside the post-repair one on purpose.
+    preRepair: Object.freeze({
+      rejectedIntervalKeys: result.presentedIntervalKeys,
+      safeGrid: result.safeGrid,
+    }),
+    baselineProjectId: result.baselineProjectId,
+    repairedProjectId: repair.applied === true ? result.repairedProjectId : null,
+    diagnostics: result.diagnostics,
+  });
+}
+
+function buildResult(status, combinedMml, roles, diagnostics, microGap, roundTrip, facts, repair = null) {
   return Object.freeze({
     status,
     combinedMml: status === EMIT_STATUS.PASS ? combinedMml : null,
@@ -828,7 +931,11 @@ function buildResult(status, combinedMml, roles, diagnostics, microGap, roundTri
       rejectedIntervalKeys: microGap?.rejectedIntervalKeys ?? Object.freeze([]),
       blockedIntervalKeys: microGap?.blockedIntervalKeys ?? Object.freeze([]),
       policyConformant: microGap?.policy?.conformant ?? null,
+      // Which candidate the three lists above describe. After a successful
+      // repair this is the repaired project, never the input.
+      gradedProjectId: repair?.applied === true ? repair.result?.repairedProjectId ?? null : null,
     }),
+    technicalTimingRepair: repairBlock(repair),
     roundTrip,
     diagnostics: Object.freeze(diagnostics),
     canonical: canonicalIdentity(),

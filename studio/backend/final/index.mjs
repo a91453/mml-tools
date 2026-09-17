@@ -13,6 +13,22 @@ export {
   isBelowSafeGrid,
 } from './micro-gap-enforcement.mjs';
 
+// Canonical-aware Technical Timing Repair. G10's rejected worklist becomes an
+// exact, auditable transformation — or a structured refusal. It holds no
+// classification authority of its own.
+export {
+  REPAIR_STATUS,
+  REPAIR_OPERATIONS,
+  REPAIR_NEUTRALITY,
+  REPAIR_DIAGNOSTICS,
+  REPAIR_SEVERITY,
+  REPAIR_UNSUPPORTED,
+  TECHNICAL_REPAIR_NOTICE,
+  repairTechnicalTiming,
+  readRejectedTechnicalRecords,
+  verifyRepairInvariants,
+} from './technical-timing-repair.mjs';
+
 // Per-song readiness. Remains the readiness authority; the emitter never
 // substitutes for it.
 export { evaluateProjectReadiness } from './readiness.mjs';
