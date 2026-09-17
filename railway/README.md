@@ -79,6 +79,26 @@ Expect `"status": "CANONICAL_LOADED"` and five distinct identities: `canonical_v
 
 `/healthz` is deliberately **not** coupled to the Canonical load: a Canonical problem must never fail Railway's healthcheck and roll back a deployment that is otherwise serving correctly.
 
+## Post-merge operator actions (Agent Control Plane only)
+
+Nothing in this repository changes a running Railway service. After the Studio Agent Interface work merges, apply these by hand in the **`mml-tools-allen` / `mml-tools`** service settings. Do not apply them to `studio-web-permanent`; that plane is configured separately and is not affected.
+
+1. **Update the build watch patterns** to the set in [`service-settings.json`](service-settings.json). Two additions matter:
+   - `/railway/canonical-probe.sh` — shipped in the image and previously unwatched.
+   - `/docs/CANONICAL_MANIFEST.md` — see below. Without it, a Canonical release does not reach this service.
+
+   The Canonical rule sources are deliberately **not** watched: they are read from the immutable rules snapshot the Manifest pins, never from `main`, so editing one cannot change what this service loads.
+
+2. **Optionally set the Studio storage variables.** Both are optional and the service starts without them:
+   - `MML_STUDIO_DATA_DIR=/data/studio` (already the image default)
+   - `MML_STUDIO_DURABILITY=persistent` — set this **only** if `/data` really is the mounted volume. Nothing detects a real mount; durability is reported from this declaration, so an inaccurate value makes the capability endpoint lie.
+
+3. **Verify the deploy** using the two credential-free checks above.
+
+4. **Re-verify after any Canonical release.** Because the Canonical view is pinned at image build, compare the `canonical.published_main_head` reported by this service's public root endpoint against the current `main`. If they differ, the service is serving an older Manifest view and needs a rebuild.
+
+No variable rotation, volume change, bucket change, service creation or migration is required or implied by this work.
+
 ### If it reports `CANONICAL_NOT_LOADED`
 
 The probe line names which precondition failed, and all three remedies are deployment-side rather than code: the image needs a source checkout carrying this repository's history and its published ref.

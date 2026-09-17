@@ -16,10 +16,18 @@
       "/studio/backend/**",
       "/railway/auth.mjs",
       "/railway/server.mjs",
+      "/railway/canonical-probe.sh",
       "/railway/Dockerfile",
       "/.dockerignore",
-      "/package.json"
-    ]
+      "/package.json",
+      "/docs/CANONICAL_MANIFEST.md"
+    ],
+    "watchPatternNotes": {
+      "imageContents": "Every path the .dockerignore allowlist admits is watched, so a change to anything the image actually ships rebuilds it.",
+      "canonicalManifest": "The Agent backend's Canonical view is pinned at image build: .git is copied in and nothing fetches at runtime, so refs/remotes/origin/main resolves to whatever main was when the image was built. Publishing a Canonical release therefore does not reach this service until it is rebuilt, and docs/CANONICAL_MANIFEST.md is watched so that a publication triggers one.",
+      "ruleSourcesDeliberatelyNotWatched": "The Canonical rule documents are read from the immutable rules snapshot the Manifest pins, never from main, so editing one on main cannot change what this service loads. Watching them would force rebuilds that change nothing.",
+      "volume": "/data is this service working storage. It is not /studio-cache, which belongs to the Permanent Studio Web plane and holds verified release bytes."
+    }
   },
   "deploy": {
     "startCommand": "node railway/server.mjs",
@@ -44,5 +52,7 @@
   "optionalVariables": [
     "MML_STUDIO_DATA_DIR",
     "MML_STUDIO_DURABILITY"
-  ]
+  ],
+  "plane": "agent-control-plane",
+  "note": "Agent Control Plane only (project mml-tools-allen / service mml-tools). The Permanent Studio Web plane (mml-tools-studio-permanent / studio-web-permanent) is configured separately and is not described by this file."
 }
