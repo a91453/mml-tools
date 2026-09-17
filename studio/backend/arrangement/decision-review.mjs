@@ -20,6 +20,7 @@ import { compareCandidateLineage, compareCanonicalVersions } from '../compare/ve
 import { evaluateCore3Continuity } from '../arbitration/core3.mjs';
 import {
   evaluateLeadDemotion,
+  evaluateLeadPromotion,
   leadEvidenceIdentityBlockers,
   LEAD_EVIDENCE_IDENTITY_MISMATCH,
   LEAD_EVIDENCE_PROVENANCE_PAIR_AMBIGUOUS,
@@ -185,6 +186,86 @@ export function leadDemotionReportsFromApplication(application, baseline) {
 }
 
 /**
+ * Re-grade every promotion into Melody that this application produced.
+ *
+ * Readiness keys promotion evidence on the *candidate* Melody event: a role
+ * move/assignment keeps the source event id, while a justified duplicate gets a
+ * derived event id. The musical evidence is nevertheless judged against the
+ * source/baseline origin event so the citation cannot be laundered through a
+ * derived id.
+ */
+export function leadPromotionReportsFromApplication(application, baseline) {
+  if (!requirePass(application, baseline)) return [];
+  const baselineById = new Map((baseline?.events ?? []).map(event => [event.id, event]));
+  const candidateById = new Map((application?.candidate?.events ?? []).map(event => [event.id, event]));
+  const reports = [];
+
+  for (const entry of application.applied) {
+    if (![ACCEPTED_DECISION_TYPES.ASSIGN_ROLE, ACCEPTED_DECISION_TYPES.MOVE_ROLE, ACCEPTED_DECISION_TYPES.DUPLICATE_WITH_JUSTIFICATION].includes(entry.type)) continue;
+
+    const promoted = [];
+    for (const item of entry.events ?? []) {
+      if (item.fromRole === LEAD_ROLE) continue;
+      if ((entry.type === ACCEPTED_DECISION_TYPES.ASSIGN_ROLE || entry.type === ACCEPTED_DECISION_TYPES.MOVE_ROLE) && item.toRole === LEAD_ROLE) {
+        if (candidateById.get(item.eventId)?.role === LEAD_ROLE) promoted.push({ item, promotedEventId: item.eventId });
+        continue;
+      }
+      if (entry.type === ACCEPTED_DECISION_TYPES.DUPLICATE_WITH_JUSTIFICATION) {
+        for (const outputId of item.outputEventIds ?? []) {
+          if (outputId === item.eventId) continue;
+          if (candidateById.get(outputId)?.role === LEAD_ROLE) promoted.push({ item, promotedEventId: outputId });
+        }
+      }
+    }
+    if (!promoted.length) continue;
+
+    // The application contract permits one Lead-affecting event per accepted
+    // decision. Re-establish that boundary here rather than trusting a restored
+    // application record to have run the interlock.
+    if ((entry.events ?? []).length !== 1) {
+      for (const { promotedEventId } of promoted) {
+        reports.push(pendingReport(promotedEventId, LEAD_ROLE, [DECISION_REJECTION.LEAD_EVIDENCE_MULTI_EVENT_SCOPE_UNSUPPORTED]));
+      }
+      continue;
+    }
+
+    for (const { item, promotedEventId } of promoted) {
+      const origin = baselineById.get(item.eventId);
+      if (!origin || origin.role === LEAD_ROLE) continue;
+      const scope = leadEvidenceIdentityBlockers(entry.leadEvidence, origin);
+      if (scope.length) {
+        reports.push(Object.freeze({
+          ...pendingReport(promotedEventId, LEAD_ROLE, scope.includes(LEAD_EVIDENCE_IDENTITY_MISMATCH) || scope.includes(LEAD_EVIDENCE_PROVENANCE_PAIR_AMBIGUOUS)
+            ? scope
+            : [...scope, LEAD_EVIDENCE_IDENTITY_MISMATCH]),
+          originEventId: origin.id,
+        }));
+        continue;
+      }
+      try {
+        const report = evaluateLeadPromotion({
+          ...(entry.leadEvidence ?? {}),
+          event: origin,
+          destinationRole: LEAD_ROLE,
+          positiveReason: entry.leadEvidence?.positiveReason ?? entry.reason,
+        });
+        reports.push(Object.freeze({
+          ...report,
+          eventId: promotedEventId,
+          originEventId: origin.id,
+        }));
+      } catch (error) {
+        reports.push(Object.freeze({
+          ...pendingReport(promotedEventId, LEAD_ROLE, [`LEAD_PROMOTION_EVIDENCE_INVALID: ${error.message}`]),
+          originEventId: origin.id,
+        }));
+      }
+    }
+  }
+  return reports;
+}
+
+/**
  * Re-run the existing validation pipeline against an applied candidate.
  *
  * Returns the untouched reports of the modules above. `readiness.candidateReady`
@@ -197,6 +278,7 @@ export function reviewAppliedCandidate({
   acceptedPrevious = null,
   mmlValidation = null,
   leadDemotionReports = [],
+  leadPromotionReports = [],
   core3ApprovedChanges = [],
   versionDriftReviewed = false,
   originalAudioRequired = true,
@@ -235,6 +317,7 @@ export function reviewAppliedCandidate({
     core3Report: core3FromBaseline,
     harmonyReport: harmony,
     leadDemotionReports,
+    leadPromotionReports,
     lineageReport: lineage,
     versionDriftReviewed,
     originalAudioRequired,
