@@ -374,3 +374,126 @@ test('a blocked finalize blocks identically on every transport', async () => {
     assert.equal(result.emit_status, null, `${name} must not report an emitter verdict`);
   }
 });
+
+// ─── the advertised schema is JSON Schema ───────────────────────────────────
+
+test('every advertised tool schema is valid JSON Schema, with no private type values', async () => {
+  // `inputSchema` is handed to external MCP hosts as JSON Schema. A private
+  // type value the local validator happens to understand is an interoperability
+  // defect: a conforming host may reject the tool outright even though this
+  // server would have accepted the call.
+  const JSON_SCHEMA_TYPES = new Set(['object', 'array', 'string', 'number', 'integer', 'boolean', 'null']);
+  const tools = await mcp(createStudioApplication({})).list();
+  assert.ok(tools.length > MCP_TOOLS.length, 'expected the studio surface to be advertised');
+
+  const walk = (schema, where) => {
+    assert.equal(typeof schema, 'object', `${where}: schema must be an object`);
+    assert.notEqual(schema, null, `${where}: schema must not be null`);
+    if (schema.type !== undefined) {
+      const declared = Array.isArray(schema.type) ? schema.type : [schema.type];
+      for (const type of declared) {
+        assert.ok(JSON_SCHEMA_TYPES.has(type), `${where}: "${type}" is not a JSON Schema type`);
+      }
+    }
+    for (const [key, child] of Object.entries(schema.properties ?? {})) walk(child, `${where}.properties.${key}`);
+    if (schema.items !== undefined) walk(schema.items, `${where}.items`);
+    if (typeof schema.additionalProperties === 'object' && schema.additionalProperties !== null) {
+      walk(schema.additionalProperties, `${where}.additionalProperties`);
+    }
+    for (const keyword of ['allOf', 'anyOf', 'oneOf']) {
+      (schema[keyword] ?? []).forEach((child, index) => walk(child, `${where}.${keyword}[${index}]`));
+    }
+  };
+  for (const tool of tools) walk(tool.inputSchema, tool.name);
+
+  // The serialized form is what actually crosses the wire, so the private
+  // spelling must be absent from it and not merely absent from the object tree.
+  assert.ok(!JSON.stringify(tools).includes('passthrough'), 'the wire schema still carries a private type value');
+});
+
+test('structured payloads are still accepted, still bounded and still refuse prototype keys', async () => {
+  const application = createStudioApplication({});
+  const client = mcp(application);
+  const project = (await application.createProject(OWNER, { title: 'schema' })).project;
+
+  // Valid structured input reaches the Application Service, which answers with
+  // its own vocabulary rather than a transport schema error.
+  const accepted = await client.call('studio_candidate_review', {
+    project_id: project.project_id,
+    candidate_id: `g11d:rev:${'a'.repeat(64)}`,
+    confirmations: { source_complete: { value: true, reason: 'checked against the official release' } },
+  });
+  assert.equal(accepted.isError, true);
+  // It reached the Application Service and came back in that layer's own
+  // vocabulary — this project has no baseline yet. What matters here is that
+  // the transport schema did not refuse the structured payload on the way in.
+  assert.equal(accepted.structuredContent.error.code, 'SOURCE_INCOMPLETE', 'the transport schema must not have refused this');
+
+  // Prototype pollution stays refused inside the open object — at the top
+  // level, nested, and inside an array item. It is refused as invalid params
+  // before the tool runs at all, which is stricter than a tool-level error:
+  // the Application Service never sees the value.
+  const raw = async (name, args) => (await (await handleMcp(
+    rpc({ jsonrpc: '2.0', id: 'proto', method: 'tools/call', params: { name, arguments: args } }),
+    { application, owner: OWNER },
+  )).json());
+
+  for (const [name, args] of [
+    ['studio_candidate_review', { project_id: project.project_id, candidate_id: `g11d:rev:${'a'.repeat(64)}`, confirmations: JSON.parse('{"__proto__": {"polluted": true}}') }],
+    ['studio_candidate_review', { project_id: project.project_id, candidate_id: `g11d:rev:${'a'.repeat(64)}`, confirmations: JSON.parse('{"source_complete": {"constructor": {"value": true}}}') }],
+    ['studio_decisions_apply', { project_id: project.project_id, decisions: [JSON.parse('{"__proto__": {"polluted": true}}')] }],
+    ['studio_audio_alignment', { project_id: project.project_id, candidate_id: `g11d:rev:${'a'.repeat(64)}`, report: JSON.parse('{"nested": {"prototype": {"x": 1}}}') }],
+  ]) {
+    const refused = await raw(name, args);
+    assert.equal(refused.result, undefined, `${name}: a forbidden key must not reach the tool`);
+    assert.equal(refused.error.code, -32602);
+    assert.match(refused.error.message, /forbidden property name/);
+  }
+  assert.equal({}.polluted, undefined, 'nothing may reach Object.prototype');
+  assert.equal(Object.prototype.polluted, undefined);
+
+  // An open object is not an escape hatch for bulk data: the body ceiling is
+  // unchanged and still enforced ahead of any schema work.
+  const oversize = await handleMcp(rpc('x'.repeat(MAX_BODY_BYTES + 1)), { application, owner: OWNER });
+  assert.equal(oversize.status, 413);
+  // A declared over-large content-length is refused without reading the body.
+  const declared = await handleMcp(rpc({ jsonrpc: '2.0', id: 1, method: 'tools/list' }, { 'content-length': String(MAX_BODY_BYTES + 1) }), { application, owner: OWNER });
+  assert.equal(declared.status, 413);
+});
+
+// ─── unexpected failures are not a disclosure channel ───────────────────────
+
+test('an unexpected fault is sanitized, while a domain refusal keeps its structure', async () => {
+  const secret = '/data/private/secret.sqlite';
+  const application = createStudioApplication({});
+  // One operation is replaced with something that throws the way an internal
+  // fault does: a raw Error naming a path, with a stack.
+  const faulty = Object.freeze({
+    ...application,
+    capabilities: async () => { throw Error(`ENOENT: no such file or directory, open '${secret}'`); },
+  });
+
+  const result = await mcp(faulty).call('studio_capabilities', {});
+  assert.equal(result.isError, true);
+  const serialized = JSON.stringify(result);
+  assert.equal(result.structuredContent.error.code, 'INTERNAL_ERROR');
+  assert.equal(result.structuredContent.error.message, 'The request could not be completed.');
+  assert.ok(!serialized.includes(secret), 'the response leaked a filesystem path');
+  assert.ok(!serialized.includes('ENOENT'), 'the response leaked the raw error message');
+  assert.ok(!/\bat \w+.*:\d+:\d+/.test(serialized), 'the response leaked a stack frame');
+  assert.ok(!serialized.includes('node:'), 'the response leaked an internal module name');
+
+  // A real Application Service refusal is not swept into the generic form: a
+  // model has to be able to tell a blocked gate from a broken server.
+  const domain = await mcp(application).call('studio_project_get', { project_id: `prj_${'0'.repeat(32)}` });
+  assert.equal(domain.isError, true);
+  assert.equal(domain.structuredContent.error.code, 'PROJECT_NOT_FOUND');
+  assert.equal(typeof domain.structuredContent.error.details, 'object');
+
+  // The legacy tools' own argument refusals are domain errors too, and keep
+  // their exact caller-facing message.
+  const legacy = await mcp(application).call('mml_validate', { mml: 'MML@t1200o4c1,,,,,;', meter_text: '0 4/4' });
+  assert.equal(legacy.isError, true);
+  assert.equal(legacy.structuredContent.error.code, 'INVALID_REQUEST');
+  assert.match(legacy.structuredContent.error.message, /三位數安全界限/);
+});

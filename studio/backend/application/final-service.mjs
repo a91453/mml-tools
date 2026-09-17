@@ -25,7 +25,7 @@
 // adaptation and no in-game acceptance. The artifact carries the gate axes
 // beside the MML so that reading one can never be mistaken for the other.
 
-import { ERROR_CODES, OPERATION_STATUS, fail } from './contracts.mjs';
+import { ERROR_CODES, GATE_STATUS, OPERATION_STATUS, fail } from './contracts.mjs';
 import { sha256Of } from './store.mjs';
 import { gatesFrom } from './review-service.mjs';
 
@@ -166,13 +166,36 @@ export function createFinalService({ canonical, projects, review, store }) {
       };
       const emitGates = gatesFrom(finalReadiness);
 
+      // Two independent facts, kept independent and both required.
+      //
+      //   `passed`               the Final emitter's own result.
+      //   `technicalSatisfied`   the authoritative Final parser's verdict on
+      //                          the string the emitter produced, as readiness
+      //                          graded it.
+      //
+      // Delivery requires both. An emitter PASS that the parser then
+      // contradicts is not a Final: shipping it would hand a caller MML and an
+      // artifact carrying `technical: FAIL`, which is the layered gate model
+      // collapsing into the emitter's single opinion. Anything short of PASS
+      // blocks, NOT_RUN included — an emitted string nobody graded is not a
+      // graded one, and this fails closed.
+      const technicalSatisfied = emitGates.technical === GATE_STATUS.PASS;
+      const delivered = passed && technicalSatisfied;
+
+      // Why the two are still reported separately below rather than reconciled:
+      // the disagreement is the finding. A reader has to be able to see that
+      // the emitter said PASS and the parser did not.
+      const technicalValidation = mmlValidation === null
+        ? { run: false, reason: passed ? 'the candidate declares no meter events, so the emitted MML could not be re-validated' : 'nothing was emitted' }
+        : { run: true, ok: mmlValidation.ok, error_count: mmlValidation.errors.length };
+
       const artifact = {
         schema: FINAL_ARTIFACT_SCHEMA,
         type: 'final_mml',
         ...identity,
         created_at: now(),
         emit_status: emitStatus,
-        mml: passed ? emitted.combinedMml : null,
+        mml: delivered ? emitted.combinedMml : null,
         roles: emitted.roles,
         character_counts: emitted.characterCounts,
         micro_gap: emitted.microGap,
@@ -184,9 +207,7 @@ export function createFinalService({ canonical, projects, review, store }) {
           candidate_ready: finalReadiness.candidateReady,
           pre_game_blocking: [...finalReadiness.preGameBlocking],
           gates: Object.fromEntries(Object.entries(finalReadiness.gates).map(([name, gate]) => [name, gate.status])),
-          technical_validation: mmlValidation === null
-            ? { run: false, reason: passed ? 'the candidate declares no meter events, so the emitted MML could not be re-validated' : 'nothing was emitted' }
-            : { run: true, ok: mmlValidation.ok, error_count: mmlValidation.errors.length },
+          technical_validation: technicalValidation,
         },
         gates: emitGates,
         remaining_pending_gates: Object.entries(emitGates)
@@ -197,11 +218,19 @@ export function createFinalService({ canonical, projects, review, store }) {
         acceptance_notice: 'A Final artifact is an implementation result. Producing it does not make the song VALIDATED and never implies IN_GAME_ACCEPTED.',
       };
 
-      const { artifactId } = fileArtifact(projects.load(owner, projectId), artifact);
+      // No artifact is filed unless the Final was actually delivered. A stored
+      // `final_mml` artifact is the record of a Final that happened; minting
+      // one for an emission the parser rejected would leave a retrievable
+      // artifact that later reads as a delivered Final.
+      const artifactId = delivered ? fileArtifact(projects.load(owner, projectId), artifact).artifactId : null;
 
       return {
-        operation: passed ? OPERATION_STATUS.SUCCEEDED : OPERATION_STATUS.FAILED,
-        code: passed ? null : ERROR_CODES.FINALIZATION_BLOCKED,
+        // A technical gate that did not pass after emission is a Canonical
+        // block on delivery, not a crash of the orchestration: the call ran and
+        // produced a real answer about the song, which is what `blocked` means
+        // everywhere else in this interface.
+        operation: delivered ? OPERATION_STATUS.SUCCEEDED : (passed ? OPERATION_STATUS.BLOCKED : OPERATION_STATUS.FAILED),
+        code: delivered ? null : ERROR_CODES.FINALIZATION_BLOCKED,
         ...identity,
         artifact_id: artifactId,
         mml: artifact.mml,
@@ -212,9 +241,19 @@ export function createFinalService({ canonical, projects, review, store }) {
         character_counts: emitted.characterCounts,
         diagnostics: emitted.diagnostics,
         gates: artifact.gates,
-        blockers: [...finalReadiness.preGameBlocking].filter(name => !PRE_EMISSION_EXEMPT_GATES.includes(name)),
+        // `technical` is exempt only *before* emission, where requiring it
+        // would be circular. Past that point there is an emitted string the
+        // parser has graded, so it is an ordinary blocking gate again and
+        // filtering it out here would hide the one blocker that matters.
+        blockers: [...finalReadiness.preGameBlocking],
+        // Carried in the response, not only in the artifact, because a blocked
+        // finalize files no artifact and the contradiction still has to be
+        // readable from what the caller was handed.
+        technical_validation: technicalValidation,
         readiness: finalReadiness,
-        notice: artifact.acceptance_notice,
+        notice: delivered
+          ? artifact.acceptance_notice
+          : 'No Final was delivered. The emitted MML did not satisfy the technical gate under the authoritative Final parser, so no MML and no artifact were returned. in_game is unaffected and remains PENDING.',
       };
     },
 

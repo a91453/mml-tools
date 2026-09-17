@@ -506,3 +506,83 @@ test('a new intake invalidates candidates derived from the old baseline', async 
   assert.deepEqual(after.candidates, [], 'a candidate describes sources that are no longer the project’s');
   await rejects(service.reviewCandidate(OWNER, run.projectId, { candidateId: run.candidateId }), ERROR_CODES.CANDIDATE_NOT_FOUND);
 });
+
+// ─── the emitter and the parser are two independent facts ───────────────────
+
+test('an emitter PASS that the Final parser contradicts delivers nothing', async () => {
+  // The dangerous shape. The emitter serialized the candidate and reported
+  // PASS; the authoritative Final parser then read the emitted string back and
+  // disagreed. Technical is a required Canonical gate in its own right, and an
+  // emitter's opinion of its own output is not that gate's answer.
+  //
+  // Only `mml/parser.mjs` is replaced, and only its validate entry point. Every
+  // other engine — intake, arrangement, arbitration, readiness, the Final
+  // emitter itself — is the real module, so what is exercised here is the real
+  // pipeline reaching a real emitter PASS.
+  const engines = await createStudioApplication({}).canonical.engines();
+  const failingValidation = {
+    ok: false,
+    errors: [{ code: 'ROUNDTRIP_MISMATCH', message: 'the emitted MML did not read back to the same semantics' }],
+    warnings: [],
+    song: null,
+  };
+  const service = createStudioApplication({
+    loadEngines: async () => ({ ...engines, mml: { ...engines.mml, validateMML: () => failingValidation } }),
+  });
+
+  const run = await applyKeepOnlyCandidate(service, OWNER);
+  const result = await service.finalize(OWNER, run.projectId, { candidateId: run.candidateId, confirmations: fullConfirmations });
+
+  // The emitter really did pass — that is the whole point of the case.
+  assert.equal(result.emit_status, 'PASS');
+
+  // Nothing is delivered.
+  assert.notEqual(result.operation, 'succeeded');
+  assert.equal(result.operation, 'blocked');
+  assert.equal(result.code, ERROR_CODES.FINALIZATION_BLOCKED);
+  assert.equal(result.artifact_id, null, 'no artifact may be filed for a Final that did not pass');
+  assert.equal(result.mml, null, 'the emitted string must not be handed to a caller');
+
+  // The contradiction is visible rather than resolved in the emitter's favour.
+  assert.equal(result.gates.technical, 'FAIL');
+  assert.ok(result.blockers.includes('technical'), 'technical must appear as a blocker after emission');
+  assert.equal(result.technical_validation.run, true);
+  assert.equal(result.technical_validation.ok, false);
+  assert.equal(result.readiness.candidateReady, false);
+
+  // Nothing leaked into the project, and nothing is retrievable as a Final.
+  const project = (await service.getProject(OWNER, run.projectId)).project;
+  assert.deepEqual([...project.artifacts], [], 'a blocked Final must add no artifact to the project');
+  await rejects(service.getArtifact(OWNER, `art_${'0'.repeat(64)}`), ERROR_CODES.ARTIFACT_NOT_FOUND);
+
+  // The orchestration itself ran to completion: a blocked song is an answer,
+  // not a crashed job.
+  assert.equal(result.job.status, 'succeeded');
+  assert.equal(result.job.result_artifact_id, null);
+
+  // And none of this touches the axis no implementation may set.
+  assert.equal(result.gates.in_game, 'PENDING');
+});
+
+test('an emitter PASS the Final parser confirms still delivers a Final artifact', async () => {
+  // The other half: the normal path is unchanged by the block above, and the
+  // artifact it files still records the readiness that actually graded it.
+  const service = app();
+  const run = await applyKeepOnlyCandidate(service, OWNER);
+  const result = await service.finalize(OWNER, run.projectId, { candidateId: run.candidateId, confirmations: fullConfirmations });
+
+  assert.equal(result.emit_status, 'PASS');
+  assert.equal(result.operation, 'succeeded');
+  assert.equal(result.code, null);
+  assert.match(result.artifact_id, /^art_[0-9a-f]{64}$/);
+  assert.ok(result.mml.length > 0);
+  assert.equal(result.gates.technical, 'PASS');
+  assert.ok(!result.blockers.includes('technical'));
+  assert.equal(result.technical_validation.run, true);
+  assert.equal(result.technical_validation.ok, true);
+
+  const { artifact } = await service.getArtifact(OWNER, result.artifact_id);
+  assert.equal(artifact.mml, result.mml);
+  assert.equal(artifact.readiness_summary.technical_validation.ok, true);
+  assert.equal(artifact.gates.in_game, 'PENDING');
+});

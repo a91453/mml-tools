@@ -429,3 +429,83 @@ test('legacy technical validation keeps its preflight bounds', async () => {
   assert.throws(() => service.validateTechnicalMml({ mml: 'MML@t1200o4c1,,,,,;', meter_text: '0 4/4' }), /三位數安全界限/);
   assert.throws(() => service.validateTechnicalMml({ mml: 'MML@t120o4c1,,,,,;', meter_text: '0 4/4', pickup: 'abc' }), /pickup/);
 });
+
+test('a later engine failure keeps the loaded Canonical identity and never reads as CANONICAL_NOT_LOADED', async () => {
+  // The two failures are different facts and must never be confused:
+  //
+  //   the published rules would not load        -> CANONICAL_NOT_LOADED
+  //   the rules loaded, a later engine did not  -> ENGINE_UNAVAILABLE
+  //
+  // Reporting the second as the first blames the published release for an
+  // environment fault, and makes the operation and the provenance contradict
+  // each other — one refusing with ENGINE_UNAVAILABLE while the other claims
+  // nothing was ever loaded.
+  const { createCanonicalGate, EngineUnavailableError } = await import('../backend/application/provenance.mjs');
+  const { PUBLISHED_CANONICAL } = await import('../backend/rules/index.mjs');
+  assert.equal(PUBLISHED_CANONICAL.status, 'CANONICAL_LOADED', 'this regression needs the real published release');
+
+  // Stage 1 completes with the real rules module, exactly as production does;
+  // stage 2 then fails. Nothing here fabricates an identity.
+  const gate = createCanonicalGate({
+    load: async ({ recordPublished }) => {
+      recordPublished(PUBLISHED_CANONICAL);
+      throw new EngineUnavailableError("Cannot find package 'fast-xml-parser' imported from /app/studio/backend/score/musicxml.mjs");
+    },
+  });
+
+  const provenance = await gate.provenance();
+  assert.equal(provenance.status, 'CANONICAL_LOADED');
+  assert.equal(await gate.loaded(), false, 'the engines are still not usable');
+
+  // The real identities survive, all five kept apart.
+  assert.equal(provenance.canonical_version, PUBLISHED_CANONICAL.metadata.canonical_version);
+  assert.equal(provenance.rules_snapshot_sha, PUBLISHED_CANONICAL.metadata.rules_snapshot_sha);
+  assert.equal(provenance.manifest_commit, PUBLISHED_CANONICAL.provenance.manifest_commit);
+  assert.equal(provenance.published_main_head, PUBLISHED_CANONICAL.provenance.published_main_head);
+  assert.equal(provenance.repository_head, PUBLISHED_CANONICAL.provenance.repository_head);
+  assert.notEqual(provenance.rules_snapshot_sha, null);
+  assert.notEqual(provenance.manifest_commit, provenance.rules_snapshot_sha);
+
+  // The engine problem is named beside the release, not instead of it, and the
+  // raw import message is not published: this envelope is served unauthenticated.
+  assert.equal(provenance.engine_status, ERROR_CODES.ENGINE_UNAVAILABLE);
+  assert.match(provenance.engine_notice, /Published Canonical loaded/);
+  assert.ok(!JSON.stringify(provenance).includes('/app/studio'), 'provenance must not publish a container path');
+  assert.ok(!JSON.stringify(provenance).includes('fast-xml-parser'), 'provenance must not publish a raw import failure');
+
+  // And the operation refuses with the engine code, not the Canonical one.
+  await assert.rejects(gate.engines(), error => {
+    assert.equal(error.code, ERROR_CODES.ENGINE_UNAVAILABLE);
+    assert.notEqual(error.code, ERROR_CODES.CANONICAL_NOT_LOADED);
+    return true;
+  });
+});
+
+test('a genuine rules failure still reports CANONICAL_NOT_LOADED with no retained identity', async () => {
+  // The other half of the distinction. Nothing about the fix above may soften
+  // the fail-closed answer when the published rules themselves do not load.
+  const { createCanonicalGate } = await import('../backend/application/provenance.mjs');
+  const gate = createCanonicalGate({ load: async () => { throw Error('Missing or invalid snapshot resource: docs/MASTER_RULES.md'); } });
+
+  const provenance = await gate.provenance();
+  assert.equal(provenance.status, ERROR_CODES.CANONICAL_NOT_LOADED);
+  assert.equal(provenance.legacy_fallback_allowed, false);
+  assert.equal(provenance.canonical_version, null);
+  assert.equal(provenance.rules_snapshot_sha, null);
+  assert.equal(provenance.manifest_commit, null);
+  assert.equal(provenance.engine_status, undefined, 'this is not an engine problem');
+  await assert.rejects(gate.engines(), error => error.code === ERROR_CODES.CANONICAL_NOT_LOADED);
+
+  // A rules module that loads but reports no release is the same answer: a
+  // recorded identity must come from a real CANONICAL_LOADED, never from a
+  // module that merely resolved.
+  const unloaded = createCanonicalGate({
+    load: async ({ recordPublished }) => {
+      recordPublished({ status: 'CANONICAL_NOT_LOADED', metadata: { rules_snapshot_sha: 'not-a-release' } });
+      throw Error('rules module did not expose a loaded Published Canonical');
+    },
+  });
+  const unloadedProvenance = await unloaded.provenance();
+  assert.equal(unloadedProvenance.status, ERROR_CODES.CANONICAL_NOT_LOADED);
+  assert.equal(unloadedProvenance.rules_snapshot_sha, null);
+});

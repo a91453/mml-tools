@@ -25,6 +25,19 @@ const writes = { readOnlyHint: false, destructiveHint: false, idempotentHint: fa
 const projectId = { type: 'string', minLength: 36, maxLength: 36, description: '本服務發出的 project_id（prj_ 開頭）。不可傳檔案路徑、暫存檔名或瀏覽器網址。' };
 const candidateId = { type: 'string', minLength: 10, maxLength: 128, description: '既有 G11-D revision id（g11d:rev: 開頭），由 studio_decisions_apply 產生。' };
 
+// A structured payload whose vocabulary belongs to the Application Service.
+//
+// As JSON Schema this is an ordinary object with unconstrained properties, so
+// `tools/list` advertises something every MCP host can read. It is deliberately
+// NOT a detailed schema: restating the decision, confirmation or alignment
+// vocabulary here would create a second contract to keep in step with the
+// module that owns it, and the two would drift.
+//
+// The transport still checks the value internally — plain JSON only, bounded
+// depth and width, no prototype-polluting keys — and the whole request body is
+// capped at MAX_BODY_BYTES, so this is not a way to smuggle bulk data in.
+const structuredPayload = description => ({ type: 'object', additionalProperties: true, ...(description ? { description } : {}) });
+
 export const STUDIO_MCP_TOOLS = [
   {
     name: 'studio_capabilities',
@@ -87,7 +100,7 @@ export const STUDIO_MCP_TOOLS = [
       type: 'object',
       properties: {
         project_id: projectId,
-        decisions: { type: 'array', minItems: 1, maxItems: 500, items: { type: 'passthrough' }, description: 'KEEP／ASSIGN_ROLE／MOVE_ROLE／OMIT_FROM_SIX／DUPLICATE_WITH_JUSTIFICATION，含 target、reason、evidence、acceptedBy。' },
+        decisions: { type: 'array', minItems: 1, maxItems: 500, items: structuredPayload(), description: 'KEEP／ASSIGN_ROLE／MOVE_ROLE／OMIT_FROM_SIX／DUPLICATE_WITH_JUSTIFICATION，含 target、reason、evidence、acceptedBy。' },
         parent_candidate_id: candidateId,
         accepted_by: { type: 'string', minLength: 1, maxLength: 120 },
       },
@@ -105,7 +118,7 @@ export const STUDIO_MCP_TOOLS = [
       properties: {
         project_id: projectId,
         candidate_id: candidateId,
-        report: { type: 'passthrough', description: '既有 audio worker 輸出的 alignment 報告 JSON。' },
+        report: structuredPayload('既有 audio worker 輸出的 alignment 報告 JSON。'),
       },
       required: ['project_id', 'candidate_id', 'report'],
       additionalProperties: false,
@@ -121,7 +134,7 @@ export const STUDIO_MCP_TOOLS = [
       properties: {
         project_id: projectId,
         candidate_id: candidateId,
-        confirmations: { type: 'passthrough', description: 'source_complete／version_drift_reviewed／player_readback／original_audio_required，每項需 reason。in_game 無法由此設定。' },
+        confirmations: structuredPayload('source_complete／version_drift_reviewed／player_readback／original_audio_required，每項需 reason。in_game 無法由此設定。'),
       },
       required: ['project_id', 'candidate_id'],
       additionalProperties: false,
@@ -138,7 +151,7 @@ export const STUDIO_MCP_TOOLS = [
         project_id: projectId,
         candidate_id: candidateId,
         technical_timing_repair: { type: 'boolean', description: '明確 opt-in。預設 false，呼叫 finalize 不會自動開啟。' },
-        confirmations: { type: 'passthrough' },
+        confirmations: structuredPayload(),
       },
       required: ['project_id', 'candidate_id'],
       additionalProperties: false,

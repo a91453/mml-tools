@@ -67,8 +67,17 @@ const ENGINE_MODULES = freeze({
 // environment problem, and reporting it as a Canonical failure would both blame
 // the published rules for it and make the Canonical signal untrustworthy — a
 // test for `CANONICAL_NOT_LOADED` would start passing for the wrong reason.
-async function importEngines() {
+//
+// `recordPublished` is called the moment the rules module resolves and before
+// any other engine is imported. That ordering is the whole point: if a later
+// import fails, the published identity has already been retained, so the
+// provenance answer can say CANONICAL_LOADED with the real snapshot beside the
+// engine failure. Without it the two answers contradict each other — the
+// operation refuses with ENGINE_UNAVAILABLE while provenance claims the rules
+// never loaded, which is the opposite of what happened.
+async function importEngines({ recordPublished } = {}) {
   const rules = await import(ENGINE_MODULES.rules);
+  recordPublished?.(rules?.PUBLISHED_CANONICAL);
   const names = Object.keys(ENGINE_MODULES).filter(name => name !== 'rules');
   let loaded;
   try {
@@ -138,20 +147,30 @@ export function unloadedProvenance(reason) {
  *
  * `load` exists so a regression can simulate an unavailable Published Canonical
  * without breaking the repository it runs in. Production passes nothing.
+ *
+ * `load` is called with `{ recordPublished }`. A loader that imports the rules
+ * separately from the rest calls it as soon as the rules resolve, so a later
+ * engine failure still has the real published identity to report.
  */
 export function createCanonicalGate({ load = importEngines } = {}) {
   let attempt = null;
   // Retained so an engine-level failure can still report the real Canonical
-  // identity. It is only ever written from a completed rules load.
+  // identity. It is only ever written from a real rules load — either through
+  // `recordPublished` the moment the rules module resolves, or from a fully
+  // completed load below. Nothing else may write it: a fabricated identity here
+  // would be indistinguishable from a real one to every caller downstream.
   let lastPublished = null;
+  const recordPublished = published => {
+    if (published?.status === 'CANONICAL_LOADED') lastPublished = published;
+  };
 
   const attemptLoad = () => {
     if (!attempt) {
       attempt = Promise.resolve()
-        .then(() => load())
+        .then(() => load({ recordPublished }))
         .then(engines => {
           const published = engines?.rules?.PUBLISHED_CANONICAL;
-          lastPublished = published ?? lastPublished;
+          recordPublished(published);
           if (!published || published.status !== 'CANONICAL_LOADED') {
             throw Error('rules module did not expose a loaded Published Canonical');
           }
@@ -197,8 +216,20 @@ export function createCanonicalGate({ load = importEngines } = {}) {
         // The rules did load if the failure came from a later engine import, so
         // the provenance is real and is reported as such, with the engine
         // problem named beside it rather than disguised as a Canonical one.
+        // Reporting CANONICAL_NOT_LOADED here would contradict the operation,
+        // which refuses with ENGINE_UNAVAILABLE, and would blame the published
+        // rules for an environment fault they had nothing to do with.
+        //
+        // The signal is the stable code, not the underlying import message:
+        // this envelope is served on the public root endpoint, and the raw
+        // failure — which names modules and container paths — belongs to the
+        // authenticated caller, who gets it in the thrown error's `reason`.
         if (error instanceof EngineUnavailableError && lastPublished) {
-          return freeze({ ...provenanceOf(lastPublished), engine_status: error.message });
+          return freeze({
+            ...provenanceOf(lastPublished),
+            engine_status: ERROR_CODES.ENGINE_UNAVAILABLE,
+            engine_notice: 'Published Canonical loaded, but a Canonical-aware engine module could not be imported in this environment. Canonical-aware operations refuse with ENGINE_UNAVAILABLE; the published rules release is unaffected.',
+          });
         }
         return unloadedProvenance(error?.message ?? null);
       }

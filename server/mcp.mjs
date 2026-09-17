@@ -1,5 +1,6 @@
 import { VERSION, PROFILE, ROLES } from '../dist/core.js';
 import { createTechnicalService } from '../studio/backend/application/technical-service.mjs';
+import { ERROR_CODES, StudioApplicationError } from '../studio/backend/application/contracts.mjs';
 import { STUDIO_MCP_TOOLS, UPLOAD_INSTRUCTION, runStudioTool } from './mcp-studio.mjs';
 
 // A deliberately small, stateless Streamable HTTP implementation. No sessions,
@@ -66,6 +67,22 @@ function mcpRpcError(id, code, message, status = 200) {
 function mcpCheckSchema(schema, value, path = 'arguments') {
   if (schema.type === 'object') {
     if (value === null || typeof value !== 'object' || Array.isArray(value)) throw Error(`${path} must be an object`);
+    // An object schema with no declared properties and `additionalProperties`
+    // open is a structured payload the Application Service validates itself: a
+    // decision set, a confirmation block, an alignment report. That is ordinary
+    // JSON Schema, and it is what `tools/list` advertises — no private type
+    // value an external MCP host would have to understand.
+    //
+    // Reading it here as "any JSON object" is exactly what the schema says. The
+    // additional plain-JSON check below is a transport safety property, not a
+    // schema claim: it refuses anything JSON.parse can produce that is not
+    // plain data, bounds depth and width, and rejects prototype-polluting keys.
+    // The real vocabulary check belongs to the module that owns the vocabulary,
+    // and duplicating it here would create a second contract to keep in step.
+    if (!schema.properties) {
+      mcpCheckPlainJson(value, path);
+      return;
+    }
     for (const key of schema.required ?? []) if (!Object.hasOwn(value, key)) throw Error(`${path}.${key} is required`);
     for (const key of Object.keys(value)) {
       if (!Object.hasOwn(schema.properties, key)) throw Error(`${path}: unknown property`);
@@ -81,16 +98,6 @@ function mcpCheckSchema(schema, value, path = 'arguments') {
     for (const item of value) mcpCheckSchema(schema.items, item, path);
   } else if (schema.type === 'boolean') {
     if (typeof value !== 'boolean') throw Error(`${path}: must be true or false`);
-  } else if (schema.type === 'passthrough') {
-    // A structured payload the Application Service validates itself: a decision
-    // set, a confirmation block, an alignment report. It is checked here only
-    // for being JSON-shaped and for carrying no prototype pollution; the real
-    // vocabulary check belongs to the module that owns the vocabulary, and
-    // duplicating it here would create a second contract to keep in step.
-    //
-    // It is not an escape hatch for bulk data: the whole request body is capped
-    // at MAX_BODY_BYTES, so a recording or a large score cannot arrive this way.
-    mcpCheckPlainJson(value, path);
   } else throw Error('Unsupported schema');
 }
 // Rejects anything JSON.parse can produce that is not plain data, and any
@@ -236,18 +243,29 @@ export async function handleMcp(request, { application = null, owner = null } = 
     catch (error) { return mcpRpcError(id, -32602, error.message); }
     try {
       const data = await mcpRunTool(tool.name, args, context), serialized = JSON.stringify(data);
-      if (mcpTextEncoder.encode(serialized).byteLength > 524288) throw Error('回應超過安全大小限制，請縮小输入或明細範圍。');
+      // A deliberate, caller-actionable refusal rather than a fault, so it is
+      // raised in the structured form that survives the sanitizer below.
+      if (mcpTextEncoder.encode(serialized).byteLength > 524288) {
+        throw new StudioApplicationError(ERROR_CODES.PAYLOAD_TOO_LARGE, '回應超過安全大小限制，請縮小输入或明細範圍。', { max_bytes: 524288 });
+      }
       result = { content: [{ type: 'text', text: serialized }], structuredContent: data, isError: false };
     } catch (error) {
-      // A structured Application Service refusal keeps its code and details:
-      // a model that is told only "failed" cannot tell a blocked gate from a
-      // malformed request, and would retry the wrong thing.
+      // A structured Application Service refusal keeps its code and details: a
+      // model that is told only "failed" cannot tell a blocked gate from a
+      // malformed request, and would retry the wrong thing. These messages are
+      // written to be read by a caller, and the legacy technical tools' own
+      // argument refusals are the same kind of thing.
+      //
+      // Anything else is an unexpected fault, and its message is not written
+      // for a caller: an import failure, a filesystem error or an internal
+      // assertion names modules, container paths and dependency internals. It
+      // is reduced to a stable generic code here, exactly as the HTTP adapter
+      // already does, so the two transports leak the same amount: nothing.
+      // Neither the raw message, the cause chain nor the stack is sent.
       const structured = error?.name === 'StudioApplicationError'
         ? { error: { code: error.code, message: error.message, details: error.details } }
-        : null;
-      result = structured
-        ? { content: [{ type: 'text', text: JSON.stringify(structured) }], structuredContent: structured, isError: true }
-        : { content: [{ type: 'text', text: error.message }], isError: true };
+        : { error: { code: 'INTERNAL_ERROR', message: 'The request could not be completed.' } };
+      result = { content: [{ type: 'text', text: JSON.stringify(structured) }], structuredContent: structured, isError: true };
     }
   } else return mcpRpcError(id, -32601, 'Method not found');
   return mcpReply({ jsonrpc: '2.0', id, result });
