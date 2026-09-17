@@ -57,6 +57,7 @@ import {
 import { compareCanonicalVersions } from '../compare/version-drift.mjs';
 import {
   evaluateLeadDemotion,
+  evaluateLeadPromotion,
   leadEvidenceIdentityBlockers,
   LEAD_EVIDENCE_IDENTITY_MISMATCH,
   LEAD_EVIDENCE_PROVENANCE_PAIR_AMBIGUOUS,
@@ -582,26 +583,24 @@ function leadDemotionBlockers(decision, event, destinationRole) {
   return report.status === 'PASS' ? [] : [...report.blockers];
 }
 
-// Promotion into Melody is the mirror obligation. MASTER_RULES.md §4 allows
-// instrumental leads and source-supported hand-offs, so this is an
-// evidence-presence interlock, not a musical judgement: it asks that the caller
-// state which section this is and cite score or audio evidence that the material
-// is actually the lead there. It never decides that anything *is* the lead.
-const PROMOTION_SECTION_ROLES = new Set(['vocal-active', 'vocal-rest', 'instrumental', 'intro', 'interlude', 'solo', 'outro']);
-
+// Promotion into Melody is the mirror obligation. The shared Lead grader owns
+// the Canonical evidence semantics; this application layer only adds the
+// accepted decision's own generic evidence-reference requirement.
 function leadPromotionBlockers(decision, event) {
   const evidence = decision.leadEvidence;
-  const blockers = [];
   if (!isPlainObject(evidence)) return ['LEAD_PROMOTION_EVIDENCE_MISSING'];
-  // Same obligation as demotion, and for the same reason: a citation about some
-  // other event is not evidence that *this* material is the lead here.
-  blockers.push(...leadEvidenceIdentityBlockers(evidence, event));
-  if (!PROMOTION_SECTION_ROLES.has(evidence.sectionRole)) blockers.push('SECTION_ROLE_UNRESOLVED');
-  const score = isPlainObject(evidence.scoreEvidence) ? evidence.scoreEvidence : {};
-  const audio = isPlainObject(evidence.audioEvidence) ? evidence.audioEvidence : {};
-  const scoreLead = score.availability !== 'unavailable' && score.classification === 'lead' && nonEmptyString(score.citation);
-  const audioLead = audio.availability !== 'unavailable' && audio.classification === 'foreground' && nonEmptyString(audio.citation);
-  if (!scoreLead && !audioLead) blockers.push('POSITIVE_LEAD_EVIDENCE_MISSING');
+  let report;
+  try {
+    report = evaluateLeadPromotion({
+      ...evidence,
+      event,
+      destinationRole: LEAD_ROLE,
+      positiveReason: nonEmptyString(evidence.positiveReason) ? evidence.positiveReason : decision.reason,
+    });
+  } catch (error) {
+    return [`LEAD_PROMOTION_EVIDENCE_INVALID: ${error.message}`];
+  }
+  const blockers = report.status === 'PASS' ? [] : [...report.blockers];
   if (!decision.evidence.length) blockers.push('EVIDENCE_REFERENCES_MISSING');
   return [...new Set(blockers)];
 }
