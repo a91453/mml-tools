@@ -148,6 +148,7 @@ export function createFinalService({ canonical, projects, review, store }) {
       }
 
       const leadDemotionReports = engines.arrangement.leadDemotionReportsFromApplication(application, baselineProject);
+      const leadPromotionReports = engines.arrangement.leadPromotionReportsFromApplication(application, baselineProject);
       const lineage = engines.compare.compareCandidateLineage({ sourceBaseline: baselineProject, acceptedPrevious: parent, candidate: project });
       const core3 = engines.core3.evaluateCore3Continuity({ baseline: baselineProject, candidate: project, approvedChanges: [] });
       const harmony = engines.harmony.analyzeCrossSourceHarmony(project);
@@ -160,6 +161,7 @@ export function createFinalService({ canonical, projects, review, store }) {
         harmonyReport: harmony,
         lineageReport: lineage,
         leadDemotionReports,
+        leadPromotionReports,
         versionDriftReviewed: recorded.version_drift_reviewed?.value === true,
         originalAudioRequired: recorded.original_audio_required?.value !== false,
         playerReadback: recorded.player_readback?.value ?? 'NOT_RUN',
