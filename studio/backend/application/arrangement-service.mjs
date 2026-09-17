@@ -35,7 +35,12 @@ const now = () => new Date().toISOString();
 const CALLER_DECISION_KEYS = new Set(['id', 'type', 'target', 'fromRole', 'toRole', 'toRoles', 'reason', 'evidence', 'section', 'leadEvidence', 'metadata', 'acceptedBy', 'note']);
 
 export function createArrangementService({ canonical, projects, intake, store }) {
-  const suggestionKey = (projectId, baselineId) => `suggestion:${projectId}:${baselineId}`;
+  // Keyed by the baseline AND the Published Canonical rules snapshot the
+  // engines were loaded under: a suggestion is derived under one release, and
+  // an image rebuilt under another must recompute rather than answer from a
+  // cache whose lanes were arbitrated by different rules while its bindings
+  // claim the new snapshot.
+  const suggestionKey = (projectId, baselineId, rulesSnapshotSha) => `suggestion:${projectId}:${baselineId}:${rulesSnapshotSha}`;
   // The whole G11-D application result is stored, not just the candidate it
   // produced. `reviewAppliedCandidate` re-establishes the revision identity,
   // the candidate digest and the baseline snapshot from it on every read, so a
@@ -47,7 +52,7 @@ export function createArrangementService({ canonical, projects, intake, store })
   const suggestionFor = async (owner, projectId, { refresh = false } = {}) => {
     const engines = await canonical.engines();
     const { record, baseline, project } = await intake.project(owner, projectId);
-    const key = suggestionKey(record.project_id, baseline.baseline_id);
+    const key = suggestionKey(record.project_id, baseline.baseline_id, engines.emitterContract.canonicalIdentity().rules_snapshot_sha);
     const cached = refresh ? null : store.getJson(key);
     if (cached) return { engines, record, baseline, project, suggestion: cached };
 
@@ -66,9 +71,61 @@ export function createArrangementService({ canonical, projects, intake, store })
     return { entry, application, candidate: application.candidate, revision: application.revision };
   };
 
+  /**
+   * The baseline's events with their provenance, optionally one lane's, paged.
+   *
+   * Identity, role, pitch, timing and source identities only. No verdict is
+   * computed and nothing is written; the suggestion is consulted solely to
+   * resolve a lane id to the events it groups.
+   */
+  const baselineEvents = async (owner, projectId, { laneId = null, eventIds = null, offset = 0, limit = LIMITS.maxEventsPerPage } = {}) => {
+    if (laneId !== null && laneId !== undefined) requireString(laneId, 'lane_id', { max: 200 });
+    if (eventIds !== null && eventIds !== undefined) {
+      if (!Array.isArray(eventIds) || eventIds.length > LIMITS.maxEventsPerPage) fail(ERROR_CODES.INVALID_REQUEST, `event_ids must be an array of at most ${LIMITS.maxEventsPerPage} event ids.`);
+      eventIds.forEach((id, index) => requireString(id, `event_ids[${index}]`, { max: 300 }));
+    }
+    if (!Number.isSafeInteger(offset) || offset < 0) fail(ERROR_CODES.INVALID_REQUEST, 'offset must be a non-negative integer.');
+    if (!Number.isSafeInteger(limit) || limit < 1 || limit > LIMITS.maxEventsPerPage) fail(ERROR_CODES.INVALID_REQUEST, `limit must be an integer from 1 to ${LIMITS.maxEventsPerPage}.`);
+
+    const { baseline, project, suggestion } = laneId ? await suggestionFor(owner, projectId) : { ...(await intake.project(owner, projectId)), suggestion: null };
+    let selected = project.events;
+    if (laneId) {
+      const lane = (suggestion?.lanes ?? []).find(entry => entry?.id === laneId || entry?.laneId === laneId);
+      if (!lane) fail(ERROR_CODES.INVALID_REQUEST, 'Unknown lane in the current suggestion.', { lane_id: laneId });
+      const members = new Set(lane.eventIds ?? []);
+      selected = selected.filter(event => members.has(event.id));
+    }
+    if (eventIds) {
+      const wanted = new Set(eventIds);
+      selected = selected.filter(event => wanted.has(event.id));
+    }
+    const page = selected.slice(offset, offset + limit);
+    return {
+      baseline_id: baseline.baseline_id,
+      lane_id: laneId ?? null,
+      total: selected.length,
+      offset,
+      limit,
+      next_offset: offset + limit < selected.length ? offset + limit : null,
+      events: page.map(event => Object.freeze({
+        event_id: event.id,
+        kind: event.kind,
+        role: event.role ?? null,
+        voice: event.voice ?? null,
+        pitch: event.kind === 'note' ? event.pitch : null,
+        start: event.start,
+        end: event.end,
+        source_ids: [...(event.sourceIds ?? [])],
+        source_event_ids: [...(event.sourceEventIds ?? [])],
+      })),
+      notice: 'A read-only projection of the Source-Faithful Baseline. Source identities are what Lead evidence must cite; nothing here is a verdict.',
+    };
+  };
+
   return Object.freeze({
     suggestionFor,
     loadCandidate,
+    baselineEvents,
 
     /**
      * Propose six-role candidates over the Source-Faithful Baseline.

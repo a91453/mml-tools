@@ -44,6 +44,50 @@ const pairSummary = review => review?.pairs.map(pair => ({
   overlap_count: pair.overlaps.length,
 })) ?? [];
 
+// The argument shape the three original tools declare over MCP, enforced here
+// so that every transport refuses the same malformed request the same way. A
+// request that is not a technical-check request must not be graded as one: a
+// FAIL report over a missing `mml` reads to a caller as a verdict about a song.
+// The numbers below are the MCP schema's numbers; the two must stay equal.
+export const TECHNICAL_INPUT = Object.freeze({
+  mml: { type: 'string', min: 1, max: 40000 },
+  meter_text: { type: 'string', min: 1, max: 2048 },
+  pickup: { type: 'string', max: 32 },
+  final_partial: { type: 'string', max: 32 },
+  drum_profile: { type: 'string', max: 4096 },
+  programs: { type: 'programs' },
+  title: { type: 'string', max: 120 },
+  error_offset: { type: 'integer', min: 0, max: 100000 },
+});
+export const OVERLAP_INPUT = Object.freeze({
+  ...TECHNICAL_INPUT,
+  offset: { type: 'integer', min: 0, max: 100000 },
+  limit: { type: 'integer', min: 1, max: 200 },
+  kind: { type: 'enum', values: ['all', 'same_pitch', 'low_mid_intervals'] },
+});
+const REQUIRED = Object.freeze(['mml', 'meter_text']);
+
+function checkShape(input, shape) {
+  if (!input || typeof input !== 'object' || Array.isArray(input)) fail(ERROR_CODES.INVALID_REQUEST, 'A technical check takes a JSON object.');
+  for (const key of REQUIRED) if (input[key] === undefined) fail(ERROR_CODES.INVALID_REQUEST, `${key} is required`, { required: REQUIRED });
+  for (const [key, value] of Object.entries(input)) {
+    // Own keys only: a JSON key such as `__proto__` or `constructor` resolves
+    // through the prototype and is not an accepted field either.
+    const rule = Object.hasOwn(shape, key) ? shape[key] : null;
+    if (!rule) fail(ERROR_CODES.INVALID_REQUEST, `${key} is not an accepted technical-check field`, { accepted: Object.keys(shape) });
+    if (value === undefined) continue;
+    if (rule.type === 'string') {
+      if (typeof value !== 'string' || value.length < (rule.min ?? 0) || value.length > rule.max) fail(ERROR_CODES.INVALID_REQUEST, `${key} must be a string of ${rule.min ?? 0}–${rule.max} characters`);
+    } else if (rule.type === 'integer') {
+      if (!Number.isSafeInteger(value) || value < rule.min || value > rule.max) fail(ERROR_CODES.INVALID_REQUEST, `${key} must be an integer from ${rule.min} to ${rule.max}`);
+    } else if (rule.type === 'enum') {
+      if (!rule.values.includes(value)) fail(ERROR_CODES.INVALID_REQUEST, `${key} must be one of ${rule.values.join(', ')}`, { accepted: rule.values });
+    } else if (rule.type === 'programs') {
+      if (!Array.isArray(value) || value.length !== 6 || value.some(item => !Number.isSafeInteger(item) || item < 0 || item > 127)) fail(ERROR_CODES.INVALID_REQUEST, 'programs must be six integers from 0 to 127');
+    }
+  }
+}
+
 function preflight(input) {
   if (/\d{4}/.test(input.mml)) fail(ERROR_CODES.INVALID_REQUEST, 'MML 數值超過本服務的三位數安全界限；Strict Mobile 指令不需要四位數數值。');
   for (const key of ['meter_text', 'pickup', 'final_partial']) {
@@ -104,6 +148,7 @@ export function createTechnicalService({ serviceVersion }) {
   return Object.freeze({
     /** Technical validation over a complete six-track MML string. */
     validate(input) {
+      checkShape(input, TECHNICAL_INPUT);
       preflight(input);
       return report(runValidation(input), input.error_offset ?? 0);
     },
@@ -116,6 +161,7 @@ export function createTechnicalService({ serviceVersion }) {
      * parser could not read.
      */
     overlapDetails(input) {
+      checkShape(input, OVERLAP_INPUT);
       preflight(input);
       const validation = runValidation(input);
       if (!validation.ok) return report(validation, input.error_offset ?? 0);

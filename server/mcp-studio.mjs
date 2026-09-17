@@ -1,6 +1,6 @@
 // The `studio_*` MCP control surface.
 //
-// Status: IMPLEMENTATION NOTES. Ten high-level tools over the Studio
+// Status: IMPLEMENTATION NOTES. Twelve high-level tools over the Studio
 // Application Service. Deliberately not one tool per backend function: a model
 // should reason about a project, its sources, a suggestion, a decision set, a
 // review and a Final artifact — not about `midi-file.mjs`, `role-candidates.mjs`,
@@ -60,8 +60,8 @@ export const STUDIO_MCP_TOOLS = [
   {
     name: 'studio_project_get',
     title: '讀取專案狀態',
-    description: '回傳專案的資產、Source-Faithful Baseline、候選、音訊證據、工作與產出清單。只有識別碼與統計，不含任何位元組。',
-    inputSchema: { type: 'object', properties: { project_id: projectId }, required: ['project_id'], additionalProperties: false },
+    description: '給 project_id 時回傳該專案的資產、Source-Faithful Baseline、候選、音訊證據、工作與產出清單；省略 project_id 時回傳本人所有專案的摘要清單（project_id、標題、素材與候選數、baseline_id），遺失 project_id 時由此找回。只有識別碼與統計，不含任何位元組。',
+    inputSchema: { type: 'object', properties: { project_id: projectId }, additionalProperties: false },
     annotations: readOnly,
   },
   {
@@ -79,6 +79,24 @@ export const STUDIO_MCP_TOOLS = [
       additionalProperties: false,
     },
     annotations: writes,
+  },
+  {
+    name: 'studio_baseline_events',
+    title: 'Source-Faithful Baseline 事件與來源身分',
+    description: '唯讀列出 baseline 事件：event_id、role、pitch、起訖拍、source_ids 與 source_event_ids。Lead 相關決定的 leadEvidence.sourceIdentity 必須引用這裡的來源身分。可用 lane_id（來自 studio_arrangement_suggest）或 event_ids 縮小範圍，並分頁。',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        project_id: projectId,
+        lane_id: { type: 'string', minLength: 1, maxLength: 200 },
+        event_ids: { type: 'array', minItems: 1, maxItems: 500, items: { type: 'string', minLength: 1, maxLength: 300 } },
+        offset: { type: 'integer', minimum: 0, maximum: 1000000 },
+        limit: { type: 'integer', minimum: 1, maximum: 500 },
+      },
+      required: ['project_id'],
+      additionalProperties: false,
+    },
+    annotations: readOnly,
   },
   {
     name: 'studio_arrangement_suggest',
@@ -134,7 +152,7 @@ export const STUDIO_MCP_TOOLS = [
       properties: {
         project_id: projectId,
         candidate_id: candidateId,
-        confirmations: structuredPayload('source_complete／version_drift_reviewed／player_readback／original_audio_required，每項需 reason。in_game 無法由此設定。'),
+        confirmations: structuredPayload('source_complete／version_drift_reviewed／player_readback／original_audio_required，每項需 reason。player_readback 為 PASS、NOT_RUN 或 N/A（未使用預覽／驗證素材時，附理由）；PASS 可附 mml_sha256 綁定實際回讀的 MML。確認綁定於目前 baseline 與本候選；in_game 無法由此設定。'),
       },
       required: ['project_id', 'candidate_id'],
       additionalProperties: false,
@@ -152,6 +170,8 @@ export const STUDIO_MCP_TOOLS = [
         candidate_id: candidateId,
         technical_timing_repair: { type: 'boolean', description: '明確 opt-in。預設 false，呼叫 finalize 不會自動開啟。' },
         confirmations: structuredPayload(),
+        pickup: { type: 'string', minLength: 1, maxLength: 32, description: '來源確認的弱起拍長（整數、小數或分數拍）；沒有時省略。Final parser 不會自行推測。' },
+        final_partial: { type: 'string', minLength: 1, maxLength: 32, description: '來源確認的末小節拍長；曲子未在小節線結束時必填，否則 technical gate 無法通過。不會自行推測。' },
       },
       required: ['project_id', 'candidate_id'],
       additionalProperties: false,
@@ -198,7 +218,15 @@ export async function runStudioTool(name, args, { application, owner }) {
     case 'studio_project_create':
       return application.createProject(owner, { title: args.title });
     case 'studio_project_get':
-      return application.getProject(owner, args.project_id);
+      // The same read the HTTP adapter serves as GET /projects and
+      // GET /projects/:id. Without an id there is nothing to look up, so the
+      // owner's own list is the answer; a client that lost its project id
+      // recovers it here rather than being locked out of its own project.
+      return args.project_id === undefined
+        ? application.listProjects(owner)
+        : application.getProject(owner, args.project_id);
+    case 'studio_baseline_events':
+      return application.listBaselineEvents(owner, args.project_id, { laneId: args.lane_id ?? null, eventIds: args.event_ids ?? null, offset: args.offset ?? 0, limit: args.limit ?? 500 });
     case 'studio_sources_analyze':
       return application.analyzeSources(owner, args.project_id, { assetIds: args.asset_ids ?? null, meterText: args.meter_text ?? '' });
     case 'studio_arrangement_suggest':
@@ -220,6 +248,8 @@ export async function runStudioTool(name, args, { application, owner }) {
         // repair on by itself, and there is no automatic mode.
         technicalTimingRepair: args.technical_timing_repair ?? false,
         confirmations: args.confirmations ?? null,
+        pickup: args.pickup ?? null,
+        finalPartial: args.final_partial ?? null,
       });
     case 'studio_job_status':
       return application.getJob(owner, args.job_id);

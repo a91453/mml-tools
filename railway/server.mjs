@@ -35,8 +35,86 @@ scrubBuildCredentialVariables();
 // this line and nothing below it.
 export const SERVICE_OWNER = 'owner:service';
 
+// The connector hosts whose exact HTTPS callbacks Dynamic Client Registration
+// accepts by default: the ChatGPT and Claude web connectors. Native clients use
+// RFC 8252 loopback redirects, accepted separately. An operator narrows or
+// widens this with MML_OAUTH_REDIRECT_HOSTS (a comma-separated list of bare
+// host names, which REPLACES the default) and switches loopback off with
+// MML_OAUTH_LOOPBACK_REDIRECTS=0. The authorization flow itself — exact
+// registered callback, PKCE S256, CSRF, the owner password — is the same for
+// every client.
+export const DEFAULT_REDIRECT_HOSTS = Object.freeze(['chatgpt.com', 'chat.openai.com', 'claude.ai', 'claude.com']);
+
+// A host name and nothing else: no scheme, no port, no path, no userinfo, no
+// wildcard, no whitespace. Shared by every variable that names a host so the
+// two validators cannot drift apart.
+const BARE_HOST = /^[a-z0-9](?:[a-z0-9-]*[a-z0-9])?(?:\.[a-z0-9](?:[a-z0-9-]*[a-z0-9])?)+$/;
+
+export function parseRedirectHosts(env = process.env) {
+  const raw = env.MML_OAUTH_REDIRECT_HOSTS;
+  if (raw === undefined) return [...DEFAULT_REDIRECT_HOSTS];
+  const hosts = String(raw).split(',').map(host => host.trim().toLowerCase()).filter(Boolean);
+  if (!hosts.length) throw Error('MML_OAUTH_REDIRECT_HOSTS must list at least one bare host name');
+  for (const host of hosts) {
+    if (!BARE_HOST.test(host)) throw Error(`MML_OAUTH_REDIRECT_HOSTS entry is not a bare host name: ${host}`);
+  }
+  return [...new Set(hosts)];
+}
+
+export function parseLoopbackSetting(env = process.env) {
+  const raw = env.MML_OAUTH_LOOPBACK_REDIRECTS;
+  if (raw === undefined) return true;
+  if (['1', 'true', 'on', 'yes'].includes(String(raw).trim().toLowerCase())) return true;
+  if (['0', 'false', 'off', 'no'].includes(String(raw).trim().toLowerCase())) return false;
+  throw Error('MML_OAUTH_LOOPBACK_REDIRECTS must be 1 or 0');
+}
+
+// The public origin this deployment serves under.
+//
+// One string decides every externally meaningful identity the service issues:
+// the OAuth issuer, the protected resource, the authorization, token,
+// registration and revocation endpoints, the consent form's own Origin check,
+// the callback CSP, and the `WWW-Authenticate` challenge that tells a client
+// where to authenticate. It is not a label; it is where clients are sent.
+//
+// `MML_PUBLIC_ORIGIN` is the operator's explicit statement and always wins.
+// Production names its own origin, and a platform-injected domain must never
+// silently re-point it -- that would move a live connector's issuer without
+// anyone asking.
+//
+// A Railway PR environment is the case that had no answer. It is served on its
+// own generated domain but inherits the service's variables, so an unset origin
+// left this empty and startup died on a validation error, while an inherited
+// one pointed the preview's issuer, callbacks and consent form at production.
+// When nothing is stated, the domain this deployment is actually served on is
+// used instead, over HTTPS, and only when it is a real bare host: a preview is
+// then a preview of itself.
+//
+// With neither, startup fails closed. There is deliberately no localhost or
+// invented default: a service that guessed its origin would hand out OAuth
+// metadata and callbacks nobody can return to, and would look healthy doing it.
+export function parsePublicOrigin(env = process.env) {
+  const stated = (env.MML_PUBLIC_ORIGIN ?? '').trim();
+  // Returned verbatim. Whether it is a usable HTTPS origin is the authorization
+  // server's judgement (`createAuth`), which fails closed on anything else --
+  // a stated origin that is wrong is a configuration error to report, never a
+  // reason to substitute a different one.
+  if (stated) return stated;
+
+  const domain = (env.RAILWAY_PUBLIC_DOMAIN ?? '').trim().toLowerCase();
+  if (!domain) {
+    throw Error('MML_PUBLIC_ORIGIN must be set to this deployment\'s exact HTTPS origin, and no RAILWAY_PUBLIC_DOMAIN was provided to derive one from');
+  }
+  // A domain, not an address: an IPv4 literal or a single-label name is not
+  // something a connector can be sent back to over public HTTPS.
+  if (domain.length > 253 || !BARE_HOST.test(domain) || !/\.[a-z]{2,}$/.test(domain)) {
+    throw Error(`RAILWAY_PUBLIC_DOMAIN is not a bare public host name: ${domain.slice(0, 80)}`);
+  }
+  return `https://${domain}`;
+}
+
 export function createApplication(options) {
-  const auth = createAuth(options);
+  const auth = createAuth({ ...options, allowedRedirectHosts: options.allowedRedirectHosts ?? [...DEFAULT_REDIRECT_HOSTS] });
   // Constructing the service performs no Canonical load and touches no engine:
   // a deployment missing the published Git history still starts, serves
   // /healthz and answers capability discovery saying Canonical is unavailable,
@@ -52,7 +130,7 @@ export function createApplication(options) {
     // Production passes nothing.
     loadEngines: options.studioLoadEngines,
   });
-  const api = createApiRouter({ application: studio, ownerOf: () => SERVICE_OWNER });
+  const api = createApiRouter({ application: studio, ownerOf: () => SERVICE_OWNER, challenge: auth.unauthorized().headers.get('www-authenticate') });
   return {
     close: auth.close,
     origin: auth.issuer,
@@ -67,7 +145,7 @@ export function createApplication(options) {
         // Only locally issued, audience-bound OAuth access tokens authorize this
         // standalone service. Sites identity headers have no authority here.
         if (!auth.authenticated(request)) return auth.unauthorized();
-        return handleMcp(request, { application: studio, owner: SERVICE_OWNER });
+        return handleMcp(request, { application: studio, owner: SERVICE_OWNER, allowedOrigins: auth.allowedOrigins });
       }
       // The Application HTTP surface, behind the same OAuth check. The router
       // is told whether the request is authenticated rather than deciding it:
@@ -147,7 +225,9 @@ if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) 
   const port = Number(process.env.PORT ?? '3000');
   if (!Number.isSafeInteger(port) || port < 1 || port > 65535) throw Error('Invalid PORT');
   const application = createApplication({
-    origin: process.env.MML_PUBLIC_ORIGIN ?? '',
+    // Explicitly stated, or the domain this deployment is served on. Never
+    // guessed: see parsePublicOrigin.
+    origin: parsePublicOrigin(process.env),
     ownerPassword: process.env.MML_OWNER_PASSWORD,
     database: process.env.MML_AUTH_DB,
     // Studio records live beside the OAuth database on the volume this service
@@ -155,6 +235,8 @@ if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) 
     // only claimed when the operator declares the mount is persistent.
     studioDataDirectory: process.env.MML_STUDIO_DATA_DIR ?? null,
     studioDurability: process.env.MML_STUDIO_DURABILITY ?? 'unknown',
+    allowedRedirectHosts: parseRedirectHosts(process.env),
+    allowLoopbackRedirects: parseLoopbackSetting(process.env),
   });
   const server = createHttpServer(application);
   server.listen(port, '0.0.0.0', () => console.log('MML OAuth service is ready'));

@@ -60,8 +60,18 @@ class AuthStore {
   close() { this.db.close(); }
 }
 
-export function createAuth({ origin, ownerPassword, database, allowedRedirectHosts = ['chatgpt.com', 'chat.openai.com'], now = () => Math.floor(Date.now() / 1000), allowHttpForTests = false }) {
-  const base = new URL(origin);
+// RFC 8252 §7.3 loopback redirects for native clients (a CLI, a desktop app, an
+// inspector): plain http to the machine's own loopback address on any port. The
+// authorization code is delivered only to a listener on the owner's own host.
+const LOOPBACK_HOSTS = new Set(['127.0.0.1', '[::1]', 'localhost']);
+
+export function createAuth({ origin, ownerPassword, database, allowedRedirectHosts = ['chatgpt.com', 'chat.openai.com'], allowLoopbackRedirects = true, now = () => Math.floor(Date.now() / 1000), allowHttpForTests = false }) {
+  // An unparseable value is the same configuration error as a malformed one and
+  // is reported as one: the raw `Invalid URL` a bare parse throws names nothing
+  // an operator can act on, and this is the first thing a misconfigured
+  // deployment hits.
+  let base;
+  try { base = new URL(origin); } catch { throw Error('MML_PUBLIC_ORIGIN must be an HTTPS origin'); }
   if ((base.protocol !== 'https:' && !allowHttpForTests) || base.username || base.password || base.pathname !== '/' || base.search || base.hash) throw Error('MML_PUBLIC_ORIGIN must be an HTTPS origin');
   if (typeof ownerPassword !== 'string' || ownerPassword.length < 32 || ownerPassword.length > 256) throw Error('MML_OWNER_PASSWORD must be a generated secret of 32–256 characters');
   if (!database) throw Error('Persistent MML_AUTH_DB is required');
@@ -81,10 +91,22 @@ export function createAuth({ origin, ownerPassword, database, allowedRedirectHos
   function clientFor(id) { const client = store.get('client', id); requireValue(client, 'invalid_client', 'Unknown client', 401); return client; }
   function checkResource(value) { requireValue(!value || value === resource, 'invalid_target', 'Resource does not match this server'); }
   function checkScope(value) { requireValue(!value || value === SCOPE, 'invalid_scope', 'Only mml:read is available'); }
+  // Exact HTTPS callbacks on the approved connector hosts with no userinfo, no
+  // fragment and no custom port; or a loopback redirect for a native client.
   function redirectAllowed(value) {
     if (typeof value !== 'string' || value.length > 2048) return false;
-    try { const u = new URL(value); return u.protocol === 'https:' && !u.username && !u.password && !u.hash && allowedRedirectHosts.includes(u.hostname) && (!u.port || u.port === '443'); } catch { return false; }
+    try {
+      const u = new URL(value);
+      if (u.username || u.password || u.hash) return false;
+      if (u.protocol === 'https:') return allowedRedirectHosts.includes(u.hostname) && (!u.port || u.port === '443');
+      if (u.protocol === 'http:') return allowLoopbackRedirects && LOOPBACK_HOSTS.has(u.hostname);
+      return false;
+    } catch { return false; }
   }
+  // Browser origins that may call /mcp with an Origin header: this server and
+  // the approved callback hosts. Derived from the same list so the two cannot
+  // drift apart.
+  const allowedOrigins = Object.freeze([issuer, ...allowedRedirectHosts.map(host => `https://${host}`)]);
   function issue(grantId, clientId) {
     const grant = store.get('grant', grantId);
     requireValue(grant && !grant.revoked && grant.clientId === clientId && grant.resource === resource, 'invalid_grant', 'Authorization no longer valid');
@@ -202,7 +224,7 @@ export function createAuth({ origin, ownerPassword, database, allowedRedirectHos
     return new Response(null, { status: 200, headers: noCache });
   }
   return {
-    issuer, resource, authenticated,
+    issuer, resource, authenticated, allowedOrigins,
     close: () => store.close(),
     unauthorized: () => json({ error: 'unauthorized', message: 'MML service sign-in required' }, 401, { 'www-authenticate': `Bearer resource_metadata="${issuer}/.well-known/oauth-protected-resource/mcp", scope="${SCOPE}"` }),
     async route(request) {

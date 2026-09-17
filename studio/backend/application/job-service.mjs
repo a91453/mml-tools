@@ -19,7 +19,7 @@
 // polls `studio_job_status` is not misled — it simply finds a terminal job on
 // the first poll.
 
-import { ERROR_CODES, JOB_STATUS, JOB_TYPES, isJobId, fail } from './contracts.mjs';
+import { ERROR_CODES, JOB_STATUS, JOB_TYPES, OPERATION_STATUS, isJobId, fail } from './contracts.mjs';
 import { ID_PREFIX, newId } from './store.mjs';
 
 const now = () => new Date().toISOString();
@@ -62,6 +62,11 @@ export function createJobService({ store, projects }) {
         finished_at: null,
         result_artifact_id: null,
         result_reference: null,
+        // What the operation itself answered — succeeded, blocked or failed —
+        // as distinct from whether this job ran to completion. A blocked
+        // finalize is a completed job with a real answer about the song; an
+        // operation that reports itself failed is a failed job.
+        result_operation: null,
         error: null,
         transitions: [{ status: JOB_STATUS.QUEUED, at: now() }],
       };
@@ -72,11 +77,17 @@ export function createJobService({ store, projects }) {
 
       try {
         const outcome = await work();
+        const operation = outcome?.result?.operation ?? null;
+        const failed = operation === OPERATION_STATUS.FAILED;
         job = {
-          ...transition(job, JOB_STATUS.SUCCEEDED),
+          ...transition(job, failed ? JOB_STATUS.FAILED : JOB_STATUS.SUCCEEDED),
           finished_at: now(),
           result_artifact_id: outcome?.artifactId ?? null,
           result_reference: outcome?.reference ?? null,
+          result_operation: operation,
+          error: failed
+            ? { code: outcome.result?.code ?? ERROR_CODES.JOB_FAILED, message: outcome.result?.notice ?? 'The operation reported failure', details: {} }
+            : null,
         };
         persist(projects.load(owner, projectId), job);
         return { job: Object.freeze({ ...job, transitions: Object.freeze([...job.transitions]) }), result: outcome?.result ?? null };

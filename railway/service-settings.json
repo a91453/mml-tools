@@ -40,7 +40,8 @@
   },
   "volume": {
     "mountPath": "/data",
-    "sizeMB": 512
+    "sizeMB": 500,
+    "sizeNote": "500 MB as observed on the mounted volume (railway/deployment-target.json volumeSizeMB); an earlier copy of this file said 512."
   },
   "port": 3000,
   "requiredVariables_addedByCanonicalBootstrap": [
@@ -63,8 +64,20 @@
   ],
   "optionalVariables": [
     "MML_STUDIO_DATA_DIR",
-    "MML_STUDIO_DURABILITY"
+    "MML_STUDIO_DURABILITY",
+    "MML_OAUTH_REDIRECT_HOSTS",
+    "MML_OAUTH_LOOPBACK_REDIRECTS"
   ],
   "plane": "agent-control-plane",
-  "note": "Agent Control Plane only (project mml-tools-allen / service mml-tools). The Permanent Studio Web plane (mml-tools-studio-permanent / studio-web-permanent) is configured separately and is not described by this file."
+  "note": "Agent Control Plane only (project mml-tools-allen / service mml-tools). The Permanent Studio Web plane (mml-tools-studio-permanent / studio-web-permanent) is configured separately and is not described by this file.",
+  "publicOriginNotes": {
+    "explicitWins": "MML_PUBLIC_ORIGIN is the operator statement and is used verbatim; a platform-injected domain never overrides it.",
+    "derivedFallback": "Unset or blank, railway/server.mjs parsePublicOrigin derives https://$RAILWAY_PUBLIC_DOMAIN, accepting only a bare public host name. This is what makes a PR environment serve its own OAuth issuer instead of production.",
+    "failsClosed": "With neither variable the service refuses to start. There is no localhost or invented default."
+  },
+  "prEnvironmentNotes": {
+    "inherited": "Railway copies every non-sealed service variable into a PR environment, including MML_PUBLIC_ORIGIN, MML_OWNER_PASSWORD and MML_AUTH_DB. Override the origin with the environment own domain (or remove it and use the derivation) and give the environment its own owner password.",
+    "notInherited": "Sealed variables are not copied, so MML_CANONICAL_SOURCE_TOKEN is absent and the image build fails closed at the Canonical gate. Provide the PR environment its own fine-grained Contents: Read token; never unseal or copy the production one.",
+    "volumes": "Both environments mount /data. Per-environment volume isolation is Railway behaviour and must be confirmed in the dashboard, not assumed by this file."
+  }
 }

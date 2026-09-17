@@ -22,11 +22,13 @@ The Permanent Studio Web deployment, its pinned artifact, its trust bundle and i
 
 - Build context: repository root; Dockerfile: `railway/Dockerfile`.
 - One service and **one replica**, with a persistent volume mounted at `/data`.
-- `MML_PUBLIC_ORIGIN`: exact generated HTTPS origin, without a path.
+- `MML_PUBLIC_ORIGIN`: exact generated HTTPS origin, without a path. This is the operator's explicit statement and always wins: a platform-injected domain never silently re-points a deployment that names its own origin. Unset or blank, the service derives `https://$RAILWAY_PUBLIC_DOMAIN` — the domain this deployment is actually served on — and refuses anything that is not a bare public host name. With neither, startup fails closed; no origin is ever guessed, because a guessed one hands out OAuth metadata and callbacks nobody can return to while the deployment still looks healthy.
 - `MML_OWNER_PASSWORD`: a randomly generated 32–256 character service password; set only in Railway Variables, never in Git, a URL, a report, or the source ZIP.
 - `MML_AUTH_DB`: `/data/mml-auth.sqlite`.
 - `MML_STUDIO_DATA_DIR`: `/data/studio` for the Studio Agent Interface's project, asset and artifact records. Unset, those records stay in memory and the capability endpoint reports `asset_storage.durability: "ephemeral"`.
 - `MML_STUDIO_DURABILITY`: `persistent` only when `/data` really is a mounted volume. Nothing in the service detects a real mount, so durability is reported from this declaration rather than assumed.
+- `MML_OAUTH_REDIRECT_HOSTS` (optional): comma-separated bare hostnames whose exact HTTPS callbacks may register. Unset, the default is `chatgpt.com,chat.openai.com,claude.ai,claude.com`. A value that is not a bare hostname list refuses to start.
+- `MML_OAUTH_LOOPBACK_REDIRECTS` (optional): `false` to refuse RFC 8252 loopback callbacks from native clients. Unset or `true`, they are accepted.
 - `PORT`: Railway's supplied port, or 3000.
 - Healthcheck: `/healthz`.
 
@@ -195,6 +197,15 @@ Do **not** work around it by creating `refs/remotes/origin/main` from `HEAD`, fr
 
 If it reports `CANONICAL_NOT_LOADED` at **runtime** instead — the service is up, `/healthz` answers, and the root endpoint says the rules are unavailable — the image was built before this gate existed, or `/app/.git` was lost after the build. Rebuild it.
 
+## Railway PR environments
+
+A PR environment is a real, publicly reachable deployment on its own generated domain, and it is **not** configured by this file's production values. Two facts decide what it can do:
+
+- **Every non-sealed service variable is copied into it.** That includes `MML_PUBLIC_ORIGIN`, `MML_OWNER_PASSWORD` and `MML_AUTH_DB`. An inherited origin points the preview's OAuth issuer, resource, endpoints, consent form and callback policy at production, so override it with the environment's own domain or remove it and let the `RAILWAY_PUBLIC_DOMAIN` derivation above apply. An inherited owner password means the preview's login form accepts the production service password on a public URL; give the environment its own generated password.
+- **Sealed variables are not copied.** `MML_CANONICAL_SOURCE_TOKEN` is sealed, so a PR environment has no read access to this private repository and the image build fails closed at `scripts/materialize-canonical.mjs` with `CANONICAL_NOT_LOADED` and Git's own `could not read Username for 'https://github.com'`. That is the gate working as designed, not a regression in the pull request. To build previews, give the PR environment its own fine-grained token variable scoped to `Contents: Read` on this repository and nothing else, with a short expiry. Never unseal the production token, never copy its value into another environment, and never commit or paste it.
+
+Volume data isolation between environments is Railway's behaviour, not this service's: both environments mount `/data` and the service writes `MML_AUTH_DB` and `MML_STUDIO_DATA_DIR` under it. Confirm in the Railway dashboard that the PR environment has its own volume instance before treating a preview as isolated from production records, and never point a preview at the production volume.
+
 ## ChatGPT connection
 
 Only after a successful deploy and HTTPS verification:
@@ -205,7 +216,7 @@ Only after a successful deploy and HTTPS verification:
 - The service login form requests the generated MML service password from Railway Variables. It never requests a ChatGPT, GitHub, or Railway account password.
 - OAuth resource: the same complete `/mcp` URL.
 
-Initial metadata and the password form are public; tool requests require an OAuth token. Registered callbacks are restricted to exact HTTPS URLs on `chatgpt.com` or `chat.openai.com`, with no custom ports or fragments. An additional client requires explicit configuration and tests for its callback host.
+Initial metadata and the password form are public; tool requests require an OAuth token. Registered callbacks are restricted to exact HTTPS URLs, with no custom ports, userinfo or fragments, on the approved connector hosts — by default `chatgpt.com`, `chat.openai.com`, `claude.ai` and `claude.com` — plus RFC 8252 loopback redirects (`http://127.0.0.1`, `http://[::1]`, `http://localhost`, any port) for native clients such as a local agent. `MML_OAUTH_REDIRECT_HOSTS` (comma-separated bare hostnames) replaces the default host list, and `MML_OAUTH_LOOPBACK_REDIRECTS=false` switches loopback off; the MCP `Origin` allowlist follows the same hosts. The same flow — exact registered URI, PKCE S256, CSRF, the owner password — applies to every client, and a regression walks it for each default host and for loopback.
 
 ### Login form origin compatibility
 

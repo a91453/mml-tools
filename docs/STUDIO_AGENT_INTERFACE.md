@@ -332,14 +332,34 @@ evidence are assertions somebody has to make *against the candidate that
 actually exists*.
 
 They are recorded explicitly, each with a stated reason:
-`source_complete`, `version_drift_reviewed`, `player_readback` (PASS or NOT_RUN
-only), `original_audio_required`. The review project is then assembled from the
-candidate plus exactly those confirmations, through the backend's own
+`source_complete`, `version_drift_reviewed`, `player_readback` (`PASS`, `NOT_RUN`
+or `N/A`), `original_audio_required`. The review project is then assembled from
+the candidate plus exactly those confirmations, through the backend's own
 constructors — the same composition the Studio Web analysis performs.
 
+**A confirmation is bound to the thing it is about.** Each recorded
+confirmation carries the `baseline_id` it was made under, and the
+candidate-scoped kinds (`version_drift_reviewed`, `player_readback`) carry the
+`candidate_id` they name — supplied as `candidate_id` in the request, or taken
+from the review or finalize call the confirmations arrive with. A confirmation
+whose identity no longer matches — the baseline was replaced by a new intake,
+or a different candidate is being reviewed — stays on the record for the audit
+trail, is reported under `stale_confirmations` with the reason
+(`BASELINE_CHANGED`, `CANDIDATE_MISMATCH`, `UNBOUND`), and feeds no gate. A
+readback PASS recorded for revision one does not pass revision two.
+
+`player_readback` has three honest states. `NOT_RUN` is the default. `N/A`,
+with the reason, states that no preview or verification assets are used for
+this cue — the same state the Studio Web plane records for that situation. `PASS`
+states the emitted MML was read back in a player, and may name `mml_sha256`,
+the SHA-256 of the exact MML that was read back; finalize honours such a PASS
+only when the MML it emits has that digest, and reports the check under
+`player_readback_binding`. None of these is ever upgraded to another, and
+`FAIL` is not a confirmation.
+
 `source_complete` cannot be confirmed over a baseline whose own adapters
-reported unsupported source material: the evidence contradicts the claim, and a
-review is not allowed to overrule it.
+reported unsupported source material or incomplete inputs: the evidence
+contradicts the claim, and a review is not allowed to overrule it.
 
 ## 9. Workflow
 
@@ -382,12 +402,35 @@ service to finalize does not turn it on. There is no `auto` mode, and a value
 other than `true`/`false` is refused rather than interpreted, because
 introducing one would change what an existing `finalize` call means.
 
+Before anything is emitted, the stored candidate must still agree with itself
+and with the project's own Source-Faithful Baseline (`applicationIntegrity`),
+and must have been accepted under the Published Canonical rules snapshot that
+is loaded now. A record that fails either check is refused with `blockers:
+["integrity"]` or `["canonical"]`, the same finding review reports, and no
+emitter runs.
+
 Readiness is evaluated twice from one set of inputs: before emission with no MML
 to grade, and again afterwards with the emitted string re-validated under the
 authoritative Final parser. The meter map for that re-validation comes from the
 candidate's own meter events, never from a caller. Where the emitter passed and
 the parser then disagreed, the post-emission readiness wins — two modules
-contradicting each other is reported as the unsatisfied gate it is.
+contradicting each other is reported as the unsatisfied gate it is. Delivery
+requires the whole post-emission readiness, not only its technical row.
+
+**Pieces that do not end on a bar line.** The Final parser accepts a
+source-confirmed `pickup` and `final_partial` (a non-negative integer, decimal
+or fraction of beats, at most 32 characters). Finalize passes exactly what the
+caller states, never infers either, and records both under `final_bar` on the
+response and the artifact together with the meter map the MML was validated
+under. Without the declaration a partial last bar fails the technical gate, and
+the non-delivery notice says so.
+
+Every non-delivery is explained for the path that was taken: the emitter
+reported failure and the parser never ran; the candidate declares no meter
+events so nothing was graded; the parser rejected the emitted MML; the recorded
+readback names a different MML. An emitter failure is `operation: "failed"` and
+a `failed` job; a blocked finalize is a completed job whose `result_operation`
+is `blocked`.
 
 The artifact records the MML, the candidate and project identity, the Canonical
 provenance, the readiness summary, the repair report, the round-trip report, the
@@ -408,6 +451,7 @@ GET    /api/v1/projects/:project_id/assets
 POST   /api/v1/projects/:project_id/assets
 GET    /api/v1/projects/:project_id/assets/:asset_id
 GET    /api/v1/projects/:project_id/assets/:asset_id/content
+GET    /api/v1/projects/:project_id/baseline/events
 POST   /api/v1/projects/:project_id/intake
 POST   /api/v1/projects/:project_id/audio-alignment
 POST   /api/v1/projects/:project_id/arrangement/suggest
@@ -423,16 +467,34 @@ POST   /api/v1/technical/overlaps
 ```
 
 Everything is behind the existing OAuth check, evaluated before any owner
-subject is derived.
+subject is derived. An unauthenticated request is answered `401` with the same
+`WWW-Authenticate` challenge `/mcp` sends, so a client discovers the
+authorization server the same way on both.
+
+`GET …/baseline/events` is a read-only, paged projection of the Source-Faithful
+Baseline (`lane_id`, `event_ids`, `offset`, `limit` ≤ 500): each event's kind,
+role, voice, pitch, start, end, `source_ids` and `source_event_ids`. Lead
+evidence must cite those source identities, so an agent has to be able to read
+them; without this read the only way to learn them was to re-ingest the bytes
+out of band.
+
+The technical endpoints refuse a malformed request (`INVALID_REQUEST`, HTTP
+400) exactly where the MCP tool schemas refuse it, rather than grading the
+mistake as a technical verdict.
 
 ## 12. MCP control surface
 
-Ten `studio_*` tools, plus the three original tools unchanged:
+Twelve `studio_*` tools, plus the three original tools unchanged:
 
-`studio_capabilities`, `studio_project_create`, `studio_project_get`,
-`studio_sources_analyze`, `studio_arrangement_suggest`, `studio_decisions_apply`,
+`studio_capabilities`, `studio_project_create`, `studio_project_get` (without
+`project_id`: the owner's project list), `studio_sources_analyze`,
+`studio_baseline_events`, `studio_arrangement_suggest`, `studio_decisions_apply`,
 `studio_audio_alignment`, `studio_candidate_review`, `studio_finalize`,
 `studio_job_status`, `studio_artifact_get`.
+
+A structured tool refusal (`isError: true`) carries the same `canonical`
+provenance envelope the HTTP error body carries, so a client can tell a refusal
+made under a loaded Canonical from one made under none.
 
 Deliberately not one tool per backend function. A model reasons about a project,
 a suggestion, a decision set, a review and an artifact — `midi-file.mjs`,
@@ -468,6 +530,11 @@ repair report and the Canonical provenance — and a blocked finalize must block
 identically on all three.
 
 Transport metadata, headers and JSON-RPC framing are of course not compared.
+
+Parity is also a reachability contract: every Application Service read an
+agent needs to make a Canonical decision — the project list, the per-event
+provenance of the baseline — is served on both adapters, and a regression
+compares the two answers.
 
 An `artifact_id` is deliberately *not* expected to match across transports: it is
 content-addressed over a body naming the project it belongs to and when it was
