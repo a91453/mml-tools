@@ -61,7 +61,13 @@ function baselineGate(project) {
     .map(pair => ({ beforeId: pair.before?.id ?? null, afterId: pair.after?.id ?? null, changes: pair.changes }));
   const leadRoleMoved = eventDiff.notes.roleMoved
     .filter(pair => pair.before?.role === 'Melody' || pair.after?.role === 'Melody')
-    .map(pair => ({ beforeId: pair.before?.id ?? null, afterId: pair.after?.id ?? null, changes: pair.changes }));
+    .map(pair => ({
+      beforeId: pair.before?.id ?? null,
+      afterId: pair.after?.id ?? null,
+      beforeRole: pair.before?.role ?? null,
+      afterRole: pair.after?.role ?? null,
+      changes: pair.changes,
+    }));
 
   return gate('PASS', {
     baselineId: snapshot.id,
@@ -75,18 +81,9 @@ function baselineGate(project) {
   });
 }
 
-function leadGate(reports, leadEventDiff = null) {
-  if (!Array.isArray(reports)) throw Error('leadDemotionReports must be an array');
-
+function evidenceReportGate(reports, requiredEventIds, { reportName, blocker, noneReason }) {
+  if (!Array.isArray(reports)) throw Error(`${reportName} must be an array`);
   const relevant = reports.filter(report => report?.status !== 'N/A');
-  const requiredEventIds = new Set();
-  for (const id of leadEventDiff?.removed ?? []) {
-    if (typeof id === 'string' && id) requiredEventIds.add(id);
-  }
-  for (const move of leadEventDiff?.roleMoved ?? []) {
-    const id = move?.beforeId ?? move?.afterId;
-    if (typeof id === 'string' && id) requiredEventIds.add(id);
-  }
 
   if (requiredEventIds.size) {
     const byEventId = new Map(
@@ -97,18 +94,52 @@ function leadGate(reports, leadEventDiff = null) {
     const pendingEventIds = [...requiredEventIds].filter(id => byEventId.get(id)?.status !== 'PASS');
     if (pendingEventIds.length) {
       return gate('PENDING', {
-        blockers: ['LEAD_DEMOTION_EVIDENCE_REQUIRED'],
+        blockers: [blocker],
         pendingEventIds,
       });
     }
     return gate('PASS', { reviewed: requiredEventIds.size, requiredEventIds: [...requiredEventIds] });
   }
 
-  if (!relevant.length) return gate('N/A', { reason: 'No Lead demotion requires arbitration.' });
+  if (!relevant.length) return gate('N/A', { reason: noneReason });
   const pending = relevant.filter(report => report.status !== 'PASS');
   return pending.length
     ? gate('PENDING', { pendingEventIds: pending.map(report => report.eventId ?? null) })
     : gate('PASS', { reviewed: relevant.length });
+}
+
+function leadDemotionGate(reports, leadEventDiff = null) {
+  const requiredEventIds = new Set();
+  for (const id of leadEventDiff?.removed ?? []) {
+    if (typeof id === 'string' && id) requiredEventIds.add(id);
+  }
+  for (const move of leadEventDiff?.roleMoved ?? []) {
+    if (move?.beforeRole !== 'Melody' || move?.afterRole === 'Melody') continue;
+    const id = move.beforeId ?? move.afterId;
+    if (typeof id === 'string' && id) requiredEventIds.add(id);
+  }
+  return evidenceReportGate(reports, requiredEventIds, {
+    reportName: 'leadDemotionReports',
+    blocker: 'LEAD_DEMOTION_EVIDENCE_REQUIRED',
+    noneReason: 'No Lead demotion requires arbitration.',
+  });
+}
+
+function leadPromotionGate(reports, leadEventDiff = null) {
+  const requiredEventIds = new Set();
+  for (const id of leadEventDiff?.added ?? []) {
+    if (typeof id === 'string' && id) requiredEventIds.add(id);
+  }
+  for (const move of leadEventDiff?.roleMoved ?? []) {
+    if (move?.afterRole !== 'Melody' || move?.beforeRole === 'Melody') continue;
+    const id = move.afterId ?? move.beforeId;
+    if (typeof id === 'string' && id) requiredEventIds.add(id);
+  }
+  return evidenceReportGate(reports, requiredEventIds, {
+    reportName: 'leadPromotionReports',
+    blocker: 'LEAD_PROMOTION_EVIDENCE_REQUIRED',
+    noneReason: 'No Lead promotion requires arbitration.',
+  });
 }
 
 // G10. Published MOBILE_SYNTAX forbids technical micro-gaps and decomposition
@@ -153,6 +184,7 @@ export function evaluateProjectReadiness({
   core3Report,
   harmonyReport,
   leadDemotionReports = [],
+  leadPromotionReports = [],
   lineageReport = null,
   versionDriftReviewed = false,
   playerReadback = 'NOT_RUN',
@@ -165,8 +197,12 @@ export function evaluateProjectReadiness({
   const pendingDecisions = (project.decisions ?? []).filter(decision => decision.status === 'pending');
   const sourceComplete = project.metadata?.sourceComplete === true;
   const baseline = baselineGate(project);
-  const leadDemotion = leadGate(
+  const leadDemotion = leadDemotionGate(
     leadDemotionReports,
+    baseline.status === 'PASS' ? baseline.leadEventDiff : null,
+  );
+  const leadPromotion = leadPromotionGate(
+    leadPromotionReports,
     baseline.status === 'PASS' ? baseline.leadEventDiff : null,
   );
 
@@ -188,6 +224,7 @@ export function evaluateProjectReadiness({
     microTiming: microTimingGate(project),
     core3: gate(normalizeStatus(core3Report, 'NOT_RUN'), { blockers: core3Report?.blockers ?? [] }),
     leadDemotion,
+    leadPromotion,
     crossSourceHarmony: gate(normalizeStatus(harmonyReport, 'NOT_RUN'), { unresolvedCount: harmonyReport?.unresolvedCount ?? null }),
     versionDrift: versionGate(lineageReport, versionDriftReviewed),
     originalAudio: audioGate(project, originalAudioRequired),
@@ -206,6 +243,7 @@ export function evaluateProjectReadiness({
     'microTiming',
     'core3',
     'leadDemotion',
+    'leadPromotion',
     'crossSourceHarmony',
     'versionDrift',
     'originalAudio',
@@ -221,6 +259,6 @@ export function evaluateProjectReadiness({
     finalAccepted,
     preGameBlocking: Object.freeze(preGameBlocking),
     gates,
-    notice: 'Module availability never certifies a song. Candidate readiness requires source completeness plus a real Source-Faithful Baseline snapshot whose event-level diff is computed against the candidate, evidence-backed review of any Lead removals/role moves, a source-aware micro-timing result with no confirmed technical residue and no unresolved sub-grid interval, and audio/arbitration/technical/player evidence. finalAccepted additionally requires in-game acceptance.',
+    notice: 'Module availability never certifies a song. Candidate readiness requires source completeness plus a real Source-Faithful Baseline snapshot whose event-level diff is computed against the candidate, evidence-backed review of any Lead removals/demotions and Lead additions/promotions, a source-aware micro-timing result with no confirmed technical residue and no unresolved sub-grid interval, and audio/arbitration/technical/player evidence. finalAccepted additionally requires in-game acceptance.',
   });
 }
