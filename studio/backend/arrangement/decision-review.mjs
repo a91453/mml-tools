@@ -18,17 +18,19 @@
 
 import { compareCandidateLineage, compareCanonicalVersions } from '../compare/version-drift.mjs';
 import { evaluateCore3Continuity } from '../arbitration/core3.mjs';
-import { evaluateLeadDemotion } from '../arbitration/lead-demotion.mjs';
+import {
+  evaluateLeadDemotion,
+  leadEvidenceIdentityBlockers,
+  LEAD_EVIDENCE_IDENTITY_MISMATCH,
+  LEAD_EVIDENCE_PROVENANCE_PAIR_AMBIGUOUS,
+} from '../arbitration/lead-demotion.mjs';
 import { analyzeCrossSourceHarmony } from '../arbitration/harmony.mjs';
 import { evaluateProjectReadiness } from '../final/index.mjs';
 import {
   ACCEPTED_DECISION_TYPES,
   LEAD_ROLE,
-  LEAD_EVIDENCE_IDENTITY_MISMATCH,
-  LEAD_EVIDENCE_PROVENANCE_PAIR_AMBIGUOUS,
   DECISION_REJECTION,
   CANONICAL_PROJECT_SCHEMA,
-  leadEvidenceIdentityBlockers,
   revisionIdentityMatches,
   candidateDigestOf,
   baselineIdentityOf,
@@ -158,9 +160,10 @@ export function leadDemotionReportsFromApplication(application, baseline) {
       const destinationRole = destinationOf(item);
       const scope = leadEvidenceIdentityBlockers(entry.leadEvidence, event);
       if (scope.length) {
-        // Never reaches evaluateLeadDemotion: that gate only asks for a present
-        // source identity, so foreign-but-well-formed evidence can make it
-        // answer PASS under this event's id.
+        // Reported before the gate so the report carries the scope failure
+        // alone. The gate now runs the same binding itself, so this is a
+        // presentation choice, not the only thing standing between a foreign
+        // citation and a PASS under this event's id.
         reports.push(pendingReport(event.id, destinationRole, scope.includes(LEAD_EVIDENCE_IDENTITY_MISMATCH) || scope.includes(LEAD_EVIDENCE_PROVENANCE_PAIR_AMBIGUOUS)
           ? scope
           : [...scope, LEAD_EVIDENCE_IDENTITY_MISMATCH]));

@@ -72,6 +72,9 @@ Both remain unreachable and remain open. `studio/tests/raw-midi-preflight.test.m
 holds the containment.
 
 **P2-A — `evaluateLeadDemotion` does not verify supplied `sourceIdentity`.**
+Closed since: the G11-D residual hardening moved the identity binding into the
+gate itself (see `docs/G11D_DECISION_APPLICATION.md`, "Residual A"). What
+follows is the reachability argument as it stood when this note was written.
 Unreachable, unchanged by this work. The only production caller is
 `studio/web/model.mjs#analyzeWorkspace`, which looks the event up inside the
 *current* baseline and only evaluates evidence recorded at the current revision.

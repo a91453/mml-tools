@@ -115,8 +115,13 @@ Decision records are persisted; the applied candidate is not. It is re-derived
 from the re-validated source project on every analysis, and every decision is
 re-checked against the baseline, source, revision and Canonical identity it was
 accepted under, so a record that outlives its inputs is refused rather than
-replayed. A suggestion never becomes an acceptance, and an accepted application
-never moves a workspace to `VALIDATED`.
+replayed. Records chain: revision N is applied onto the revision N−1 the same
+analysis just re-derived, never onto a stored or imported parent. Each record is
+tamper-evident (a digest over the whole record) but not authenticated: nothing
+proves who accepted it, and the code says so. A suggestion never becomes an
+acceptance, and an accepted application never moves a workspace to `VALIDATED`.
+Lead evidence recorded through the pre-G11-D form is built behind the Worker and
+bound to the exact baseline source event by the Lead Demotion Gate itself.
 
 This path ends before G12, Final MML emission, Mobile audibility/octave
 adaptation, instrument assignment, volume mapping, drum-face mapping or in-game

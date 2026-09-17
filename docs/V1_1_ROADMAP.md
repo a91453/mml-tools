@@ -70,6 +70,7 @@ prose.
 | G12 | Stale `workbench-source.zip` | `OPEN` | `NEEDS_PROJECT_DECISION` → `IMPLEMENTATION_WORK` | `NONE` |
 | G13 | Lockfile decision | `OPEN` | `NEEDS_PROJECT_DECISION` → `IMPLEMENTATION_WORK` | `NONE` |
 | G14 | Per-token caution granularity | `NO_ACTION_REQUIRED` | — | `NONE` |
+| G11-D-R | G11-D residual integrity hardening (Lead identity at the gate, Web revision chain, record envelope, carry-forward) | `RESOLVED` (pending review) | — | `NONE` |
 
 ### Coverage closed by PR #10 (G1–G7, G11)
 
@@ -223,6 +224,24 @@ so `rejectedIntervalKeys` remains an unconsumed worklist and that part of the
 paragraph above still stands. See [FINAL_MML_EMITTER.md](FINAL_MML_EMITTER.md).
 It resolves no `PENDING`: P1, P2, P3, P4, P5, P6, P10 and P16 are all still
 open, and the emitter is deliberately narrower than each of them.
+
+### G11-D-R — G11-D residual integrity hardening · `RESOLVED` (pending review)
+
+**Origin.** PR #28 (G11-D) recorded four residuals rather than fixing them: the
+pre-G11-D Web Lead evidence path was not covered by the identity binding; the
+Web model did not chain revisions; decision records were self-consistent but
+their acceptance block was outside the digest; baseline/parent arbitration
+decisions were carried forward unchanged.
+
+**Closed how.** Four checkpoint commits on `fix/g11d-residual-hardening`, each
+with its own threat model, regressions and executed mutations, documented in
+`docs/G11D_DECISION_APPLICATION.md` under "Residual hardening". Canonical impact
+`NONE`; no Published Canonical document changed.
+
+**Still open, by design.** Authenticated authorship of decision records is
+`NOT_ESTABLISHED` (no trust root exists; a digest is not a signature). Multi-
+source Lead evidence stays fail-closed until the IR preserves source/source-event
+pairs. Both are stated in the code as data.
 
 ### G12 — Stale legacy `workbench-source.zip` · `OPEN`
 
