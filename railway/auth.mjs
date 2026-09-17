@@ -66,7 +66,12 @@ class AuthStore {
 const LOOPBACK_HOSTS = new Set(['127.0.0.1', '[::1]', 'localhost']);
 
 export function createAuth({ origin, ownerPassword, database, allowedRedirectHosts = ['chatgpt.com', 'chat.openai.com'], allowLoopbackRedirects = true, now = () => Math.floor(Date.now() / 1000), allowHttpForTests = false }) {
-  const base = new URL(origin);
+  // An unparseable value is the same configuration error as a malformed one and
+  // is reported as one: the raw `Invalid URL` a bare parse throws names nothing
+  // an operator can act on, and this is the first thing a misconfigured
+  // deployment hits.
+  let base;
+  try { base = new URL(origin); } catch { throw Error('MML_PUBLIC_ORIGIN must be an HTTPS origin'); }
   if ((base.protocol !== 'https:' && !allowHttpForTests) || base.username || base.password || base.pathname !== '/' || base.search || base.hash) throw Error('MML_PUBLIC_ORIGIN must be an HTTPS origin');
   if (typeof ownerPassword !== 'string' || ownerPassword.length < 32 || ownerPassword.length > 256) throw Error('MML_OWNER_PASSWORD must be a generated secret of 32–256 characters');
   if (!database) throw Error('Persistent MML_AUTH_DB is required');

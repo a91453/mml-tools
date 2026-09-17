@@ -22,7 +22,7 @@ The Permanent Studio Web deployment, its pinned artifact, its trust bundle and i
 
 - Build context: repository root; Dockerfile: `railway/Dockerfile`.
 - One service and **one replica**, with a persistent volume mounted at `/data`.
-- `MML_PUBLIC_ORIGIN`: exact generated HTTPS origin, without a path.
+- `MML_PUBLIC_ORIGIN`: exact generated HTTPS origin, without a path. This is the operator's explicit statement and always wins: a platform-injected domain never silently re-points a deployment that names its own origin. Unset or blank, the service derives `https://$RAILWAY_PUBLIC_DOMAIN` — the domain this deployment is actually served on — and refuses anything that is not a bare public host name. With neither, startup fails closed; no origin is ever guessed, because a guessed one hands out OAuth metadata and callbacks nobody can return to while the deployment still looks healthy.
 - `MML_OWNER_PASSWORD`: a randomly generated 32–256 character service password; set only in Railway Variables, never in Git, a URL, a report, or the source ZIP.
 - `MML_AUTH_DB`: `/data/mml-auth.sqlite`.
 - `MML_STUDIO_DATA_DIR`: `/data/studio` for the Studio Agent Interface's project, asset and artifact records. Unset, those records stay in memory and the capability endpoint reports `asset_storage.durability: "ephemeral"`.
@@ -196,6 +196,15 @@ A failing build is the gate working. The probe lines name what was missing, and 
 Do **not** work around it by creating `refs/remotes/origin/main` from `HEAD`, from the build source commit, or from a working-tree Manifest. That would let a build of any branch declare itself published Canonical, which is precisely the substitution the bootstrap contract forbids, and it is why the materialization captures the published SHA from the published repository and reads everything from that commit. Copying the working tree's Canonical documents into the image, or hard-coding the Manifest, is the same substitution wearing a different hat.
 
 If it reports `CANONICAL_NOT_LOADED` at **runtime** instead — the service is up, `/healthz` answers, and the root endpoint says the rules are unavailable — the image was built before this gate existed, or `/app/.git` was lost after the build. Rebuild it.
+
+## Railway PR environments
+
+A PR environment is a real, publicly reachable deployment on its own generated domain, and it is **not** configured by this file's production values. Two facts decide what it can do:
+
+- **Every non-sealed service variable is copied into it.** That includes `MML_PUBLIC_ORIGIN`, `MML_OWNER_PASSWORD` and `MML_AUTH_DB`. An inherited origin points the preview's OAuth issuer, resource, endpoints, consent form and callback policy at production, so override it with the environment's own domain or remove it and let the `RAILWAY_PUBLIC_DOMAIN` derivation above apply. An inherited owner password means the preview's login form accepts the production service password on a public URL; give the environment its own generated password.
+- **Sealed variables are not copied.** `MML_CANONICAL_SOURCE_TOKEN` is sealed, so a PR environment has no read access to this private repository and the image build fails closed at `scripts/materialize-canonical.mjs` with `CANONICAL_NOT_LOADED` and Git's own `could not read Username for 'https://github.com'`. That is the gate working as designed, not a regression in the pull request. To build previews, give the PR environment its own fine-grained token variable scoped to `Contents: Read` on this repository and nothing else, with a short expiry. Never unseal the production token, never copy its value into another environment, and never commit or paste it.
+
+Volume data isolation between environments is Railway's behaviour, not this service's: both environments mount `/data` and the service writes `MML_AUTH_DB` and `MML_STUDIO_DATA_DIR` under it. Confirm in the Railway dashboard that the PR environment has its own volume instance before treating a preview as isolated from production records, and never point a preview at the production volume.
 
 ## ChatGPT connection
 
