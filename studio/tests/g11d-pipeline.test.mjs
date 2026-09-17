@@ -145,6 +145,8 @@ const leadDecisions = () => {
         sectionRole: 'instrumental',
         scoreEvidence: { availability: 'available', classification: 'lead', citation: 'fixture:score lead staff' },
         audioEvidence: { availability: 'available', classification: 'foreground', citation: 'fixture:audio 0:00-0:02 foreground' },
+        continuity: { checked: true, createsLeadGap: false, replacementEventIds: [] },
+        core3: { checked: true, status: 'PASS' },
       },
       acceptance: acceptance(),
     };
