@@ -225,7 +225,7 @@ test('TTRE-5 the round trip grades the repaired semantics, and the original timi
   assert.deepEqual([...block.preRepair.rejectedIntervalKeys], [...block.presentedIntervalKeys]);
 });
 
-test('TTRE-6 a repaired sustain that a tempo change splits stays one attack', () => {
+test('TTRE-6 a sustain a tempo change splits stays one attack, and the repair never lengthens it', () => {
   // A sustain spanning a mid-song tempo change, in a role that also carries a
   // repairable hole. The sustain's *representation* becomes tied segments; its
   // attack identity does not change, and the repair does not touch it.

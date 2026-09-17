@@ -95,8 +95,11 @@
 // One neutrality class, and it is checked rather than argued
 // ---------------------------------------------------------
 // Every implemented operation is `silence-preserving`: it touches no note, so the
-// candidate sounds byte-for-byte identical and only its *representation* loses
-// the sub-grid component. `checkInvariants` verifies that on the produced
+// candidate's note-event semantics and silence coverage are exactly unchanged and
+// only its *representation* loses the sub-grid component. That is a claim about
+// the Canonical IR and the parsed readback, both compared as exact rationals, not
+// about rendered-audio bytes, which nothing here establishes.
+// `verifyRepairInvariants` checks it on the produced
 // project — every note byte-identical including its end, and the per-role silence
 // point set unchanged — rather than trusting the plan that produced it. There is
 // deliberately no weaker "the attacks survived" class.
@@ -393,8 +396,8 @@ function planGapClosure({ identityKey, identity, record }, context) {
   //
   // A rest: extending its end changes no note, so the role's silence — the
   // complement of its note coverage — and its attack set are the same point sets
-  // before and after. The candidate sounds byte-for-byte identical. That is a
-  // proof, not a judgement.
+  // before and after. Note-event semantics and silence coverage are exactly
+  // unchanged. That is a proof, not a judgement.
   //
   // A note: extending its end lengthens how long that note sounds and shortens
   // the role's silence by the same amount. Attack identity surviving does not

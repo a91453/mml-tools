@@ -299,14 +299,27 @@ none. Only the permitted half of the enforcement range was unimplemented.
 **Still open, by design.** Three shapes have no proven semantically neutral
 repair on the evidence the Canonical IR carries: an inter-event hole preceded by
 a note, a sub-grid *note* duration, and a sub-grid rest whose predecessor is a
-note. All three fail closed. That is recorded as an unresolved implementation
-question rather than a Canonical ambiguity: failing closed is already a
-Canonical-valid answer, so no published rule is missing. Supporting any of them
-would need either the C2 artifact-attestation channel that `micro-timing.mjs`
-documents as deliberately unavailable, or an explicit project decision. **A
-project decision is required** if the note-preceded hole is to be repairable —
-it is the shape a MIDI ingest produces when a note-off lands a few ticks before
-the next note-on. It resolves no `PENDING` item.
+note. All three fail closed, which is the **compliant** behaviour today — no
+published rule is missing and nothing is blocked on a decision in order to be
+correct.
+
+Supporting any of them has exactly two routes, and an implementer preference is
+not one of them. `MOBILE_SYNTAX §4` and `ACCEPTANCE_CRITERIA` Gate 1 both require
+event/exact timing preserved, and `SOURCE_POLICY §1` class A makes authoritative
+symbolic sources the primary authority for onset and duration; a changed release
+contradicts all three. So either (a) stronger evidence — the C2
+artifact-attestation channel `micro-timing.mjs` documents as deliberately
+unavailable, or equivalent admissible source/in-game evidence — establishes for a
+specific event that the changed release is correct under the **existing**
+Published Canonical, needing no rule change; or (b) the project normatively
+permits release extension without that evidence, which is a proposed
+**Canonical-policy change** and must go through `MASTER_RULES §12` change
+control, review and publication rather than being implemented silently.
+
+The note-preceded hole is the narrowest case and the shape a MIDI ingest produces
+when a note-off lands a few ticks before the next note-on, so it is worth raising
+with the project — as a question about which route applies, not as a one-line
+implementer fix. It resolves no `PENDING` item.
 
 ### G11-D-R — G11-D residual integrity hardening · `RESOLVED` (pending review)
 

@@ -116,8 +116,9 @@ is not a verdict. Nothing here classifies an interval" — so a `tool-derived`
 release is not evidence that moving it is neutral. The C2 artifact attestation
 that could carry such a claim is documented as deliberately unavailable
 (`micro-timing.mjs`: "Path B... is intentionally unavailable in C2A"). Supporting
-the note case would need that channel, or an explicit project decision. Neither
-is invented here.
+the note case therefore needs either that evidence channel or a published
+Canonical change — see §13 for why an implementer preference is not a third
+option. Neither is invented here.
 
 ## 5. The two operations
 
@@ -128,10 +129,12 @@ is invented here.
 
 There is exactly **one** neutrality class, and deliberately no weaker one:
 
-- `silence-preserving` — the operation touches no note, so the role's silence
-  region and its attack set are *identical point sets* before and after. The
-  candidate sounds byte-for-byte the same; only its representation loses the
-  sub-grid component.
+- `silence-preserving` — the operation touches no note, so the role's note-event
+  semantics (onset, pitch, volume, release, ordinal) and its silence coverage are
+  *exactly unchanged*; only the representation loses the sub-grid component. This
+  is a statement about the Canonical IR and the parsed readback, both compared as
+  exact rationals. No claim is made about rendered-audio byte identity, which
+  nothing in this repository establishes.
 
 A weaker "the attacks survived, so the change is fine" class is exactly the claim
 this layer must not make, so `REPAIR_NEUTRALITY` has no constant for it, and
@@ -251,7 +254,7 @@ original verdict stands and the refusal is recorded as a notice.
 | residue repaired only in part | `FAIL` — a partial repair is not a partial pass, and `applied` stays `false` |
 | a supplied readiness report blocks on any gate but `technical` | `PENDING` — the repair succeeded and bought nothing |
 | a role exceeds the 2,400-character budget | `FAIL` — the repair runs, the budget still refuses, no note is dropped |
-| a repaired sustain crosses a tempo change | the existing serialization splits it into tied segments; one attack, Tempo Map untouched |
+| a repaired candidate contains a sustain crossing a tempo change | unchanged: the existing serialization splits that **untouched** sustain into tied segments, which re-read as one attack, and the Tempo Map is not edited. The repair never lengthens a sustain — it touches no note at all (`TTRE-6`). |
 
 The round-trip gate compares against the **repaired** semantics, because that is
 what the emitted string claims to mean. The pre-repair timing stays visible in
@@ -264,10 +267,11 @@ silently repaired what it grades would be grading its own output.
 
 ## 11. Regression and mutation coverage
 
-`studio/tests/technical-timing-repair.test.mjs` (30) and
-`studio/tests/technical-timing-repair-emitter.test.mjs` (16).
+`studio/tests/technical-timing-repair.test.mjs` (37) and
+`studio/tests/technical-timing-repair-emitter.test.mjs` (17) — 54 regressions for
+this layer, inside a full suite of 1,160.
 
-Fourteen deliberate mutations were applied to the production source one at a
+Seventeen deliberate mutations were applied to the production source one at a
 time, the targeted suites run, the catching regression recorded, and the mutation
 reverted with `git checkout`. All seventeen were caught.
 
@@ -291,7 +295,7 @@ reverted with `git checkout`. All seventeen were caught.
 | 14 | drop the silence point-set invariant | `TTR-34` |
 | 15 | let a note be a repair target | `TTR-34` |
 
-Two mutations survived a first run and produced new regressions rather than a
+Three mutations survived a first run and produced new regressions rather than a
 shrug:
 
 - **5b** (float epsilon in place of exact-rational comparison) → `TTR-28`;
@@ -330,17 +334,39 @@ the evidence the Canonical IR carries:
 Published Canonical permits normalizing all three and does not say which of
 several musically different transformations to prefer. All three fail closed.
 
-This is recorded as an **unresolved implementation question**, not a Canonical
-ambiguity requiring a rule change: failing closed is already a Canonical-valid
-answer (`ACCEPTANCE_CRITERIA` "Final state vocabulary" allows `PENDING` /
-`UNSUPPORTED`), so no published rule is missing. Supporting any of them would
-require either the C2 artifact-attestation channel that `micro-timing.mjs`
-documents as deliberately unavailable, or an explicit project decision about
-which transformation is preferred. Neither has been taken here, and **no
-Canonical rule source was modified**.
+**Failing closed is the current compliant behaviour**, not a placeholder:
+`ACCEPTANCE_CRITERIA` "Final state vocabulary" allows `PENDING` / `UNSUPPORTED`,
+so no published rule is missing and nothing here is blocked on a decision in
+order to be correct today.
+
+### What would actually be required to support them
+
+There are exactly two routes, and an ordinary implementer preference is **not**
+one of them. Published Canonical currently requires a rewrite to preserve *event
+timing* (`MOBILE_SYNTAX §4`) and *exact timing* (`ACCEPTANCE_CRITERIA` Gate 1),
+and `SOURCE_POLICY §1` class A makes authoritative symbolic sources the primary
+authority for **onset and duration**. A changed release contradicts all three, so
+no amount of implementer convenience can authorise it.
+
+1. **Evidence.** Support becomes possible if stronger evidence — the C2
+   artifact-attestation channel `micro-timing.mjs` documents as deliberately
+   unavailable, or equivalent source/in-game evidence admissible under
+   `SOURCE_POLICY` — establishes for a *specific* event that the changed release
+   is correct under the **existing** Published Canonical. That needs no rule
+   change: it supplies the proof the rule already demands.
+
+2. **A published Canonical change.** If the project instead wants to normatively
+   permit release extension *without* that evidence, that is a proposed change to
+   Canonical policy, not an implementation choice. It goes through the
+   change-control route in `MASTER_RULES §12` — explicit rationale, evidence
+   class, regression impact, and executable-contract/test changes only *after*
+   the prose rule is accepted — with review and publication of a new rules
+   release. Implementing it silently, or inferring it from the rule text, is
+   exactly what this PR's first revision did wrong.
+
+Neither route has been taken here, and **no Canonical rule source was modified**.
 
 Case 1 is the narrowest and most likely to matter in practice: it is the shape a
 MIDI ingest produces when a note-off lands a few ticks before the next note-on.
-A project decision that "a technical hole may be closed by extending the
-preceding note's release" would unblock it in one line, and is the right thing to
-put to the project rather than to infer from the rule text.
+That makes it worth raising with the project — as a question about which of the
+two routes above applies, never as a one-line implementer fix.
