@@ -10,7 +10,7 @@ Studio／repository Skill 共用 Manifest Bootstrap。更新本機 `origin/main`
 
 `railway/` 提供獨立的 Node HTTP 服務、單一擁有者 OAuth、Dockerfile 與部署說明；它沿用原有 MML 核心。此版本採用 OAuth DCR、公用客戶端與 PKCE S256，授權資料保存於獨立 SQLite volume，MML 不入庫。請依 `railway/README.md` 完成環境變數、持久磁碟及來源連接。
 
-私人 GitHub 程式庫為 `a91453/mml-tools`；Railway 精確目標與進度記錄於 `railway/deployment-target.json`。部署使用 Railway 服務設定及 `railway/Dockerfile`，不使用新服務已停用的 `railway.toml` 設定方式；`railway/service-settings.json` 保存不含密碼的設定參考。本機 78 項測試通過，包括經由實際本機 HTTP 的 OAuth＋MCP 呼叫；本機測試、正式 HTTPS 檢查及使用者在 ChatGPT 的連接驗收分開記錄。
+私人 GitHub 程式庫為 `a91453/mml-tools`；Railway 精確目標與進度記錄於 `railway/deployment-target.json`。部署使用 Railway 服務設定及 `railway/Dockerfile`，不使用新服務已停用的 `railway.toml` 設定方式；`railway/service-settings.json` 保存不含密碼的設定參考。本機 `npm test` 全數通過（撰寫時 1343 項），包括經由實際本機 HTTP 的 OAuth＋MCP 呼叫；本機測試、正式 HTTPS 檢查及使用者在 ChatGPT 的連接驗收分開記錄。
 
 Railway 已於 2026-09-08 22:48 UTC 完成部署，GitHub 來源為 `a91453/mml-tools` 的 `main`。已觀察到 `/healthz` 200、OAuth metadata 200、未登入 `/mcp` 401；完整使用者 OAuth 與授權後工具呼叫仍需另外驗收。正式工具網址為 `https://mml-tools-production.up.railway.app/mcp`，採 OAuth DCR。較早的「Application not found」是歷史部署狀態，不是目前的登入錯誤原因。
 
@@ -34,7 +34,7 @@ Railway 已於 2026-09-08 22:48 UTC 完成部署，GitHub 來源為 `a91453/mml-
 
 ### Studio Agent Interface
 
-Agent Control Plane（Railway 專案 `mml-tools-allen`／服務 `mml-tools`）在通過 OAuth 後另外提供十個 `studio_*` 工具與 `/api/v1/*` HTTP 介面，讓 ChatGPT、Claude、Codex、未來模型或本地 agent 透過同一套介面操作既有 Studio：專案、素材、來源匯入、編排建議、明確接受的決定、候選審查與 Final 產出。上述三個原有工具維持不變；未接上 Application Service 的 Sites Worker 仍只提供那三個。
+Agent Control Plane（Railway 專案 `mml-tools-allen`／服務 `mml-tools`）在通過 OAuth 後另外提供十二個 `studio_*` 工具與 `/api/v1/*` HTTP 介面，讓 ChatGPT、Claude、Codex、未來模型或本地 agent 透過同一套介面操作既有 Studio：專案、素材、來源匯入、編排建議、明確接受的決定、候選審查與 Final 產出。上述三個原有工具維持不變；未接上 Application Service 的 Sites Worker 仍只提供那三個。
 
 **這不是 Studio Web 部署。** 目前 Railway 上有兩個各自獨立的平面：
 
