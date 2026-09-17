@@ -201,8 +201,8 @@ test('a refused decision set mints no candidate and reports the backend codes', 
   });
   await service.analyzeSources(OWNER, created.project_id);
 
-  // Promoting material into the Lead role without the evidence the Lead
-  // Demotion Gate requires. The refusal belongs to that gate, not to this layer.
+  // Promoting material into the Lead role without the evidence the shared
+  // Lead-role gate requires. The refusal belongs to that gate, not to this layer.
   const result = await service.applyDecisions(OWNER, created.project_id, {
     decisions: [{
       id: 'promote',
@@ -224,6 +224,51 @@ test('a refused decision set mints no candidate and reports the backend codes', 
   assert.deepEqual((await service.getProject(OWNER, created.project_id)).project.candidates, []);
 });
 
+test('the Studio service re-grades a lawful promotion and reports it separately from demotion', async () => {
+  const service = app();
+  const project = sixRoleBaseline();
+  const created = (await service.createProject(OWNER, { title: 'Lead promotion' })).project;
+  await service.uploadAsset(OWNER, created.project_id, {
+    kind: 'canonical_project', filename: 'b.json', mediaType: 'application/json', bytes: canonicalProjectBytes(project),
+  });
+  await service.analyzeSources(OWNER, created.project_id);
+
+  const event = project.events.find(item => item.id === 'chord1-1');
+  const applied = await service.applyDecisions(OWNER, created.project_id, {
+    decisions: [{
+      id: 'promote-reviewed',
+      type: 'MOVE_ROLE',
+      target: { eventIds: [event.id] },
+      fromRole: 'Chord1',
+      toRole: 'Melody',
+      reason: 'The official top-line hand-off makes this event the foreground instrumental lead in this section.',
+      evidence: ['fixture:official-score hand-off', 'fixture:audio foreground'],
+      leadEvidence: {
+        sourceIdentity: { sourceId: event.sourceIds[0], sourceEventId: event.sourceEventIds[0] },
+        sectionRole: 'instrumental',
+        scoreEvidence: { availability: 'available', classification: 'lead', citation: 'fixture:official-score hand-off' },
+        audioEvidence: { availability: 'available', classification: 'foreground', citation: 'fixture:audio foreground' },
+        continuity: { checked: true, createsLeadGap: false, replacementEventIds: [] },
+        core3: { checked: true, status: 'PASS' },
+      },
+      acceptedBy: 'reviewer:test',
+    }],
+  });
+  assert.equal(applied.operation, 'succeeded');
+  assert.equal(applied.decisions.status, 'PASS');
+
+  const { review } = await service.reviewCandidate(OWNER, created.project_id, {
+    candidateId: applied.decisions.candidate_id,
+  });
+  assert.equal(review.lead_demotion.length, 0);
+  assert.equal(review.lead_promotion.length, 1);
+  assert.equal(review.lead_promotion[0].status, 'PASS');
+  assert.equal(review.lead_promotion[0].eventId, event.id);
+  assert.equal(review.lead_promotion[0].originEventId, event.id);
+  assert.equal(review.readiness.gates.leadDemotion.status, 'N/A');
+  assert.equal(review.readiness.gates.leadPromotion.status, 'PASS');
+});
+
 // ─── review ─────────────────────────────────────────────────────────────────
 
 test('review reports each module verdict and publishes no aggregate of its own', async () => {
@@ -236,6 +281,7 @@ test('review reports each module verdict and publishes no aggregate of its own',
   assert.equal(review.application_status, 'PASS');
   for (const key of ['lineage', 'core3', 'harmony', 'readiness']) assert.ok(review[key], `${key} must be reported`);
   assert.ok(Array.isArray(review.lead_demotion));
+  assert.ok(Array.isArray(review.lead_promotion));
   assert.ok(!Object.hasOwn(review, 'ok'), 'review must not publish a single pass/fail of its own');
   assert.match(review.notice, /belongs to the module that produced it/);
 });
