@@ -781,6 +781,29 @@ test('TTR-26 the repair layer never rewrites the Tempo Map, the sources or the d
   assert.deepEqual(JSON.parse(JSON.stringify(repaired.decisions)), JSON.parse(JSON.stringify(candidate.decisions)));
 });
 
+test('TTR-28 boundary resolution is exact, so timings a float cannot separate stay separate', () => {
+  // Two Melody spans end one part in 10^20 apart. Their doubles are identical, so
+  // an epsilon or float comparison sees one boundary where there are two — and
+  // would report the repair target as ambiguous, or worse, extend the wrong span.
+  const hair = new F(1, 10n ** 20n);
+  const early = note({ id: 'exact-a', start: 0, end: f(1).sub(RESIDUE) });
+  const late = note({ id: 'exact-a2', pitch: 64, start: '1/2', end: f(1).sub(RESIDUE).add(hair) });
+  const next = note({ id: 'exact-b', pitch: 62, start: 1, end: 2 });
+  assert.equal(f(early.end).num(), f(late.end).num(), 'the two ends are the same double');
+  assert.notEqual(early.end, late.end, 'and different exact rationals');
+
+  const identity = gapIdentity(late, next);
+  const candidate = project({ events: [early, late, next], decisions: [technicalDecision(identity)] });
+
+  const result = repairTechnicalTiming(candidate);
+  assert.equal(result.status, REPAIR_STATUS.PASS, 'exactly one span ends at the hole, so the target is unambiguous');
+  assert.equal(result.repairs.length, 1);
+  assert.equal(result.repairs[0].targetEventId, late.id, 'the later-ending span is the one extended');
+  assert.equal(result.repairs[0].after.end, '1');
+  // The span that ends a hair earlier is untouched, not swept up by a tolerance.
+  assert.equal(result.repairedProject.events.find(event => event.id === early.id).end, early.end);
+});
+
 test('TTR-27 the result carries the published Canonical identity and claims no acceptance', () => {
   const { candidate } = earlyReleaseGap();
   const result = repairTechnicalTiming(candidate);
