@@ -3,7 +3,8 @@
 // Status: IMPLEMENTATION NOTES. Every verdict reported here belongs to the
 // module that produced it: version drift to `compare/version-drift.mjs`, Core3
 // continuity to `arbitration/core3.mjs`, cross-source harmony to
-// `arbitration/harmony.mjs`, Lead demotion to `arbitration/lead-demotion.mjs`,
+// `arbitration/harmony.mjs`, Lead demotion/promotion to the shared
+// `arbitration/lead-demotion.mjs` role grader,
 // readiness to `final/readiness.mjs`, micro-timing to
 // `canonical/micro-timing.mjs`. This module computes no verdict of its own and
 // publishes no aggregate that could be mistaken for one.
