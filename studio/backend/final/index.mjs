@@ -26,6 +26,7 @@ export {
   TECHNICAL_REPAIR_NOTICE,
   repairTechnicalTiming,
   readRejectedTechnicalRecords,
+  verifyRepairInvariants,
 } from './technical-timing-repair.mjs';
 
 // Per-song readiness. Remains the readiness authority; the emitter never

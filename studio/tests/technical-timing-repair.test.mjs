@@ -51,6 +51,7 @@ import {
   REPAIR_UNSUPPORTED,
   repairTechnicalTiming,
   readRejectedTechnicalRecords,
+  verifyRepairInvariants,
 } from '../backend/final/technical-timing-repair.mjs';
 import { EFFECTIVE_RULESET } from '../backend/rules/index.mjs';
 
@@ -988,6 +989,73 @@ test('TTR-33 no repair snaps, rounds, or moves an onset — across every fixture
       assert.equal(f(repair.identity.length).cmp(SAFE_GRID) < 0, true, 'only a sub-grid interval is ever repaired');
     }
   }
+});
+
+test('TTR-34 the invariant net catches a note extension even if a planner let one through', () => {
+  // The planners already refuse this, so production cannot reach the invariant
+  // branches — which is exactly why they are driven directly here. This is the
+  // second line of defence for the note-release correction: if a future edit
+  // re-admitted a note-preceded gap closure, `verifyRepairInvariants` still
+  // refuses the project it produced.
+  const { a, b, candidate } = noteBeforeGap();
+
+  const extended = createCanonicalProject({
+    id: `${candidate.id}#technical-timing-repair`,
+    title: 'note release extended',
+    sources: [OFFICIAL],
+    tempoEvents: [...candidate.tempoEvents],
+    decisions: [...candidate.decisions],
+    events: [
+      createCanonicalNoteEvent({
+        id: a.id, pitch: a.pitch, start: a.start, end: b.start,
+        role: a.role, voice: a.voice, volume: a.volume,
+        sourceIds: [...a.sourceIds], sourceEventIds: [...a.sourceEventIds],
+      }),
+      b,
+    ],
+  });
+  const plan = {
+    identityKey: 'pretend-key',
+    neutrality: REPAIR_NEUTRALITY.SILENCE_PRESERVING,
+    targetEventId: a.id,
+    absorbedEventId: null,
+    before: { start: a.start, end: a.end },
+    after: { start: a.start, end: b.start },
+  };
+
+  const violations = verifyRepairInvariants(candidate, extended, [plan]);
+  assert.ok(violations.length, 'a changed note must not pass the invariant net');
+  assert.ok(violations.some(item => /no implemented repair may touch a note/.test(item)),
+    'the note itself changed');
+  assert.ok(violations.some(item => /is a repair target; only a rest may be/.test(item)),
+    'a note was named as a repair target');
+  assert.ok(violations.some(item => /silence point set changed/.test(item)),
+    'the silence point set moved, so the repair was not silence-preserving');
+
+  // The honest counterpart: a genuine rest repair passes the same net cleanly.
+  const clean = repairTechnicalTiming(earlyReleaseGap().candidate);
+  assert.equal(clean.status, REPAIR_STATUS.PASS);
+  assert.deepEqual(codes(clean).filter(code => code === REPAIR_DIAGNOSTICS.INVARIANT_VIOLATED), []);
+});
+
+test('TTR-35 a neutrality class this layer does not implement is itself a violation', () => {
+  // Nothing may quietly reintroduce a weaker "the attacks survived" class.
+  const { candidate } = earlyReleaseGap();
+  const result = repairTechnicalTiming(candidate);
+  assert.equal(result.status, REPAIR_STATUS.PASS);
+
+  const [real] = result.repairs;
+  const mislabelled = {
+    identityKey: real.identityKey,
+    neutrality: 'attack-preserving',
+    targetEventId: real.targetEventId,
+    absorbedEventId: null,
+    before: real.before,
+    after: real.after,
+  };
+  const violations = verifyRepairInvariants(candidate, result.repairedProject, [mislabelled]);
+  assert.ok(violations.some(item => /claims neutrality attack-preserving, which this layer does not implement/.test(item)));
+  assert.deepEqual(Object.values(REPAIR_NEUTRALITY), ['silence-preserving'], 'there is exactly one implemented class');
 });
 
 test('TTR-27 the result carries the published Canonical identity and claims no acceptance', () => {

@@ -698,8 +698,13 @@ const controlShape = event => ({ id: event.id, beat: event.beat, bpm: event.bpm 
  *
  * These are not defensive noise. Each one is a mutation someone could introduce
  * in this file that every happy-path assertion would still pass.
+ *
+ * Exported because the planners already refuse everything this would catch, so
+ * nothing in production can reach these branches — and a check nothing exercises
+ * silently stops being a check. A regression drives it directly with a
+ * hand-built "repaired" project instead.
  */
-function checkInvariants(before, after, plans) {
+export function verifyRepairInvariants(before, after, plans) {
   const violations = [];
   const byKeyTarget = new Map(plans.map(plan => [plan.targetEventId, plan]));
   const absorbed = new Set(plans.filter(plan => plan.absorbedEventId).map(plan => plan.absorbedEventId));
@@ -921,7 +926,7 @@ export function repairTechnicalTiming(project, { mobileSyntax, enforcement } = {
       });
     }
 
-    const violations = checkInvariants(project, repairedProject, kept);
+    const violations = verifyRepairInvariants(project, repairedProject, kept);
     if (violations.length) {
       diagnostics.push(diagnostic(
         REPAIR_DIAGNOSTICS.INVARIANT_VIOLATED,
