@@ -286,21 +286,34 @@ test('the running service drops the build credential and never hands it to a chi
 
   // The runtime Git adapter is the second, independent removal: even an entry
   // point that skipped the scrub cannot leak the credential into a Git child.
+  //
+  // Observed rather than asserted on the adapter's shape: a Git credential
+  // helper is an ordinary child process that inherits Git's environment, so
+  // asking one to echo the variable reports what the child actually received.
+  // No identity, config, network or repository state is involved, so this says
+  // the same thing on a bare CI runner as it does on a developer machine.
   const token = 'ghp_SYNTHETIC_TEST_TOKEN_NEVER_REAL_0123456789';
+  const helper = 'credential.helper=!f() { printf \'%s\\n\' "username=probe" "password=${MML_CANONICAL_SOURCE_TOKEN:-ABSENT}"; }; f';
+  const askHelper = run => String(run({ root, args: ['-c', helper, 'credential', 'fill'], input: 'protocol=https\nhost=probe.invalid\n\n' }));
+
   const previous = process.env.MML_CANONICAL_SOURCE_TOKEN;
   process.env.MML_CANONICAL_SOURCE_TOKEN = token;
   try {
-    const seen = gitSubprocess({
-      root,
-      args: ['--no-pager', 'var', 'GIT_AUTHOR_IDENT'],
-    });
-    assert.ok(Buffer.isBuffer(seen) || typeof seen === 'string');
-    // Read the child's own environment rather than trusting the adapter's shape.
-    const child = spawnSync(process.execPath, ['-e', 'process.stdout.write(String(Boolean(process.env.MML_CANONICAL_SOURCE_TOKEN)))'], {
-      encoding: 'utf8',
-      env: (() => { const copy = { ...process.env }; scrubBuildOnlyVariables(copy); return copy; })(),
-    });
-    assert.equal(child.stdout, 'false', 'a child spawned from a scrubbed environment must not see the credential');
+    const throughRuntime = askHelper(gitSubprocess);
+    assert.match(throughRuntime, /password=ABSENT/, 'the runtime Git adapter must not hand the credential to a child');
+    assert.ok(!throughRuntime.includes(token), 'the credential reached a Git child of the runtime adapter');
+
+    // Control: the same probe, run with the environment left alone, must see the
+    // credential. Without it the assertion above could pass for the wrong reason
+    // — a helper that never ran, or one that always prints ABSENT.
+    const throughUnscrubbed = askHelper(({ root: cwd, args, input }) => execFileSync('git', args, {
+      cwd, input, encoding: 'utf8', stdio: ['pipe', 'pipe', 'pipe'], env: process.env,
+    }));
+    assert.match(throughUnscrubbed, new RegExp(`password=${token}`), 'the probe must be able to observe the credential when it is present');
+
+    // (That the build-time adapter still supplies it is covered end to end by
+    // studio/tests/bootstrap-materialize.test.mjs, which materializes through it
+    // with a token and asserts which calls carry the credential.)
   } finally {
     if (previous === undefined) delete process.env.MML_CANONICAL_SOURCE_TOKEN;
     else process.env.MML_CANONICAL_SOURCE_TOKEN = previous;
