@@ -180,18 +180,45 @@ function silenceOf(candidate, role = 'Melody') {
 
 const codes = result => result.diagnostics.map(item => item.code);
 
+// Every field of every note, `end` included. The neutrality this layer claims is
+// that no note changes at all, so the comparison is total rather than selective.
+const noteRecords = candidate => candidate.events
+  .filter(event => event.kind === 'note')
+  .map(event => ({ id: event.id, pitch: event.pitch, start: event.start, end: event.end, volume: event.volume, role: event.role }))
+  .sort((left, right) => (left.id < right.id ? -1 : 1));
+
+const repaired0Kind = (result, id) => result.repairedProject.events.find(event => event.id === id)?.kind ?? null;
+
 /**
- * The canonical fixture: a technical sub-grid hole left by an early release.
- * `a` stops one 1/256 before beat 1, `b` attacks exactly on beat 1.
+ * The canonical repairable fixture: a technical sub-grid hole whose preceding
+ * span is a REST. The rest stops one 1/256 before beat 2, `b` attacks on beat 2.
+ *
+ * Rest-preceded because that is the only case whose neutrality the IR proves: a
+ * role's silence is the complement of its note coverage, so moving a rest's end
+ * cannot change what the role sounds like. The note-preceded shape is
+ * `noteBeforeGap()` below, and it is a refusal, not a repair.
  */
 function earlyReleaseGap({ classify = 'technical', residue = RESIDUE } = {}) {
-  const a = note({ id: 'gap-a', start: 0, end: f(1).sub(residue) });
-  const b = note({ id: 'gap-b', pitch: 62, start: 1, end: 2 });
+  const opening = note({ id: 'gap-n', start: 0, end: 1 });
+  const a = rest({ id: 'gap-a', start: 1, end: f(2).sub(residue) });
+  const b = note({ id: 'gap-b', pitch: 62, start: 2, end: 3 });
   const identity = gapIdentity(a, b);
   const decisions = classify === 'technical' ? [technicalDecision(identity)]
     : classify === 'keep' ? [keepDecision(identity)]
       : [];
-  return { a, b, identity, candidate: project({ events: [a, b], decisions }) };
+  return { opening, a, b, identity, candidate: project({ events: [opening, a, b], decisions }) };
+}
+
+/**
+ * The same hole with a NOTE in front of it. Closing it would extend that note's
+ * release, which the Canonical IR does not prove neutral, so this is the shape
+ * the layer must refuse.
+ */
+function noteBeforeGap({ residue = RESIDUE, pitchB = 62 } = {}) {
+  const a = note({ id: 'nbg-a', start: 0, end: f(1).sub(residue) });
+  const b = note({ id: 'nbg-b', pitch: pitchB, start: 1, end: 2 });
+  const identity = gapIdentity(a, b);
+  return { a, b, identity, candidate: project({ events: [a, b], decisions: [technicalDecision(identity)] }) };
 }
 
 /** Two contiguous rests where the second one is sub-grid technical residue. */
@@ -211,7 +238,7 @@ function contiguousRestResidue() {
 // 1–5. Successful technical repair
 // ---------------------------------------------------------------------------
 
-test('TTR-1 a technical sub-grid inter-event gap is closed into the preceding span, exactly', () => {
+test('TTR-1 a technical sub-grid hole before an attack is closed into the preceding rest, exactly', () => {
   const { a, b, identity, candidate } = earlyReleaseGap();
   const before = enforceMicroGaps(candidate);
   assert.equal(before.status, 'FAIL', 'the fixture must actually present technical residue');
@@ -227,8 +254,8 @@ test('TTR-1 a technical sub-grid inter-event gap is closed into the preceding sp
   assert.deepEqual([...result.unrepairedIntervalKeys], []);
 
   const [repair] = result.repairs;
-  assert.equal(repair.operation, REPAIR_OPERATIONS.CLOSE_GAP_INTO_PRECEDING_SPAN);
-  assert.equal(repair.neutrality, REPAIR_NEUTRALITY.ATTACK_PRESERVING);
+  assert.equal(repair.operation, REPAIR_OPERATIONS.CLOSE_GAP_INTO_PRECEDING_REST);
+  assert.equal(repair.neutrality, REPAIR_NEUTRALITY.SILENCE_PRESERVING);
   assert.equal(repair.classification, MICRO_TIMING_CLASSIFICATIONS.TECHNICAL_RESIDUE);
   assert.equal(repair.targetEventId, a.id);
   assert.equal(repair.absorbedEventId, null);
@@ -239,11 +266,12 @@ test('TTR-1 a technical sub-grid inter-event gap is closed into the preceding sp
   assert.equal(f(repair.after.end).sub(f(repair.before.end)).cmp(RESIDUE), 0);
   assert.ok(repair.permittedBecause.includes('MASTER_RULES §7'));
   assert.equal(repair.decisionId, 'tech:gap-a+gap-b');
+  assert.equal(repaired0Kind(result, a.id), 'rest', 'only a rest is ever the repair target');
 
   // The repaired candidate has no hole left, and enforcement agrees.
   const repaired = result.repairedProject;
-  assert.equal(repaired.events.find(event => event.id === a.id).end, '1');
-  assert.equal(repaired.events.find(event => event.id === b.id).start, '1');
+  assert.equal(repaired.events.find(event => event.id === a.id).end, '2');
+  assert.equal(repaired.events.find(event => event.id === b.id).start, '2');
   assert.equal(result.verification.status, 'PASS');
   assert.deepEqual([...result.verification.rejectedIntervalKeys], []);
 });
@@ -289,15 +317,16 @@ test('TTR-3 a silence-preserving repair leaves the role silence and attack set i
   assert.deepEqual(attackShape(result.repairedProject), attackShape(candidate), 'attacks must be untouched');
 });
 
-test('TTR-4 an attack-preserving repair moves no onset, pitch, volume or attack count', () => {
+test('TTR-4 a repair leaves every note byte-identical, its release included', () => {
   const { candidate } = earlyReleaseGap();
   const result = repairTechnicalTiming(candidate);
   assert.equal(result.status, REPAIR_STATUS.PASS);
 
-  assert.deepEqual(attackShape(result.repairedProject), attackShape(candidate));
-  const notesBefore = candidate.events.filter(event => event.kind === 'note').length;
-  const notesAfter = result.repairedProject.events.filter(event => event.kind === 'note').length;
-  assert.equal(notesAfter, notesBefore, 'no attack invented or deleted');
+  // Not "the onsets survived" — total equality. No implemented operation touches
+  // a note at all, so a changed release is as much a violation as a changed pitch.
+  assert.deepEqual(noteRecords(result.repairedProject), noteRecords(candidate));
+  assert.deepEqual(silenceOf(result.repairedProject), silenceOf(candidate));
+  assert.equal(result.repairs.every(repair => repair.neutrality === REPAIR_NEUTRALITY.SILENCE_PRESERVING), true);
 });
 
 test('TTR-5 the input project is never mutated and the repaired candidate is a distinct, inspectable project', () => {
@@ -317,7 +346,7 @@ test('TTR-5 the input project is never mutated and the repaired candidate is a d
   // the repaired candidate itself, not only from the result object.
   const provenance = repaired.events.find(event => event.id === a.id).metadata.technicalTimingRepair;
   assert.equal(provenance.before.end, a.end);
-  assert.equal(provenance.after.end, '1');
+  assert.equal(provenance.after.end, '2');
   assert.equal(provenance.delta, RESIDUE.toString());
   assert.deepEqual(provenance.canonical, EFFECTIVE_RULESET.canonical);
   assert.equal(result.repairs[0].reversal.restore.end, a.end);
@@ -364,12 +393,13 @@ test('TTR-7 a source-supported musical rest is never shortened, absorbed or fill
 });
 
 test('TTR-8 two adjacent repeated attacks stay two attacks; nothing becomes a tie or a sustain', () => {
-  // Same pitch, technical hole between them — the exact shape a "tie it together"
-  // optimizer would collapse. MOBILE_SYNTAX §8 forbids that.
-  const first = note({ id: 'rep-a', pitch: 60, start: 0, end: f(1).sub(RESIDUE) });
-  const second = note({ id: 'rep-b', pitch: 60, start: 1, end: 2 });
-  const identity = gapIdentity(first, second);
-  const candidate = project({ events: [first, second], decisions: [technicalDecision(identity)] });
+  // Same pitch either side of a repairable hole — the exact shape a "tie it
+  // together" optimizer would collapse. MOBILE_SYNTAX §8 forbids that.
+  const first = note({ id: 'rep-a', pitch: 60, start: 0, end: 1 });
+  const separation = rest({ id: 'rep-r', start: 1, end: f(2).sub(RESIDUE) });
+  const second = note({ id: 'rep-b', pitch: 60, start: 2, end: 3 });
+  const identity = gapIdentity(separation, second);
+  const candidate = project({ events: [first, separation, second], decisions: [technicalDecision(identity)] });
 
   const result = repairTechnicalTiming(candidate);
   assert.equal(result.status, REPAIR_STATUS.PASS);
@@ -377,9 +407,9 @@ test('TTR-8 two adjacent repeated attacks stay two attacks; nothing becomes a ti
   const repaired = result.repairedProject;
   const attacks = repaired.events.filter(event => event.kind === 'note');
   assert.equal(attacks.length, 2, 'the two repeated attacks are still two events');
-  assert.equal(attacks.find(event => event.id === 'rep-a').end, '1');
-  assert.equal(attacks.find(event => event.id === 'rep-b').start, '1', 'the second attack did not move');
-  assert.deepEqual(attackShape(repaired), attackShape(candidate));
+  assert.equal(attacks.find(event => event.id === 'rep-a').end, '1', 'the first attack was not stretched into the second');
+  assert.equal(attacks.find(event => event.id === 'rep-b').start, '2', 'the second attack did not move');
+  assert.deepEqual(noteRecords(repaired), noteRecords(candidate));
 });
 
 test('TTR-9 unknown provenance is blocked, never repaired', () => {
@@ -466,7 +496,7 @@ test('TTR-14 a residue whose float image equals the grid is still repaired exact
   assert.equal(result.status, REPAIR_STATUS.PASS);
   const [repair] = result.repairs;
   assert.equal(repair.delta, NEAR_GRID.toString());
-  assert.equal(repair.after.end, '1');
+  assert.equal(repair.after.end, '2');
   // A rounding repair would have produced the grid value; exact arithmetic did not.
   assert.notEqual(repair.delta, EXACT_GRID.toString());
 });
@@ -504,8 +534,8 @@ test('TTR-16 a sub-grid rest after a note is refused rather than folded into the
 test('TTR-17 an ambiguous boundary refuses rather than picking one of two spans', () => {
   // Two Melody spans end at the same instant. Extending one of them leaves the
   // other behind, so there is no single repair target.
-  const first = note({ id: 'amb-a', start: 0, end: f(1).sub(RESIDUE) });
-  const second = note({ id: 'amb-b', pitch: 64, start: '1/2', end: f(1).sub(RESIDUE) });
+  const first = rest({ id: 'amb-a', start: 0, end: f(1).sub(RESIDUE) });
+  const second = rest({ id: 'amb-b', start: '1/2', end: f(1).sub(RESIDUE) });
   const later = note({ id: 'amb-c', pitch: 62, start: 1, end: 2 });
   const identity = gapIdentity(first, later);
   const candidate = project({ events: [first, second, later], decisions: [technicalDecision(identity)] });
@@ -539,22 +569,24 @@ test('TTR-18 two repairs that would write the same event are both refused rather
 });
 
 test('TTR-18b two holes that write different events are both repaired, in one deterministic pass', () => {
-  // The neighbouring case that must NOT be refused: a hole before `mid` and a
-  // hole after it write `left` and `mid` respectively, so they are independent.
-  const left = note({ id: 'chain-a', start: 0, end: f(1).sub(RESIDUE) });
-  const mid = note({ id: 'chain-b', pitch: 62, start: 1, end: f(2).sub(RESIDUE) });
-  const right = note({ id: 'chain-c', pitch: 64, start: 2, end: 3 });
+  // The neighbouring case that must NOT be refused: two rest-preceded holes whose
+  // targets are different rests, so the plans are independent.
+  const openA = note({ id: 'chain-n1', start: 0, end: 1 });
+  const restA = rest({ id: 'chain-a', start: 1, end: f(2).sub(RESIDUE) });
+  const midNote = note({ id: 'chain-n2', pitch: 62, start: 2, end: 3 });
+  const restB = rest({ id: 'chain-b', start: 3, end: f(4).sub(RESIDUE) });
+  const closing = note({ id: 'chain-n3', pitch: 64, start: 4, end: 5 });
   const candidate = project({
-    events: [left, mid, right],
-    decisions: [technicalDecision(gapIdentity(left, mid)), technicalDecision(gapIdentity(mid, right))],
+    events: [openA, restA, midNote, restB, closing],
+    decisions: [technicalDecision(gapIdentity(restA, midNote)), technicalDecision(gapIdentity(restB, closing))],
   });
 
   const result = repairTechnicalTiming(candidate);
   assert.equal(result.status, REPAIR_STATUS.PASS);
   assert.equal(result.repairs.length, 2);
-  assert.equal(result.repairedProject.events.find(event => event.id === 'chain-a').end, '1');
-  assert.equal(result.repairedProject.events.find(event => event.id === 'chain-b').end, '2');
-  assert.deepEqual(attackShape(result.repairedProject), attackShape(candidate));
+  assert.equal(result.repairedProject.events.find(event => event.id === 'chain-a').end, '2');
+  assert.equal(result.repairedProject.events.find(event => event.id === 'chain-b').end, '4');
+  assert.deepEqual(noteRecords(result.repairedProject), noteRecords(candidate));
   // Deterministic: the same input produces the same repaired candidate every run.
   assert.equal(JSON.stringify(repairTechnicalTiming(candidate).repairedProject), JSON.stringify(result.repairedProject));
 });
@@ -728,15 +760,17 @@ test('TTR-23 a non-conformant Final contract stops the repair layer instead of b
 });
 
 test('TTR-24 a mixed worklist repairs only what it can and never reports PASS for the rest', () => {
-  // One repairable hole in Melody, one refused sub-grid note duration in Chord1.
-  const a = note({ id: 'mix-a', start: 0, end: f(1).sub(RESIDUE) });
-  const b = note({ id: 'mix-b', pitch: 62, start: 1, end: 2 });
+  // One repairable rest-preceded hole in Melody, one refused sub-grid note
+  // duration in Chord1.
+  const opening = note({ id: 'mix-n', start: 0, end: 1 });
+  const a = rest({ id: 'mix-a', start: 1, end: f(2).sub(RESIDUE) });
+  const b = note({ id: 'mix-b', pitch: 62, start: 2, end: 3 });
   const shortNote = note({ id: 'mix-c', pitch: 64, role: 'Chord1', start: 0, end: RESIDUE });
   const afterShort = note({ id: 'mix-d', pitch: 65, role: 'Chord1', start: RESIDUE, end: 1 });
   const gap = gapIdentity(a, b);
   const shortDuration = durationIdentity(shortNote);
   const candidate = project({
-    events: [a, b, shortNote, afterShort],
+    events: [opening, a, b, shortNote, afterShort],
     decisions: [technicalDecision(gap), technicalDecision(shortDuration)],
   });
 
@@ -745,7 +779,7 @@ test('TTR-24 a mixed worklist repairs only what it can and never reports PASS fo
   assert.deepEqual([...result.repairedIntervalKeys], [intervalIdentityKey(gap)]);
   assert.deepEqual([...result.unrepairedIntervalKeys], [intervalIdentityKey(shortDuration)]);
   // The repairable half really was repaired...
-  assert.equal(result.repairedProject.events.find(event => event.id === 'mix-a').end, '1');
+  assert.equal(result.repairedProject.events.find(event => event.id === 'mix-a').end, '2');
   // ...and the result is still not PASS, and still not Final-eligible.
   assert.equal(result.status, REPAIR_STATUS.PENDING);
   assert.equal(result.finalEmissionEligible, false);
@@ -757,6 +791,7 @@ test('TTR-25 presented keys always partition into repaired and unrepaired', () =
   const fixtures = [
     earlyReleaseGap().candidate,
     contiguousRestResidue().candidate,
+    noteBeforeGap().candidate,
     project({ events: [note({ id: 'p-a', start: 0, end: RESIDUE }), note({ id: 'p-b', pitch: 62, start: RESIDUE, end: 1 })] }),
   ];
   for (const candidate of fixtures) {
@@ -786,8 +821,8 @@ test('TTR-28 boundary resolution is exact, so timings a float cannot separate st
   // an epsilon or float comparison sees one boundary where there are two — and
   // would report the repair target as ambiguous, or worse, extend the wrong span.
   const hair = new F(1, 10n ** 20n);
-  const early = note({ id: 'exact-a', start: 0, end: f(1).sub(RESIDUE) });
-  const late = note({ id: 'exact-a2', pitch: 64, start: '1/2', end: f(1).sub(RESIDUE).add(hair) });
+  const early = rest({ id: 'exact-a', start: 0, end: f(1).sub(RESIDUE) });
+  const late = rest({ id: 'exact-a2', start: '1/2', end: f(1).sub(RESIDUE).add(hair) });
   const next = note({ id: 'exact-b', pitch: 62, start: 1, end: 2 });
   assert.equal(f(early.end).num(), f(late.end).num(), 'the two ends are the same double');
   assert.notEqual(early.end, late.end, 'and different exact rationals');
@@ -802,6 +837,157 @@ test('TTR-28 boundary resolution is exact, so timings a float cannot separate st
   assert.equal(result.repairs[0].after.end, '1');
   // The span that ends a hair earlier is untouched, not swept up by a tolerance.
   assert.equal(result.repairedProject.events.find(event => event.id === early.id).end, early.end);
+});
+
+// ---------------------------------------------------------------------------
+// 29–33. The note-release correction
+//
+// MASTER_RULES §7 permits normalizing a meaning-free technical micro-gap. It does
+// not say which rewrite, and two of the rules that *do* describe a rewrite name
+// two requirements each:
+//
+//   MOBILE_SYNTAX §4   "preserves event timing *and* attack identity"
+//   ACCEPTANCE Gate 1  "exact timing *and* note-on identity preserved"
+//
+// So attack identity surviving is half the test, not the whole of it. Extending a
+// preceding note's release satisfies the second and fails the first, and nothing
+// in the Canonical IR proves it neutral. These pin the refusal.
+// ---------------------------------------------------------------------------
+
+test('TTR-29 a technical hole preceded by a NOTE fails closed instead of extending its release', () => {
+  const { a, b, identity, candidate } = noteBeforeGap();
+  const enforcement = enforceMicroGaps(candidate);
+  assert.equal(enforcement.status, 'FAIL', 'the fixture must actually present technical residue');
+  assert.deepEqual([...enforcement.rejectedIntervalKeys], [intervalIdentityKey(identity)]);
+
+  const result = repairTechnicalTiming(candidate);
+
+  // Presented — the classification is real and this layer saw it — and refused.
+  assert.equal(result.presentedCount, 1);
+  assert.deepEqual([...result.repairedIntervalKeys], []);
+  assert.deepEqual([...result.unrepairedIntervalKeys], [intervalIdentityKey(identity)]);
+  assert.equal(result.unrepaired[0].reason, REPAIR_UNSUPPORTED.NOTE_RELEASE_NOT_PROVEN_NEUTRAL);
+  assert.match(result.unrepaired[0].detail, /no evidence in this project proves that change semantically neutral/);
+
+  assert.equal(result.status, REPAIR_STATUS.PENDING);
+  assert.equal(result.finalEmissionEligible, false);
+  assert.equal(result.repairedProject, null, 'no transformed candidate is produced');
+  assert.ok(codes(result).includes(REPAIR_DIAGNOSTICS.UNSUPPORTED_INTERVAL));
+
+  // And the note is exactly where the candidate put it.
+  assert.equal(candidate.events.find(event => event.id === a.id).end, f(1).sub(RESIDUE).toString());
+  assert.equal(candidate.events.find(event => event.id === b.id).start, '1');
+});
+
+test('TTR-30 attack identity alone does not qualify a changed note duration as neutral', () => {
+  // Construct the transformation the layer refuses and show, explicitly, that it
+  // WOULD preserve everything MOBILE_SYNTAX §8 and §11 step 1 protect: same
+  // attacks, same onsets, same pitches, same volumes, same ordinals. The layer
+  // still refuses, because §4 and Gate 1 also require event timing preserved and
+  // the note's release would move.
+  const { a, b, candidate } = noteBeforeGap();
+  const hypothetical = createCanonicalProject({
+    id: 'hypothetical-extension',
+    title: 'what leftward note extension would produce',
+    sources: [OFFICIAL],
+    tempoEvents: [...candidate.tempoEvents],
+    events: [
+      createCanonicalNoteEvent({
+        id: a.id, pitch: a.pitch, start: a.start, end: b.start,
+        role: a.role, voice: a.voice, volume: a.volume,
+        sourceIds: [...a.sourceIds], sourceEventIds: [...a.sourceEventIds],
+      }),
+      b,
+    ],
+  });
+
+  // Attack identity is fully intact under the hypothetical transformation...
+  assert.deepEqual(attackShape(hypothetical), attackShape(candidate), 'onsets, pitches, volumes and count all survive');
+  // ...and yet the candidate's audible content is not the same: the note sounds
+  // longer and the role's silence shrank by exactly the residue.
+  assert.notDeepEqual(silenceOf(hypothetical), silenceOf(candidate));
+  assert.notDeepEqual(noteRecords(hypothetical), noteRecords(candidate));
+  assert.equal(
+    f(hypothetical.events[0].end).sub(f(a.end)).toString(),
+    RESIDUE.toString(),
+    'the release would move by exactly the technical residue',
+  );
+
+  // Which is why the repair layer will not perform it.
+  const result = repairTechnicalTiming(candidate);
+  assert.equal(result.status, REPAIR_STATUS.PENDING);
+  assert.equal(result.repairedProject, null);
+  assert.equal(result.unrepaired[0].reason, REPAIR_UNSUPPORTED.NOTE_RELEASE_NOT_PROVEN_NEUTRAL);
+});
+
+test('TTR-31 a rest-preceded hole is repaired only because the silence semantics are unchanged', () => {
+  const { a, b, candidate } = earlyReleaseGap();
+  const result = repairTechnicalTiming(candidate);
+  assert.equal(result.status, REPAIR_STATUS.PASS);
+
+  // The repair target is a rest, and it is the only thing that moved.
+  assert.equal(candidate.events.find(event => event.id === a.id).kind, 'rest');
+  assert.equal(result.repairs[0].targetEventId, a.id);
+  assert.equal(result.repairs[0].neutrality, REPAIR_NEUTRALITY.SILENCE_PRESERVING);
+
+  // The two properties that make it neutral, stated directly.
+  assert.deepEqual(silenceOf(result.repairedProject), silenceOf(candidate), 'silence is the same exact point set');
+  assert.deepEqual(noteRecords(result.repairedProject), noteRecords(candidate), 'every note is byte-identical');
+
+  // The sub-grid component is nevertheless gone: the rest now reaches the attack.
+  assert.equal(result.repairedProject.events.find(event => event.id === a.id).end, b.start);
+  assert.equal(result.verification.status, 'PASS');
+});
+
+test('TTR-32 contiguous technical rests coalesce only while the silence semantics stay identical', () => {
+  const { long, residue, candidate } = contiguousRestResidue();
+  const result = repairTechnicalTiming(candidate);
+  assert.equal(result.status, REPAIR_STATUS.PASS);
+
+  assert.deepEqual(silenceOf(result.repairedProject), silenceOf(candidate));
+  assert.deepEqual(noteRecords(result.repairedProject), noteRecords(candidate));
+
+  // Two rest events describing one uninterrupted silence became one; the silence
+  // itself did not move a single exact rational.
+  const survivor = result.repairedProject.events.find(event => event.id === residue.id);
+  assert.equal(survivor.start, long.start);
+  assert.equal(survivor.end, residue.end);
+  assert.equal(result.repairedProject.events.some(event => event.id === long.id), false);
+  assert.equal(result.repairs[0].neutrality, REPAIR_NEUTRALITY.SILENCE_PRESERVING);
+});
+
+test('TTR-33 no repair snaps, rounds, or moves an onset — across every fixture', () => {
+  const fixtures = [
+    earlyReleaseGap().candidate,
+    earlyReleaseGap({ residue: NEAR_GRID }).candidate,
+    contiguousRestResidue().candidate,
+    noteBeforeGap().candidate,
+  ];
+
+  for (const candidate of fixtures) {
+    const result = repairTechnicalTiming(candidate);
+    const repaired = result.repairedProject;
+    if (!repaired) continue;
+
+    // No note moved at all, so no onset moved and nothing was snapped to a grid.
+    assert.deepEqual(noteRecords(repaired), noteRecords(candidate));
+
+    for (const repair of result.repairs) {
+      // Every produced boundary is an exact rational the candidate already
+      // contained — never a grid multiple this layer chose.
+      const landedOn = candidate.events.some(event => event.start === repair.after.end || event.end === repair.after.end);
+      assert.ok(landedOn, `${repair.after.end} must be an onset or release the candidate already had`);
+
+      // The delta is exactly the difference of two candidate values, with no
+      // rounding: re-deriving it from the recorded before/after must agree.
+      assert.equal(f(repair.after.end).sub(f(repair.before.end)).add(f(repair.before.start)).sub(f(repair.after.start)).toString(), repair.delta);
+      assert.ok(!/\./.test(repair.delta), 'a delta is an exact rational, never a decimal');
+      // The interval that was repaired is always sub-grid. `delta` is the exact
+      // distance the repaired boundary moved, which for a coalesce is the
+      // absorbed rest's whole length, so it is not the thing to compare here.
+      assert.equal(f(repair.identity.length).cmp(SAFE_GRID) < 0, true, 'only a sub-grid interval is ever repaired');
+    }
+  }
 });
 
 test('TTR-27 the result carries the published Canonical identity and claims no acceptance', () => {

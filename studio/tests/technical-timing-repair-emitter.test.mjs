@@ -100,10 +100,27 @@ const readTrack = (result, role = 'Melody') => parseTrack(
   splitMML(result.combinedMml)[ROLES.indexOf(role)], role, { mode: 'final' },
 );
 
-/** The canonical repairable shape: `a` releases one 1/256 early, `b` is on beat. */
+/**
+ * The canonical repairable shape: a rest releases one 1/256 early, `b` is on
+ * beat. Rest-preceded because that is the only hole whose closure the Canonical
+ * IR proves neutral — moving a rest's end changes no note, so the role's silence
+ * and attacks are identical point sets either side of the repair.
+ */
 function residueCandidate({ pitchB = 62 } = {}) {
-  const a = note({ id: 'emit-a', start: 0, end: f(1).sub(RESIDUE) });
-  const b = note({ id: 'emit-b', pitch: pitchB, start: 1, end: 2 });
+  const opening = note({ id: 'emit-n', start: 0, end: 1 });
+  const a = rest({ id: 'emit-a', start: 1, end: f(2).sub(RESIDUE) });
+  const b = note({ id: 'emit-b', pitch: pitchB, start: 2, end: 3 });
+  return { opening, a, b, candidate: project({ events: [opening, a, b], decisions: [technicalDecision(gapIdentity(a, b))] }) };
+}
+
+/**
+ * The same hole with a NOTE in front of it. Closing it would extend that note's
+ * release, which nothing in the IR proves neutral, so the emitter must still
+ * refuse with the repair opt-in switched on.
+ */
+function noteBeforeGapCandidate() {
+  const a = note({ id: 'nbg-a', start: 0, end: f(1).sub(RESIDUE) });
+  const b = note({ id: 'nbg-b', pitch: 62, start: 1, end: 2 });
   return { a, b, candidate: project({ events: [a, b], decisions: [technicalDecision(gapIdentity(a, b))] }) };
 }
 
@@ -176,9 +193,11 @@ test('TTRE-4 a repaired candidate emits, parses under Final mode, and round-trip
   assert.equal(track.events.length, 2, 'both attacks survive');
   assert.deepEqual(track.events, [
     { pitch: 60, start: '0', end: '1', volume: 8 },
-    { pitch: 62, start: '1', end: '2', volume: 8 },
+    { pitch: 62, start: '2', end: '3', volume: 8 },
   ]);
-  assert.deepEqual(silenceSpansOf(track), [], 'the meaning-free hole is gone, and no new silence was invented');
+  // The silence the candidate always meant, with the sub-grid hole folded into
+  // it — one span, not two, and not a beat more or less.
+  assert.deepEqual(silenceSpansOf(track), [{ start: '1', end: '2' }]);
   assert.equal(melody(result).attacks, 2);
 });
 
@@ -187,9 +206,10 @@ test('TTRE-5 the round trip grades the repaired semantics, and the original timi
   const result = emitFinalMml(candidate, { technicalTimingRepair: true });
   const track = readTrack(result);
 
-  // What the string means is the repaired candidate...
-  assert.equal(track.events[0].end, '1');
-  assert.notEqual(track.events[0].end, a.end);
+  // What the string means is the repaired candidate: the hole before the second
+  // attack is gone, and the silence runs to the attack exactly.
+  assert.deepEqual(silenceSpansOf(track), [{ start: '1', end: '2' }]);
+  assert.notEqual(a.end, '2', 'the candidate itself had the rest stopping early');
 
   // ...and the pre-repair timing is still on the result, so the two are never
   // indistinguishable. MOBILE_SYNTAX §11 step 8.
@@ -197,7 +217,7 @@ test('TTRE-5 the round trip grades the repaired semantics, and the original timi
   assert.equal(block.applied, true);
   assert.equal(block.status, REPAIR_STATUS.PASS);
   assert.equal(block.repairs[0].before.end, a.end);
-  assert.equal(block.repairs[0].after.end, '1');
+  assert.equal(block.repairs[0].after.end, '2');
   assert.equal(block.repairs[0].delta, RESIDUE.toString());
   assert.equal(block.baselineProjectId, candidate.id);
   assert.notEqual(block.repairedProjectId, candidate.id);
@@ -206,22 +226,25 @@ test('TTRE-5 the round trip grades the repaired semantics, and the original timi
 });
 
 test('TTRE-6 a repaired sustain that a tempo change splits stays one attack', () => {
-  // The repaired note spans a mid-song tempo change, so its *representation* must
-  // become tied segments while its attack identity does not change.
-  const a = note({ id: 'split-a', start: 0, end: f(2).sub(RESIDUE) });
-  const b = note({ id: 'split-b', pitch: 62, start: 2, end: 3 });
+  // A sustain spanning a mid-song tempo change, in a role that also carries a
+  // repairable hole. The sustain's *representation* becomes tied segments; its
+  // attack identity does not change, and the repair does not touch it.
+  const a = note({ id: 'split-a', start: 0, end: 2 });
+  const gap = rest({ id: 'split-r', start: 2, end: f(3).sub(RESIDUE) });
+  const b = note({ id: 'split-b', pitch: 62, start: 3, end: 4 });
   const candidate = project({
-    events: [a, b],
+    events: [a, gap, b],
     tempoEvents: [tempo(0, 120), tempo(1, 144)],
-    decisions: [technicalDecision(gapIdentity(a, b))],
+    decisions: [technicalDecision(gapIdentity(gap, b))],
   });
 
   const result = emitFinalMml(candidate, { technicalTimingRepair: true });
   assert.equal(result.status, 'PASS');
+  assert.equal(result.technicalTimingRepair.applied, true);
   const track = readTrack(result);
   assert.ok(melody(result).mml.includes('&'), 'the tempo change forces a tie chain');
   assert.equal(track.events.length, 2, 'the tie chain collapses back into one attack, not two');
-  assert.deepEqual(track.events[0], { pitch: 60, start: '0', end: '2', volume: 8 });
+  assert.deepEqual(track.events[0], { pitch: 60, start: '0', end: '2', volume: 8 }, 'the sustain was not extended by the repair');
   // The Tempo Map itself is untouched by the repair.
   assert.deepEqual(track.tempo, [{ beat: '0', bpm: 120 }, { beat: '1', bpm: 144 }]);
 });
@@ -235,7 +258,8 @@ test('TTRE-7 two repeated attacks around technical residue never become one sust
   assert.equal(track.events.length, 2, 'MOBILE_SYNTAX §8: a repeated attack is not tied away');
   assert.equal(track.events[0].pitch, 60);
   assert.equal(track.events[1].pitch, 60);
-  assert.equal(track.events[1].start, '1');
+  assert.equal(track.events[0].end, '1', 'the first attack was not stretched into the second');
+  assert.equal(track.events[1].start, '2');
   assert.ok(!melody(result).mml.includes('&'), 'no tie may join two distinct attacks');
 });
 
@@ -244,9 +268,10 @@ test('TTRE-7 two repeated attacks around technical residue never become one sust
 // ---------------------------------------------------------------------------
 
 test('TTRE-8 a source-supported sub-grid interval still fails closed with the opt-in on', () => {
-  const a = note({ id: 'keep-a', start: 0, end: f(1).sub(RESIDUE) });
-  const b = note({ id: 'keep-b', pitch: 62, start: 1, end: 2 });
-  const candidate = project({ events: [a, b], decisions: [keepDecision(gapIdentity(a, b))] });
+  const opening = note({ id: 'keep-n', start: 0, end: 1 });
+  const a = rest({ id: 'keep-a', start: 1, end: f(2).sub(RESIDUE) });
+  const b = note({ id: 'keep-b', pitch: 62, start: 2, end: 3 });
+  const candidate = project({ events: [opening, a, b], decisions: [keepDecision(gapIdentity(a, b))] });
 
   const result = emitFinalMml(candidate, { technicalTimingRepair: true });
   assert.equal(result.status, 'FAIL');
@@ -258,9 +283,10 @@ test('TTRE-8 a source-supported sub-grid interval still fails closed with the op
 });
 
 test('TTRE-9 unproven sub-grid material still blocks with the opt-in on', () => {
-  const a = note({ id: 'unk-a', start: 0, end: f(1).sub(RESIDUE) });
-  const b = note({ id: 'unk-b', pitch: 62, start: 1, end: 2 });
-  const candidate = project({ events: [a, b] });
+  const opening = note({ id: 'unk-n', start: 0, end: 1 });
+  const a = rest({ id: 'unk-a', start: 1, end: f(2).sub(RESIDUE) });
+  const b = note({ id: 'unk-b', pitch: 62, start: 2, end: 3 });
+  const candidate = project({ events: [opening, a, b] });
 
   const result = emitFinalMml(candidate, { technicalTimingRepair: true });
   assert.equal(result.status, 'PENDING');
@@ -328,12 +354,13 @@ test('TTRE-13 repair never rescues a character-budget failure', () => {
   // A role far over the 2,400-character limit that also carries repairable
   // residue. The repair runs; the budget still refuses, and no note is dropped.
   const { characterLimit } = parserFacts();
-  const events = [note({ id: 'big-0', start: 0, end: f(1).sub(RESIDUE) })];
+  const leading = rest({ id: 'big-r', start: 0, end: f(1).sub(RESIDUE) });
+  const events = [leading];
   const total = characterLimit + 200;
-  for (let index = 1; index < total; index += 1) {
+  for (let index = 1; index <= total; index += 1) {
     events.push(note({ id: `big-${index}`, pitch: 60 + (index % 2), start: index, end: index + 1 }));
   }
-  const candidate = project({ events, decisions: [technicalDecision(gapIdentity(events[0], events[1]))] });
+  const candidate = project({ events, decisions: [technicalDecision(gapIdentity(leading, events[1]))] });
 
   const result = emitFinalMml(candidate, { technicalTimingRepair: true });
   assert.equal(result.status, 'FAIL');
@@ -348,12 +375,13 @@ test('TTRE-13 repair never rescues a character-budget failure', () => {
 test('TTRE-14 a mixed candidate whose residue is only partly repairable emits nothing', () => {
   // Melody residue is repairable; Chord1 residue is a sub-grid note duration and
   // is not. A partial repair must not become a partial pass.
-  const a = note({ id: 'mix2-a', start: 0, end: f(1).sub(RESIDUE) });
-  const b = note({ id: 'mix2-b', pitch: 62, start: 1, end: 2 });
+  const opening = note({ id: 'mix2-n', start: 0, end: 1 });
+  const a = rest({ id: 'mix2-a', start: 1, end: f(2).sub(RESIDUE) });
+  const b = note({ id: 'mix2-b', pitch: 62, start: 2, end: 3 });
   const short = note({ id: 'mix2-c', pitch: 64, role: 'Chord1', start: 0, end: RESIDUE });
-  const after = note({ id: 'mix2-d', pitch: 65, role: 'Chord1', start: RESIDUE, end: 2 });
+  const after = note({ id: 'mix2-d', pitch: 65, role: 'Chord1', start: RESIDUE, end: 3 });
   const candidate = project({
-    events: [a, b, short, after],
+    events: [opening, a, b, short, after],
     decisions: [technicalDecision(gapIdentity(a, b)), technicalDecision(durationIdentity(short))],
   });
 
@@ -364,6 +392,30 @@ test('TTRE-14 a mixed candidate whose residue is only partly repairable emits no
   assert.equal(result.technicalTimingRepair.presentedIntervalKeys.length, 2);
   assert.equal(result.technicalTimingRepair.repairedIntervalKeys.length, 1);
   assert.equal(result.technicalTimingRepair.unrepairedIntervalKeys.length, 1);
+});
+
+test('TTRE-14b a hole preceded by a NOTE still refuses with the opt-in on', () => {
+  // The correction, at the emitter seam: turning the opt-in on must not turn a
+  // refusal into an emission when the transformation's neutrality is unproven.
+  const { a, b, candidate } = noteBeforeGapCandidate();
+
+  const off = emitFinalMml(candidate);
+  const on = emitFinalMml(candidate, { technicalTimingRepair: true });
+
+  assert.equal(off.status, 'FAIL');
+  assert.equal(on.status, 'FAIL', 'the opt-in buys nothing here');
+  assert.equal(on.combinedMml, null);
+  assert.ok(codes(on).includes(EMIT_DIAGNOSTICS.TECHNICAL_TIMING_REPAIR_UNAVAILABLE));
+  assert.ok(codes(on).includes(EMIT_DIAGNOSTICS.MICRO_GAP_TECHNICAL_RESIDUE));
+  assert.equal(on.technicalTimingRepair.applied, false);
+  assert.equal(on.technicalTimingRepair.status, REPAIR_STATUS.PENDING);
+  assert.equal(on.technicalTimingRepair.repairedIntervalKeys.length, 0);
+  assert.equal(on.technicalTimingRepair.unrepairedIntervalKeys.length, 1);
+  assert.equal(on.microGap.gradedProjectId, null, 'nothing was regraded');
+
+  // The candidate's own note is untouched either way.
+  assert.equal(candidate.events.find(event => event.id === a.id).end, f(1).sub(RESIDUE).toString());
+  assert.equal(candidate.events.find(event => event.id === b.id).start, '1');
 });
 
 test('TTRE-15 a coalesced rest emits the same silence the candidate always meant', () => {

@@ -42,38 +42,64 @@
 //   ACCEPTANCE §Gate 2 removals/additions/pitch/onset/duration edits must be
 //                     explainable.
 //
-// Which transformation, and why it is not invented here
-// -----------------------------------------------------
-// Canonical *permits* normalizing a meaning-free micro-gap; it does not enumerate
-// transformations. Two directions exist for a hole between a span that ends at
-// `t` and one that starts at `t + d`: absorb the hole leftward into the span that
-// precedes it, or move the following event's onset earlier. Canonical does decide
-// between them, in four separate places: note-on identity must be preserved
-// (§8), source attacks are preserved (§11 step 1), a new note-on is not moved for
-// technical convenience (MASTER_RULES §6), and Gate 1 requires note-on identity
-// preserved. Moving the following onset breaks all four. Absorbing leftward
-// breaks none: every attack keeps its onset, pitch, volume and ordinal position,
-// and the only thing that changes is how far the preceding span reaches into an
-// interval the project has already accepted as carrying no musical meaning.
-// MASTER_RULES §7's own contrast — do not fill *true* rests — is the same
-// direction read from the other side.
+// What "may be normalized" does and does not settle
+// -------------------------------------------------
+// MASTER_RULES §7 permits normalizing a meaning-free technical micro-gap. That
+// is a permission, not a transformation: it establishes that the interval *may*
+// stop existing, and says nothing about which of several musically different
+// rewrites is the right one. Canonical does not enumerate them.
 //
-// So leftward absorption is the only direction implemented. Everything else is
-// reported as unsupported; see `REPAIR_UNSUPPORTED`. In particular a sub-grid
-// *note* duration is never repaired: eliminating it would require deleting an
-// attack, inventing duration, or moving a neighbour, and no one of those is
-// distinguishable from the others on the evidence the IR carries.
+// For a hole between a span ending at `t` and one starting at `t + d`, two
+// directions exist: move the following event's onset back to `t`, or extend the
+// preceding span's end forward to `t + d`.
 //
-// Two operations, two different strengths of neutrality
-// ----------------------------------------------------
-//   `silence-preserving`  the role's silence region and its attack set are
-//                         *identical* point sets before and after. Nothing about
-//                         the candidate's sound changes at all.
-//   `attack-preserving`   every attack keeps onset, pitch, volume and ordinal;
-//                         one preceding note's release extends across an
-//                         interval accepted as meaning-free. This is the
-//                         normalization MASTER_RULES §7 permits, and it is
-//                         recorded as such rather than presented as a no-op.
+// Moving the following onset is ruled out. MOBILE_SYNTAX §8 requires a syntax
+// optimizer to preserve note-on identity and §11 step 1 preserves source
+// attacks; ACCEPTANCE Gate 1 requires note-on identity preserved.
+//
+// Extending the preceding span is **not** thereby licensed, and an earlier
+// revision of this module wrongly claimed it was. Read the two rules that
+// actually describe a rewrite:
+//
+//   MOBILE_SYNTAX §4   "...decomposition that preserves event timing *and*
+//                       attack identity"
+//   ACCEPTANCE Gate 1  "exact timing *and* note-on identity preserved"
+//
+// Each names two requirements, not one. Attack identity surviving satisfies the
+// second and says nothing about the first: a note whose end moves keeps its
+// onset, pitch, volume and ordinal position while sounding longer than the
+// candidate said it does, and the role's silence shrinks by exactly that much.
+// MASTER_RULES §6's "do not delay a new note-on" is about repairing a confirmed
+// non-musical *overlap*, and it forbids delaying an onset; it is not a rule that
+// mandates leftward duration extension, and must not be read as one.
+//
+// So the direction is decided by what the transformation touches, not by a
+// Canonical preference for a direction:
+//
+//   preceding span is a REST  the rest's end moves, no note changes. A role's
+//                             silence is the complement of its note coverage, so
+//                             silence and attacks are *identical point sets*
+//                             before and after. Provable from the IR. Repaired.
+//   preceding span is a NOTE  that note sounds longer and the silence shrinks.
+//                             Nothing in the Canonical IR proves that neutral —
+//                             C1 timing provenance is explicitly factual and may
+//                             not be read as a verdict, and the C2 artifact
+//                             attestation that could carry such a claim is not
+//                             available. Fails closed, every time.
+//
+// Everything else is reported as unsupported; see `REPAIR_UNSUPPORTED`. A
+// sub-grid *note* duration is likewise never repaired: eliminating it would
+// require deleting an attack, inventing duration, or moving a neighbour, and the
+// IR does not distinguish those.
+//
+// One neutrality class, and it is checked rather than argued
+// ---------------------------------------------------------
+// Every implemented operation is `silence-preserving`: it touches no note, so the
+// candidate sounds byte-for-byte identical and only its *representation* loses
+// the sub-grid component. `checkInvariants` verifies that on the produced
+// project — every note byte-identical including its end, and the per-role silence
+// point set unchanged — rather than trusting the plan that produced it. There is
+// deliberately no weaker "the attacks survived" class.
 //
 // Nothing here is approximate. No epsilon, no float, no rounding, no snapping,
 // no quantization, no grid search. Every comparison and every delta is exact
@@ -104,9 +130,11 @@ export const REPAIR_STATUS = Object.freeze({
 });
 
 export const REPAIR_OPERATIONS = Object.freeze({
-  // An uncovered hole between two spans of one role: the preceding span's end is
-  // extended to the following span's onset. No event is created or removed.
-  CLOSE_GAP_INTO_PRECEDING_SPAN: 'close-technical-gap-into-preceding-span',
+  // An uncovered hole whose preceding span is a *rest*: that rest's end is
+  // extended to the following span's onset. No event is created or removed, and
+  // no note is touched. A hole preceded by a note is not repaired — see
+  // `REPAIR_UNSUPPORTED.NOTE_RELEASE_NOT_PROVEN_NEUTRAL`.
+  CLOSE_GAP_INTO_PRECEDING_REST: 'close-technical-gap-into-preceding-rest',
   // A sub-grid rest event whose immediate predecessor is also a rest: the two
   // rest events describe one uninterrupted silence and become one. The
   // *classified* event survives so its accepted decision stays bound to a real
@@ -114,9 +142,12 @@ export const REPAIR_OPERATIONS = Object.freeze({
   COALESCE_CONTIGUOUS_RESTS: 'coalesce-technical-rest-with-preceding-rest',
 });
 
+// One class only. Every implemented operation leaves the role's notes untouched,
+// so its silence and attack sets are identical point sets before and after. A
+// weaker claim — "the attacks survive, so the change is fine" — is exactly what
+// this layer refuses to make, and there is deliberately no constant for it.
 export const REPAIR_NEUTRALITY = Object.freeze({
   SILENCE_PRESERVING: 'silence-preserving',
-  ATTACK_PRESERVING: 'attack-preserving',
 });
 
 export const REPAIR_DIAGNOSTICS = Object.freeze({
@@ -147,6 +178,7 @@ export const REPAIR_UNSUPPORTED = Object.freeze({
   UNSUPPORTED_INTERVAL_TYPE: 'unsupported-interval-type',
   NOTE_DURATION_RESIDUE: 'note-duration-residue-has-no-unique-neutral-repair',
   REST_DURATION_WITHOUT_PRECEDING_REST: 'rest-duration-residue-has-no-preceding-contiguous-rest',
+  NOTE_RELEASE_NOT_PROVEN_NEUTRAL: 'preceding-note-release-extension-is-not-proven-semantically-neutral',
   IDENTITY_NOT_CURRENT: 'interval-identity-is-not-current-in-the-project',
   AMBIGUOUS_BOUNDARY: 'interval-boundary-event-is-ambiguous',
   INTERVAL_OCCUPIED: 'interval-is-not-empty-within-its-role',
@@ -155,11 +187,15 @@ export const REPAIR_UNSUPPORTED = Object.freeze({
   INTERACTING_REPAIRS: 'repair-interacts-with-another-repair-on-the-same-event',
 });
 
+// What the published rule actually supports for each operation. The permission
+// comes from MASTER_RULES §7; the *neutrality* comes from the transformation
+// touching no note at all, which is checked on the produced project rather than
+// argued here. Neither string claims Canonical mandates a direction.
 const PERMITTED_BECAUSE = Object.freeze({
-  [REPAIR_OPERATIONS.CLOSE_GAP_INTO_PRECEDING_SPAN]:
-    'MASTER_RULES §7 permits normalizing a technical micro-gap that carries no musical meaning, and MOBILE_SYNTAX §4 / §11 step 5 forbid one in Final output. The hole is absorbed leftward into the span that precedes it, so every attack keeps its onset, pitch, volume and ordinal position (MOBILE_SYNTAX §8, §11 step 1; MASTER_RULES §6; ACCEPTANCE_CRITERIA Gate 1). The interval was classified by the source-aware analyzer and rejected by micro-gap enforcement; this layer re-classified nothing.',
+  [REPAIR_OPERATIONS.CLOSE_GAP_INTO_PRECEDING_REST]:
+    'MASTER_RULES §7 permits normalizing a technical micro-gap that carries no musical meaning, and MOBILE_SYNTAX §4 / §11 step 5 forbid a sub-1/64 technical micro-gap in Final output. The span preceding this hole is a rest, so extending it changes no note: the role\'s silence and its attack set are identical point sets before and after, which satisfies "preserves event timing and attack identity" (MOBILE_SYNTAX §4) and "exact timing and note-on identity preserved" (ACCEPTANCE_CRITERIA Gate 1) for every note in the role. The interval was classified by the source-aware analyzer and rejected by micro-gap enforcement; this layer re-classified nothing.',
   [REPAIR_OPERATIONS.COALESCE_CONTIGUOUS_RESTS]:
-    'MASTER_RULES §7 permits normalizing a technical micro-gap that carries no musical meaning, and MOBILE_SYNTAX §4 / §11 step 5 forbid a sub-1/64 component in Final output. Two contiguous rest events describe one uninterrupted silence, so coalescing them leaves the role\'s silence region and attack set identical point sets (MOBILE_SYNTAX §11 step 1). The interval was classified by the source-aware analyzer and rejected by micro-gap enforcement; this layer re-classified nothing.',
+    'MASTER_RULES §7 permits normalizing a technical micro-gap that carries no musical meaning, and MOBILE_SYNTAX §4 / §11 step 5 forbid a sub-1/64 component in Final output. Two contiguous rest events describe one uninterrupted silence, so coalescing them changes no note: the role\'s silence and its attack set are identical point sets before and after (MOBILE_SYNTAX §4; ACCEPTANCE_CRITERIA Gate 1). The interval was classified by the source-aware analyzer and rejected by micro-gap enforcement; this layer re-classified nothing.',
 });
 
 export const TECHNICAL_REPAIR_NOTICE = 'Technical Timing Repair is one implementation layer. A PASS means the intervals micro-gap enforcement had already rejected as meaning-free technical residue were normalized exactly, and that re-running the same enforcement on the repaired candidate agrees. It certifies no Canonical gate, does not make a song VALIDATED, and never implies IN_GAME_ACCEPTED. The repaired candidate is a distinct project from the source-faithful input, which is left unmodified.';
@@ -353,6 +389,31 @@ function planGapClosure({ identityKey, identity, record }, context) {
     });
   }
 
+  // The whole neutrality argument turns on what the preceding span is.
+  //
+  // A rest: extending its end changes no note, so the role's silence — the
+  // complement of its note coverage — and its attack set are the same point sets
+  // before and after. The candidate sounds byte-for-byte identical. That is a
+  // proof, not a judgement.
+  //
+  // A note: extending its end lengthens how long that note sounds and shortens
+  // the role's silence by the same amount. Attack identity surviving does not
+  // make that neutral — MOBILE_SYNTAX §4 asks a rewrite to preserve "event
+  // timing *and* attack identity" and ACCEPTANCE Gate 1 asks for "exact timing
+  // *and* note-on identity", two requirements each, and a release move fails the
+  // first. Canonical rules out moving the following onset (§8, §11 step 1) but
+  // does not thereby license changing the preceding release; that the gap is
+  // meaning-free establishes only that it *may* be normalized, not that this
+  // particular normalization is semantically neutral. Nothing the Canonical IR
+  // carries closes that gap: C1 timing provenance is explicitly factual and may
+  // not be read as a verdict, and the C2 artifact attestation that could carry
+  // such a claim is not available. So this fails closed.
+  if (previous.kind !== 'rest') {
+    return unsupported(identityKey, identity, REPAIR_UNSUPPORTED.NOTE_RELEASE_NOT_PROVEN_NEUTRAL, {
+      detail: `the preceding span ${previous.id} is a ${previous.kind}; extending its release by ${f(identity.end).sub(f(identity.start)).toString()} would change how long it sounds, and no evidence in this project proves that change semantically neutral`,
+    });
+  }
+
   // Admission already established this interval is positive and below the grid.
   const delta = f(identity.end).sub(f(identity.start));
 
@@ -360,8 +421,8 @@ function planGapClosure({ identityKey, identity, record }, context) {
     ok: true,
     identityKey,
     identity,
-    operation: REPAIR_OPERATIONS.CLOSE_GAP_INTO_PRECEDING_SPAN,
-    neutrality: previous.kind === 'rest' ? REPAIR_NEUTRALITY.SILENCE_PRESERVING : REPAIR_NEUTRALITY.ATTACK_PRESERVING,
+    operation: REPAIR_OPERATIONS.CLOSE_GAP_INTO_PRECEDING_REST,
+    neutrality: REPAIR_NEUTRALITY.SILENCE_PRESERVING,
     role,
     decisionId: record.decisionId ?? null,
     // Mutated: `previous` gains duration. `next` is read, never written.
@@ -587,14 +648,47 @@ function applyPlans(project, plans) {
 
 // ── invariants ─────────────────────────────────────────────────────────────
 
+// Every field of a note, `end` included. No implemented operation touches a note
+// at all, so this is total equality rather than a list of protected fields.
 const noteShape = event => ({
   id: event.id,
   pitch: event.pitch,
   start: event.start,
+  end: event.end,
   volume: event.volume ?? null,
   role: event.role,
   sourceIds: [...event.sourceIds].sort(),
 });
+
+/**
+ * A role's silence, as the exact point set no note of that role covers.
+ *
+ * This is the literal statement of what `silence-preserving` claims, computed
+ * from the produced project so the claim is verified rather than argued. Rests
+ * are deliberately not consulted: silence is the complement of note coverage, so
+ * a rest moving cannot change it and a note moving must.
+ */
+function silenceByRole(project) {
+  const byRole = new Map();
+  for (const event of project.events) {
+    if (event.kind !== 'note' || !ASSIGNED_ROLES.has(event.role)) continue;
+    if (!byRole.has(event.role)) byRole.set(event.role, []);
+    byRole.get(event.role).push(event);
+  }
+
+  const silence = {};
+  for (const [role, notes] of byRole) {
+    const ordered = [...notes].sort((left, right) => f(left.start).cmp(right.start) || f(left.end).cmp(right.end));
+    const spans = [];
+    let cursor = f(0);
+    for (const note of ordered) {
+      if (f(note.start).cmp(cursor) > 0) spans.push([cursor.toString(), note.start]);
+      if (f(note.end).cmp(cursor) > 0) cursor = f(note.end);
+    }
+    silence[role] = spans;
+  }
+  return silence;
+}
 
 const controlShape = event => ({ id: event.id, beat: event.beat, bpm: event.bpm ?? null, numerator: event.numerator ?? null, denominator: event.denominator ?? null });
 
@@ -622,19 +716,28 @@ function checkInvariants(before, after, plans) {
       violations.push(`note ${note.id} disappeared`);
       continue;
     }
-    // Pitch, onset, volume, role and provenance are untouchable. Only the release
-    // of a planned gap-closure target may move, and only forward.
+    // Total equality. A note is never a repair target: not its pitch, onset,
+    // volume, role or provenance, and not its release either. A plan naming one
+    // is itself the violation.
     if (JSON.stringify(noteShape(note)) !== JSON.stringify(noteShape(now))) {
-      violations.push(`note ${note.id} changed pitch/onset/volume/role/provenance`);
+      violations.push(`note ${note.id} changed — no implemented repair may touch a note, its release included`);
     }
-    const plan = byKeyTarget.get(note.id);
-    if (!plan && !exactlyEqual(note.end, now.end)) violations.push(`note ${note.id} release moved without a repair plan`);
-    if (plan && !exactlyEqual(now.end, plan.after.end)) violations.push(`note ${note.id} release does not match its plan`);
-    if (f(now.end).cmp(note.end) < 0) violations.push(`note ${note.id} was shortened`);
+    if (byKeyTarget.has(note.id)) violations.push(`note ${note.id} is a repair target; only a rest may be`);
   }
   for (const note of afterNotes) {
     if (!beforeNotes.some(event => event.id === note.id)) violations.push(`note ${note.id} was invented`);
   }
+  for (const plan of plans) {
+    if (plan.neutrality !== REPAIR_NEUTRALITY.SILENCE_PRESERVING) {
+      violations.push(`repair ${plan.identityKey} claims neutrality ${plan.neutrality}, which this layer does not implement`);
+    }
+  }
+
+  // The neutrality claim itself, checked rather than argued: the role's audible
+  // silence must be the same exact point set on both sides.
+  const silenceBefore = JSON.stringify(silenceByRole(before));
+  const silenceAfter = JSON.stringify(silenceByRole(after));
+  if (silenceBefore !== silenceAfter) violations.push('the role silence point set changed; the repair was not silence-preserving');
 
   const beforeRests = before.events.filter(event => event.kind === 'rest');
   const afterRestById = new Map(after.events.filter(event => event.kind === 'rest').map(event => [event.id, event]));
@@ -844,6 +947,9 @@ export function repairTechnicalTiming(project, { mobileSyntax, enforcement } = {
   // this module's own opinion of its own output.
   const verification = repairedProject ? enforceMicroGaps(repairedProject, options) : report;
 
+  // `delta` is the exact rational distance the repaired event's boundary moved:
+  // for a gap closure that is the residue itself, for a coalesce it is the
+  // absorbed rest's whole length. The sub-grid interval is `identity.length`.
   const repairs = kept.map(plan => freezeDeep({
     identityKey: plan.identityKey,
     identity: plan.identity,
