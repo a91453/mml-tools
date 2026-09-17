@@ -465,11 +465,15 @@ arbitration decision covers both of its event ids, so an accepted *arrangement*
 decision that became an accepted *arbitration* decision would silently resolve
 harmony conflicts it never examined.
 
-Decisions already present on the project being applied onto are carried forward
-unchanged and reported as `ARBITRATION_DECISIONS_CARRIED_FORWARD`. One that
-references an event this revision omitted is dropped loudly
-(`ARBITRATION_DECISION_DROPPED_WITH_OMITTED_EVENT`), which makes whatever it
-resolved report as unresolved again — the safe direction.
+Decisions already present on the project being applied onto are classified
+against what this revision changed to the events they name; see "Residual D"
+below. An untouched decision is carried as it was
+(`ARBITRATION_DECISIONS_CARRIED_FORWARD`); one naming an omitted event is
+dropped loudly (`ARBITRATION_DECISION_DROPPED_WITH_OMITTED_EVENT`); one naming
+an event whose role this revision changed or duplicated is carried as
+`pending` with a `carriedForward` marker
+(`ARBITRATION_DECISION_REREVIEW_REQUIRED`), which makes whatever it resolved
+report as unresolved again — the safe direction.
 
 ## Studio Web integration
 
@@ -489,14 +493,17 @@ that are loaded, never supplied by a caller.
   Both travel in `importedHistory`, like imported reviews and acceptance.
 * A persisted application found on a restored asset is reported through
   `acceptedArrangementBinding()` and never displayed as current.
-* Each record carries a content digest over what the decision *does*, kept
-  separate from the acceptance block that says what it was reviewed against.
-  This is **self-consistency, not authentication**: a body edited in storage no
-  longer agrees with its digest and is refused, but anyone who can rewrite the
-  record can rewrite the digest beside it. What actually fails closed against a
-  hostile or stale workspace is the binding to the baseline content, source
-  identity, reviewed revision and Canonical rules snapshot, none of which the
-  workspace chooses.
+* Each record carries `recordDigest`, a content digest over the whole record:
+  schema, pipeline, workspace revision and the normalized decision including its
+  acceptance block. This is **self-consistency, not authentication**: a record
+  edited in storage no longer agrees with its digest and is refused, but anyone
+  who can rewrite the record can rewrite the digest beside it. What actually
+  fails closed against a hostile or stale workspace is the binding to the
+  baseline content, source identity, reviewed revision and Canonical rules
+  snapshot, none of which the workspace chooses. See "Residual C" below.
+* Records chain. Revision N's parent is the application the same analysis
+  produced for revision N−1; nothing derived is ever stored or restored. See
+  "Residual B" below.
 
 ## Tests
 
@@ -654,9 +661,9 @@ specific name stays `DECISION_MALFORMED`.
 A padded digest was refused where a padded baseline or source digest was not.
 Now trimmed like the others.
 
-Recorded, not changed: the Studio Web integration only ever produces revision 1
-(it never passes a `parent`), so revision chaining is a backend capability the
-Web model does not yet expose.
+Recorded at the time, since closed: the Studio Web integration only ever
+produced revision 1 (it never passed a `parent`). See "Residual hardening" below
+for the re-derived chain.
 
 ## External re-review — multi-source pairing was guessed
 
@@ -690,14 +697,208 @@ self-review is worth. Three P2/P3 items were found and fixed before the PR:
 
 Remaining, recorded rather than fixed:
 
-* **P3 — decision records are not authenticated.** See the Studio Web section
-  above. Local workspace storage is the reviewer's own; the bindings, not a
-  signature, are what make a decision unusable against inputs it was not
-  reviewed against.
-* **P3 — arbitration decisions already on the baseline are trusted.** G11-D
-  carries them forward unchanged and manufactures none. In the Web path
-  `readCanonical()` already forces imported decisions to `pending`; in a direct
-  backend call the caller owns the baseline.
+* **P3 — decision records are not authenticated.** Still true and now stated
+  as data (`ACCEPTED_DECISION_INTEGRITY.authorship = 'NOT_AUTHENTICATED'`). Local
+  workspace storage is the reviewer's own; the bindings, not a signature, are
+  what make a decision unusable against inputs it was not reviewed against.
+  See "Residual C".
+* **P3 — arbitration decisions already on the baseline are trusted.** Narrowed
+  by "Residual D": a carried decision stays current only while every event it
+  names is present with the same role and was not duplicated. A baseline's own
+  decisions are still the caller's (backend) or forced to `pending` on import
+  (Web).
+
+## Residual hardening (PR #28 follow-up)
+
+Four residuals PR #28 recorded rather than fixed were closed as one integrity
+lifecycle, in four independently reviewable commits, without touching any
+Published Canonical document. Canonical impact: NONE. Everything below is an
+implementation safeguard or a stated representation/product limitation; none
+of it is a music rule.
+
+| Identity | Value |
+| --- | --- |
+| `rules_snapshot_sha` (re-verified) | `0a172900a01fdf39c2e9e84cf176961320b779ea` |
+| Manifest commit | `5e7666b850a37f1c85ee2dd8cd0f4fac037a9e14` |
+| Published `main` at start of work | `1b1bbc422cf77055df54e0de6eb401df4d4717af` (PR #29 merge) |
+| Branch base / merge-base | `1b1bbc422cf77055df54e0de6eb401df4d4717af` |
+
+### Residual A — Lead evidence identity is bound inside the gate
+
+**Weakness.** PR #28 bound a Lead citation to the event it targets, but only on
+the G11-D path: `leadEvidenceIdentityBlockers()` lived in
+`decision-application.mjs` and the pre-G11-D Studio Web path
+(`workspace.leadEvidence[]`, judged by `analyzeWorkspace()`) called
+`evaluateLeadDemotion()` directly. The gate itself asked only that a source
+identity be *present*. A stored record naming event A with event B's citation
+(or a fabricated one) therefore produced a PASS carrying A's id, which is the
+key the readiness Lead gate matches on. The page also constructed the identity
+by array index (`sourceIds[0]` / `sourceEventIds[0]`), which for a multi-source
+event is exactly the pairing guess the G11-D check refuses.
+
+**Trust boundary now.** `studio/backend/arbitration/lead-demotion.mjs` owns
+`sourceIdentityBlockers()`, `leadEvidenceIdentityBlockers()` and the codes
+(`LEAD_EVIDENCE_EVENT_IDENTITY_MISMATCH`,
+`LEAD_EVIDENCE_PROVENANCE_PAIR_AMBIGUOUS`, `SOURCE_IDENTITY_MISSING`,
+`TARGET_EVENT_SOURCE_IDS_MISSING`, `TARGET_EVENT_SOURCE_EVENT_IDS_MISSING`), and
+`evaluateLeadDemotion()` runs the binding on every Melody event it judges. The
+G11-D application and review re-export the gate's function (a regression asserts
+they are the same function object); their pre-checks remain only so an
+out-of-scope citation is reported alone, not beside musical blockers. The gate
+result now carries `evidence.sourceIdentityBinding = { bound, blockers }`.
+
+**Rules (unchanged in substance from PR #28, now universal).** Single source:
+the citation must name that source and one of the event's source event ids;
+same source with another source event, another source with the right source
+event, or an event without source-event provenance all fail closed. Multiple
+sources: the IR stores `sourceIds[]` and `sourceEventIds[]` as independent
+arrays, so no pair can be proven and none is guessed — not by position, not by
+cross-membership, not by "apparently correct" — and the result is
+`LEAD_EVIDENCE_PROVENANCE_PAIR_AMBIGUOUS`. A derived duplicate binds to its
+origin provenance, never to its own id. This is a representation limitation of
+the current IR, stated; a pair-preserving provenance schema was out of scope and
+is not needed to keep the check safe.
+
+**Web path.** The Lead evidence record is now built behind the Worker by
+`recordLeadEvidence()` in `studio/web/model.mjs`, from the loaded baseline
+event, with `singleSourceIdentityOf()` — the one constructor the gate module
+offers, which returns `null` for a multi-source event instead of an
+index-paired identity. The page (`#lead-form`) submits form fields only. A
+stored record naming an unknown baseline event, or one the gate cannot read,
+now yields a PENDING report instead of throwing the whole analysis.
+
+### Residual B — Web revision chaining, re-derived and never stored
+
+**Two revision namespaces.** `workspace.revision` is an integer the Web model
+bumps on every source/settings invalidation; it only scopes which stored records
+are considered. The G11-D revision id (`g11d:rev:<sha256>`) is content-addressed
+by the backend and is what a decision's `reviewedRevisionId` names. The Web model
+adds no third identity and no second hash formula.
+
+**Parent model.** `deriveAcceptedArrangement()` groups the records at the
+current workspace revision by the revision each says it was reviewed against.
+The `null` group applies against the Source-Faithful Baseline; if it passes, the
+group naming that revision's id applies onto it, and so on. The parent handed to
+the backend at every step is the application the same call produced one step
+earlier. The backend still re-verifies every parent (identity recompute,
+candidate digest, baseline identity, Canonical identity). A stored or imported
+parent, candidate, revision or PASS has no path into the parent slot.
+
+**Stale, sibling, forged.** Any record whose reviewed revision is not the head
+the chain actually reached — an edited id, a sibling produced by a different
+decision set, a revision that stopped existing because its step's decisions
+changed — is applied as the next step against the verified head and refused
+there by the backend's own `STALE_DECISION_REVISION_MISMATCH`. The chain ends at
+the last PASS; `chain[]`, `head` and `staleRevisionClaims[]` report exactly what
+happened. `recordAcceptedDecision()` verifies the caller's `reviewedRevisionId`
+against the re-derived head before writing, so the chain stays linear.
+
+**Persistence and import.** Only records are persisted. `importWorkspace()`
+restores none (they travel as `importedHistory`), so an imported chain is
+history; re-accepting the same decisions against the same bytes reproduces the
+same revision ids, which is what content addressing means. A stored application
+left on an asset is compared against the re-derived derivation, head included
+(`ACCEPTED_ARRANGEMENT_HEAD_CHANGED`), and reported as a claim.
+
+**Invalidation.** `invalidate()` (source replaced, settings/meter/range changed,
+delivery pasted, audio file changed, Canonical package changed) bumps the
+workspace revision and drops every record, so the chain is gone. A record
+surviving a bump is reported as ignored, never applied. A human review or an
+in-game acceptance record is presentation at the same workspace revision and
+leaves the chain intact. Editing any record breaks its envelope (Residual C).
+Adding a decision to the head step changes the head's id; only the head accepts
+new decisions, so nothing later can be orphaned by a legal write.
+
+### Residual C — record integrity and the authentication boundary
+
+**What the old digest covered.** PR #28's `contentDigest` covered the decision
+body minus its acceptance block. Every acceptance field (`state`, `acceptedBy`,
+`reviewedRevisionId`, the four binding digests, `note`), the record's workspace
+`revision` and its `schema` could be edited without detection, and the body
+digest could be recomputed after an envelope edit.
+
+**Now.** Record schema `@2` carries `recordDigest`, a SHA-256 over the whole
+record: schema, pipeline, workspace revision and the decision exactly as the
+backend constructor normalizes it, acceptance included. Every field edit in the
+threat list (target, type, roles, section, reason, evidence, Lead evidence,
+each acceptance field, record revision, schema/pipeline, metadata) leaves a
+record that no longer agrees with itself; nothing is applied from it. Records of
+unknown schema, pipeline or shape are reported as invalid, never skipped.
+
+**Classification.** `decisionRecordIntegrity()` answers three separate
+questions — `structural`, `envelope`, `workspaceRevisionCurrent` — and states
+`authorship: 'NOT_AUTHENTICATED'`. The bindings are not classified there because
+they are the backend's to re-derive at application time against what is loaded:
+a re-signed record naming other inputs is refused by `STALE_DECISION_*`, not by
+the digest. A re-signed `acceptedBy` applies, because it is an assertion.
+
+**Authentication boundary, stated plainly.** A digest beside mutable data is not
+a signature. Nothing in this repository proves who accepted a decision; there is
+no signer, no key, no verifier and no trust root, and this change invents none.
+Authenticated authorship: NOT ESTABLISHED. This is a product/security boundary,
+non-blocking for arrangement safety because every Canonical and arrangement
+binding fails closed regardless of who wrote the record. Introducing real
+authentication is a product decision (key management, identity, revocation)
+outside this stage.
+
+### Residual D — arbitration carry-forward
+
+**What is carried, by class.**
+
+| Class | Items | Treatment |
+| --- | --- | --- |
+| A. source/baseline provenance | `sources[]`, event `sourceIds`/`sourceEventIds`, tempo/meter, per-event timing provenance in `event.metadata`, the Source-Faithful snapshot | carried; the snapshot is rebuilt from the baseline on every revision, never from the parent |
+| B. event-level arbitration decision | `project.decisions[]` | classified per decision (below) |
+| C. derived candidate decision | event roles, derived duplicates | the revision's own content, from the parent by construction |
+| D. gate/readiness evidence | `sourceComplete`, `audioAlignmentEvidence`, `incompleteInputs`, `sourceFaithfulBaseline`, `g11d` | stripped from the candidate and reported (`PARENT_GATE_METADATA_NOT_INHERITED`); recomputed, replaced or absent |
+| E. historical/audit | previous `g11d` provenance, demoted decisions | replaced by the new revision's provenance; demoted decisions retained with an explicit non-current marker |
+| F. unknown project metadata | every other key | carried as descriptive data and named (`PARENT_METADATA_INHERITED`); no readiness gate reads any key outside class D |
+
+**Arbitration decisions.** For each decision on the project being applied onto:
+every named event present with the same role and not duplicated → carried as it
+was, marked `carriedForward.currentStatus: 'CURRENT'`; a named event omitted →
+dropped loudly; a named event re-roled or duplicated by this revision → an
+`accepted` decision is carried as `pending` with
+`carriedForward: { previousStatus, currentStatus: 'REQUIRES_REREVIEW', reasons,
+affectedEventIds }`, so cross-source harmony reports the pair unresolved and the
+readiness `pendingDecisions` gate blocks; a `pending`/`rejected` one keeps its
+status with a `HISTORICAL` marker. This is a staleness rule of the same kind as
+the acceptance bindings: it decides nothing about the music and re-asks the
+question. Canonical (MASTER_RULES.md §6, SOURCE_POLICY.md §5) requires an
+explicit decision per meaningful conflict and is silent on survival across a
+role move, so the stage does not guess.
+
+**Duplicates.** A derived duplicate carries its origin's provenance and conflicts
+with foreign-source events on its own account; no decision stretches to cover
+it, and it never gains independent source support.
+
+**Baseline vs parent.** The baseline remains the source-faithful reference
+(`diffFromBaseline`, embedded snapshot); the parent is previous candidate history
+(`diffFromParent`, `parentCandidateIdentity`). Neither substitutes for the other.
+
+### Tests and mutations
+
+| File | Covers |
+| --- | --- |
+| `studio/tests/lead-demotion.test.mjs` | gate fixture now carries provenance; A1–A7 identity cases at the gate |
+| `studio/tests/web-lead-evidence-identity.test.mjs` | the Web pre-G11-D path through the real model, `recordLeadEvidence`, cross-path code compatibility, same-function assertion |
+| `studio/tests/raw-midi-preflight.test.mjs` | P2-A closed at the gate |
+| `studio/tests/web-g11d-revision-chain.test.mjs` | chain 1–15: baseline→rev1→rev2→rev3, determinism, immutability, sibling/forged/edited parent, stale baseline/Canonical/reviewed revision, import, persistence, invalidation, export/import identity |
+| `studio/tests/web-g11d-record-integrity.test.mjs` | every field edit (17 threat cases), re-signed records reaching the bindings, authorship stated |
+| `studio/tests/web-g11d-import-adversarial.test.mjs` | missing/unknown fields, wrong/stale schema, malformed revision, altered candidate/decision/acceptance, forged stored application, stale Canonical, same id/different content, same content/different source, old chain in new workspace |
+| `studio/tests/decision-application-carry-forward.test.mjs` | classes A–F, omitted/moved/duplicated events, gate metadata, parent forgery, history across revisions |
+| `studio/tests/decision-application-binding.test.mjs` | adds `PARENT_CANONICAL_MISMATCH` (found by mutation: the check existed with no test) |
+
+Deliberate mutations executed, one at a time, each restored afterwards:
+A 4/4 caught (gate check removed; sourceId-only; cross-membership pairing;
+index-pairing constructor); B 7/7 caught after one gap was closed (skip parent
+identity, candidate digest, baseline, Canonical; skip reviewed-revision
+staleness; skip record-time head check; apply orphans against the baseline);
+C 6/6 caught (acceptance out of envelope; revision out of envelope; digest
+comparison skipped; stored PASS trusted; digest labelled authentication;
+unknown schema skipped); D 5/5 caught (inherit gate metadata; no role-change
+detection; duplicate does not re-ask; touched decision stays accepted; keep
+decisions naming omitted events). 22 mutations total, 22 caught.
 
 ## Known limitations
 
@@ -709,12 +910,16 @@ Remaining, recorded rather than fixed:
 * A Lead-affecting decision must resolve to exactly one note event. Multi-event
   Lead decisions need an `eventId → Lead evidence` contract and are deferred.
 * An event carrying no `sourceEventIds` cannot be the target of a Lead-affecting
-  decision at all. That is the fail-closed consequence of requiring the binding,
-  and it is a real restriction for any adapter that leaves the field empty.
-* The Lead evidence path in `studio/web/model.mjs` that predates G11-D calls
-  `evaluateLeadDemotion()` directly and is **not** covered by this binding. It is
-  outside this stage's application path and was left alone rather than widened
-  into; it is recorded here so the gap is visible rather than assumed closed.
+  decision at all, on either path. That is the fail-closed consequence of
+  requiring the binding, and it is a real restriction for any adapter that
+  leaves the field empty.
+* Multi-source events cannot carry Lead evidence at all until the IR has a
+  pair-preserving provenance representation. Out of scope here; fail-closed.
+* Decision records are tamper-evident, not authenticated. See Residual C.
+* ~~The Lead evidence path in `studio/web/model.mjs` that predates G11-D calls
+  `evaluateLeadDemotion()` directly and is **not** covered by this binding.~~
+  Closed by the residual hardening below: the binding now lives inside the gate
+  itself, so every caller is covered.
 * Rest events are carried through unchanged and cannot be targeted.
 * Reduced one-/two-role performance questions (`PENDING.md` P17) are untouched.
 * M6 (Canonical bootstrap Git-subprocess fragility under parallel tests) is not
