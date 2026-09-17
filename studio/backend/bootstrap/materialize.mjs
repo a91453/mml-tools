@@ -101,7 +101,9 @@ const requireValue = (condition, reason) => {
 // nothing. Unlike the loader's adapter this one is allowed to reach the network,
 // which is exactly why it lives here and not in `index.mjs`.
 export function materializeSubprocess({ root, args }) {
-  return execFileSync('git', args, {
+  // Objects are read as stored, matching the runtime loader. Anything this step
+  // writes is re-verified by that loader before the build is allowed to pass.
+  return execFileSync('git', ['--no-replace-objects', ...args], {
     cwd: root,
     // Never wait on a terminal: a builder with no credential must fail the build
     // in seconds, not hang until the platform kills it.
