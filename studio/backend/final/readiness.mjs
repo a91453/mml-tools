@@ -189,6 +189,20 @@ function mobileAdaptationGate(value) {
   return gate(status, status === 'PENDING' ? { blockers: ['MOBILE_ADAPTATION_REVIEW_REQUIRED'] } : {});
 }
 
+function regressionGate(reviewed) {
+  // ACCEPTANCE_CRITERIA Gate 9 is a candidate-specific review, not an inference
+  // from a clean diff or a passing test suite. Baseline/previous comparisons,
+  // Lead/Core3 checks and historical fixtures are evidence the reviewer uses;
+  // none of them silently upgrades this gate on its own.
+  return reviewed === true
+    ? gate('PASS', { historicalRegression: 'FIXTURE_PENDING', namedRegressionPassClaimed: false })
+    : gate('PENDING', {
+        blockers: ['REGRESSION_REVIEW_REQUIRED'],
+        historicalRegression: 'FIXTURE_PENDING',
+        namedRegressionPassClaimed: false,
+      });
+}
+
 export function evaluateProjectReadiness({
   project,
   mmlValidation,
@@ -201,6 +215,7 @@ export function evaluateProjectReadiness({
   playerReadback = 'NOT_RUN',
   originalAudioRequired = true,
   mobileAdaptation = 'PENDING',
+  regressionReviewed = false,
   inGameAcceptance = 'PENDING',
 }) {
   if (!project || typeof project !== 'object') throw Error('Canonical project is required');
@@ -242,6 +257,7 @@ export function evaluateProjectReadiness({
     originalAudio: audioGate(project, originalAudioRequired),
     playerReadback: gate(normalizeStatus(playerReadback, 'NOT_RUN')),
     mobileAdaptation: mobileAdaptationGate(mobileAdaptation),
+    regression: regressionGate(regressionReviewed),
     inGameAcceptance: gate(normalizeStatus(inGameAcceptance, 'PENDING')),
     pendingDecisions: pendingDecisions.length
       ? gate('PENDING', { decisionIds: pendingDecisions.map(decision => decision.id) })
@@ -262,6 +278,7 @@ export function evaluateProjectReadiness({
     'originalAudio',
     'playerReadback',
     'mobileAdaptation',
+    'regression',
     'pendingDecisions',
   ];
   const preGameBlocking = preGameGateNames.filter(name => !PASS_LIKE.has(gates[name].status));
@@ -273,6 +290,6 @@ export function evaluateProjectReadiness({
     finalAccepted,
     preGameBlocking: Object.freeze(preGameBlocking),
     gates,
-    notice: 'Module availability never certifies a song. Candidate readiness requires source completeness plus a real Source-Faithful Baseline snapshot whose event-level diff is computed against the candidate, evidence-backed review of any Lead removals/demotions and Lead additions/promotions, a source-aware micro-timing result with no confirmed technical residue and no unresolved sub-grid interval, and audio/arbitration/technical/player evidence plus an explicit evidence-backed Mobile adaptation review. finalAccepted additionally requires in-game acceptance.',
+    notice: 'Module availability never certifies a song. Candidate readiness requires source completeness plus a real Source-Faithful Baseline snapshot whose event-level diff is computed against the candidate, evidence-backed review of any Lead removals/demotions and Lead additions/promotions, a source-aware micro-timing result with no confirmed technical residue and no unresolved sub-grid interval, audio/arbitration/technical/player evidence, an explicit evidence-backed Mobile adaptation review, and an explicit evidence-backed regression review. Named historical regressions without reproducible fixtures remain FIXTURE_PENDING and are never claimed as passed. finalAccepted additionally requires in-game acceptance.',
   });
 }
