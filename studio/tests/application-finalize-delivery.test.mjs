@@ -32,6 +32,7 @@ const OWNER = 'owner:alice';
 const CONFIRMATIONS = Object.freeze({
   source_complete: { value: true, reason: 'The fixture is the complete material.' },
   player_readback: { value: 'N/A', reason: 'No preview or verification assets are used for this cue.' },
+  mobile_adaptation_reviewed: { value: true, reason: 'The fixture candidate was reviewed against Gate 8 and needs no additional Mobile adaptation.', evidence: ['fixture Gate 8 review'] },
   original_audio_required: { value: false, reason: 'The fixture workflow has no recording.' },
 });
 
