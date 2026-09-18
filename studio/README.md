@@ -33,7 +33,12 @@ studio/
     compare/        deterministic version/source drift reports
     arrangement/    G11-B voice decomposition and G11-C role candidates
     arbitration/    Core3, Lead Demotion and cross-source harmony gates
+    reduction/      G12 Final Six-Role Reduction and its accounting ledger
+    adaptation/     Mobile Adaptation v1 register and volume mapping
     final/           per-song readiness evaluation
+    application/     the Application Service: one orchestration boundary for
+                     the HTTP and MCP adapters, including the One-Click
+                     Orchestrator run (run-service.mjs)
     audio/           Node audio-evidence bridge
   audio-worker/      Python/FFmpeg original-audio alignment
   web/               local-first iPhone/iPad UI and PWA sources
