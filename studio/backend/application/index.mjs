@@ -143,7 +143,7 @@ export function createStudioApplication({
   const arrangement = createArrangementService({ canonical, projects, intake, store });
   const review = createReviewService({ canonical, projects, intake, arrangement, store });
   const final = createFinalService({ canonical, projects, review, store });
-  const technical = createTechnicalService({ serviceVersion });
+  const technical = createTechnicalService({ serviceVersion, canonical });
   const serialized = createProjectSerializer();
   const mutate = (projectId, work) => serialized(String(projectId), work);
 
@@ -305,18 +305,35 @@ export function createStudioApplication({
       return envelope({ operation: OPERATION_STATUS.SUCCEEDED, artifact: final.find(owner, artifactId) });
     },
 
-    // ── legacy technical validation ─────────────────────────────────────────
+    // ── technical validation ────────────────────────────────────────────────
     //
-    // Deliberately available without Published Canonical: it runs on the legacy
-    // core, exactly as the original tools did, so an environment that cannot
-    // load the published rules keeps the capability it already had.
+    // The two Canonical operations route to the Published Canonical validator
+    // and fail closed with CANONICAL_NOT_LOADED when the published rules are
+    // unavailable. There is no fallback to the legacy engine: the two engines
+    // disagree in both directions, so answering a Canonical question with a
+    // legacy verdict would misreport the release.
+    //
+    // The legacy engine stays reachable under its own names, as an explicitly
+    // labelled diagnostic. Its report carries `technical_ok: null`,
+    // `authority: 'LEGACY_DIAGNOSTIC'` and `strict_mobile_technical: NOT_RUN`,
+    // so an environment that cannot load the published rules keeps the
+    // capability it already had without that capability being mistaken for a
+    // Canonical PASS.
 
-    validateTechnicalMml(input) {
+    async validateTechnicalMml(input) {
       return technical.validate(input);
     },
 
-    technicalOverlapDetails(input) {
+    async technicalOverlapDetails(input) {
       return technical.overlapDetails(input);
+    },
+
+    legacyTechnicalDiagnostic(input) {
+      return technical.legacyValidate(input);
+    },
+
+    legacyTechnicalOverlapDetails(input) {
+      return technical.legacyOverlapDetails(input);
     },
 
     // Exposed for adapters that need to describe or bound a request.

@@ -413,23 +413,54 @@ test('a filesystem store survives a new service over the same directory', async 
   }
 });
 
-// ─── legacy technical validation ────────────────────────────────────────────
+// ─── technical validation routing ───────────────────────────────────────────
 
-test('legacy technical validation is reachable without Published Canonical', async () => {
-  // It always ran on the legacy core. A layer that is meant to be additive must
-  // not take that capability away from an environment that had it.
+test('Canonical technical validation fails closed without Published Canonical', async () => {
+  // The operation advertises a current Canonical / Strict Mobile verdict, so an
+  // environment that cannot load the published rules gets a refusal. Answering
+  // it from the legacy core instead would report a non-Canonical verdict under
+  // a Canonical name, and the two engines disagree in both directions.
   const service = app({ loadEngines: async () => { throw Error('no published history'); } });
-  const report = service.validateTechnicalMml({ mml: 'MML@t120o4c1,,,,,;', meter_text: '0 4/4' });
-  assert.equal(report.technical_ok, true);
-  assert.equal(report.gates.strict_mobile_technical, 'PASS');
+  await assert.rejects(
+    () => service.validateTechnicalMml({ mml: 'MML@t120o4c1,,,,,;', meter_text: '0 4/4' }),
+    error => error.code === ERROR_CODES.CANONICAL_NOT_LOADED,
+  );
+  await assert.rejects(
+    () => service.technicalOverlapDetails({ mml: 'MML@t120o4c1,,,,,;', meter_text: '0 4/4' }),
+    error => error.code === ERROR_CODES.CANONICAL_NOT_LOADED,
+  );
+});
+
+test('the legacy diagnostic stays reachable without Published Canonical and claims no Canonical PASS', async () => {
+  // It always ran on the legacy core. A layer that is meant to be additive must
+  // not take that capability away from an environment that had it -- but it is
+  // labelled for what it is, so a legacy PASS cannot be read as a Canonical one.
+  const service = app({ loadEngines: async () => { throw Error('no published history'); } });
+  const report = service.legacyTechnicalDiagnostic({ mml: 'MML@t120o4c1,,,,,;', meter_text: '0 4/4' });
+  assert.equal(report.authority, 'LEGACY_DIAGNOSTIC');
+  assert.equal(report.technical_ok, null);
+  assert.equal(report.legacy_technical_ok, true);
+  assert.equal(report.gates.strict_mobile_technical, 'NOT_RUN');
+  assert.equal(report.gates.legacy_diagnostic, 'PASS');
   assert.equal(report.gates.in_game_acceptance, 'PENDING');
   assert.equal(report.changed_input, false);
 });
 
-test('legacy technical validation keeps its preflight bounds', async () => {
+test('a Canonical technical PASS is labelled as one', async () => {
   const service = app();
-  assert.throws(() => service.validateTechnicalMml({ mml: 'MML@t1200o4c1,,,,,;', meter_text: '0 4/4' }), /三位數安全界限/);
-  assert.throws(() => service.validateTechnicalMml({ mml: 'MML@t120o4c1,,,,,;', meter_text: '0 4/4', pickup: 'abc' }), /pickup/);
+  const report = await service.validateTechnicalMml({ mml: 'MML@t120o4c1,,,,,;', meter_text: '0 4/4' });
+  assert.equal(report.authority, 'PUBLISHED_CANONICAL');
+  assert.equal(report.technical_ok, true);
+  assert.equal(report.legacy_technical_ok, undefined);
+  assert.equal(report.gates.strict_mobile_technical, 'PASS');
+});
+
+test('technical validation keeps its preflight bounds on both engines', async () => {
+  const service = app();
+  await assert.rejects(() => service.validateTechnicalMml({ mml: 'MML@t1200o4c1,,,,,;', meter_text: '0 4/4' }), /三位數安全界限/);
+  await assert.rejects(() => service.validateTechnicalMml({ mml: 'MML@t120o4c1,,,,,;', meter_text: '0 4/4', pickup: 'abc' }), /pickup/);
+  assert.throws(() => service.legacyTechnicalDiagnostic({ mml: 'MML@t1200o4c1,,,,,;', meter_text: '0 4/4' }), /三位數安全界限/);
+  assert.throws(() => service.legacyTechnicalDiagnostic({ mml: 'MML@t120o4c1,,,,,;', meter_text: '0 4/4', pickup: 'abc' }), /pickup/);
 });
 
 test('a later engine failure keeps the loaded Canonical identity and never reads as CANONICAL_NOT_LOADED', async () => {

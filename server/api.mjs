@@ -296,11 +296,17 @@ export function createApiRouter({ application, ownerOf, challenge = null }) {
     ['GET', /^\/jobs\/([^/]+)$/, async (m, _r, owner) => json(await application.getJob(owner, m[1]))],
     ['GET', /^\/artifacts\/([^/]+)$/, async (m, _r, owner) => json(await application.getArtifact(owner, m[1]))],
 
-    // The legacy technical check, reachable over HTTP for the first time. Same
-    // Application Service operation the legacy MCP tools call, so the two
-    // transports cannot drift.
-    ['POST', /^\/technical\/validate$/, async (_m, request) => json(application.validateTechnicalMml(await readJson(request)))],
-    ['POST', /^\/technical\/overlaps$/, async (_m, request) => json(application.technicalOverlapDetails(await readJson(request)))],
+    // The technical check, reachable over HTTP. Same Application Service
+    // operation the MCP tools call, so the two transports cannot drift.
+    //
+    // `/technical/*` is the Published Canonical answer and fails closed when
+    // the published rules are unavailable. `/technical/legacy/*` is the legacy
+    // `dist/core.js` diagnostic, under its own path so that no caller reaches a
+    // legacy verdict while asking for a Canonical one.
+    ['POST', /^\/technical\/validate$/, async (_m, request) => json(await application.validateTechnicalMml(await readJson(request)))],
+    ['POST', /^\/technical\/overlaps$/, async (_m, request) => json(await application.technicalOverlapDetails(await readJson(request)))],
+    ['POST', /^\/technical\/legacy\/validate$/, async (_m, request) => json(application.legacyTechnicalDiagnostic(await readJson(request)))],
+    ['POST', /^\/technical\/legacy\/overlaps$/, async (_m, request) => json(application.legacyTechnicalOverlapDetails(await readJson(request)))],
   ];
 
   return async function handleApi(request, { authenticated }) {

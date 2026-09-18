@@ -1,10 +1,44 @@
-// Legacy technical MML validation, as an Application Service operation.
+// Technical MML validation, as an Application Service operation.
 //
 // Status: IMPLEMENTATION NOTES. This is the business logic the three original
 // MCP tools (`mml_service_info`, `mml_validate`, `mml_overlap_details`) used to
-// carry inside the transport. It is moved here unchanged, so those tools become
-// adapters over the Application Service like every other caller, and the same
-// answer is reachable over HTTP without a second implementation.
+// carry inside the transport. It is an adapter over the Application Service
+// like every other caller, so the same answer is reachable over HTTP without a
+// second implementation.
+//
+// Two validators, one of which is authoritative
+// ---------------------------------------------
+// This module holds two engines, and the whole point of the split is that they
+// are never interchangeable:
+//
+//   * `validate()` / `overlapDetails()` are the **Published Canonical** answer.
+//     They route to `backend/mml/parser.mjs`, the validator the Manifest-pinned
+//     rules snapshot designates, through the Canonical gate. A caller asking
+//     for Strict Mobile / current Canonical validation reaches this one.
+//
+//   * `legacyValidate()` / `legacyOverlapDetails()` are a **legacy diagnostic**
+//     over `dist/core.js`. They are retained because the legacy engine reads
+//     songs the published rules release has since re-judged, and seeing that
+//     difference is useful. They are not a Canonical verdict and never claim to
+//     be one.
+//
+// The two genuinely disagree, in both directions, which is why the legacy
+// engine may not stand in for the Canonical one:
+//
+//     MML@t256o4c1,,,,,;      legacy PASS        Canonical FAIL (TEMPO_OUT_OF_RANGE)
+//     a 4/4 bar built from l64/64th notes
+//                             legacy FAIL        Canonical PASS
+//
+// So a legacy report carries `technical_ok: null`, a `legacy_technical_ok`
+// boolean of its own, `authority: 'LEGACY_DIAGNOSTIC'`, and a
+// `strict_mobile_technical` gate of `NOT_RUN`. A legacy PASS can therefore not
+// be read — by a client, a model, or a later refactor — as a Published
+// Canonical PASS.
+//
+// When Published Canonical cannot be loaded, the Canonical operations fail
+// closed with `CANONICAL_NOT_LOADED`. They do not fall back to the legacy
+// engine: a fallback would answer a Canonical question with a non-Canonical
+// verdict, which is exactly the routing defect this split exists to close.
 //
 // Two things are deliberately preserved byte-for-byte rather than modernized:
 //
@@ -15,22 +49,39 @@
 //     pipeline; neither is converted into the other;
 //   * the three-digit preflight bound. It protects the rational parser from
 //     pathological integers and is not a musical rule.
-//
-// This operation deliberately does not require Published Canonical. It runs on
-// the legacy `dist/core.js` engine, exactly as it did before, so an environment
-// without the published Git history keeps the capability it already had instead
-// of losing it to a layer that was supposed to be additive.
 
-import { PROFILE, ROLES, VERSION, secondsAt, validateMML } from '../../../dist/core.js';
-import { ERROR_CODES, fail } from './contracts.mjs';
+import { PROFILE, ROLES, VERSION, secondsAt, validateMML as legacyValidateMML } from '../../../dist/core.js';
+import { ERROR_CODES, StudioApplicationError, fail } from './contracts.mjs';
 
 export const LEGACY_CORE = Object.freeze({ version: VERSION, profile: PROFILE, roles: ROLES });
 
-// The legacy gate vocabulary, unchanged. `technical_ok` is one axis of several
-// and never implies the others: a PASS here is a Strict Mobile technical result
-// and says nothing about the source, the recording, the player or the game.
-const legacyGates = ok => Object.freeze({
+// What produced a report. A caller that must not act on a non-Canonical verdict
+// checks this field rather than inferring authority from the gate vocabulary.
+export const TECHNICAL_AUTHORITY = Object.freeze({
+  CANONICAL: 'PUBLISHED_CANONICAL',
+  LEGACY: 'LEGACY_DIAGNOSTIC',
+});
+
+// The legacy gate vocabulary, unchanged for the Canonical report.
+// `strict_mobile_technical` is one axis of several and never implies the
+// others: a PASS here is a Strict Mobile technical result under the published
+// rules snapshot and says nothing about the source, the recording, the player
+// or the game.
+const canonicalGates = ok => Object.freeze({
   strict_mobile_technical: ok ? 'PASS' : 'FAIL',
+  original_source_identity: 'PENDING',
+  original_audio_listening: 'PENDING',
+  player_readback: 'NOT_RUN',
+  in_game_acceptance: 'PENDING',
+});
+
+// The legacy diagnostic's gates. `strict_mobile_technical` is NOT_RUN because
+// this engine did not run the published rules: the axis exists, and nothing
+// answered it. `legacy_diagnostic` is the legacy engine's own result, named so
+// that it cannot be mistaken for the axis above.
+const legacyGates = ok => Object.freeze({
+  strict_mobile_technical: 'NOT_RUN',
+  legacy_diagnostic: ok ? 'PASS' : 'FAIL',
   original_source_identity: 'PENDING',
   original_audio_listening: 'PENDING',
   player_readback: 'NOT_RUN',
@@ -99,7 +150,7 @@ function preflight(input) {
   }
 }
 
-const runValidation = input => validateMML(input.mml, {
+const settingsOf = input => ({
   meterText: input.meter_text,
   pickup: input.pickup,
   finalPartial: input.final_partial,
@@ -108,15 +159,45 @@ const runValidation = input => validateMML(input.mml, {
   title: input.title,
 });
 
-export function createTechnicalService({ serviceVersion }) {
-  const report = (validation, offset = 0) => {
+export function createTechnicalService({ serviceVersion, canonical = null }) {
+  // The Published Canonical validator, or a fail-closed refusal. There is no
+  // third outcome: an unavailable Canonical never resolves to the legacy
+  // engine, because a legacy verdict is not an answer to a Canonical question.
+  const canonicalValidator = async () => {
+    if (!canonical || typeof canonical.engines !== 'function') {
+      throw new StudioApplicationError(
+        ERROR_CODES.CANONICAL_NOT_LOADED,
+        'CANONICAL_NOT_LOADED: this technical service was built without the Published Canonical gate, so it cannot answer a Canonical validation request. The legacy diagnostic is reachable separately and is not a Canonical verdict.',
+        { legacy_fallback_allowed: false },
+      );
+    }
+    const engines = await canonical.engines();
+    const validate = engines?.mml?.validateMML;
+    if (typeof validate !== 'function') {
+      throw new StudioApplicationError(
+        ERROR_CODES.ENGINE_UNAVAILABLE,
+        'ENGINE_UNAVAILABLE: the Canonical MML validator was not exported by the loaded engines.',
+        { legacy_fallback_allowed: false },
+      );
+    }
+    return { validate, profile: engines.mml.STUDIO_MML_PROFILE ?? PROFILE };
+  };
+
+  const report = (validation, offset, { authority, profile }) => {
     const song = validation.song;
+    const ok = validation.ok === true;
+    const canonicalAuthority = authority === TECHNICAL_AUTHORITY.CANONICAL;
     return {
       service_version: serviceVersion,
       core_version: VERSION,
-      profile: PROFILE,
-      technical_ok: validation.ok,
-      gates: legacyGates(validation.ok),
+      profile,
+      authority,
+      // A legacy diagnostic states no Canonical technical verdict at all. The
+      // field stays present so the shape is stable, and stays null so no caller
+      // can read a legacy PASS as `technical_ok`.
+      technical_ok: canonicalAuthority ? ok : null,
+      ...(canonicalAuthority ? {} : { legacy_technical_ok: ok }),
+      gates: canonicalAuthority ? canonicalGates(ok) : legacyGates(ok),
       error_count: validation.errors.length,
       errors: validation.errors.slice(offset, offset + 200),
       error_offset: offset,
@@ -132,7 +213,7 @@ export function createTechnicalService({ serviceVersion }) {
         error_count: track.errors.length,
       })) ?? [],
       total_beats: song?.total ?? null,
-      estimated_seconds: validation.ok ? secondsAt(song.total, song.tempo) : null,
+      estimated_seconds: ok ? secondsAt(song.total, song.tempo) : null,
       tempo_map: song?.tempo ?? [],
       meter_map: song?.meter ?? [],
       bar_count: song?.bars.length ?? 0,
@@ -141,55 +222,94 @@ export function createTechnicalService({ serviceVersion }) {
       low_mid_interval_count: song?.review?.crowding.length ?? null,
       max_simultaneous_attacks: song?.review?.maxSimultaneousAttacks ?? null,
       changed_input: false,
-      evidence_notice: '技術 PASS 只針對本 Strict Mobile profile。來源、鼓面證據、聽驗、播放器回讀及遊戲結果未由此服務確認。',
+      evidence_notice: canonicalAuthority
+        ? '技術 PASS 只針對 Published Canonical 的 Strict Mobile 技術面。來源、鼓面證據、聽驗、播放器回讀及遊戲結果未由此服務確認。'
+        : 'LEGACY 診斷結果，非 Published Canonical 判定。legacy PASS 不等於 Canonical PASS；請以 Canonical 端點的 technical_ok 為準。',
+    };
+  };
+
+  const overlapReport = (review, input, { authority, profile }) => {
+    const items = [];
+    if (input.kind !== 'low_mid_intervals') {
+      for (const pair of review.pairs) for (const overlap of pair.overlaps) items.push({ category: 'same_pitch', left: pair.left, right: pair.right, ...overlap });
+    }
+    if (input.kind !== 'same_pitch') {
+      for (const overlap of review.crowding) items.push({ category: 'low_mid_intervals', ...overlap });
+    }
+    const offset = input.offset ?? 0;
+    const limit = input.limit ?? 100;
+    const canonicalAuthority = authority === TECHNICAL_AUTHORITY.CANONICAL;
+    return {
+      service_version: serviceVersion,
+      core_version: VERSION,
+      profile,
+      authority,
+      technical_ok: canonicalAuthority ? true : null,
+      ...(canonicalAuthority ? {} : { legacy_technical_ok: true }),
+      gates: canonicalAuthority ? canonicalGates(true) : legacyGates(true),
+      pair_count: 15,
+      pairs: pairSummary(review),
+      total_items: items.length,
+      offset,
+      limit,
+      items: items.slice(offset, offset + limit),
+      next_offset: offset + limit < items.length ? offset + limit : null,
+      changed_input: false,
     };
   };
 
   return Object.freeze({
-    /** Technical validation over a complete six-track MML string. */
-    validate(input) {
+    /**
+     * Published Canonical technical validation over a complete six-track MML
+     * string. Fails closed when Canonical is unavailable.
+     */
+    async validate(input) {
       checkShape(input, TECHNICAL_INPUT);
       preflight(input);
-      return report(runValidation(input), input.error_offset ?? 0);
+      const { validate, profile } = await canonicalValidator();
+      return report(validate(input.mml, settingsOf(input)), input.error_offset ?? 0, { authority: TECHNICAL_AUTHORITY.CANONICAL, profile });
     },
 
     /**
-     * Paged same-pitch and low/mid interval detail.
+     * Paged same-pitch and low/mid interval detail, under Published Canonical.
      *
      * A validation failure returns the validation report instead, exactly as
      * the original tool did: there is no reviewed interval list for a song the
      * parser could not read.
      */
-    overlapDetails(input) {
+    async overlapDetails(input) {
       checkShape(input, OVERLAP_INPUT);
       preflight(input);
-      const validation = runValidation(input);
-      if (!validation.ok) return report(validation, input.error_offset ?? 0);
-      const review = validation.song.review;
-      const items = [];
-      if (input.kind !== 'low_mid_intervals') {
-        for (const pair of review.pairs) for (const overlap of pair.overlaps) items.push({ category: 'same_pitch', left: pair.left, right: pair.right, ...overlap });
-      }
-      if (input.kind !== 'same_pitch') {
-        for (const overlap of review.crowding) items.push({ category: 'low_mid_intervals', ...overlap });
-      }
-      const offset = input.offset ?? 0;
-      const limit = input.limit ?? 100;
-      return {
-        service_version: serviceVersion,
-        core_version: VERSION,
-        profile: PROFILE,
-        technical_ok: true,
-        gates: legacyGates(true),
-        pair_count: 15,
-        pairs: pairSummary(review),
-        total_items: items.length,
-        offset,
-        limit,
-        items: items.slice(offset, offset + limit),
-        next_offset: offset + limit < items.length ? offset + limit : null,
-        changed_input: false,
-      };
+      const { validate, profile } = await canonicalValidator();
+      const validation = validate(input.mml, settingsOf(input));
+      const meta = { authority: TECHNICAL_AUTHORITY.CANONICAL, profile };
+      if (!validation.ok) return report(validation, input.error_offset ?? 0, meta);
+      return overlapReport(validation.song.review, input, meta);
+    },
+
+    /**
+     * The legacy `dist/core.js` engine, as an explicitly labelled diagnostic.
+     *
+     * Retained so an environment without the published Git history keeps the
+     * capability it already had, and so the difference between the legacy
+     * engine and the published rules stays observable. Its PASS is not a
+     * Published Canonical PASS and the report says so in three places:
+     * `authority`, `technical_ok: null`, and `gates.strict_mobile_technical`.
+     */
+    legacyValidate(input) {
+      checkShape(input, TECHNICAL_INPUT);
+      preflight(input);
+      return report(legacyValidateMML(input.mml, settingsOf(input)), input.error_offset ?? 0, { authority: TECHNICAL_AUTHORITY.LEGACY, profile: PROFILE });
+    },
+
+    /** Paged overlap detail from the legacy engine, labelled as a diagnostic. */
+    legacyOverlapDetails(input) {
+      checkShape(input, OVERLAP_INPUT);
+      preflight(input);
+      const validation = legacyValidateMML(input.mml, settingsOf(input));
+      const meta = { authority: TECHNICAL_AUTHORITY.LEGACY, profile: PROFILE };
+      if (!validation.ok) return report(validation, input.error_offset ?? 0, meta);
+      return overlapReport(validation.song.review, input, meta);
     },
   });
 }
