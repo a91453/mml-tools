@@ -146,6 +146,7 @@ export const REDUCTION_BLOCKERS = Object.freeze({
   NEW_CROSS_SOURCE_CONFLICT: 'REDUCTION_NEW_CROSS_SOURCE_CONFLICT_REQUIRES_REVIEW',
   COLLISION_SCAN_LIMIT: 'REDUCTION_COLLISION_SCAN_LIMIT',
   PARENT_INTEGRITY_MISMATCH: 'REDUCTION_PARENT_INTEGRITY_MISMATCH',
+  CANDIDATE_NOT_THE_APPLICATION_TARGET: 'REDUCTION_CANDIDATE_NOT_THE_APPLICATION_TARGET',
   PARENT_CANONICAL_MISMATCH: 'REDUCTION_PARENT_CANONICAL_MISMATCH',
   STALE_PLAN: 'STALE_FINAL_REDUCTION_PLAN',
   NOTHING_TO_APPLY: 'REDUCTION_NOTHING_TO_APPLY',
@@ -558,6 +559,28 @@ function roleAnalysisOf(project) {
 
 const unsupportedEventIdsOf = analysis => new Set((analysis.unsupportedSourceMaterial ?? []).flatMap(item => item?.eventIds ?? []));
 
+/**
+ * The parent application a derived candidate carries inside itself.
+ *
+ * A candidate minted by an accepted application records its own revision and
+ * the Source-Faithful snapshot it was derived from. When a caller hands in such
+ * a candidate without the stored application wrapper -- the local Web plane,
+ * a reload, a second reduction over a reduction -- the envelope is rebuilt from
+ * that provenance and then put through the ordinary `applicationIntegrity`
+ * check like any other. Nothing is asserted: a candidate whose revision does not
+ * recompute from its own content, whose digest does not match, or whose snapshot
+ * is not this baseline, fails that check exactly as a forged one would.
+ *
+ * This mints no revision and invents no provenance. A candidate with no
+ * derivation record returns null and is handled by the caller.
+ */
+function recoverParentFromCandidate(baseline, candidate) {
+  const revision = candidate?.metadata?.g11d?.revision ?? null;
+  if (!plain(revision)) return null;
+  const rebuilt = { status: 'PASS', candidate, revision };
+  return applicationIntegrity(rebuilt, baseline).ok ? rebuilt : null;
+}
+
 // ─── the plan (G12-B) ───────────────────────────────────────────────────────
 
 /**
@@ -601,15 +624,27 @@ export function planFinalReduction({
   const addWarning = (code, detail = {}) => warnings.push(Object.freeze({ code, ...detail }));
 
   // ── parent binding ──
+  //
+  // The role application applies decisions onto `parent.candidate`, or onto the
+  // baseline when there is no parent. So the project this plan describes and
+  // the project the decisions would land on have to be the same project. A
+  // candidate that differs from the baseline with no parent to apply onto is
+  // refused rather than quietly reduced against the baseline instead, which
+  // would throw away exactly the role decisions this stage exists to converge.
+  const resolvedParent = parent ?? recoverParentFromCandidate(baseline, candidate);
   let parentRevisionId = null;
   let parentIndex = 0;
-  if (parent !== null) {
-    const integrity = applicationIntegrity(parent, baseline);
+  if (resolvedParent !== null) {
+    const integrity = applicationIntegrity(resolvedParent, baseline);
     if (!integrity.ok) addBlocker(REDUCTION_BLOCKERS.PARENT_INTEGRITY_MISMATCH, { reasons: Object.freeze([...integrity.reasons]) });
-    else if (candidateDigestOf(candidate) !== parent.revision.candidateDigest) addBlocker(REDUCTION_BLOCKERS.PARENT_INTEGRITY_MISMATCH, { reasons: Object.freeze(['PARENT_CANDIDATE_DIGEST_MISMATCH']) });
-    if (parent.revision?.canonicalIdentity?.rules_snapshot_sha !== canonical.rules_snapshot_sha) addBlocker(REDUCTION_BLOCKERS.PARENT_CANONICAL_MISMATCH, { expected: canonical.rules_snapshot_sha, observed: parent.revision?.canonicalIdentity?.rules_snapshot_sha ?? null });
-    parentRevisionId = parent.revision?.id ?? null;
-    parentIndex = Number.isInteger(parent.revision?.index) ? parent.revision.index : 0;
+    else if (candidateDigestOf(candidate) !== resolvedParent.revision.candidateDigest) addBlocker(REDUCTION_BLOCKERS.PARENT_INTEGRITY_MISMATCH, { reasons: Object.freeze(['PARENT_CANDIDATE_DIGEST_MISMATCH']) });
+    if (resolvedParent.revision?.canonicalIdentity?.rules_snapshot_sha !== canonical.rules_snapshot_sha) addBlocker(REDUCTION_BLOCKERS.PARENT_CANONICAL_MISMATCH, { expected: canonical.rules_snapshot_sha, observed: resolvedParent.revision?.canonicalIdentity?.rules_snapshot_sha ?? null });
+    parentRevisionId = resolvedParent.revision?.id ?? null;
+    parentIndex = Number.isInteger(resolvedParent.revision?.index) ? resolvedParent.revision.index : 0;
+  } else if (candidateDigestOf(candidate) !== candidateDigestOf(baseline)) {
+    addBlocker(REDUCTION_BLOCKERS.CANDIDATE_NOT_THE_APPLICATION_TARGET, {
+      detail: 'The candidate differs from the Source-Faithful Baseline and carries no verifiable derivation from it, so a reduction decision has nothing to be applied onto. Reduce a candidate produced by an accepted application, or one identical to the baseline.',
+    });
   }
 
   // ── analysis inputs ──
@@ -653,7 +688,7 @@ export function planFinalReduction({
   const roleDecisions = toRoleDecisions(normalizedDecisions, { currentRoleOf, baselineIdentity, canonical, parentRevisionId, acceptedBy: acceptedBy.trim() });
   let derivation = null;
   if (roleDecisions.length) {
-    try { derivation = applyAcceptedArrangement({ baseline, parent, decisions: roleDecisions, canonicalIdentity: canonical, stage: FINAL_REDUCTION_STAGE }); }
+    try { derivation = applyAcceptedArrangement({ baseline, parent: resolvedParent, decisions: roleDecisions, canonicalIdentity: canonical, stage: FINAL_REDUCTION_STAGE }); }
     catch (error) { addBlocker(REDUCTION_BLOCKERS.DECISION_REJECTED, { detail: error.message }); }
     if (derivation && derivation.status !== 'PASS') {
       for (const rejection of derivation.rejected) addBlocker(REDUCTION_BLOCKERS.DECISION_REJECTED, { decisionId: rejection.decisionId ?? null, rejection: rejection.code, detail: rejection.detail ?? null });
@@ -1042,6 +1077,7 @@ export function applyFinalReduction({
   }
 
   const canonical = plan.canonicalIdentity;
+  const resolvedParent = parent ?? recoverParentFromCandidate(baseline, candidate);
   const candidateById = new Map(candidate.events.map(event => [event.id, event]));
   const roleDecisions = toRoleDecisions(plan.decisions, {
     currentRoleOf: eventId => candidateById.get(eventId)?.role ?? null,
@@ -1073,7 +1109,7 @@ export function applyFinalReduction({
 
   let application;
   try {
-    application = applyAcceptedArrangement({ baseline, parent, decisions: roleDecisions, canonicalIdentity: canonical, stage: FINAL_REDUCTION_STAGE, stageMetadata });
+    application = applyAcceptedArrangement({ baseline, parent: resolvedParent, decisions: roleDecisions, canonicalIdentity: canonical, stage: FINAL_REDUCTION_STAGE, stageMetadata });
   } catch (error) {
     return Object.freeze({ schema: REDUCTION_APPLICATION_SCHEMA, stage: FINAL_REDUCTION_STAGE, applied: false, didApply: false, status: 'PENDING', candidate: null, revision: null, plan, blockers: Object.freeze([Object.freeze({ code: REDUCTION_BLOCKERS.DECISION_REJECTED, detail: error.message })]) });
   }

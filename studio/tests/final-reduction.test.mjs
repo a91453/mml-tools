@@ -496,3 +496,43 @@ test('the reduction candidate still emits Final MML', () => {
   const emitted = emitFinalMml(result.candidate);
   assert.equal(emitted.status, 'PASS', JSON.stringify(emitted.diagnostics));
 });
+
+// ─── the application target ─────────────────────────────────────────────────
+
+test('a candidate with no verifiable derivation from the baseline is refused, not reduced against the baseline', () => {
+  const baseline = baselineWithUnassignedRole();
+  // A candidate that is not the baseline and carries no revision: applying a
+  // decision would land it on the baseline and throw away the candidate's own
+  // roles, so the plan refuses instead.
+  const candidate = createCanonicalProject({
+    ...baseline,
+    events: baseline.events.map(event => event.role === 'Chord4' ? createCanonicalNoteEvent({ ...event, role: 'Chord3' }) : event),
+  });
+  const plan = planFinalReduction({ baseline, candidate, acceptedBy: 'test-reviewer' });
+  assert.equal(plan.status, 'PENDING');
+  assert.ok(plan.blockers.some(blocker => blocker.code === REDUCTION_BLOCKERS.CANDIDATE_NOT_THE_APPLICATION_TARGET));
+  const result = applyFinalReduction({ baseline, candidate, decisions: [placeChord5], expectedPlanId: planFinalReduction({ baseline, candidate, decisions: [placeChord5], acceptedBy: 'test-reviewer' }).id, acceptedBy: 'test-reviewer' });
+  assert.equal(result.didApply, false);
+  assert.equal(result.candidate, null);
+});
+
+test('a derived candidate carries the parent the reduction applies onto, and a forged one does not', () => {
+  const baseline = baselineWithUnassignedRole();
+  const { result } = apply(baseline, [placeChord5]);
+  // Handed back without its stored application wrapper, the reduction candidate
+  // still resolves its own parent from the provenance it carries.
+  const second = planFinalReduction({ baseline, candidate: result.candidate, acceptedBy: 'test-reviewer' });
+  assert.equal(second.status, 'PASS');
+  assert.equal(second.parentRevisionId, result.revision.id);
+  assert.equal(second.accounting.pending, 0);
+  assert.equal(second.accounting.retained, 18);
+  // A candidate whose events were edited after the revision was minted no
+  // longer agrees with it, so no parent is recovered and the plan refuses.
+  const forged = createCanonicalProject({
+    ...result.candidate,
+    events: result.candidate.events.map(event => event.id === 'chord3-1' ? createCanonicalNoteEvent({ ...event, role: 'Chord4' }) : event),
+  });
+  const refused = planFinalReduction({ baseline, candidate: forged, acceptedBy: 'test-reviewer' });
+  assert.equal(refused.status, 'PENDING');
+  assert.ok(refused.blockers.some(blocker => [REDUCTION_BLOCKERS.PARENT_INTEGRITY_MISMATCH, REDUCTION_BLOCKERS.CANDIDATE_NOT_THE_APPLICATION_TARGET].includes(blocker.code)));
+});

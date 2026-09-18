@@ -15,6 +15,7 @@ import { alignmentProjectText } from './audio-payload.mjs';
 import { arrangementBinding, deriveArrangement, ingestMidiSource, isRawMidiAsset, reingestMidiAsset, verifyStoredProject } from './midi-source.mjs';
 import { acceptedArrangementBinding, acceptedDecisionBindings, acceptedRevisionHead, buildAcceptedDecisionRecord, deriveAcceptedArrangement } from './arrangement-decisions.mjs';
 import { planMobileAdaptation, applyMobileAdaptation } from '../backend/adaptation/index.mjs';
+import { planFinalReduction, applyFinalReduction } from '../backend/reduction/index.mjs';
 
 export const WORKSPACE_SCHEMA = 'mml-studio-web/workspace@1';
 export const MAX_TEXT_BYTES = 4 * 1024 * 1024;
@@ -97,19 +98,94 @@ export function invalidate(workspace) {
   delete next.deliveryBinding;
   delete next.finalDelivery;
   delete next.mobileAdaptation;
+  // The reduction is an input record too, and it is bound to the exact baseline
+  // and candidate it was previewed against. Once the revision moves, that plan
+  // describes material that is no longer loaded, so it goes the way the Mobile
+  // profile and every accepted decision go: dropped, to be re-previewed.
+  delete next.finalReduction;
   return next;
 }
 
-export function previewMobileAdaptation(workspace, profile) {
+// ─── G12 Final Six-Role Reduction ───────────────────────────────────────────
+//
+// The same two operations the Agent plane has, over the local workspace:
+// `previewFinalReduction` is read-only, and applying persists the *inputs* --
+// the accepted decisions, the plan id and the reviewer -- never a derived
+// candidate and never a PASS. Every analysis re-derives the reduction from the
+// sources that are loaded now, so a restored workspace is re-checked rather
+// than believed, and a stale plan is refused there exactly as it is here.
+
+export function previewFinalReduction(workspace, decisions = [], { acceptedBy = 'reduction-preview', instrumentProfile = null } = {}) {
+  if (!workspace.assets?.baseline || !workspace.assets?.candidate) throw Error('Final Six-Role Reduction 需要來源基準與候選');
+  return planFinalReduction({
+    baseline: readCanonical(workspace.assets.baseline.project),
+    candidate: readCanonical(workspace.assets.candidate.project),
+    decisions,
+    acceptedBy,
+    instrumentProfile,
+  });
+}
+
+export function applyWorkspaceFinalReduction(workspace, { decisions, expectedPlanId, acceptedBy }) {
+  if (!workspace.assets?.baseline || !workspace.assets?.candidate) throw Error('Final Six-Role Reduction 需要來源基準與候選');
+  const application = applyFinalReduction({
+    baseline: readCanonical(workspace.assets.baseline.project),
+    candidate: readCanonical(workspace.assets.candidate.project),
+    decisions,
+    expectedPlanId,
+    acceptedBy,
+  });
+  if (!application.didApply) return { workspace, applied: false, plan: application.plan, blockers: application.blockers, unchanged: application.unchanged ?? false };
+  const next = invalidate(workspace);
+  next.finalReduction = { decisions: copy(application.plan.decisions), expectedPlanId: application.plan.id, acceptedBy };
+  return { workspace: next, applied: true, plan: application.plan };
+}
+
+/** Return to the pre-reduction candidate. The reduction inputs are dropped. */
+export function clearFinalReduction(workspace) {
+  return invalidate(workspace);
+}
+
+/**
+ * The candidate Mobile adaptation actually addresses.
+ *
+ * Reduction and adaptation are two layers in one order: reduction resolves role
+ * and six-role capacity, adaptation then answers target register and volume for
+ * the roles that survived it. So an adaptation preview reads the reduced
+ * candidate, not the pre-reduction one -- otherwise it would plan against roles
+ * the reduction has already changed, and a role the reduction placed would look
+ * unassigned. A workspace with no stored reduction is its own candidate.
+ */
+function adaptationInput(workspace) {
   if (!workspace.assets?.baseline || !workspace.assets?.candidate) throw Error('Mobile 適配需要來源基準與候選');
-  return planMobileAdaptation({ baseline: readCanonical(workspace.assets.baseline.project), candidate: readCanonical(workspace.assets.candidate.project), profile });
+  const baseline = readCanonical(workspace.assets.baseline.project);
+  let candidate = readCanonical(workspace.assets.candidate.project);
+  if (workspace.finalReduction) {
+    const { decisions, expectedPlanId, acceptedBy } = workspace.finalReduction;
+    const application = applyFinalReduction({ baseline, candidate, decisions, expectedPlanId, acceptedBy });
+    if (!application.didApply) throw Error(application.blockers?.map(item => item.code).join(', ') || 'FINAL_REDUCTION_NOT_APPLIED');
+    candidate = application.candidate;
+  }
+  return { baseline, candidate };
+}
+
+export function previewMobileAdaptation(workspace, profile) {
+  const { baseline, candidate } = adaptationInput(workspace);
+  return planMobileAdaptation({ baseline, candidate, profile });
 }
 
 export function applyWorkspaceMobileAdaptation(workspace, { profile, expectedPlanId, acceptedBy }) {
-  if (!workspace.assets?.baseline || !workspace.assets?.candidate) throw Error('Mobile 適配需要來源基準與候選');
-  const application = applyMobileAdaptation({ baseline: readCanonical(workspace.assets.baseline.project), candidate: readCanonical(workspace.assets.candidate.project), profile, expectedPlanId, acceptedBy });
+  const { baseline, candidate } = adaptationInput(workspace);
+  const application = applyMobileAdaptation({ baseline, candidate, profile, expectedPlanId, acceptedBy });
   if (!application.didApply) return { workspace, applied: false, plan: application.plan, blockers: application.blockers, unchanged: application.unchanged ?? false };
   const next = invalidate(workspace);
+  // The adaptation was computed on top of the reduction, so the reduction has
+  // to survive with it. `invalidate` drops it as a source-bound record; it is
+  // carried back explicitly, unchanged, because it is the input the adapted
+  // candidate is derived from. The reverse does not hold: applying a reduction
+  // invalidates an earlier adaptation, which was planned against roles the
+  // reduction has now changed.
+  if (workspace.finalReduction) next.finalReduction = copy(workspace.finalReduction);
   // Persist inputs, not a trusted derived candidate or PASS. Re-derive on every
   // analysis, including restore from IndexedDB. Original source assets survive.
   next.mobileAdaptation = { profile: application.plan.profile, expectedPlanId: application.plan.id, acceptedBy };
@@ -151,7 +227,13 @@ export function importWorkspace(raw) {
   // backup cannot attest that its decisions were reviewed against the bytes
   // this workspace just re-ingested, and a backup asserting an applied
   // candidate is describing an application nobody can re-check from the file.
-  clean.importedHistory = { reviews: input.reviews, acceptance: input.acceptance, audio: input.audio, acceptedDecisions: input.acceptedDecisions, leadEvidence: input.leadEvidence, leadPromotionEvidence: input.leadPromotionEvidence, mobileAdaptation: input.mobileAdaptation };
+  // A reduction record travels as history for the same reason: a backup cannot
+  // attest that its plan was reviewed against the bytes this workspace just
+  // re-ingested, and an imported plan id is a claim about a derivation nobody
+  // can re-check from the file. It is preserved and shown, never restored into
+  // the live `finalReduction` slot, so the reduction has to be previewed and
+  // accepted again against what is actually loaded.
+  clean.importedHistory = { reviews: input.reviews, acceptance: input.acceptance, audio: input.audio, acceptedDecisions: input.acceptedDecisions, leadEvidence: input.leadEvidence, leadPromotionEvidence: input.leadPromotionEvidence, mobileAdaptation: input.mobileAdaptation, finalReduction: input.finalReduction };
   return clean;
 }
 
@@ -469,14 +551,39 @@ function analysisContext(w) {
   let candidate = readCanonical(asset.project);
   const baseline = w.assets.baseline ? readCanonical(w.assets.baseline.project) : null;
   const previous = w.assets.previous ? readCanonical(w.assets.previous.project) : null;
+  // Reduction first, then Mobile adaptation. The two layers stay separate and
+  // stay in this order: reduction resolves role and six-role capacity, and
+  // adaptation then answers target register and volume for the roles that
+  // survived it. Running adaptation first would offset material whose role the
+  // reduction is still deciding.
+  let finalReduction = null, finalReductionError = null;
+  if (w.finalReduction) {
+    try {
+      const { decisions, expectedPlanId, acceptedBy } = w.finalReduction;
+      const application = applyFinalReduction({ baseline, candidate, decisions, expectedPlanId, acceptedBy });
+      // A refused application is a refusal, not a reduction with a plan beside
+      // it. Keeping the returned object would let the UI render its recomputed
+      // plan -- which can read PASS -- under a heading that says the reduction
+      // was applied. The report carries the error instead.
+      if (!application.didApply) throw Error(application.blockers?.map(item => item.code).join(', ') || 'FINAL_REDUCTION_NOT_APPLIED');
+      finalReduction = application;
+      candidate = finalReduction.candidate;
+    } catch (error) { finalReduction = null; finalReductionError = error.message; }
+  }
   let mobileAdaptation = null, mobileAdaptationError = null;
-  if (w.mobileAdaptation) {
+  // Adaptation runs on the candidate the reduction produced. When the stored
+  // reduction could not be replayed, that candidate does not exist, so the
+  // adaptation is not silently applied to the unreduced one instead.
+  if (w.mobileAdaptation && !finalReductionError) {
     try {
       const { profile, expectedPlanId, acceptedBy } = w.mobileAdaptation;
-      mobileAdaptation = applyMobileAdaptation({ baseline, candidate, profile, expectedPlanId, acceptedBy });
-      if (!mobileAdaptation.didApply) throw Error(mobileAdaptation.blockers?.map(item => item.code).join(', ') || 'MOBILE_ADAPTATION_NOT_APPLIED');
+      const application = applyMobileAdaptation({ baseline, candidate, profile, expectedPlanId, acceptedBy });
+      if (!application.didApply) throw Error(application.blockers?.map(item => item.code).join(', ') || 'MOBILE_ADAPTATION_NOT_APPLIED');
+      mobileAdaptation = application;
       candidate = mobileAdaptation.candidate;
-    } catch (error) { mobileAdaptationError = error.message; }
+    } catch (error) { mobileAdaptation = null; mobileAdaptationError = error.message; }
+  } else if (w.mobileAdaptation) {
+    mobileAdaptationError = 'MOBILE_ADAPTATION_NOT_REPLAYED: the stored Final Six-Role Reduction could not be replayed, so the candidate it adapts does not exist.';
   }
   let project = cleanMetadata(candidate);
   const localDecisions = (w.harmonyDecisions ?? []).filter(d => d.revision === w.revision).map(d => createArbitrationDecision(d));
@@ -493,7 +600,7 @@ function analysisContext(w) {
     }
     catch (error) { audioError = error.message; }
   }
-  const { mml: rawMml, origin: deliveryOrigin } = selectDelivery(w, w.mobileAdaptation ? { ...asset, format: 'Canonical IR' } : asset);
+  const { mml: rawMml, origin: deliveryOrigin } = selectDelivery(w, w.mobileAdaptation || w.finalReduction ? { ...asset, format: 'Canonical IR' } : asset);
   const { technical, deliveryMatches } = verifyDelivery(candidate, rawMml, w.settings.meterText);
   const lineage = baseline ? compareCandidateLineage({ sourceBaseline: baseline, acceptedPrevious: previous, candidate }) : null;
   const core3 = baseline ? evaluateCore3Continuity({ baseline, candidate, approvedChanges: (w.core3Approvals ?? []).filter(a => a.revision === w.revision) }) : pending('BASELINE_MISSING');
@@ -565,6 +672,7 @@ function analysisContext(w) {
   const audioRequired = audioPresent || w.settings.audioRequired !== 'no';
   const readiness = evaluateProjectReadiness({ project, mmlValidation: technical, core3Report: core3, core3CompletenessReport: core3Completeness, harmonyReport: harmony, leadDemotionReports: leadReports, leadPromotionReports, lineageReport: lineage, versionDriftReviewed: reviewed(w, 'version'), originalAudioRequired: audioRequired, playerReadback: w.settings.preview === 'none' && reviewed(w, 'tempo') ? 'N/A' : 'PENDING', mobileAdaptation: reviewed(w, 'adaptation') ? 'PASS' : 'PENDING', regressionReviewed: reviewed(w, 'regression') });
   const gates = { ...readiness.gates };
+  if (finalReductionError) gates.finalReductionIntegrity = pending(finalReductionError);
   if (mobileAdaptationError) gates.mobileAdaptationIntegrity = pending(mobileAdaptationError);
   delete gates.inGameAcceptance;
   // The shared readiness name is `mobileAdaptation`; the Web UI's long-lived
@@ -618,6 +726,7 @@ function analysisContext(w) {
   const report = { state: accepted ? 'IN_GAME_ACCEPTED' : validated ? 'VALIDATED' : 'CANDIDATE', gates, blockers, technical, core3, core3Completeness, harmony, lineage, leadReports, leadPromotionReports, readiness, rawMidi,
     tracks: technical?.ok && deliveryMatches ? splitMML(rawMml) : null, rawMml: technical?.ok && deliveryMatches ? rawMml.trim() : null, deliveryOrigin,
     mobileAdaptation: mobileAdaptation ? { plan: mobileAdaptation.plan, diffFromBaseline: mobileAdaptation.diffFromBaseline, diffFromParent: mobileAdaptation.diffFromParent } : null,
+    finalReduction: finalReduction ? { plan: finalReduction.plan, accounting: finalReduction.accounting, diffFromBaseline: finalReduction.diffFromBaseline, diffFromParent: finalReduction.diffFromParent } : null,
     historicalRegression: 'FIXTURE_PENDING', audioError, importedDecisions: candidate.decisions };
   return { asset, candidate, project, readiness, gates, report };
 }
