@@ -548,3 +548,39 @@ test('a fresh review does not survive a change to the event it is about', () => 
   assert.equal(elsewhere[0].status, 'PENDING');
   assert.ok(elsewhere[0].blockers.includes(LEAD_EVIDENCE_LINEAGE_BLOCKERS.DESTINATION_CHANGED));
 });
+
+test('a fresh review cannot resurrect a lineage the integrity check refused', () => {
+  const { first, second } = stalePromotionChain();
+  const fresh = [freshPromotionReview(second.candidate)];
+
+  // A chain with a hole in it. The missing revision could have moved exactly
+  // the material the evidence claims about, so the lineage is refused whole --
+  // and a review is not a way back in, because there is no recovered record for
+  // it to substitute evidence on.
+  const holed = [first, { ...second, revision: { ...second.revision, index: 5 } }];
+  const refused = applicationLineage(holed, baseline);
+  assert.equal(refused.ok, false);
+  // The property the builders actually rely on: a refusal yields NO steps, not
+  // a shorter chain. Both builders also test `lineage.ok`, which is redundant
+  // belt-and-braces -- removing it changes nothing, because every refusal path
+  // returns the same empty result. Asserting the invariant here rather than the
+  // redundant guard keeps that honest.
+  assert.deepEqual([...refused.steps], []);
+  assert.ok(refused.reasons.length);
+  assert.deepEqual(leadPromotionReportsFromLineage({ applications: holed, baseline, candidate: second.candidate, freshReviews: fresh }), []);
+  assert.deepEqual(leadDemotionReportsFromLineage({ applications: holed, baseline, candidate: second.candidate, freshReviews: fresh }), []);
+
+  // Same for a tampered step: integrity fails, so nothing downstream runs.
+  const tampered = [first, { ...second, status: 'FAIL' }];
+  assert.equal(applicationLineage(tampered, baseline).ok, false);
+  assert.deepEqual(leadPromotionReportsFromLineage({ applications: tampered, baseline, candidate: second.candidate, freshReviews: fresh }), []);
+
+  // And with no chain at all there is nothing to review against.
+  assert.deepEqual(leadPromotionReportsFromLineage({ applications: [], baseline, candidate: second.candidate, freshReviews: fresh }), []);
+
+  // The control: the intact chain does produce the answered report, so the
+  // emptiness above is the refusal and not a broken fixture.
+  const intact = leadPromotionReportsFromLineage({ applications: [first, second], baseline, candidate: second.candidate, freshReviews: fresh });
+  assert.equal(intact.length, 1);
+  assert.equal(intact[0].status, 'PASS');
+});
