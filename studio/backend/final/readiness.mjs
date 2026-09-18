@@ -276,9 +276,9 @@ function evidenceReportGate(reports, requiredEventIds, { reportName, blocker, no
 // that cannot answer it.
 function leadGateWithIdentity(result, unresolved) {
   if (!unresolved.length) return result;
+  const { status: _status, reason: _reason, ...details } = result;
   return gate('PENDING', {
-    ...result,
-    status: 'PENDING',
+    ...details,
     blockers: [...new Set([...(result.blockers ?? []), 'LEAD_IDENTITY_CORRESPONDENCE_UNRESOLVED'])],
     unresolvedPairings: Object.freeze([...unresolved]),
   });

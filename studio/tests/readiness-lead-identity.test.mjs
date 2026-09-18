@@ -103,6 +103,7 @@ test('a disjoint-id Lead swap is not N/A, and blocks', () => {
     assert.notEqual(readiness.gates[name].status, 'N/A', `${name} must not go quiet`);
     assert.equal(readiness.gates[name].status, 'PENDING');
     assert.ok(readiness.gates[name].blockers.includes(UNRESOLVED));
+    assert.equal(Object.hasOwn(readiness.gates[name], 'reason'), false, `${name} unresolved PENDING must not retain the superseded N/A reason`);
     assert.ok(readiness.preGameBlocking.includes(name));
   }
   assert.equal(readiness.candidateReady, false);
