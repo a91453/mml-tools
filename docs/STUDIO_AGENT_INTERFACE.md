@@ -288,7 +288,7 @@ lifecycle vocabulary but is never reached in this build.
 
 ## 8. Gate separation
 
-Six independent axes, reported as their own field, never collapsed into a
+Seven independent public gate axes, reported as their own field, never collapsed into a
 success boolean:
 
 ```json
@@ -300,6 +300,7 @@ success boolean:
     "audio": "PENDING",
     "player_readback": "PASS",
     "mobile_adaptation": "PASS",
+    "regression": "PASS",
     "in_game": "PENDING"
   }
 }
@@ -314,10 +315,10 @@ is not ready. Conflating those would make a reviewer's finding indistinguishable
 from a transport fault.
 
 Each axis is transcribed from the module that owns it. `mobile_adaptation`
-comes from the shared readiness Gate 8 and reaches `PASS` only after an
-explicit candidate-bound, evidence-backed Mobile adaptation review. Parser,
-emitter and technical PASS never set it, because Gate 8 adaptation is a
-different question from serialization.
+comes from shared readiness Gate 8 and `regression` from Gate 9. Each reaches
+`PASS` only after an explicit candidate-bound, evidence-backed review.
+Parser/emitter/test success never sets either one: technical serialization,
+Mobile adaptation and regression review are separate questions.
 
 **`in_game` is `PENDING` by construction.** No emitter, parser, job, transport,
 test or model call can set it, and attempting to record it is refused with the
@@ -334,10 +335,14 @@ actually exists*.
 
 They are recorded explicitly, each with a stated reason:
 `source_complete`, `version_drift_reviewed`, `player_readback` (`PASS`, `NOT_RUN`
-or `N/A`), `mobile_adaptation_reviewed`, `original_audio_required`. A
-`mobile_adaptation_reviewed: true` confirmation requires at least one evidence
-reference and states that Gate 8 was reviewed for that exact candidate,
-including the valid conclusion that no additional Mobile adaptation is needed.
+or `N/A`), `mobile_adaptation_reviewed`, `regression_reviewed`,
+`original_audio_required`. A true Gate 8 or Gate 9 review confirmation
+requires at least one evidence reference and is bound to that exact candidate.
+For Gate 8, a valid reviewed conclusion may be that no additional Mobile
+adaptation is needed. For Gate 9, the review covers the baseline/accepted-
+previous comparisons, Lead/Core3/source drift, and executable historical
+regressions that actually exist; named regressions without a fixture remain
+`FIXTURE_PENDING`, not PASS.
 The review project is then assembled from
 the candidate plus exactly those confirmations, through the backend's own
 constructors — the same composition the Studio Web analysis performs.
@@ -345,7 +350,7 @@ constructors — the same composition the Studio Web analysis performs.
 **A confirmation is bound to the thing it is about.** Each recorded
 confirmation carries the `baseline_id` it was made under, and the
 candidate-scoped kinds (`version_drift_reviewed`, `player_readback`,
-`mobile_adaptation_reviewed`) carry the `candidate_id` they name — supplied as `candidate_id` in the request, or taken
+`mobile_adaptation_reviewed`, `regression_reviewed`) carry the `candidate_id` they name — supplied as `candidate_id` in the request, or taken
 from the review or finalize call the confirmations arrive with. A confirmation
 whose identity no longer matches — the baseline was replaced by a new intake,
 or a different candidate is being reviewed — stays on the record for the audit
@@ -636,9 +641,9 @@ rendered as a generic 500 with no message, path or stack.
    produced by the existing Python audio worker, outside this process. This
    interface validates a report and attaches it as evidence; it does not invoke
    the worker.
-6. **`mobile_adaptation` is explicit, not automatic.** The shared Gate 8 stays
-   `PENDING` until a candidate-bound evidence-backed review is recorded;
-   parser/emitter success never upgrades it.
+6. **Gate 8 and Gate 9 are explicit, not automatic.** `mobile_adaptation` and
+   `regression` stay `PENDING` until candidate-bound evidence-backed reviews
+   are recorded; parser/emitter/test success never upgrades either one.
 7. **MusicXML intake needs the runtime dependency.** Without it the engines
    report `ENGINE_UNAVAILABLE` rather than degrading silently.
 8. **MCP protocol modernization was not attempted.** The hand-written stateless
