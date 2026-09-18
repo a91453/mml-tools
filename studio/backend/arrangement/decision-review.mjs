@@ -310,6 +310,7 @@ export function reviewAppliedCandidate({
   versionDriftReviewed = false,
   originalAudioRequired = true,
   playerReadback = 'NOT_RUN',
+  mobileAdaptation = 'PENDING',
   inGameAcceptance = 'PENDING',
 }) {
   const checked = applicationIntegrity(application, baseline);
@@ -349,6 +350,7 @@ export function reviewAppliedCandidate({
     versionDriftReviewed,
     originalAudioRequired,
     playerReadback,
+    mobileAdaptation,
     inGameAcceptance,
   });
 
