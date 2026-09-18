@@ -131,6 +131,7 @@ function readyInput(overrides = {}) {
     versionDriftReviewed: false,
     playerReadback: 'PASS',
     originalAudioRequired: true,
+    mobileAdaptation: 'PASS',
     inGameAcceptance: 'PENDING',
     ...overrides,
   };
@@ -180,6 +181,19 @@ test('original audio may be N/A only when the song workflow explicitly marks it 
   }));
   assert.equal(result.gates.originalAudio.status, 'N/A');
   assert.equal(result.candidateReady, true);
+});
+
+test('Mobile adaptation is a required pre-game gate and N/A does not bypass review', () => {
+  for (const mobileAdaptation of ['PENDING', 'NOT_RUN', 'N/A']) {
+    const result = evaluateProjectReadiness(readyInput({ mobileAdaptation }));
+    assert.equal(result.candidateReady, false, mobileAdaptation);
+    assert.equal(result.gates.mobileAdaptation.status, 'PENDING', mobileAdaptation);
+    assert.ok(result.gates.mobileAdaptation.blockers.includes('MOBILE_ADAPTATION_REVIEW_REQUIRED'), mobileAdaptation);
+    assert.ok(result.preGameBlocking.includes('mobileAdaptation'), mobileAdaptation);
+  }
+  const passed = evaluateProjectReadiness(readyInput({ mobileAdaptation: 'PASS' }));
+  assert.equal(passed.gates.mobileAdaptation.status, 'PASS');
+  assert.equal(passed.candidateReady, true);
 });
 
 test('source completeness is a hard per-song readiness condition', () => {
