@@ -74,14 +74,15 @@ continued Studio development on `main`. That does not certify any song and does
 not mean the Studio roadmap is complete. In particular, the current Raw MIDI path
 ends at preserved source evidence, G11-B decomposition, G11-C candidate suggestions,
 G11-D application of explicitly accepted arrangement decisions, and existing
-readiness information; G12 work, Final MML generation, Mobile adaptation and
-target-client acceptance remain separate stages.
+readiness information; the G12 Final Six-Role Reduction, Final MML generation,
+Mobile adaptation and target-client acceptance remain separate stages, each of
+which has to be run and reviewed on its own.
 
 The separate [Mobile Adaptation v1](../docs/MOBILE_ADAPTATION_V1.md) stage now
 implements register and volume transformations for assigned, source-traceable
 candidates. It is available through HTTP/MCP and the local Web Worker. It does
 not supply an instrument audibility database, drum mapping, performer allocation,
-automatic collision repair, full reduction or G12, and does not certify Gate 8.
+automatic collision repair or instrument assignment, and does not certify Gate 8. Six-role reduction is the separate G12 stage (`docs/G12_FINAL_SIX_ROLE_REDUCTION.md`), which runs before it.
 
 G11-D produces a derived Candidate Canonical project from decisions a reviewer has
 explicitly accepted, without modifying the Source-Faithful Baseline. Its `PASS`

@@ -131,9 +131,10 @@ duplicate's own id can never become source evidence. Re-recording replaces the
 record for that candidate event, and a record is read only while it names the
 current revision, so a later revision asks for the evidence again.
 
-This path ends before G12, Final MML emission, Mobile audibility/octave
-adaptation, instrument assignment, volume mapping, drum-face mapping or in-game
-acceptance. A Raw MIDI file therefore cannot make a song `VALIDATED` or
+This path ends before the G12 Final Six-Role Reduction, Final MML emission,
+Mobile audibility/octave adaptation, instrument assignment, volume mapping,
+drum-face mapping or in-game acceptance. Reduction and adaptation are two
+further, separately reviewed stages in this workspace, in that order. A Raw MIDI file therefore cannot make a song `VALIDATED` or
 `IN_GAME_ACCEPTED` by intake alone, and neither can an accepted arrangement.
 
 Implementation guards currently refuse Raw MIDI input over 4 MiB or a decoded
@@ -209,8 +210,9 @@ persistence, scope and remaining work.
 - Raw MIDI support stops at preserved source evidence, G11-B decomposition,
   G11-C candidate suggestions, G11-D application of explicitly accepted
   arrangement decisions, and existing readiness information. It does not
-  automatically perform Final six-role reduction, G12, Final MML emission,
-  Mobile adaptation, instrument/octave assignment or drum-face mapping. No
+  automatically perform the G12 Final Six-Role Reduction, Final MML emission,
+  Mobile adaptation, instrument/octave assignment or drum-face mapping. Each is
+  an explicit, separately reviewed step. No
   arrangement decision is ever accepted on the reviewer's behalf, and this
   release ships no Arrangement Editor UI: decisions are recorded through the
   model API, not by dragging notes.
