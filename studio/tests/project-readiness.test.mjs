@@ -132,6 +132,7 @@ function readyInput(overrides = {}) {
     playerReadback: 'PASS',
     originalAudioRequired: true,
     mobileAdaptation: 'PASS',
+    regressionReviewed: true,
     inGameAcceptance: 'PENDING',
     ...overrides,
   };
