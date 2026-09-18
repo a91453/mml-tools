@@ -66,6 +66,7 @@ const CONFIRMATIONS = Object.freeze({
   version_drift_reviewed: 'readiness `versionDrift` gate: the divergence of this candidate from the accepted previous version has been reviewed. Bound to the candidate.',
   player_readback: 'readiness `playerReadback` gate: PASS (the emitted MML was read back in a player; may name the mml_sha256 that was read back), NOT_RUN, or N/A (no preview or verification assets are used for this cue, with the reason). Bound to the candidate.',
   mobile_adaptation_reviewed: 'readiness `mobileAdaptation` gate: the candidate was reviewed against Acceptance Gate 8 and any Mobile adaptation (or the conclusion that none is needed) is minimal, role-preserving and evidence-backed. Bound to the candidate.',
+  regression_reviewed: 'readiness `regression` gate: the candidate was compared against the Source-Faithful Baseline and accepted previous version when present, with Lead/Core3/source drift and available historical regressions explicitly reviewed. Bound to the candidate.',
   original_audio_required: 'readiness `originalAudio` applicability. Setting it false states the song-specific workflow does not require original audio, and must say why. Bound to the baseline.',
 });
 
@@ -75,6 +76,7 @@ const CONFIRMATION_SCOPE = Object.freeze({
   version_drift_reviewed: 'candidate',
   player_readback: 'candidate',
   mobile_adaptation_reviewed: 'candidate',
+  regression_reviewed: 'candidate',
   original_audio_required: 'baseline',
 });
 
@@ -235,6 +237,9 @@ export function createReviewService({ canonical, projects, intake, arrangement, 
       if (name === 'mobile_adaptation_reviewed' && input.value === true && !evidence.length) {
         fail(ERROR_CODES.INVALID_REQUEST, 'mobile_adaptation_reviewed PASS requires at least one evidence reference for the candidate-specific Gate 8 review.');
       }
+      if (name === 'regression_reviewed' && input.value === true && !evidence.length) {
+        fail(ERROR_CODES.INVALID_REQUEST, 'regression_reviewed PASS requires at least one evidence reference for the candidate-specific Gate 9 review.');
+      }
       // Source completeness cannot be asserted over a baseline whose own
       // adapters reported material they could not represent or inputs they
       // found incomplete. The evidence contradicts the claim, and a review is
@@ -320,6 +325,7 @@ export function createReviewService({ canonical, projects, intake, arrangement, 
         originalAudioRequired: recorded.original_audio_required?.value !== false,
         playerReadback: recorded.player_readback?.value ?? 'NOT_RUN',
         mobileAdaptation: recorded.mobile_adaptation_reviewed?.value === true ? 'PASS' : 'PENDING',
+        regressionReviewed: recorded.regression_reviewed?.value === true,
         // Never a parameter a caller can reach. See the header.
         inGameAcceptance: 'PENDING',
       };
@@ -396,6 +402,9 @@ function normalizeEvidence(evidence) {
  *   mobile_adaptation  Readiness answers this from an explicit candidate-bound
  *               evidence-backed Gate 8 review. Parser/emitter success never
  *               upgrades it.
+ *   regression  Readiness answers this from an explicit candidate-bound,
+ *               evidence-backed Gate 9 review. A clean diff or passing test
+ *               suite never silently upgrades it.
  *   in_game     `PENDING`, unconditionally and by construction.
  */
 export function gatesFrom(readiness) {
@@ -406,6 +415,7 @@ export function gatesFrom(readiness) {
     audio: status('originalAudio'),
     player_readback: status('playerReadback'),
     mobile_adaptation: status('mobileAdaptation'),
+    regression: status('regression'),
     in_game: GATE_STATUS.PENDING,
     notice: GATE_NOTICE,
   });
