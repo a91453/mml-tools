@@ -307,3 +307,67 @@ test('recovery never invents a PASS the shared gate would not give', () => {
   assert.equal(review.readiness.gates.leadPromotion.status, 'PENDING');
   assert.ok(review.readiness.gates.leadPromotion.pendingEventIds.includes('tex-1'));
 });
+
+// ─── the remaining staleness branches ───────────────────────────────────────
+
+test('a demotion whose destination role moved again is reported, not carried', () => {
+  // Revision 1 demotes the Lead to Chord3 with evidence for *that* destination.
+  // Revision 2 moves the same event on to Chord4. The recorded evidence argues
+  // for a destination the candidate no longer has, so it is not the evidence
+  // for what is now there.
+  const first = demoteLead1();
+  const second = applyNext(first, [{
+    id: 'm2', type: 'MOVE_ROLE', target: { eventIds: ['lead-1'] },
+    fromRole: 'Chord3', toRole: 'Chord4',
+    reason: 'Reviewed: this doubling belongs further down the enrichment stack.',
+    evidence: ['fixture:review'],
+  }]);
+  assert.equal(second.status, 'PASS');
+  assert.equal(second.candidate.events.find(event => event.id === 'lead-1').role, 'Chord4');
+
+  const { demotion } = reportsFor([first, second], second);
+  assert.equal(demotion.length, 1);
+  assert.equal(demotion[0].status, 'PENDING');
+  assert.deepEqual([...demotion[0].blockers], [LEAD_EVIDENCE_LINEAGE_BLOCKERS.DESTINATION_CHANGED]);
+
+  const review = reviewAppliedCandidate({ application: second, baseline, leadDemotionReports: demotion });
+  assert.equal(review.readiness.gates.leadDemotion.status, 'PENDING');
+});
+
+test('a promoted event that is no longer the note its citation describes is reported, not carried', () => {
+  // Defence in depth, and reachable the way the rest of this module's identity
+  // checks are: the candidate handed in is data. A caller that grades a
+  // candidate whose promoted event has been re-pitched, or is no longer Melody,
+  // must not receive that event's earlier PASS under its id.
+  const first = promoteTex1();
+  const applications = [first];
+
+  const repitched = {
+    ...first.candidate,
+    events: first.candidate.events.map(event => (event.id === 'tex-1' ? { ...event, pitch: event.pitch + 7 } : event)),
+  };
+  const changed = leadPromotionReportsFromLineage({ applications, baseline, candidate: repitched });
+  assert.equal(changed.length, 1);
+  assert.equal(changed[0].status, 'PENDING');
+  // Re-pitching a Melody event moves the Lead picture too, so both blockers are
+  // true and both are reported.
+  assert.ok(changed[0].blockers.includes(LEAD_EVIDENCE_LINEAGE_BLOCKERS.EVENT_CHANGED));
+
+  const demoted = {
+    ...first.candidate,
+    events: first.candidate.events.map(event => (event.id === 'tex-1' ? { ...event, role: 'Chord2' } : event)),
+  };
+  const moved = leadPromotionReportsFromLineage({ applications, baseline, candidate: demoted });
+  assert.equal(moved[0].status, 'PENDING');
+  assert.ok(moved[0].blockers.includes(LEAD_EVIDENCE_LINEAGE_BLOCKERS.DESTINATION_CHANGED));
+
+  const removed = {
+    ...first.candidate,
+    events: first.candidate.events.filter(event => event.id !== 'tex-1'),
+  };
+  const gone = leadPromotionReportsFromLineage({ applications, baseline, candidate: removed });
+  assert.equal(gone[0].status, 'PENDING');
+  assert.ok(gone[0].blockers.includes(LEAD_EVIDENCE_LINEAGE_BLOCKERS.EVENT_NOT_IN_CANDIDATE));
+  // Whatever the reason, none of these is ever a PASS under the promoted id.
+  for (const report of [changed[0], moved[0], gone[0]]) assert.equal(report.pass, false);
+});

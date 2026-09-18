@@ -152,7 +152,6 @@ test('a complete Web promotion record reaches shared readiness as a PASS', () =>
 
   // The verdict is the shared gate's own, byte for byte on every field it owns.
   const direct = evaluateLeadPromotion({
-    ...analysed.readiness.gates.leadPromotion && {},
     sourceIdentity: { sourceId: SCORE, sourceEventId: `${SCORE}#tex-1` },
     sectionRole: 'instrumental',
     scoreEvidence: { availability: 'available', classification: 'lead', citation: 'score: top staff, bar 1' },

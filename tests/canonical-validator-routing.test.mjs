@@ -73,11 +73,6 @@ test('the two fixtures really do split the legacy engine from Published Canonica
     assert.equal(canonicalValidateMML(mml, { meterText: METER }).ok, canonicalOk, `${name}: Canonical`);
     assert.equal(legacyValidateMML(mml, { meterText: METER }).ok, legacyOk, `${name}: legacy`);
   }
-  assert.notEqual(
-    CASES[0].canonicalOk === CASES[0].legacyOk && CASES[1].canonicalOk === CASES[1].legacyOk,
-    true,
-    'the fixtures must still diverge in both directions',
-  );
 });
 
 test('the same MML gets the same Canonical verdict through parser, service, HTTP and MCP', async () => {
@@ -181,4 +176,29 @@ test('Canonical-claiming entry points fail closed when Published Canonical is un
   assert.equal(diagnostic.authority, 'LEGACY_DIAGNOSTIC');
   assert.equal(diagnostic.legacy_technical_ok, true);
   assert.equal(diagnostic.technical_ok, null);
+});
+
+test('the MCP tools fail closed too rather than answering from the legacy engine', async () => {
+  // The MCP transport binds its own technical service and its own Canonical
+  // gate, so its fail-closed behaviour is a separate guarantee from the HTTP
+  // adapter's and is asserted separately. `load` is injected here the way the
+  // Application Service contract test injects it, because the real repository
+  // this suite runs in can load Canonical.
+  const { createTechnicalService } = await import('../studio/backend/application/technical-service.mjs');
+  const { createCanonicalGate } = await import('../studio/backend/application/provenance.mjs');
+  const unloadable = createTechnicalService({
+    serviceVersion: '0.0.0-test',
+    canonical: createCanonicalGate({ load: async () => { throw Error('no published history'); } }),
+  });
+  const input = { mml: 'MML@t120o4c1,,,,,;', meter_text: METER };
+
+  for (const operation of ['validate', 'overlapDetails']) {
+    await assert.rejects(() => unloadable[operation](input), error => error.code === ERROR_CODES.CANONICAL_NOT_LOADED, operation);
+  }
+  // ...while the same engine the transport would have fallen back to still
+  // answers under its own name, and states no Canonical verdict.
+  const diagnostic = unloadable.legacyValidate(input);
+  assert.equal(diagnostic.authority, 'LEGACY_DIAGNOSTIC');
+  assert.equal(diagnostic.technical_ok, null);
+  assert.equal(diagnostic.gates.strict_mobile_technical, 'NOT_RUN');
 });

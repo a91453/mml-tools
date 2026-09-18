@@ -130,7 +130,6 @@ test('Gate 4 is not a track-density rule', () => {
   const report = evaluateCore3Completeness({ candidate: sparse });
   assert.equal(report.status, 'PENDING', 'an absent function is unresolved, never an automatic failure');
   assert.equal(report.reviewable, true);
-  assert.notEqual(report.status, 'FAIL');
 
   // A reviewer can answer Gate 4 for it, with candidate-bound evidence.
   assert.equal(evaluateCore3Completeness({ candidate: sparse, reviewed: true }).status, 'PASS');
@@ -374,4 +373,98 @@ test('a Core3 completeness review is candidate-bound and does not clear the cont
   assert.equal(review.core3.status, 'PENDING');
   assert.ok(review.core3.blockers.includes('UNAPPROVED_CORE3_SOURCE_CHANGE'));
   assert.ok(review.blockers.includes('core3'));
+});
+
+// ─── both gates reach Finalize, not just review ─────────────────────────────
+
+test('Finalize reads the recorded Core3 approvals rather than passing none', async () => {
+  const { service, fixture, projectId } = await applicationWithBaseline();
+  const applied = await service.applyDecisions(OWNER, projectId, { decisions: [moveChord1Out(fixture)] });
+  const candidateId = applied.decisions.candidate_id;
+
+  // Finalize used to call the continuity engine with `approvedChanges: []`, so
+  // a reviewed change stayed blocked here even once review reported it clear.
+  const before = await service.finalize(OWNER, projectId, { candidateId });
+  assert.equal(before.mml, null);
+  assert.ok(before.blockers.includes('core3'), 'the unapproved Core3 change blocks emission');
+
+  for (const change of (await service.reviewCandidate(OWNER, projectId, { candidateId })).review.core3.unapproved) {
+    await service.approveCore3SourceChange(OWNER, projectId, {
+      candidateId,
+      approval: { event_id: change.eventId, type: change.type, reason: 'Reviewed against the official score.', evidence: ['fixture:score bar 1-4'] },
+    });
+  }
+
+  const after = await service.finalize(OWNER, projectId, { candidateId });
+  assert.equal(after.blockers.includes('core3'), false, 'the approvals must reach the Finalize continuity call too');
+  assert.equal(after.readiness.gates.core3.status, 'PASS');
+});
+
+test('the Gate 4 completeness gate blocks Finalize and is cleared only by its own review', async () => {
+  const service = createStudioApplication();
+  const fixture = sixRoleBaseline();
+  const created = (await service.createProject(OWNER, { title: 'Gate 4 at finalize' })).project;
+  // A baseline whose Core3 the evaluator cannot prove complete: Melody only.
+  const melodyOnly = createCanonicalProject({
+    ...fixture,
+    events: fixture.events.filter(event => event.kind !== 'note' || event.role === 'Melody'),
+  });
+  await service.uploadAsset(OWNER, created.project_id, {
+    kind: 'canonical_project', filename: 'baseline.json', mediaType: 'application/json',
+    bytes: new TextEncoder().encode(JSON.stringify(melodyOnly)),
+  });
+  await service.analyzeSources(OWNER, created.project_id);
+
+  const applied = await service.applyDecisions(OWNER, created.project_id, {
+    decisions: [{
+      id: 'keep:melody', type: 'KEEP',
+      target: { eventIds: melodyOnly.events.filter(event => event.kind === 'note').map(event => event.id) },
+      fromRole: 'Melody', reason: 'Reviewed: the source is carried unchanged.', evidence: ['fixture:source'], acceptedBy: 'reviewer:test',
+    }],
+  });
+  const candidateId = applied.decisions.candidate_id;
+
+  // Unchanged from baseline, so source continuity is clean -- and Gate 4 is not
+  // thereby answered.
+  const review = (await service.reviewCandidate(OWNER, created.project_id, { candidateId })).review;
+  assert.equal(review.core3.status, 'PASS', 'the continuity audit has nothing to report');
+  assert.equal(review.core3_completeness.status, 'PENDING');
+  assert.ok(review.blockers.includes('core3Completeness'));
+
+  const blocked = await service.finalize(OWNER, created.project_id, { candidateId });
+  assert.equal(blocked.mml, null);
+  assert.ok(blocked.blockers.includes('core3Completeness'), 'a clean continuity audit cannot carry emission on its own');
+
+  // Only the Gate 4 review clears it, and it is candidate-bound.
+  await service.recordConfirmations(OWNER, created.project_id, {
+    core3_completeness_reviewed: {
+      value: true,
+      reason: 'Gate 4 reviewed: the source carries a single line and this is its complete realization.',
+      evidence: ['fixture:score whole piece'],
+      candidate_id: candidateId,
+    },
+  });
+  const cleared = await service.finalize(OWNER, created.project_id, { candidateId });
+  assert.equal(cleared.blockers.includes('core3Completeness'), false);
+  assert.equal(cleared.readiness.gates.core3Completeness.status, 'PASS');
+});
+
+test('Studio Web blocks on the same Gate 4 gate and on its own Core3 review', async () => {
+  const { intake, newWorkspace, analyzeWorkspace, recordReview } = await import('../web/model.mjs');
+  const asset = (name, value) => intake({ name, content: JSON.stringify(value), id: name });
+  const melodyOnly = project('fixture:candidate', MELODY_ONLY);
+  const workspace = {
+    ...newWorkspace(),
+    title: 'Gate 4 web',
+    settings: { meterText: '0 4/4', recording: 'synthetic', offset: '0', end: '4', audioRequired: 'no', preview: 'none' },
+    assets: { baseline: asset('b.json', project('fixture:baseline', MELODY_ONLY)), candidate: asset('c.json', melodyOnly) },
+  };
+  const before = analyzeWorkspace(workspace);
+  assert.equal(before.core3.status, 'PASS', 'continuity is clean: the candidate is the baseline');
+  assert.equal(before.gates.core3Completeness.status, 'PENDING');
+  assert.ok(before.blockers.includes('core3Completeness'));
+
+  // The Web Core3 review is the Gate 4 review, and it is what clears it.
+  const after = analyzeWorkspace(recordReview(workspace, 'core3', 'Core3 單人完整性已審核：來源為單線，這是其完整實現。', 'fixture:score whole piece'));
+  assert.equal(after.gates.core3Completeness.status, 'PASS');
 });
