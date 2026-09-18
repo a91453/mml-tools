@@ -400,6 +400,7 @@ function normalizeCanonicalIdentity(identity) {
 // Two runs of the same inputs therefore produce the same revision id, and a
 // record whose fields were edited no longer hashes to its own id.
 export function createArrangementRevision({
+  stage = 'G11-D',
   index,
   parentRevisionId = null,
   baselineIdentity,
@@ -409,9 +410,11 @@ export function createArrangementRevision({
   laneDecompositionDigest = null,
   candidateDigest,
 }) {
+  if (!['G11-D', 'MOBILE_ADAPTATION_V1'].includes(stage)) throw Error('unsupported candidate revision stage');
   if (!Number.isInteger(index) || index < 1) throw Error('revision.index must be an integer >= 1');
   if (parentRevisionId !== null && !nonEmptyString(parentRevisionId)) throw Error('revision.parentRevisionId must be null or a non-empty string');
   const body = {
+    ...(stage === 'G11-D' ? {} : { stage }),
     index,
     parentRevisionId,
     baselineIdentity: { ...baselineIdentity },
@@ -423,8 +426,8 @@ export function createArrangementRevision({
   };
   return Object.freeze({
     schema: 'mabinogi-mobile-mml-studio/arrangement-revision@1',
-    stage: 'G11-D',
-    stageKind: 'ACCEPTED_ARRANGEMENT_REVISION',
+    stage,
+    stageKind: stage === 'G11-D' ? 'ACCEPTED_ARRANGEMENT_REVISION' : 'MOBILE_ADAPTATION_REVISION',
     id: `g11d:rev:${contentDigest(body)}`,
     ...body,
     baselineIdentity: Object.freeze({ ...baselineIdentity }),
@@ -441,6 +444,7 @@ export function revisionIdentityMatches(revision) {
   if (!isPlainObject(revision) || !nonEmptyString(revision.id)) return false;
   try {
     const rebuilt = createArrangementRevision({
+      stage: revision.stage ?? 'G11-D',
       index: revision.index,
       parentRevisionId: revision.parentRevisionId ?? null,
       baselineIdentity: revision.baselineIdentity,

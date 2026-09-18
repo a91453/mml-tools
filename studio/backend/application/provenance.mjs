@@ -57,6 +57,7 @@ const ENGINE_MODULES = freeze({
   mml: '../mml/parser.mjs',
   canonicalize: '../mml/canonicalize.mjs',
   arrangement: '../arrangement/index.mjs',
+  adaptation: '../adaptation/index.mjs',
   core3: '../arbitration/core3.mjs',
   core3Completeness: '../arbitration/core3-completeness.mjs',
   harmony: '../arbitration/harmony.mjs',

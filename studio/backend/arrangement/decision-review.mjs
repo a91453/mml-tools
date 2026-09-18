@@ -347,11 +347,14 @@ function musicalIdentityMatches(a, b) {
  * matched by pitch, time or array order lives in one place.
  */
 export function baselineOriginEvent(baselineProject, candidateProject, eventId) {
-  return baselineOriginOf(
-    eventId,
-    new Map((baselineProject?.events ?? []).map(event => [event.id, event])),
-    new Map((candidateProject?.events ?? []).map(event => [event.id, event])),
-  );
+  return baselineOriginResolver(baselineProject, candidateProject)(eventId);
+}
+
+// Batch callers share the indexes instead of rebuilding them per note.
+export function baselineOriginResolver(baselineProject, candidateProject) {
+  const baselineById = new Map((baselineProject?.events ?? []).map(event => [event.id, event]));
+  const candidateById = new Map((candidateProject?.events ?? []).map(event => [event.id, event]));
+  return eventId => baselineOriginOf(eventId, baselineById, candidateById);
 }
 
 // Walk a derived duplicate's reversible chain back to the Source-Faithful

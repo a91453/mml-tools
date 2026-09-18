@@ -14,6 +14,7 @@ import { attachAudioAlignmentEvidence } from '../backend/audio/index.mjs';
 import { alignmentProjectText } from './audio-payload.mjs';
 import { arrangementBinding, deriveArrangement, ingestMidiSource, isRawMidiAsset, reingestMidiAsset, verifyStoredProject } from './midi-source.mjs';
 import { acceptedArrangementBinding, acceptedDecisionBindings, acceptedRevisionHead, buildAcceptedDecisionRecord, deriveAcceptedArrangement } from './arrangement-decisions.mjs';
+import { planMobileAdaptation, applyMobileAdaptation } from '../backend/adaptation/index.mjs';
 
 export const WORKSPACE_SCHEMA = 'mml-studio-web/workspace@1';
 export const MAX_TEXT_BYTES = 4 * 1024 * 1024;
@@ -95,7 +96,28 @@ export function invalidate(workspace) {
   delete next.deliveryMml;
   delete next.deliveryBinding;
   delete next.finalDelivery;
+  delete next.mobileAdaptation;
   return next;
+}
+
+export function previewMobileAdaptation(workspace, profile) {
+  if (!workspace.assets?.baseline || !workspace.assets?.candidate) throw Error('Mobile 適配需要來源基準與候選');
+  return planMobileAdaptation({ baseline: readCanonical(workspace.assets.baseline.project), candidate: readCanonical(workspace.assets.candidate.project), profile });
+}
+
+export function applyWorkspaceMobileAdaptation(workspace, { profile, expectedPlanId, acceptedBy }) {
+  if (!workspace.assets?.baseline || !workspace.assets?.candidate) throw Error('Mobile 適配需要來源基準與候選');
+  const application = applyMobileAdaptation({ baseline: readCanonical(workspace.assets.baseline.project), candidate: readCanonical(workspace.assets.candidate.project), profile, expectedPlanId, acceptedBy });
+  if (!application.didApply) return { workspace, applied: false, plan: application.plan, blockers: application.blockers, unchanged: application.unchanged ?? false };
+  const next = invalidate(workspace);
+  // Persist inputs, not a trusted derived candidate or PASS. Re-derive on every
+  // analysis, including restore from IndexedDB. Original source assets survive.
+  next.mobileAdaptation = { profile: application.plan.profile, expectedPlanId: application.plan.id, acceptedBy };
+  return { workspace: next, applied: true, plan: application.plan };
+}
+
+export function clearMobileAdaptation(workspace) {
+  return invalidate(workspace);
 }
 
 export function importWorkspace(raw) {
@@ -129,7 +151,7 @@ export function importWorkspace(raw) {
   // backup cannot attest that its decisions were reviewed against the bytes
   // this workspace just re-ingested, and a backup asserting an applied
   // candidate is describing an application nobody can re-check from the file.
-  clean.importedHistory = { reviews: input.reviews, acceptance: input.acceptance, audio: input.audio, acceptedDecisions: input.acceptedDecisions, leadEvidence: input.leadEvidence, leadPromotionEvidence: input.leadPromotionEvidence };
+  clean.importedHistory = { reviews: input.reviews, acceptance: input.acceptance, audio: input.audio, acceptedDecisions: input.acceptedDecisions, leadEvidence: input.leadEvidence, leadPromotionEvidence: input.leadPromotionEvidence, mobileAdaptation: input.mobileAdaptation };
   return clean;
 }
 
@@ -444,9 +466,18 @@ function analysisContext(w) {
       report: { state: 'CANDIDATE', gates, blockers: ['intake'], tracks: null, rawMidi: [] } };
   }
   // Validate even locally restored objects and disregard imported acceptance.
-  const candidate = readCanonical(asset.project);
+  let candidate = readCanonical(asset.project);
   const baseline = w.assets.baseline ? readCanonical(w.assets.baseline.project) : null;
   const previous = w.assets.previous ? readCanonical(w.assets.previous.project) : null;
+  let mobileAdaptation = null, mobileAdaptationError = null;
+  if (w.mobileAdaptation) {
+    try {
+      const { profile, expectedPlanId, acceptedBy } = w.mobileAdaptation;
+      mobileAdaptation = applyMobileAdaptation({ baseline, candidate, profile, expectedPlanId, acceptedBy });
+      if (!mobileAdaptation.didApply) throw Error(mobileAdaptation.blockers?.map(item => item.code).join(', ') || 'MOBILE_ADAPTATION_NOT_APPLIED');
+      candidate = mobileAdaptation.candidate;
+    } catch (error) { mobileAdaptationError = error.message; }
+  }
   let project = cleanMetadata(candidate);
   const localDecisions = (w.harmonyDecisions ?? []).filter(d => d.revision === w.revision).map(d => createArbitrationDecision(d));
   const decisions = [...candidate.decisions.filter(d => !localDecisions.some(local => local.id === d.id)).map(d => createArbitrationDecision({ ...d, status: 'pending' })), ...localDecisions];
@@ -462,7 +493,7 @@ function analysisContext(w) {
     }
     catch (error) { audioError = error.message; }
   }
-  const { mml: rawMml, origin: deliveryOrigin } = selectDelivery(w, asset);
+  const { mml: rawMml, origin: deliveryOrigin } = selectDelivery(w, w.mobileAdaptation ? { ...asset, format: 'Canonical IR' } : asset);
   const { technical, deliveryMatches } = verifyDelivery(candidate, rawMml, w.settings.meterText);
   const lineage = baseline ? compareCandidateLineage({ sourceBaseline: baseline, acceptedPrevious: previous, candidate }) : null;
   const core3 = baseline ? evaluateCore3Continuity({ baseline, candidate, approvedChanges: (w.core3Approvals ?? []).filter(a => a.revision === w.revision) }) : pending('BASELINE_MISSING');
@@ -534,6 +565,7 @@ function analysisContext(w) {
   const audioRequired = audioPresent || w.settings.audioRequired !== 'no';
   const readiness = evaluateProjectReadiness({ project, mmlValidation: technical, core3Report: core3, core3CompletenessReport: core3Completeness, harmonyReport: harmony, leadDemotionReports: leadReports, leadPromotionReports, lineageReport: lineage, versionDriftReviewed: reviewed(w, 'version'), originalAudioRequired: audioRequired, playerReadback: w.settings.preview === 'none' && reviewed(w, 'tempo') ? 'N/A' : 'PENDING', mobileAdaptation: reviewed(w, 'adaptation') ? 'PASS' : 'PENDING', regressionReviewed: reviewed(w, 'regression') });
   const gates = { ...readiness.gates };
+  if (mobileAdaptationError) gates.mobileAdaptationIntegrity = pending(mobileAdaptationError);
   delete gates.inGameAcceptance;
   // The shared readiness name is `mobileAdaptation`; the Web UI's long-lived
   // public review name is `adaptation`. Present exactly one blocker here while
@@ -585,6 +617,7 @@ function analysisContext(w) {
   // claiming PASS is data about a past attempt, never a gate and never a state.
   const report = { state: accepted ? 'IN_GAME_ACCEPTED' : validated ? 'VALIDATED' : 'CANDIDATE', gates, blockers, technical, core3, core3Completeness, harmony, lineage, leadReports, leadPromotionReports, readiness, rawMidi,
     tracks: technical?.ok && deliveryMatches ? splitMML(rawMml) : null, rawMml: technical?.ok && deliveryMatches ? rawMml.trim() : null, deliveryOrigin,
+    mobileAdaptation: mobileAdaptation ? { plan: mobileAdaptation.plan, diffFromBaseline: mobileAdaptation.diffFromBaseline, diffFromParent: mobileAdaptation.diffFromParent } : null,
     historicalRegression: 'FIXTURE_PENDING', audioError, importedDecisions: candidate.decisions };
   return { asset, candidate, project, readiness, gates, report };
 }

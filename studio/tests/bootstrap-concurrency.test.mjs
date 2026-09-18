@@ -125,7 +125,8 @@ test('ambient Git redirection cannot move discovery away from the requested root
 
   for (const key of Object.keys(redirected)) assert.ok(!(key in gitEnvironment()), `${key} must not reach Git`);
   assert.equal(gitEnvironment().GIT_OPTIONAL_LOCKS, '0');
-  assert.equal(gitEnvironment().PATH, process.env.PATH);
+  const gitPath = Object.entries(gitEnvironment()).find(([key]) => key.toUpperCase() === 'PATH')?.[1];
+  assert.equal(gitPath, process.env.PATH);
   const loaded = loadPublishedCanonical({ root: repositoryRoot, supportedCanonicalVersion: SUPPORTED });
   assert.deepEqual(loaded.metadata, PUBLISHED_CANONICAL.metadata);
   assert.deepEqual(loaded.provenance, PUBLISHED_CANONICAL.provenance);

@@ -1,10 +1,12 @@
 import { chromium, webkit } from 'playwright';
 import assert from 'node:assert/strict';
 import { mkdir, writeFile } from 'node:fs/promises';
+import { fileURLToPath } from 'node:url';
 import { serveStudio } from '../../scripts/serve-studio-web.mjs';
 import { installWorkerControls, runAuditChecks } from './audit.mjs';
 import { runRawMidiChecks } from './raw-midi.mjs';
 import { runFinalDeliveryChecks } from './final-delivery.mjs';
+import { runMobileAdaptationChecks } from './mobile-adaptation.mjs';
 
 // A browser build that is not installed is neither a pass nor a failed
 // assertion, so it is recorded as NOT_RUN with its reason rather than being
@@ -54,7 +56,7 @@ try {
       const file=async(slot,content,name)=>{await page.locator(`[data-intake="${slot}"]`).setInputFiles({name,mimeType:'text/plain',buffer:Buffer.from(content)});await page.waitForFunction(name=>document.querySelector('#intake')?.textContent.includes(name),name);await idle();};
       await page.goto(base);await page.locator('#app h1').waitFor();await idle();
       assert.equal(await page.locator('#copy-mml').isEnabled(),false);
-      await page.screenshot({path:new URL(`${profile.name}-empty.png`,out).pathname,fullPage:true});
+      await page.screenshot({path:fileURLToPath(new URL(`${profile.name}-empty.png`,out)),fullPage:true});
       await page.getByLabel('專案／歌曲名稱',{exact:true}).fill('Studio browser fixture');
       await page.getByLabel('錄音版本（專輯／MV／Live 等）',{exact:true}).fill('Synthetic studio v1');
       await page.getByLabel('有效音樂起點（秒）',{exact:true}).fill('0');
@@ -133,7 +135,7 @@ try {
       await page.evaluate(()=>{window.copied=null;Object.defineProperty(navigator,'clipboard',{configurable:true,value:{writeText:async text=>{window.copied=text;}}});});
       await page.locator('#copy-mml').click();assert.equal(await page.evaluate(()=>window.copied),mml);
       assert.ok(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth+1),'No horizontal viewport overflow');
-      await page.screenshot({path:new URL(`${profile.name}-reviewed.png`,out).pathname,fullPage:true});
+      await page.screenshot({path:fileURLToPath(new URL(`${profile.name}-reviewed.png`,out)),fullPage:true});
       // Boot must announce aria-busy; otherwise its
       // ANALYSIS_RUNNING placeholder is indistinguishable from a settled result:
       // a restored VALIDATED/IN_GAME_ACCEPTED project reads as demoted to
@@ -144,8 +146,9 @@ try {
       assert.equal(await page.evaluate(()=>window.bootAnnouncedBusy),true,'boot analysis must announce aria-busy before showing a state');
       assert.equal(await page.locator('.hero .badge').textContent(),'IN_GAME_ACCEPTED');
       await runFinalDeliveryChecks({page,idle,file,mml});
+      await runMobileAdaptationChecks({page,idle,file,screenshot:()=>page.locator('#mobile-adaptation').screenshot({path:fileURLToPath(new URL(`${profile.name}-mobile-adaptation.png`,out))})});
       await runAuditChecks({page,idle,file,mml});
-      await runRawMidiChecks({page,idle,base,requests,screenshot:name=>page.screenshot({path:new URL(`${profile.name}-${name}.png`,out).pathname,fullPage:true})});
+      await runRawMidiChecks({page,idle,base,requests,screenshot:name=>page.screenshot({path:fileURLToPath(new URL(`${profile.name}-${name}.png`,out)),fullPage:true})});
       // A revision change invalidates all reviews/acceptance before re-analysis.
       await file('candidate',mml.replace('o4c1','o4d1'),'changed.mml');assert.equal(await page.locator('.hero .badge').textContent(),'CANDIDATE');
       await page.locator('#audio-file').setInputFiles({name:'original.wav',mimeType:'audio/wav',buffer:Buffer.from('synthetic audio')});
@@ -174,7 +177,7 @@ try {
         continue;
       }
       failed=true;results.push({profile:profile.name,status:'FAIL',error:error.stack,consoleErrors:errors});
-      if(page)await page.screenshot({path:new URL(`${profile.name}-failure.png`,out).pathname,fullPage:true}).catch(()=>{});
+      if(page)await page.screenshot({path:fileURLToPath(new URL(`${profile.name}-failure.png`,out)),fullPage:true}).catch(()=>{});
     } finally {if(browser)await browser.close();if(server.listening){server.closeAllConnections();server.close();}}
   }
 } finally {if(server?.listening){server.closeAllConnections();server.close();}}
