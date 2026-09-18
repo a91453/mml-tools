@@ -164,6 +164,7 @@ export const REDUCTION_WARNINGS = Object.freeze({
   UPSTREAM_OMISSION_NOT_VERIFIED: 'UPSTREAM_OMISSION_NOT_VERIFIED',
   CORE3_UNRESOLVED: 'CORE3_COMPLETENESS_UNRESOLVED',
   CORE3_DEPENDS_ON_ENRICHMENT: 'CORE3_DEPENDS_ON_ENRICHMENT',
+  ROLE_ANALYSIS_UNAVAILABLE: 'ROLE_ANALYSIS_UNAVAILABLE',
   TIMBRE_DIAGNOSTIC_ONLY: 'TIMBRE_EVIDENCE_IS_DIAGNOSTIC_ONLY',
 });
 
@@ -663,6 +664,12 @@ export function planFinalReduction({
   const currentRoleOf = eventId => candidateById.get(eventId)?.role ?? null;
   const analysis = roleAnalysisOf(candidate);
   const unsupportedIds = unsupportedEventIdsOf(analysis);
+  // Every event is still accounted for without the role analysis -- the ledger
+  // does not depend on it -- but two things degrade quietly if it is missing:
+  // material it would have reported unsupported is classified as merely
+  // undecided, and the suggestion lists are empty. Say so rather than let a
+  // reader read a thinner plan as a cleaner one.
+  if (!analysis.ok) addWarning(REDUCTION_WARNINGS.ROLE_ANALYSIS_UNAVAILABLE, { error: analysis.error });
   const budgetBefore = characterBudgetOf(candidate);
   const capacity = roleCapacityOf(candidate, budgetBefore.counts);
   // Which roles are still free *after* this plan's own decisions. Classifying
