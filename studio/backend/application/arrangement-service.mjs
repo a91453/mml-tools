@@ -12,10 +12,10 @@
 //                     nothing, and files the derived candidate.
 //
 // A suggestion is not an acceptance. This layer will not convert one into the
-// other, will not resolve a `PENDING` on a caller's behalf, will not accept a
-// Lead demotion because one was suggested, and will not invent the evidence a
-// demotion requires. An agent that wants a decision applied has to state the
-// decision.
+// other, will not resolve a `PENDING` on a caller's behalf, and will not invent
+// evidence for any Lead move. Demotion, promotion and duplication into Melody
+// all remain subject to the shared Lead-role grader. An agent that wants a
+// decision applied has to state the decision and its evidence.
 //
 // The acceptance bindings are computed here, from the baseline and lane
 // decomposition that are loaded right now, and a caller may not supply them.
