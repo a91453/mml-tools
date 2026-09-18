@@ -148,6 +148,7 @@ export const GATE_NAMES = freeze([
   'audio',
   'player_readback',
   'mobile_adaptation',
+  'regression',
   'in_game',
 ]);
 
@@ -166,7 +167,7 @@ export const OPERATION_STATUS = freeze({
   FAILED: 'failed',
 });
 
-export const GATE_NOTICE = 'Gate axes are independent. A technical PASS certifies serialization and readback under this implementation only: it never establishes source completeness, audio alignment, player readback, Mobile adaptation or in-game acceptance. No operation result, emitter result, parser result, transport result or model call can set in_game.';
+export const GATE_NOTICE = 'Gate axes are independent. A technical PASS certifies serialization and readback under this implementation only: it never establishes source completeness, audio alignment, player readback, Mobile adaptation, regression review or in-game acceptance. No operation result, emitter result, parser result, transport result or model call can set in_game.';
 
 // ─── errors ─────────────────────────────────────────────────────────────────
 //
