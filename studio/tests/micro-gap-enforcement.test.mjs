@@ -197,6 +197,7 @@ function readiness(candidate) {
     playerReadback: 'PASS',
     originalAudioRequired: true,
     mobileAdaptation: 'PASS',
+    regressionReviewed: true,
   });
 }
 
