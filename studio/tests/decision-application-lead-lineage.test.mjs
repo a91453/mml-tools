@@ -28,6 +28,7 @@ import {
   LEAD_EVIDENCE_LINEAGE_BLOCKERS,
 } from '../backend/arrangement/decision-review.mjs';
 import { suggestRoleCandidates } from '../backend/arrangement/role-candidates.mjs';
+import { evaluateProjectReadiness } from '../backend/final/index.mjs';
 import {
   roleDeclaredBaseline,
   acceptanceFor,
@@ -592,4 +593,37 @@ test('a fresh review cannot resurrect a lineage the integrity check refused', ()
   const intact = leadPromotionReportsFromLineage({ applications: [first, second], baseline, candidate: second.candidate, freshReviews: fresh });
   assert.equal(intact.length, 1);
   assert.equal(intact[0].status, 'PASS');
+});
+
+test('a refused lineage leaves the Lead gates blocking, not N/A', () => {
+  const { first, second } = stalePromotionChain();
+  const holed = [first, { ...second, revision: { ...second.revision, index: 5 } }];
+
+  // Losing the reports must not lose the requirement. An empty required set
+  // with no reports falls through to `N/A`, which is PASS-like -- so a refused
+  // or truncated chain would have REMOVED both Lead blockers instead of adding
+  // them, which is the wrong direction for a provenance failure. The readiness
+  // gates derive their required ids from Melody membership as well as from the
+  // diff, so the requirement survives the reports.
+  const reports = {
+    leadPromotionReports: leadPromotionReportsFromLineage({ applications: holed, baseline, candidate: second.candidate }),
+    leadDemotionReports: leadDemotionReportsFromLineage({ applications: holed, baseline, candidate: second.candidate }),
+  };
+  assert.deepEqual(reports.leadPromotionReports, []);
+  assert.deepEqual(reports.leadDemotionReports, []);
+
+  const readiness = evaluateProjectReadiness({ project: second.candidate, ...reports });
+  assert.equal(readiness.gates.leadPromotion.status, 'PENDING');
+  assert.ok(readiness.gates.leadPromotion.blockers.includes('LEAD_PROMOTION_EVIDENCE_REQUIRED'));
+  assert.ok(readiness.preGameBlocking.includes('leadPromotion'));
+  assert.equal(readiness.candidateReady, false);
+
+  // The intact chain is the control: the same candidate, with its reports, is
+  // not blocked on the promotion axis.
+  const ok = evaluateProjectReadiness({
+    project: second.candidate,
+    leadPromotionReports: leadPromotionReportsFromLineage({ applications: [first, second], baseline, candidate: second.candidate, freshReviews: [freshPromotionReview(second.candidate)] }),
+    leadDemotionReports: leadDemotionReportsFromLineage({ applications: [first, second], baseline, candidate: second.candidate }),
+  });
+  assert.equal(ok.gates.leadPromotion.status, 'PASS');
 });
