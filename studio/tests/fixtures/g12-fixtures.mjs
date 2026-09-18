@@ -5,6 +5,8 @@
 // material -- and nothing else.
 
 import { createCanonicalProject, createCanonicalNoteEvent } from '../../backend/canonical/index.mjs';
+import { applyAcceptedArrangement, baselineIdentityOf } from '../../backend/arrangement/decision-application.mjs';
+import { canonicalIdentity } from '../../backend/final/emitter-contract.mjs';
 import { sixRoleBaseline, FIXTURE_SOURCE_ID } from './application-fixtures.mjs';
 
 export { FIXTURE_SOURCE_ID };
@@ -78,3 +80,44 @@ export const reductionDecision = (input) => ({
   evidence: [`${FIXTURE_SOURCE_ID}#reduction`],
   ...input,
 });
+
+/**
+ * A real G11-D candidate that already contains a derived duplicate.
+ *
+ * Built by running the actual applier over an accepted
+ * `DUPLICATE_WITH_JUSTIFICATION`, not by hand-assembling a candidate: the point
+ * of the fixture is that G12 receives exactly what an upstream accepted
+ * revision produces, derived-event ids and provenance included. One source
+ * event then reaches the reduction as two candidate events in two roles.
+ */
+export function g11dCandidateWithDuplicate({ from = 'chord1-1', toRoles = ['Chord5'], acceptedBy = 'fixture-reviewer' } = {}) {
+  const source = sixRoleBaseline();
+  // Chord5 left empty so the duplicate has a free role to land in.
+  const baseline = createCanonicalProject({ ...source, events: source.events.filter(event => event.role !== 'Chord5') });
+  const canonical = canonicalIdentity();
+  const identity = baselineIdentityOf(baseline);
+  const application = applyAcceptedArrangement({
+    baseline,
+    decisions: [{
+      id: `duplicate:${from}`,
+      type: 'DUPLICATE_WITH_JUSTIFICATION',
+      target: { eventIds: [from] },
+      toRoles,
+      reason: 'The source supports this doubling as secondary reinforcement.',
+      evidence: [`${FIXTURE_SOURCE_ID}#doubling/${from}`],
+      acceptance: {
+        state: 'ACCEPTED',
+        acceptedBy,
+        reviewedRevisionId: null,
+        baselineContentDigest: identity.contentDigest,
+        sourceIdentityDigest: identity.sourceIdentityDigest,
+        laneDecompositionDigest: null,
+        canonicalRulesSnapshotSha: canonical.rules_snapshot_sha,
+      },
+    }],
+    canonicalIdentity: canonical,
+  });
+  if (application.status !== 'PASS') throw Error(`fixture could not build a duplicated candidate: ${JSON.stringify(application.rejected)}`);
+  const derivedEventId = application.candidate.events.find(event => event.metadata?.g11d?.derivedFromEventId === from)?.id;
+  return { baseline, application, candidate: application.candidate, originEventId: from, derivedEventId };
+}

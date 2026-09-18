@@ -89,6 +89,12 @@ export const REDUCTION_OUTCOMES = Object.freeze({
   OMIT: 'OMIT',
 });
 
+// The order a baseline event's several candidate copies roll up in, most
+// reviewer-attention-worthy first. An unresolved or outside-the-six-roles copy
+// outranks a settled one, so a duplicate that happens to be decided can never
+// hide the copy that is not.
+const ROLL_UP_PRECEDENCE = Object.freeze(['PENDING', 'OVERFLOW', 'REDISTRIBUTE', 'KEEP', 'OMIT']);
+
 // Which accounting bucket each outcome belongs to. The invariant in §7 of the
 // stage contract is exactly "every accounted event is in one of these five".
 export const REDUCTION_ACCOUNTING_BUCKETS = Object.freeze({
@@ -770,16 +776,20 @@ export function planFinalReduction({
       if (verified === null) addWarning(REDUCTION_WARNINGS.UPSTREAM_OMISSION_NOT_VERIFIED, { baselineEventId: origin.id });
       items.push(Object.freeze({
         ...base,
+        manifestations: Object.freeze([]),
+        manifestationCount: 0,
         candidateEventIds: Object.freeze([]),
         currentRole: null,
         proposedRole: null,
+        duplicateRoles: null,
         outcome: REDUCTION_OUTCOMES.OMIT,
         accounting: REDUCTION_ACCOUNTING_BUCKETS.OMIT,
         reasonCode: REDUCTION_REASON_CODES.OMITTED_BEFORE_REDUCTION,
         decisionId: null,
+        decisionIds: Object.freeze([]),
         evidence: Object.freeze([]),
         upstreamOmissionVerified: verified,
-        leadImpact: Object.freeze({ affectsLead: base.baselineRole === LEAD_ROLE, kind: base.baselineRole === LEAD_ROLE ? 'removal' : null, evidenceRequired: false, resolvedBy: 'PARENT_REVISION' }),
+        leadImpact: Object.freeze({ affectsLead: base.baselineRole === LEAD_ROLE, kind: base.baselineRole === LEAD_ROLE ? 'removal' : null, evidenceRequired: false, evidenceSupplied: null, resolvedBy: 'PARENT_REVISION' }),
         core3Impact: Object.freeze({ leavesCore3: CORE3.has(base.baselineRole ?? ''), entersCore3: false }),
         reviewDependencies: Object.freeze(['Gate 2', 'Gate 9']),
         suggestions: Object.freeze([]),
@@ -788,7 +798,20 @@ export function planFinalReduction({
       continue;
     }
 
-    for (const event of present) {
+    // One baseline event can reach this stage as several candidate events: an
+    // upstream G11-D `DUPLICATE_WITH_JUSTIFICATION` sounds the same source
+    // event in a second role, and `baselineOriginResolver` correctly resolves
+    // every copy back to the one origin it came from.
+    //
+    // Each copy still needs its own disposition -- they can sit in different
+    // roles and a reviewer can decide them differently -- but the accounting
+    // invariant is about the SOURCE event, not about its copies. So the ledger
+    // carries one item per baseline event, with each candidate manifestation
+    // described beneath it, and the item's own outcome is a roll-up over them.
+    // Pushing one item per copy would let a single source event occupy two
+    // accounting buckets and make `accounting.total` exceed the number of
+    // source events, which is the invariant this stage exists to hold.
+    const manifestations = present.map(event => {
       const decision = decisionByEventId.get(event.id) ?? null;
       const currentRole = event.role ?? null;
       const percussion = isPercussion(event);
@@ -867,22 +890,29 @@ export function planFinalReduction({
       // sufficient is decided by the shared Lead grader inside the role
       // application above, and shows up as a G11-D rejection if it is not.
       const leadResolved = !affectsLead ? null : derivation?.status === 'PASS' ? 'LEAD_GATE_PASSED' : 'LEAD_GATE_NOT_SATISFIED';
+      // Copies THIS plan would mint from this manifestation. Scoped to the
+      // decision that creates them, so a duplicate an earlier revision already
+      // made -- which is its own manifestation above -- is not also attributed
+      // to the event it was copied from, where it would be counted twice.
+      const createdEventIds = duplicateRoles
+        ? uniqueSorted((proposed.events ?? [])
+          .filter(other => other.metadata?.g11d?.derivedFromEventId === event.id && !candidateById.has(other.id))
+          .map(other => other.id))
+        : [];
 
-      items.push(Object.freeze({
-        ...base,
-        candidateEventIds: Object.freeze(uniqueSorted([
-          event.id,
-          ...(proposed.events ?? []).filter(other => other.metadata?.g11d?.derivedFromEventId === event.id).map(other => other.id),
-        ])),
+      return Object.freeze({
+        candidateEventId: event.id,
+        derived: Boolean(event.metadata?.g11d?.derivedFromEventId),
+        derivedFromEventId: event.metadata?.g11d?.derivedFromEventId ?? null,
         currentRole,
         proposedRole,
         duplicateRoles: duplicateRoles ? Object.freeze([...duplicateRoles]) : null,
+        createdEventIds: Object.freeze(createdEventIds),
         outcome,
         accounting: REDUCTION_ACCOUNTING_BUCKETS[outcome],
         reasonCode,
         decisionId: decision?.id ?? null,
         evidence: Object.freeze([...(decision?.evidence ?? [])]),
-        upstreamOmissionVerified: null,
         leadImpact: Object.freeze({
           affectsLead,
           kind: leadKind,
@@ -894,13 +924,52 @@ export function planFinalReduction({
           leavesCore3: CORE3.has(currentRole ?? '') && !CORE3.has(proposedRole ?? ''),
           entersCore3: !CORE3.has(currentRole ?? '') && CORE3.has(proposedRole ?? ''),
         }),
-        reviewDependencies: Object.freeze(reviewDependenciesFor(outcome, affectsLead, CORE3.has(currentRole ?? '') || CORE3.has(proposedRole ?? ''))),
         suggestions: outcome === REDUCTION_OUTCOMES.PENDING && reasonCode === REDUCTION_REASON_CODES.ROLE_DECISION_REQUIRED
           ? suggestionsFor(event, capacityAfter, analysis)
           : Object.freeze([]),
         percussion,
-      }));
-    }
+      });
+    });
+
+    // The roll-up, in the fail-visible direction: an unresolved or
+    // outside-the-six-roles copy outranks a settled one, so a second copy that
+    // happens to be decided can never hide the one that is not. `OMIT` is last
+    // because it is only the item's answer when EVERY copy is omitted.
+    const rollUp = ROLL_UP_PRECEDENCE.find(outcome => manifestations.some(entry => entry.outcome === outcome))
+      ?? REDUCTION_OUTCOMES.OMIT;
+    const deciding = manifestations.find(entry => entry.outcome === rollUp);
+    // What the item reports as its own role move: the copy that is the source
+    // event itself where there is one, so a derived duplicate never stands in
+    // for its origin's placement.
+    const primary = manifestations.find(entry => !entry.derived) ?? manifestations[0];
+    const leading = manifestations.find(entry => entry.leadImpact.affectsLead) ?? null;
+    const decisionIds = uniqueSorted(manifestations.map(entry => entry.decisionId).filter(string));
+
+    items.push(Object.freeze({
+      ...base,
+      manifestations: Object.freeze(manifestations),
+      manifestationCount: manifestations.length,
+      candidateEventIds: Object.freeze(uniqueSorted(manifestations.flatMap(entry => [entry.candidateEventId, ...entry.createdEventIds]))),
+      currentRole: primary.currentRole,
+      proposedRole: deciding?.proposedRole ?? primary.proposedRole,
+      duplicateRoles: primary.duplicateRoles,
+      outcome: rollUp,
+      accounting: REDUCTION_ACCOUNTING_BUCKETS[rollUp],
+      reasonCode: deciding?.reasonCode ?? primary.reasonCode,
+      decisionId: decisionIds.length === 1 ? decisionIds[0] : null,
+      decisionIds: Object.freeze(decisionIds),
+      evidence: Object.freeze(uniqueSorted(manifestations.flatMap(entry => entry.evidence))),
+      upstreamOmissionVerified: null,
+      leadImpact: leading ? leading.leadImpact : primary.leadImpact,
+      core3Impact: Object.freeze({
+        leavesCore3: manifestations.some(entry => entry.core3Impact.leavesCore3),
+        entersCore3: manifestations.some(entry => entry.core3Impact.entersCore3),
+      }),
+      reviewDependencies: Object.freeze([...new Set(manifestations.flatMap(entry =>
+        reviewDependenciesFor(entry.outcome, entry.leadImpact.affectsLead, CORE3.has(entry.currentRole ?? '') || CORE3.has(entry.proposedRole ?? ''))))].sort(cmpStr)),
+      suggestions: manifestations.find(entry => entry.suggestions.length)?.suggestions ?? Object.freeze([]),
+      percussion: manifestations.some(entry => entry.percussion),
+    }));
   }
 
   // Every candidate note must be reachable from a ledger item, or the invariant
@@ -920,12 +989,24 @@ export function planFinalReduction({
     for (const event of notes(proposed)) {
       if (!accountedCandidateIds.has(event.id)) addBlocker(REDUCTION_BLOCKERS.EVENT_UNACCOUNTED, { proposedEventId: event.id });
     }
+    // Checked per manifestation rather than per item. A baseline event with two
+    // copies where one is omitted and one is kept satisfies any item-level test
+    // trivially, and would hide exactly the case this check exists for.
     for (const item of items) {
-      const expectedPresent = item.outcome !== REDUCTION_OUTCOMES.OMIT;
-      const stillThere = item.candidateEventIds.some(id => proposedById.has(id));
-      if (expectedPresent && !stillThere) addBlocker(REDUCTION_BLOCKERS.EVENT_UNACCOUNTED, { baselineEventId: item.baselineEventId, detail: 'ledger predicted retention, projection dropped it' });
-      if (!expectedPresent && stillThere && !item.candidateEventIds.every(id => proposedOmittedIds.has(id) || !proposedById.has(id))) {
-        addBlocker(REDUCTION_BLOCKERS.EVENT_UNACCOUNTED, { baselineEventId: item.baselineEventId, detail: 'ledger recorded an omission the projection did not perform' });
+      for (const entry of item.manifestations) {
+        const delivered = proposedById.has(entry.candidateEventId);
+        if (entry.outcome === REDUCTION_OUTCOMES.OMIT && delivered) {
+          addBlocker(REDUCTION_BLOCKERS.EVENT_UNACCOUNTED, { baselineEventId: item.baselineEventId, candidateEventId: entry.candidateEventId, detail: 'ledger recorded an omission the projection did not perform' });
+        }
+        if (entry.outcome !== REDUCTION_OUTCOMES.OMIT && !delivered) {
+          addBlocker(REDUCTION_BLOCKERS.EVENT_UNACCOUNTED, { baselineEventId: item.baselineEventId, candidateEventId: entry.candidateEventId, detail: 'ledger predicted retention, projection dropped it' });
+        }
+        for (const created of entry.createdEventIds) {
+          if (!proposedById.has(created)) addBlocker(REDUCTION_BLOCKERS.EVENT_UNACCOUNTED, { baselineEventId: item.baselineEventId, candidateEventId: created, detail: 'ledger predicted a duplicate the projection did not create' });
+        }
+      }
+      if (!item.manifestations.length && item.outcome !== REDUCTION_OUTCOMES.OMIT) {
+        addBlocker(REDUCTION_BLOCKERS.EVENT_UNACCOUNTED, { baselineEventId: item.baselineEventId, detail: 'ledger reports a delivery for a baseline event with no candidate manifestation' });
       }
     }
   }
@@ -1012,7 +1093,14 @@ export function planFinalReduction({
     items: Object.freeze(items),
     accounting: Object.freeze({
       ...accounting,
+      // `total` counts SOURCE events, one per baseline note, which is what the
+      // invariant is about. `manifestationCount` counts the candidate events
+      // those source events reach this stage as -- larger whenever an upstream
+      // revision duplicated one -- so neither number has to stand in for the
+      // other.
       total: items.length,
+      manifestationCount: items.reduce((sum, item) => sum + item.manifestationCount, 0),
+      duplicatedBaselineEventIds: Object.freeze(uniqueSorted(items.filter(item => item.manifestationCount > 1).map(item => item.baselineEventId))),
       baselineNoteCount: notes(baseline).length,
       candidateNoteCount: candidateNotes.length,
       retainedEventIds: byBucket('retained'),
@@ -1168,10 +1256,19 @@ export function applyFinalReduction({
   for (const event of notes(output)) {
     if (!ledgerIds.has(event.id)) throw Error(`G12 INVARIANT VIOLATED: the reduction candidate delivers an event no ledger entry accounts for: ${event.id}`);
   }
+  // Per manifestation: a baseline event with one omitted and one retained copy
+  // would satisfy an item-level check trivially while the ledger and the
+  // candidate disagreed about each copy.
+  if (plan.accounting.total !== plan.accounting.baselineNoteCount) throw Error('G12 INVARIANT VIOLATED: the ledger does not carry exactly one entry per source event');
   for (const item of plan.items) {
-    const delivered = item.candidateEventIds.filter(id => outputById.has(id));
-    if (item.outcome === REDUCTION_OUTCOMES.OMIT && delivered.length) throw Error(`G12 INVARIANT VIOLATED: ${item.baselineEventId} is recorded omitted but was delivered`);
-    if (item.outcome !== REDUCTION_OUTCOMES.OMIT && item.candidateEventIds.length && !delivered.length) throw Error(`G12 INVARIANT VIOLATED: ${item.baselineEventId} is recorded retained but was not delivered`);
+    for (const entry of item.manifestations) {
+      const delivered = outputById.has(entry.candidateEventId);
+      if (entry.outcome === REDUCTION_OUTCOMES.OMIT && delivered) throw Error(`G12 INVARIANT VIOLATED: ${entry.candidateEventId} is recorded omitted but was delivered`);
+      if (entry.outcome !== REDUCTION_OUTCOMES.OMIT && !delivered) throw Error(`G12 INVARIANT VIOLATED: ${entry.candidateEventId} is recorded retained but was not delivered`);
+      for (const created of entry.createdEventIds) {
+        if (!outputById.has(created)) throw Error(`G12 INVARIANT VIOLATED: ${created} is recorded as a duplicate this reduction creates but was not delivered`);
+      }
+    }
   }
   if (output.metadata?.g12?.planId !== plan.id) throw Error('G12 INVARIANT VIOLATED: the reduction candidate does not carry this plan');
   if (output.metadata?.g11d?.revision?.stage !== FINAL_REDUCTION_STAGE) throw Error('G12 INVARIANT VIOLATED: the reduction revision does not carry the reduction stage');

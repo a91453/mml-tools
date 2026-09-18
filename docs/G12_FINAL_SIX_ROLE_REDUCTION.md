@@ -69,6 +69,44 @@ that delivers an event no ledger entry accounts for, or drops one the ledger
 says is retained; `applyFinalReduction` re-proves both on its own output before
 returning, and a violation throws rather than returns.
 
+### One source event, several candidate copies
+
+An upstream G11-D `DUPLICATE_WITH_JUSTIFICATION` sounds one source event in a
+second role, so that event reaches this stage as **two or more candidate
+events**, and `baselineOriginResolver()` resolves every copy back to the one
+origin it came from.
+
+The invariant is about the **source** event, so the ledger carries one entry per
+baseline note, with each candidate copy described beneath it in
+`manifestations[]` — its own `candidateEventId`, role, outcome, reason code,
+decision and Lead/Core3 impact. One entry per *copy* would let a single source
+event occupy two accounting buckets and make `accounting.total` exceed the
+number of source events, which is exactly what the invariant denies.
+
+The entry's own outcome is a roll-up over its copies, in the fail-visible
+direction:
+
+```
+PENDING  >  OVERFLOW  >  REDISTRIBUTE  >  KEEP  >  OMIT
+```
+
+An unresolved or outside-the-six-roles copy outranks a settled one, so a
+duplicate that happens to be decided can never hide the copy that is not.
+`OMIT` is last because it is the entry's answer only when *every* copy is
+omitted. The two counts are reported separately and neither stands in for the
+other:
+
+| Field | Counts |
+| --- | --- |
+| `accounting.total` | source events — always equals `baselineNoteCount` |
+| `accounting.manifestationCount` | the candidate events they reach this stage as |
+| `accounting.duplicatedBaselineEventIds` | which source events arrived with more than one copy |
+
+Both the planner's projection check and the apply-time proof run **per
+manifestation**, not per entry: a baseline event with one omitted copy and one
+retained copy satisfies any entry-level test trivially, which is the case those
+checks exist for.
+
 **`OMIT` is not something the planner can reach on its own.** "The six roles
 were full" is a capacity fact, not a licence to delete. An omission requires an
 explicit decision naming exact candidate events, with a reason, at least one

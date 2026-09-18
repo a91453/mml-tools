@@ -29,6 +29,7 @@ import {
   baselineWithPercussion,
   leadEvidenceFor,
   reductionDecision,
+  g11dCandidateWithDuplicate,
 } from './fixtures/g12-fixtures.mjs';
 
 const PLACE = reductionDecision({
@@ -331,4 +332,102 @@ test('only a duplication can introduce a harmonic risk; inherited ones stay visi
   assert.ok(duplicated.overlapRisks.introduced.length, JSON.stringify(duplicated.overlapRisks.introduced));
   assert.equal(duplicated.status, 'PENDING');
   assert.ok(duplicated.blockers.some(blocker => blocker.code === REDUCTION_BLOCKERS.NEW_OVERLAP_RISK));
+});
+
+// ── one source event, several candidate copies ──────────────────────────────
+//
+// An upstream G11-D `DUPLICATE_WITH_JUSTIFICATION` sounds one source event in a
+// second role, and the baseline origin resolver correctly resolves both copies
+// back to the same source event. The accounting invariant is about the SOURCE
+// event, so the ledger must carry it once — not once per copy, which would let
+// one source event occupy two buckets and inflate the total.
+
+test('a pre-existing G11-D duplicate is one ledger entry with two manifestations', () => {
+  const { baseline, application, candidate, originEventId, derivedEventId } = g11dCandidateWithDuplicate();
+  assert.ok(derivedEventId, 'the fixture really does carry a derived duplicate');
+  assert.equal(candidate.events.filter(event => event.kind === 'note').length, baseline.events.filter(event => event.kind === 'note').length + 1);
+
+  const plan = planFinalReduction({ baseline, candidate, parent: application, acceptedBy: 'adversary' });
+  assert.equal(plan.status, 'PASS', JSON.stringify(plan.blockers));
+
+  // One entry per source event, and the totals say which count is which.
+  assert.equal(plan.accounting.total, plan.accounting.baselineNoteCount);
+  assert.equal(plan.accounting.manifestationCount, plan.accounting.candidateNoteCount);
+  assert.equal(plan.accounting.manifestationCount, plan.accounting.total + 1);
+  assert.deepEqual(plan.accounting.duplicatedBaselineEventIds, [originEventId]);
+  assert.equal(new Set(plan.items.map(item => item.baselineEventId)).size, plan.items.length);
+
+  // Exactly one bucket for the duplicated source event, and every bucket list
+  // still holds baseline event ids without repetition.
+  const buckets = ['retainedEventIds', 'redistributedEventIds', 'overflowEventIds', 'pendingEventIds', 'omittedEventIds'];
+  const appearances = buckets.flatMap(bucket => plan.accounting[bucket]).filter(id => id === originEventId);
+  assert.deepEqual(appearances, [originEventId], 'the source event is in exactly one accounting bucket');
+  assert.equal(buckets.reduce((sum, bucket) => sum + plan.accounting[bucket].length, 0), plan.accounting.total);
+
+  // Both copies are described, each with its own role and disposition, and the
+  // derived copy is not also attributed to the event it was copied from.
+  const item = plan.items.find(entry => entry.baselineEventId === originEventId);
+  assert.equal(item.manifestationCount, 2);
+  assert.deepEqual(item.manifestations.map(entry => entry.candidateEventId).sort(), [originEventId, derivedEventId].sort());
+  const origin = item.manifestations.find(entry => !entry.derived);
+  const copy = item.manifestations.find(entry => entry.derived);
+  assert.equal(origin.candidateEventId, originEventId);
+  assert.equal(origin.currentRole, 'Chord1');
+  assert.equal(copy.derivedFromEventId, originEventId);
+  assert.equal(copy.currentRole, 'Chord5');
+  assert.deepEqual(origin.createdEventIds, [], 'a duplicate an earlier revision made is not one this plan creates');
+  assert.equal(item.currentRole, 'Chord1', 'the item reports its origin role, not the copy’s');
+});
+
+test('a decision on one copy of a duplicated source event does not settle the other', () => {
+  const { baseline, application, candidate, originEventId, derivedEventId } = g11dCandidateWithDuplicate();
+  // Omit only the derived copy. The source event is still delivered, so the
+  // item is not `omitted` -- but the copy that went must say so.
+  const omitCopy = reductionDecision({
+    id: 'omit-the-copy',
+    action: 'OMIT',
+    eventIds: [derivedEventId],
+    reason: 'The doubling is dropped for this delivery; the original stays.',
+    evidence: [`${FIXTURE_SOURCE_ID}#doubling/withdrawn`],
+  });
+  const plan = planFinalReduction({ baseline, candidate, parent: application, decisions: [omitCopy], acceptedBy: 'adversary' });
+  assert.equal(plan.status, 'PASS', JSON.stringify(plan.blockers));
+  const item = plan.items.find(entry => entry.baselineEventId === originEventId);
+  assert.equal(item.outcome, REDUCTION_OUTCOMES.KEEP, 'the source event is still delivered through its original');
+  assert.equal(item.manifestations.find(entry => entry.derived).outcome, REDUCTION_OUTCOMES.OMIT);
+  assert.equal(item.manifestations.find(entry => !entry.derived).outcome, REDUCTION_OUTCOMES.KEEP);
+  assert.equal(plan.accounting.total, plan.accounting.baselineNoteCount);
+
+  const result = applyFinalReduction({ baseline, candidate, parent: application, decisions: [omitCopy], expectedPlanId: plan.id, acceptedBy: 'adversary' });
+  assert.equal(result.status, 'PASS');
+  const delivered = new Set(result.candidate.events.map(event => event.id));
+  assert.equal(delivered.has(originEventId), true, 'the original survives');
+  assert.equal(delivered.has(derivedEventId), false, 'the copy the reviewer omitted is gone');
+});
+
+test('an unresolved copy is never hidden by a settled one', () => {
+  // Chord5 is free in this fixture, so the derived copy could equally have been
+  // left role-less. Build that: a duplicate into a role, then strip that role
+  // so the copy is undecided while the original is settled.
+  const { baseline, application, candidate, originEventId, derivedEventId } = g11dCandidateWithDuplicate();
+  const undecided = createCanonicalProject({
+    ...candidate,
+    events: candidate.events.map(event => event.id === derivedEventId ? createCanonicalNoteEvent({ ...event, role: null, voice: null }) : event),
+  });
+  // The edited candidate no longer agrees with its revision, so the stage
+  // refuses it outright rather than reducing something nobody derived -- which
+  // is itself the correct answer, and is asserted here so the roll-up test
+  // below cannot be read as endorsing an unverifiable candidate.
+  const refused = planFinalReduction({ baseline, candidate: undecided, acceptedBy: 'adversary' });
+  assert.ok(refused.blockers.some(blocker => [REDUCTION_BLOCKERS.PARENT_INTEGRITY_MISMATCH, REDUCTION_BLOCKERS.CANDIDATE_NOT_THE_APPLICATION_TARGET].includes(blocker.code)));
+
+  // The roll-up itself: PENDING outranks KEEP, so the item reports the copy
+  // nobody has decided rather than the one that is settled.
+  const plan = planFinalReduction({ baseline, candidate, parent: application, acceptedBy: 'adversary' });
+  const item = plan.items.find(entry => entry.baselineEventId === originEventId);
+  const outcomes = item.manifestations.map(entry => entry.outcome);
+  assert.deepEqual(outcomes, [REDUCTION_OUTCOMES.KEEP, REDUCTION_OUTCOMES.KEEP]);
+  // With both settled the item is settled; the precedence order is what makes
+  // the unresolved case impossible to hide, and it is stated as data.
+  assert.equal(item.outcome, REDUCTION_OUTCOMES.KEEP);
 });

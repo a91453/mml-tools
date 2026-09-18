@@ -405,9 +405,17 @@ const OUTCOME_LABELS = { KEEP: '保留', REDISTRIBUTE: '重新分配', OVERFLOW:
 function reductionItemRows(items, outcome) {
   const rows = items.filter(item => item.outcome === outcome);
   if (!rows.length) return '<p class="empty">無</p>';
+  // A source event an earlier revision duplicated reaches this stage as more
+  // than one candidate event. It is one ledger entry -- the accounting is about
+  // the source event -- so each copy is listed beneath it rather than the entry
+  // being repeated, which would make the source-event count read wrong.
+  const roleCell = item => item.manifestationCount > 1
+    ? `${item.manifestations.map(entry => `${esc(entry.currentRole ?? '—')} → ${esc(entry.proposedRole ?? '—')}${entry.derived ? ' <span class="muted">（複製）</span>' : ''}`).join('<br>')}`
+    : `${esc(item.currentRole ?? '—')} → ${esc(item.proposedRole ?? '—')}`;
+  const sourceCell = item => `<code>${esc(item.baselineEventId)}</code>${item.manifestationCount > 1 ? ` <span class="muted">×${item.manifestationCount}</span>` : ''}<br><span class="muted">${esc((item.sourceEventIds ?? []).join(' · '))}</span>`;
   return `<table class="reduction-ledger"><thead><tr><th>來源事件</th><th>角色</th><th>原因</th><th>Lead</th><th>Core3</th></tr></thead><tbody>${rows.slice(0, 200).map(item => `<tr>
-    <td><code>${esc(item.baselineEventId)}</code><br><span class="muted">${esc((item.sourceEventIds ?? []).join(' · '))}</span></td>
-    <td>${esc(item.currentRole ?? '—')} → ${esc(item.proposedRole ?? '—')}</td>
+    <td>${sourceCell(item)}</td>
+    <td>${roleCell(item)}</td>
     <td>${esc(item.reasonCode)}</td>
     <td>${item.leadImpact?.affectsLead ? `${esc(item.leadImpact.kind)} · ${esc(item.leadImpact.resolvedBy ?? '待證據')}` : '—'}</td>
     <td>${item.core3Impact?.leavesCore3 ? '離開 Core3' : item.core3Impact?.entersCore3 ? '進入 Core3' : '—'}</td>
@@ -423,6 +431,7 @@ function finalReductionSection() {
     <div class="actions"><button id="preview-reduction" ${workspace.assets?.baseline && workspace.assets?.candidate ? '' : 'disabled'}>預覽收斂計畫</button>${reductionDecisions.length ? `<button id="clear-reduction-decisions" class="quiet">清除 ${reductionDecisions.length} 筆待套用決策</button>` : ''}</div>
     ${applied ? `<p class="meta">已套用 ${workspace.finalReduction.decisions.length} 筆收斂決策。預覽會連同這些已接受的決策一起重新推導；新增的決策會與它們合併後再套用。</p>` : ''}
     ${plan ? `<p>${badge(plan.status)} · 共 ${a.total} 個來源事件 · 保留 ${a.retained} · 重新分配 ${a.redistributed} · 超出容量 ${a.overflow} · 待決 ${a.pending} · 已接受省略 ${a.omitted}</p>
+      ${a.manifestationCount > a.total ? `<p class="meta">其中 ${a.duplicatedBaselineEventIds.length} 個來源事件由先前修訂版複製過，合計以 ${a.manifestationCount} 個候選事件進入本階段。計數以<strong>來源事件</strong>為準，每個來源事件只會落在一個去向。</p>` : ''}
       <p class="meta">父候選：<code>${esc(plan.parentRevisionId ?? '（來源基準本身）')}</code> · 計畫：<code>${esc(plan.id)}</code></p>
       ${plan.blockers.length ? detail(`無法自動處理的項目（${plan.blockers.length}）`, plan.blockers) : ''}
       ${plan.warnings.length ? detail(`仍需審核的項目（${plan.warnings.length}）`, plan.warnings) : ''}
