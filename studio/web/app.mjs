@@ -421,6 +421,7 @@ function finalReductionSection() {
   return `<section id="final-reduction"><div class="section-heading"><h2>Final 六角色收斂（G12）</h2><small>角色與容量</small></div><div class="card">
     <p class="meta">把已接受角色的候選收斂成可進入 Mobile 適配的六角色候選。每一個來源支持的事件都會落在<strong>保留／重新分配／超出容量／待決／已接受省略</strong>其中之一，不會有事件無聲消失。本階段<strong>不改音高、八度、起訖、時值與音量</strong>——那些屬於下一節的 Mobile 適配。</p>
     <div class="actions"><button id="preview-reduction" ${workspace.assets?.baseline && workspace.assets?.candidate ? '' : 'disabled'}>預覽收斂計畫</button>${reductionDecisions.length ? `<button id="clear-reduction-decisions" class="quiet">清除 ${reductionDecisions.length} 筆待套用決策</button>` : ''}</div>
+    ${applied ? `<p class="meta">已套用 ${workspace.finalReduction.decisions.length} 筆收斂決策。預覽會連同這些已接受的決策一起重新推導；新增的決策會與它們合併後再套用。</p>` : ''}
     ${plan ? `<p>${badge(plan.status)} · 共 ${a.total} 個來源事件 · 保留 ${a.retained} · 重新分配 ${a.redistributed} · 超出容量 ${a.overflow} · 待決 ${a.pending} · 已接受省略 ${a.omitted}</p>
       <p class="meta">父候選：<code>${esc(plan.parentRevisionId ?? '（來源基準本身）')}</code> · 計畫：<code>${esc(plan.id)}</code></p>
       ${plan.blockers.length ? detail(`無法自動處理的項目（${plan.blockers.length}）`, plan.blockers) : ''}
@@ -611,7 +612,12 @@ function bind() {
   if (clearDecisions) clearDecisions.onclick = () => { reductionDecisions = []; reductionPreview = null; render(); };
   $('#preview-reduction').onclick = event => {
     event.preventDefault();
-    const decisions = reductionDecisions;
+    // The reduction is always re-derived from the loaded candidate with the
+    // whole decision set, so a preview taken after one was applied has to carry
+    // the decisions already accepted -- otherwise it would show the pre-reduction
+    // picture beside a panel saying the reduction is applied, and the material
+    // the applied decisions resolved would read as pending again.
+    const decisions = [...(workspace.finalReduction?.decisions ?? []), ...reductionDecisions];
     run(async () => { const plan = await call('previewFinalReduction', workspace, decisions, { acceptedBy: 'local-workspace-user' }); reductionPreview = { decisions, plan }; render(); });
   };
   const applyReduction = $('#apply-reduction');

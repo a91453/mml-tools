@@ -72,6 +72,15 @@ export async function runFinalReductionChecks({ page, idle, file, screenshot }) 
   assert.equal(await page.locator('#clear-reduction').count(), 1, 'IndexedDB restore replays the reduction');
   assert.ok((await page.locator('#final-reduction').textContent()).includes('重新分配 3'), 'the replayed reduction reports the same accounting');
 
+  // Previewing again after an apply carries the decisions already accepted, so
+  // the panel cannot show the pre-reduction picture beside a panel that says
+  // the reduction is applied.
+  await page.locator('#preview-reduction').click();
+  await idle();
+  const repreview = await section.textContent();
+  assert.ok(repreview.includes('重新分配 3'), `re-preview lost the applied decisions: ${repreview.slice(0, 400)}`);
+  assert.ok(repreview.includes('待決 0'), 're-preview must not report the resolved material as pending again');
+
   await page.locator('#clear-reduction').click(); await idle();
   assert.equal(await page.locator('#clear-reduction').count(), 0);
   assert.ok((await page.locator('#intake').textContent()).includes('reduction-candidate.json'), 'rollback retains the original source');
