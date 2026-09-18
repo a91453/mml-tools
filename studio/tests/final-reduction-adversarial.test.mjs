@@ -58,6 +58,40 @@ test('no accounting bucket can claim a delivery that does not happen', () => {
   for (const id of accounting.retainedEventIds) assert.ok(roleOf.get(id), `${id} is counted retained with no role`);
 });
 
+test('ACCEPT_OVERFLOW cannot relabel an assigned six-role event as outside the delivery', () => {
+  const baseline = sixRoleBaseline();
+  const decision = reductionDecision({
+    id: 'false-overflow',
+    action: 'ACCEPT_OVERFLOW',
+    eventIds: ['melody-1'],
+    evidence: [],
+    reason: 'Attempt to mark an already assigned event as overflow.',
+  });
+  const plan = planFinalReduction({ baseline, decisions: [decision], acceptedBy: 'adversary' });
+  assert.equal(plan.status, 'PENDING');
+  assert.ok(plan.blockers.some(blocker =>
+    blocker.code === REDUCTION_BLOCKERS.ACCEPT_OVERFLOW_TARGET_ASSIGNED
+    && blocker.eventId === 'melody-1'
+    && blocker.currentRole === 'Melody'
+  ), JSON.stringify(plan.blockers));
+  // The rejected bookkeeping decision does not rewrite the truthful ledger:
+  // the event remains delivered in Melody and remains a KEEP.
+  const item = plan.items.find(entry => entry.baselineEventId === 'melody-1');
+  assert.equal(item.outcome, REDUCTION_OUTCOMES.KEEP);
+  assert.equal(item.currentRole, 'Melody');
+  assert.equal(item.proposedRole, 'Melody');
+
+  const result = applyFinalReduction({
+    baseline,
+    decisions: [decision],
+    expectedPlanId: plan.id,
+    acceptedBy: 'adversary',
+  });
+  assert.equal(result.didApply, false);
+  assert.equal(result.candidate, null);
+  assert.ok(result.blockers.some(blocker => blocker.code === REDUCTION_BLOCKERS.ACCEPT_OVERFLOW_TARGET_ASSIGNED));
+});
+
 test('the ledger and the delivered candidate agree, proven on the output', () => {
   const baseline = baselineWithUnassignedRole();
   const plan = planFinalReduction({ baseline, decisions: [PLACE], acceptedBy: 'adversary' });
