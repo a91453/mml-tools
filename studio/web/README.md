@@ -196,8 +196,12 @@ The **Mobile 適配 v1** panel now previews and applies evidence-backed uniform
 role octave shifts and volume offsets/defaults, then re-runs analysis. It retains
 the original candidate for rollback and clears previous reviews and delivery.
 It operates on the candidate asset's assigned roles, not directly on the Raw MIDI
-suggestion report. See [Mobile Adaptation v1](../../docs/MOBILE_ADAPTATION_V1.md)
-for profiles, persistence, scope and remaining work.
+suggestion report. An event whose role differs from its Source-Faithful origin's
+in a way that involves Melody carries Lead evidence the existing re-review binds
+to its source pitch, timing and volume, so v1 refuses to adapt it rather than
+produce a gate no review could answer. See
+[Mobile Adaptation v1](../../docs/MOBILE_ADAPTATION_V1.md) for profiles,
+persistence, scope and remaining work.
 
 - Uncompressed score-partwise MusicXML, complete six-slot MML, Canonical IR @2 and
   Raw MIDI `.mid` / `.midi` intake are supported. Compressed MXL and unrecognized

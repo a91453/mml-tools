@@ -2,7 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { normalizeMobileProfile, planMobileAdaptation, applyMobileAdaptation, MOBILE_ADAPTATION_SCHEMA } from '../backend/adaptation/index.mjs';
 import { applicationIntegrity } from '../backend/arrangement/decision-review.mjs';
-import { createCanonicalProject, createCanonicalNoteEvent, createCanonicalRestEvent } from '../backend/canonical/index.mjs';
+import { createCanonicalProject, createCanonicalNoteEvent, createCanonicalRestEvent, createSource } from '../backend/canonical/index.mjs';
 import { createStudioApplication, OPERATION_STATUS } from '../backend/application/index.mjs';
 import { sixRoleBaseline, applyKeepOnlyCandidate } from './fixtures/application-fixtures.mjs';
 import { emitFinalMml } from '../backend/final/index.mjs';
@@ -129,12 +129,81 @@ test('empty roles stay empty and target boundaries 0 and 107 are accepted', () =
   assert.ok(plan.warnings.some(w => w.code === 'EMPTY_ROLE_UNCHANGED'));
 });
 
+// A shift that lands a role a semitone from another role is the risk this stage
+// creates most often, and a single imported MIDI puts every role on one source
+// id -- where the cross-source arbitration scan, by construction, sees nothing.
+test('a newly created m2/M7/m9 inside one source blocks, and an inherited one only warns', () => {
+  const source = createSource({ id: 'one-source', label: 'One source', kind: 'official-midi', authority: 'primary-symbolic', sha256: 'c'.repeat(64) });
+  const note = (id, pitch, role) => createCanonicalNoteEvent({ id, pitch, start: '0', end: '2', role, volume: 8, sourceIds: [source.id], sourceEventIds: [`one-source#${id}`] });
+  // Melody 84 over Chord1 71 is an inherited m9; shifting Melody to 72 makes a
+  // brand-new m2 against the same overlapping Chord1 note.
+  const project = createCanonicalProject({ id: 'single-source', title: 'Single source', sources: [source], events: [note('mel-1', 84, 'Melody'), note('ch1-1', 71, 'Chord1')] });
+  const plan = planFor(project, profile({ Melody: { pitchRange: [60, 79] } }));
+  assert.equal(plan.status, 'PENDING');
+  assert.deepEqual(plan.collisions.introduced, [{ kind: 'overlapping-dissonance', eventIds: ['ch1-1', 'mel-1'], interval: 1, intervalName: 'm2' }]);
+  assert.ok(plan.blockers.some(item => item.code === 'NEW_COLLISION_REQUIRES_REVIEW' && item.intervalName === 'm2'));
+  assert.equal(apply(project, profile({ Melody: { pitchRange: [60, 79] } })).candidate, null);
+  // The m9 that was already there is the existing review's business, not a
+  // reason to refuse a transformation that does not touch it.
+  const volumeOnly = planFor(project, profile({ Melody: { volumeDelta: 1 } }));
+  assert.equal(volumeOnly.status, 'PASS');
+  assert.deepEqual(volumeOnly.collisions.introduced, []);
+  assert.deepEqual(volumeOnly.collisions.before, [{ kind: 'overlapping-dissonance', eventIds: ['ch1-1', 'mel-1'], interval: 13, intervalName: 'm9' }]);
+  assert.ok(volumeOnly.warnings.some(w => w.code === 'EXISTING_COLLISIONS_REQUIRE_REVIEW'));
+});
+
+test('an inherited out-of-range pitch is reported, not turned into an unfixable block', () => {
+  const original = baseline();
+  const high = createCanonicalProject({ ...original, events: [...original.events, createCanonicalNoteEvent({ ...original.events[0], id: 'ch5-high', role: 'Chord5', pitch: 110, start: '8', end: '9' })] });
+  // Chord5 sits above the Published Canonical range and this profile does not
+  // touch it. Adapting Melody stays possible; the inherited note stays visible.
+  const plan = planFor(high, profile({ Melody: { pitchRange: [48, 64] } }));
+  assert.equal(plan.status, 'PASS');
+  assert.ok(plan.warnings.some(w => w.code === 'EXISTING_PITCH_OUTSIDE_MOBILE_RANGE' && w.eventId === 'ch5-high'));
+  assert.ok(!plan.blockers.some(b => b.code === 'PITCH_OUTSIDE_MOBILE_RANGE'));
+  // A note this plan does move must still land inside it.
+  assert.equal(planFor(high, profile({ Chord5: { pitchRange: [96, 107] } })).rolePlans[0].semitones, -12);
+});
+
+test('re-titling a profile does not re-apply its offsets, and changing the numbers does', () => {
+  const original = baseline();
+  const applied = apply(original, profile({ Melody: { volumeDelta: 2 } }));
+  assert.deepEqual(applied.candidate.events.filter(e => e.kind === 'note').map(e => e.volume), [10, 12, 11]);
+  // Same transformation, different envelope: id, reason and evidence all differ.
+  const retitled = { ...profile({ Melody: { volumeDelta: 2 } }), id: 'renamed', reason: 'Same register decision, reworded for the report.', evidence: ['fixture:target-client/register-and-volume', 'fixture:second-citation'] };
+  const repeat = apply(original, retitled, applied.candidate, applied);
+  assert.equal(repeat.didApply, undefined);
+  assert.equal(repeat.unchanged, true, 'a reworded profile must not add a second offset');
+  // A different offset is a new decision and does apply, once.
+  const stronger = apply(original, profile({ Melody: { volumeDelta: 3 } }), applied.candidate, applied);
+  assert.deepEqual(stronger.candidate.events.filter(e => e.kind === 'note').map(e => e.volume), [13, 15, 14]);
+  // Adding a second role must not re-offset the role already settled.
+  const both = apply(original, profile({ Melody: { volumeDelta: 2 }, Chord1: { defaultVolume: 5 } }), applied.candidate, applied);
+  assert.equal(both.unchanged, true);
+});
+
 test('a previously promoted Lead cannot acquire an unreviewable pitch/volume change', () => {
   const original = baseline();
   const source = createCanonicalProject({ ...original, events: original.events.map(e => e.kind === 'note' ? createCanonicalNoteEvent({ ...e, role: 'Chord1' }) : e) });
   const plan = planFor(source, profile(), original);
   assert.ok(plan.blockers.some(b => b.code === 'LEAD_ROLE_ADAPTATION_REVIEW_UNSUPPORTED'));
   assert.equal(apply(source, profile(), original).candidate, null);
+});
+
+test('an event a supplied Lead lineage still binds cannot be adapted either', () => {
+  const original = baseline();
+  // Baseline and candidate roles agree, so nothing in this candidate shows the
+  // Lead move. The caller's lineage does, and that record's identity check is
+  // what a pitch change would leave unanswerable.
+  const plan = planMobileAdaptation({ baseline: original, candidate: original, profile: profile(), leadBoundEventIds: ['melody-2'] });
+  const blocked = plan.blockers.filter(b => b.code === 'LEAD_ROLE_ADAPTATION_REVIEW_UNSUPPORTED');
+  assert.deepEqual(blocked, [{ code: 'LEAD_ROLE_ADAPTATION_REVIEW_UNSUPPORTED', eventId: 'melody-2', fromRole: 'Melody', toRole: 'Melody', boundBy: 'lead-evidence-lineage' }]);
+  // The bound set is part of the plan identity, so a preview taken without it
+  // cannot be applied against a candidate that has one.
+  assert.notEqual(plan.id, planFor(original).id);
+  assert.equal(applyMobileAdaptation({ baseline: original, candidate: original, profile: profile(), leadBoundEventIds: ['melody-2'], expectedPlanId: planFor(original).id, acceptedBy: 'test' }).blockers[0].code, 'STALE_MOBILE_ADAPTATION_PLAN');
+  // An id the plan does not change is not a reason to refuse anything.
+  assert.equal(planMobileAdaptation({ baseline: original, candidate: original, profile: profile(), leadBoundEventIds: ['breath'] }).status, 'PASS');
 });
 
 test('a later edited adaptation target cannot silently reuse the same relative-volume profile', () => {
@@ -187,6 +256,52 @@ test('service creates a parent-linked adaptation, re-runs review and refuses inh
   const ready = await service.finalize(owner, run.projectId, { candidateId: result.adaptation.candidate_id, confirmations });
   assert.equal(ready.operation, OPERATION_STATUS.SUCCEEDED, JSON.stringify(ready));
   assert.equal(ready.gates.mobile_adaptation, 'PASS');
+});
+
+// Through the real service, on the shape that hid the hole: revision 1 promotes
+// an event into Melody, revision 2 moves it back. Baseline and candidate roles
+// agree again, so the candidate alone shows no Lead move -- but the demotion
+// record survives in the lineage, and its identity check is re-run on whatever
+// candidate is being graded. Adapting that event used to mint a candidate whose
+// Lead gate no review could ever answer.
+test('a Lead move only the revision lineage records still blocks the adaptation', async () => {
+  const service = createStudioApplication(), owner = 'lead-lineage';
+  const evidence = (eventId, over = {}) => ({
+    sourceIdentity: { sourceId: 'fixture:official-midi', sourceEventId: `fixture:official-midi#${eventId}` }, sectionRole: 'instrumental',
+    scoreEvidence: { availability: 'available', classification: 'lead', citation: 'fixture:score top line bar 1' },
+    audioEvidence: { availability: 'available', classification: 'foreground', citation: 'fixture:audio 0:00 foreground' },
+    continuity: { checked: true, createsLeadGap: false, replacementEventIds: [] }, core3: { checked: true, status: 'PASS' },
+    positiveReason: 'The score places this attack on the top staff and the mix carries it in front.', ...over });
+  const run = await applyKeepOnlyCandidate(service, owner);
+  const move = (id, fromRole, toRole, leadEvidence) => ({ id, type: 'MOVE_ROLE', target: { eventIds: ['chord3-1'] }, fromRole, toRole,
+    reason: 'Reviewed against the cited score and mix for this window.', evidence: ['fixture:score'], leadEvidence, acceptedBy: 'reviewer' });
+  const promoted = await service.applyDecisions(owner, run.projectId, { parentCandidateId: run.candidateId, decisions: [move('promote', 'Chord3', 'Melody', evidence('chord3-1'))] });
+  assert.equal(promoted.decisions.applied, true);
+  const demoted = await service.applyDecisions(owner, run.projectId, { parentCandidateId: promoted.decisions.candidate_id, decisions: [move('demote', 'Melody', 'Chord3', evidence('chord3-1', {
+    scoreEvidence: { availability: 'available', classification: 'inner', citation: 'fixture:score inner staff' },
+    audioEvidence: { availability: 'available', classification: 'background', citation: 'fixture:audio 0:00 behind the lead' },
+    positiveReason: 'The score places this attack on the inner staff and the mix keeps it behind the lead.' }))] });
+  assert.equal(demoted.decisions.applied, true);
+  const candidateId = demoted.decisions.candidate_id;
+  const before = (await service.reviewCandidate(owner, run.projectId, { candidateId })).review;
+  assert.deepEqual(before.lead_demotion.map(report => [report.eventId, report.blockers]), [['chord3-1', []]], 'the recovered record grades cleanly before the adaptation');
+  assert.notEqual(before.readiness.gates.leadDemotion.status, 'PENDING');
+
+  // Chord3 sits at 60 in the fixture; -24 clears both the Chord5 unison at 48
+  // and the Melody unison at 72 an octave would have created.
+  const p = profile({ Chord3: { pitchRange: [30, 40] } });
+  const preview = await service.planMobileAdaptation(owner, run.projectId, { candidateId, profile: p });
+  assert.equal(preview.adaptation.plan.status, 'PENDING');
+  assert.deepEqual(preview.adaptation.plan.blockers.filter(b => b.code === 'LEAD_ROLE_ADAPTATION_REVIEW_UNSUPPORTED'),
+    [{ code: 'LEAD_ROLE_ADAPTATION_REVIEW_UNSUPPORTED', eventId: 'chord3-1', fromRole: 'Chord3', toRole: 'Chord3', boundBy: 'lead-evidence-lineage' }]);
+  const refused = await service.applyMobileAdaptation(owner, run.projectId, { candidateId, profile: p, expectedPlanId: preview.adaptation.plan.id, acceptedBy: 'reviewer' });
+  assert.equal(refused.adaptation.applied, false);
+  assert.equal((await service.getProject(owner, run.projectId)).project.candidates.length, 3, 'no candidate is minted for a refused plan');
+
+  // A role the lineage does not bind is still adaptable on the same candidate.
+  const other = profile({ Chord4: { defaultVolume: 7 } });
+  const open = await service.planMobileAdaptation(owner, run.projectId, { candidateId, profile: other });
+  assert.equal(open.adaptation.plan.status, 'PASS', JSON.stringify(open.adaptation.plan.blockers));
 });
 
 function workspace() {

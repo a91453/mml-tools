@@ -149,7 +149,7 @@ export const STUDIO_MCP_TOOLS = [
   {
     name: 'studio_mobile_adaptation_plan',
     title: '預覽 Mobile 適配',
-    description: '依附有 reason/evidence 的 profile 自動規劃整個角色的最小八度調整與音量映射。profile schema=mml-studio/mobile-adaptation-profile@1，含 id、reason、evidence、roles；roles 以 Melody/Chord1–Chord5 為鍵，各值可含 pitchRange:[min,max]、volumeDelta、defaultVolume。音域上限 107，音量 0–15。沒有內建樂器校準，不猜測鼓面，不修剪音符。回傳 plan.id 與逐事件差異；PASS 僅表示可套用，不是 Gate 8 通過。',
+    description: '依附有 reason/evidence 的 profile 自動規劃整個角色的最小八度調整與音量映射。profile schema=mml-studio/mobile-adaptation-profile@1，含 id、reason、evidence、roles；roles 以 Melody/Chord1–Chord5 為鍵，各值可含 pitchRange:[min,max]、volumeDelta、defaultVolume。音域上限 107，音量 0–15。沒有內建樂器校準，不猜測鼓面，不修剪音符。回傳 plan.id 與逐事件差異；PASS 僅表示可套用，不是 Gate 8 通過。已綁定 Lead 證據的事件（含僅由 revision lineage 記錄者）不可調整音高／音量；來源基準未指定角色時，被指派為 Melody 的事件即屬此類，v1 無法調整該 Melody。',
     inputSchema: { type: 'object', properties: { project_id: projectId, candidate_id: candidateId, profile: structuredPayload() }, required: ['project_id', 'candidate_id', 'profile'], additionalProperties: false },
     annotations: readOnly,
   },

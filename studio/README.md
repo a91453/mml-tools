@@ -60,7 +60,8 @@ The following are implemented and covered by the combined legacy + Studio CI sui
 - original-audio alignment worker and Node evidence bridge;
 - per-song Project Readiness;
 - evidence-backed Mobile Adaptation v1: uniform role octave shifts, relative
-  volume offsets and explicit defaults, with preview/apply/review and rollback;
+  volume offsets and explicit defaults, with preview/apply/review and rollback,
+  refusing any event a Lead evidence record still binds;
 - G11-A Standard MIDI File intake into source-faithful Canonical evidence;
 - G11-B lossless, source-aware monophonic voice decomposition;
 - G11-C traceable six-role candidate suggestions with explicit pending/unassigned material;

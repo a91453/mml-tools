@@ -165,9 +165,18 @@ export function createArrangementService({ canonical, projects, intake, store })
       const { application: parent } = loadCandidate(record, candidateId);
       if (!engines.arrangement.applicationIntegrity(parent, project).ok) fail(ERROR_CODES.INVALID_REQUEST, 'The candidate no longer matches the current baseline.');
       if (parent.revision.canonicalIdentity.rules_snapshot_sha !== engines.emitterContract.canonicalIdentity().rules_snapshot_sha) fail(ERROR_CODES.INVALID_REQUEST, 'The candidate belongs to a different Canonical snapshot.');
+      // Which events a recovered Lead report re-checks the identity of. Read from
+      // the whole stored lineage, because a promotion in one revision and a move
+      // back in a later one leaves the baseline and candidate roles equal while
+      // the surviving record still binds this event's pitch, timing and volume.
+      // Changing one of those would leave a gate no review could answer, so the
+      // engine refuses before the candidate exists.
+      const leadReportInputs = { applications: loadCandidateLineage(record, candidateId), baseline: project, candidate: parent.candidate };
+      const leadBoundEventIds = [...engines.arrangement.leadDemotionReportsFromLineage(leadReportInputs), ...engines.arrangement.leadPromotionReportsFromLineage(leadReportInputs)]
+        .map(report => report.eventId).filter(eventId => typeof eventId === 'string' && eventId);
       let result;
       try {
-        const input = { baseline: project, candidate: parent.candidate, profile };
+        const input = { baseline: project, candidate: parent.candidate, profile, leadBoundEventIds };
         if (!apply) return { candidate_id: candidateId, baseline_id: baseline.baseline_id, plan: engines.adaptation.planMobileAdaptation(input) };
         result = engines.adaptation.applyMobileAdaptation({ ...input, parent, expectedPlanId, acceptedBy });
       } catch (error) { fail(ERROR_CODES.INVALID_REQUEST, error.message); }

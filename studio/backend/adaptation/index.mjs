@@ -6,7 +6,7 @@ import { f, ROLES } from '../mml/index.mjs';
 import { EFFECTIVE_RULESET } from '../rules/index.mjs';
 import { canonicalIdentity } from '../final/emitter-contract.mjs';
 import { compareCanonicalVersions } from '../compare/version-drift.mjs';
-import { analyzeCrossSourceHarmony } from '../arbitration/harmony.mjs';
+import { RISK_INTERVALS } from '../arbitration/harmony.mjs';
 import { baselineIdentityOf, candidateDigestOf, contentDigest, createArrangementRevision } from '../arrangement/decision-application.mjs';
 import { applicationIntegrity, baselineOriginResolver } from '../arrangement/decision-review.mjs';
 
@@ -51,36 +51,55 @@ export function normalizeMobileProfile(input) {
   return { schema: MOBILE_ADAPTATION_SCHEMA, id: input.id.trim(), reason: input.reason.trim(), evidence: [...new Set(input.evidence.map(ref => ref.trim()))].sort(), roles };
 }
 
-// Same-source doubling must also be visible. The existing harmony gate only
-// answers cross-source arbitration. Sustain overlaps use exact rational beats.
-function collisions(project) {
-  const groups = new Map();
-  for (const event of project.events.filter(e => e.kind === 'note')) {
-    const group = groups.get(event.pitch) ?? [];
-    group.push({ event, start: f(event.start), end: f(event.end) });
-    groups.set(event.pitch, group);
-  }
-  const result = [];
-  for (const group of groups.values()) {
-    group.sort((a, b) => a.start.cmp(b.start) || compareStrings(a.event.id, b.event.id));
-    let active = [];
-    for (const current of group) {
-      active = active.filter(other => other.end.cmp(current.start) > 0);
-      for (const other of active) result.push({ kind: 'same-pitch-overlap', eventIds: [other.event.id, current.event.id].sort(), pitch: current.event.pitch });
-      active.push(current);
-    }
-  }
-  return result;
-}
+// What this transformation itself can create, scanned on the candidate before
+// and after so only a *newly* introduced pair blocks.
+//
+// The existing cross-source harmony gate answers arbitration between disjoint
+// sources and keeps that job. It cannot answer this stage's question, because
+// the pairs an octave shift creates are usually inside one source: a single
+// imported MIDI puts every role on the same source id, so a shift that lands
+// Melody a semitone from Chord1 is invisible to a disjoint-source scan. This
+// sweep therefore reads the same reviewed interval set regardless of source
+// identity. It defines no new Canonical harmony rule and publishes no verdict:
+// a pre-existing pair stays a warning for the existing review, and only a pair
+// this plan would introduce blocks the application.
+//
+// One pass over temporally overlapping pairs, ordered by exact rational beats,
+// so the work is bounded by the same overlap budget checked below rather than
+// by every pair of notes in the song.
 function risks(project) {
-  return [...collisions(project), ...analyzeCrossSourceHarmony(project).conflicts
-    .filter(conflict => conflict.kind !== 'cross-source-same-pitch')
-    .map(conflict => ({ kind: conflict.kind, eventIds: [conflict.leftEventId, conflict.rightEventId].sort(), interval: conflict.intervalSemitones }))]
-    .sort((a, b) => compareStrings(riskKey(a), riskKey(b)));
+  const spans = project.events.filter(e => e.kind === 'note')
+    .map(event => ({ event, start: f(event.start), end: f(event.end) }))
+    .sort((a, b) => a.start.cmp(b.start) || compareStrings(a.event.id, b.event.id));
+  const result = [];
+  let active = [];
+  for (const current of spans) {
+    active = active.filter(other => other.end.cmp(current.start) > 0);
+    for (const other of active) {
+      const distance = Math.abs(other.event.pitch - current.event.pitch);
+      const eventIds = [other.event.id, current.event.id].sort();
+      if (distance === 0) result.push({ kind: 'same-pitch-overlap', eventIds, pitch: current.event.pitch });
+      else if (RISK_INTERVALS.has(distance)) result.push({ kind: 'overlapping-dissonance', eventIds, interval: distance, intervalName: RISK_INTERVALS.get(distance) });
+    }
+    active.push(current);
+  }
+  return result.sort((a, b) => compareStrings(riskKey(a), riskKey(b)));
 }
 const riskKey = risk => JSON.stringify([risk.kind, risk.eventIds, risk.pitch ?? null, risk.interval ?? null]);
 const sortedEvents = events => [...events].sort((a, b) => compareStrings(a.id, b.id));
 const targetDigest = (project, profile) => contentDigest(sortedEvents(project.events.filter(event => event.kind === 'note' && Object.hasOwn(profile.roles, event.role))));
+// The one role's own notes, so the repeat guard below is keyed per role instead
+// of on the whole profile envelope.
+const roleTargetDigest = (events, role) => contentDigest(sortedEvents(events.filter(event => event.kind === 'note' && event.role === role)));
+// What this candidate now carries per role: the rule digest that produced it and
+// the notes it produced. Roles a later profile leaves alone keep their recorded
+// rule, so a profile that adds one role cannot re-offset the others.
+const mergedRoleRecord = (priorRoles, roles, events) => {
+  const merged = {};
+  for (const [role, entry] of Object.entries(plain(priorRoles) ? priorRoles : {})) if (ROLES.includes(role) && string(entry?.rule)) merged[role] = { rule: entry.rule, target: roleTargetDigest(events, role) };
+  for (const [role, rule] of Object.entries(roles)) merged[role] = { rule: contentDigest(rule), target: roleTargetDigest(events, role) };
+  return merged;
+};
 
 // Bound collision-report allocation for pathological dense inputs. Reaching
 // this implementation limit is PENDING, never a claim of collision freedom.
@@ -96,16 +115,34 @@ function collisionBudgetExceeded(notes) {
   return false;
 }
 
-/** Read-only deterministic plan. PASS means executable, never Gate 8 PASS. */
-export function planMobileAdaptation({ baseline, candidate = baseline, profile }) {
+/**
+ * Read-only deterministic plan. PASS means executable, never Gate 8 PASS.
+ *
+ * `leadBoundEventIds` are the candidate events whose musical identity a
+ * recoverable Lead evidence report is re-checked against. Comparing baseline and
+ * candidate roles here cannot find all of them: a revision lineage that promotes
+ * an event into Melody and a later one that moves it back leaves the two roles
+ * equal while the demotion record — and its identity check — survives. The
+ * caller that can read the lineage supplies them; a plane without one (the local
+ * Web workspace) has no lineage to lose and passes none.
+ */
+export function planMobileAdaptation({ baseline, candidate = baseline, profile, leadBoundEventIds = [] }) {
   const normalized = normalizeMobileProfile(profile);
   if (!baseline?.events || !candidate?.events) throw Error('Mobile adaptation requires a Source-Faithful Baseline and a Canonical candidate');
   const baselineIdentity = baselineIdentityOf(baseline);
   const inputDigest = candidateDigestOf(candidate);
   const profileDigest = contentDigest(normalized);
   const blockers = [], warnings = [], changes = [], rolePlans = [];
-  const alreadyApplied = candidate.metadata?.mobileAdaptation?.profileDigest === profileDigest;
-  if (alreadyApplied && candidate.metadata.mobileAdaptation.targetDigest !== targetDigest(candidate, normalized)) blockers.push({ code: 'MOBILE_PROFILE_CONTEXT_CHANGED' });
+  const leadBound = new Set(Array.isArray(leadBoundEventIds) ? leadBoundEventIds.filter(string) : []);
+  // The transformation already in this candidate, recorded per role. Keying the
+  // repeat guard on the role's own rule and notes -- not on the profile envelope
+  // -- is what stops a re-titled profile, a new `reason` line or an added second
+  // role from quietly applying the same relative offset a second time.
+  const prior = candidate.metadata?.mobileAdaptation ?? null;
+  const priorRoles = plain(prior?.appliedRoles) ? prior.appliedRoles : null;
+  // Revisions minted before the per-role record keyed it on the whole profile.
+  const legacyApplied = !priorRoles && prior?.profileDigest === profileDigest;
+  if (legacyApplied && prior.targetDigest !== targetDigest(candidate, normalized)) blockers.push({ code: 'MOBILE_PROFILE_CONTEXT_CHANGED' });
   const notes = sortedEvents(candidate.events.filter(event => event.kind === 'note'));
   const origins = new Map();
   const resolveOrigin = baselineOriginResolver(baseline, candidate);
@@ -121,6 +158,12 @@ export function planMobileAdaptation({ baseline, candidate = baseline, profile }
   for (const [role, rule] of Object.entries(normalized.roles)) {
     const events = notes.filter(event => event.role === role);
     if (!events.length) { warnings.push({ code: 'EMPTY_ROLE_UNCHANGED', role }); continue; }
+    const recorded = priorRoles?.[role] ?? null;
+    const settled = legacyApplied || (recorded?.rule === contentDigest(rule));
+    // Recorded as applied, but the notes it was applied to have moved since: the
+    // offset is no longer a statement about this material. Reconsider it rather
+    // than either re-adding it or treating the old one as still decided.
+    if (!legacyApplied && settled && recorded.target !== roleTargetDigest(candidate.events, role)) blockers.push({ code: 'MOBILE_PROFILE_CONTEXT_CHANGED', role });
     let shift = 0;
     if (rule.pitchRange) {
       const low = Math.min(...events.map(e => e.pitch)), high = Math.max(...events.map(e => e.pitch));
@@ -131,11 +174,11 @@ export function planMobileAdaptation({ baseline, candidate = baseline, profile }
       if (!shifts.length) blockers.push({ code: 'REGISTER_REQUIRES_PHRASE_REVIEW', role, sourceRange: [low, high], targetRange: rule.pitchRange });
       else shift = shifts[0];
     }
-    rolePlans.push({ role, semitones: shift, volumeDelta: alreadyApplied ? 0 : (rule.volumeDelta ?? 0), noteCount: events.length });
+    rolePlans.push({ role, semitones: shift, volumeDelta: settled ? 0 : (rule.volumeDelta ?? 0), noteCount: events.length });
     for (const event of events) {
       const pitch = event.pitch + shift;
       let volume = event.volume;
-      if (!alreadyApplied && (rule.volumeDelta !== undefined || rule.defaultVolume !== undefined)) {
+      if (!settled && (rule.volumeDelta !== undefined || rule.defaultVolume !== undefined)) {
         if (volume === null) {
           if (rule.defaultVolume === undefined) blockers.push({ code: 'VOLUME_REFERENCE_REQUIRED', role, eventId: event.id });
           else volume = rule.defaultVolume;
@@ -147,15 +190,28 @@ export function planMobileAdaptation({ baseline, candidate = baseline, profile }
     }
   }
   const byId = new Map(changes.map(change => [change.eventId, change]));
-  // Existing Lead re-review binds musical identity to the source event. It
-  // cannot yet answer a moved Lead whose pitch/volume also changed. Refuse
-  // that combination before minting a candidate with an uncleareable gate.
+  // Existing Lead re-review binds musical identity to the source event: it
+  // cannot answer an event whose pitch or volume changed under the citation, and
+  // a fresh candidate-bound review cannot either, because the identity check runs
+  // before the grade. Refuse that combination -- whether this candidate shows the
+  // Lead move in its own roles, or only the supplied lineage still records it --
+  // before minting a candidate with a gate nothing can clear.
   for (const change of changes) {
     const origin = origins.get(change.eventId);
-    if (origin && origin.role !== change.role && [origin.role, change.role].includes('Melody')) blockers.push({ code: 'LEAD_ROLE_ADAPTATION_REVIEW_UNSUPPORTED', eventId: change.eventId });
+    const movedLead = origin && origin.role !== change.role && [origin.role, change.role].includes('Melody');
+    if (movedLead || leadBound.has(change.eventId)) blockers.push({ code: 'LEAD_ROLE_ADAPTATION_REVIEW_UNSUPPORTED', eventId: change.eventId, fromRole: origin?.role ?? null, toRole: change.role, boundBy: movedLead ? 'baseline-role-move' : 'lead-evidence-lineage' });
   }
   const proposed = { ...candidate, events: candidate.events.map(event => byId.has(event.id) ? { ...event, ...byId.get(event.id).after } : event) };
-  for (const event of proposed.events.filter(e => e.kind === 'note')) if (event.pitch < syntax.numericNoteMin || event.pitch > syntax.numericNoteMax) blockers.push({ code: 'PITCH_OUTSIDE_MOBILE_RANGE', eventId: event.id, pitch: event.pitch });
+  // A note this plan moves must land inside the Published Canonical range. A
+  // note already outside it that this plan does not move is inherited, not
+  // introduced: it stays a visible warning for the existing technical/Final
+  // gates that refuse it, instead of making every other role unadaptable.
+  for (const event of proposed.events.filter(e => e.kind === 'note')) {
+    if (event.pitch >= syntax.numericNoteMin && event.pitch <= syntax.numericNoteMax) continue;
+    const moved = byId.get(event.id)?.after.pitch !== byId.get(event.id)?.before.pitch;
+    if (moved) blockers.push({ code: 'PITCH_OUTSIDE_MOBILE_RANGE', eventId: event.id, pitch: event.pitch });
+    else warnings.push({ code: 'EXISTING_PITCH_OUTSIDE_MOBILE_RANGE', eventId: event.id, pitch: event.pitch });
+  }
   const scanLimited = collisionBudgetExceeded(notes);
   if (scanLimited) blockers.push({ code: 'COLLISION_SCAN_LIMIT', maxOverlappingPairs: 50000 });
   const beforeRisks = scanLimited ? [] : risks(candidate), afterRisks = scanLimited ? [] : risks(proposed);
@@ -163,17 +219,17 @@ export function planMobileAdaptation({ baseline, candidate = baseline, profile }
   const introduced = afterRisks.filter(risk => !existing.has(riskKey(risk)));
   for (const risk of introduced) blockers.push({ code: 'NEW_COLLISION_REQUIRES_REVIEW', ...risk });
   if (beforeRisks.length) warnings.push({ code: 'EXISTING_COLLISIONS_REQUIRE_REVIEW', count: beforeRisks.length });
-  const body = { schema: 'mml-studio/mobile-adaptation-plan@1', baselineIdentity, inputDigest, profileDigest, profile: normalized, canonicalIdentity: canonicalIdentity(), rolePlans, changes, blockers, warnings, collisions: { before: beforeRisks, after: afterRisks, introduced, scanLimited }, status: blockers.length ? 'PENDING' : 'PASS' };
+  const body = { schema: 'mml-studio/mobile-adaptation-plan@1', baselineIdentity, inputDigest, profileDigest, profile: normalized, canonicalIdentity: canonicalIdentity(), leadBoundEventIds: [...leadBound].sort(compareStrings), rolePlans, changes, blockers, warnings, collisions: { before: beforeRisks, after: afterRisks, introduced, scanLimited }, status: blockers.length ? 'PENDING' : 'PASS' };
   return { ...body, id: `mobile:plan:${contentDigest(body)}`, certifiesGates: [], notice: 'An executable adaptation plan, not a Mobile acceptance verdict. Evidence references are caller-supplied, not independently authenticated.' };
 }
 
 /** Atomic application; recomputes the plan and refuses stale preview identities. */
-export function applyMobileAdaptation({ baseline, candidate = baseline, parent = null, profile, expectedPlanId, acceptedBy }) {
+export function applyMobileAdaptation({ baseline, candidate = baseline, parent = null, profile, expectedPlanId, acceptedBy, leadBoundEventIds = [] }) {
   if (!string(acceptedBy) || acceptedBy.length > 120) throw Error('acceptedBy is required');
   if (!string(expectedPlanId)) throw Error('expectedPlanId from the preview is required');
   if (parent && (!applicationIntegrity(parent, baseline).ok || candidateDigestOf(candidate) !== parent.revision.candidateDigest)) throw Error('Mobile adaptation parent integrity mismatch');
   if (parent && parent.revision.canonicalIdentity?.rules_snapshot_sha !== canonicalIdentity().rules_snapshot_sha) throw Error('Mobile adaptation parent Canonical snapshot mismatch');
-  const plan = planMobileAdaptation({ baseline, candidate, profile });
+  const plan = planMobileAdaptation({ baseline, candidate, profile, leadBoundEventIds });
   if (plan.id !== expectedPlanId) return { applied: false, status: 'PENDING', candidate: null, revision: null, plan, blockers: [{ code: 'STALE_MOBILE_ADAPTATION_PLAN' }] };
   if (plan.blockers.length || !plan.changes.length) return { applied: false, status: plan.status, candidate: null, revision: null, plan, blockers: plan.blockers, unchanged: !plan.blockers.length };
   const changed = new Map(plan.changes.map(change => [change.eventId, change]));
@@ -189,7 +245,9 @@ export function applyMobileAdaptation({ baseline, candidate = baseline, parent =
     // A changed context can invalidate even a pair whose notes did not move.
     // Re-open accepted arbitration rather than carry any verdict into the revision.
     decisions: candidate.decisions.map(decision => createArbitrationDecision({ ...decision, status: decision.status === 'accepted' ? 'pending' : decision.status })),
-    metadata: { ...metadata, sourceFaithfulBaseline: { snapshot }, mobileAdaptation: { planId: plan.id, profileDigest: plan.profileDigest, targetDigest: targetDigest({ events: outputEvents }, plan.profile), profile: plan.profile, inputDigest: plan.inputDigest, acceptedBy: acceptedBy.trim(), changes: plan.changes, certifiesGates: [] } },
+    metadata: { ...metadata, sourceFaithfulBaseline: { snapshot }, mobileAdaptation: { planId: plan.id, profileDigest: plan.profileDigest, targetDigest: targetDigest({ events: outputEvents }, plan.profile),
+      appliedRoles: mergedRoleRecord(candidate.metadata?.mobileAdaptation?.appliedRoles, plan.profile.roles, outputEvents),
+      profile: plan.profile, inputDigest: plan.inputDigest, acceptedBy: acceptedBy.trim(), changes: plan.changes, certifiesGates: [] } },
   });
   const revision = createArrangementRevision({ stage: 'MOBILE_ADAPTATION_V1', index, parentRevisionId: parent?.revision.id ?? null, baselineIdentity: plan.baselineIdentity, parentCandidateIdentity: parent ? baselineIdentityOf(candidate) : null, decisionSetDigest: contentDigest({ planId: plan.id, acceptedBy: acceptedBy.trim() }), canonicalIdentity: plan.canonicalIdentity, candidateDigest: candidateDigestOf(adapted) });
   const output = createCanonicalProject({ ...adapted, metadata: { ...adapted.metadata, g11d: { revision, certifiesGates: [] } } });
