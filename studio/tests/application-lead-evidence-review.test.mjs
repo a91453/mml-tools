@@ -396,3 +396,102 @@ test('finalize grades the re-reviewed evidence review grades, not a separate one
   const after = await service.finalize(OWNER, projectId, { candidateId });
   assert.equal(after.blockers.includes('leadPromotion'), false, 'Finalize reads the same re-reviewed evidence review does');
 });
+
+// ─── what a re-review may and may not answer ────────────────────────────────
+//
+// Findings from an adversarial review of the operation above. Several PENDING
+// reasons are decided BEFORE the builder consults a fresh review -- the
+// multi-event scope boundary, an unresolvable origin, and the event-identity
+// and destination staleness checks. A citation cannot answer any of those, so
+// filing one against them used to report success and store a record no gate
+// would ever read.
+
+test('a demotion whose destination moved on again is still answerable', async () => {
+  const { service, projectId } = await project('destination moved on');
+
+  const first = await service.applyDecisions(OWNER, projectId, { decisions: [demote('melody-1')] });
+  // The event moves again, between two non-Lead roles. That is not a Lead move,
+  // so it carries no Lead evidence -- but the recovered citation argues for
+  // Chord3 and the candidate now has Chord4, so the recovered record is stale
+  // for a reason no citation about Chord3 could answer.
+  const second = await service.applyDecisions(OWNER, projectId, {
+    parentCandidateId: first.decisions.candidate_id,
+    decisions: [{
+      id: 'move-on:melody-1', type: 'MOVE_ROLE', target: { eventIds: ['melody-1'] }, fromRole: 'Chord3', toRole: 'Chord4',
+      reason: 'Reviewed: this reads as enrichment rather than core harmony.',
+      evidence: ['fixture:review note'], acceptedBy: 'reviewer:test',
+    }],
+  });
+  const candidateId = second.decisions.candidate_id;
+
+  const stale = reportFor((await service.reviewCandidate(OWNER, projectId, { candidateId })).review.lead_demotion, 'melody-1');
+  assert.equal(stale.status, 'PENDING');
+  assert.ok(stale.blockers.includes('LEAD_EVIDENCE_DESTINATION_DOES_NOT_MATCH_CANDIDATE'));
+
+  // A fresh citation is an argument about the candidate as it stands, so it is
+  // graded against the role the event actually has now. Without this the Lead
+  // gate would be unclearable again.
+  await service.reviewLeadEvidence(OWNER, projectId, {
+    candidateId,
+    review: {
+      event_id: 'melody-1', axis: 'demotion',
+      reason: 'Re-reviewed: inner material, and enrichment is where it sits now.',
+      evidence: ['fixture:score inner staff'],
+      lead_evidence: demotionEvidence('melody-1'),
+    },
+  });
+
+  const after = (await service.reviewCandidate(OWNER, projectId, { candidateId })).review;
+  const report = reportFor(after.lead_demotion, 'melody-1');
+  assert.equal(report.status, 'PASS');
+  assert.equal(report.destinationRole, 'Chord4', 'graded against the role the candidate actually has');
+  assert.equal(report.evidenceSource, 'candidate-review');
+  assert.equal(after.readiness.gates.leadDemotion.status, 'PASS');
+});
+
+test('a citation that turns out to be wrong can be retracted, and the gate returns to PENDING', async () => {
+  const { service, projectId } = await project('supersede');
+
+  const first = await service.applyDecisions(OWNER, projectId, { decisions: [promote('chord3-1')] });
+  const second = await service.applyDecisions(OWNER, projectId, {
+    parentCandidateId: first.decisions.candidate_id, decisions: [demote('melody-1')],
+  });
+  const candidateId = second.decisions.candidate_id;
+  const base = {
+    event_id: 'chord3-1', axis: 'promotion', reason: 'Re-reviewed against this candidate.',
+    evidence: ['fixture:score top line'], lead_evidence: promotionEvidence('chord3-1'),
+  };
+
+  await service.reviewLeadEvidence(OWNER, projectId, { candidateId, review: base });
+  assert.equal(reportFor((await service.reviewCandidate(OWNER, projectId, { candidateId })).review.lead_promotion, 'chord3-1').status, 'PASS');
+
+  // An answered question is not re-opened by accident.
+  await assert.rejects(
+    () => service.reviewLeadEvidence(OWNER, projectId, { candidateId, review: base }),
+    /Supply supersede_reason to replace the citation on record/,
+  );
+
+  // With an explicit retraction it is, and the replacement is graded like any
+  // other citation -- so withdrawing a claim returns the gate to PENDING rather
+  // than forcing anything.
+  const retracted = await service.reviewLeadEvidence(OWNER, projectId, {
+    candidateId,
+    review: {
+      ...base,
+      reason: 'Re-listened: the top line is doubled, and this is the inner half.',
+      supersede_reason: 'The earlier citation read the wrong staff.',
+      lead_evidence: promotionEvidence('chord3-1', {
+        scoreEvidence: { availability: 'available', classification: 'inner', citation: 'fixture:score inner staff' },
+        audioEvidence: { availability: 'available', classification: 'background', citation: 'fixture:audio behind' },
+      }),
+    },
+  });
+  assert.equal(retracted.review.supersede_reason, 'The earlier citation read the wrong staff.');
+
+  const after = (await service.reviewCandidate(OWNER, projectId, { candidateId })).review;
+  assert.equal(reportFor(after.lead_promotion, 'chord3-1').status, 'PENDING', 'a withdrawn claim does not stay PASS');
+  assert.equal(after.readiness.gates.leadPromotion.status, 'PENDING');
+  // Both citations stay on the record: the superseded one is the audit trail.
+  assert.equal(after.lead_evidence_reviews.length, 2);
+  assert.equal(after.lead_evidence_reviews[1].supersedeReason, 'The earlier citation read the wrong staff.');
+});

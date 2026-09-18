@@ -408,6 +408,7 @@ const freshPromotionReview = (candidate, over = {}) => ({
   leadEvidence: leadPromotionEvidence(),
   leadContextDigest: contextDigestOf(candidate),
   reason: 'Re-reviewed against the Lead picture as it now stands.',
+  evidence: ['fixture:score bar 1, top staff'],
   at: '2026-01-01T00:00:00.000Z',
   ...over,
 });
@@ -492,6 +493,14 @@ test('a malformed or foreign fresh review is ignored rather than trusted', () =>
   unchanged([{ ...freshPromotionReview(second.candidate), eventId: 42 }]);
   unchanged([{ ...freshPromotionReview(second.candidate), leadEvidence: undefined }]);
   unchanged([{ ...freshPromotionReview(second.candidate), leadEvidence: 'cited' }]);
+
+  // A review with no explicit evidence reference is not a review. The service
+  // refuses one at the door, but this input arrives as stored data, so the rule
+  // is enforced where the verdict is produced as well -- mirroring the apply
+  // path, which grades `decision.evidence` as a blocker of its own.
+  unchanged([{ ...freshPromotionReview(second.candidate), evidence: [] }]);
+  unchanged([{ ...freshPromotionReview(second.candidate), evidence: undefined }]);
+  unchanged([{ ...freshPromotionReview(second.candidate), evidence: 'fixture:score' }]);
 
   // A review naming an event the lineage performed no Lead move on adds no
   // report: a review substitutes evidence for a recovered move, it does not

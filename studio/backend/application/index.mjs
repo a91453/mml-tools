@@ -279,7 +279,11 @@ export function createStudioApplication({
     },
 
     async approveCore3SourceChange(owner, projectId, input) {
-      return serialized(`${owner}:${projectId}`, async () => envelope({
+      // Same serializer key as every other mutating operation. Keyed by owner
+      // too, these two writes ran on a different chain from `applyDecisions`
+      // and `analyzeSources`, so intake could replace the baseline between the
+      // read that resolves `baseline_id` and the write that binds to it.
+      return mutate(projectId, async () => envelope({
         operation: OPERATION_STATUS.SUCCEEDED,
         ...(await review.approveCore3SourceChange(owner, projectId, input)),
       }));
@@ -293,7 +297,7 @@ export function createStudioApplication({
      * exist and what each binding refuses.
      */
     async reviewLeadEvidence(owner, projectId, input) {
-      return serialized(`${owner}:${projectId}`, async () => envelope({
+      return mutate(projectId, async () => envelope({
         operation: OPERATION_STATUS.SUCCEEDED,
         ...(await review.reviewLeadEvidence(owner, projectId, input)),
       }));

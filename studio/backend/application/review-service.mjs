@@ -207,6 +207,7 @@ export function createReviewService({ canonical, projects, intake, arrangement, 
         reason: entry.reason,
         evidence: [...(entry.evidence ?? [])],
         originEventId: entry.origin_event_id ?? null,
+        supersedeReason: entry.supersede_reason ?? null,
         at: entry.at ?? null,
       }));
   };
@@ -505,8 +506,18 @@ export function createReviewService({ canonical, projects, intake, arrangement, 
           reviewable: reportsWith(leadEvidenceReviewsFor(record, candidateId)).filter(report => report.pass !== true).map(report => report.eventId),
         });
       }
-      if (before.pass === true) {
-        fail(ERROR_CODES.INVALID_REQUEST, `This candidate's Lead ${axis} for that event is already answered; there is nothing to re-review.`, {
+      // An answered question is not re-opened by accident -- but it must be
+      // possible to retract a citation that turns out to be wrong, or the first
+      // PASS on a candidate is final and a reviewer's only remedy is to abandon
+      // the candidate. A retraction is therefore allowed, and only with an
+      // explicit reason saying so. It is not a way to force a PASS: the
+      // replacement is graded like any other citation, and the honest outcome
+      // of withdrawing one is the gate returning to PENDING.
+      const supersedeReason = review.supersede_reason === undefined || review.supersede_reason === null
+        ? null
+        : requireString(review.supersede_reason, 'review.supersede_reason', { max: 500 });
+      if (before.pass === true && !supersedeReason) {
+        fail(ERROR_CODES.INVALID_REQUEST, `This candidate's Lead ${axis} for that event is already answered. Supply supersede_reason to replace the citation on record.`, {
           candidate_id: candidateId, event_id: eventId, axis, status: before.status ?? null,
         });
       }
@@ -526,6 +537,7 @@ export function createReviewService({ canonical, projects, intake, arrangement, 
         origin_event_id: before.originEventId ?? null,
         baseline_id: record.baseline?.baseline_id ?? null,
         candidate_id: candidateId,
+        ...(supersedeReason ? { supersede_reason: supersedeReason } : {}),
         at: now(),
       };
       const dryRun = reportsWith([...others, {
@@ -542,9 +554,38 @@ export function createReviewService({ canonical, projects, intake, arrangement, 
         });
       }
 
+      // A few PENDING reasons are decided BEFORE the builder consults a review
+      // -- the multi-event scope boundary, an origin that does not resolve to
+      // the baseline, and the musical-identity staleness check -- and a
+      // citation cannot answer any of them. Filing one against those would
+      // report success and write a record no gate could ever consume, so it is
+      // refused instead. Reaching the grader is exactly what `evidenceSource`
+      // records, so that is the test.
+      //
+      // Deliberately NOT covered by a regression, because none of those three
+      // is reachable through this service: the decision contract refuses a
+      // multi-event Lead decision, no decision type re-pitches or re-times an
+      // event, and every candidate event's origin resolves by construction. A
+      // stale destination was the one reachable case, and it is now answered
+      // rather than refused -- see the destination note in the demotion builder.
+      // This stays as defence for a restored or hand-edited lineage, where they
+      // are reachable, and it is stated rather than tested so the next reader
+      // does not go looking for the case that exercises it.
+      if (dryRun?.evidenceSource !== 'candidate-review') {
+        fail(ERROR_CODES.INVALID_REQUEST, `This candidate's Lead ${axis} for that event is not waiting on evidence; re-supplying a citation cannot answer it.`, {
+          candidate_id: candidateId,
+          event_id: eventId,
+          axis,
+          blockers: [...(dryRun?.blockers ?? [])],
+        });
+      }
+
+      // Append rather than replace: the superseded citation stays on the record
+      // for the audit trail, and the builders read the last entry for an event
+      // and axis.
       store.putJson(
         leadEvidenceReviewKey(record.project_id, candidateId),
-        [...existing.filter(item => !(item.event_id === eventId && item.axis === axis)), candidateEntry],
+        [...existing, candidateEntry],
       );
       return Object.freeze({
         review: Object.freeze({ ...candidateEntry, evidence: Object.freeze([...evidence]) }),

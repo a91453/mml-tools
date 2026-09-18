@@ -158,6 +158,14 @@ function freshReviewIndex(freshReviews, axis) {
     const eventId = review.eventId;
     if (typeof eventId !== 'string' || !eventId) continue;
     if (!review.leadEvidence || typeof review.leadEvidence !== 'object') continue;
+    // A review with no explicit evidence reference is not a review. The apply
+    // path already grades `decision.evidence` as a blocker, and the service
+    // refuses a submission without one -- but this input arrives as stored
+    // data, so the rule is enforced where the verdict is produced too. An entry
+    // without one is ignored, which leaves the recovered record as it was.
+    if (!Array.isArray(review.evidence) || !review.evidence.length) continue;
+    // Later entries supersede earlier ones for the same event and axis, which
+    // is what lets a reviewer retract a citation they got wrong.
     index.set(eventId, review);
   }
   return index;
@@ -471,9 +479,22 @@ export function leadDemotionReportsFromLineage({ applications, baseline, candida
       continue;
     }
 
-    const stale = demotionStaleness({ destinationRole, currentById, event, contextDigest, step, review });
+    // A recovered citation argues for the destination the revision moved the
+    // event to, and a candidate that moved it on again has an unproven claim.
+    // A FRESH citation is an argument about the candidate as it stands, so it
+    // is graded against the role the event actually has now -- otherwise
+    // demoting to Chord3 and later moving to Chord4 would leave a requirement
+    // no re-review could answer, which is the dead-end this path exists to
+    // remove, re-created one door along. The destination is a fact about the
+    // candidate, never a claim in the record, so reading the current one takes
+    // nothing on trust.
+    const gradedDestination = review
+      ? (currentById.get(event.id)?.role ?? 'omitted')
+      : destinationRole;
+
+    const stale = demotionStaleness({ destinationRole: gradedDestination, currentById, event, contextDigest, step, review });
     if (stale.length) {
-      reports.push(pendingReport(event.id, destinationRole, stale));
+      reports.push(pendingReport(event.id, gradedDestination, stale));
       continue;
     }
     try {
@@ -481,7 +502,7 @@ export function leadDemotionReportsFromLineage({ applications, baseline, candida
         ...evaluateLeadDemotion({
           ...(leadEvidence ?? {}),
           event,
-          destinationRole,
+          destinationRole: gradedDestination,
           positiveReason: leadEvidence?.positiveReason ?? (review ? review.reason : entry.reason),
         }),
         gradedFromRevisionId: step.revision.id,
