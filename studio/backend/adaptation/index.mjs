@@ -2,11 +2,11 @@
 // A profile is a song/target-specific, cited input, NOT an instrument database
 // or a new Canonical rule. No pitch folding, clipping, deletion or role moves.
 import { createCanonicalProject, createCanonicalNoteEvent, createArbitrationDecision } from '../canonical/index.mjs';
-import { f, ROLES } from '../mml/index.mjs';
+import { ROLES } from '../mml/index.mjs';
 import { EFFECTIVE_RULESET } from '../rules/index.mjs';
 import { canonicalIdentity } from '../final/emitter-contract.mjs';
 import { compareCanonicalVersions } from '../compare/version-drift.mjs';
-import { RISK_INTERVALS } from '../arbitration/harmony.mjs';
+import { overlapRisks, overlapRiskKey, overlapPairBudgetExceeded, OVERLAP_PAIR_BUDGET } from '../arbitration/harmony.mjs';
 import { baselineIdentityOf, candidateDigestOf, contentDigest, createArrangementRevision } from '../arrangement/decision-application.mjs';
 import { applicationIntegrity, baselineOriginResolver } from '../arrangement/decision-review.mjs';
 
@@ -52,40 +52,10 @@ export function normalizeMobileProfile(input) {
 }
 
 // What this transformation itself can create, scanned on the candidate before
-// and after so only a *newly* introduced pair blocks.
-//
-// The existing cross-source harmony gate answers arbitration between disjoint
-// sources and keeps that job. It cannot answer this stage's question, because
-// the pairs an octave shift creates are usually inside one source: a single
-// imported MIDI puts every role on the same source id, so a shift that lands
-// Melody a semitone from Chord1 is invisible to a disjoint-source scan. This
-// sweep therefore reads the same reviewed interval set regardless of source
-// identity. It defines no new Canonical harmony rule and publishes no verdict:
-// a pre-existing pair stays a warning for the existing review, and only a pair
-// this plan would introduce blocks the application.
-//
-// One pass over temporally overlapping pairs, ordered by exact rational beats,
-// so the work is bounded by the same overlap budget checked below rather than
-// by every pair of notes in the song.
-function risks(project) {
-  const spans = project.events.filter(e => e.kind === 'note')
-    .map(event => ({ event, start: f(event.start), end: f(event.end) }))
-    .sort((a, b) => a.start.cmp(b.start) || compareStrings(a.event.id, b.event.id));
-  const result = [];
-  let active = [];
-  for (const current of spans) {
-    active = active.filter(other => other.end.cmp(current.start) > 0);
-    for (const other of active) {
-      const distance = Math.abs(other.event.pitch - current.event.pitch);
-      const eventIds = [other.event.id, current.event.id].sort();
-      if (distance === 0) result.push({ kind: 'same-pitch-overlap', eventIds, pitch: current.event.pitch });
-      else if (RISK_INTERVALS.has(distance)) result.push({ kind: 'overlapping-dissonance', eventIds, interval: distance, intervalName: RISK_INTERVALS.get(distance) });
-    }
-    active.push(current);
-  }
-  return result.sort((a, b) => compareStrings(riskKey(a), riskKey(b)));
-}
-const riskKey = risk => JSON.stringify([risk.kind, risk.eventIds, risk.pitch ?? null, risk.interval ?? null]);
+// and after so only a *newly* introduced pair blocks. The sweep itself lives
+// beside the existing cross-source harmony gate in `arbitration/harmony.mjs`,
+// so this stage and the Final Six-Role Reduction read one implementation of
+// the reviewed interval set rather than each carrying a copy.
 const sortedEvents = events => [...events].sort((a, b) => compareStrings(a.id, b.id));
 const targetDigest = (project, profile) => contentDigest(sortedEvents(project.events.filter(event => event.kind === 'note' && Object.hasOwn(profile.roles, event.role))));
 // The one role's own notes, so the repeat guard below is keyed per role instead
@@ -100,20 +70,6 @@ const mergedRoleRecord = (priorRoles, roles, events) => {
   for (const [role, rule] of Object.entries(roles)) merged[role] = { rule: contentDigest(rule), target: roleTargetDigest(events, role) };
   return merged;
 };
-
-// Bound collision-report allocation for pathological dense inputs. Reaching
-// this implementation limit is PENDING, never a claim of collision freedom.
-function collisionBudgetExceeded(notes) {
-  const spans = notes.map(event => ({ start: f(event.start), end: f(event.end) })).sort((a, b) => a.start.cmp(b.start));
-  let active = [], pairs = 0;
-  for (const span of spans) {
-    active = active.filter(end => end.cmp(span.start) > 0);
-    pairs += active.length;
-    if (pairs > 50000) return true;
-    active.push(span.end);
-  }
-  return false;
-}
 
 /**
  * Read-only deterministic plan. PASS means executable, never Gate 8 PASS.
@@ -212,11 +168,11 @@ export function planMobileAdaptation({ baseline, candidate = baseline, profile, 
     if (moved) blockers.push({ code: 'PITCH_OUTSIDE_MOBILE_RANGE', eventId: event.id, pitch: event.pitch });
     else warnings.push({ code: 'EXISTING_PITCH_OUTSIDE_MOBILE_RANGE', eventId: event.id, pitch: event.pitch });
   }
-  const scanLimited = collisionBudgetExceeded(notes);
-  if (scanLimited) blockers.push({ code: 'COLLISION_SCAN_LIMIT', maxOverlappingPairs: 50000 });
-  const beforeRisks = scanLimited ? [] : risks(candidate), afterRisks = scanLimited ? [] : risks(proposed);
-  const existing = new Set(beforeRisks.map(riskKey));
-  const introduced = afterRisks.filter(risk => !existing.has(riskKey(risk)));
+  const scanLimited = overlapPairBudgetExceeded(notes);
+  if (scanLimited) blockers.push({ code: 'COLLISION_SCAN_LIMIT', maxOverlappingPairs: OVERLAP_PAIR_BUDGET });
+  const beforeRisks = scanLimited ? [] : overlapRisks(candidate), afterRisks = scanLimited ? [] : overlapRisks(proposed);
+  const existing = new Set(beforeRisks.map(overlapRiskKey));
+  const introduced = afterRisks.filter(risk => !existing.has(overlapRiskKey(risk)));
   for (const risk of introduced) blockers.push({ code: 'NEW_COLLISION_REQUIRES_REVIEW', ...risk });
   if (beforeRisks.length) warnings.push({ code: 'EXISTING_COLLISIONS_REQUIRE_REVIEW', count: beforeRisks.length });
   const body = { schema: 'mml-studio/mobile-adaptation-plan@1', baselineIdentity, inputDigest, profileDigest, profile: normalized, canonicalIdentity: canonicalIdentity(), leadBoundEventIds: [...leadBound].sort(compareStrings), rolePlans, changes, blockers, warnings, collisions: { before: beforeRisks, after: afterRisks, introduced, scanLimited }, status: blockers.length ? 'PENDING' : 'PASS' };

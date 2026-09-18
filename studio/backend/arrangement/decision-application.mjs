@@ -394,6 +394,28 @@ function normalizeCanonicalIdentity(identity) {
   });
 }
 
+// The candidate revision stages this repository's pipeline mints, and the kind
+// each one records. These are implementation stage names used by the pipeline
+// and roadmap documents; none of them is a Published Canonical rule identifier,
+// and a stage name certifies no ACCEPTANCE_CRITERIA.md gate.
+//
+// The stage is inside the content-addressed revision body below, so a reduction
+// revision cannot be re-read as a G11-D role decision, nor the reverse: the two
+// hash differently even over identical baselines, parents and decision sets.
+export const REVISION_STAGE_KINDS = Object.freeze({
+  'G11-D': 'ACCEPTED_ARRANGEMENT_REVISION',
+  MOBILE_ADAPTATION_V1: 'MOBILE_ADAPTATION_REVISION',
+  FINAL_SIX_ROLE_REDUCTION_V1: 'FINAL_SIX_ROLE_REDUCTION_REVISION',
+});
+
+// Which stages `applyAcceptedArrangement` itself mints. Mobile adaptation is
+// absent on purpose: it mints its own revision in `adaptation/index.mjs`,
+// because it changes pitch and volume rather than applying role decisions.
+export const DECISION_APPLICATION_STAGES = Object.freeze({
+  'G11-D': Object.freeze({ candidateIdSuffix: 'g11d', stageKindLabel: 'ACCEPTED_ARRANGEMENT_APPLICATION', metadataKey: null }),
+  FINAL_SIX_ROLE_REDUCTION_V1: Object.freeze({ candidateIdSuffix: 'g12', stageKindLabel: 'FINAL_SIX_ROLE_REDUCTION_APPLICATION', metadataKey: 'g12' }),
+});
+
 // The revision record. `id` is content-addressed over everything that decides
 // what this revision *is*: which baseline, which parent, which decisions, which
 // Canonical release, which lane decomposition, and the candidate those produced.
@@ -410,7 +432,7 @@ export function createArrangementRevision({
   laneDecompositionDigest = null,
   candidateDigest,
 }) {
-  if (!['G11-D', 'MOBILE_ADAPTATION_V1'].includes(stage)) throw Error('unsupported candidate revision stage');
+  if (!Object.hasOwn(REVISION_STAGE_KINDS, stage)) throw Error('unsupported candidate revision stage');
   if (!Number.isInteger(index) || index < 1) throw Error('revision.index must be an integer >= 1');
   if (parentRevisionId !== null && !nonEmptyString(parentRevisionId)) throw Error('revision.parentRevisionId must be null or a non-empty string');
   const body = {
@@ -427,7 +449,7 @@ export function createArrangementRevision({
   return Object.freeze({
     schema: 'mabinogi-mobile-mml-studio/arrangement-revision@1',
     stage,
-    stageKind: stage === 'G11-D' ? 'ACCEPTED_ARRANGEMENT_REVISION' : 'MOBILE_ADAPTATION_REVISION',
+    stageKind: REVISION_STAGE_KINDS[stage],
     id: `g11d:rev:${contentDigest(body)}`,
     ...body,
     baselineIdentity: Object.freeze({ ...baselineIdentity }),
@@ -720,11 +742,23 @@ export function applyAcceptedArrangement({
   parent = null,
   decisions,
   canonicalIdentity,
+  stage = 'G11-D',
+  stageMetadata = null,
 } = {}) {
   if (!isCanonicalProject(baseline)) {
     throw Error(`applyAcceptedArrangement requires the Source-Faithful Canonical baseline project (${CANONICAL_PROJECT_SCHEMA})`);
   }
   if (!Array.isArray(decisions)) throw Error('applyAcceptedArrangement requires an array of accepted decisions');
+  // A later stage reuses this application -- the same role decisions, the same
+  // Lead interlocks, the same conflict vocabulary, the same all-or-nothing
+  // atomicity -- and differs only in which stage identity the derived revision
+  // carries and what stage record the candidate keeps beside it. Threading the
+  // stage is what keeps that reuse from becoming a second copy of this
+  // function, which is the drift hazard the shared boundary exists to rule out.
+  if (!Object.hasOwn(DECISION_APPLICATION_STAGES, stage)) throw Error(`applyAcceptedArrangement does not mint a ${stage} revision`);
+  const stageProfile = DECISION_APPLICATION_STAGES[stage];
+  if (stageMetadata !== null && !isPlainObject(stageMetadata)) throw Error('stageMetadata must be null or an object');
+  if (stageMetadata !== null && stageProfile.metadataKey === null) throw Error(`the ${stage} stage carries no stage record`);
   const canonical = normalizeCanonicalIdentity(canonicalIdentity);
 
   // Immutability evidence, taken before anything else touches the inputs.
@@ -1114,8 +1148,8 @@ export function applyAcceptedArrangement({
   if (status !== 'PASS') {
     return Object.freeze({
       schema: 'mabinogi-mobile-mml-studio/accepted-arrangement-application@1',
-      stage: 'G11-D',
-      stageKind: 'ACCEPTED_ARRANGEMENT_APPLICATION',
+      stage,
+      stageKind: stageProfile.stageKindLabel,
       status,
       candidate: null,
       revision: null,
@@ -1443,7 +1477,7 @@ export function applyAcceptedArrangement({
   const baselineSnapshot = stripMetadataKeys(baseline, ['sourceFaithfulBaseline', 'g11d']);
 
   const candidateWithoutRevision = createCanonicalProject({
-    id: `${baseline.id}#g11d-r${revisionIndex}`,
+    id: `${baseline.id}#${stageProfile.candidateIdSuffix}-r${revisionIndex}`,
     title: baseline.title,
     sources: [...baseline.sources].sort(byId),
     events: outputEvents,
@@ -1452,6 +1486,11 @@ export function applyAcceptedArrangement({
     decisions: [...carriedDecisions].sort(byId),
     metadata: {
       ...inheritedMetadata,
+      // The stage record is part of what this candidate *is*, so it is written
+      // before the revision is computed and is therefore inside the
+      // content-addressed candidate digest. An edited stage record no longer
+      // hashes to the revision that names it.
+      ...(stageMetadata ? { [stageProfile.metadataKey]: structuredClone(stageMetadata) } : {}),
       sourceFaithfulBaseline: { snapshot: baselineSnapshot },
     },
   });
@@ -1460,6 +1499,7 @@ export function applyAcceptedArrangement({
   // computed from a candidate that does not yet carry it, and then attached.
   const candidateDigest = candidateDigestOf(candidateWithoutRevision);
   const revision = createArrangementRevision({
+    stage,
     index: revisionIndex,
     parentRevisionId: expectedReviewedRevisionId,
     baselineIdentity,
@@ -1548,8 +1588,8 @@ export function applyAcceptedArrangement({
 
   return Object.freeze({
     schema: 'mabinogi-mobile-mml-studio/accepted-arrangement-application@1',
-    stage: 'G11-D',
-    stageKind: 'ACCEPTED_ARRANGEMENT_APPLICATION',
+    stage,
+    stageKind: stageProfile.stageKindLabel,
     status: 'PASS',
     candidate,
     revision,

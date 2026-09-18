@@ -52,6 +52,8 @@ export {
   CONFLICT_CODES,
   DOWNSTREAM_CONTRACT,
   DECISION_APPLICATION_STATUS,
+  REVISION_STAGE_KINDS,
+  DECISION_APPLICATION_STAGES,
 } from './decision-application.mjs';
 
 // G11-D downstream wiring. It computes nothing: every verdict comes from the

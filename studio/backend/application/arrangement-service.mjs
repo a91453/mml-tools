@@ -193,6 +193,55 @@ export function createArrangementService({ canonical, projects, intake, store })
     },
 
     /**
+     * Preview or apply the Final Six-Role Reduction for one candidate.
+     *
+     * Two operations that must never collapse into one. `finalReduction(...,
+     * { apply: false })` is read-only and writes nothing; applying is an
+     * explicit mutation that has to name the preview's `expectedPlanId`. The
+     * application layer exposes them as two named operations for exactly that
+     * reason — a single `apply=true` flag is one typo away from a mutation
+     * nobody previewed.
+     *
+     * Everything a caller could make stale-proof is recomputed here from what
+     * is loaded now: the acceptance bindings, the plan, and the lineage inputs
+     * the Lead and accounting checks read. A caller supplies decisions and the
+     * plan id it reviewed; nothing else.
+     */
+    async finalReduction(owner, projectId, { candidateId, decisions = [], expectedPlanId = null, acceptedBy = null, instrumentProfile = null, apply = false } = {}) {
+      const engines = await canonical.engines();
+      const { record, baseline, project } = await intake.project(owner, projectId);
+      const { application: parent } = loadCandidate(record, candidateId);
+      if (!engines.arrangement.applicationIntegrity(parent, project).ok) fail(ERROR_CODES.INVALID_REQUEST, 'The candidate no longer matches the current baseline.');
+      if (parent.revision.canonicalIdentity.rules_snapshot_sha !== engines.emitterContract.canonicalIdentity().rules_snapshot_sha) fail(ERROR_CODES.INVALID_REQUEST, 'The candidate belongs to a different Canonical snapshot.');
+      if (!Array.isArray(decisions)) fail(ERROR_CODES.INVALID_REQUEST, 'decisions must be an array of accepted reduction decisions.');
+      if (decisions.length > LIMITS.maxDecisionsPerRequest) fail(ERROR_CODES.INVALID_REQUEST, `A reduction decision set is limited to ${LIMITS.maxDecisionsPerRequest} decisions.`, { received: decisions.length });
+      const reviewer = apply ? requireString(acceptedBy, 'accepted_by', { max: 120 }) : (typeof acceptedBy === 'string' && acceptedBy.trim() ? requireString(acceptedBy, 'accepted_by', { max: 120 }) : 'reduction-preview');
+      // Which baseline events earlier accepted revisions already omitted. Read
+      // from the whole stored lineage, because `metadata.g11d.omittedEventIds`
+      // records only the omissions of the revision that performed them and is
+      // deliberately not inherited. Without this the accounting ledger would
+      // have to report every earlier omission as unverified.
+      const lineage = loadCandidateLineage(record, candidateId);
+      const parentOmittedEventIds = [...new Set(lineage.flatMap(step => step.candidate?.metadata?.g11d?.omittedEventIds ?? []))];
+      const input = { baseline: project, candidate: parent.candidate, parent, decisions, acceptedBy: reviewer, parentOmittedEventIds, instrumentProfile };
+      let result;
+      try {
+        if (!apply) return { candidate_id: candidateId, baseline_id: baseline.baseline_id, plan: engines.reduction.planFinalReduction(input) };
+        result = engines.reduction.applyFinalReduction({ ...input, expectedPlanId, acceptedBy: reviewer });
+      } catch (error) { fail(ERROR_CODES.INVALID_REQUEST, error.message); }
+      if (!result.didApply) return { applied: false, candidate_id: candidateId, baseline_id: baseline.baseline_id, status: result.status, unchanged: result.unchanged ?? false, blockers: result.blockers, plan: result.plan };
+      const reducedId = result.revision.id;
+      store.putJson(applicationKey(record.project_id, reducedId), result.roleApplication);
+      projects.save({ ...record, candidates: [...record.candidates.filter(entry => entry.candidate_id !== reducedId), {
+        candidate_id: reducedId, parent_candidate_id: candidateId, baseline_id: baseline.baseline_id,
+        revision_index: result.revision.index, created_at: now(), decision_count: result.plan.decisions.length,
+        decision_ids: [result.plan.id], accepted_by: [reviewer], stage: 'FINAL_SIX_ROLE_REDUCTION_V1',
+      }] });
+      return { applied: true, status: 'PASS', candidate_id: reducedId, parent_candidate_id: candidateId, baseline_id: baseline.baseline_id,
+        plan: result.plan, accounting: result.accounting, diff_from_baseline: result.diffFromBaseline, diff_from_parent: result.diffFromParent, notice: result.notice };
+    },
+
+    /**
      * Propose six-role candidates over the Source-Faithful Baseline.
      *
      * The returned `bindings` are what an accepted decision must carry. They

@@ -14,9 +14,11 @@ const detail = (label, value) => `<details><summary>${esc(label)}</summary>${jso
 const options = (values, selected) => values.map(([value, label]) => `<option value="${esc(value)}" ${value === selected ? 'selected' : ''}>${esc(label)}</option>`).join('');
 const roles = ['Melody', 'Chord1', 'Chord2', 'Chord3', 'Chord4', 'Chord5'];
 const reviewLabels = { source: '來源完整與可追溯', version: 'Version Drift／已接受版本', lead: 'Lead 樂句、休止與接棒', core3: 'Core3 單人完整性', full6: 'Full6 和聲、重疊與密度', tempo: 'Tempo、拍號與時間範圍', audio: '原曲音訊證據', adaptation: 'Mobile 最小適配', regression: '回歸與已接受優點' };
-const gateLabels = { implementation: '分析模組', source: '來源完整性', baseline: '來源基準', technical: 'MML 技術語法', microTiming: '來源感知微時值（1/64 以下）', core3: 'Core3 來源連續性', core3Completeness: 'Core3 單人完整性（Gate 4）', leadDemotion: 'Lead 降級證據', leadPromotion: 'Lead 升級證據', crossSourceHarmony: '跨來源和聲', versionDrift: '版本差異', originalAudio: '原曲音訊', playerReadback: '播放器實際回讀', pendingDecisions: '待決仲裁', intake: '版本／音樂範圍', lead: 'Lead 審核', full6: 'Full6 審核', tempo: 'Tempo／時值審核', adaptation: 'Mobile 適配', regression: '回歸審核', deliveryIdentity: '交付事件一致性' };
+const gateLabels = { finalReductionIntegrity: 'Final 六角色收斂完整性', mobileAdaptationIntegrity: 'Mobile 適配完整性', implementation: '分析模組', source: '來源完整性', baseline: '來源基準', technical: 'MML 技術語法', microTiming: '來源感知微時值（1/64 以下）', core3: 'Core3 來源連續性', core3Completeness: 'Core3 單人完整性（Gate 4）', leadDemotion: 'Lead 降級證據', leadPromotion: 'Lead 升級證據', crossSourceHarmony: '跨來源和聲', versionDrift: '版本差異', originalAudio: '原曲音訊', playerReadback: '播放器實際回讀', pendingDecisions: '待決仲裁', intake: '版本／音樂範圍', lead: 'Lead 審核', full6: 'Full6 審核', tempo: 'Tempo／時值審核', adaptation: 'Mobile 適配', regression: '回歸審核', deliveryIdentity: '交付事件一致性' };
 let workspace, report, identity, projects = [], audioFile = null, uploadController = null, busy = 0;
 let mobilePreview = null;
+let reductionPreview = null;
+let reductionDecisions = [];
 const queued = createTaskQueue();
 const midiRequests = createSourceRequestLedger();
 const MAX_SOURCE_BYTES = 4194304;
@@ -73,6 +75,8 @@ async function refreshProjects() {
 }
 async function commit(next) {
   mobilePreview = null;
+  reductionPreview = null;
+  reductionDecisions = [];
   markBusy(true);
   try {
     const canonicalKey=JSON.stringify(identity.metadata);
@@ -391,6 +395,74 @@ function appliedDeliveryCard(attempt) {
   </div>`;
 }
 
+const OUTCOME_LABELS = { KEEP: '保留', REDISTRIBUTE: '重新分配', OVERFLOW: '超出六角色容量', PENDING: '待決', OMIT: '已接受省略' };
+
+// The reduction review surface: enough to read the plan, accept decisions and
+// apply or roll back. Deliberately not an arrangement editor -- no drag and
+// drop, no piano roll. What it must never do is present a PENDING or an
+// OVERFLOW as if it were settled, so every bucket is shown with its own count
+// and its own reason codes, and nothing here turns a plan PASS into a gate.
+function reductionItemRows(items, outcome) {
+  const rows = items.filter(item => item.outcome === outcome);
+  if (!rows.length) return '<p class="empty">無</p>';
+  // A source event an earlier revision duplicated reaches this stage as more
+  // than one candidate event. It is one ledger entry -- the accounting is about
+  // the source event -- so each copy is listed beneath it rather than the entry
+  // being repeated, which would make the source-event count read wrong.
+  const roleCell = item => item.manifestationCount > 1
+    ? `${item.manifestations.map(entry => `${esc(entry.currentRole ?? '—')} → ${esc(entry.proposedRole ?? '—')}${entry.derived ? ' <span class="muted">（複製）</span>' : ''}`).join('<br>')}`
+    : `${esc(item.currentRole ?? '—')} → ${esc(item.proposedRole ?? '—')}`;
+  const sourceCell = item => `<code>${esc(item.baselineEventId)}</code>${item.manifestationCount > 1 ? ` <span class="muted">×${item.manifestationCount}</span>` : ''}<br><span class="muted">${esc((item.sourceEventIds ?? []).join(' · '))}</span>`;
+  return `<table class="reduction-ledger"><thead><tr><th>來源事件</th><th>角色</th><th>原因</th><th>Lead</th><th>Core3</th></tr></thead><tbody>${rows.slice(0, 200).map(item => `<tr>
+    <td>${sourceCell(item)}</td>
+    <td>${roleCell(item)}</td>
+    <td>${esc(item.reasonCode)}</td>
+    <td>${item.leadImpact?.affectsLead ? `${esc(item.leadImpact.kind)} · ${esc(item.leadImpact.resolvedBy ?? '待證據')}` : '—'}</td>
+    <td>${item.core3Impact?.leavesCore3 ? '離開 Core3' : item.core3Impact?.entersCore3 ? '進入 Core3' : '—'}</td>
+  </tr>`).join('')}</tbody></table>${rows.length > 200 ? `<p class="meta">另有 ${rows.length - 200} 筆，完整內容見下方 ledger。</p>` : ''}`;
+}
+
+function finalReductionSection() {
+  const plan = reductionPreview?.plan ?? report.finalReduction?.plan;
+  const applied = Boolean(workspace.finalReduction);
+  const a = plan?.accounting;
+  return `<section id="final-reduction"><div class="section-heading"><h2>Final 六角色收斂（G12）</h2><small>角色與容量</small></div><div class="card">
+    <p class="meta">把已接受角色的候選收斂成可進入 Mobile 適配的六角色候選。每一個來源支持的事件都會落在<strong>保留／重新分配／超出容量／待決／已接受省略</strong>其中之一，不會有事件無聲消失。本階段<strong>不改音高、八度、起訖、時值與音量</strong>——那些屬於下一節的 Mobile 適配。</p>
+    <div class="actions"><button id="preview-reduction" ${workspace.assets?.baseline && workspace.assets?.candidate ? '' : 'disabled'}>預覽收斂計畫</button>${reductionDecisions.length ? `<button id="clear-reduction-decisions" class="quiet">清除 ${reductionDecisions.length} 筆待套用決策</button>` : ''}</div>
+    ${applied ? `<p class="meta">已套用 ${workspace.finalReduction.decisions.length} 筆收斂決策。預覽會連同這些已接受的決策一起重新推導；新增的決策會與它們合併後再套用。</p>` : ''}
+    ${plan ? `<p>${badge(plan.status)} · 共 ${a.total} 個來源事件 · 保留 ${a.retained} · 重新分配 ${a.redistributed} · 超出容量 ${a.overflow} · 待決 ${a.pending} · 已接受省略 ${a.omitted}</p>
+      ${a.manifestationCount > a.total ? `<p class="meta">其中 ${a.duplicatedBaselineEventIds.length} 個來源事件由先前修訂版複製過，合計以 ${a.manifestationCount} 個候選事件進入本階段。計數以<strong>來源事件</strong>為準，每個來源事件只會落在一個去向。</p>` : ''}
+      <p class="meta">父候選：<code>${esc(plan.parentRevisionId ?? '（來源基準本身）')}</code> · 計畫：<code>${esc(plan.id)}</code></p>
+      ${plan.blockers.length ? detail(`無法自動處理的項目（${plan.blockers.length}）`, plan.blockers) : ''}
+      ${plan.warnings.length ? detail(`仍需審核的項目（${plan.warnings.length}）`, plan.warnings) : ''}
+      <details open><summary>待決（${a.pending}）——需要音樂判斷，不會自動決定</summary>${reductionItemRows(plan.items, 'PENDING')}</details>
+      <details><summary>超出六角色容量（${a.overflow}）——保留在候選與 ledger 中</summary>${reductionItemRows(plan.items, 'OVERFLOW')}</details>
+      <details><summary>重新分配（${a.redistributed}）</summary>${reductionItemRows(plan.items, 'REDISTRIBUTE')}</details>
+      <details><summary>已接受省略（${a.omitted}）</summary>${reductionItemRows(plan.items, 'OMIT')}</details>
+      <details><summary>保留（${a.retained}）</summary>${reductionItemRows(plan.items, 'KEEP')}</details>
+      ${detail('Core3（收斂前後）', plan.core3)}
+      ${detail('和聲與重疊（收斂前後、新產生者）', { harmony: plan.harmony, overlapRisks: plan.overlapRisks })}
+      ${detail('角色容量與字數壓力', { roleCapacity: plan.roleCapacity, characterBudget: plan.characterBudget })}
+      ${detail('完整事件 ledger', plan.items)}
+      <p class="note">${badge(plan.status)} 只代表<strong>這份收斂計畫可以安全套用</strong>。它不是 Gate 3／4／5／8／9 通過，也不是 <code>VALIDATED</code>。套用後所有受影響的 Gate 都會重新開啟。</p>` : '<p class="empty">尚未預覽。載入來源基準與候選後即可產生收斂計畫。</p>'}
+    <details><summary>記錄一筆收斂決策</summary>
+      <p class="meta">決策是<strong>逐事件</strong>的：填入候選 event ID（以空白或分號分隔）。<code>重新分配</code>與<code>省略</code>需要證據位置；<code>省略</code>另需明確理由，且只會移除你指名的事件。</p>
+      <p class="note">任何進出 Melody 的移動、複製進 Melody，或移除 Lead 事件，都必須走既有 Lead evidence 契約。本機介面 v1 不提供該表單，這類決策會被計畫擋下並列出原因。</p>
+      <form id="reduction-decision"><div class="field-grid">
+        <label>動作<select name="action">${options([['REDISTRIBUTE','重新分配到某個角色'],['ACCEPT_OVERFLOW','接受維持在六角色之外'],['OMIT','接受省略（需證據）'],['KEEP','確認維持現有角色']],'REDISTRIBUTE')}</select></label>
+        <label>目標角色<select name="toRole">${options([['','（不適用）'],...roles.map(role=>[role,role])],'')}</select></label>
+        ${input('eventIds','候選 event ID（空白或分號分隔）','')}
+        ${input('evidence','證據位置（來源／段落／event）','')}
+        <label class="wide">理由<textarea name="reason" required></textarea></label>
+      </div><button class="secondary">加入待套用決策</button></form>
+      ${reductionDecisions.length ? detail(`待套用決策（${reductionDecisions.length}）`, reductionDecisions) : ''}
+    </details>
+    ${reductionPreview && plan?.status === 'PASS' && plan.decisions.length ? '<button id="apply-reduction">套用此收斂計畫並重新分析</button>' : ''}
+    ${applied ? '<button id="clear-reduction" class="secondary">還原收斂前候選</button>' : ''}
+    <p class="meta">套用只保存<strong>輸入</strong>（已接受的決策、計畫 ID 與審查者），不保存衍生候選，也不保存任何 PASS。每次分析與重新載入都會重新推導；計畫過期即拒絕。匯入備份中的收斂紀錄只作為歷史，需重新預覽與接受。</p>
+  </div></section>`;
+}
+
 function mobileAdaptationSection() {
   const plan = mobilePreview?.plan ?? report.mobileAdaptation?.plan;
   const profile = mobilePreview?.profile ?? workspace.mobileAdaptation?.profile;
@@ -399,7 +471,7 @@ function mobileAdaptationSection() {
     <form id="mobile-profile"><div class="field-grid">${input('profileId','設定名稱',profile?.id ?? '')}${input('reason','本曲適配理由',profile?.reason ?? '')}${input('evidence','證據位置（實機紀錄／音訊時間窗）',profile?.evidence?.join('; ') ?? '')}</div>
     ${roles.map(role => { const rule = profile?.roles?.[role] ?? {}; return `<details><summary>${esc(role)}</summary><div class="field-grid">${input(`${role}-min`,'最低音高（0–107）',rule.pitchRange?.[0] ?? '', 'type="number" min="0" max="107" step="1"')}${input(`${role}-max`,'最高音高（0–107）',rule.pitchRange?.[1] ?? '', 'type="number" min="0" max="107" step="1"')}${input(`${role}-delta`,'音量增減（保留原有起伏）',rule.volumeDelta ?? '', 'type="number" min="-15" max="15" step="1"')}${input(`${role}-default`,'尚未決定音量的起始值（0–15）',rule.defaultVolume ?? '', 'type="number" min="0" max="15" step="1"')}</div></details>`; }).join('')}
     <div class="actions"><button id="preview-mobile" ${workspace.assets?.baseline && workspace.assets?.candidate ? '' : 'disabled'}>預覽適配差異</button></div></form>
-    ${plan ? `<p>${badge(plan.status)} · ${mobilePreview ? `${plan.changes.length} 個音符需調整` : `適配已套用 · ${plan.changes.length} 個音符已調整`}</p>${plan.blockers.length ? detail('無法自動修正的項目', plan.blockers) : ''}${plan.warnings.length ? detail('仍需審核的項目',plan.warnings) : ''}${detail('逐音修改前後',plan.changes)}<p class="meta">套用只建立候選版本，仍需重新審核 Mobile、Core3 與回歸結果。尚未支援樂器指派、鼓面映射、碰撞修復與 G12。</p>` : ''}
+    ${plan ? `<p>${badge(plan.status)} · ${mobilePreview ? `${plan.changes.length} 個音符需調整` : `適配已套用 · ${plan.changes.length} 個音符已調整`}</p>${plan.blockers.length ? detail('無法自動修正的項目', plan.blockers) : ''}${plan.warnings.length ? detail('仍需審核的項目',plan.warnings) : ''}${detail('逐音修改前後',plan.changes)}<p class="meta">套用只建立候選版本，仍需重新審核 Mobile、Core3 與回歸結果。適配以<strong>收斂後</strong>的候選為對象；尚未支援樂器指派、鼓面映射與碰撞修復。</p>` : ''}
     ${mobilePreview && plan.status === 'PASS' && plan.changes.length ? '<button id="apply-mobile">套用此預覽並重新分析</button>' : ''}
     ${workspace.mobileAdaptation ? '<button id="clear-mobile" class="secondary">還原適配前候選</button>' : ''}
     <p class="meta">原始來源與基準保持可還原。調整設定會從原始候選重新計算；匯入備份後需重新預覽與套用。</p>
@@ -442,6 +514,7 @@ function render() {
       <div class="card"><h3>記錄本輪人工審核</h3><p class="meta">只在已完成對照／聽驗時記錄；原因與證據綁定目前 revision。紀錄不會清除工具找到的未解決缺口或 unsupported。</p><form id="review-form"><div class="field-grid"><label>審核項目<select name="name">${options(Object.entries(reviewLabels),'source')}</select></label>${input('evidence','來源 ID、event、時間窗或實機紀錄','')}<label class="wide">審核結論與理由<textarea name="note" required></textarea></label></div><button>記錄已完成審核</button></form>${Object.entries(w.reviews).map(([name,v])=>`<div class="review-log"><strong>${esc(reviewLabels[name])}</strong> · ${esc(v.note)}<br><span class="muted">${esc(v.evidence)}</span></div>`).join('')}</div>
     </section>
     <section id="audio"><div class="section-heading"><h2>05　Audio evidence</h2><small>僅主動要求時上傳</small></div><div class="card"><p class="note safe">選取音訊只會留在本機。按下「要求 Audio Alignment」才會傳送該音訊及候選的衍生音符／時間特徵；MusicXML／MML 原始文字不會上傳。</p><p id="audio-file-status" class="meta">${audioFile?esc(`${audioFile.name} · ${(audioFile.size/1048576).toFixed(1)} MiB · 尚未上傳`):'未選取音訊。雲端未連線。'}</p><label class="file-button secondary">選擇 M4A／FLAC／WAV<input id="audio-file" type="file" accept=".m4a,.flac,.wav,audio/mp4,audio/flac,audio/wav"></label><details><summary>Audio Worker 連線（選用）</summary><label>HTTPS alignment endpoint<input id="audio-endpoint" type="url" placeholder="https://your-worker.example/align" autocomplete="off"></label><label>本次工作階段 access token<input id="audio-token" type="password" autocomplete="off"></label><p class="meta">Token 僅存於目前畫面記憶體。v1 沒有預設雲端服務；未設定時保持 PENDING。</p></details><div class="actions"><button id="request-audio" ${!audioFile || !w.assets.candidate?'disabled':''}>要求 Audio Alignment</button><button id="cancel-audio" class="quiet" ${uploadController?'':'disabled'}>取消上傳／等待</button><label class="file-button quiet">匯入既有 alignment report<input id="audio-report" type="file" accept=".json,application/json"></label></div><div id="audio-progress" role="status"></div>${detail('音訊證據、控制點、信心與漂移',w.audio?.report ?? {status:'PENDING',reason:'SONG_AUDIO_EVIDENCE_MISSING'})}<p class="meta">Audio evidence 不會修改、刪除或重排 symbolic events。信心分數本身不代表音高真值。</p></div></section>
+    ${finalReductionSection()}
     ${mobileAdaptationSection()}
     ${finalDeliverySection()}
     <section id="delivery"><div class="section-heading"><h2>07　Readiness 與實機接受</h2>${badge(r.state)}</div><div class="card"><p class="note">${r.state==='CANDIDATE'?'目前為 Candidate，尚有必要 Gate 未通過。複製內容仍屬候選版本。':r.state==='VALIDATED'?'必要非實機 Gate 已通過。等待使用者於目標遊戲 client 實際接受。':'已有本輪 exact-MML 實機接受紀錄。'}</p><p class="meta">本節記錄的是<strong>實機接受</strong>。產生與匯出 Final MML 在上方第 06 節。「下載六軌對照文字」是含角色標題的<strong>對照用</strong>文字檔，<strong>不是</strong>可直接貼上的樂譜；可貼上的完整字串請用「複製完整 MML@」或第 06 節的匯出。</p><div class="actions"><button id="copy-mml" ${r.rawMml?'':'disabled'}>複製完整 MML@</button><button id="export-mml" class="secondary" ${r.rawMml?'':'disabled'}>下載六軌對照文字</button><button id="export-report" class="quiet">下載分析報告</button></div>${r.tracks?`${r.tracks.map((track,i)=>`<div class="track"><div class="row"><label for="track-${i}">${roles[i]} <small>${track.length} / ${PUBLISHED_ROLE_CHARACTER_LIMIT} 字元</small></label><button data-copy-track="${i}" class="quiet">複製</button></div><textarea id="track-${i}" class="code" readonly spellcheck="false">${esc(track)}</textarea></div>`).join('')}<p class="note">${P1_LOCAL_NOTE}</p>`:'<p class="empty">需有通過 Final 技術語法且與候選事件一致的六軌 MML。MusicXML／IR 不會自動縮編或猜測角色；可在第 06 節產生，或附上對應的交付 MML 進行回讀。</p>'}<details><summary>記錄 In-game Accepted</summary><form id="acceptance"><div class="field-grid">${input('client','Client／地區／版本','')}${input('instrument','樂器與軌道配置','')}${input('evidence','實機結果／截圖或紀錄定位','')}</div><button ${r.state==='CANDIDATE'?'disabled':''}>此 exact-MML 已實機接受</button></form>${w.acceptance?json(w.acceptance):''}</details></div></section>
@@ -528,6 +601,46 @@ async function copyText(value, textarea) {
   catch { showCopyFallback(value, textarea); }
 }
 function bind() {
+  $('#reduction-decision').onsubmit = event => {
+    event.preventDefault();
+    const data = Object.fromEntries(new FormData(event.target));
+    const eventIds = data.eventIds.split(/[;\s]+/).map(id => id.trim()).filter(Boolean);
+    if (!eventIds.length) return message('請至少填入一個候選 event ID');
+    const decision = { id: `web:${data.action.toLowerCase()}:${reductionDecisions.length + 1}`, action: data.action, eventIds, reason: data.reason,
+      evidence: data.evidence.split(';').map(ref => ref.trim()).filter(Boolean) };
+    if (data.action === 'REDISTRIBUTE') {
+      if (!data.toRole) return message('重新分配需要目標角色');
+      decision.toRole = data.toRole;
+    }
+    reductionDecisions = [...reductionDecisions, decision];
+    reductionPreview = null;
+    render();
+    message('已加入待套用決策；請重新預覽收斂計畫。');
+  };
+  const clearDecisions = $('#clear-reduction-decisions');
+  if (clearDecisions) clearDecisions.onclick = () => { reductionDecisions = []; reductionPreview = null; render(); };
+  $('#preview-reduction').onclick = event => {
+    event.preventDefault();
+    // The reduction is always re-derived from the loaded candidate with the
+    // whole decision set, so a preview taken after one was applied has to carry
+    // the decisions already accepted -- otherwise it would show the pre-reduction
+    // picture beside a panel saying the reduction is applied, and the material
+    // the applied decisions resolved would read as pending again.
+    const decisions = [...(workspace.finalReduction?.decisions ?? []), ...reductionDecisions];
+    run(async () => { const plan = await call('previewFinalReduction', workspace, decisions, { acceptedBy: 'local-workspace-user' }); reductionPreview = { decisions, plan }; render(); });
+  };
+  const applyReduction = $('#apply-reduction');
+  if (applyReduction) applyReduction.onclick = () => {
+    const preview = reductionPreview;
+    run(async () => {
+      const result = await call('applyWorkspaceFinalReduction', workspace, { decisions: preview.decisions, expectedPlanId: preview.plan.id, acceptedBy: 'local-workspace-user' });
+      if (!result.applied) { reductionPreview = { decisions: preview.decisions, plan: result.plan }; render(); message(result.blockers?.map(item => item.code).join(', ') || '沒有可套用的收斂決策'); return; }
+      await commit(result.workspace);
+      message('收斂已套用；所有受影響的 Gate 已重新開啟，請重新審核。');
+    });
+  };
+  const clearReduction = $('#clear-reduction');
+  if (clearReduction) clearReduction.onclick = () => run(async () => commit(await call('clearFinalReduction', workspace)));
   $('#mobile-profile').onsubmit = event => {
     event.preventDefault();
     const data = Object.fromEntries(new FormData(event.target));

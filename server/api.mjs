@@ -277,6 +277,29 @@ export function createApiRouter({ application, ownerOf, challenge = null }) {
         confirmations: body.confirmations ?? null,
       }));
     }],
+    // The Final Six-Role Reduction, preview and apply on two routes. Never one
+    // route with an `apply` flag: the preview writes nothing and the apply
+    // mints a revision, and a single flag is one typo away from a mutation
+    // nobody previewed.
+    ['POST', /^\/projects\/([^/]+)\/final-reduction\/plan$/, async (m, request, owner) => {
+      const body = await readJson(request);
+      return json(await application.planFinalReduction(owner, m[1], {
+        candidateId: body.candidate_id,
+        decisions: body.decisions ?? [],
+        acceptedBy: body.accepted_by ?? null,
+        instrumentProfile: body.instrument_profile ?? null,
+      }));
+    }],
+    ['POST', /^\/projects\/([^/]+)\/final-reduction\/apply$/, async (m, request, owner) => {
+      const body = await readJson(request);
+      return json(await application.applyFinalReduction(owner, m[1], {
+        candidateId: body.candidate_id,
+        decisions: body.decisions ?? [],
+        expectedPlanId: body.expected_plan_id,
+        acceptedBy: body.accepted_by,
+        instrumentProfile: body.instrument_profile ?? null,
+      }));
+    }],
     ['POST', /^\/projects\/([^/]+)\/mobile-adaptation\/plan$/, async (m, request, owner) => {
       const body = await readJson(request);
       return json(await application.planMobileAdaptation(owner, m[1], { candidateId: body.candidate_id, profile: body.profile }));

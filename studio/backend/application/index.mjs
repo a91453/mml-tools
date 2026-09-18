@@ -289,6 +289,30 @@ export function createStudioApplication({
       }));
     },
 
+    /**
+     * Preview the Final Six-Role Reduction. Read-only: nothing is written and
+     * no candidate is minted, whatever the plan says.
+     */
+    async planFinalReduction(owner, projectId, input) {
+      return envelope({ operation: OPERATION_STATUS.SUCCEEDED, reduction: await arrangement.finalReduction(owner, projectId, { ...input, apply: false }) });
+    },
+
+    /**
+     * Apply a reviewed Final Six-Role Reduction plan and re-run the review.
+     *
+     * The review that comes back is the ordinary candidate review of the new
+     * revision. It is run here so a caller cannot mistake "applied" for
+     * "reviewed": every gate the reduction touched is PENDING again until that
+     * review says otherwise.
+     */
+    async applyFinalReduction(owner, projectId, input) {
+      return mutate(projectId, async () => {
+        const result = await arrangement.finalReduction(owner, projectId, { ...input, apply: true });
+        const reviewResult = result.applied ? await review.review(owner, projectId, { candidateId: result.candidate_id }) : null;
+        return envelope({ operation: result.applied ? OPERATION_STATUS.SUCCEEDED : OPERATION_STATUS.BLOCKED, reduction: result, review: reviewResult });
+      });
+    },
+
     async planMobileAdaptation(owner, projectId, input) {
       return envelope({ operation: OPERATION_STATUS.SUCCEEDED, adaptation: await arrangement.mobileAdaptation(owner, projectId, { ...input, apply: false }) });
     },

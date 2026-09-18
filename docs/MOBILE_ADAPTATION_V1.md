@@ -167,7 +167,7 @@ applicable. This is not a one-click MIDI-to-Final pipeline.
   Changes to other events can still invalidate Lead context and require the
   existing fresh Lead re-review, which remains answerable.
 - MIDI velocity curves calibrated to Mobile volume.
-- Complete Final six-role reduction / G12.
+- ~~Complete Final six-role reduction / G12.~~ Implemented as a separate stage; see `G12_FINAL_SIX_ROLE_REDUCTION.md`. It runs *before* Mobile adaptation and changes no pitch, octave, timing or volume.
 
 These are separate capabilities, not silently covered by v1 PASS. Original
 audio, real target-client testing, and the published acceptance gates remain

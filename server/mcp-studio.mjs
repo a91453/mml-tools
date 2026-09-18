@@ -23,7 +23,7 @@ const readOnly = { readOnlyHint: true, destructiveHint: false, idempotentHint: t
 const writes = { readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: false };
 
 const projectId = { type: 'string', minLength: 36, maxLength: 36, description: '本服務發出的 project_id（prj_ 開頭）。不可傳檔案路徑、暫存檔名或瀏覽器網址。' };
-const candidateId = { type: 'string', minLength: 10, maxLength: 128, description: '候選 revision id（g11d:rev: 開頭），由 studio_decisions_apply 或 studio_mobile_adaptation_apply 產生。' };
+const candidateId = { type: 'string', minLength: 10, maxLength: 128, description: '候選 revision id（g11d:rev: 開頭），由 studio_decisions_apply、studio_final_reduction_apply 或 studio_mobile_adaptation_apply 產生。' };
 
 // A structured payload whose vocabulary belongs to the Application Service.
 //
@@ -142,6 +142,51 @@ export const STUDIO_MCP_TOOLS = [
         accepted_by: { type: 'string', minLength: 1, maxLength: 120 },
       },
       required: ['project_id', 'decisions'],
+      additionalProperties: false,
+    },
+    annotations: writes,
+  },
+  {
+    name: 'studio_final_reduction_plan',
+    title: '預覽 Final Six-Role Reduction',
+    description: 'G12：把已接受角色的候選收斂成可進入 Mobile Adaptation 的六角色候選，並產生事件級 accounting ledger。唯讀，不寫入、不產生候選。'
+      + '每個來源支持的 baseline 事件都會落在 KEEP／REDISTRIBUTE／OVERFLOW／PENDING／OMIT 其中之一；overflow 與 pending 一律保留在 ledger 與候選中，不會消失。'
+      + 'decisions 為 schema=mml-studio/final-six-role-reduction-decision@1 的陣列，含 id、action（KEEP／REDISTRIBUTE／DUPLICATE／ACCEPT_OVERFLOW／OMIT）、eventIds（候選事件 id，不接受 lane）、reason；REDISTRIBUTE 需 toRole，DUPLICATE 需 toRoles，兩者與 OMIT 另需至少一筆 evidence。'
+      + '任何進出 Melody 的移動、複製進 Melody，或移除 Lead 事件，都要帶完整 leadEvidence，並由既有 Lead grader 判定；證據不足即 PENDING，沒有 G12 專用捷徑。'
+      + '本階段只處理角色與六軌容量：不改音高、八度、起訖、時值與音量（那些屬於 Gate 8 Mobile Adaptation），不因角色字數超過上限而刪音，不把未對應鼓面的 GM 鼓音塞進音高角色。'
+      + 'instrument_profile 為選填且僅供診斷：它不決定任何 outcome、不解決 PENDING、不通過任何 Gate，帶或不帶都不會改變 plan.id。'
+      + '回傳 plan.id、逐事件 ledger、Core3／和聲／字數壓力前後比較；status=PASS 僅表示這份 plan 可安全套用，不是 Gate 3／4／5／8／9 通過。',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        project_id: projectId,
+        candidate_id: candidateId,
+        decisions: { type: 'array', maxItems: 500, items: structuredPayload(), description: '明確接受的 reduction decisions；留空即取得純分析預覽。' },
+        accepted_by: { type: 'string', minLength: 1, maxLength: 120, description: '審查者識別；plan 身分綁定於此，預覽與套用需一致。' },
+        instrument_profile: structuredPayload('選填 mml-studio/instrument-profile@1；僅診斷，不影響任何判定。'),
+      },
+      required: ['project_id', 'candidate_id'],
+      additionalProperties: false,
+    },
+    annotations: readOnly,
+  },
+  {
+    name: 'studio_final_reduction_apply',
+    title: '套用 Final Six-Role Reduction 並重新審核',
+    description: '重新計算 reduction plan，只有 expected_plan_id 與目前 baseline／candidate／decisions／accepted_by／Canonical 一致時才原子套用。'
+      + '產生新的 reduction 候選（stage=FINAL_SIX_ROLE_REDUCTION_V1），保留 parent candidate、Source-Faithful Baseline、plan 身分與 accounting ledger，並立即重新跑 review。'
+      + '套用不代表任何 Gate 通過：Core3、Lead、Full6、Gate 8、Gate 9 與實機接受全部重新開啟。有任何 blocker 時完全不套用。',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        project_id: projectId,
+        candidate_id: candidateId,
+        decisions: { type: 'array', minItems: 1, maxItems: 500, items: structuredPayload() },
+        expected_plan_id: { type: 'string', minLength: 10, maxLength: 200 },
+        accepted_by: { type: 'string', minLength: 1, maxLength: 120 },
+        instrument_profile: structuredPayload('選填；僅診斷。'),
+      },
+      required: ['project_id', 'candidate_id', 'decisions', 'expected_plan_id', 'accepted_by'],
       additionalProperties: false,
     },
     annotations: writes,
@@ -304,6 +349,10 @@ export async function runStudioTool(name, args, { application, owner }) {
       });
     case 'studio_audio_alignment':
       return application.attachAudioAlignment(owner, args.project_id, { candidateId: args.candidate_id, report: args.report });
+    case 'studio_final_reduction_plan':
+      return application.planFinalReduction(owner, args.project_id, { candidateId: args.candidate_id, decisions: args.decisions ?? [], acceptedBy: args.accepted_by ?? null, instrumentProfile: args.instrument_profile ?? null });
+    case 'studio_final_reduction_apply':
+      return application.applyFinalReduction(owner, args.project_id, { candidateId: args.candidate_id, decisions: args.decisions ?? [], expectedPlanId: args.expected_plan_id, acceptedBy: args.accepted_by, instrumentProfile: args.instrument_profile ?? null });
     case 'studio_mobile_adaptation_plan':
       return application.planMobileAdaptation(owner, args.project_id, { candidateId: args.candidate_id, profile: args.profile });
     case 'studio_mobile_adaptation_apply':
