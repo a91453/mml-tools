@@ -196,6 +196,7 @@ function readiness(candidate) {
     harmonyReport: { status: 'PASS', unresolvedCount: 0 },
     playerReadback: 'PASS',
     originalAudioRequired: true,
+    mobileAdaptation: 'PASS',
   });
 }
 
