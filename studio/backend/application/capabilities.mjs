@@ -87,16 +87,13 @@ export function buildCapabilities({ canonical, storage, jobs, transports = [] })
 
     gates: freeze({
       axes: GATE_NAMES,
-      settable_by_this_service: freeze(['technical', 'source', 'audio', 'player_readback']),
-      // Distinct from `never_settable_by_this_service`, and deliberately not
-      // folded into it. `mobile_adaptation` has no gate implementing it in this
-      // build, so nothing here can move it off PENDING — but that is a missing
-      // implementation, not the standing prohibition `in_game` carries. Listing
-      // the two together would either overclaim a rule that does not exist or
-      // dilute the one that does.
-      not_implemented_in_this_build: freeze(['mobile_adaptation']),
+      settable_by_this_service: freeze(['technical', 'source', 'audio', 'player_readback', 'mobile_adaptation']),
+      // Gate 8 is settable only through the explicit candidate-bound,
+      // evidence-backed review confirmation. Parser/emitter success never sets
+      // it. in_game remains a standing prohibition for this service.
+      not_implemented_in_this_build: freeze([]),
       never_settable_by_this_service: freeze(['in_game']),
-      notice: 'in_game is recorded only by the user or a controlled target-client test. No parser, emitter, transport, job or model call can set it, and this build records none, so it stays PENDING. mobile_adaptation also stays PENDING, for the different reason that no gate implements it here.',
+      notice: 'mobile_adaptation can reach PASS only from an explicit candidate-bound evidence-backed Gate 8 review; parser/emitter success does not upgrade it. in_game is recorded only by the user or a controlled target-client test. No parser, emitter, transport, job or model call can set in_game, so it stays PENDING.',
     }),
 
     audio: freeze({
