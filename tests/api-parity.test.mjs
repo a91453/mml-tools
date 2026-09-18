@@ -84,3 +84,102 @@ test('the MCP technical tools keep refusing the same malformed arguments as befo
   assert.equal((await call({ mml: 123, meter_text: '0 4/4' })).error.code, -32602);
   assert.equal((await call(VALID)).result.structuredContent.technical_ok, true);
 });
+
+// ─── the two review axes reach the same place on both transports ────────────
+//
+// `approveCore3SourceChange` existed on the Application Service with no caller
+// on either transport, which left the Core3 source-continuity axis unclearable
+// from the Agent plane. A route and a tool were added together; this pins that
+// both exist, that they dispatch to the same operation, and that a malformed
+// request is refused the same way on each -- so the pair cannot drift back into
+// one transport knowing an operation the other does not.
+
+test('the Core3 approval and Lead evidence review routes exist and refuse the same inputs MCP refuses', async () => {
+  const { json } = setup();
+  const project = '/projects/prj_00000000000000000000000000000000';
+
+  // An unreached route answers NOT_FOUND / "Unknown endpoint"; a reached one
+  // answers with the operation's own refusal. Both are HTTP 404 here -- an
+  // unknown candidate IS a 404 -- so the code is what distinguishes them, and
+  // `/review` is the control: a route known to exist, answering identically.
+  const control = await json(`${project}/review`, {});
+  assert.equal(control.body.error?.code, 'CANDIDATE_NOT_FOUND');
+
+  for (const path of [`${project}/core3/approvals`, `${project}/lead-evidence/reviews`]) {
+    const { body } = await json(path, {});
+    assert.notEqual(body.error?.code, 'NOT_FOUND', `${path} must be routed`);
+    assert.equal(body.error?.code, control.body.error.code, `${path} answered ${JSON.stringify(body.error)}`);
+  }
+
+  // A path that really is not routed, so the assertion above can fail.
+  const missing = await json(`${project}/core3/approvals/nope`, {});
+  assert.equal(missing.body.error?.code, 'NOT_FOUND');
+});
+
+test('every studio MCP tool dispatches to an operation the Application Service actually has', async () => {
+  const { STUDIO_MCP_TOOLS } = await import('../server/mcp-studio.mjs');
+  const application = createStudioApplication({});
+  // The operation each tool is documented to call. A tool naming an operation
+  // that does not exist would fail only when a caller tried it.
+  const operations = {
+    studio_capabilities: 'capabilities',
+    studio_project_create: 'createProject',
+    studio_project_get: 'getProject',
+    studio_sources_analyze: 'analyzeSources',
+    studio_baseline_events: 'listBaselineEvents',
+    studio_arrangement_suggest: 'suggestArrangement',
+    studio_decisions_apply: 'applyDecisions',
+    studio_audio_alignment: 'attachAudioAlignment',
+    studio_candidate_review: 'reviewCandidate',
+    studio_core3_change_approve: 'approveCore3SourceChange',
+    studio_lead_evidence_review: 'reviewLeadEvidence',
+    studio_finalize: 'finalize',
+    studio_job_status: 'getJob',
+    studio_artifact_get: 'getArtifact',
+  };
+  for (const tool of STUDIO_MCP_TOOLS) {
+    const operation = operations[tool.name];
+    assert.ok(operation, `${tool.name} is advertised but this test does not know which operation it calls`);
+    assert.equal(typeof application[operation], 'function', `${tool.name} dispatches to a missing operation ${operation}`);
+  }
+  assert.equal(STUDIO_MCP_TOOLS.length, Object.keys(operations).length, 'a tool was added or removed without updating this map');
+});
+
+// Advertising a tool is not the same as being able to call it. A dispatch case
+// whose name drifted from the advertised one would fail only when an agent
+// tried it, and `tools/list` would keep claiming the capability. Every tool is
+// therefore actually dispatched here, and the only thing asserted is that it
+// was recognised: it must not raise "Unknown studio tool".
+test('every advertised studio tool is dispatchable, not just advertised', async () => {
+  const { STUDIO_MCP_TOOLS, runStudioTool } = await import('../server/mcp-studio.mjs');
+  const application = createStudioApplication({});
+  const owner = 'owner:service';
+  // Arguments good enough to reach the operation; each is expected to be
+  // refused by the operation itself, which is what proves it was reached.
+  const args = {
+    project_id: 'prj_00000000000000000000000000000000',
+    candidate_id: 'g11d:rev:0000000000000000',
+    job_id: 'job_00000000000000000000000000000000',
+    artifact_id: 'art_00000000000000000000000000000000',
+    approval: {},
+    review: {},
+    report: {},
+    decisions: [],
+  };
+
+  for (const tool of STUDIO_MCP_TOOLS) {
+    let unknown = false;
+    try {
+      await runStudioTool(tool.name, args, { application, owner });
+    } catch (error) {
+      unknown = /Unknown studio tool/.test(error.message);
+    }
+    assert.equal(unknown, false, `${tool.name} is advertised but not dispatched`);
+  }
+
+  // The guard above can fail: a name nobody dispatches is still refused.
+  await assert.rejects(
+    () => runStudioTool('studio_not_a_tool', args, { application, owner }),
+    /Unknown studio tool/,
+  );
+});
