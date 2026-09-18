@@ -35,6 +35,7 @@ const fullConfirmations = {
   source_complete: { value: true, reason: 'The official source is the complete material for this cue.', evidence: ['official-midi'] },
   player_readback: { value: 'PASS', reason: 'The emitted MML was read back in the player.', evidence: ['player session log'] },
   mobile_adaptation_reviewed: { value: true, reason: 'The candidate was reviewed for Mobile audibility/register/role preservation; no further adaptation is needed.', evidence: ['fixture Gate 8 review'] },
+  regression_reviewed: { value: true, reason: 'Baseline/previous drift and available historical regressions were reviewed.', evidence: ['fixture Gate 9 review'] },
   original_audio_required: { value: false, reason: 'No released recording exists for this cue.' },
 };
 
@@ -436,6 +437,7 @@ test('a technical PASS never produces a source, audio, player or in-game PASS', 
       source_complete: { value: true, reason: 'Complete.' },
       original_audio_required: { value: false, reason: 'No recording exists.' },
       mobile_adaptation_reviewed: { value: true, reason: 'Gate 8 reviewed.', evidence: ['fixture Gate 8 review'] },
+      regression_reviewed: fullConfirmations.regression_reviewed,
       // Player readback deliberately not confirmed.
     },
   });
@@ -465,6 +467,7 @@ test('Gate 8 blocks Final until an evidence-backed candidate review is recorded'
   const withoutAdaptation = {
     source_complete: fullConfirmations.source_complete,
     player_readback: fullConfirmations.player_readback,
+    regression_reviewed: fullConfirmations.regression_reviewed,
     original_audio_required: fullConfirmations.original_audio_required,
   };
   const blocked = await service.finalize(OWNER, run.projectId, {
