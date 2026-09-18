@@ -99,15 +99,55 @@ test('a KEEP revision does not erase the Lead promotion evidence of an earlier o
   assert.equal(secondReview.blockers.includes('leadPromotion'), false);
 });
 
-test('a later revision that moves Core3 material sends the recovered promotion back to PENDING', async () => {
+test('a later revision that changes the Lead picture sends the recovered promotion back to PENDING', async () => {
   const service = createStudioApplication();
-  const { project, projectId } = await projectWithBaseline(service, 'Lead lineage staleness');
+  const { projectId } = await projectWithBaseline(service, 'Lead lineage staleness');
 
   const first = await service.applyDecisions(OWNER, projectId, { decisions: [promote('chord3-1')] });
   assert.equal(first.decisions.applied, true);
 
-  // Chord1 leaves Core3. The reviewer's continuity and Core3 claims were made
-  // about the Core3 picture as it stood at revision 1.
+  // A Lead event leaves Melody. The reviewer's continuity claim for the earlier
+  // promotion was made about the Lead picture as it stood at revision 1.
+  const second = await service.applyDecisions(OWNER, projectId, {
+    parentCandidateId: first.decisions.candidate_id,
+    decisions: [{
+      id: 'demote:melody-1',
+      type: 'MOVE_ROLE',
+      target: { eventIds: ['melody-1'] },
+      fromRole: 'Melody',
+      toRole: 'Chord3',
+      reason: 'Reviewed: on a second listen this opening attack is inner material.',
+      evidence: ['fixture:score inner staff'],
+      leadEvidence: {
+        sourceIdentity: { sourceId: SOURCE_ID, sourceEventId: `${SOURCE_ID}#melody-1` },
+        sectionRole: 'instrumental',
+        scoreEvidence: { availability: 'available', classification: 'inner', citation: 'fixture:score inner staff' },
+        audioEvidence: { availability: 'available', classification: 'background', citation: 'fixture:audio 0:00 behind' },
+        continuity: { checked: true, createsLeadGap: false, replacementEventIds: [] },
+        core3: { checked: true, status: 'PASS' },
+        positiveReason: 'The score places this attack on the inner staff and the mix keeps it behind the lead.',
+      },
+      acceptedBy: 'reviewer:test',
+    }],
+  });
+  assert.equal(second.decisions.applied, true);
+
+  const review = (await service.reviewCandidate(OWNER, projectId, { candidateId: second.decisions.candidate_id })).review;
+  const promoted = review.lead_promotion.find(report => report.eventId === 'chord3-1');
+  assert.equal(promoted.status, 'PENDING', 'a changed Lead picture is re-review, not a carried PASS');
+  assert.ok(promoted.blockers.includes('LEAD_EVIDENCE_CONTEXT_CHANGED'));
+  assert.equal(review.readiness.gates.leadPromotion.status, 'PENDING');
+  assert.ok(review.blockers.includes('leadPromotion'));
+});
+
+test('an ordinary later Core3 decision does not void the recovered promotion evidence', async () => {
+  const service = createStudioApplication();
+  const { project, projectId } = await projectWithBaseline(service, 'Lead lineage unrelated edit');
+
+  const first = await service.applyDecisions(OWNER, projectId, { decisions: [promote('chord3-1')] });
+  // Chord1 material leaves Core3. That is a real Core3 source change -- the
+  // continuity gate reports it -- but it says nothing about the Lead move, and
+  // G11-D will not let the reviewer re-apply a promotion that already happened.
   const second = await service.applyDecisions(OWNER, projectId, {
     parentCandidateId: first.decisions.candidate_id,
     decisions: [{
@@ -124,11 +164,11 @@ test('a later revision that moves Core3 material sends the recovered promotion b
   assert.equal(second.decisions.applied, true);
 
   const review = (await service.reviewCandidate(OWNER, projectId, { candidateId: second.decisions.candidate_id })).review;
-  assert.equal(review.lead_promotion.length, 1);
-  assert.equal(review.lead_promotion[0].status, 'PENDING', 'a changed Core3 context is re-review, not a carried PASS');
-  assert.ok(review.lead_promotion[0].blockers.includes('LEAD_EVIDENCE_CONTEXT_CHANGED'));
-  assert.equal(review.readiness.gates.leadPromotion.status, 'PENDING');
-  assert.ok(review.blockers.includes('leadPromotion'));
+  assert.equal(review.lead_promotion.find(report => report.eventId === 'chord3-1').status, 'PASS');
+  assert.equal(review.readiness.gates.leadPromotion.status, 'PASS');
+  // The Core3 change is still caught, by the gate that owns that question.
+  assert.equal(review.core3.status, 'PENDING');
+  assert.ok(review.core3.blockers.includes('UNAPPROVED_CORE3_SOURCE_CHANGE'));
 });
 
 test('finalize reads the same recovered evidence review does', async () => {

@@ -164,24 +164,48 @@ test('a revision that only touches an unrelated voice keeps the promotion eviden
 
 // ─── the limits: this is a re-grade, never a carry-forward ──────────────────
 
-test('a later revision that moves Core3 material sends the recovered evidence back to PENDING', () => {
-  const first = promoteTex1();
-  // Chord1 material leaves Core3. The reviewer's continuity and Core3 claims
-  // were made about the Core3 picture as it stood at revision 1; that picture
-  // has moved, so the claim is unproven again.
+test('an ordinary later Core3 decision does not void an earlier revision\'s Lead evidence', () => {
+  // The staleness check must not become the very defect this recovery fixes. A
+  // reviewer who assigns a texture voice to Chord1 in revision 2 has said
+  // nothing about revision 1's Lead move, and G11-D correctly refuses to
+  // re-apply a role move that already happened -- so voiding the evidence here
+  // would leave the Lead gate unclearable again, by a different door. Core3
+  // integrity is not carried forward by the Lead record: the source-continuity
+  // audit and the Gate 4 completeness gate both re-evaluate it every review.
+  const first = demoteLead1();
   const second = applyNext(first, [{
-    id: 'm1', type: 'MOVE_ROLE', target: { eventIds: ['harm-1'] },
-    fromRole: 'Chord1', toRole: 'Chord4',
-    reason: 'Reviewed: moved to enrichment.',
+    id: 'c1', type: 'ASSIGN_ROLE', target: { eventIds: ['tex-2'] }, toRole: 'Chord1',
+    reason: 'Reviewed: this texture voice supports the core harmony.',
     evidence: ['fixture:review'],
   }]);
   assert.equal(second.status, 'PASS');
 
+  const { demotion } = reportsFor([first, second], second);
+  assert.equal(demotion.length, 1);
+  assert.equal(demotion[0].status, 'PASS');
+  assert.equal(reviewAppliedCandidate({ application: second, baseline, leadDemotionReports: demotion })
+    .readiness.gates.leadDemotion.status, 'PASS');
+});
+
+test('a later revision that changes the Lead picture sends the recovered evidence back to PENDING', () => {
+  // The record's own claim is `createsLeadGap: false` -- a statement about Lead
+  // coverage. Once the Lead material itself moves, that claim is unproven again,
+  // and MASTER_RULES 4 says an unproven Lead decision is PENDING, not PASS.
+  const first = promoteTex1();
+  const second = applyNext(first, [{
+    id: 'd2', type: 'MOVE_ROLE', target: { eventIds: ['lead-1'] },
+    fromRole: 'Melody', toRole: 'Chord3',
+    reason: 'Reviewed: this opening note is inner material.',
+    evidence: ['fixture:score inner staff'],
+    leadEvidence: leadDemotionEvidence(),
+  }]);
+  assert.equal(second.status, 'PASS');
+
   const { promotion } = reportsFor([first, second], second);
-  assert.equal(promotion.length, 1);
-  assert.equal(promotion[0].status, 'PENDING');
-  assert.deepEqual([...promotion[0].blockers], [LEAD_EVIDENCE_LINEAGE_BLOCKERS.CONTEXT_CHANGED]);
-  assert.equal(promotion[0].pass, false);
+  const forTex1 = promotion.find(report => report.eventId === 'tex-1');
+  assert.equal(forTex1.status, 'PENDING');
+  assert.deepEqual([...forTex1.blockers], [LEAD_EVIDENCE_LINEAGE_BLOCKERS.CONTEXT_CHANGED]);
+  assert.equal(forTex1.pass, false);
 
   // Readiness still requires it, so the candidate is blocked until re-reviewed.
   const review = reviewAppliedCandidate({ application: second, baseline, leadPromotionReports: promotion });

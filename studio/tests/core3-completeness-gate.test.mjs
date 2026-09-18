@@ -148,15 +148,37 @@ test('Gate 4 is not a track-density rule', () => {
   assert.equal(evaluateCore3Completeness({ candidate: withRests }).status, 'PASS', 'a true source rest is not a gap');
 });
 
-test('a review can never clear a Core3 whose identity depends on enrichment', () => {
-  // Material that sounds while Core3 is silent is proven essential by the
-  // silence-gap test. Sitting in Chord3 it makes Core3 unintelligible without
-  // enrichment, which Gate 4 forbids -- and that is a statement about the
-  // arrangement, not a gap in the evidence.
+test('a Core3 with no Lead at all is a deficiency no review can clear', () => {
+  // MASTER_RULES 5 makes Melody the Lead and Gate 4 requires the Lead to be
+  // present. "The source has no lead voice" is not the reduced-texture case a
+  // reviewer resolves -- an arrangement with no Lead is not a Core3 at all, and
+  // Gate 3 asks the same question independently.
+  const leadless = project('fixture:candidate', [
+    note({ id: 'h1', pitch: 64, start: 0, end: 2, role: 'Chord1' }),
+    note({ id: 'h2', pitch: 65, start: 2, end: 4, role: 'Chord1' }),
+    note({ id: 'b1', pitch: 48, start: 0, end: 2, role: 'Chord2' }),
+    note({ id: 'b2', pitch: 43, start: 2, end: 4, role: 'Chord2' }),
+  ]);
+  const report = evaluateCore3Completeness({ candidate: leadless });
+  assert.equal(report.status, 'FAIL');
+  assert.deepEqual([...report.blockers], [CORE3_COMPLETENESS_BLOCKERS.INCOMPLETE]);
+  assert.ok(report.absentFunctions.includes('lead-continuity'));
+  assert.equal(report.reviewable, false);
+  assert.equal(evaluateCore3Completeness({ candidate: leadless, reviewed: true }).status, 'FAIL',
+    'a reviewer cannot supply a Lead by confirming one');
+});
+
+test('proven-essential material left in enrichment is raised for review, not auto-failed', () => {
   // Core3 sounds at 0-1 and 3-4 and is silent in between, while a Chord3 lane
   // sounds right through that gap and inside the Core3 span -- so the window is
-  // not the end-time question P14 sets aside, and the lane is proven essential.
-  const damaged = project('fixture:candidate', [
+  // not the end-time question P14 sets aside, and the silence-gap test proves
+  // the lane essential.
+  //
+  // Gate 4 does ask whether Core3 stays intelligible without Chord3-Chord5
+  // there, so this cannot silently PASS. But an enrichment line across a Core3
+  // rest is ordinary music, so it cannot be an unreviewable failure either --
+  // that would be the density rule again from the other direction.
+  const fill = project('fixture:candidate', [
     note({ id: 'm1', pitch: 72, start: 0, end: 1, role: 'Melody' }),
     note({ id: 'h1', pitch: 64, start: 0, end: 1, role: 'Chord1' }),
     note({ id: 'b1', pitch: 48, start: 0, end: 1, role: 'Chord2' }),
@@ -165,15 +187,13 @@ test('a review can never clear a Core3 whose identity depends on enrichment', ()
     note({ id: 'h2', pitch: 65, start: 3, end: 4, role: 'Chord1' }),
     note({ id: 'b2', pitch: 43, start: 3, end: 4, role: 'Chord2' }),
   ]);
-  const report = evaluateCore3Completeness({ candidate: damaged });
-  assert.equal(report.identityDependsOnEnrichment, true, 'the silence-gap test proves the Chord3 lane essential');
-  assert.equal(report.status, 'FAIL');
-  assert.deepEqual([...report.blockers], [CORE3_COMPLETENESS_BLOCKERS.INCOMPLETE]);
-  assert.equal(report.reviewable, false);
+  const report = evaluateCore3Completeness({ candidate: fill });
+  assert.equal(report.provenEssentialMisplaced, true, 'the silence-gap test proves the Chord3 lane essential');
   assert.ok(report.essentialEventIdsOutsideCore3.includes('e1'));
-  // And a reviewer cannot talk it out of that: this is a statement about the
-  // arrangement, not a gap in the evidence.
-  assert.equal(evaluateCore3Completeness({ candidate: damaged, reviewed: true }).status, 'FAIL');
+  assert.equal(report.status, 'PENDING', 'raised for review rather than passed or failed');
+  assert.deepEqual([...report.blockers], [CORE3_COMPLETENESS_BLOCKERS.ENRICHMENT_DEPENDENCE_UNRESOLVED]);
+  assert.equal(report.reviewable, true);
+  assert.equal(evaluateCore3Completeness({ candidate: fill, reviewed: true }).status, 'PASS');
 });
 
 // ─── the candidate-bound Core3 approval path ────────────────────────────────

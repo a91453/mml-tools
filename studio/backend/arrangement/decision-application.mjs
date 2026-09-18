@@ -324,22 +324,32 @@ export function snapshotDigestOf(project) {
 }
 
 /**
- * The Core3 picture a Lead evidence record's continuity and Core3 claims were
- * made about.
+ * The Lead picture a Lead evidence record's continuity claim was made about.
  *
- * `SOURCE_POLICY.md` §4 asks a Lead move for continuity after the move and for
- * Core3 integrity. Both are claims about a *state*, not about an event in
- * isolation: the same citation about the same event stops being proven once the
- * Melody/Chord1/Chord2 material around it moves, changes pitch or timing, or
- * appears or disappears. So when evidence recorded at one revision is recovered
- * for a later candidate, this digest is what decides whether it still describes
- * the candidate being graded, or has to go back to PENDING for re-review.
+ * `SOURCE_POLICY.md` §4 asks a Lead move for continuity after the move: the
+ * record asserts `createsLeadGap: false`, which is a claim about a *state*, not
+ * about an event in isolation. The same citation about the same event stops
+ * being proven once the Lead material around it moves, changes pitch or timing,
+ * or appears or disappears. So when evidence recorded at one revision is
+ * recovered for a later candidate, this digest decides whether the continuity
+ * claim still describes the candidate being graded, or has to go back to
+ * PENDING for re-review.
  *
- * Scoped to Core3 note events on purpose. Re-roling Chord3-Chord5 enrichment
- * material does not touch either claim, and invalidating every Lead record on
- * any edit anywhere would push reviewers to re-enter evidence mechanically,
- * which is how a gate stops being read. Volume is included because prominence
- * is part of what a Core3 role claim asserts.
+ * Scoped to Melody/Lead note events, and deliberately not to all of Core3.
+ *
+ * The record also carries a `core3` claim, but that one is not carried forward
+ * by anything: `final/readiness.mjs` re-evaluates Core3 on every review through
+ * the source-continuity audit and the independent Gate 4 completeness gate, both
+ * against the current candidate. Folding Core3 into this digest as well would
+ * therefore invalidate every earlier Lead record on any ordinary later Core3
+ * decision -- assigning a texture voice to Chord1, say -- while G11-D correctly
+ * refuses to re-apply a role move that already happened. The Lead gate would
+ * become unclearable again, which is the defect this lineage recovery exists to
+ * fix, re-created through a different door. Core3 integrity is gated; the Lead
+ * record's own claim is about Lead continuity, and that is what is checked here.
+ *
+ * Volume is included because prominence is part of what a Lead role claim
+ * asserts.
  *
  * This is an implementation staleness rule. It adds no Canonical rule and
  * decides no musical question: a changed digest means "not proven for this
@@ -348,7 +358,7 @@ export function snapshotDigestOf(project) {
 export function leadContextDigestOf(project) {
   if (!isPlainObject(project)) throw Error('leadContextDigestOf requires a Canonical project');
   const events = (project.events ?? [])
-    .filter(event => event?.kind === 'note' && CORE3_ROLE_NAMES.includes(event.role ?? ''))
+    .filter(event => event?.kind === 'note' && event.role === LEAD_ROLE)
     .map(event => ({
       id: event.id,
       role: event.role,

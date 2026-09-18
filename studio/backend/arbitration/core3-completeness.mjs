@@ -47,12 +47,13 @@
 // ----------------------------
 //   PASS     the five functions are satisfied, or a reviewer answered Gate 4
 //            for this candidate with evidence
-//   FAIL     proven-essential material -- material that sounds while Core3 is
-//            silent -- is sitting in Chord3-Chord5. The arrangement's identity
-//            depends on enrichment, which is a deficiency in the arrangement
-//            and is never reviewable away
-//   PENDING  anything else, including a missing function whose material the
-//            source may simply not carry
+//   FAIL     Lead continuity is absent (a Core3 with no Lead is not a Core3),
+//            or the evaluator's own re-arbitration still cannot bring
+//            proven-essential material into Core3. Deficiencies in the
+//            arrangement, never reviewable away
+//   PENDING  anything else, including a missing Chord1/Chord2 function whose
+//            material the source may simply not carry, and proven-essential
+//            material the delivered Core3 leaves in enrichment
 //
 // A reviewer resolves the PENDING residue with candidate-bound, evidence-backed
 // judgement -- that is what `reviewed` is for, and it is the same shape as the
@@ -69,6 +70,10 @@ const CORE3_ROLES = new Set(['Melody', 'Chord1', 'Chord2']);
 export const CORE3_COMPLETENESS_BLOCKERS = Object.freeze({
   INCOMPLETE: 'CORE3_INCOMPLETE',
   UNRESOLVED: 'CORE3_COMPLETENESS_UNRESOLVED',
+  // Proven-essential material that the delivered Core3 leaves in Chord3-Chord5.
+  // Reviewable: an enrichment line across a Core3 rest is ordinary music, and
+  // only a reviewer can say whether Core3 stays intelligible without it.
+  ENRICHMENT_DEPENDENCE_UNRESOLVED: 'CORE3_ENRICHMENT_DEPENDENCE_UNRESOLVED',
   NOT_EVALUATED: 'CORE3_COMPLETENESS_NOT_EVALUATED',
 });
 
@@ -124,54 +129,68 @@ export function evaluateCore3Completeness({ candidate, decompositions = null, re
     .filter(id => !candidateCore3EventIds.has(id));
   const provenEssentialMisplaced = (core3.functions?.essentialInnerSupport?.promotedToChord2?.length ?? 0) > 0
     && essentialOutsideCore3.length > 0;
-  const identityDependsOnEnrichment = core3.identityDependsOnEnrichment === true || provenEssentialMisplaced;
+  const identityDependsOnEnrichment = core3.identityDependsOnEnrichment === true;
 
   // Which outcomes are a *deficiency*, and which are merely unresolved.
   //
   // This is the line the whole gate turns on, so it is drawn from evidence and
-  // not from note counts. Gate 4 requires "essential Bass/inner support ...
-  // where source/context requires it", and an empty Chord2 has two completely
-  // different meanings:
+  // from what Canonical actually requires -- never from note counts. Gate 4
+  // requires "essential Bass/inner support ... where source/context requires
+  // it", so an empty Chord2 has two completely different meanings:
   //
   //   the source carries no such material   a legitimately reduced texture
   //   the material exists, outside Core3    cleanup damaged the arrangement
   //
-  // Only the second is a deficiency, and the evaluator proves it by the
-  // silence-gap test against the SOURCE: material that sounds while Core3 is
-  // silent is proven essential, and `identityDependsOnEnrichment` says that
-  // proven-essential material is sitting in Chord3-Chord5. That is the one
-  // outcome this gate FAILs on, because it is the one it can prove.
+  // An absent Chord1 or Chord2 function is therefore NOT a deficiency on its
+  // own. Treating it as one would be "Chord1 and Chord2 must always contain
+  // notes" wearing a different name, and it would fail every source that
+  // genuinely has no bass line, every true rest and every source-supported
+  // reduced texture. It does not pass either: it is unresolved until someone
+  // says, with candidate-bound evidence, that the reduced realization is the
+  // complete one for this source.
   //
-  // An absent function on its own is NOT treated as a deficiency. Doing so
-  // would be "Chord1 and Chord2 must always contain notes" wearing a different
-  // name, and it would fail every source that genuinely has no bass line, every
-  // true rest and every source-supported reduced texture. Nor does it pass: a
-  // Core3 missing a function is unresolved until someone says, with evidence,
-  // that the reduced realization is the complete one for this source. The
-  // material a candidate *dropped* is not this gate's question either -- the
-  // source-continuity audit already reports removals and role moves out of
-  // Core3, with its own approval path.
+  // Two outcomes ARE deficiencies, and neither is reviewable away:
+  //
+  //   * Lead continuity absent. MASTER_RULES 5 makes Melody the Lead and Gate 4
+  //     requires the Lead to be present; a Core3 with no Lead at all is not an
+  //     incomplete arrangement of this kind, it is not one. "The source has no
+  //     lead voice" is not the reduced-texture case, and Gate 3 asks the same
+  //     question independently. A reviewer cannot supply a Lead by confirming
+  //     one.
+  //   * The evaluator's own `identityDependsOnEnrichment`: proven-essential
+  //     material that even its re-arbitration could not bring into Core3.
+  //
+  // `provenEssentialMisplaced` -- proven-essential material the *delivered*
+  // candidate keeps in Chord3-Chord5 while the evaluator's proposal pulls it in
+  // -- is deliberately NOT a deficiency. An enrichment line sounding across a
+  // Core3 rest is ordinary music, and failing it unreviewably would be the
+  // density rule again from the other direction. It is reported as its own
+  // blocker for the reviewer to answer, because Gate 4 does ask whether Core3
+  // stays intelligible without Chord3-Chord5 there.
   //
   // So nothing here auto-passes on "unchanged from baseline": an unchanged,
   // musically incomplete Core3 lands on PENDING and stays blocked until Gate 4
   // is actually answered.
-  const deficient = identityDependsOnEnrichment;
+  const leadAbsent = absentFunctions.includes('lead-continuity');
+  const deficient = identityDependsOnEnrichment || leadAbsent;
 
   let status;
   let blockers = [];
   if (deficient) {
-    // Not reviewable away: this is a statement about the arrangement, not a gap
+    // Not reviewable away: these are statements about the arrangement, not gaps
     // in the evidence.
     status = 'FAIL';
     blockers = [CORE3_COMPLETENESS_BLOCKERS.INCOMPLETE];
-  } else if (core3.status === 'COMPLETE') {
+  } else if (core3.status === 'COMPLETE' && !provenEssentialMisplaced) {
     status = 'PASS';
   } else if (reviewed === true) {
     // A reviewer has answered Gate 4 for this candidate with evidence.
     status = 'PASS';
   } else {
     status = 'PENDING';
-    blockers = [CORE3_COMPLETENESS_BLOCKERS.UNRESOLVED];
+    blockers = provenEssentialMisplaced
+      ? [CORE3_COMPLETENESS_BLOCKERS.ENRICHMENT_DEPENDENCE_UNRESOLVED]
+      : [CORE3_COMPLETENESS_BLOCKERS.UNRESOLVED];
   }
 
   return Object.freeze({
@@ -180,7 +199,8 @@ export function evaluateCore3Completeness({ candidate, decompositions = null, re
     blockers: Object.freeze(blockers),
     evaluation: core3.status,
     reviewed: reviewed === true,
-    reviewable: !deficient && core3.status !== 'COMPLETE',
+    reviewable: !deficient && (core3.status !== 'COMPLETE' || provenEssentialMisplaced),
+    provenEssentialMisplaced,
     missingFunctions: Object.freeze([...(core3.missingFunctions ?? [])]),
     absentFunctions: Object.freeze(absentFunctions),
     unprovenFunctions: Object.freeze(unprovenFunctions),
