@@ -102,6 +102,7 @@ test('with an Application Service the studio control surface is advertised', asy
     'studio_capabilities', 'studio_project_create', 'studio_project_get', 'studio_sources_analyze',
     'studio_arrangement_suggest', 'studio_decisions_apply', 'studio_candidate_review',
     'studio_core3_change_approve', 'studio_lead_evidence_review',
+    'studio_final_reduction_plan', 'studio_final_reduction_apply',
     'studio_finalize', 'studio_job_status', 'studio_artifact_get',
   ]) {
     assert.ok(names.includes(expected), `${expected} must be advertised`);
@@ -111,11 +112,12 @@ test('with an Application Service the studio control surface is advertised', asy
   for (const leaked of ['midi_file', 'role_candidates', 'readiness', 'technical_timing_repair', 'mml_emitter', 'micro_gap']) {
     assert.ok(!names.some(name => name.includes(leaked)), `${leaked} is an implementation detail and must not be a tool`);
   }
-  // Sixteen studio tools beside the three base ones. The bound is about what a
+  // Eighteen studio tools beside the three base ones. The bound is about what a
   // model can hold, not about hiding operations: a review axis with no tool is
-  // not a smaller surface, it is an unreachable one, and the two Gate 4 axes and
-  // the Lead evidence re-review are each a separate question a reviewer answers.
-  assert.ok(tools.length <= 19, 'the surface must stay small enough for a model to reason about');
+  // not a smaller surface, it is an unreachable one, and the two Gate 4 axes,
+  // the Lead evidence re-review and the reduction's read-only preview are each a
+  // separate question a reviewer answers.
+  assert.ok(tools.length <= 21, 'the surface must stay small enough for a model to reason about');
 });
 
 // Every Application Service operation a reviewer has to reach, and the tool that

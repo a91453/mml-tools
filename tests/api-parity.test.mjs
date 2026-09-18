@@ -129,6 +129,8 @@ test('every studio MCP tool dispatches to an operation the Application Service a
     studio_baseline_events: 'listBaselineEvents',
     studio_arrangement_suggest: 'suggestArrangement',
     studio_decisions_apply: 'applyDecisions',
+    studio_final_reduction_plan: 'planFinalReduction',
+    studio_final_reduction_apply: 'applyFinalReduction',
     studio_mobile_adaptation_plan: 'planMobileAdaptation',
     studio_mobile_adaptation_apply: 'applyMobileAdaptation',
     studio_audio_alignment: 'attachAudioAlignment',
