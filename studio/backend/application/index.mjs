@@ -267,6 +267,13 @@ export function createStudioApplication({
       });
     },
 
+    async approveCore3SourceChange(owner, projectId, input) {
+      return serialized(`${owner}:${projectId}`, async () => envelope({
+        operation: OPERATION_STATUS.SUCCEEDED,
+        ...(await review.approveCore3SourceChange(owner, projectId, input)),
+      }));
+    },
+
     async reviewCandidate(owner, projectId, input) {
       return mutate(projectId, async () => envelope({ operation: OPERATION_STATUS.SUCCEEDED, review: await review.review(owner, projectId, input) }));
     },

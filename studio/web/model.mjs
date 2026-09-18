@@ -4,6 +4,7 @@ import { validateMML, splitMML } from '../backend/mml/parser.mjs';
 import { ingestMusicXML, musicXMLFragmentToProject } from '../backend/score/index.mjs';
 import { compareCandidateLineage, compareCanonicalVersions } from '../backend/compare/version-drift.mjs';
 import { evaluateCore3Continuity } from '../backend/arbitration/core3.mjs';
+import { evaluateCore3Completeness } from '../backend/arbitration/core3-completeness.mjs';
 import { evaluateLeadDemotion, evaluateLeadPromotion, singleSourceIdentityOf } from '../backend/arbitration/lead-demotion.mjs';
 import { SIX_ROLES } from '../backend/arrangement/decision-application.mjs';
 import { baselineOriginEvent } from '../backend/arrangement/decision-review.mjs';
@@ -465,6 +466,11 @@ function analysisContext(w) {
   const { technical, deliveryMatches } = verifyDelivery(candidate, rawMml, w.settings.meterText);
   const lineage = baseline ? compareCandidateLineage({ sourceBaseline: baseline, acceptedPrevious: previous, candidate }) : null;
   const core3 = baseline ? evaluateCore3Continuity({ baseline, candidate, approvedChanges: (w.core3Approvals ?? []).filter(a => a.revision === w.revision) }) : pending('BASELINE_MISSING');
+  // Gate 4's own question, beside the source-continuity audit above. The Web
+  // `core3` review is the candidate-bound, evidence-backed reviewer judgement
+  // that can resolve the residue the evaluator could not prove; it can never
+  // clear a function proven absent.
+  const core3Completeness = evaluateCore3Completeness({ candidate, reviewed: reviewed(w, 'core3') });
   const harmony = analyzeCrossSourceHarmony(project);
   // Stored Lead evidence is data. Each record is judged on every analysis by
   // the Lead Demotion Gate against the baseline event it names; the gate binds
@@ -524,7 +530,7 @@ function analysisContext(w) {
   });
   const audioPresent = Object.values(w.assets).some(a => a.project.sources.some(s => s.kind === 'original-audio')) || Boolean(w.audio);
   const audioRequired = audioPresent || w.settings.audioRequired !== 'no';
-  const readiness = evaluateProjectReadiness({ project, mmlValidation: technical, core3Report: core3, harmonyReport: harmony, leadDemotionReports: leadReports, leadPromotionReports, lineageReport: lineage, versionDriftReviewed: reviewed(w, 'version'), originalAudioRequired: audioRequired, playerReadback: w.settings.preview === 'none' && reviewed(w, 'tempo') ? 'N/A' : 'PENDING', mobileAdaptation: reviewed(w, 'adaptation') ? 'PASS' : 'PENDING', regressionReviewed: reviewed(w, 'regression') });
+  const readiness = evaluateProjectReadiness({ project, mmlValidation: technical, core3Report: core3, core3CompletenessReport: core3Completeness, harmonyReport: harmony, leadDemotionReports: leadReports, leadPromotionReports, lineageReport: lineage, versionDriftReviewed: reviewed(w, 'version'), originalAudioRequired: audioRequired, playerReadback: w.settings.preview === 'none' && reviewed(w, 'tempo') ? 'N/A' : 'PENDING', mobileAdaptation: reviewed(w, 'adaptation') ? 'PASS' : 'PENDING', regressionReviewed: reviewed(w, 'regression') });
   const gates = { ...readiness.gates };
   delete gates.inGameAcceptance;
   // The shared readiness name is `mobileAdaptation`; the Web UI's long-lived
@@ -575,7 +581,7 @@ function analysisContext(w) {
   // Every status here is recomputed from the workspace on this run. Nothing is
   // read from `w.finalDelivery`: a stored, imported or edited generation record
   // claiming PASS is data about a past attempt, never a gate and never a state.
-  const report = { state: accepted ? 'IN_GAME_ACCEPTED' : validated ? 'VALIDATED' : 'CANDIDATE', gates, blockers, technical, core3, harmony, lineage, leadReports, leadPromotionReports, readiness, rawMidi,
+  const report = { state: accepted ? 'IN_GAME_ACCEPTED' : validated ? 'VALIDATED' : 'CANDIDATE', gates, blockers, technical, core3, core3Completeness, harmony, lineage, leadReports, leadPromotionReports, readiness, rawMidi,
     tracks: technical?.ok && deliveryMatches ? splitMML(rawMml) : null, rawMml: technical?.ok && deliveryMatches ? rawMml.trim() : null, deliveryOrigin,
     historicalRegression: 'FIXTURE_PENDING', audioError, importedDecisions: candidate.decisions };
   return { asset, candidate, project, readiness, gates, report };

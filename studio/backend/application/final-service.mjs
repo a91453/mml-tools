@@ -106,6 +106,7 @@ export function createFinalService({ canonical, projects, review, store }) {
 
       const ctx = await review.context(owner, projectId, candidateId);
       const { engines, record, baseline, entry, application, baselineProject, project, parent, confirmations: recorded } = ctx;
+      const core3ApprovedChanges = ctx.core3Approvals;
 
       const identity = {
         project_id: record.project_id,
@@ -156,7 +157,17 @@ export function createFinalService({ canonical, projects, review, store }) {
       const leadDemotionReports = engines.arrangement.leadDemotionReportsFromLineage(leadReportInputs);
       const leadPromotionReports = engines.arrangement.leadPromotionReportsFromLineage(leadReportInputs);
       const lineage = engines.compare.compareCandidateLineage({ sourceBaseline: baselineProject, acceptedPrevious: parent, candidate: project });
-      const core3 = engines.core3.evaluateCore3Continuity({ baseline: baselineProject, candidate: project, approvedChanges: [] });
+      // Validated, candidate-bound Core3 approvals, recorded through
+      // `approveCore3SourceChange` and re-checked against this candidate when
+      // they were recorded. Finalize used to pass `[]` here, which left a
+      // legitimate reviewed Core3 source change blocked by
+      // UNAPPROVED_CORE3_SOURCE_CHANGE with no way to clear it.
+      const core3 = engines.core3.evaluateCore3Continuity({ baseline: baselineProject, candidate: project, approvedChanges: core3ApprovedChanges });
+      // Gate 4's own question. A clean continuity audit above does not answer it.
+      const core3Completeness = engines.core3Completeness.evaluateCore3Completeness({
+        candidate: project,
+        reviewed: recorded.core3_completeness_reviewed?.value === true,
+      });
       const harmony = engines.harmony.analyzeCrossSourceHarmony(project);
       // One set of readiness inputs, evaluated twice: once before emission with
       // no MML to grade, and once after with the emitted string. Nothing else
@@ -164,6 +175,7 @@ export function createFinalService({ canonical, projects, review, store }) {
       const readinessInputs = {
         project,
         core3Report: core3,
+        core3CompletenessReport: core3Completeness,
         harmonyReport: harmony,
         lineageReport: lineage,
         leadDemotionReports,

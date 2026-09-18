@@ -172,6 +172,26 @@ function microTimingGate(project) {
   });
 }
 
+// ACCEPTANCE_CRITERIA Gate 4 is two questions, and this file used to ask only
+// one of them. `core3Continuity` is the source-relative audit: what did this
+// candidate remove, modify or move away from the baseline without an approved
+// reason, and is any source-supported Lead interval left uncovered.
+// `core3Completeness` is Gate 4's own question: do Melody + Chord1 + Chord2
+// stand up as a one-player arrangement at all.
+//
+// They are separate because a candidate identical to its baseline passes the
+// first trivially and can fail the second completely -- a baseline that only
+// ever carried a Melody is unchanged and incomplete at once. Neither gate
+// implies the other, and neither is derived from the other's result.
+function core3CompletenessGate(report) {
+  const status = normalizeStatus(report, 'NOT_RUN');
+  if (status === 'NOT_RUN') {
+    return gate('PENDING', { blockers: ['CORE3_COMPLETENESS_NOT_EVALUATED'] });
+  }
+  const { status: _status, pass, blockers = [], notice, ...details } = report ?? {};
+  return gate(status, { ...(blockers.length ? { blockers: [...blockers] } : {}), ...details });
+}
+
 function versionGate(lineageReport, reviewed) {
   if (!lineageReport) return gate('N/A', { reason: 'No accepted previous version supplied.' });
   if (lineageReport.reviewRequired && !reviewed) return gate('PENDING', { blockers: ['VERSION_DIVERGENCE_REVIEW_REQUIRED'] });
@@ -207,6 +227,7 @@ export function evaluateProjectReadiness({
   project,
   mmlValidation,
   core3Report,
+  core3CompletenessReport = null,
   harmonyReport,
   leadDemotionReports = [],
   leadPromotionReports = [],
@@ -249,7 +270,10 @@ export function evaluateProjectReadiness({
     // sub-grid timing in the Canonical musical project has source-supported
     // meaning. Neither answer substitutes for the other.
     microTiming: microTimingGate(project),
+    // Retained under its historical name so existing callers and reports keep
+    // reading the source-continuity verdict they always read.
     core3: gate(normalizeStatus(core3Report, 'NOT_RUN'), { blockers: core3Report?.blockers ?? [] }),
+    core3Completeness: core3CompletenessGate(core3CompletenessReport),
     leadDemotion,
     leadPromotion,
     crossSourceHarmony: gate(normalizeStatus(harmonyReport, 'NOT_RUN'), { unresolvedCount: harmonyReport?.unresolvedCount ?? null }),
@@ -271,6 +295,7 @@ export function evaluateProjectReadiness({
     'technical',
     'microTiming',
     'core3',
+    'core3Completeness',
     'leadDemotion',
     'leadPromotion',
     'crossSourceHarmony',
@@ -290,6 +315,6 @@ export function evaluateProjectReadiness({
     finalAccepted,
     preGameBlocking: Object.freeze(preGameBlocking),
     gates,
-    notice: 'Module availability never certifies a song. Candidate readiness requires source completeness plus a real Source-Faithful Baseline snapshot whose event-level diff is computed against the candidate, evidence-backed review of any Lead removals/demotions and Lead additions/promotions, a source-aware micro-timing result with no confirmed technical residue and no unresolved sub-grid interval, audio/arbitration/technical/player evidence, an explicit evidence-backed Mobile adaptation review, and an explicit evidence-backed regression review. Named historical regressions without reproducible fixtures remain FIXTURE_PENDING and are never claimed as passed. finalAccepted additionally requires in-game acceptance.',
+    notice: 'Module availability never certifies a song. Candidate readiness requires source completeness plus a real Source-Faithful Baseline snapshot whose event-level diff is computed against the candidate, an independent Gate 4 result for Core3 musical completeness that a clean source-continuity audit never supplies, evidence-backed review of any Lead removals/demotions and Lead additions/promotions, a source-aware micro-timing result with no confirmed technical residue and no unresolved sub-grid interval, audio/arbitration/technical/player evidence, an explicit evidence-backed Mobile adaptation review, and an explicit evidence-backed regression review. Named historical regressions without reproducible fixtures remain FIXTURE_PENDING and are never claimed as passed. finalAccepted additionally requires in-game acceptance.',
   });
 }

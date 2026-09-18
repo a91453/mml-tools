@@ -67,6 +67,7 @@ const CONFIRMATIONS = Object.freeze({
   player_readback: 'readiness `playerReadback` gate: PASS (the emitted MML was read back in a player; may name the mml_sha256 that was read back), NOT_RUN, or N/A (no preview or verification assets are used for this cue, with the reason). Bound to the candidate.',
   mobile_adaptation_reviewed: 'readiness `mobileAdaptation` gate: the candidate was reviewed against Acceptance Gate 8 and any Mobile adaptation (or the conclusion that none is needed) is minimal, role-preserving and evidence-backed. Bound to the candidate.',
   regression_reviewed: 'readiness `regression` gate: the candidate was compared against the Source-Faithful Baseline and accepted previous version when present, with Lead/Core3/source drift and available historical regressions explicitly reviewed. Bound to the candidate.',
+  core3_completeness_reviewed: 'readiness `core3Completeness` gate: the Core3 functions the evaluator could not prove from the loaded evidence were reviewed against Acceptance Gate 4 and found to stand up as a one-player arrangement. It resolves only that unproven residue: a function proven absent, or a Core3 whose identity depends on Chord3-Chord5, is a deficiency in the arrangement and is never reviewable away. Bound to the candidate.',
   original_audio_required: 'readiness `originalAudio` applicability. Setting it false states the song-specific workflow does not require original audio, and must say why. Bound to the baseline.',
 });
 
@@ -77,6 +78,7 @@ const CONFIRMATION_SCOPE = Object.freeze({
   player_readback: 'candidate',
   mobile_adaptation_reviewed: 'candidate',
   regression_reviewed: 'candidate',
+  core3_completeness_reviewed: 'candidate',
   original_audio_required: 'baseline',
 });
 
@@ -92,6 +94,10 @@ export const STALE_CONFIRMATION = Object.freeze({
 
 export function createReviewService({ canonical, projects, intake, arrangement, store }) {
   const audioKey = (projectId, candidateId) => `audio:${projectId}:${candidateId}`;
+  // Core3 source-change approvals are per candidate, like audio evidence and
+  // unlike a confirmation: each one is about one specific change to one
+  // specific event, not a statement about the candidate as a whole.
+  const core3ApprovalKey = (projectId, candidateId) => `core3-approvals:${projectId}:${candidateId}`;
 
   /**
    * The candidate as the readiness modules should see it.
@@ -146,6 +152,23 @@ export function createReviewService({ canonical, projects, intake, arrangement, 
     return Array.isArray(stored) ? stored : [];
   };
 
+  /**
+   * The Core3 source-change approvals stored for one candidate.
+   *
+   * Returned in the shape `evaluateCore3Continuity` normalizes, and bound to
+   * both the baseline and the candidate. An approval recorded against a
+   * different baseline or a different candidate is not an approval for this
+   * one: the change it named belongs to a comparison that is no longer being
+   * made, so it is dropped here rather than inherited.
+   */
+  const core3ApprovalsFor = (record, candidateId) => {
+    const stored = store.getJson(core3ApprovalKey(record.project_id, candidateId));
+    const baselineId = record.baseline?.baseline_id ?? null;
+    return (Array.isArray(stored) ? stored : [])
+      .filter(entry => entry?.baseline_id === baselineId && entry?.candidate_id === candidateId)
+      .map(entry => ({ eventId: entry.event_id, type: entry.type, reason: entry.reason, evidence: [...entry.evidence] }));
+  };
+
   /** Everything review and finalize both need, assembled once. */
   const context = async (owner, projectId, candidateId) => {
     // Checked by shape first, before the Canonical engines are loaded or the
@@ -171,7 +194,7 @@ export function createReviewService({ canonical, projects, intake, arrangement, 
     const candidateRulesSnapshot = application.revision?.canonicalIdentity?.rules_snapshot_sha ?? null;
     const loadedRulesSnapshot = engines.emitterContract.canonicalIdentity().rules_snapshot_sha;
 
-    return { engines, record, baseline, baselineProject, entry, application, applicationLineage: arrangement.loadCandidateLineage(record, candidateId), confirmations, staleConfirmations: stale, audioReports, audioErrors, project, parent, candidateRulesSnapshot, loadedRulesSnapshot };
+    return { engines, record, baseline, baselineProject, entry, application, applicationLineage: arrangement.loadCandidateLineage(record, candidateId), core3Approvals: core3ApprovalsFor(record, candidateId), confirmations, staleConfirmations: stale, audioReports, audioErrors, project, parent, candidateRulesSnapshot, loadedRulesSnapshot };
   };
 
   /** Record an explicit confirmation. Each one needs a stated reason. */
@@ -266,6 +289,81 @@ export function createReviewService({ canonical, projects, intake, arrangement, 
     record,
     effectiveConfirmations,
 
+    /**
+     * Record one reviewed, evidence-backed approval for one Core3 source change.
+     *
+     * Deliberately not a confirmation and deliberately not a boolean. A Core3
+     * approval is a statement about one specific change to one specific event --
+     * "this Chord1 event was moved to Chord4, for this reason, on this
+     * evidence" -- so it is recorded per change, bound to the baseline and the
+     * candidate the change exists in.
+     *
+     * The change must be one the continuity audit is currently reporting as
+     * unapproved for this candidate. That is what stops an approval from being
+     * a standing permission: a caller cannot pre-approve an edit it has not
+     * made, and an approval does not survive into a candidate where the change
+     * it named no longer exists.
+     *
+     * This is its own review axis. An accepted role decision, a Lead evidence
+     * record and a Lead promotion PASS are none of them a Core3 approval, and
+     * no operation converts one into another.
+     */
+    async approveCore3SourceChange(owner, projectId, { candidateId, approval } = {}) {
+      const ctx = await context(owner, projectId, candidateId);
+      const { engines, record, baselineProject, project } = ctx;
+      if (!approval || typeof approval !== 'object' || Array.isArray(approval)) {
+        fail(ERROR_CODES.INVALID_REQUEST, 'A Core3 change approval is required', { candidate_id: candidateId });
+      }
+      const eventId = requireString(approval.event_id, 'approval.event_id', { max: 200 });
+      const type = approval.type;
+      if (!['remove', 'modify', 'role-move'].includes(type)) {
+        fail(ERROR_CODES.INVALID_REQUEST, 'approval.type must be remove, modify, or role-move', { accepted: ['remove', 'modify', 'role-move'] });
+      }
+      const reason = requireString(approval.reason, 'approval.reason', { max: 500 });
+      const evidence = normalizeEvidence(approval.evidence);
+      if (!evidence.length) {
+        fail(ERROR_CODES.INVALID_REQUEST, 'A Core3 change approval requires at least one explicit evidence reference.');
+      }
+
+      // The change has to be one this candidate actually shows, and has to be
+      // unapproved right now. Recording an approval for a change that is not
+      // there would file a permission rather than a review.
+      const current = engines.core3.evaluateCore3Continuity({
+        baseline: baselineProject,
+        candidate: project,
+        approvedChanges: core3ApprovalsFor(record, candidateId),
+      });
+      const named = (current.unapproved ?? []).find(item => item.eventId === eventId && item.type === type);
+      if (!named) {
+        fail(ERROR_CODES.INVALID_REQUEST, 'This candidate reports no unapproved Core3 change of that type for that event.', {
+          candidate_id: candidateId,
+          event_id: eventId,
+          type,
+          unapproved: (current.unapproved ?? []).map(item => ({ event_id: item.eventId, type: item.type })),
+        });
+      }
+
+      const stored = store.getJson(core3ApprovalKey(record.project_id, candidateId));
+      const existing = Array.isArray(stored) ? stored : [];
+      const entry = {
+        event_id: eventId,
+        type,
+        reason,
+        evidence,
+        baseline_id: record.baseline?.baseline_id ?? null,
+        candidate_id: candidateId,
+        at: now(),
+      };
+      store.putJson(
+        core3ApprovalKey(record.project_id, candidateId),
+        [...existing.filter(item => !(item.event_id === eventId && item.type === type)), entry],
+      );
+      return Object.freeze({
+        approval: Object.freeze({ ...entry, evidence: Object.freeze([...evidence]) }),
+        notice: 'A Core3 source-change approval explains one reviewed change to the continuity audit. It is not a Gate 4 completeness result, not a Lead decision, and not an approval of any other change.',
+      });
+    },
+
     /** Validate and record an audio alignment report against one candidate. */
     async attachAudioAlignment(owner, projectId, { candidateId, report }) {
       const engines = await canonical.engines();
@@ -315,6 +413,7 @@ export function createReviewService({ canonical, projects, intake, arrangement, 
       if (confirmations) record(owner, projectId, confirmations, { candidateId });
       const ctx = await context(owner, projectId, candidateId);
       const { engines, application, baselineProject, confirmations: recorded, project, parent } = ctx;
+      const core3ApprovedChanges = ctx.core3Approvals;
 
       // Read the whole integrity-checked revision lineage, not just this
       // revision: a Lead move made three revisions ago still needs evidence
@@ -332,6 +431,7 @@ export function createReviewService({ canonical, projects, intake, arrangement, 
         playerReadback: recorded.player_readback?.value ?? 'NOT_RUN',
         mobileAdaptation: recorded.mobile_adaptation_reviewed?.value === true ? 'PASS' : 'PENDING',
         regressionReviewed: recorded.regression_reviewed?.value === true,
+        core3CompletenessReviewed: recorded.core3_completeness_reviewed?.value === true,
         // Never a parameter a caller can reach. See the header.
         inGameAcceptance: 'PENDING',
       };
@@ -340,16 +440,24 @@ export function createReviewService({ canonical, projects, intake, arrangement, 
         application,
         baseline: baselineProject,
         acceptedPrevious: parent,
+        core3ApprovedChanges,
         ...readinessInputs,
       });
 
       const lineage = engines.compare.compareCandidateLineage({ sourceBaseline: baselineProject, acceptedPrevious: parent, candidate: project });
-      const core3 = engines.core3.evaluateCore3Continuity({ baseline: baselineProject, candidate: project, approvedChanges: [] });
+      // Validated, candidate-bound approvals reach the continuity engine; a
+      // caller cannot hand it approvals directly.
+      const core3 = engines.core3.evaluateCore3Continuity({ baseline: baselineProject, candidate: project, approvedChanges: core3ApprovedChanges });
+      const core3Completeness = engines.core3Completeness.evaluateCore3Completeness({
+        candidate: project,
+        reviewed: recorded.core3_completeness_reviewed?.value === true,
+      });
       const harmony = engines.harmony.analyzeCrossSourceHarmony(project);
       const readiness = engines.final.evaluateProjectReadiness({
         project,
         mmlValidation: null,
         core3Report: core3,
+        core3CompletenessReport: core3Completeness,
         harmonyReport: harmony,
         lineageReport: lineage,
         ...readinessInputs,
@@ -365,6 +473,8 @@ export function createReviewService({ canonical, projects, intake, arrangement, 
         application_status: applied.applicationStatus ?? null,
         lineage,
         core3,
+        core3_completeness: core3Completeness,
+        core3_approvals: core3ApprovedChanges,
         harmony,
         lead_demotion: leadDemotionReports,
         lead_promotion: leadPromotionReports,

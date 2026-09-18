@@ -126,6 +126,7 @@ test('the Web adaptation review feeds the shared Canonical Gate 8 readiness gate
     project: candidateProject(FOUR_BEATS),
     mmlValidation: null,
     core3Report: null,
+    core3CompletenessReport: { status: 'PASS', blockers: [] },
     harmonyReport: null,
     mobileAdaptation: 'PENDING',
   });

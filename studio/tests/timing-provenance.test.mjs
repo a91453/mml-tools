@@ -217,6 +217,7 @@ test('readiness and gate results are unchanged by the presence of timing provena
     project: input,
     mmlValidation: validateMML(raw, { meterText: '0 4/4' }),
     core3Report: null,
+    core3CompletenessReport: { status: 'PASS', blockers: [] },
     harmonyReport: null,
   });
   assert.equal(JSON.stringify(evaluate(project)), JSON.stringify(evaluate(stripped)));

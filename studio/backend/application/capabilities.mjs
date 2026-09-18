@@ -59,7 +59,16 @@ export function buildCapabilities({ canonical, storage, jobs, transports = [] })
       technical_timing_repair: true,
       final_emission: true,
       round_trip_readback: true,
-      legacy_technical_validation: true,
+      // Two separate Core3 questions, and neither answers the other: the
+      // source-continuity audit with its own candidate-bound approval path, and
+      // the independent Gate 4 musical-completeness result.
+      core3_source_continuity_audit: true,
+      core3_source_change_approval: true,
+      core3_completeness_gate: true,
+      // The Published Canonical validator, and the legacy engine kept beside it
+      // as an explicitly labelled diagnostic whose PASS is not a Canonical PASS.
+      canonical_technical_validation: true,
+      legacy_technical_diagnostic: true,
       in_game_test: false,
     }),
 

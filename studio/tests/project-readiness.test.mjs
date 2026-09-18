@@ -124,6 +124,7 @@ function readyInput(overrides = {}) {
     project: project(),
     mmlValidation: { ok: true, errors: [] },
     core3Report: { status: 'PASS', blockers: [] },
+    core3CompletenessReport: { status: 'PASS', blockers: [] },
     harmonyReport: { status: 'PASS', unresolvedCount: 0 },
     leadDemotionReports: [],
     leadPromotionReports: [],
@@ -279,6 +280,7 @@ test('technical validation failure blocks readiness even when musical gates pass
 test('Core3, Lead Demotion and cross-source harmony stay independently blocking', () => {
   const result = evaluateProjectReadiness(readyInput({
     core3Report: { status: 'PENDING', blockers: ['SOURCE_SUPPORTED_LEAD_GAP'] },
+    core3CompletenessReport: { status: 'PASS', blockers: [] },
     leadDemotionReports: [{ eventId: 'official:n1', status: 'PENDING' }],
     harmonyReport: { status: 'PENDING', unresolvedCount: 2 },
   }));
@@ -319,6 +321,7 @@ test('missing gate reports fail closed as NOT_RUN instead of silently passing', 
     project: project(),
     mmlValidation: null,
     core3Report: null,
+    core3CompletenessReport: { status: 'PASS', blockers: [] },
     harmonyReport: null,
     playerReadback: 'NOT_RUN',
     originalAudioRequired: true,

@@ -18,6 +18,7 @@
 
 import { compareCandidateLineage, compareCanonicalVersions } from '../compare/version-drift.mjs';
 import { evaluateCore3Continuity } from '../arbitration/core3.mjs';
+import { evaluateCore3Completeness } from '../arbitration/core3-completeness.mjs';
 import {
   evaluateLeadDemotion,
   evaluateLeadPromotion,
@@ -579,6 +580,7 @@ export function reviewAppliedCandidate({
   leadDemotionReports = [],
   leadPromotionReports = [],
   core3ApprovedChanges = [],
+  core3CompletenessReviewed = false,
   versionDriftReviewed = false,
   originalAudioRequired = true,
   playerReadback = 'NOT_RUN',
@@ -601,6 +603,7 @@ export function reviewAppliedCandidate({
       lineage: null,
       core3FromBaseline: null,
       core3FromPrevious: null,
+      core3Completeness: null,
       harmony: null,
       readiness: null,
     });
@@ -611,11 +614,15 @@ export function reviewAppliedCandidate({
   const core3FromPrevious = acceptedPrevious
     ? evaluateCore3Continuity({ baseline: acceptedPrevious, candidate, approvedChanges: core3ApprovedChanges })
     : null;
+  // Gate 4's own question, asked of the candidate rather than of the diff. A
+  // clean continuity audit above says nothing about it.
+  const core3Completeness = evaluateCore3Completeness({ candidate, reviewed: core3CompletenessReviewed });
   const harmony = analyzeCrossSourceHarmony(candidate);
   const readiness = evaluateProjectReadiness({
     project: candidate,
     mmlValidation,
     core3Report: core3FromBaseline,
+    core3CompletenessReport: core3Completeness,
     harmonyReport: harmony,
     leadDemotionReports,
     leadPromotionReports,
@@ -638,6 +645,7 @@ export function reviewAppliedCandidate({
     lineage,
     core3FromBaseline,
     core3FromPrevious,
+    core3Completeness,
     harmony,
     readiness,
     notice: 'Every verdict here belongs to the module that produced it. A G11-D application result is not an input to any of them, and REVIEWED is not a gate result: read readiness.candidateReady and the individual gates.',
