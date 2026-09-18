@@ -168,6 +168,7 @@ export function createFinalService({ canonical, projects, review, store }) {
         originalAudioRequired: recorded.original_audio_required?.value !== false,
         playerReadback: recorded.player_readback?.value ?? 'NOT_RUN',
         mobileAdaptation: recorded.mobile_adaptation_reviewed?.value === true ? 'PASS' : 'PENDING',
+        regressionReviewed: recorded.regression_reviewed?.value === true,
         inGameAcceptance: 'PENDING',
       };
       const readiness = engines.final.evaluateProjectReadiness({ ...readinessInputs, mmlValidation: null });
