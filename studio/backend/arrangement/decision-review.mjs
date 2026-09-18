@@ -126,6 +126,57 @@ export const LEAD_EVIDENCE_LINEAGE_BLOCKERS = Object.freeze({
   DESTINATION_CHANGED: 'LEAD_EVIDENCE_DESTINATION_DOES_NOT_MATCH_CANDIDATE',
 });
 
+// The two Lead evidence axes. A record on one axis never answers the other: a
+// citation arguing an event belongs in Melody is not a citation arguing it
+// belongs out of it, and the graders are different functions.
+export const LEAD_EVIDENCE_REVIEW_AXES = Object.freeze({
+  PROMOTION: 'promotion',
+  DEMOTION: 'demotion',
+});
+
+/**
+ * Index the fresh, candidate-bound Lead evidence reviews for one axis.
+ *
+ * A fresh review is the reviewer's answer to a recovered record that went stale
+ * -- a later revision moved the Lead picture, so the earlier citation no longer
+ * describes the arrangement being graded. It replaces that record's *evidence*
+ * and nothing else: the move it speaks about still has to be a move the lineage
+ * actually performed, and the substituted evidence still goes through the same
+ * scope binding and the same shared grader below. Recovering a record and then
+ * grading fresh evidence for it is therefore one path, not two.
+ *
+ * Malformed entries are dropped rather than trusted. This input reaches the
+ * builder from stored data, and a review that cannot be read is a review that
+ * cannot substitute anything -- which leaves the recovered record exactly as it
+ * was, PENDING.
+ */
+function freshReviewIndex(freshReviews, axis) {
+  const index = new Map();
+  for (const review of Array.isArray(freshReviews) ? freshReviews : []) {
+    if (!review || typeof review !== 'object') continue;
+    if (review.axis !== axis) continue;
+    const eventId = review.eventId;
+    if (typeof eventId !== 'string' || !eventId) continue;
+    if (!review.leadEvidence || typeof review.leadEvidence !== 'object') continue;
+    index.set(eventId, review);
+  }
+  return index;
+}
+
+// Does the evidence -- recovered from its revision, or re-supplied by a
+// candidate-bound review -- still describe the Lead picture being graded?
+//
+// For a recovered record the question is asked of the candidate the evidence
+// was originally graded against. For a fresh review it is asked of the Lead
+// context digest the reviewer recorded it under, which is the same question
+// against the reviewer's own reference point. Either way a `null` digest -- an
+// unreadable candidate, an unrecorded digest -- is a mismatch, never a pass.
+function leadContextStillMatches(fresh, step, candidateContextDigest) {
+  if (candidateContextDigest === null) return false;
+  if (fresh) return typeof fresh.leadContextDigest === 'string' && fresh.leadContextDigest === candidateContextDigest;
+  return contextStillMatches(step, candidateContextDigest);
+}
+
 /**
  * Order and verify a chain of G11-D applications as one revision lineage.
  *
@@ -353,15 +404,30 @@ function contextStillMatches(step, candidateContextDigest) {
  * that moved any of those has an unproven claim again, and MASTER_RULES §4 says
  * an unproven Lead decision is PENDING, not PASS.
  *
+ * Why a fresh review substitutes evidence rather than adding a report. The
+ * staleness checks above are correct and must stay, but on their own they leave
+ * a reviewer nothing to do: G11-D refuses to re-apply a move that already
+ * happened, so once a later revision moves the Lead picture there is no decision
+ * that could carry a new citation. `freshReviews` is that missing path -- one
+ * candidate-bound, axis-specific, evidence-backed review per event, recorded
+ * against the exact candidate being graded. It replaces the recovered record's
+ * evidence and its context reference point, and nothing else: the move must
+ * still be one this lineage performed, the citation must still bind to the same
+ * baseline event, the destination and musical identity checks still run, and
+ * the verdict still comes from `evaluateLeadDemotion()` on this call. A review
+ * recorded against a different candidate is never loaded, so the next
+ * Lead-affecting revision returns the report to PENDING exactly as before.
+ *
  * `baseline` is the Source-Faithful baseline. Every report is produced by
  * `evaluateLeadDemotion()` itself; this never manufactures a PASS.
  */
-export function leadDemotionReportsFromLineage({ applications, baseline, candidate }) {
+export function leadDemotionReportsFromLineage({ applications, baseline, candidate, freshReviews = [] }) {
   const lineage = applicationLineage(applications, baseline);
   if (!lineage.ok || !lineage.steps.length) return [];
   const baselineById = new Map((baseline?.events ?? []).map(event => [event.id, event]));
   const currentById = new Map((candidate?.events ?? []).map(event => [event.id, event]));
   const contextDigest = safeLeadContextDigest(candidate);
+  const fresh = freshReviewIndex(freshReviews, LEAD_EVIDENCE_REVIEW_AXES.DEMOTION);
 
   // Oldest to newest: a later demotion of the same event replaces the earlier
   // record, and a later promotion back to Lead withdraws it. Exactly one record
@@ -383,11 +449,17 @@ export function leadDemotionReportsFromLineage({ applications, baseline, candida
     const event = baselineById.get(eventId);
     if (!event) continue;
 
+    // A candidate-bound review re-supplies the evidence for this recovered
+    // move; everything else about the move -- which event, which destination,
+    // which revision performed it -- still comes from the lineage.
+    const review = fresh.get(eventId) ?? null;
+    const leadEvidence = review ? review.leadEvidence : entry.leadEvidence;
+
     // Scope before staleness, and deliberately so: a citation that does not
     // describe this event is a fault in the evidence record itself, and it is
     // reported as that rather than as a fact about the candidate. The order
     // changes which reason is shown, never the outcome -- both are PENDING.
-    const scope = leadEvidenceIdentityBlockers(entry.leadEvidence, event);
+    const scope = leadEvidenceIdentityBlockers(leadEvidence, event);
     if (scope.length) {
       // Reported before the gate so the report carries the scope failure alone.
       // The gate now runs the same binding itself, so this is a presentation
@@ -399,7 +471,7 @@ export function leadDemotionReportsFromLineage({ applications, baseline, candida
       continue;
     }
 
-    const stale = demotionStaleness({ destinationRole, currentById, event, contextDigest, step });
+    const stale = demotionStaleness({ destinationRole, currentById, event, contextDigest, step, review });
     if (stale.length) {
       reports.push(pendingReport(event.id, destinationRole, stale));
       continue;
@@ -407,12 +479,14 @@ export function leadDemotionReportsFromLineage({ applications, baseline, candida
     try {
       reports.push(Object.freeze({
         ...evaluateLeadDemotion({
-          ...(entry.leadEvidence ?? {}),
+          ...(leadEvidence ?? {}),
           event,
           destinationRole,
-          positiveReason: entry.leadEvidence?.positiveReason ?? entry.reason,
+          positiveReason: leadEvidence?.positiveReason ?? (review ? review.reason : entry.reason),
         }),
         gradedFromRevisionId: step.revision.id,
+        evidenceSource: review ? 'candidate-review' : 'revision',
+        reviewedAt: review ? (review.at ?? null) : null,
       }));
     } catch (error) {
       reports.push(pendingReport(event.id, destinationRole, [`LEAD_DEMOTION_EVIDENCE_INVALID: ${error.message}`]));
@@ -425,7 +499,7 @@ export function leadDemotionReportsFromLineage({ applications, baseline, candida
 // Either way the destination the reviewer argued for must be the destination the
 // candidate actually has, and the event's musical identity must not have moved
 // under the citation.
-function demotionStaleness({ destinationRole, currentById, event, contextDigest, step }) {
+function demotionStaleness({ destinationRole, currentById, event, contextDigest, step, review = null }) {
   const blockers = [];
   const current = currentById.get(event.id);
   if (destinationRole === 'omitted') {
@@ -436,7 +510,7 @@ function demotionStaleness({ destinationRole, currentById, event, contextDigest,
     if (current.role !== destinationRole) blockers.push(LEAD_EVIDENCE_LINEAGE_BLOCKERS.DESTINATION_CHANGED);
     if (!musicalIdentityMatches(current, event)) blockers.push(LEAD_EVIDENCE_LINEAGE_BLOCKERS.EVENT_CHANGED);
   }
-  if (!contextStillMatches(step, contextDigest)) blockers.push(LEAD_EVIDENCE_LINEAGE_BLOCKERS.CONTEXT_CHANGED);
+  if (!leadContextStillMatches(review, step, contextDigest)) blockers.push(LEAD_EVIDENCE_LINEAGE_BLOCKERS.CONTEXT_CHANGED);
   return [...new Set(blockers)];
 }
 
@@ -455,13 +529,20 @@ function demotionStaleness({ destinationRole, currentById, event, contextDigest,
  * candidate event. It is therefore graded as it stood immediately before the
  * move -- which is also why "just re-supply the evidence on a KEEP" cannot work
  * as a workaround, and why this recovery is the fix.
+ *
+ * `freshReviews` carries the candidate-bound re-reviews described on the
+ * demotion builder above, on the `promotion` axis. They substitute the recovered
+ * record's evidence only. The origin walk runs first and is unaffected, so a
+ * derived duplicate is still graded against its Source-Faithful origin and the
+ * fresh citation is bound to that origin's provenance, not to the derived id.
  */
-export function leadPromotionReportsFromLineage({ applications, baseline, candidate }) {
+export function leadPromotionReportsFromLineage({ applications, baseline, candidate, freshReviews = [] }) {
   const lineage = applicationLineage(applications, baseline);
   if (!lineage.ok || !lineage.steps.length) return [];
   const baselineById = new Map((baseline?.events ?? []).map(event => [event.id, event]));
   const currentById = new Map((candidate?.events ?? []).map(event => [event.id, event]));
   const contextDigest = safeLeadContextDigest(candidate);
+  const fresh = freshReviewIndex(freshReviews, LEAD_EVIDENCE_REVIEW_AXES.PROMOTION);
 
   const records = new Map();
   for (const step of lineage.steps) {
@@ -499,8 +580,16 @@ export function leadPromotionReportsFromLineage({ applications, baseline, candid
     // necessary for a derived event whose origin was already Melody: the
     // derived copy is currently non-Lead even though its source ancestor was.
     const evidenceEvent = { ...origin, id: item.eventId, role: item.fromRole ?? null };
+
+    // A candidate-bound review re-supplies this move's evidence. The origin walk
+    // above has already run, so a derived duplicate is still graded against the
+    // Source-Faithful origin it came from and a fresh citation cannot be
+    // laundered through the derived id either.
+    const review = fresh.get(promotedEventId) ?? null;
+    const leadEvidence = review ? review.leadEvidence : entry.leadEvidence;
+
     // Scope before staleness: see the note in the demotion builder above.
-    const scope = leadEvidenceIdentityBlockers(entry.leadEvidence, evidenceEvent);
+    const scope = leadEvidenceIdentityBlockers(leadEvidence, evidenceEvent);
     if (scope.length) {
       reports.push(Object.freeze({
         ...pendingReport(promotedEventId, LEAD_ROLE, scope.includes(LEAD_EVIDENCE_IDENTITY_MISMATCH) || scope.includes(LEAD_EVIDENCE_PROVENANCE_PAIR_AMBIGUOUS)
@@ -518,7 +607,7 @@ export function leadPromotionReportsFromLineage({ applications, baseline, candid
       if (current.role !== LEAD_ROLE) stale.push(LEAD_EVIDENCE_LINEAGE_BLOCKERS.DESTINATION_CHANGED);
       if (!musicalIdentityMatches(current, origin)) stale.push(LEAD_EVIDENCE_LINEAGE_BLOCKERS.EVENT_CHANGED);
     }
-    if (!contextStillMatches(step, contextDigest)) stale.push(LEAD_EVIDENCE_LINEAGE_BLOCKERS.CONTEXT_CHANGED);
+    if (!leadContextStillMatches(review, step, contextDigest)) stale.push(LEAD_EVIDENCE_LINEAGE_BLOCKERS.CONTEXT_CHANGED);
     if (stale.length) {
       reports.push(Object.freeze({
         ...pendingReport(promotedEventId, LEAD_ROLE, [...new Set(stale)]),
@@ -528,16 +617,18 @@ export function leadPromotionReportsFromLineage({ applications, baseline, candid
     }
     try {
       const report = evaluateLeadPromotion({
-        ...(entry.leadEvidence ?? {}),
+        ...(leadEvidence ?? {}),
         event: evidenceEvent,
         destinationRole: LEAD_ROLE,
-        positiveReason: entry.leadEvidence?.positiveReason ?? entry.reason,
+        positiveReason: leadEvidence?.positiveReason ?? (review ? review.reason : entry.reason),
       });
       reports.push(Object.freeze({
         ...report,
         eventId: promotedEventId,
         originEventId: origin.id,
         gradedFromRevisionId: step.revision.id,
+        evidenceSource: review ? 'candidate-review' : 'revision',
+        reviewedAt: review ? (review.at ?? null) : null,
       }));
     } catch (error) {
       reports.push(Object.freeze({

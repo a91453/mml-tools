@@ -65,6 +65,12 @@ export function buildCapabilities({ canonical, storage, jobs, transports = [] })
       core3_source_continuity_audit: true,
       core3_source_change_approval: true,
       core3_completeness_gate: true,
+      // Lead evidence is recovered from the revision that performed the move and
+      // re-graded against the current candidate, and a reviewer can re-supply a
+      // citation for an already-applied move when a later revision moves the
+      // Lead picture. Both axes; the shared grader runs every time.
+      lead_evidence_lineage_recovery: true,
+      lead_evidence_re_review: true,
       // The Published Canonical validator, and the legacy engine kept beside it
       // as an explicitly labelled diagnostic whose PASS is not a Canonical PASS.
       canonical_technical_validation: true,

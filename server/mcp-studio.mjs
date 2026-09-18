@@ -1,6 +1,6 @@
 // The `studio_*` MCP control surface.
 //
-// Status: IMPLEMENTATION NOTES. Twelve high-level tools over the Studio
+// Status: IMPLEMENTATION NOTES. Fourteen high-level tools over the Studio
 // Application Service. Deliberately not one tool per backend function: a model
 // should reason about a project, its sources, a suggestion, a decision set, a
 // review and a Final artifact — not about `midi-file.mjs`, `role-candidates.mjs`,
@@ -37,6 +37,24 @@ const candidateId = { type: 'string', minLength: 10, maxLength: 128, description
 // depth and width, no prototype-polluting keys — and the whole request body is
 // capped at MAX_BODY_BYTES, so this is not a way to smuggle bulk data in.
 const structuredPayload = description => ({ type: 'object', additionalProperties: true, ...(description ? { description } : {}) });
+
+// The recordable confirmations, named here once so `studio_candidate_review`
+// and `studio_finalize` cannot describe the same vocabulary differently.
+//
+// It says which confirmations exist, which of them require evidence when
+// recorded true, and which question each one answers — because an agent that
+// cannot see `core3_completeness_reviewed` here has no way to learn it exists,
+// and one that believes only Gate 8 and Gate 9 need evidence will send a
+// reason-only Core3 completeness review and have it refused with no idea why.
+// Gate 4's two questions are named apart on purpose: the source-continuity
+// audit is answered by `studio_core3_change_approve`, one change at a time, and
+// the musical-completeness review is answered here, and neither is the other.
+const CONFIRMATIONS_DESCRIPTION = 'source_complete／version_drift_reviewed／player_readback／mobile_adaptation_reviewed／regression_reviewed／core3_completeness_reviewed／original_audio_required，每項需 reason。'
+  + 'mobile_adaptation_reviewed（Gate 8）、regression_reviewed（Gate 9）與 core3_completeness_reviewed（Gate 4 Core3 musical completeness）這三項，value=true 時另需至少一筆 evidence：只有理由字串的審查會被拒絕。'
+  + 'core3_completeness_reviewed 回答的是 Gate 4 的第二個問題（evaluator 無法證明完整的 Core3 是否仍站得住），它可以解決可審查的殘留（例如來源本來就沒有的 Chord1／Chord2 功能），但永遠無法消除缺席的 Lead，也無法消除身分依賴 Chord3–Chord5 的 Core3——那兩者 gate 直接 FAIL。'
+  + 'Gate 4 的第一個問題（Core3 來源連續性）不在這裡：它由 studio_core3_change_approve 逐筆核准，兩者是不同 review axis，互不代替。'
+  + 'player_readback 為 PASS、NOT_RUN 或 N/A（未使用預覽／驗證素材時，附理由）；PASS 可附 mml_sha256 綁定實際回讀的 MML。'
+  + '確認綁定於目前 baseline 與本候選，換候選即失效；in_game 無法由此設定。';
 
 export const STUDIO_MCP_TOOLS = [
   {
@@ -152,9 +170,41 @@ export const STUDIO_MCP_TOOLS = [
       properties: {
         project_id: projectId,
         candidate_id: candidateId,
-        confirmations: structuredPayload('source_complete／version_drift_reviewed／player_readback／mobile_adaptation_reviewed／regression_reviewed／original_audio_required，每項需 reason。Gate 8／9 的 reviewed=true 另需 evidence。player_readback 為 PASS、NOT_RUN 或 N/A（未使用預覽／驗證素材時，附理由）；PASS 可附 mml_sha256 綁定實際回讀的 MML。確認綁定於目前 baseline 與本候選；in_game 無法由此設定。'),
+        confirmations: structuredPayload(CONFIRMATIONS_DESCRIPTION),
       },
       required: ['project_id', 'candidate_id'],
+      additionalProperties: false,
+    },
+    annotations: writes,
+  },
+  {
+    name: 'studio_core3_change_approve',
+    title: 'Core3 來源變更核准',
+    description: 'Gate 4 的第一個問題：Core3 來源連續性。針對連續性稽核目前回報為「未核准」的單一 Core3 變更（remove／modify／role-move）記錄一筆有證據的核准，綁定目前 baseline 與本候選。變更必須是本候選現在真的存在且未核准的那一筆，因此無法預先核准，也不會被其他候選繼承。這與 Gate 4 的第二個問題（Core3 musical completeness，見 studio_candidate_review 的 core3_completeness_reviewed）是不同的 review axis：任何一邊都不能代替另一邊，Lead 的決定與 Lead evidence 也都不是 Core3 核准。',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        project_id: projectId,
+        candidate_id: candidateId,
+        approval: structuredPayload('event_id、type（remove／modify／role-move）、reason，以及至少一筆 evidence。evidence 為必填：沒有證據的核准是主張，不是審查。'),
+      },
+      required: ['project_id', 'candidate_id', 'approval'],
+      additionalProperties: false,
+    },
+    annotations: writes,
+  },
+  {
+    name: 'studio_lead_evidence_review',
+    title: 'Lead 證據重新審查',
+    description: '為「先前 revision 已經套用過」的單一 Lead move 重新提交證據。之所以需要這條路徑：下游 Lead gate 會從執行該 move 的 revision 取回證據並對目前候選重新評分，一旦後續 revision 改動了 Lead 樣貌，舊引用就不再描述正在評分的編曲，會正確地回到 PENDING（LEAD_EVIDENCE_CONTEXT_CHANGED）；但 G11-D 拒絕重複套用已發生的 move（PREVIOUS_ROLE_MISMATCH），KEEP 也不是 role move，因此原本無路可補。這裡提交的是審查紀錄，不是決定：不移動任何東西、不產生 revision，也不是 boolean 確認。每次 review 與 finalize 都會用同一個共享 grader 重新評分，絕不沿用舊的 PASS。綁定 exact candidate、axis、以及 Source-Faithful baseline 來源事件（衍生複製會綁回其 origin，不接受衍生 id）；下一個改動 Lead 的 revision 是不同候選，這筆審查不會被載入，報告會自動回到 PENDING。',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        project_id: projectId,
+        candidate_id: candidateId,
+        review: structuredPayload('event_id（readiness 使用的事件 id；衍生複製請用候選中的衍生 id）、axis（promotion 或 demotion，兩者互不代替）、reason、至少一筆 evidence，以及 lead_evidence：精確 sourceIdentity、sectionRole、scoreEvidence／audioEvidence、continuity.checked、core3.checked/status 與正面的目的角色理由。sourceIdentity 請用 studio_baseline_events 取得，不可猜測；綁不到該 move 的 baseline 來源事件會被拒絕。'),
+      },
+      required: ['project_id', 'candidate_id', 'review'],
       additionalProperties: false,
     },
     annotations: writes,
@@ -169,7 +219,7 @@ export const STUDIO_MCP_TOOLS = [
         project_id: projectId,
         candidate_id: candidateId,
         technical_timing_repair: { type: 'boolean', description: '明確 opt-in。預設 false，呼叫 finalize 不會自動開啟。' },
-        confirmations: structuredPayload(),
+        confirmations: structuredPayload(CONFIRMATIONS_DESCRIPTION),
         pickup: { type: 'string', minLength: 1, maxLength: 32, description: '來源確認的弱起拍長（整數、小數或分數拍）；沒有時省略。Final parser 不會自行推測。' },
         final_partial: { type: 'string', minLength: 1, maxLength: 32, description: '來源確認的末小節拍長；曲子未在小節線結束時必填，否則 technical gate 無法通過。不會自行推測。' },
       },
@@ -241,6 +291,10 @@ export async function runStudioTool(name, args, { application, owner }) {
       return application.attachAudioAlignment(owner, args.project_id, { candidateId: args.candidate_id, report: args.report });
     case 'studio_candidate_review':
       return application.reviewCandidate(owner, args.project_id, { candidateId: args.candidate_id, confirmations: args.confirmations ?? null });
+    case 'studio_core3_change_approve':
+      return application.approveCore3SourceChange(owner, args.project_id, { candidateId: args.candidate_id, approval: args.approval });
+    case 'studio_lead_evidence_review':
+      return application.reviewLeadEvidence(owner, args.project_id, { candidateId: args.candidate_id, review: args.review });
     case 'studio_finalize':
       return application.finalize(owner, args.project_id, {
         candidateId: args.candidate_id,

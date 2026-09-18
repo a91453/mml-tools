@@ -17,7 +17,7 @@
 
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { applyAcceptedArrangement } from '../backend/arrangement/decision-application.mjs';
+import { applyAcceptedArrangement, leadContextDigestOf } from '../backend/arrangement/decision-application.mjs';
 import {
   applicationLineage,
   reviewAppliedCandidate,
@@ -370,4 +370,181 @@ test('a promoted event that is no longer the note its citation describes is repo
   assert.ok(gone[0].blockers.includes(LEAD_EVIDENCE_LINEAGE_BLOCKERS.EVENT_NOT_IN_CANDIDATE));
   // Whatever the reason, none of these is ever a PASS under the promoted id.
   for (const report of [changed[0], moved[0], gone[0]]) assert.equal(report.pass, false);
+});
+
+// ─── fresh, candidate-bound Lead evidence reviews ───────────────────────────
+//
+// The staleness above is correct, but on its own it leaves a reviewer nothing
+// to do: G11-D refuses to re-apply a move that already happened, so no decision
+// could carry a new citation. `freshReviews` is that path. It substitutes the
+// recovered record's evidence and its context reference point, and nothing
+// else -- so these regressions are mostly about what it still refuses.
+//
+// They exercise the builder directly rather than through the Application
+// Service, because that is where the input arrives as stored data. The service
+// validates a submission before writing it; the builder must not depend on
+// that having happened, since a restored or hand-edited store is exactly the
+// case a filter here exists for.
+
+const contextDigestOf = candidate => leadContextDigestOf(candidate);
+
+// Revision 1 promotes tex-1; revision 2 moves a DIFFERENT Lead event, so the
+// Lead context digest changes and revision 1's citation goes stale.
+const stalePromotionChain = () => {
+  const first = promoteTex1();
+  const second = applyNext(first, [{
+    id: 'd2', type: 'MOVE_ROLE', target: { eventIds: ['lead-1'] }, fromRole: 'Melody', toRole: 'Chord3',
+    reason: 'Reviewed: inner-staff doubling, not the lead.',
+    evidence: ['fixture:score inner staff'],
+    leadEvidence: leadDemotionEvidence(),
+    acceptance: acceptanceFor(baseline, { suggestion, reviewedRevisionId: first.revision.id }),
+  }]);
+  return { first, second, applications: [first, second] };
+};
+
+const freshPromotionReview = (candidate, over = {}) => ({
+  eventId: 'tex-1',
+  axis: 'promotion',
+  leadEvidence: leadPromotionEvidence(),
+  leadContextDigest: contextDigestOf(candidate),
+  reason: 'Re-reviewed against the Lead picture as it now stands.',
+  at: '2026-01-01T00:00:00.000Z',
+  ...over,
+});
+
+test('a fresh candidate-bound review answers a citation the lineage reports as stale', () => {
+  const { applications, second } = stalePromotionChain();
+
+  const stale = leadPromotionReportsFromLineage({ applications, baseline, candidate: second.candidate });
+  assert.equal(stale[0].status, 'PENDING');
+  assert.ok(stale[0].blockers.includes(LEAD_EVIDENCE_LINEAGE_BLOCKERS.CONTEXT_CHANGED));
+  // A report refused before the grader carries no evidence source: nothing was
+  // graded, so there is nothing to attribute.
+  assert.equal(stale[0].evidenceSource, undefined);
+
+  const answered = leadPromotionReportsFromLineage({
+    applications, baseline, candidate: second.candidate,
+    freshReviews: [freshPromotionReview(second.candidate)],
+  });
+  assert.equal(answered[0].status, 'PASS');
+  assert.equal(answered[0].eventId, 'tex-1');
+  assert.equal(answered[0].evidenceSource, 'candidate-review');
+  assert.equal(answered[0].reviewedAt, '2026-01-01T00:00:00.000Z');
+  // The move's provenance is still the revision that performed it.
+  assert.equal(answered[0].gradedFromRevisionId, applications[0].revision.id);
+});
+
+test('a fresh review whose recorded Lead context is not this candidate is refused, not trusted', () => {
+  const { applications, first, second } = stalePromotionChain();
+
+  // A digest from another candidate -- the shape a restored or hand-edited
+  // store entry would have. It carries the right event id and a complete,
+  // correctly-scoped citation, and it still must not substitute anything.
+  for (const digest of [contextDigestOf(first.candidate), 'not-a-digest', null, undefined, 42]) {
+    const reports = leadPromotionReportsFromLineage({
+      applications, baseline, candidate: second.candidate,
+      freshReviews: [freshPromotionReview(second.candidate, { leadContextDigest: digest })],
+    });
+    assert.equal(reports[0].status, 'PENDING', `digest ${String(digest)} must not answer this candidate`);
+    assert.ok(reports[0].blockers.includes(LEAD_EVIDENCE_LINEAGE_BLOCKERS.CONTEXT_CHANGED));
+    assert.equal(reports[0].pass, false);
+  }
+});
+
+test('a fresh review on the other axis does not substitute evidence', () => {
+  const { applications, second } = stalePromotionChain();
+
+  // Demotion evidence argues an event OUT of Melody. It cannot answer a
+  // promotion requirement, whatever event id it carries.
+  const reports = leadPromotionReportsFromLineage({
+    applications, baseline, candidate: second.candidate,
+    freshReviews: [freshPromotionReview(second.candidate, { axis: 'demotion' })],
+  });
+  assert.equal(reports[0].status, 'PENDING');
+  assert.ok(reports[0].blockers.includes(LEAD_EVIDENCE_LINEAGE_BLOCKERS.CONTEXT_CHANGED));
+
+  // And the reverse: the demotion builder ignores a promotion-axis review.
+  const demotion = leadDemotionReportsFromLineage({
+    applications, baseline, candidate: second.candidate,
+    freshReviews: [{ ...freshPromotionReview(second.candidate), eventId: 'lead-1', axis: 'promotion' }],
+  });
+  assert.equal(demotion.length, 1);
+  assert.equal(demotion[0].eventId, 'lead-1');
+  // lead-1 was demoted by the head revision itself, so it is graded from that
+  // revision and the ignored review changed nothing about it.
+  assert.equal(demotion[0].evidenceSource, 'revision');
+});
+
+test('a malformed or foreign fresh review is ignored rather than trusted', () => {
+  const { applications, second } = stalePromotionChain();
+  const unchanged = freshReviews => {
+    const reports = leadPromotionReportsFromLineage({ applications, baseline, candidate: second.candidate, freshReviews });
+    assert.equal(reports.length, 1);
+    assert.equal(reports[0].status, 'PENDING');
+    assert.ok(reports[0].blockers.includes(LEAD_EVIDENCE_LINEAGE_BLOCKERS.CONTEXT_CHANGED));
+    assert.equal(reports[0].evidenceSource, undefined);
+  };
+
+  unchanged(undefined);
+  unchanged('not an array');
+  unchanged([null]);
+  unchanged([{ ...freshPromotionReview(second.candidate), eventId: undefined }]);
+  unchanged([{ ...freshPromotionReview(second.candidate), eventId: 42 }]);
+  unchanged([{ ...freshPromotionReview(second.candidate), leadEvidence: undefined }]);
+  unchanged([{ ...freshPromotionReview(second.candidate), leadEvidence: 'cited' }]);
+
+  // A review naming an event the lineage performed no Lead move on adds no
+  // report: a review substitutes evidence for a recovered move, it does not
+  // invent one.
+  unchanged([{ ...freshPromotionReview(second.candidate), eventId: 'harm-1' }]);
+});
+
+test('a fresh review cannot launder a citation that does not bind to the baseline event', () => {
+  const { applications, second } = stalePromotionChain();
+
+  const reports = leadPromotionReportsFromLineage({
+    applications, baseline, candidate: second.candidate,
+    freshReviews: [freshPromotionReview(second.candidate, {
+      leadEvidence: leadPromotionEvidence({ sourceEventId: `${baseline.sources[0].id}#lead-1` }),
+    })],
+  });
+  assert.equal(reports[0].status, 'PENDING');
+  assert.ok(reports[0].blockers.includes('LEAD_EVIDENCE_EVENT_IDENTITY_MISMATCH'));
+  assert.equal(reports[0].pass, false);
+});
+
+test('a fresh review does not make an insufficient citation sufficient', () => {
+  const { applications, second } = stalePromotionChain();
+
+  // Correctly scoped, correctly bound, and still not enough: the shared gate
+  // runs on it exactly as it runs on a recovered record.
+  const reports = leadPromotionReportsFromLineage({
+    applications, baseline, candidate: second.candidate,
+    freshReviews: [freshPromotionReview(second.candidate, {
+      leadEvidence: { ...leadPromotionEvidence(), continuity: { checked: false, createsLeadGap: null, replacementEventIds: [] } },
+    })],
+  });
+  assert.equal(reports[0].status, 'PENDING');
+  assert.ok(reports[0].blockers.includes('LEAD_CONTINUITY_NOT_CHECKED'));
+  // It reached the grader -- which is the point: the fresh citation was graded
+  // and found wanting, not waved through and not refused before grading.
+  assert.equal(reports[0].evidenceSource, 'candidate-review');
+});
+
+test('a fresh review does not survive a change to the event it is about', () => {
+  const { applications, second } = stalePromotionChain();
+  const fresh = [freshPromotionReview(second.candidate)];
+
+  // Re-pitched: the citation describes the event as it was.
+  const repitched = { ...second.candidate, events: second.candidate.events.map(event => (event.id === 'tex-1' ? { ...event, pitch: event.pitch + 1 } : event)) };
+  const changed = leadPromotionReportsFromLineage({ applications, baseline, candidate: repitched, freshReviews: fresh });
+  assert.equal(changed[0].status, 'PENDING');
+  assert.ok(changed[0].blockers.includes(LEAD_EVIDENCE_LINEAGE_BLOCKERS.EVENT_CHANGED));
+
+  // Moved out of Melody: the destination the citation argued for is not the
+  // destination the candidate has.
+  const moved = { ...second.candidate, events: second.candidate.events.map(event => (event.id === 'tex-1' ? { ...event, role: 'Chord2' } : event)) };
+  const elsewhere = leadPromotionReportsFromLineage({ applications, baseline, candidate: moved, freshReviews: fresh });
+  assert.equal(elsewhere[0].status, 'PENDING');
+  assert.ok(elsewhere[0].blockers.includes(LEAD_EVIDENCE_LINEAGE_BLOCKERS.DESTINATION_CHANGED));
 });

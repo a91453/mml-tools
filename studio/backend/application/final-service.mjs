@@ -152,8 +152,12 @@ export function createFinalService({ canonical, projects, review, store }) {
 
       // Same lineage recovery as review: evidence for a Lead move made in an
       // earlier revision is recovered from that revision and re-graded against
-      // this candidate. A previous PASS is never inherited.
-      const leadReportInputs = { applications: ctx.applicationLineage, baseline: baselineProject, candidate: application.candidate };
+      // this candidate. A previous PASS is never inherited. The same
+      // candidate-bound Lead evidence re-reviews reach it too, from the same
+      // `review.context()` -- so a citation a reviewer re-supplied is graded
+      // here by the same shared gate, and Finalize cannot be satisfied by a
+      // path review does not see, or refuse one review accepts.
+      const leadReportInputs = { applications: ctx.applicationLineage, baseline: baselineProject, candidate: application.candidate, freshReviews: ctx.leadEvidenceReviews };
       const leadDemotionReports = engines.arrangement.leadDemotionReportsFromLineage(leadReportInputs);
       const leadPromotionReports = engines.arrangement.leadPromotionReportsFromLineage(leadReportInputs);
       const lineage = engines.compare.compareCandidateLineage({ sourceBaseline: baselineProject, acceptedPrevious: parent, candidate: project });

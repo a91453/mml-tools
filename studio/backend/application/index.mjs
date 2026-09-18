@@ -274,6 +274,20 @@ export function createStudioApplication({
       }));
     },
 
+    /**
+     * Re-supply Lead evidence for an already-applied Lead move on one candidate.
+     *
+     * Its own operation, and deliberately not part of `applyDecisions`: nothing
+     * moves. See `review-service.reviewLeadEvidence` for why the path has to
+     * exist and what each binding refuses.
+     */
+    async reviewLeadEvidence(owner, projectId, input) {
+      return serialized(`${owner}:${projectId}`, async () => envelope({
+        operation: OPERATION_STATUS.SUCCEEDED,
+        ...(await review.reviewLeadEvidence(owner, projectId, input)),
+      }));
+    },
+
     async reviewCandidate(owner, projectId, input) {
       return mutate(projectId, async () => envelope({ operation: OPERATION_STATUS.SUCCEEDED, review: await review.review(owner, projectId, input) }));
     },

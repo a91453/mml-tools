@@ -273,6 +273,26 @@ export function createApiRouter({ application, ownerOf, challenge = null }) {
         confirmations: body.confirmations ?? null,
       }));
     }],
+    // Gate 4's two questions, each on its own route, because each is a
+    // different review axis and neither answers the other: one reviewed Core3
+    // source change at a time here, and the Core3 musical-completeness review
+    // as a candidate-bound confirmation on the routes above.
+    ['POST', /^\/projects\/([^/]+)\/core3\/approvals$/, async (m, request, owner) => {
+      const body = await readJson(request);
+      return json(await application.approveCore3SourceChange(owner, m[1], {
+        candidateId: body.candidate_id,
+        approval: body.approval ?? null,
+      }));
+    }],
+    // Fresh Lead evidence for a move an earlier revision already applied. Not a
+    // decision route: nothing moves, and no revision is produced.
+    ['POST', /^\/projects\/([^/]+)\/lead-evidence\/reviews$/, async (m, request, owner) => {
+      const body = await readJson(request);
+      return json(await application.reviewLeadEvidence(owner, m[1], {
+        candidateId: body.candidate_id,
+        review: body.review ?? null,
+      }));
+    }],
     ['POST', /^\/projects\/([^/]+)\/confirmations$/, async (m, request, owner) => {
       const body = await readJson(request);
       return json(await application.recordConfirmations(owner, m[1], body.confirmations ?? body));

@@ -107,6 +107,10 @@ export function createReviewService({ canonical, projects, intake, arrangement, 
   // unlike a confirmation: each one is about one specific change to one
   // specific event, not a statement about the candidate as a whole.
   const core3ApprovalKey = (projectId, candidateId) => `core3-approvals:${projectId}:${candidateId}`;
+  // Fresh Lead evidence, re-supplied for a move an earlier revision already
+  // performed. Per candidate for the same reason the approvals are: the
+  // citation is an answer about one specific candidate's Lead picture.
+  const leadEvidenceReviewKey = (projectId, candidateId) => `lead-evidence-reviews:${projectId}:${candidateId}`;
 
   /**
    * The candidate as the readiness modules should see it.
@@ -178,6 +182,35 @@ export function createReviewService({ canonical, projects, intake, arrangement, 
       .map(entry => ({ eventId: entry.event_id, type: entry.type, reason: entry.reason, evidence: [...entry.evidence] }));
   };
 
+  /**
+   * The fresh Lead evidence reviews stored for one candidate.
+   *
+   * Same binding discipline as the Core3 approvals above, and for a stronger
+   * reason: a Lead citation is an argument about the arrangement as it stands,
+   * so one recorded against another baseline or another candidate is an
+   * argument about material that is no longer being graded. Such an entry is
+   * dropped here rather than inherited, which returns the recovered record to
+   * PENDING -- the closed direction.
+   *
+   * Returned in the shape the lineage report builders read.
+   */
+  const leadEvidenceReviewsFor = (record, candidateId) => {
+    const stored = store.getJson(leadEvidenceReviewKey(record.project_id, candidateId));
+    const baselineId = record.baseline?.baseline_id ?? null;
+    return (Array.isArray(stored) ? stored : [])
+      .filter(entry => entry?.baseline_id === baselineId && entry?.candidate_id === candidateId)
+      .map(entry => ({
+        eventId: entry.event_id,
+        axis: entry.axis,
+        leadEvidence: entry.lead_evidence,
+        leadContextDigest: entry.lead_context_digest,
+        reason: entry.reason,
+        evidence: [...(entry.evidence ?? [])],
+        originEventId: entry.origin_event_id ?? null,
+        at: entry.at ?? null,
+      }));
+  };
+
   /** Everything review and finalize both need, assembled once. */
   const context = async (owner, projectId, candidateId) => {
     // Checked by shape first, before the Canonical engines are loaded or the
@@ -203,7 +236,7 @@ export function createReviewService({ canonical, projects, intake, arrangement, 
     const candidateRulesSnapshot = application.revision?.canonicalIdentity?.rules_snapshot_sha ?? null;
     const loadedRulesSnapshot = engines.emitterContract.canonicalIdentity().rules_snapshot_sha;
 
-    return { engines, record, baseline, baselineProject, entry, application, applicationLineage: arrangement.loadCandidateLineage(record, candidateId), core3Approvals: core3ApprovalsFor(record, candidateId), confirmations, staleConfirmations: stale, audioReports, audioErrors, project, parent, candidateRulesSnapshot, loadedRulesSnapshot };
+    return { engines, record, baseline, baselineProject, entry, application, applicationLineage: arrangement.loadCandidateLineage(record, candidateId), core3Approvals: core3ApprovalsFor(record, candidateId), leadEvidenceReviews: leadEvidenceReviewsFor(record, candidateId), confirmations, staleConfirmations: stale, audioReports, audioErrors, project, parent, candidateRulesSnapshot, loadedRulesSnapshot };
   };
 
   /** Record an explicit confirmation. Each one needs a stated reason. */
@@ -379,6 +412,147 @@ export function createReviewService({ canonical, projects, intake, arrangement, 
       });
     },
 
+    /**
+     * Re-supply Lead evidence for a role move an earlier revision already made.
+     *
+     * Why this operation has to exist. The downstream Lead gates recover each
+     * move's evidence from the revision that performed it and re-grade it
+     * against the current candidate. When a later revision moves the Lead
+     * picture, that recovered citation no longer describes the arrangement being
+     * graded and is correctly reported `LEAD_EVIDENCE_CONTEXT_CHANGED` --
+     * PENDING, per MASTER_RULES §4. That staleness is right and stays. What was
+     * missing was any way to answer it: G11-D refuses to re-apply a move that
+     * already happened (`PREVIOUS_ROLE_MISMATCH`), and a KEEP carrying
+     * `leadEvidence` is not a role move, so no report reads it. The gate was
+     * unclearable by construction.
+     *
+     * What this is, and what it is not. It is a review record: one candidate,
+     * one event, one axis, one citation, with a reason and explicit evidence.
+     * It is not a decision -- it moves nothing and produces no revision -- and
+     * it is not a boolean confirmation, because a checkbox cannot be graded.
+     * Nothing here decides anything: the submitted citation is put through the
+     * same shared `evaluateLeadPromotion()` / `evaluateLeadDemotion()` grader on
+     * every subsequent review and finalize, exactly as the original was. The
+     * previous PASS is never read and never carried forward.
+     *
+     * Four bindings, all of them refusals rather than warnings:
+     *
+     *   the move      must be one this candidate's lineage actually performed
+     *                 and is currently reporting as not yet answered. A caller
+     *                 cannot file a citation for a move it has not made, or
+     *                 re-answer one that already passes.
+     *   the axis      promotion evidence cannot answer a demotion requirement,
+     *                 or the reverse. They are different graders.
+     *   the identity  the citation is bound to the Source-Faithful baseline
+     *                 event -- for a derived duplicate, to the origin the
+     *                 duplicate chain resolves to, never to the derived id.
+     *   the candidate the review is stored under, and re-checked against, the
+     *                 exact candidate and Lead context digest it was made for.
+     *                 The next Lead-affecting revision is a different candidate,
+     *                 so the review is not loaded and the report returns to
+     *                 PENDING.
+     *
+     * The identity binding is checked by grading the submission through the real
+     * report builder before anything is written, so this operation holds no copy
+     * of the binding rule. A submission that fails it is refused and not stored.
+     */
+    async reviewLeadEvidence(owner, projectId, { candidateId, review } = {}) {
+      const ctx = await context(owner, projectId, candidateId);
+      const { engines, record, baselineProject, application } = ctx;
+      if (!review || typeof review !== 'object' || Array.isArray(review)) {
+        fail(ERROR_CODES.INVALID_REQUEST, 'A Lead evidence review is required', { candidate_id: candidateId });
+      }
+      const eventId = requireString(review.event_id, 'review.event_id', { max: 300 });
+      const axes = engines.arrangement.LEAD_EVIDENCE_REVIEW_AXES;
+      const axis = review.axis;
+      if (axis !== axes.PROMOTION && axis !== axes.DEMOTION) {
+        fail(ERROR_CODES.INVALID_REQUEST, 'review.axis must be promotion or demotion. Promotion evidence argues an event into Melody; demotion evidence argues one out of it, and neither answers the other.', { accepted: [axes.PROMOTION, axes.DEMOTION] });
+      }
+      const reason = requireString(review.reason, 'review.reason', { max: 500 });
+      const evidence = normalizeEvidence(review.evidence);
+      if (!evidence.length) {
+        fail(ERROR_CODES.INVALID_REQUEST, 'A Lead evidence review requires at least one explicit evidence reference.');
+      }
+      const leadEvidence = review.lead_evidence;
+      if (!leadEvidence || typeof leadEvidence !== 'object' || Array.isArray(leadEvidence)) {
+        fail(ERROR_CODES.INVALID_REQUEST, 'review.lead_evidence must be the Lead evidence record the shared gate grades: sourceIdentity, sectionRole, scoreEvidence, audioEvidence, continuity, core3 and a positive destination reason.');
+      }
+
+      // The Lead picture this review is an argument about. Recorded with the
+      // review so a later candidate cannot silently inherit it.
+      let leadContextDigest;
+      try { leadContextDigest = engines.arrangement.leadContextDigestOf(application.candidate); }
+      catch (error) { fail(ERROR_CODES.INVALID_REQUEST, `This candidate has no readable Lead context to review against: ${error.message}`, { candidate_id: candidateId }); }
+
+      const stored = store.getJson(leadEvidenceReviewKey(record.project_id, candidateId));
+      const existing = Array.isArray(stored) ? stored : [];
+      const others = leadEvidenceReviewsFor(record, candidateId).filter(entry => !(entry.eventId === eventId && entry.axis === axis));
+      const reportsWith = freshReviews => {
+        const inputs = { applications: ctx.applicationLineage, baseline: baselineProject, candidate: application.candidate, freshReviews };
+        return axis === axes.PROMOTION
+          ? engines.arrangement.leadPromotionReportsFromLineage(inputs)
+          : engines.arrangement.leadDemotionReportsFromLineage(inputs);
+      };
+
+      // Something to answer. Computed with the reviews already stored, so a
+      // question this caller has already answered is reported as answered.
+      const before = reportsWith(leadEvidenceReviewsFor(record, candidateId)).find(report => report.eventId === eventId);
+      if (!before) {
+        fail(ERROR_CODES.INVALID_REQUEST, `This candidate reports no Lead ${axis} requiring evidence for that event.`, {
+          candidate_id: candidateId,
+          event_id: eventId,
+          axis,
+          reviewable: reportsWith(leadEvidenceReviewsFor(record, candidateId)).filter(report => report.pass !== true).map(report => report.eventId),
+        });
+      }
+      if (before.pass === true) {
+        fail(ERROR_CODES.INVALID_REQUEST, `This candidate's Lead ${axis} for that event is already answered; there is nothing to re-review.`, {
+          candidate_id: candidateId, event_id: eventId, axis, status: before.status ?? null,
+        });
+      }
+
+      // Grade the submission through the real builder before storing it. The
+      // identity binding lives in one place and this asks it the question
+      // rather than repeating it. A scope failure is a fault in the submission,
+      // so it is refused; an insufficient but correctly-scoped citation is
+      // recorded and reported PENDING by the gate, which is its answer to give.
+      const candidateEntry = {
+        event_id: eventId,
+        axis,
+        lead_evidence: leadEvidence,
+        reason,
+        evidence,
+        lead_context_digest: leadContextDigest,
+        origin_event_id: before.originEventId ?? null,
+        baseline_id: record.baseline?.baseline_id ?? null,
+        candidate_id: candidateId,
+        at: now(),
+      };
+      const dryRun = reportsWith([...others, {
+        eventId, axis, leadEvidence, leadContextDigest, reason, evidence, originEventId: candidateEntry.origin_event_id, at: candidateEntry.at,
+      }]).find(report => report.eventId === eventId);
+      const identityBlockers = (dryRun?.blockers ?? []).filter(blocker => engines.leadDemotion.LEAD_EVIDENCE_IDENTITY_BLOCKERS.includes(blocker));
+      if (identityBlockers.length) {
+        fail(ERROR_CODES.INVALID_REQUEST, 'The Lead evidence does not bind to the Source-Faithful baseline event this move is about, so it is not evidence for this move.', {
+          candidate_id: candidateId,
+          event_id: eventId,
+          axis,
+          origin_event_id: candidateEntry.origin_event_id,
+          blockers: identityBlockers,
+        });
+      }
+
+      store.putJson(
+        leadEvidenceReviewKey(record.project_id, candidateId),
+        [...existing.filter(item => !(item.event_id === eventId && item.axis === axis)), candidateEntry],
+      );
+      return Object.freeze({
+        review: Object.freeze({ ...candidateEntry, evidence: Object.freeze([...evidence]) }),
+        report: dryRun ?? null,
+        notice: 'A Lead evidence review re-supplies one citation for one already-applied Lead move on one candidate. It is graded by the shared Lead gate on every review and finalize, it carries no previous verdict forward, and it is not loaded for any other candidate.',
+      });
+    },
+
     /** Validate and record an audio alignment report against one candidate. */
     async attachAudioAlignment(owner, projectId, { candidateId, report }) {
       const engines = await canonical.engines();
@@ -435,7 +609,7 @@ export function createReviewService({ canonical, projects, intake, arrangement, 
       // relative to the Source-Faithful baseline, and its evidence record lives
       // on the revision that made it. Every recovered record is re-graded
       // against the current candidate, never carried forward as a stored PASS.
-      const leadReportInputs = { applications: ctx.applicationLineage, baseline: baselineProject, candidate: application.candidate };
+      const leadReportInputs = { applications: ctx.applicationLineage, baseline: baselineProject, candidate: application.candidate, freshReviews: ctx.leadEvidenceReviews };
       const leadDemotionReports = engines.arrangement.leadDemotionReportsFromLineage(leadReportInputs);
       const leadPromotionReports = engines.arrangement.leadPromotionReportsFromLineage(leadReportInputs);
       const readinessInputs = {
@@ -493,6 +667,7 @@ export function createReviewService({ canonical, projects, intake, arrangement, 
         harmony,
         lead_demotion: leadDemotionReports,
         lead_promotion: leadPromotionReports,
+        lead_evidence_reviews: ctx.leadEvidenceReviews,
         readiness,
         audio: {
           reports: ctx.audioReports.length,
