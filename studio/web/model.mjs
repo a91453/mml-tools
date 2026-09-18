@@ -423,7 +423,7 @@ function analysisContext(w) {
   });
   const audioPresent = Object.values(w.assets).some(a => a.project.sources.some(s => s.kind === 'original-audio')) || Boolean(w.audio);
   const audioRequired = audioPresent || w.settings.audioRequired !== 'no';
-  const readiness = evaluateProjectReadiness({ project, mmlValidation: technical, core3Report: core3, harmonyReport: harmony, leadDemotionReports: leadReports, lineageReport: lineage, versionDriftReviewed: reviewed(w, 'version'), originalAudioRequired: audioRequired, playerReadback: w.settings.preview === 'none' && reviewed(w, 'tempo') ? 'N/A' : 'PENDING' });
+  const readiness = evaluateProjectReadiness({ project, mmlValidation: technical, core3Report: core3, harmonyReport: harmony, leadDemotionReports: leadReports, lineageReport: lineage, versionDriftReviewed: reviewed(w, 'version'), originalAudioRequired: audioRequired, playerReadback: w.settings.preview === 'none' && reviewed(w, 'tempo') ? 'N/A' : 'PENDING', mobileAdaptation: reviewed(w, 'adaptation') ? 'PASS' : 'PENDING' });
   const gates = { ...readiness.gates };
   delete gates.inGameAcceptance;
   gates.intake = text(w.title) && text(w.settings.recording) && finiteNumber(w.settings.offset) && finiteNumber(w.settings.end) && Number(w.settings.offset) >= 0 && Number(w.settings.end) > Number(w.settings.offset)
@@ -436,7 +436,9 @@ function analysisContext(w) {
   gates.versionDrift = baseline && good(gates.versionDrift) ? reviewGate(w, 'version') : pending('BASELINE_OR_VERSION_REVIEW_MISSING');
   gates.tempo = reviewGate(w, 'tempo');
   gates.originalAudio = audioError ? pending(audioError) : good(gates.originalAudio) ? audioRequired ? reviewGate(w, 'audio') : { status: 'N/A', reason: 'USER_DECLARED_NO_ORIGINAL_AUDIO' } : gates.originalAudio;
-  gates.adaptation = reviewGate(w, 'adaptation');
+  gates.adaptation = reviewed(w, 'adaptation')
+    ? { ...readiness.gates.mobileAdaptation, reason: w.reviews.adaptation.note }
+    : { ...readiness.gates.mobileAdaptation, reason: 'ADAPTATION_REVIEW_REQUIRED' };
   gates.regression = reviewGate(w, 'regression');
   gates.deliveryIdentity = deliveryMatches ? pass('EXACT_SYMBOLIC_READBACK') : pending('MML_AND_CANDIDATE_IDENTITY_NOT_VERIFIED');
   const rawMidi = rawMidiReport(w, { candidate, baseline, previous });
