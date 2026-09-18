@@ -292,8 +292,14 @@ An accepted decision does not disable a gate.
 * Both sides first require the evidence to be **in scope for the event being
   moved** — see below.
 * G11-D never reports Core3 as complete. `certifiesCore3Complete` is `false`,
-  and Core3 completeness is decided by `arbitration/core3.mjs` against the
-  baseline, after application.
+  and Core3 is decided after application by two independent modules:
+  `arbitration/core3.mjs` `evaluateCore3Continuity()`, which audits source
+  continuity *against the Source-Faithful Baseline* with its own candidate-bound
+  `core3ApprovedChanges`, and `arbitration/core3-completeness.mjs`
+  `evaluateCore3Completeness()`, which asks Gate 4's musical-completeness
+  question *of the candidate itself*. Neither implies the other: a candidate
+  identical to its baseline has a clean continuity audit and can still be
+  musically incomplete.
 
 ### Lead evidence is bound to the event it is attached to
 
@@ -368,15 +374,125 @@ events.
 
 ### Downstream defence in depth
 
-`leadDemotionReportsFromApplication()` re-establishes both checks against the
-baseline event before producing any report. An application result is data — it
-can be restored, hand-built, mutated, or produced by a caller that bypassed the
-recording path — so `status === 'PASS'` is not evidence that the scope checks
-ever ran. This is the last place a foreign citation could be re-packaged as a
-PASS carrying the target event's id, because the readiness Lead gate matches
-reports to required Lead events by `eventId`. A mismatch yields a `PENDING`
-report carrying `LEAD_EVIDENCE_EVENT_IDENTITY_MISMATCH`; the underlying gate is
-never called.
+`leadDemotionReportsFromLineage()` and `leadPromotionReportsFromLineage()`
+re-establish both checks against the baseline event before producing any report.
+An application result is data — it can be restored, hand-built, mutated, or
+produced by a caller that bypassed the recording path — so `status === 'PASS'` is
+not evidence that the scope checks ever ran. This is the last place a foreign
+citation could be re-packaged as a PASS carrying the target event's id, because
+the readiness Lead gate matches reports to required Lead events by `eventId`. A
+mismatch yields a `PENDING` report carrying
+`LEAD_EVIDENCE_EVENT_IDENTITY_MISMATCH`; the underlying gate is never called.
+
+`leadDemotionReportsFromApplication()` and `leadPromotionReportsFromApplication()`
+remain as single-revision wrappers that delegate to the lineage builders with a
+one-step chain. They are not the path review and finalize take.
+
+### Why the lineage, not one revision
+
+Readiness derives what needs evidence from the candidate-versus-Source-Faithful-
+baseline diff, and that diff accumulates for the life of a project: an event
+demoted in revision 1 is still demoted relative to the baseline in revision 9.
+The evidence, though, lives in the `applied[]` of the one revision that performed
+the move, and `metadata.g11d` deliberately does not inherit across revisions.
+Reading only the head therefore loses the evidence for every earlier move, and a
+revision that merely `KEEP`s an already-moved event produces no report at all —
+leaving a gate no later decision could clear, because G11-D correctly refuses to
+re-apply a move that has already happened.
+
+`applicationLineage(applications, baseline)` is the gatekeeper. Every step goes
+through the same `applicationIntegrity()` the head does; on any failure the
+lineage is refused **whole** — no steps, therefore no recovered reports,
+therefore the readiness Lead gates stay `PENDING`, which is the closed direction
+a missing application already takes.
+
+| Reason | Meaning |
+| --- | --- |
+| `LINEAGE_NOT_AN_ARRAY` | the input is not a chain |
+| `LINEAGE_STEPS_AGAINST_DIFFERENT_REFERENCES` | steps resolve against different references; reports from two references are not one set |
+| `LINEAGE_REVISION_INDEX_INVALID` | a step has no integer `revision.index` ≥ 1 |
+| `LINEAGE_INDEX_NOT_CONTIGUOUS` | a hole in the chain, whose missing revision could have moved exactly the material the evidence claims about |
+| `LINEAGE_PARENT_REVISION_MISMATCH` | a step's `parentRevisionId` does not name the step before it |
+
+Ordering is by `revision.index`, which is content-addressed inside `revision.id`
+and re-checked by `revisionIdentityMatches()`, so it cannot be renumbered without
+breaking integrity first. Contiguity is required *among the steps supplied*, not
+from revision 1: a caller may legitimately hand in one application or the tail of
+a chain. A partial chain can only lose evidence, never launder it.
+
+Records are built oldest to newest, one per event id: a later demotion of the
+same event replaces the earlier record, and a later promotion back to Melody
+withdraws it. Exactly one report per event id, because the readiness gate keys on
+it and a second report would make the outcome order-dependent.
+
+**This is a re-grade, not a carry-forward.** The previous revision's PASS is
+never read. What is recovered is the *evidence record*, which is put through
+`evaluateLeadDemotion()` / `evaluateLeadPromotion()` again. The promotion side
+carries one asymmetry: a promoted event is already Melody in every later
+candidate, so `evaluateLeadPromotion()` would short-circuit to `N/A` if handed
+the candidate event. It is therefore graded as it stood immediately *before* the
+move, against the Source-Faithful origin that `baselineOriginEvent()` resolves by
+walking the reversible derived-duplicate chain — never by pitch, time or array
+order. A derived id is never accepted as a `sourceEventId`. That helper is
+exported so the Studio Web plane performs the same walk rather than a second copy
+of it, and a promotion whose origin cannot be resolved is reported
+`LEAD_PROMOTION_ORIGIN_NOT_IN_BASELINE`.
+
+Each surviving report names the revision whose evidence it re-graded
+(`gradedFromRevisionId`), and a promotion report also carries `originEventId`.
+
+### When a recovered record goes back to PENDING
+
+`LEAD_EVIDENCE_LINEAGE_BLOCKERS`. None of these is a musical verdict, and none
+can turn a non-PASS into a PASS.
+
+| Blocker | Meaning |
+| --- | --- |
+| `LEAD_EVIDENCE_EVENT_NOT_IN_CANDIDATE` | the moved event is no longer in the candidate at all |
+| `LEAD_EVIDENCE_EVENT_CHANGED` | the event is there, but its musical identity moved: a citation about the event as it was is not a citation about the event as it is |
+| `LEAD_EVIDENCE_CONTEXT_CHANGED` | the Lead picture the continuity/Core3 claims were made about has moved |
+| `LEAD_EVIDENCE_DESTINATION_DOES_NOT_MATCH_CANDIDATE` | the role the evidence argued for is not the role the candidate now has |
+
+`musicalIdentityMatches()` compares pitch, start, end, volume and the sorted
+`sourceIds`/`sourceEventIds`, and deliberately **excludes role** — the role change
+*is* the move the evidence argues for. For a demotion to `omitted`, the event
+still being present is itself `DESTINATION_CHANGED`.
+
+`leadContextDigestOf()` is scoped to Melody/Lead events only, not to all of
+Core3. That scope is load-bearing: covering all of Core3 meant any later Core3
+decision permanently voided every earlier revision's Lead evidence, which
+re-created the unclearable gate through a different door. The record's Core3
+claim is not carried forward by anything — readiness re-evaluates Core3 every
+review, through the source-continuity audit and the independent Gate 4
+completeness gate, both against the current candidate.
+
+### Answering a stale citation
+
+The staleness above is correct and stays. On its own, though, it left a reviewer
+nothing to do: G11-D refuses to re-apply a move that already happened
+(`PREVIOUS_ROLE_MISMATCH`), and a `KEEP` carrying `leadEvidence` is not a role
+move, so no report reads it — the evidence is applied and silently ignored. The
+gate was unclearable by construction.
+
+The two lineage builders therefore take an optional `freshReviews` input: the
+candidate-bound Lead evidence reviews recorded through the Application Service's
+`reviewLeadEvidence` operation, one per event per axis (`promotion` /
+`demotion`). A fresh review **substitutes the recovered record's evidence and its
+context reference point, and nothing else**. The move must still be one the
+lineage performed, the origin walk still runs first, the citation must still bind
+to the same baseline event, the destination and musical-identity checks still
+run, and the verdict still comes from the shared grader on that call. A review
+carries its own recorded Lead context digest, which must equal the candidate's;
+so the next Lead-affecting revision is a different candidate, the review is not
+loaded, and the report returns to `PENDING` — where it can be answered again.
+
+Because a fresh review arrives as stored data, the builders trust none of it:
+an entry that is malformed, on the wrong axis, carrying no evidence record, or
+naming an event the lineage performed no Lead move on is ignored rather than
+applied, which leaves the recovered record exactly as it was. A report that
+carries `evidenceSource: 'candidate-review'` is one where a fresh citation
+actually reached the grader; `'revision'` is one graded from the recovered
+record; a report refused before the grader carries neither.
 
 Omitting Core3 material is applied when the decision is legal and evidenced, and
 is reported as `CORE3_MATERIAL_OMITTED`; whether the result is still a complete
@@ -409,8 +525,8 @@ must still run (`downstream.mustRerun`), and `decision-review.mjs` wires the
 existing modules:
 
 event-level diff (baseline and previous) · Core3 continuity and false Lead gaps ·
-Lead Demotion Gate for every Lead removal/role move in the diff · cross-source
-harmony arbitration · source-aware micro-timing · per-song readiness.
+shared Lead-role grading for every Lead demotion and promotion in the diff ·
+cross-source harmony arbitration · source-aware micro-timing · per-song readiness.
 
 A derived revision never inherits `sourceComplete`, `audioAlignmentEvidence`, a
 stored `sourceFaithfulBaseline` snapshot or a previous `g11d` block from its
@@ -629,8 +745,8 @@ that `candidate.metadata.g11d.revision` names this revision. A failure is
 reported as `NOT_APPLICABLE` with the reasons, never thrown, and produces no
 Lead report. `reviewAppliedCandidate()` additionally requires the reference to
 be the Source-Faithful baseline (`REVIEW_REQUIRES_SOURCE_FAITHFUL_BASELINE`),
-because readiness keys on it; `leadDemotionReportsFromApplication()` accepts
-either bound reference.
+because readiness keys on it; the Lead report builders accept either bound
+reference.
 
 **R-S1 (P1 class) — a lane target could name a rest and lie about it.** A G11-C
 lane only ever holds note events, but the suggestion is caller-supplied data.

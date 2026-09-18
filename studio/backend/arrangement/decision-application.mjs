@@ -57,6 +57,7 @@ import {
 import { compareCanonicalVersions } from '../compare/version-drift.mjs';
 import {
   evaluateLeadDemotion,
+  evaluateLeadPromotion,
   leadEvidenceIdentityBlockers,
   LEAD_EVIDENCE_IDENTITY_MISMATCH,
   LEAD_EVIDENCE_PROVENANCE_PAIR_AMBIGUOUS,
@@ -322,6 +323,54 @@ export function snapshotDigestOf(project) {
   return contentDigest(projectDigestShape(project, { excludeMetadataKeys: ['sourceFaithfulBaseline', 'g11d'] }));
 }
 
+/**
+ * The Lead picture a Lead evidence record's continuity claim was made about.
+ *
+ * `SOURCE_POLICY.md` §4 asks a Lead move for continuity after the move: the
+ * record asserts `createsLeadGap: false`, which is a claim about a *state*, not
+ * about an event in isolation. The same citation about the same event stops
+ * being proven once the Lead material around it moves, changes pitch or timing,
+ * or appears or disappears. So when evidence recorded at one revision is
+ * recovered for a later candidate, this digest decides whether the continuity
+ * claim still describes the candidate being graded, or has to go back to
+ * PENDING for re-review.
+ *
+ * Scoped to Melody/Lead note events, and deliberately not to all of Core3.
+ *
+ * The record also carries a `core3` claim, but that one is not carried forward
+ * by anything: `final/readiness.mjs` re-evaluates Core3 on every review through
+ * the source-continuity audit and the independent Gate 4 completeness gate, both
+ * against the current candidate. Folding Core3 into this digest as well would
+ * therefore invalidate every earlier Lead record on any ordinary later Core3
+ * decision -- assigning a texture voice to Chord1, say -- while G11-D correctly
+ * refuses to re-apply a role move that already happened. The Lead gate would
+ * become unclearable again, which is the defect this lineage recovery exists to
+ * fix, re-created through a different door. Core3 integrity is gated; the Lead
+ * record's own claim is about Lead continuity, and that is what is checked here.
+ *
+ * Volume is included because prominence is part of what a Lead role claim
+ * asserts.
+ *
+ * This is an implementation staleness rule. It adds no Canonical rule and
+ * decides no musical question: a changed digest means "not proven for this
+ * candidate", never "wrong".
+ */
+export function leadContextDigestOf(project) {
+  if (!isPlainObject(project)) throw Error('leadContextDigestOf requires a Canonical project');
+  const events = (project.events ?? [])
+    .filter(event => event?.kind === 'note' && event.role === LEAD_ROLE)
+    .map(event => ({
+      id: event.id,
+      role: event.role,
+      pitch: event.pitch,
+      start: beatKey(event.start),
+      end: beatKey(event.end),
+      volume: event.volume ?? null,
+    }))
+    .sort((a, b) => cmpStr(a.id, b.id));
+  return contentDigest(events);
+}
+
 export function decisionSetDigestOf(normalizedDecisions) {
   const records = normalizedDecisions
     .map(decision => ({ ...decision }))
@@ -582,26 +631,24 @@ function leadDemotionBlockers(decision, event, destinationRole) {
   return report.status === 'PASS' ? [] : [...report.blockers];
 }
 
-// Promotion into Melody is the mirror obligation. MASTER_RULES.md §4 allows
-// instrumental leads and source-supported hand-offs, so this is an
-// evidence-presence interlock, not a musical judgement: it asks that the caller
-// state which section this is and cite score or audio evidence that the material
-// is actually the lead there. It never decides that anything *is* the lead.
-const PROMOTION_SECTION_ROLES = new Set(['vocal-active', 'vocal-rest', 'instrumental', 'intro', 'interlude', 'solo', 'outro']);
-
+// Promotion into Melody is the mirror obligation. The shared Lead grader owns
+// the Canonical evidence semantics; this application layer only adds the
+// accepted decision's own generic evidence-reference requirement.
 function leadPromotionBlockers(decision, event) {
   const evidence = decision.leadEvidence;
-  const blockers = [];
   if (!isPlainObject(evidence)) return ['LEAD_PROMOTION_EVIDENCE_MISSING'];
-  // Same obligation as demotion, and for the same reason: a citation about some
-  // other event is not evidence that *this* material is the lead here.
-  blockers.push(...leadEvidenceIdentityBlockers(evidence, event));
-  if (!PROMOTION_SECTION_ROLES.has(evidence.sectionRole)) blockers.push('SECTION_ROLE_UNRESOLVED');
-  const score = isPlainObject(evidence.scoreEvidence) ? evidence.scoreEvidence : {};
-  const audio = isPlainObject(evidence.audioEvidence) ? evidence.audioEvidence : {};
-  const scoreLead = score.availability !== 'unavailable' && score.classification === 'lead' && nonEmptyString(score.citation);
-  const audioLead = audio.availability !== 'unavailable' && audio.classification === 'foreground' && nonEmptyString(audio.citation);
-  if (!scoreLead && !audioLead) blockers.push('POSITIVE_LEAD_EVIDENCE_MISSING');
+  let report;
+  try {
+    report = evaluateLeadPromotion({
+      ...evidence,
+      event,
+      destinationRole: LEAD_ROLE,
+      positiveReason: nonEmptyString(evidence.positiveReason) ? evidence.positiveReason : decision.reason,
+    });
+  } catch (error) {
+    return [`LEAD_PROMOTION_EVIDENCE_INVALID: ${error.message}`];
+  }
+  const blockers = report.status === 'PASS' ? [] : [...report.blockers];
   if (!decision.evidence.length) blockers.push('EVIDENCE_REFERENCES_MISSING');
   return [...new Set(blockers)];
 }

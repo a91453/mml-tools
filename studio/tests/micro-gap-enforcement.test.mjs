@@ -193,9 +193,12 @@ function readiness(candidate) {
     project: candidate,
     mmlValidation: { ok: true, errors: [] },
     core3Report: { status: 'PASS', blockers: [] },
+    core3CompletenessReport: { status: 'PASS', blockers: [] },
     harmonyReport: { status: 'PASS', unresolvedCount: 0 },
     playerReadback: 'PASS',
     originalAudioRequired: true,
+    mobileAdaptation: 'PASS',
+    regressionReviewed: true,
   });
 }
 
@@ -295,6 +298,7 @@ test('G10-1d a source-supported sub-grid gap does not bypass the separate techni
     project: candidate,
     mmlValidation: { ok: false, errors: [{ message: 'role exceeds 2,400 characters' }] },
     core3Report: { status: 'PASS', blockers: [] },
+    core3CompletenessReport: { status: 'PASS', blockers: [] },
     harmonyReport: { status: 'PASS', unresolvedCount: 0 },
     playerReadback: 'PASS',
     originalAudioRequired: true,

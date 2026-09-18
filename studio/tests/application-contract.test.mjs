@@ -19,7 +19,7 @@ import {
   createStudioApplication,
 } from '../backend/application/index.mjs';
 import { SOURCE_KINDS } from '../backend/canonical/index.mjs';
-import { canonicalProjectBytes } from './fixtures/application-fixtures.mjs';
+import { canonicalProjectBytes, sixRoleBaseline } from './fixtures/application-fixtures.mjs';
 
 const OWNER = 'owner:alice';
 const OTHER = 'owner:bob';
@@ -69,16 +69,18 @@ test('capabilities report what this build does, not what it wishes it did', asyn
   assert.ok(!caps.gates.settable_by_this_service.includes('in_game'));
   assert.deepEqual([...caps.gates.axes], [...GATE_NAMES]);
 
-  // `mobile_adaptation` has no gate implementing it in this build, so claiming
-  // it is settable here would be an overclaim in the one record an agent reads
-  // to find out what this service can actually do. It is reported as
-  // unimplemented, and kept apart from `in_game`: one is a missing
-  // implementation, the other is a standing prohibition, and folding them
-  // together would either invent a rule or weaken the one that exists.
-  assert.ok(!caps.gates.settable_by_this_service.includes('mobile_adaptation'));
-  assert.ok(caps.gates.not_implemented_in_this_build.includes('mobile_adaptation'));
+  // Gate 8 is settable only through the explicit candidate-bound,
+  // evidence-backed review confirmation. Parser/emitter success never sets it.
+  assert.ok(caps.gates.settable_by_this_service.includes('mobile_adaptation'));
+  assert.ok(!caps.gates.not_implemented_in_this_build.includes('mobile_adaptation'));
   assert.ok(!caps.gates.not_implemented_in_this_build.includes('in_game'));
   assert.ok(!caps.gates.never_settable_by_this_service.includes('mobile_adaptation'));
+
+  // Gate 9 has the same trust shape: explicit candidate-bound evidence, never
+  // inferred from a clean diff or a passing test suite.
+  assert.ok(caps.gates.settable_by_this_service.includes('regression'));
+  assert.ok(!caps.gates.not_implemented_in_this_build.includes('regression'));
+  assert.ok(!caps.gates.never_settable_by_this_service.includes('regression'));
   // Every axis is accounted for by exactly one of the three lists, so a future
   // axis cannot be added without saying which it is.
   const classified = [
@@ -87,6 +89,57 @@ test('capabilities report what this build does, not what it wishes it did', asyn
     ...caps.gates.never_settable_by_this_service,
   ];
   assert.deepEqual([...classified].sort(), [...GATE_NAMES].sort());
+});
+
+// `axes` is the Acceptance gate vocabulary, not the list of things that can
+// block a Final. Readiness has its own pre-game gates and every one of them
+// reaches `blockers`, so a capability record that published only `axes` beside
+// an empty `not_implemented_in_this_build` read as a complete inventory and was
+// not one: an agent would meet a refusal naming `core3Completeness` or
+// `leadPromotion` without ever having seen the name.
+test('capabilities name every readiness gate that can block a Final, and name them correctly', async () => {
+  const caps = await app().capabilities();
+  const { evaluateProjectReadiness } = await import('../backend/final/index.mjs');
+
+  // Transcribed, not imported, so the record survives an unavailable Canonical.
+  // Equality with the real readiness gate set is what stops it drifting.
+  const readiness = evaluateProjectReadiness({ project: sixRoleBaseline() });
+  const blocking = new Set([...readiness.preGameBlocking, ...Object.keys(readiness.gates)]);
+  for (const name of caps.gates.readiness_gates_that_block_final) {
+    assert.ok(blocking.has(name), `${name} is advertised as a readiness gate but readiness does not report it`);
+  }
+  // The pre-game set is what decides `candidateReady`, so nothing in it may be
+  // missing from the record.
+  const everBlocking = Object.keys(readiness.gates).filter(name => name !== 'inGameAcceptance');
+  for (const name of everBlocking) {
+    assert.ok(
+      caps.gates.readiness_gates_that_block_final.includes(name),
+      `${name} can block a Final but is not advertised`,
+    );
+  }
+
+  // The two Gate 4 axes and the two Lead axes are each named with the operation
+  // that answers them, and no axis claims to be answerable by another's.
+  const axes = Object.fromEntries(caps.gates.review_axes_settable_by_this_service.map(entry => [entry.axis, entry]));
+  assert.equal(axes.core3_source_continuity.operation, 'approveCore3SourceChange');
+  assert.equal(axes.core3_source_continuity.readiness_gate, 'core3');
+  assert.equal(axes.core3_completeness.readiness_gate, 'core3Completeness');
+  assert.ok(axes.core3_completeness.operation.includes('core3_completeness_reviewed'));
+  for (const axis of ['lead_promotion', 'lead_demotion']) {
+    assert.ok(axes[axis].operation.includes('reviewLeadEvidence'), `${axis} must name the re-review path`);
+    assert.ok(!axes[axis].operation.includes('Core3'), 'a Lead operation is never a Core3 approval');
+  }
+  // Every named review axis is a readiness gate that actually exists.
+  for (const entry of caps.gates.review_axes_settable_by_this_service) {
+    assert.ok(blocking.has(entry.readiness_gate), `${entry.axis} names a readiness gate that does not exist`);
+  }
+
+  // The evidence rule an agent has to know before it records anything.
+  for (const gate of ['Gate 8', 'Gate 9', 'Gate 4']) assert.ok(caps.gates.notice.includes(gate));
+  assert.ok(caps.gates.notice.includes('core3_completeness'));
+  assert.ok(/never a Core3 approval/.test(caps.gates.notice));
+  assert.equal(caps.capabilities.lead_evidence_re_review, true);
+  assert.equal(caps.capabilities.core3_source_change_approval, true);
 });
 
 test('capabilities state the zero-cost and no-LLM position as facts', async () => {
@@ -411,23 +464,54 @@ test('a filesystem store survives a new service over the same directory', async 
   }
 });
 
-// ─── legacy technical validation ────────────────────────────────────────────
+// ─── technical validation routing ───────────────────────────────────────────
 
-test('legacy technical validation is reachable without Published Canonical', async () => {
-  // It always ran on the legacy core. A layer that is meant to be additive must
-  // not take that capability away from an environment that had it.
+test('Canonical technical validation fails closed without Published Canonical', async () => {
+  // The operation advertises a current Canonical / Strict Mobile verdict, so an
+  // environment that cannot load the published rules gets a refusal. Answering
+  // it from the legacy core instead would report a non-Canonical verdict under
+  // a Canonical name, and the two engines disagree in both directions.
   const service = app({ loadEngines: async () => { throw Error('no published history'); } });
-  const report = service.validateTechnicalMml({ mml: 'MML@t120o4c1,,,,,;', meter_text: '0 4/4' });
-  assert.equal(report.technical_ok, true);
-  assert.equal(report.gates.strict_mobile_technical, 'PASS');
+  await assert.rejects(
+    () => service.validateTechnicalMml({ mml: 'MML@t120o4c1,,,,,;', meter_text: '0 4/4' }),
+    error => error.code === ERROR_CODES.CANONICAL_NOT_LOADED,
+  );
+  await assert.rejects(
+    () => service.technicalOverlapDetails({ mml: 'MML@t120o4c1,,,,,;', meter_text: '0 4/4' }),
+    error => error.code === ERROR_CODES.CANONICAL_NOT_LOADED,
+  );
+});
+
+test('the legacy diagnostic stays reachable without Published Canonical and claims no Canonical PASS', async () => {
+  // It always ran on the legacy core. A layer that is meant to be additive must
+  // not take that capability away from an environment that had it -- but it is
+  // labelled for what it is, so a legacy PASS cannot be read as a Canonical one.
+  const service = app({ loadEngines: async () => { throw Error('no published history'); } });
+  const report = service.legacyTechnicalDiagnostic({ mml: 'MML@t120o4c1,,,,,;', meter_text: '0 4/4' });
+  assert.equal(report.authority, 'LEGACY_DIAGNOSTIC');
+  assert.equal(report.technical_ok, null);
+  assert.equal(report.legacy_technical_ok, true);
+  assert.equal(report.gates.strict_mobile_technical, 'NOT_RUN');
+  assert.equal(report.gates.legacy_diagnostic, 'PASS');
   assert.equal(report.gates.in_game_acceptance, 'PENDING');
   assert.equal(report.changed_input, false);
 });
 
-test('legacy technical validation keeps its preflight bounds', async () => {
+test('a Canonical technical PASS is labelled as one', async () => {
   const service = app();
-  assert.throws(() => service.validateTechnicalMml({ mml: 'MML@t1200o4c1,,,,,;', meter_text: '0 4/4' }), /三位數安全界限/);
-  assert.throws(() => service.validateTechnicalMml({ mml: 'MML@t120o4c1,,,,,;', meter_text: '0 4/4', pickup: 'abc' }), /pickup/);
+  const report = await service.validateTechnicalMml({ mml: 'MML@t120o4c1,,,,,;', meter_text: '0 4/4' });
+  assert.equal(report.authority, 'PUBLISHED_CANONICAL');
+  assert.equal(report.technical_ok, true);
+  assert.equal(report.legacy_technical_ok, undefined);
+  assert.equal(report.gates.strict_mobile_technical, 'PASS');
+});
+
+test('technical validation keeps its preflight bounds on both engines', async () => {
+  const service = app();
+  await assert.rejects(() => service.validateTechnicalMml({ mml: 'MML@t1200o4c1,,,,,;', meter_text: '0 4/4' }), /三位數安全界限/);
+  await assert.rejects(() => service.validateTechnicalMml({ mml: 'MML@t120o4c1,,,,,;', meter_text: '0 4/4', pickup: 'abc' }), /pickup/);
+  assert.throws(() => service.legacyTechnicalDiagnostic({ mml: 'MML@t1200o4c1,,,,,;', meter_text: '0 4/4' }), /三位數安全界限/);
+  assert.throws(() => service.legacyTechnicalDiagnostic({ mml: 'MML@t120o4c1,,,,,;', meter_text: '0 4/4', pickup: 'abc' }), /pickup/);
 });
 
 test('a later engine failure keeps the loaded Canonical identity and never reads as CANONICAL_NOT_LOADED', async () => {

@@ -1,0 +1,629 @@
+// Lead evidence across the revision lineage.
+//
+// The readiness Lead gates derive what needs evidence from the candidate-versus-
+// Source-Faithful-baseline diff, which accumulates for the life of a project. The
+// evidence itself is recorded on the one revision that performed the role move,
+// and `metadata.g11d` deliberately does not inherit across revisions. Reading a
+// single revision therefore loses the evidence for every earlier move: a
+// revision that merely KEEPs an already-promoted event produced no report at
+// all, and the gate could never be cleared again, because G11-D correctly
+// refuses to re-apply a move that has already happened.
+//
+// These regressions pin the recovery and -- just as importantly -- its limits.
+// Nothing here may carry a previous PASS forward: every surviving report is a
+// fresh grade from the shared Lead gate, and a candidate whose event identity,
+// destination role or Core3 context has moved sends the evidence back to
+// PENDING for re-review.
+
+import test from 'node:test';
+import assert from 'node:assert/strict';
+import { applyAcceptedArrangement, leadContextDigestOf } from '../backend/arrangement/decision-application.mjs';
+import {
+  applicationLineage,
+  reviewAppliedCandidate,
+  leadDemotionReportsFromApplication,
+  leadDemotionReportsFromLineage,
+  leadPromotionReportsFromApplication,
+  leadPromotionReportsFromLineage,
+  LEAD_EVIDENCE_LINEAGE_BLOCKERS,
+} from '../backend/arrangement/decision-review.mjs';
+import { suggestRoleCandidates } from '../backend/arrangement/role-candidates.mjs';
+import { evaluateProjectReadiness } from '../backend/final/index.mjs';
+import {
+  roleDeclaredBaseline,
+  acceptanceFor,
+  leadDemotionEvidence,
+  leadPromotionEvidence,
+  CANONICAL_IDENTITY,
+} from './fixtures/g11d-fixtures.mjs';
+
+const baseline = roleDeclaredBaseline();
+const suggestion = suggestRoleCandidates(baseline);
+
+const applyFirst = decisions => applyAcceptedArrangement({
+  baseline, suggestion, decisions, canonicalIdentity: CANONICAL_IDENTITY,
+});
+
+const applyNext = (parent, decisions) => applyAcceptedArrangement({
+  baseline,
+  suggestion,
+  canonicalIdentity: CANONICAL_IDENTITY,
+  parent: { revision: parent.revision, candidate: parent.candidate },
+  decisions: decisions.map(decision => ({
+    ...decision,
+    acceptance: acceptanceFor(baseline, { suggestion, reviewedRevisionId: parent.revision.id }),
+  })),
+});
+
+const accept = () => acceptanceFor(baseline, { suggestion });
+
+// Revision 1: a lawful Chord-to-Melody promotion with complete positive
+// evidence. `tex-1` carries no baseline role, so ASSIGN_ROLE is the lawful move.
+const promoteTex1 = () => applyFirst([{
+  id: 'p1', type: 'ASSIGN_ROLE', target: { eventIds: ['tex-1'] }, toRole: 'Melody',
+  reason: 'Reviewed: the cited texture becomes the foreground instrumental lead here.',
+  evidence: ['fixture:score top line', 'fixture:audio foreground'],
+  leadEvidence: leadPromotionEvidence(),
+  acceptance: accept(),
+}]);
+
+// Revision 1: a lawful Lead demotion with complete positive evidence.
+const demoteLead1 = () => applyFirst([{
+  id: 'd1', type: 'MOVE_ROLE', target: { eventIds: ['lead-1'] },
+  fromRole: 'Melody', toRole: 'Chord3',
+  reason: 'Reviewed: inner-staff doubling, not the lead.',
+  evidence: ['fixture:score inner staff'],
+  leadEvidence: leadDemotionEvidence(),
+  acceptance: accept(),
+}]);
+
+const keep = (id, eventIds) => ({
+  id, type: 'KEEP', target: { eventIds },
+  reason: 'Reviewed: carried unchanged into this revision.',
+  evidence: ['fixture:review'],
+});
+
+const reportsFor = (applications, head) => ({
+  promotion: leadPromotionReportsFromLineage({ applications, baseline, candidate: head.candidate }),
+  demotion: leadDemotionReportsFromLineage({ applications, baseline, candidate: head.candidate }),
+});
+
+// ─── the reproduction ───────────────────────────────────────────────────────
+
+test('a no-op KEEP revision does not erase an earlier promotion evidence chain', () => {
+  const first = promoteTex1();
+  assert.equal(first.status, 'PASS');
+  assert.equal(leadPromotionReportsFromApplication(first, baseline)[0].status, 'PASS');
+
+  // Revision 2 keeps the already-promoted Melody event unchanged.
+  const second = applyNext(first, [keep('k1', ['tex-1'])]);
+  assert.equal(second.status, 'PASS');
+  assert.equal(second.candidate.events.find(event => event.id === 'tex-1').role, 'Melody');
+
+  // The single-revision reading is what produced the block: revision 2 performed
+  // no promotion, so it carries no promotion evidence...
+  assert.deepEqual(leadPromotionReportsFromApplication(second, baseline), []);
+  const lost = reviewAppliedCandidate({ application: second, baseline, leadPromotionReports: [] });
+  assert.equal(lost.readiness.gates.leadPromotion.status, 'PENDING');
+  assert.ok(lost.readiness.gates.leadPromotion.blockers.includes('LEAD_PROMOTION_EVIDENCE_REQUIRED'));
+
+  // ...while the requirement never goes away, because the baseline diff still
+  // shows tex-1 arriving in Melody. Reading the lineage recovers the evidence
+  // and re-grades it against the current candidate.
+  const { promotion } = reportsFor([first, second], second);
+  assert.equal(promotion.length, 1);
+  assert.equal(promotion[0].status, 'PASS');
+  assert.equal(promotion[0].eventId, 'tex-1');
+  assert.equal(promotion[0].originEventId, 'tex-1');
+  assert.equal(promotion[0].gradedFromRevisionId, first.revision.id, 'the report names the revision whose evidence it re-graded');
+
+  const recovered = reviewAppliedCandidate({ application: second, baseline, leadPromotionReports: promotion });
+  assert.equal(recovered.readiness.gates.leadPromotion.status, 'PASS');
+});
+
+test('the same loss and the same recovery apply to Lead demotion evidence', () => {
+  const first = demoteLead1();
+  assert.equal(first.status, 'PASS');
+  assert.equal(leadDemotionReportsFromApplication(first, baseline)[0].status, 'PASS');
+
+  const second = applyNext(first, [keep('k1', ['lead-1'])]);
+  assert.equal(second.status, 'PASS');
+
+  assert.deepEqual(leadDemotionReportsFromApplication(second, baseline), []);
+  const lost = reviewAppliedCandidate({ application: second, baseline, leadDemotionReports: [] });
+  assert.equal(lost.readiness.gates.leadDemotion.status, 'PENDING');
+  assert.ok(lost.readiness.gates.leadDemotion.pendingEventIds.includes('lead-1'));
+
+  const { demotion } = reportsFor([first, second], second);
+  assert.equal(demotion.length, 1);
+  assert.equal(demotion[0].status, 'PASS');
+  assert.equal(demotion[0].eventId, 'lead-1');
+  assert.equal(demotion[0].destinationRole, 'Chord3');
+
+  const recovered = reviewAppliedCandidate({ application: second, baseline, leadDemotionReports: demotion });
+  assert.equal(recovered.readiness.gates.leadDemotion.status, 'PASS');
+});
+
+test('a revision that only touches an unrelated voice keeps the promotion evidence applicable', () => {
+  const first = promoteTex1();
+  // tex-2 carries no baseline role and lands in enrichment: it is outside Core3
+  // and outside the Lead move, so the continuity/Core3 claims still hold.
+  const second = applyNext(first, [{
+    id: 'e1', type: 'ASSIGN_ROLE', target: { eventIds: ['tex-2'] }, toRole: 'Chord5',
+    reason: 'Reviewed: the second texture voice enriches without touching Core3.',
+    evidence: ['fixture:review'],
+  }]);
+  assert.equal(second.status, 'PASS');
+  assert.equal(second.candidate.events.find(event => event.id === 'tex-2').role, 'Chord5');
+
+  const { promotion } = reportsFor([first, second], second);
+  assert.equal(promotion.length, 1);
+  assert.equal(promotion[0].status, 'PASS', 'an enrichment-only change does not invalidate a Lead claim');
+  assert.equal(reviewAppliedCandidate({ application: second, baseline, leadPromotionReports: promotion })
+    .readiness.gates.leadPromotion.status, 'PASS');
+});
+
+// ─── the limits: this is a re-grade, never a carry-forward ──────────────────
+
+test('an ordinary later Core3 decision does not void an earlier revision\'s Lead evidence', () => {
+  // The staleness check must not become the very defect this recovery fixes. A
+  // reviewer who assigns a texture voice to Chord1 in revision 2 has said
+  // nothing about revision 1's Lead move, and G11-D correctly refuses to
+  // re-apply a role move that already happened -- so voiding the evidence here
+  // would leave the Lead gate unclearable again, by a different door. Core3
+  // integrity is not carried forward by the Lead record: the source-continuity
+  // audit and the Gate 4 completeness gate both re-evaluate it every review.
+  const first = demoteLead1();
+  const second = applyNext(first, [{
+    id: 'c1', type: 'ASSIGN_ROLE', target: { eventIds: ['tex-2'] }, toRole: 'Chord1',
+    reason: 'Reviewed: this texture voice supports the core harmony.',
+    evidence: ['fixture:review'],
+  }]);
+  assert.equal(second.status, 'PASS');
+
+  const { demotion } = reportsFor([first, second], second);
+  assert.equal(demotion.length, 1);
+  assert.equal(demotion[0].status, 'PASS');
+  assert.equal(reviewAppliedCandidate({ application: second, baseline, leadDemotionReports: demotion })
+    .readiness.gates.leadDemotion.status, 'PASS');
+});
+
+test('a later revision that changes the Lead picture sends the recovered evidence back to PENDING', () => {
+  // The record's own claim is `createsLeadGap: false` -- a statement about Lead
+  // coverage. Once the Lead material itself moves, that claim is unproven again,
+  // and MASTER_RULES 4 says an unproven Lead decision is PENDING, not PASS.
+  const first = promoteTex1();
+  const second = applyNext(first, [{
+    id: 'd2', type: 'MOVE_ROLE', target: { eventIds: ['lead-1'] },
+    fromRole: 'Melody', toRole: 'Chord3',
+    reason: 'Reviewed: this opening note is inner material.',
+    evidence: ['fixture:score inner staff'],
+    leadEvidence: leadDemotionEvidence(),
+  }]);
+  assert.equal(second.status, 'PASS');
+
+  const { promotion } = reportsFor([first, second], second);
+  const forTex1 = promotion.find(report => report.eventId === 'tex-1');
+  assert.equal(forTex1.status, 'PENDING');
+  assert.deepEqual([...forTex1.blockers], [LEAD_EVIDENCE_LINEAGE_BLOCKERS.CONTEXT_CHANGED]);
+  assert.equal(forTex1.pass, false);
+
+  // Readiness still requires it, so the candidate is blocked until re-reviewed.
+  const review = reviewAppliedCandidate({ application: second, baseline, leadPromotionReports: promotion });
+  assert.equal(review.readiness.gates.leadPromotion.status, 'PENDING');
+  assert.ok(review.readiness.gates.leadPromotion.pendingEventIds.includes('tex-1'));
+});
+
+test('demoting a promoted event withdraws its promotion record instead of leaving two reports', () => {
+  const first = promoteTex1();
+  const second = applyNext(first, [{
+    id: 'd2', type: 'MOVE_ROLE', target: { eventIds: ['tex-1'] },
+    fromRole: 'Melody', toRole: 'Chord3',
+    reason: 'Reviewed: on a second listen this is inner material after all.',
+    evidence: ['fixture:score inner staff'],
+    leadEvidence: leadDemotionEvidence({ eventId: 'tex-1', sourceEventId: 'fixture:symbolic#tex-1' }),
+  }]);
+  assert.equal(second.status, 'PASS');
+
+  const { promotion, demotion } = reportsFor([first, second], second);
+  // Exactly one report per event id: the readiness gate keys reports by event
+  // id and keeps the last one, so a second report for tex-1 would make the gate
+  // outcome depend on array order.
+  assert.deepEqual(promotion, [], 'the promotion no longer exists in the candidate');
+  assert.equal(demotion.filter(report => report.eventId === 'tex-1').length, 1);
+});
+
+test('an unrecoverable evidence chain fails closed rather than passing by default', () => {
+  const first = promoteTex1();
+  const second = applyNext(first, [keep('k1', ['tex-1'])]);
+
+  // An edited intermediate application is data, not evidence. Tampering with the
+  // candidate breaks the revision's content address, so the lineage is refused
+  // whole: no report is produced and the gate stays PENDING.
+  const forged = {
+    ...first,
+    candidate: {
+      ...first.candidate,
+      events: first.candidate.events.map(event => (event.id === 'harm-1' ? { ...event, pitch: event.pitch + 1 } : event)),
+    },
+  };
+  const lineage = applicationLineage([forged, second], baseline);
+  assert.equal(lineage.ok, false);
+  assert.deepEqual(leadPromotionReportsFromLineage({ applications: [forged, second], baseline, candidate: second.candidate }), []);
+
+  const review = reviewAppliedCandidate({ application: second, baseline, leadPromotionReports: [] });
+  assert.equal(review.readiness.gates.leadPromotion.status, 'PENDING');
+});
+
+test('a chain with a hole in it is refused, and a well-formed one is ordered oldest first', () => {
+  const first = promoteTex1();
+  const second = applyNext(first, [keep('k1', ['tex-1'])]);
+  const third = applyNext(second, [keep('k2', ['tex-1'])]);
+
+  const whole = applicationLineage([third, first, second], baseline);
+  assert.equal(whole.ok, true, 'order of the input does not matter');
+  assert.deepEqual(whole.steps.map(step => step.index), [1, 2, 3]);
+
+  const holed = applicationLineage([first, third], baseline);
+  assert.equal(holed.ok, false);
+  assert.ok(holed.reasons.includes('LINEAGE_INDEX_NOT_CONTIGUOUS'));
+
+  // The evidence still survives three revisions of KEEP when the chain is whole.
+  const { promotion } = reportsFor([first, second, third], third);
+  assert.equal(promotion.length, 1);
+  assert.equal(promotion[0].status, 'PASS');
+});
+
+test('recovery never invents a PASS the shared gate would not give', () => {
+  // Revision 1 promotes with an incomplete citation: the gate said PENDING then,
+  // and recovering the record two revisions later must say PENDING too.
+  const first = applyFirst([{
+    id: 'p1', type: 'ASSIGN_ROLE', target: { eventIds: ['tex-1'] }, toRole: 'Melody',
+    reason: 'Reviewed: the cited texture becomes the foreground instrumental lead here.',
+    evidence: ['fixture:score top line', 'fixture:audio foreground'],
+    leadEvidence: leadPromotionEvidence(),
+    acceptance: accept(),
+  }]);
+  assert.equal(first.status, 'PASS');
+
+  // `applied[]` is not covered by the revision's content address -- the digest
+  // is over the decision set, the candidate and the identities, not over the
+  // applied trace -- so an evidence record removed there survives the integrity
+  // check. That is precisely why nothing downstream reads a stored verdict:
+  // recovery re-grades the record it finds, and a record with no citation gets
+  // the same closed answer it would have got at application time.
+  const stripped = { ...first, applied: first.applied.map(entry => ({ ...entry, leadEvidence: null })) };
+  const second = applyNext(first, [keep('k1', ['tex-1'])]);
+
+  const recovered = leadPromotionReportsFromLineage({ applications: [stripped, second], baseline, candidate: second.candidate });
+  assert.equal(recovered.length, 1);
+  assert.equal(recovered[0].status, 'PENDING', 'a recovered record with no evidence is not a recovered PASS');
+  assert.ok(recovered[0].blockers.includes('LEAD_EVIDENCE_MISSING'));
+
+  // The single-revision reading of the stripped result agrees.
+  assert.ok(leadPromotionReportsFromApplication(stripped, baseline).every(report => report.status !== 'PASS'));
+
+  // And the gate readiness keys on stays PENDING for the event.
+  const review = reviewAppliedCandidate({ application: second, baseline, leadPromotionReports: recovered });
+  assert.equal(review.readiness.gates.leadPromotion.status, 'PENDING');
+  assert.ok(review.readiness.gates.leadPromotion.pendingEventIds.includes('tex-1'));
+});
+
+// ─── the remaining staleness branches ───────────────────────────────────────
+
+test('a demotion whose destination role moved again is reported, not carried', () => {
+  // Revision 1 demotes the Lead to Chord3 with evidence for *that* destination.
+  // Revision 2 moves the same event on to Chord4. The recorded evidence argues
+  // for a destination the candidate no longer has, so it is not the evidence
+  // for what is now there.
+  const first = demoteLead1();
+  const second = applyNext(first, [{
+    id: 'm2', type: 'MOVE_ROLE', target: { eventIds: ['lead-1'] },
+    fromRole: 'Chord3', toRole: 'Chord4',
+    reason: 'Reviewed: this doubling belongs further down the enrichment stack.',
+    evidence: ['fixture:review'],
+  }]);
+  assert.equal(second.status, 'PASS');
+  assert.equal(second.candidate.events.find(event => event.id === 'lead-1').role, 'Chord4');
+
+  const { demotion } = reportsFor([first, second], second);
+  assert.equal(demotion.length, 1);
+  assert.equal(demotion[0].status, 'PENDING');
+  assert.deepEqual([...demotion[0].blockers], [LEAD_EVIDENCE_LINEAGE_BLOCKERS.DESTINATION_CHANGED]);
+
+  const review = reviewAppliedCandidate({ application: second, baseline, leadDemotionReports: demotion });
+  assert.equal(review.readiness.gates.leadDemotion.status, 'PENDING');
+});
+
+test('a promoted event that is no longer the note its citation describes is reported, not carried', () => {
+  // Defence in depth, and reachable the way the rest of this module's identity
+  // checks are: the candidate handed in is data. A caller that grades a
+  // candidate whose promoted event has been re-pitched, or is no longer Melody,
+  // must not receive that event's earlier PASS under its id.
+  const first = promoteTex1();
+  const applications = [first];
+
+  const repitched = {
+    ...first.candidate,
+    events: first.candidate.events.map(event => (event.id === 'tex-1' ? { ...event, pitch: event.pitch + 7 } : event)),
+  };
+  const changed = leadPromotionReportsFromLineage({ applications, baseline, candidate: repitched });
+  assert.equal(changed.length, 1);
+  assert.equal(changed[0].status, 'PENDING');
+  // Re-pitching a Melody event moves the Lead picture too, so both blockers are
+  // true and both are reported.
+  assert.ok(changed[0].blockers.includes(LEAD_EVIDENCE_LINEAGE_BLOCKERS.EVENT_CHANGED));
+
+  const demoted = {
+    ...first.candidate,
+    events: first.candidate.events.map(event => (event.id === 'tex-1' ? { ...event, role: 'Chord2' } : event)),
+  };
+  const moved = leadPromotionReportsFromLineage({ applications, baseline, candidate: demoted });
+  assert.equal(moved[0].status, 'PENDING');
+  assert.ok(moved[0].blockers.includes(LEAD_EVIDENCE_LINEAGE_BLOCKERS.DESTINATION_CHANGED));
+
+  const removed = {
+    ...first.candidate,
+    events: first.candidate.events.filter(event => event.id !== 'tex-1'),
+  };
+  const gone = leadPromotionReportsFromLineage({ applications, baseline, candidate: removed });
+  assert.equal(gone[0].status, 'PENDING');
+  assert.ok(gone[0].blockers.includes(LEAD_EVIDENCE_LINEAGE_BLOCKERS.EVENT_NOT_IN_CANDIDATE));
+  // Whatever the reason, none of these is ever a PASS under the promoted id.
+  for (const report of [changed[0], moved[0], gone[0]]) assert.equal(report.pass, false);
+});
+
+// ─── fresh, candidate-bound Lead evidence reviews ───────────────────────────
+//
+// The staleness above is correct, but on its own it leaves a reviewer nothing
+// to do: G11-D refuses to re-apply a move that already happened, so no decision
+// could carry a new citation. `freshReviews` is that path. It substitutes the
+// recovered record's evidence and its context reference point, and nothing
+// else -- so these regressions are mostly about what it still refuses.
+//
+// They exercise the builder directly rather than through the Application
+// Service, because that is where the input arrives as stored data. The service
+// validates a submission before writing it; the builder must not depend on
+// that having happened, since a restored or hand-edited store is exactly the
+// case a filter here exists for.
+
+const contextDigestOf = candidate => leadContextDigestOf(candidate);
+
+// Revision 1 promotes tex-1; revision 2 moves a DIFFERENT Lead event, so the
+// Lead context digest changes and revision 1's citation goes stale.
+const stalePromotionChain = () => {
+  const first = promoteTex1();
+  const second = applyNext(first, [{
+    id: 'd2', type: 'MOVE_ROLE', target: { eventIds: ['lead-1'] }, fromRole: 'Melody', toRole: 'Chord3',
+    reason: 'Reviewed: inner-staff doubling, not the lead.',
+    evidence: ['fixture:score inner staff'],
+    leadEvidence: leadDemotionEvidence(),
+    acceptance: acceptanceFor(baseline, { suggestion, reviewedRevisionId: first.revision.id }),
+  }]);
+  return { first, second, applications: [first, second] };
+};
+
+const freshPromotionReview = (candidate, over = {}) => ({
+  eventId: 'tex-1',
+  axis: 'promotion',
+  leadEvidence: leadPromotionEvidence(),
+  leadContextDigest: contextDigestOf(candidate),
+  reason: 'Re-reviewed against the Lead picture as it now stands.',
+  evidence: ['fixture:score bar 1, top staff'],
+  at: '2026-01-01T00:00:00.000Z',
+  ...over,
+});
+
+test('a fresh candidate-bound review answers a citation the lineage reports as stale', () => {
+  const { applications, second } = stalePromotionChain();
+
+  const stale = leadPromotionReportsFromLineage({ applications, baseline, candidate: second.candidate });
+  assert.equal(stale[0].status, 'PENDING');
+  assert.ok(stale[0].blockers.includes(LEAD_EVIDENCE_LINEAGE_BLOCKERS.CONTEXT_CHANGED));
+  // A report refused before the grader carries no evidence source: nothing was
+  // graded, so there is nothing to attribute.
+  assert.equal(stale[0].evidenceSource, undefined);
+
+  const answered = leadPromotionReportsFromLineage({
+    applications, baseline, candidate: second.candidate,
+    freshReviews: [freshPromotionReview(second.candidate)],
+  });
+  assert.equal(answered[0].status, 'PASS');
+  assert.equal(answered[0].eventId, 'tex-1');
+  assert.equal(answered[0].evidenceSource, 'candidate-review');
+  assert.equal(answered[0].reviewedAt, '2026-01-01T00:00:00.000Z');
+  // The move's provenance is still the revision that performed it.
+  assert.equal(answered[0].gradedFromRevisionId, applications[0].revision.id);
+});
+
+test('a fresh review whose recorded Lead context is not this candidate is refused, not trusted', () => {
+  const { applications, first, second } = stalePromotionChain();
+
+  // A digest from another candidate -- the shape a restored or hand-edited
+  // store entry would have. It carries the right event id and a complete,
+  // correctly-scoped citation, and it still must not substitute anything.
+  for (const digest of [contextDigestOf(first.candidate), 'not-a-digest', null, undefined, 42]) {
+    const reports = leadPromotionReportsFromLineage({
+      applications, baseline, candidate: second.candidate,
+      freshReviews: [freshPromotionReview(second.candidate, { leadContextDigest: digest })],
+    });
+    assert.equal(reports[0].status, 'PENDING', `digest ${String(digest)} must not answer this candidate`);
+    assert.ok(reports[0].blockers.includes(LEAD_EVIDENCE_LINEAGE_BLOCKERS.CONTEXT_CHANGED));
+    assert.equal(reports[0].pass, false);
+  }
+});
+
+test('a fresh review on the other axis does not substitute evidence', () => {
+  const { applications, second } = stalePromotionChain();
+
+  // Demotion evidence argues an event OUT of Melody. It cannot answer a
+  // promotion requirement, whatever event id it carries.
+  const reports = leadPromotionReportsFromLineage({
+    applications, baseline, candidate: second.candidate,
+    freshReviews: [freshPromotionReview(second.candidate, { axis: 'demotion' })],
+  });
+  assert.equal(reports[0].status, 'PENDING');
+  assert.ok(reports[0].blockers.includes(LEAD_EVIDENCE_LINEAGE_BLOCKERS.CONTEXT_CHANGED));
+
+  // And the reverse: the demotion builder ignores a promotion-axis review.
+  const demotion = leadDemotionReportsFromLineage({
+    applications, baseline, candidate: second.candidate,
+    freshReviews: [{ ...freshPromotionReview(second.candidate), eventId: 'lead-1', axis: 'promotion' }],
+  });
+  assert.equal(demotion.length, 1);
+  assert.equal(demotion[0].eventId, 'lead-1');
+  // lead-1 was demoted by the head revision itself, so it is graded from that
+  // revision and the ignored review changed nothing about it.
+  assert.equal(demotion[0].evidenceSource, 'revision');
+});
+
+test('a malformed or foreign fresh review is ignored rather than trusted', () => {
+  const { applications, second } = stalePromotionChain();
+  const unchanged = freshReviews => {
+    const reports = leadPromotionReportsFromLineage({ applications, baseline, candidate: second.candidate, freshReviews });
+    assert.equal(reports.length, 1);
+    assert.equal(reports[0].status, 'PENDING');
+    assert.ok(reports[0].blockers.includes(LEAD_EVIDENCE_LINEAGE_BLOCKERS.CONTEXT_CHANGED));
+    assert.equal(reports[0].evidenceSource, undefined);
+  };
+
+  unchanged(undefined);
+  unchanged('not an array');
+  unchanged([null]);
+  unchanged([{ ...freshPromotionReview(second.candidate), eventId: undefined }]);
+  unchanged([{ ...freshPromotionReview(second.candidate), eventId: 42 }]);
+  unchanged([{ ...freshPromotionReview(second.candidate), leadEvidence: undefined }]);
+  unchanged([{ ...freshPromotionReview(second.candidate), leadEvidence: 'cited' }]);
+
+  // A review with no explicit evidence reference is not a review. The service
+  // refuses one at the door, but this input arrives as stored data, so the rule
+  // is enforced where the verdict is produced as well -- mirroring the apply
+  // path, which grades `decision.evidence` as a blocker of its own.
+  unchanged([{ ...freshPromotionReview(second.candidate), evidence: [] }]);
+  unchanged([{ ...freshPromotionReview(second.candidate), evidence: undefined }]);
+  unchanged([{ ...freshPromotionReview(second.candidate), evidence: 'fixture:score' }]);
+
+  // A review naming an event the lineage performed no Lead move on adds no
+  // report: a review substitutes evidence for a recovered move, it does not
+  // invent one.
+  unchanged([{ ...freshPromotionReview(second.candidate), eventId: 'harm-1' }]);
+});
+
+test('a fresh review cannot launder a citation that does not bind to the baseline event', () => {
+  const { applications, second } = stalePromotionChain();
+
+  const reports = leadPromotionReportsFromLineage({
+    applications, baseline, candidate: second.candidate,
+    freshReviews: [freshPromotionReview(second.candidate, {
+      leadEvidence: leadPromotionEvidence({ sourceEventId: `${baseline.sources[0].id}#lead-1` }),
+    })],
+  });
+  assert.equal(reports[0].status, 'PENDING');
+  assert.ok(reports[0].blockers.includes('LEAD_EVIDENCE_EVENT_IDENTITY_MISMATCH'));
+  assert.equal(reports[0].pass, false);
+});
+
+test('a fresh review does not make an insufficient citation sufficient', () => {
+  const { applications, second } = stalePromotionChain();
+
+  // Correctly scoped, correctly bound, and still not enough: the shared gate
+  // runs on it exactly as it runs on a recovered record.
+  const reports = leadPromotionReportsFromLineage({
+    applications, baseline, candidate: second.candidate,
+    freshReviews: [freshPromotionReview(second.candidate, {
+      leadEvidence: { ...leadPromotionEvidence(), continuity: { checked: false, createsLeadGap: null, replacementEventIds: [] } },
+    })],
+  });
+  assert.equal(reports[0].status, 'PENDING');
+  assert.ok(reports[0].blockers.includes('LEAD_CONTINUITY_NOT_CHECKED'));
+  // It reached the grader -- which is the point: the fresh citation was graded
+  // and found wanting, not waved through and not refused before grading.
+  assert.equal(reports[0].evidenceSource, 'candidate-review');
+});
+
+test('a fresh review does not survive a change to the event it is about', () => {
+  const { applications, second } = stalePromotionChain();
+  const fresh = [freshPromotionReview(second.candidate)];
+
+  // Re-pitched: the citation describes the event as it was.
+  const repitched = { ...second.candidate, events: second.candidate.events.map(event => (event.id === 'tex-1' ? { ...event, pitch: event.pitch + 1 } : event)) };
+  const changed = leadPromotionReportsFromLineage({ applications, baseline, candidate: repitched, freshReviews: fresh });
+  assert.equal(changed[0].status, 'PENDING');
+  assert.ok(changed[0].blockers.includes(LEAD_EVIDENCE_LINEAGE_BLOCKERS.EVENT_CHANGED));
+
+  // Moved out of Melody: the destination the citation argued for is not the
+  // destination the candidate has.
+  const moved = { ...second.candidate, events: second.candidate.events.map(event => (event.id === 'tex-1' ? { ...event, role: 'Chord2' } : event)) };
+  const elsewhere = leadPromotionReportsFromLineage({ applications, baseline, candidate: moved, freshReviews: fresh });
+  assert.equal(elsewhere[0].status, 'PENDING');
+  assert.ok(elsewhere[0].blockers.includes(LEAD_EVIDENCE_LINEAGE_BLOCKERS.DESTINATION_CHANGED));
+});
+
+test('a fresh review cannot resurrect a lineage the integrity check refused', () => {
+  const { first, second } = stalePromotionChain();
+  const fresh = [freshPromotionReview(second.candidate)];
+
+  // A chain with a hole in it. The missing revision could have moved exactly
+  // the material the evidence claims about, so the lineage is refused whole --
+  // and a review is not a way back in, because there is no recovered record for
+  // it to substitute evidence on.
+  const holed = [first, { ...second, revision: { ...second.revision, index: 5 } }];
+  const refused = applicationLineage(holed, baseline);
+  assert.equal(refused.ok, false);
+  // The property the builders actually rely on: a refusal yields NO steps, not
+  // a shorter chain. Both builders also test `lineage.ok`, which is redundant
+  // belt-and-braces -- removing it changes nothing, because every refusal path
+  // returns the same empty result. Asserting the invariant here rather than the
+  // redundant guard keeps that honest.
+  assert.deepEqual([...refused.steps], []);
+  assert.ok(refused.reasons.length);
+  assert.deepEqual(leadPromotionReportsFromLineage({ applications: holed, baseline, candidate: second.candidate, freshReviews: fresh }), []);
+  assert.deepEqual(leadDemotionReportsFromLineage({ applications: holed, baseline, candidate: second.candidate, freshReviews: fresh }), []);
+
+  // Same for a tampered step: integrity fails, so nothing downstream runs.
+  const tampered = [first, { ...second, status: 'FAIL' }];
+  assert.equal(applicationLineage(tampered, baseline).ok, false);
+  assert.deepEqual(leadPromotionReportsFromLineage({ applications: tampered, baseline, candidate: second.candidate, freshReviews: fresh }), []);
+
+  // And with no chain at all there is nothing to review against.
+  assert.deepEqual(leadPromotionReportsFromLineage({ applications: [], baseline, candidate: second.candidate, freshReviews: fresh }), []);
+
+  // The control: the intact chain does produce the answered report, so the
+  // emptiness above is the refusal and not a broken fixture.
+  const intact = leadPromotionReportsFromLineage({ applications: [first, second], baseline, candidate: second.candidate, freshReviews: fresh });
+  assert.equal(intact.length, 1);
+  assert.equal(intact[0].status, 'PASS');
+});
+
+test('a refused lineage leaves the Lead gates blocking, not N/A', () => {
+  const { first, second } = stalePromotionChain();
+  const holed = [first, { ...second, revision: { ...second.revision, index: 5 } }];
+
+  // Losing the reports must not lose the requirement. An empty required set
+  // with no reports falls through to `N/A`, which is PASS-like -- so a refused
+  // or truncated chain would have REMOVED both Lead blockers instead of adding
+  // them, which is the wrong direction for a provenance failure. The readiness
+  // gates derive their required ids from Melody membership as well as from the
+  // diff, so the requirement survives the reports.
+  const reports = {
+    leadPromotionReports: leadPromotionReportsFromLineage({ applications: holed, baseline, candidate: second.candidate }),
+    leadDemotionReports: leadDemotionReportsFromLineage({ applications: holed, baseline, candidate: second.candidate }),
+  };
+  assert.deepEqual(reports.leadPromotionReports, []);
+  assert.deepEqual(reports.leadDemotionReports, []);
+
+  const readiness = evaluateProjectReadiness({ project: second.candidate, ...reports });
+  assert.equal(readiness.gates.leadPromotion.status, 'PENDING');
+  assert.ok(readiness.gates.leadPromotion.blockers.includes('LEAD_PROMOTION_EVIDENCE_REQUIRED'));
+  assert.ok(readiness.preGameBlocking.includes('leadPromotion'));
+  assert.equal(readiness.candidateReady, false);
+
+  // The intact chain is the control: the same candidate, with its reports, is
+  // not blocked on the promotion axis.
+  const ok = evaluateProjectReadiness({
+    project: second.candidate,
+    leadPromotionReports: leadPromotionReportsFromLineage({ applications: [first, second], baseline, candidate: second.candidate, freshReviews: [freshPromotionReview(second.candidate)] }),
+    leadDemotionReports: leadDemotionReportsFromLineage({ applications: [first, second], baseline, candidate: second.candidate }),
+  });
+  assert.equal(ok.gates.leadPromotion.status, 'PASS');
+});

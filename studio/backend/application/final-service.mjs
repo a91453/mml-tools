@@ -22,7 +22,9 @@
 // An emitter PASS means the candidate was serialized exactly and re-parsed to
 // identical semantics under the authoritative Final parser. It certifies no
 // source completeness, no audio alignment, no player readback, no Mobile
-// adaptation and no in-game acceptance. The artifact carries the gate axes
+// adaptation and no in-game acceptance. Mobile adaptation is a separate
+// evidence-backed readiness gate; serializer success never substitutes for it.
+// The artifact carries the gate axes
 // beside the MML so that reading one can never be mistaken for the other.
 
 import { ERROR_CODES, GATE_STATUS, OPERATION_STATUS, fail, requireString } from './contracts.mjs';
@@ -58,7 +60,7 @@ export const FINAL_ARTIFACT_SCHEMA = 'mabinogi-mobile-mml-studio/application-fin
 // emission would be circular: generation could never start, so the output that
 // gate reads could never exist. Everything else stays blocking — source
 // completeness, the baseline snapshot, micro-timing, Core3, Lead demotion,
-// cross-source harmony, version drift, original audio, player readback and
+// Lead promotion, cross-source harmony, version drift, original audio, player readback and
 // pending arbitration all still have to be satisfied before a single character
 // is emitted.
 export const PRE_EMISSION_EXEMPT_GATES = Object.freeze(['technical']);
@@ -104,6 +106,7 @@ export function createFinalService({ canonical, projects, review, store }) {
 
       const ctx = await review.context(owner, projectId, candidateId);
       const { engines, record, baseline, entry, application, baselineProject, project, parent, confirmations: recorded } = ctx;
+      const core3ApprovedChanges = ctx.core3Approvals;
 
       const identity = {
         project_id: record.project_id,
@@ -147,9 +150,28 @@ export function createFinalService({ canonical, projects, review, store }) {
         }, 'Nothing was emitted. This candidate was accepted under a different Published Canonical rules snapshot than the one loaded now; re-run the suggestion and decisions under the loaded release.');
       }
 
-      const leadDemotionReports = engines.arrangement.leadDemotionReportsFromApplication(application, baselineProject);
+      // Same lineage recovery as review: evidence for a Lead move made in an
+      // earlier revision is recovered from that revision and re-graded against
+      // this candidate. A previous PASS is never inherited. The same
+      // candidate-bound Lead evidence re-reviews reach it too, from the same
+      // `review.context()` -- so a citation a reviewer re-supplied is graded
+      // here by the same shared gate, and Finalize cannot be satisfied by a
+      // path review does not see, or refuse one review accepts.
+      const leadReportInputs = { applications: ctx.applicationLineage, baseline: baselineProject, candidate: application.candidate, freshReviews: ctx.leadEvidenceReviews };
+      const leadDemotionReports = engines.arrangement.leadDemotionReportsFromLineage(leadReportInputs);
+      const leadPromotionReports = engines.arrangement.leadPromotionReportsFromLineage(leadReportInputs);
       const lineage = engines.compare.compareCandidateLineage({ sourceBaseline: baselineProject, acceptedPrevious: parent, candidate: project });
-      const core3 = engines.core3.evaluateCore3Continuity({ baseline: baselineProject, candidate: project, approvedChanges: [] });
+      // Validated, candidate-bound Core3 approvals, recorded through
+      // `approveCore3SourceChange` and re-checked against this candidate when
+      // they were recorded. Finalize used to pass `[]` here, which left a
+      // legitimate reviewed Core3 source change blocked by
+      // UNAPPROVED_CORE3_SOURCE_CHANGE with no way to clear it.
+      const core3 = engines.core3.evaluateCore3Continuity({ baseline: baselineProject, candidate: project, approvedChanges: core3ApprovedChanges });
+      // Gate 4's own question. A clean continuity audit above does not answer it.
+      const core3Completeness = engines.core3Completeness.evaluateCore3Completeness({
+        candidate: project,
+        reviewed: recorded.core3_completeness_reviewed?.value === true,
+      });
       const harmony = engines.harmony.analyzeCrossSourceHarmony(project);
       // One set of readiness inputs, evaluated twice: once before emission with
       // no MML to grade, and once after with the emitted string. Nothing else
@@ -157,12 +179,16 @@ export function createFinalService({ canonical, projects, review, store }) {
       const readinessInputs = {
         project,
         core3Report: core3,
+        core3CompletenessReport: core3Completeness,
         harmonyReport: harmony,
         lineageReport: lineage,
         leadDemotionReports,
+        leadPromotionReports,
         versionDriftReviewed: recorded.version_drift_reviewed?.value === true,
         originalAudioRequired: recorded.original_audio_required?.value !== false,
         playerReadback: recorded.player_readback?.value ?? 'NOT_RUN',
+        mobileAdaptation: recorded.mobile_adaptation_reviewed?.value === true ? 'PASS' : 'PENDING',
+        regressionReviewed: recorded.regression_reviewed?.value === true,
         inGameAcceptance: 'PENDING',
       };
       const readiness = engines.final.evaluateProjectReadiness({ ...readinessInputs, mmlValidation: null });

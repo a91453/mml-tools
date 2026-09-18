@@ -288,7 +288,7 @@ lifecycle vocabulary but is never reached in this build.
 
 ## 8. Gate separation
 
-Six independent axes, reported as their own field, never collapsed into a
+Seven independent public gate axes, reported as their own field, never collapsed into a
 success boolean:
 
 ```json
@@ -299,7 +299,8 @@ success boolean:
     "source": "PASS",
     "audio": "PENDING",
     "player_readback": "PASS",
-    "mobile_adaptation": "PENDING",
+    "mobile_adaptation": "PASS",
+    "regression": "PASS",
     "in_game": "PENDING"
   }
 }
@@ -313,10 +314,11 @@ A blocked finalize returns `operation: "blocked"` with code
 is not ready. Conflating those would make a reviewer's finding indistinguishable
 from a transport fault.
 
-Each axis is transcribed from the module that owns it. `mobile_adaptation` has
-no implemented gate in this build and stays `PENDING` rather than borrowing
-`technical`, because Gate 8 adaptation is a different question from
-serialization.
+Each axis is transcribed from the module that owns it. `mobile_adaptation`
+comes from shared readiness Gate 8 and `regression` from Gate 9. Each reaches
+`PASS` only after an explicit candidate-bound, evidence-backed review.
+Parser/emitter/test success never sets either one: technical serialization,
+Mobile adaptation and regression review are separate questions.
 
 **`in_game` is `PENDING` by construction.** No emitter, parser, job, transport,
 test or model call can set it, and attempting to record it is refused with the
@@ -333,14 +335,45 @@ actually exists*.
 
 They are recorded explicitly, each with a stated reason:
 `source_complete`, `version_drift_reviewed`, `player_readback` (`PASS`, `NOT_RUN`
-or `N/A`), `original_audio_required`. The review project is then assembled from
+or `N/A`), `mobile_adaptation_reviewed`, `regression_reviewed`,
+`core3_completeness_reviewed`, `original_audio_required`.
+
+Three of them answer a required gate that the modules deliberately leave
+`PENDING` until a human answers it, and a reason string alone is an assertion
+rather than a review. A true `mobile_adaptation_reviewed` (Gate 8),
+`regression_reviewed` (Gate 9) or `core3_completeness_reviewed` (Gate 4
+musical completeness) therefore requires at least one evidence reference and is
+bound to that exact candidate; recorded without one it is refused with
+`INVALID_REQUEST`. Studio Web requires a note *and* evidence for the same three
+reviews, so anything less here would be a parity hole an Agent caller could walk
+through.
+
+For Gate 8, a valid reviewed conclusion may be that no additional Mobile
+adaptation is needed. For Gate 9, the review covers the baseline/accepted-
+previous comparisons, Lead/Core3/source drift, and executable historical
+regressions that actually exist; named regressions without a fixture remain
+`FIXTURE_PENDING`, not PASS.
+
+For Gate 4, `core3_completeness_reviewed` answers only the **second** of that
+gate's two questions, and only part of it. It resolves the unresolved residue —
+a missing Chord1/Chord2 function whose material the source may simply never have
+carried (`CORE3_COMPLETENESS_UNRESOLVED`), and proven-essential material the
+delivered Core3 leaves in Chord3–Chord5
+(`CORE3_ENRICHMENT_DEPENDENCE_UNRESOLVED`). It can never clear an absent Lead,
+and never a Core3 whose identity depends on Chord3–Chord5: both are deficiencies
+in the arrangement, and the gate returns `FAIL` with `CORE3_INCOMPLETE` whatever
+a reviewer records. Gate 4's **first** question — Core3 source continuity — is
+not a confirmation at all; see *The two Core3 questions* below.
+
+The review project is then assembled from
 the candidate plus exactly those confirmations, through the backend's own
 constructors — the same composition the Studio Web analysis performs.
 
 **A confirmation is bound to the thing it is about.** Each recorded
 confirmation carries the `baseline_id` it was made under, and the
-candidate-scoped kinds (`version_drift_reviewed`, `player_readback`) carry the
-`candidate_id` they name — supplied as `candidate_id` in the request, or taken
+candidate-scoped kinds (`version_drift_reviewed`, `player_readback`,
+`mobile_adaptation_reviewed`, `regression_reviewed`,
+`core3_completeness_reviewed`) carry the `candidate_id` they name — supplied as `candidate_id` in the request, or taken
 from the review or finalize call the confirmations arrive with. A confirmation
 whose identity no longer matches — the baseline was replaced by a new intake,
 or a different candidate is being reviewed — stays on the record for the audit
@@ -375,9 +408,12 @@ upload assets (HTTP)  →  studio_sources_analyze   →  Source-Faithful Baselin
 ```
 
 A suggestion is not an acceptance. This layer will not convert one into the
-other, will not resolve a `PENDING` on a caller's behalf, will not accept a Lead
-demotion because one was suggested, and will not invent the evidence a demotion
-requires.
+other, will not resolve a `PENDING` on a caller's behalf, and will not invent
+evidence for a Lead move. Any move out of Melody, into Melody, or duplicate into
+Melody is re-graded through the shared Lead-role evidence boundary: exact source
+identity, section role, usable score/audio role evidence, continuity after the
+move, Core3 integrity, and an explicit positive reason for the destination role.
+Conflicting source-role evidence remains `PENDING`.
 
 The acceptance bindings — baseline digest, source identity digest, lane
 decomposition digest, Canonical rules snapshot, reviewed revision — are computed
@@ -388,6 +424,97 @@ against different inputs.
 
 Intake never removes a note, quantizes source timing, performs Mobile
 adaptation, assigns a role or emits Final MML.
+
+### The two Core3 questions
+
+Gate 4 asks two independent questions, each with its own module, its own
+readiness gate and its own way of being answered. Neither implies the other, and
+neither may be answered with the other's evidence.
+
+| | Source continuity | Musical completeness |
+| --- | --- | --- |
+| Module | `arbitration/core3.mjs` `evaluateCore3Continuity()` | `arbitration/core3-completeness.mjs` `evaluateCore3Completeness()` |
+| Asked of | the candidate *against the Source-Faithful Baseline* | the candidate *on its own terms* |
+| Readiness gate | `core3` | `core3Completeness` |
+| Answered by | `studio_core3_change_approve`, one reviewed change at a time | the `core3_completeness_reviewed` confirmation |
+| Blocker when unanswered | `UNAPPROVED_CORE3_SOURCE_CHANGE` | `CORE3_COMPLETENESS_UNRESOLVED` / `CORE3_ENRICHMENT_DEPENDENCE_UNRESOLVED` |
+
+A candidate identical to its baseline has a clean continuity audit and can still
+be musically incomplete; a candidate that is musically complete can still have
+dropped source material nobody approved.
+
+`studio_core3_change_approve` records one evidence-backed approval for one Core3
+change (`remove`, `modify`, `role-move`) the continuity audit is *currently*
+reporting as unapproved for that candidate. That is what stops it being a
+standing permission: a caller cannot pre-approve an edit it has not made, and an
+approval does not survive into a candidate where the change it named no longer
+exists. At least one evidence reference is required. An accepted role decision,
+a Lead evidence record and a Lead promotion PASS are none of them a Core3
+approval, and no operation converts one into another.
+
+The completeness gate never derives a verdict from track density. A missing
+Chord1/Chord2 function is reviewable `PENDING`, not `FAIL`, because the
+evaluator cannot tell material the source never carried from material cleanup
+dropped — only a reviewer can. What it will not do is let anyone review an
+absent Lead into existence.
+
+### Lead promotion and demotion readiness
+
+`studio_decisions_apply` may apply a Lead move only when the accepted decision
+already carries a complete `leadEvidence` chain. That application PASS is not
+itself a readiness PASS. Role moves into Melody are keyed by the candidate event
+id; a justified duplicate into Melody is keyed by its derived Melody event id
+while retaining the source/origin event id for evidence audit. This is what lets
+the Source-Faithful baseline diff enumerate `other-track-to-T1` promotions
+without allowing a derived id to become source evidence.
+
+**Evidence is recovered across the whole revision lineage, and re-graded.**
+Readiness derives what needs evidence from the candidate-versus-baseline diff,
+which accumulates for the life of a project: an event promoted in revision 1 is
+still promoted relative to the baseline in revision 9. The evidence, though,
+lives in the `applied[]` of the one revision that performed the move, and
+`metadata.g11d` deliberately does not inherit. So `studio_candidate_review` and
+`studio_finalize` read the whole stored chain (`applicationLineage()`, which puts
+every step through the same `applicationIntegrity()` and refuses an inconsistent
+chain whole) and re-grade each recovered *evidence record* through the shared
+grader. No previous PASS is ever read.
+
+A recovered record is returned to `PENDING` rather than graded when the
+candidate has moved under it:
+
+| Blocker | Meaning |
+| --- | --- |
+| `LEAD_EVIDENCE_EVENT_NOT_IN_CANDIDATE` | the event is no longer in the candidate |
+| `LEAD_EVIDENCE_EVENT_CHANGED` | its musical identity moved, so the citation describes something else |
+| `LEAD_EVIDENCE_CONTEXT_CHANGED` | the Lead picture the continuity claim was made about has moved |
+| `LEAD_EVIDENCE_DESTINATION_DOES_NOT_MATCH_CANDIDATE` | the role the evidence argued for is not the role the candidate has |
+
+None of these is a musical verdict and none can turn a non-PASS into a PASS.
+
+**Re-reviewing a move that already happened.** The staleness above is correct,
+but on its own it left a reviewer nothing to do: G11-D refuses to re-apply a role
+move that already happened (`PREVIOUS_ROLE_MISMATCH`), and a `KEEP` carrying
+`leadEvidence` is not a role move, so no report reads it.
+`studio_lead_evidence_review` is the path that answers it — one candidate-bound,
+axis-specific (`promotion` or `demotion`), evidence-backed review per event.
+
+It is a review record, not a decision: nothing moves and no revision is produced.
+It is not a boolean, because a checkbox cannot be graded. It substitutes the
+recovered record's evidence and its context reference point, and nothing else —
+the citation is still graded by the same shared grader on every later review and
+finalize. It is refused unless the move is one that candidate's lineage actually
+performed and is currently reporting as unanswered, the axis matches, at least
+one evidence reference is supplied, and the citation binds to the Source-Faithful
+baseline event (for a derived duplicate, to the origin the chain resolves to —
+never the derived id). Because it is stored per candidate and re-checked against
+the Lead context digest it was recorded under, the next Lead-affecting revision
+is a different candidate, the review is not loaded, and the report returns to
+`PENDING` — where it can be answered again.
+
+The Final readiness gate treats Lead demotion and Lead promotion as independent
+requirements. A promotion can therefore never satisfy a missing demotion report
+or vice versa, and a candidate with an ungraded promotion is blocked before the
+Final emitter is called.
 
 ## 10. Finalize
 
@@ -484,13 +611,27 @@ mistake as a technical verdict.
 
 ## 12. MCP control surface
 
-Twelve `studio_*` tools, plus the three original tools unchanged:
+Fourteen `studio_*` tools, plus the three original tools unchanged:
 
 `studio_capabilities`, `studio_project_create`, `studio_project_get` (without
 `project_id`: the owner's project list), `studio_sources_analyze`,
 `studio_baseline_events`, `studio_arrangement_suggest`, `studio_decisions_apply`,
-`studio_audio_alignment`, `studio_candidate_review`, `studio_finalize`,
+`studio_audio_alignment`, `studio_candidate_review`,
+`studio_core3_change_approve`, `studio_lead_evidence_review`, `studio_finalize`,
 `studio_job_status`, `studio_artifact_get`.
+
+**Every review axis a reviewer has to move has a tool**, and a regression
+asserts it operation by operation. That rule is written down because the
+alternative was found in this codebase: `approveCore3SourceChange` existed on the
+Application Service with no caller on either transport, which left the Core3
+source-continuity axis unclearable from the Agent plane. A service operation with
+no transport is not a smaller surface; it is an unreachable gate.
+
+The surface is not otherwise uniform across transports, and the service header
+says which operations each one reaches. The binary plane (`uploadAsset`,
+`readAssetBytes`) is HTTP-only by construction, because no tool carries bytes;
+`listAssets`, `getAsset`, `listJobs` and the four technical-validation operations
+are HTTP-only today.
 
 A structured tool refusal (`isError: true`) carries the same `canonical`
 provenance envelope the HTTP error body carries, so a client can tell a refusal
@@ -610,7 +751,9 @@ rendered as a generic 500 with no message, path or stack.
    produced by the existing Python audio worker, outside this process. This
    interface validates a report and attaches it as evidence; it does not invoke
    the worker.
-6. **`mobile_adaptation` has no gate.** It stays `PENDING`.
+6. **Gate 8 and Gate 9 are explicit, not automatic.** `mobile_adaptation` and
+   `regression` stay `PENDING` until candidate-bound evidence-backed reviews
+   are recorded; parser/emitter/test success never upgrades either one.
 7. **MusicXML intake needs the runtime dependency.** Without it the engines
    report `ENGINE_UNAVAILABLE` rather than degrading silently.
 8. **MCP protocol modernization was not attempted.** The hand-written stateless

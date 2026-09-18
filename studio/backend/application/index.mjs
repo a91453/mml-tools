@@ -8,8 +8,19 @@
 // HTTP adapter, the MCP adapter and any future server transport go through it:
 // they parse their own wire format, name an operation, and render the result.
 // None of them holds arrangement logic, Canonical logic, Final logic or a
-// second workflow, and no operation is reachable from one transport and not
-// another.
+// second workflow.
+//
+// Transport coverage is not uniform, and saying so is the point: a blanket
+// parity claim here is how `approveCore3SourceChange` came to exist with no
+// caller on either transport, leaving a required gate unclearable from the
+// Agent plane. The rule that does hold is narrower: every operation a reviewer
+// needs in order to move a gate is reachable from MCP, and `tests/
+// mcp-studio.test.mjs` asserts that operation-by-operation. The binary plane
+// (`uploadAsset`, `readAssetBytes`) is HTTP-only by construction, because no
+// tool carries bytes; `listAssets`, `getAsset`, `listJobs`,
+// `recordConfirmations` on its own (it is reachable inside
+// `studio_candidate_review` and `studio_finalize`) and the four technical
+// validation operations are HTTP-only today.
 //
 //     ChatGPT · Claude · Codex · future models · local agents
 //                            │
@@ -143,7 +154,7 @@ export function createStudioApplication({
   const arrangement = createArrangementService({ canonical, projects, intake, store });
   const review = createReviewService({ canonical, projects, intake, arrangement, store });
   const final = createFinalService({ canonical, projects, review, store });
-  const technical = createTechnicalService({ serviceVersion });
+  const technical = createTechnicalService({ serviceVersion, canonical });
   const serialized = createProjectSerializer();
   const mutate = (projectId, work) => serialized(String(projectId), work);
 
@@ -267,6 +278,31 @@ export function createStudioApplication({
       });
     },
 
+    async approveCore3SourceChange(owner, projectId, input) {
+      // Same serializer key as every other mutating operation. Keyed by owner
+      // too, these two writes ran on a different chain from `applyDecisions`
+      // and `analyzeSources`, so intake could replace the baseline between the
+      // read that resolves `baseline_id` and the write that binds to it.
+      return mutate(projectId, async () => envelope({
+        operation: OPERATION_STATUS.SUCCEEDED,
+        ...(await review.approveCore3SourceChange(owner, projectId, input)),
+      }));
+    },
+
+    /**
+     * Re-supply Lead evidence for an already-applied Lead move on one candidate.
+     *
+     * Its own operation, and deliberately not part of `applyDecisions`: nothing
+     * moves. See `review-service.reviewLeadEvidence` for why the path has to
+     * exist and what each binding refuses.
+     */
+    async reviewLeadEvidence(owner, projectId, input) {
+      return mutate(projectId, async () => envelope({
+        operation: OPERATION_STATUS.SUCCEEDED,
+        ...(await review.reviewLeadEvidence(owner, projectId, input)),
+      }));
+    },
+
     async reviewCandidate(owner, projectId, input) {
       return mutate(projectId, async () => envelope({ operation: OPERATION_STATUS.SUCCEEDED, review: await review.review(owner, projectId, input) }));
     },
@@ -305,18 +341,35 @@ export function createStudioApplication({
       return envelope({ operation: OPERATION_STATUS.SUCCEEDED, artifact: final.find(owner, artifactId) });
     },
 
-    // ── legacy technical validation ─────────────────────────────────────────
+    // ── technical validation ────────────────────────────────────────────────
     //
-    // Deliberately available without Published Canonical: it runs on the legacy
-    // core, exactly as the original tools did, so an environment that cannot
-    // load the published rules keeps the capability it already had.
+    // The two Canonical operations route to the Published Canonical validator
+    // and fail closed with CANONICAL_NOT_LOADED when the published rules are
+    // unavailable. There is no fallback to the legacy engine: the two engines
+    // disagree in both directions, so answering a Canonical question with a
+    // legacy verdict would misreport the release.
+    //
+    // The legacy engine stays reachable under its own names, as an explicitly
+    // labelled diagnostic. Its report carries `technical_ok: null`,
+    // `authority: 'LEGACY_DIAGNOSTIC'` and `strict_mobile_technical: NOT_RUN`,
+    // so an environment that cannot load the published rules keeps the
+    // capability it already had without that capability being mistaken for a
+    // Canonical PASS.
 
-    validateTechnicalMml(input) {
+    async validateTechnicalMml(input) {
       return technical.validate(input);
     },
 
-    technicalOverlapDetails(input) {
+    async technicalOverlapDetails(input) {
       return technical.overlapDetails(input);
+    },
+
+    legacyTechnicalDiagnostic(input) {
+      return technical.legacyValidate(input);
+    },
+
+    legacyTechnicalOverlapDetails(input) {
+      return technical.legacyOverlapDetails(input);
     },
 
     // Exposed for adapters that need to describe or bound a request.

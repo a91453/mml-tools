@@ -120,14 +120,21 @@ test('a required Web gate that is still pending emits nothing', () => {
   assert.equal(analyzeWorkspace(applied).rawMml, null);
 });
 
-test('a Web-only human review still blocks generation when backend readiness is clear', () => {
-  // `adaptation` exists only in the Web layer -- evaluateProjectReadiness has no
-  // such gate. If generation consulted backend readiness alone it would emit.
+test('the Web adaptation review feeds the shared Canonical Gate 8 readiness gate', () => {
   const w = reviewAll(workspaceFor(candidateProject(FOUR_BEATS)), ['adaptation']);
   const backend = evaluateProjectReadiness({
-    project: candidateProject(FOUR_BEATS), mmlValidation: null, core3Report: null, harmonyReport: null,
+    project: candidateProject(FOUR_BEATS),
+    mmlValidation: null,
+    core3Report: null,
+    core3CompletenessReport: { status: 'PASS', blockers: [] },
+    harmonyReport: null,
+    mobileAdaptation: 'PENDING',
   });
-  assert.ok(!backend.preGameBlocking.includes('adaptation'), 'backend readiness does not know this gate exists');
+  assert.ok(backend.preGameBlocking.includes('mobileAdaptation'), 'shared readiness must know Gate 8 exists');
+
+  const report = analyzeWorkspace(w);
+  assert.equal(report.gates.adaptation.status, 'PENDING');
+  assert.equal(report.readiness.gates.mobileAdaptation.status, 'PENDING');
 
   const result = generateFinalDelivery(w);
   assert.equal(result.status, 'PENDING');

@@ -91,6 +91,21 @@ export const EFFECTIVE_RULESET = Object.freeze({
     leadIsNotVocalOnly: true,
     leadDemotionRequiresPositiveEvidence: true,
     unresolvedLeadDemotion: 'FAIL_OR_PENDING',
+    // There is deliberately no `leadPromotionRequiresPositiveEvidence` /
+    // `unresolvedLeadPromotion` beside these two. MASTER_RULES 4 states the
+    // positive-evidence requirement for *demoting* a source-supported Lead; the
+    // published release declares no symmetric promotion policy, and this object
+    // is the executable echo of that release, not a place to extend it. Minting
+    // a Canonical-looking policy value here is exactly the implementation
+    // defining Canonical in reverse that section 0 forbids, and the migration
+    // invariant in studio/tests/bootstrap.test.mjs fails closed on it.
+    //
+    // The Lead Promotion Gate itself is unaffected and remains required. It is
+    // an IMPLEMENTER signal -- `STUDIO_IMPLEMENTATION.leadPromotionGate` and
+    // `LEAD_PROMOTION_GATE_PENDING` below -- implementing the traceability the
+    // published rules already require: MASTER_RULES 3 makes other-track-to-T1
+    // promotions enumerable in the baseline and forbids a silent role move, and
+    // ACCEPTANCE_CRITERIA Gate 2 requires every role move to be explainable.
     preserveSourceRoleUntilResolved: true,
     samePitchOverlapIsReviewNotAutoDelete: true,
     lowMidM2M7IsReviewNotAutoDelete: true,
@@ -117,6 +132,7 @@ export const STUDIO_IMPLEMENTATION = Object.freeze({
   versionDriftReport: true,
   core3ContinuityGate: true,
   leadDemotionGate: true,
+  leadPromotionGate: true,
   originalAudioAlignment: true,
   crossSourceHarmonyArbitration: true,
   // G10 C2B: the source-aware micro-timing readiness gate exists as a module.
@@ -160,6 +176,7 @@ export const STUDIO_FINAL_MODULE_BLOCKERS = Object.freeze([
   Object.freeze(['versionDriftReport', 'VERSION_DRIFT_REPORT_PENDING']),
   Object.freeze(['core3ContinuityGate', 'CORE3_CONTINUITY_GATE_PENDING']),
   Object.freeze(['leadDemotionGate', 'LEAD_DEMOTION_GATE_PENDING']),
+  Object.freeze(['leadPromotionGate', 'LEAD_PROMOTION_GATE_PENDING']),
   Object.freeze(['originalAudioAlignment', 'ORIGINAL_AUDIO_ALIGNMENT_PENDING']),
   Object.freeze(['crossSourceHarmonyArbitration', 'CROSS_SOURCE_HARMONY_PENDING']),
   Object.freeze(['sourceAwareMicroTimingGate', 'SOURCE_AWARE_MICRO_TIMING_GATE_PENDING']),

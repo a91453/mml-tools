@@ -101,6 +101,7 @@ test('with an Application Service the studio control surface is advertised', asy
   for (const expected of [
     'studio_capabilities', 'studio_project_create', 'studio_project_get', 'studio_sources_analyze',
     'studio_arrangement_suggest', 'studio_decisions_apply', 'studio_candidate_review',
+    'studio_core3_change_approve', 'studio_lead_evidence_review',
     'studio_finalize', 'studio_job_status', 'studio_artifact_get',
   ]) {
     assert.ok(names.includes(expected), `${expected} must be advertised`);
@@ -110,7 +111,71 @@ test('with an Application Service the studio control surface is advertised', asy
   for (const leaked of ['midi_file', 'role_candidates', 'readiness', 'technical_timing_repair', 'mml_emitter', 'micro_gap']) {
     assert.ok(!names.some(name => name.includes(leaked)), `${leaked} is an implementation detail and must not be a tool`);
   }
-  assert.ok(tools.length < 16, 'the surface must stay small enough for a model to reason about');
+  // Fourteen studio tools beside the three base ones. The bound is about what a
+  // model can hold, not about hiding operations: a review axis with no tool is
+  // not a smaller surface, it is an unreachable one, and the two Gate 4 axes and
+  // the Lead evidence re-review are each a separate question a reviewer answers.
+  assert.ok(tools.length <= 17, 'the surface must stay small enough for a model to reason about');
+});
+
+// Every Application Service operation a reviewer has to reach, and the tool that
+// reaches it. A service operation with no transport is not a conservative
+// surface; it is a gate that cannot be cleared from the Agent plane, which is
+// how `approveCore3SourceChange` came to exist with no caller.
+test('every reviewer-facing Application Service operation is reachable from a studio tool', async () => {
+  const application = createStudioApplication({});
+  const names = new Set((await mcp(application).list()).map(tool => tool.name));
+  for (const [operation, tool] of [
+    ['reviewCandidate', 'studio_candidate_review'],
+    ['recordConfirmations', 'studio_candidate_review'],
+    ['approveCore3SourceChange', 'studio_core3_change_approve'],
+    ['reviewLeadEvidence', 'studio_lead_evidence_review'],
+    ['attachAudioAlignment', 'studio_audio_alignment'],
+    ['applyDecisions', 'studio_decisions_apply'],
+    ['finalize', 'studio_finalize'],
+  ]) {
+    assert.equal(typeof application[operation], 'function', `${operation} must exist on the Application Service`);
+    assert.ok(names.has(tool), `${operation} must be reachable through ${tool}`);
+  }
+});
+
+// What an agent can learn from `tools/list` alone. Each of these was a real
+// drift: the runtime required evidence for three confirmations while the
+// description named two, and `core3_completeness_reviewed` existed with no way
+// for a caller to discover it.
+test('the studio tool descriptions tell an agent what the review surface actually requires', async () => {
+  const tools = Object.fromEntries(STUDIO_MCP_TOOLS.map(tool => [tool.name, tool]));
+  const confirmations = tools.studio_candidate_review.inputSchema.properties.confirmations.description;
+
+  // All seven recordable confirmations are named.
+  for (const name of [
+    'source_complete', 'version_drift_reviewed', 'player_readback',
+    'mobile_adaptation_reviewed', 'regression_reviewed', 'core3_completeness_reviewed',
+    'original_audio_required',
+  ]) {
+    assert.ok(confirmations.includes(name), `${name} must be discoverable from the tool description`);
+  }
+  // Finalize takes the same vocabulary and must describe it identically.
+  assert.equal(tools.studio_finalize.inputSchema.properties.confirmations.description, confirmations);
+
+  // Evidence-on-true is required for three, and the description says so beside
+  // each gate rather than naming Gate 8 and Gate 9 alone.
+  for (const gate of ['Gate 8', 'Gate 9', 'Gate 4']) assert.ok(confirmations.includes(gate), `${gate} must be named`);
+  assert.ok(/evidence/.test(confirmations));
+
+  // The two Gate 4 axes are named apart, and each points at its own tool.
+  assert.ok(confirmations.includes('studio_core3_change_approve'), 'the continuity axis must point at the tool that answers it');
+  assert.ok(/review axis/.test(confirmations), 'the description must say the two Gate 4 questions are different axes');
+  assert.ok(/review axis/.test(tools.studio_core3_change_approve.description));
+  assert.ok(tools.studio_core3_change_approve.description.includes('core3_completeness_reviewed'));
+
+  // The Lead re-review names both axes and the binding that makes it safe.
+  // Read as an agent reads it: the tool description plus the schema the agent
+  // has to fill in, because a fact stated in neither is a fact it cannot learn.
+  const lead = `${tools.studio_lead_evidence_review.description}\n${tools.studio_lead_evidence_review.inputSchema.properties.review.description}`;
+  for (const fact of ['promotion', 'demotion', 'LEAD_EVIDENCE_CONTEXT_CHANGED', 'PREVIOUS_ROLE_MISMATCH']) {
+    assert.ok(lead.includes(fact), `${fact} must be in the Lead evidence review description`);
+  }
 });
 
 test('studio tool schemas are closed and carry no file content field', async () => {
@@ -232,6 +297,8 @@ async function walk(runner) {
 const CONFIRMATIONS = {
   source_complete: { value: true, reason: 'Complete.' },
   player_readback: { value: 'PASS', reason: 'Read back.' },
+  mobile_adaptation_reviewed: { value: true, reason: 'Gate 8 reviewed.', evidence: ['transport parity Gate 8 review'] },
+  regression_reviewed: { value: true, reason: 'Gate 9 reviewed.', evidence: ['transport parity Gate 9 review'] },
   original_audio_required: { value: false, reason: 'No recording.' },
 };
 

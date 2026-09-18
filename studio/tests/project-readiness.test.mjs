@@ -74,17 +74,66 @@ function project({
   });
 }
 
+function promotionProject() {
+  const source = createSource({
+    id: 'official',
+    label: 'Official score',
+    kind: 'official-musicxml',
+    authority: 'primary-symbolic',
+  });
+  const before = createCanonicalNoteEvent({
+    id: 'official:p1',
+    pitch: 67,
+    start: '0',
+    end: '1',
+    sourceIds: ['official'],
+    sourceEventIds: ['official#p1'],
+    role: 'Chord1',
+  });
+  const after = createCanonicalNoteEvent({
+    id: 'official:p1',
+    pitch: 67,
+    start: '0',
+    end: '1',
+    sourceIds: ['official'],
+    sourceEventIds: ['official#p1'],
+    role: 'Melody',
+  });
+  const baselineProject = createCanonicalProject({
+    id: 'baseline:promotion',
+    title: 'Promotion baseline',
+    sources: [source],
+    events: [before],
+    metadata: { sourceComplete: true, baselineKind: 'source-faithful' },
+  });
+  return createCanonicalProject({
+    id: 'song:promotion',
+    title: 'Promotion candidate',
+    sources: [source],
+    events: [after],
+    metadata: {
+      sourceComplete: true,
+      sourceFaithfulBaseline: { snapshot: baselineProject },
+      audioAlignmentEvidence: [{ sourceId: 'original-audio', warnings: [], metrics: { confidence: 0.9 } }],
+    },
+  });
+}
+
 function readyInput(overrides = {}) {
   return {
     project: project(),
     mmlValidation: { ok: true, errors: [] },
     core3Report: { status: 'PASS', blockers: [] },
+    core3CompletenessReport: { status: 'PASS', blockers: [] },
     harmonyReport: { status: 'PASS', unresolvedCount: 0 },
     leadDemotionReports: [],
+    leadPromotionReports: [],
     lineageReport: null,
     versionDriftReviewed: false,
     playerReadback: 'PASS',
     originalAudioRequired: true,
+    mobileAdaptation: 'PASS',
+    regressionReviewed: true,
     inGameAcceptance: 'PENDING',
     ...overrides,
   };
@@ -136,6 +185,19 @@ test('original audio may be N/A only when the song workflow explicitly marks it 
   assert.equal(result.candidateReady, true);
 });
 
+test('Mobile adaptation is a required pre-game gate and N/A does not bypass review', () => {
+  for (const mobileAdaptation of ['PENDING', 'NOT_RUN', 'N/A']) {
+    const result = evaluateProjectReadiness(readyInput({ mobileAdaptation }));
+    assert.equal(result.candidateReady, false, mobileAdaptation);
+    assert.equal(result.gates.mobileAdaptation.status, 'PENDING', mobileAdaptation);
+    assert.ok(result.gates.mobileAdaptation.blockers.includes('MOBILE_ADAPTATION_REVIEW_REQUIRED'), mobileAdaptation);
+    assert.ok(result.preGameBlocking.includes('mobileAdaptation'), mobileAdaptation);
+  }
+  const passed = evaluateProjectReadiness(readyInput({ mobileAdaptation: 'PASS' }));
+  assert.equal(passed.gates.mobileAdaptation.status, 'PASS');
+  assert.equal(passed.candidateReady, true);
+});
+
 test('source completeness is a hard per-song readiness condition', () => {
   const result = evaluateProjectReadiness(readyInput({ project: project({ sourceComplete: false }) }));
   assert.equal(result.candidateReady, false);
@@ -180,6 +242,33 @@ test('baseline Lead removal can pass only with a matching evidence-backed PASS r
   assert.equal(result.candidateReady, true);
 });
 
+test('Lead promotion is not misclassified as a demotion and fails closed without its own report', () => {
+  const result = evaluateProjectReadiness(readyInput({ project: promotionProject() }));
+  assert.equal(result.gates.baseline.status, 'PASS');
+  assert.equal(result.gates.baseline.leadEventDiff.roleMoved.length, 1);
+  assert.deepEqual(
+    result.gates.baseline.leadEventDiff.roleMoved.map(move => [move.beforeRole, move.afterRole]),
+    [['Chord1', 'Melody']],
+  );
+  assert.equal(result.gates.leadDemotion.status, 'N/A');
+  assert.equal(result.gates.leadPromotion.status, 'PENDING');
+  assert.deepEqual(result.gates.leadPromotion.blockers, ['LEAD_PROMOTION_EVIDENCE_REQUIRED']);
+  assert.deepEqual(result.gates.leadPromotion.pendingEventIds, ['official:p1']);
+  assert.ok(result.preGameBlocking.includes('leadPromotion'));
+  assert.ok(!result.preGameBlocking.includes('leadDemotion'));
+});
+
+test('Lead promotion passes readiness only with the matching promotion grader PASS', () => {
+  const result = evaluateProjectReadiness(readyInput({
+    project: promotionProject(),
+    leadPromotionReports: [{ eventId: 'official:p1', status: 'PASS' }],
+  }));
+  assert.equal(result.gates.leadDemotion.status, 'N/A');
+  assert.equal(result.gates.leadPromotion.status, 'PASS');
+  assert.deepEqual(result.gates.leadPromotion.requiredEventIds, ['official:p1']);
+  assert.equal(result.candidateReady, true);
+});
+
 test('technical validation failure blocks readiness even when musical gates pass', () => {
   const result = evaluateProjectReadiness(readyInput({
     mmlValidation: { ok: false, errors: [{ message: 'invalid final syntax' }] },
@@ -191,6 +280,7 @@ test('technical validation failure blocks readiness even when musical gates pass
 test('Core3, Lead Demotion and cross-source harmony stay independently blocking', () => {
   const result = evaluateProjectReadiness(readyInput({
     core3Report: { status: 'PENDING', blockers: ['SOURCE_SUPPORTED_LEAD_GAP'] },
+    core3CompletenessReport: { status: 'PASS', blockers: [] },
     leadDemotionReports: [{ eventId: 'official:n1', status: 'PENDING' }],
     harmonyReport: { status: 'PENDING', unresolvedCount: 2 },
   }));
@@ -231,6 +321,7 @@ test('missing gate reports fail closed as NOT_RUN instead of silently passing', 
     project: project(),
     mmlValidation: null,
     core3Report: null,
+    core3CompletenessReport: { status: 'PASS', blockers: [] },
     harmonyReport: null,
     playerReadback: 'NOT_RUN',
     originalAudioRequired: true,

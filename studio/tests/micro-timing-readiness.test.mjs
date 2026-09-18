@@ -185,12 +185,15 @@ function readiness(project, overrides = {}) {
     project,
     mmlValidation: { ok: true, errors: [] },
     core3Report: { status: 'PASS', blockers: [] },
+    core3CompletenessReport: { status: 'PASS', blockers: [] },
     harmonyReport: { status: 'PASS', unresolvedCount: 0 },
     leadDemotionReports: [],
     lineageReport: null,
     versionDriftReviewed: false,
     playerReadback: 'PASS',
     originalAudioRequired: true,
+    mobileAdaptation: 'PASS',
+    regressionReviewed: true,
     inGameAcceptance: 'PENDING',
     ...overrides,
   });
@@ -583,6 +586,7 @@ test('C2B-22 a caller-supplied micro-timing PASS cannot spoof the gate', () => {
     project,
     mmlValidation: { ok: true, errors: [] },
     core3Report: { status: 'PASS', blockers: [] },
+    core3CompletenessReport: { status: 'PASS', blockers: [] },
     harmonyReport: { status: 'PASS', unresolvedCount: 0 },
     playerReadback: 'PASS',
     originalAudioRequired: true,
@@ -809,9 +813,12 @@ test('C2B a micro-timing analysis that cannot run fails closed as PENDING', () =
     project: broken,
     mmlValidation: { ok: true, errors: [] },
     core3Report: { status: 'PASS', blockers: [] },
+    core3CompletenessReport: { status: 'PASS', blockers: [] },
     harmonyReport: { status: 'PASS', unresolvedCount: 0 },
     playerReadback: 'PASS',
     originalAudioRequired: false,
+    mobileAdaptation: 'PASS',
+    regressionReviewed: true,
   });
   assert.equal(result.gates.microTiming.status, 'PENDING');
   assert.deepEqual(result.gates.microTiming.blockers, ['MICRO_TIMING_ANALYSIS_FAILED']);

@@ -120,8 +120,16 @@ analysis just re-derived, never onto a stored or imported parent. Each record is
 tamper-evident (a digest over the whole record) but not authenticated: nothing
 proves who accepted it, and the code says so. A suggestion never becomes an
 acceptance, and an accepted application never moves a workspace to `VALIDATED`.
-Lead evidence recorded through the pre-G11-D form is built behind the Worker and
-bound to the exact baseline source event by the Lead Demotion Gate itself.
+Lead evidence recorded through the two pre-G11-D forms is built behind the
+Worker; a form never supplies a source identity. Demotion evidence is keyed to
+the exact baseline Melody event and bound to it by the Lead Demotion Gate itself.
+Promotion evidence stores the candidate Melody event id together with the
+baseline origin the reversible derived-duplicate chain resolves to
+(`baselineOriginEvent`, shared with the Agent plane rather than copied), and is
+graded by the shared Lead Promotion Gate against that origin — so a derived
+duplicate's own id can never become source evidence. Re-recording replaces the
+record for that candidate event, and a record is read only while it names the
+current revision, so a later revision asks for the evidence again.
 
 This path ends before G12, Final MML emission, Mobile audibility/octave
 adaptation, instrument assignment, volume mapping, drum-face mapping or in-game

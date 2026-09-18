@@ -37,6 +37,7 @@ export {
   laneDecompositionDigestOf,
   decisionSetDigestOf,
   candidateDigestOf,
+  leadContextDigestOf,
   snapshotDigestOf,
   CANONICAL_PROJECT_SCHEMA,
   derivedDuplicateEventId,
@@ -58,5 +59,12 @@ export {
 export {
   reviewAppliedCandidate,
   leadDemotionReportsFromApplication,
+  leadPromotionReportsFromApplication,
+  leadDemotionReportsFromLineage,
+  leadPromotionReportsFromLineage,
+  applicationLineage,
   applicationIntegrity,
+  baselineOriginEvent,
+  LEAD_EVIDENCE_LINEAGE_BLOCKERS,
+  LEAD_EVIDENCE_REVIEW_AXES,
 } from './decision-review.mjs';

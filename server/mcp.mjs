@@ -1,6 +1,7 @@
 import { VERSION, PROFILE, ROLES } from '../dist/core.js';
 import { createTechnicalService } from '../studio/backend/application/technical-service.mjs';
 import { ERROR_CODES, StudioApplicationError } from '../studio/backend/application/contracts.mjs';
+import { createCanonicalGate } from '../studio/backend/application/provenance.mjs';
 import { STUDIO_MCP_TOOLS, UPLOAD_INSTRUCTION, runStudioTool } from './mcp-studio.mjs';
 
 // A deliberately small, stateless Streamable HTTP implementation. No sessions,
@@ -46,13 +47,13 @@ export const MCP_TOOLS = [
   },
   {
     name: 'mml_validate', title: '六軌 MML 技術檢查',
-    description: '以工作台相同核心檢查六軌、每軌 2400 字、語法、精確拍長、Tempo Map、小節與全部 15 對重疊。只回報，不改寫。technical_ok 不代表原曲相似、已聽驗、播放器回讀或遊戲驗收通過。',
+    description: '以 Published Canonical 驗證器檢查六軌、每軌 2400 字、語法、精確拍長、Tempo Map、小節與全部 15 對重疊。只回報，不改寫。Canonical 無法載入時直接拒絕，不退回 legacy 引擎。technical_ok 不代表原曲相似、已聽驗、播放器回讀或遊戲驗收通過。',
     inputSchema: { type: 'object', properties: { ...mcpSongProperties, error_offset: mcpPageProperty }, required: ['mml', 'meter_text'], additionalProperties: false },
     annotations: mcpAnnotations,
   },
   {
     name: 'mml_overlap_details', title: 'MML 重疊區間明細',
-    description: '對技術檢查通過的同一份六軌 MML，分頁回傳持續同音及低中音小二度／大七度區間；全部 15 對摘要保留。這些是需審核的提醒，不是刪音指令。',
+    description: '對 Published Canonical 技術檢查通過的同一份六軌 MML，分頁回傳持續同音及低中音小二度／大七度區間；全部 15 對摘要保留。這些是需審核的提醒，不是刪音指令。',
     inputSchema: { type: 'object', properties: { ...mcpSongProperties, offset: mcpPageProperty, limit: { type: 'integer', minimum: 1, maximum: 200 }, kind: { type: 'string', enum: ['all', 'same_pitch', 'low_mid_intervals'] } }, required: ['mml', 'meter_text'], additionalProperties: false },
     annotations: mcpAnnotations,
   },
@@ -130,7 +131,7 @@ function mcpPreflight(args) {
     if (s && !/^\d+(?:\/\d+|\.\d{1,9})?$/.test(s)) throw Error(`${key} 需為非負整數、小數或分數。`);
   }
 }
-// The legacy tools' business logic now lives in the Application Service's
+// The two technical tools' business logic lives in the Application Service's
 // `technical-service.mjs`, which the HTTP surface calls too, so there is one
 // implementation rather than two.
 //
@@ -140,10 +141,16 @@ function mcpPreflight(args) {
 // call, not about the orchestration layer. Routing it through an application
 // constructed with a different version string would make the same tool report
 // two different versions depending on how the process was wired. The logic is
-// identical either way — same module, same factory, same code path — and it
-// reaches for no filesystem and no Published Canonical, exactly as the original
-// tools did.
-const legacyTechnical = createTechnicalService({ serviceVersion: SERVICE_VERSION });
+// identical either way — same module, same factory, same code path.
+//
+// It is given its own Canonical gate, so `mml_validate` and
+// `mml_overlap_details` answer with the Published Canonical validator whether
+// or not an Application Service is attached. The gate is lazy and fails closed:
+// a transport in an environment without the published Git history refuses these
+// two tools with CANONICAL_NOT_LOADED rather than silently answering from the
+// legacy engine, whose verdict differs in both directions. Tool discovery,
+// `mml_service_info` and the `studio_*` tools are unaffected.
+const technical = createTechnicalService({ serviceVersion: SERVICE_VERSION, canonical: createCanonicalGate() });
 
 function mcpServiceInfo(tools) {
   return {
@@ -159,8 +166,8 @@ function mcpServiceInfo(tools) {
 
 async function mcpRunTool(name, args, context) {
   if (name === 'mml_service_info') return mcpServiceInfo(mcpToolsFor(context));
-  if (name === 'mml_validate') return legacyTechnical.validate(args);
-  if (name === 'mml_overlap_details') return legacyTechnical.overlapDetails(args);
+  if (name === 'mml_validate') return technical.validate(args);
+  if (name === 'mml_overlap_details') return technical.overlapDetails(args);
   return runStudioTool(name, args, context);
 }
 

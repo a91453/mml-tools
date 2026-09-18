@@ -4,8 +4,10 @@ import { validateMML, splitMML } from '../backend/mml/parser.mjs';
 import { ingestMusicXML, musicXMLFragmentToProject } from '../backend/score/index.mjs';
 import { compareCandidateLineage, compareCanonicalVersions } from '../backend/compare/version-drift.mjs';
 import { evaluateCore3Continuity } from '../backend/arbitration/core3.mjs';
-import { evaluateLeadDemotion, singleSourceIdentityOf } from '../backend/arbitration/lead-demotion.mjs';
+import { evaluateCore3Completeness } from '../backend/arbitration/core3-completeness.mjs';
+import { evaluateLeadDemotion, evaluateLeadPromotion, singleSourceIdentityOf } from '../backend/arbitration/lead-demotion.mjs';
 import { SIX_ROLES } from '../backend/arrangement/decision-application.mjs';
+import { baselineOriginEvent } from '../backend/arrangement/decision-review.mjs';
 import { analyzeCrossSourceHarmony } from '../backend/arbitration/harmony.mjs';
 import { evaluateProjectReadiness, emitFinalMml, EMIT_STATUS, DIAGNOSTIC_SEVERITY } from '../backend/final/index.mjs';
 import { attachAudioAlignmentEvidence } from '../backend/audio/index.mjs';
@@ -24,7 +26,7 @@ const pass = reason => ({ status: 'PASS', reason });
 const good = value => ['PASS', 'N/A'].includes(value?.status);
 
 export function newWorkspace() {
-  return { schema: WORKSPACE_SCHEMA, id: crypto.randomUUID(), title: '未命名專案', revision: 0, assets: {}, settings: { meterText: '', recording: '', offset: '', end: '', audioRequired: 'unknown', preview: 'unknown' }, reviews: {}, harmonyDecisions: [], core3Approvals: [], leadEvidence: [], acceptedDecisions: [], audio: null, acceptance: null };
+  return { schema: WORKSPACE_SCHEMA, id: crypto.randomUUID(), title: '未命名專案', revision: 0, assets: {}, settings: { meterText: '', recording: '', offset: '', end: '', audioRequired: 'unknown', preview: 'unknown' }, reviews: {}, harmonyDecisions: [], core3Approvals: [], leadEvidence: [], leadPromotionEvidence: [], acceptedDecisions: [], audio: null, acceptance: null };
 }
 
 // Imported JSON is data, including any old PASS flags. Reconstruct every item
@@ -76,6 +78,7 @@ export function invalidate(workspace) {
   next.harmonyDecisions = [];
   next.core3Approvals = [];
   next.leadEvidence = [];
+  next.leadPromotionEvidence = [];
   // An accepted arrangement decision is bound to the exact baseline, source and
   // lane decomposition it was reviewed against. Once the revision moves, every
   // one of those bindings is a claim about inputs that are no longer loaded, so
@@ -126,7 +129,7 @@ export function importWorkspace(raw) {
   // backup cannot attest that its decisions were reviewed against the bytes
   // this workspace just re-ingested, and a backup asserting an applied
   // candidate is describing an application nobody can re-check from the file.
-  clean.importedHistory = { reviews: input.reviews, acceptance: input.acceptance, audio: input.audio, acceptedDecisions: input.acceptedDecisions };
+  clean.importedHistory = { reviews: input.reviews, acceptance: input.acceptance, audio: input.audio, acceptedDecisions: input.acceptedDecisions, leadEvidence: input.leadEvidence, leadPromotionEvidence: input.leadPromotionEvidence };
   return clean;
 }
 
@@ -222,6 +225,68 @@ export function recordLeadEvidence(workspace, form) {
   const next = copy(workspace);
   next.acceptance = null;
   next.leadEvidence = [...(next.leadEvidence ?? []).filter(item => item.eventId !== event.id), record];
+  return next;
+}
+
+// Record the Lead Promotion Gate evidence for one candidate Melody event.
+//
+// The symmetric half of `recordLeadEvidence` above, and deliberately a separate
+// writer rather than an extra branch in it: that function's refusals ("the
+// destination must be Chord1-Chord5 or omitted", "no such baseline Melody
+// event") are the demotion contract, and loosening them to admit a promotion
+// would remove the guard rather than add a path.
+//
+// Two event ids, because a promotion has two. `promotedEventId` is the
+// *candidate* Melody event, which is what the shared readiness gate keys on: a
+// role move keeps the source event id, while a justified duplicate gets a
+// derived one. `originEventId` is the Source-Faithful *baseline* event the
+// citation is bound to, resolved through the same reversible derived-duplicate
+// chain the Agent/Application plane walks -- so a duplicate's derived id cannot
+// be used to launder a citation, and nothing is matched by pitch, time or array
+// order.
+//
+// As with demotion, nothing here evaluates anything. The record is data, and
+// the shared promotion grader judges it on every analysis against the baseline
+// event it names.
+export const LEAD_PROMOTION_DESTINATION = 'Melody';
+
+export function recordLeadPromotionEvidence(workspace, form) {
+  if (!form || typeof form !== 'object') throw Error('Lead promotion evidence form is required');
+  if ((form.destinationRole ?? LEAD_PROMOTION_DESTINATION) !== LEAD_PROMOTION_DESTINATION) throw Error('目標角色必須為 Melody');
+  const candidate = workspace.assets?.candidate?.project ?? null;
+  const baseline = workspace.assets?.baseline?.project ?? null;
+  if (!baseline) throw Error('需要 Source-Faithful Baseline 才能提交 Lead 升級證據');
+
+  const promoted = (candidate?.events ?? []).find(item => item.id === form.promotedEventId && item.role === LEAD_PROMOTION_DESTINATION);
+  if (!promoted) throw Error('找不到候選 Melody event');
+
+  // The origin is the baseline event this promotion came from: the same id for
+  // a role move, or the head of the derived chain for a duplicate. An explicit
+  // originEventId is accepted, but it is resolved against the baseline here --
+  // a form never supplies an identity.
+  const origin = baselineOriginEvent(baseline, candidate, form.originEventId || form.promotedEventId);
+  if (!origin) throw Error('找不到基準來源 event（無法回溯到 Source-Faithful Baseline）');
+  if (origin.role === LEAD_PROMOTION_DESTINATION) throw Error('來源事件已是 Melody，這不是一次升級');
+
+  const checked = form.continuity === 'checked';
+  const record = {
+    promotedEventId: promoted.id,
+    originEventId: origin.id,
+    destinationRole: LEAD_PROMOTION_DESTINATION,
+    // null for a multi-source origin: the pairing cannot be proven from the IR,
+    // and the gate reports it rather than this record guessing it.
+    sourceIdentity: singleSourceIdentityOf(origin) ? { ...singleSourceIdentityOf(origin) } : null,
+    sectionRole: form.sectionRole,
+    scoreEvidence: { availability: text(form.scoreCitation) ? 'available' : 'unavailable', classification: form.scoreClass, citation: form.scoreCitation },
+    audioEvidence: { availability: text(form.audioCitation) ? 'available' : 'unavailable', classification: form.audioClass, citation: form.audioCitation },
+    positiveReason: form.positiveReason,
+    continuity: { checked, createsLeadGap: checked ? false : null, replacementEventIds: [] },
+    core3: { checked, status: checked ? 'PASS' : 'PENDING' },
+    revision: workspace.revision,
+  };
+  const next = copy(workspace);
+  next.acceptance = null;
+  next.leadPromotionEvidence = [...(next.leadPromotionEvidence ?? []).filter(item => item.promotedEventId !== promoted.id), record];
   return next;
 }
 
@@ -401,6 +466,12 @@ function analysisContext(w) {
   const { technical, deliveryMatches } = verifyDelivery(candidate, rawMml, w.settings.meterText);
   const lineage = baseline ? compareCandidateLineage({ sourceBaseline: baseline, acceptedPrevious: previous, candidate }) : null;
   const core3 = baseline ? evaluateCore3Continuity({ baseline, candidate, approvedChanges: (w.core3Approvals ?? []).filter(a => a.revision === w.revision) }) : pending('BASELINE_MISSING');
+  // Gate 4's own question, beside the source-continuity audit above. The Web
+  // `core3` review is the candidate-bound, evidence-backed reviewer judgement
+  // that resolves the residue the evaluator could not certify, a missing
+  // Chord1/Chord2 function included. It can never clear an absent Lead or a
+  // Core3 whose identity depends on enrichment: the gate FAILs on those.
+  const core3Completeness = evaluateCore3Completeness({ candidate, reviewed: reviewed(w, 'core3') });
   const harmony = analyzeCrossSourceHarmony(project);
   // Stored Lead evidence is data. Each record is judged on every analysis by
   // the Lead Demotion Gate against the baseline event it names; the gate binds
@@ -421,11 +492,53 @@ function analysisContext(w) {
     try { return evaluateLeadDemotion({ ...e, event }); }
     catch (error) { return { status: 'PENDING', pass: false, eventId: event.id, destinationRole: e.destinationRole ?? null, blockers: [`LEAD_DEMOTION_EVIDENCE_INVALID: ${error.message}`], warnings: [] }; }
   });
+  // The promotion mirror of the block above, through the same shared grader.
+  // Four things must hold before the evidence is graded at all, and each
+  // failure is a visible PENDING report rather than a thrown analysis:
+  // the promoted event is still a Melody event of the candidate; the candidate
+  // diff actually shows it arriving in Melody (so a record cannot outlive the
+  // move it describes); its origin still resolves to a baseline event; and the
+  // promoted event is still the note that origin describes.
+  // The grade itself is `evaluateLeadPromotion` against the origin provenance,
+  // and the report is re-keyed to the candidate event id afterwards because
+  // that is the id shared readiness matches on.
+  const leadPromotionReports = (w.leadPromotionEvidence ?? []).filter(e => e.revision === w.revision).map(e => {
+    const promotedEventId = typeof e?.promotedEventId === 'string' ? e.promotedEventId : null;
+    const stale = blockers => ({ status: 'PENDING', pass: false, eventId: promotedEventId, destinationRole: 'Melody', blockers, warnings: [] });
+    const promoted = promotedEventId ? candidate.events.find(event => event.id === promotedEventId) : null;
+    if (!promoted || promoted.role !== 'Melody') return stale(['LEAD_PROMOTION_EVENT_NOT_IN_CANDIDATE']);
+    const arrived = (lineage?.sourceToCandidate.notes.added ?? []).some(event => event.id === promotedEventId)
+      || (lineage?.sourceToCandidate.notes.roleMoved ?? []).some(pair => pair.after.id === promotedEventId && pair.after.role === 'Melody' && pair.before.role !== 'Melody');
+    if (!arrived) return stale(['LEAD_PROMOTION_NOT_PRESENT_IN_CANDIDATE_DIFF']);
+    const origin = baseline ? baselineOriginEvent(baseline, candidate, e.originEventId || promotedEventId) : null;
+    if (!origin) return stale(['LEAD_PROMOTION_ORIGIN_NOT_IN_BASELINE']);
+    // The citation is bound to the origin's provenance, so the promoted event
+    // must still be the same note the origin describes. Role is excluded: the
+    // role change is the move the evidence argues for. Everything else moving
+    // means the citation is about a note that is no longer there.
+    const sameNote = ['pitch', 'start', 'end', 'volume'].every(key => String(promoted[key] ?? '') === String(origin[key] ?? ''))
+      && JSON.stringify([...(promoted.sourceIds ?? [])].sort()) === JSON.stringify([...(origin.sourceIds ?? [])].sort())
+      && JSON.stringify([...(promoted.sourceEventIds ?? [])].sort()) === JSON.stringify([...(origin.sourceEventIds ?? [])].sort());
+    if (!sameNote) return stale(['LEAD_EVIDENCE_EVENT_CHANGED']);
+    try {
+      // Graded as the event stood before the move: the shared gate answers N/A
+      // for an event that is already Melody, so handing it the candidate event
+      // would silently drop the requirement instead of grading it.
+      const report = evaluateLeadPromotion({ ...e, event: { ...origin, id: origin.id, role: origin.role }, destinationRole: 'Melody' });
+      return { ...report, eventId: promotedEventId, originEventId: origin.id };
+    } catch (error) {
+      return stale([`LEAD_PROMOTION_EVIDENCE_INVALID: ${error.message}`]);
+    }
+  });
   const audioPresent = Object.values(w.assets).some(a => a.project.sources.some(s => s.kind === 'original-audio')) || Boolean(w.audio);
   const audioRequired = audioPresent || w.settings.audioRequired !== 'no';
-  const readiness = evaluateProjectReadiness({ project, mmlValidation: technical, core3Report: core3, harmonyReport: harmony, leadDemotionReports: leadReports, lineageReport: lineage, versionDriftReviewed: reviewed(w, 'version'), originalAudioRequired: audioRequired, playerReadback: w.settings.preview === 'none' && reviewed(w, 'tempo') ? 'N/A' : 'PENDING' });
+  const readiness = evaluateProjectReadiness({ project, mmlValidation: technical, core3Report: core3, core3CompletenessReport: core3Completeness, harmonyReport: harmony, leadDemotionReports: leadReports, leadPromotionReports, lineageReport: lineage, versionDriftReviewed: reviewed(w, 'version'), originalAudioRequired: audioRequired, playerReadback: w.settings.preview === 'none' && reviewed(w, 'tempo') ? 'N/A' : 'PENDING', mobileAdaptation: reviewed(w, 'adaptation') ? 'PASS' : 'PENDING', regressionReviewed: reviewed(w, 'regression') });
   const gates = { ...readiness.gates };
   delete gates.inGameAcceptance;
+  // The shared readiness name is `mobileAdaptation`; the Web UI's long-lived
+  // public review name is `adaptation`. Present exactly one blocker here while
+  // keeping the full shared verdict intact on `readiness.gates`.
+  delete gates.mobileAdaptation;
   gates.intake = text(w.title) && text(w.settings.recording) && finiteNumber(w.settings.offset) && finiteNumber(w.settings.end) && Number(w.settings.offset) >= 0 && Number(w.settings.end) > Number(w.settings.offset)
     ? pass('VERSION_AND_RANGE_RECORDED') : pending('RECORDING_VERSION_AND_RANGE_REQUIRED');
   gates.source = hasUnsupported(asset) || hasUnsupported(w.assets.baseline) ? { status: asset.unsupported?.length || w.assets.baseline?.unsupported?.length ? 'UNSUPPORTED' : 'PENDING', reason: 'SOURCE_INCOMPLETE_OR_UNSUPPORTED' } : reviewGate(w, 'source');
@@ -436,7 +549,9 @@ function analysisContext(w) {
   gates.versionDrift = baseline && good(gates.versionDrift) ? reviewGate(w, 'version') : pending('BASELINE_OR_VERSION_REVIEW_MISSING');
   gates.tempo = reviewGate(w, 'tempo');
   gates.originalAudio = audioError ? pending(audioError) : good(gates.originalAudio) ? audioRequired ? reviewGate(w, 'audio') : { status: 'N/A', reason: 'USER_DECLARED_NO_ORIGINAL_AUDIO' } : gates.originalAudio;
-  gates.adaptation = reviewGate(w, 'adaptation');
+  gates.adaptation = reviewed(w, 'adaptation')
+    ? { ...readiness.gates.mobileAdaptation, reason: w.reviews.adaptation.note }
+    : { ...readiness.gates.mobileAdaptation, reason: 'ADAPTATION_REVIEW_REQUIRED' };
   gates.regression = reviewGate(w, 'regression');
   gates.deliveryIdentity = deliveryMatches ? pass('EXACT_SYMBOLIC_READBACK') : pending('MML_AND_CANDIDATE_IDENTITY_NOT_VERIFIED');
   const rawMidi = rawMidiReport(w, { candidate, baseline, previous });
@@ -468,7 +583,7 @@ function analysisContext(w) {
   // Every status here is recomputed from the workspace on this run. Nothing is
   // read from `w.finalDelivery`: a stored, imported or edited generation record
   // claiming PASS is data about a past attempt, never a gate and never a state.
-  const report = { state: accepted ? 'IN_GAME_ACCEPTED' : validated ? 'VALIDATED' : 'CANDIDATE', gates, blockers, technical, core3, harmony, lineage, leadReports, readiness, rawMidi,
+  const report = { state: accepted ? 'IN_GAME_ACCEPTED' : validated ? 'VALIDATED' : 'CANDIDATE', gates, blockers, technical, core3, core3Completeness, harmony, lineage, leadReports, leadPromotionReports, readiness, rawMidi,
     tracks: technical?.ok && deliveryMatches ? splitMML(rawMml) : null, rawMml: technical?.ok && deliveryMatches ? rawMml.trim() : null, deliveryOrigin,
     historicalRegression: 'FIXTURE_PENDING', audioError, importedDecisions: candidate.decisions };
   return { asset, candidate, project, readiness, gates, report };

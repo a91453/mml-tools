@@ -59,7 +59,22 @@ export function buildCapabilities({ canonical, storage, jobs, transports = [] })
       technical_timing_repair: true,
       final_emission: true,
       round_trip_readback: true,
-      legacy_technical_validation: true,
+      // Two separate Core3 questions, and neither answers the other: the
+      // source-continuity audit with its own candidate-bound approval path, and
+      // the independent Gate 4 musical-completeness result.
+      core3_source_continuity_audit: true,
+      core3_source_change_approval: true,
+      core3_completeness_gate: true,
+      // Lead evidence is recovered from the revision that performed the move and
+      // re-graded against the current candidate, and a reviewer can re-supply a
+      // citation for an already-applied move when a later revision moves the
+      // Lead picture. Both axes; the shared grader runs every time.
+      lead_evidence_lineage_recovery: true,
+      lead_evidence_re_review: true,
+      // The Published Canonical validator, and the legacy engine kept beside it
+      // as an explicitly labelled diagnostic whose PASS is not a Canonical PASS.
+      canonical_technical_validation: true,
+      legacy_technical_diagnostic: true,
       in_game_test: false,
     }),
 
@@ -86,17 +101,43 @@ export function buildCapabilities({ canonical, storage, jobs, transports = [] })
     identities: IDENTITY_MODEL,
 
     gates: freeze({
+      // The Acceptance gate axes this interface reports as such. It is NOT the
+      // full list of gates that can block a Final: shared readiness has its own
+      // pre-game gates, and every one of them reaches `blockers`. They are
+      // listed beside it rather than folded into it, because an agent that
+      // reads `axes` plus an empty `not_implemented_in_this_build` would
+      // otherwise take it for a complete inventory and be surprised by a
+      // refusal naming a gate it never saw.
       axes: GATE_NAMES,
-      settable_by_this_service: freeze(['technical', 'source', 'audio', 'player_readback']),
-      // Distinct from `never_settable_by_this_service`, and deliberately not
-      // folded into it. `mobile_adaptation` has no gate implementing it in this
-      // build, so nothing here can move it off PENDING — but that is a missing
-      // implementation, not the standing prohibition `in_game` carries. Listing
-      // the two together would either overclaim a rule that does not exist or
-      // dilute the one that does.
-      not_implemented_in_this_build: freeze(['mobile_adaptation']),
+      // Exactly `preGameGateNames` in `final/readiness.mjs`, in its order. It is
+      // transcribed rather than imported so that this record can still be built
+      // when the Canonical engines are unavailable, and a regression asserts the
+      // two lists are equal so the transcription cannot drift.
+      readiness_gates_that_block_final: freeze([
+        'implementation', 'source', 'baseline', 'technical', 'microTiming',
+        'core3', 'core3Completeness', 'leadDemotion', 'leadPromotion',
+        'crossSourceHarmony', 'versionDrift', 'originalAudio', 'playerReadback',
+        'mobileAdaptation', 'regression', 'pendingDecisions',
+      ]),
+      // Scoped to `axes` above, and every axis there is in exactly one of the
+      // three lists below — a future Acceptance axis cannot be added without
+      // saying which it is.
+      settable_by_this_service: freeze(['technical', 'source', 'audio', 'player_readback', 'mobile_adaptation', 'regression']),
+      // Review axes this service can move that are not Acceptance gate axes.
+      // Listed because each is a separate question with its own operation, and
+      // an agent that cannot see them has no way to learn how to answer them.
+      review_axes_settable_by_this_service: freeze([
+        { axis: 'core3_source_continuity', gate: 'Gate 4 (source continuity)', readiness_gate: 'core3', operation: 'approveCore3SourceChange' },
+        { axis: 'core3_completeness', gate: 'Gate 4 (musical completeness)', readiness_gate: 'core3Completeness', operation: 'recordConfirmations.core3_completeness_reviewed' },
+        { axis: 'lead_promotion', gate: 'Gate 3 (promotion into Melody)', readiness_gate: 'leadPromotion', operation: 'applyDecisions.leadEvidence / reviewLeadEvidence' },
+        { axis: 'lead_demotion', gate: 'Gate 3 (demotion out of Melody)', readiness_gate: 'leadDemotion', operation: 'applyDecisions.leadEvidence / reviewLeadEvidence' },
+      ]),
+      // Each of these moves only through an explicit, candidate-bound,
+      // evidence-backed review. Parser/emitter/test success never sets one, and
+      // in_game remains a standing prohibition for this service.
+      not_implemented_in_this_build: freeze([]),
       never_settable_by_this_service: freeze(['in_game']),
-      notice: 'in_game is recorded only by the user or a controlled target-client test. No parser, emitter, transport, job or model call can set it, and this build records none, so it stays PENDING. mobile_adaptation also stays PENDING, for the different reason that no gate implements it here.',
+      notice: 'mobile_adaptation, regression and core3_completeness can reach PASS only from explicit candidate-bound evidence-backed Gate 8 / Gate 9 / Gate 4 reviews, each of which requires at least one evidence reference; parser/emitter/test success does not upgrade them. The Core3 source-continuity axis moves only through per-change evidence-backed approvals, and the Lead axes only through the shared Lead grader re-run over a cited evidence record — a Lead approval is never a Core3 approval and neither axis of Gate 4 answers the other. in_game is recorded only by the user or a controlled target-client test. No parser, emitter, transport, job or model call can set in_game, so it stays PENDING.',
     }),
 
     audio: freeze({

@@ -159,6 +159,8 @@ export function leadPromotionEvidence({
     sectionRole,
     scoreEvidence: { availability: 'available', classification: scoreClassification, citation: 'fixture:score bar 1, top staff' },
     audioEvidence: { availability: 'available', classification: audioClassification, citation: 'fixture:audio 0:00-0:01 foreground' },
+    continuity: { checked: true, createsLeadGap: false, replacementEventIds: [] },
+    core3: { checked: true, status: 'PASS' },
   };
 }
 

@@ -34,6 +34,8 @@ async function rejects(promise, code) {
 const fullConfirmations = {
   source_complete: { value: true, reason: 'The official source is the complete material for this cue.', evidence: ['official-midi'] },
   player_readback: { value: 'PASS', reason: 'The emitted MML was read back in the player.', evidence: ['player session log'] },
+  mobile_adaptation_reviewed: { value: true, reason: 'The candidate was reviewed for Mobile audibility/register/role preservation; no further adaptation is needed.', evidence: ['fixture Gate 8 review'] },
+  regression_reviewed: { value: true, reason: 'Baseline/previous drift and available historical regressions were reviewed.', evidence: ['fixture Gate 9 review'] },
   original_audio_required: { value: false, reason: 'No released recording exists for this cue.' },
 };
 
@@ -201,8 +203,8 @@ test('a refused decision set mints no candidate and reports the backend codes', 
   });
   await service.analyzeSources(OWNER, created.project_id);
 
-  // Promoting material into the Lead role without the evidence the Lead
-  // Demotion Gate requires. The refusal belongs to that gate, not to this layer.
+  // Promoting material into the Lead role without the evidence the shared
+  // Lead-role gate requires. The refusal belongs to that gate, not to this layer.
   const result = await service.applyDecisions(OWNER, created.project_id, {
     decisions: [{
       id: 'promote',
@@ -224,6 +226,51 @@ test('a refused decision set mints no candidate and reports the backend codes', 
   assert.deepEqual((await service.getProject(OWNER, created.project_id)).project.candidates, []);
 });
 
+test('the Studio service re-grades a lawful promotion and reports it separately from demotion', async () => {
+  const service = app();
+  const project = sixRoleBaseline();
+  const created = (await service.createProject(OWNER, { title: 'Lead promotion' })).project;
+  await service.uploadAsset(OWNER, created.project_id, {
+    kind: 'canonical_project', filename: 'b.json', mediaType: 'application/json', bytes: canonicalProjectBytes(project),
+  });
+  await service.analyzeSources(OWNER, created.project_id);
+
+  const event = project.events.find(item => item.id === 'chord1-1');
+  const applied = await service.applyDecisions(OWNER, created.project_id, {
+    decisions: [{
+      id: 'promote-reviewed',
+      type: 'MOVE_ROLE',
+      target: { eventIds: [event.id] },
+      fromRole: 'Chord1',
+      toRole: 'Melody',
+      reason: 'The official top-line hand-off makes this event the foreground instrumental lead in this section.',
+      evidence: ['fixture:official-score hand-off', 'fixture:audio foreground'],
+      leadEvidence: {
+        sourceIdentity: { sourceId: event.sourceIds[0], sourceEventId: event.sourceEventIds[0] },
+        sectionRole: 'instrumental',
+        scoreEvidence: { availability: 'available', classification: 'lead', citation: 'fixture:official-score hand-off' },
+        audioEvidence: { availability: 'available', classification: 'foreground', citation: 'fixture:audio foreground' },
+        continuity: { checked: true, createsLeadGap: false, replacementEventIds: [] },
+        core3: { checked: true, status: 'PASS' },
+      },
+      acceptedBy: 'reviewer:test',
+    }],
+  });
+  assert.equal(applied.operation, 'succeeded');
+  assert.equal(applied.decisions.status, 'PASS');
+
+  const { review } = await service.reviewCandidate(OWNER, created.project_id, {
+    candidateId: applied.decisions.candidate_id,
+  });
+  assert.equal(review.lead_demotion.length, 0);
+  assert.equal(review.lead_promotion.length, 1);
+  assert.equal(review.lead_promotion[0].status, 'PASS');
+  assert.equal(review.lead_promotion[0].eventId, event.id);
+  assert.equal(review.lead_promotion[0].originEventId, event.id);
+  assert.equal(review.readiness.gates.leadDemotion.status, 'N/A');
+  assert.equal(review.readiness.gates.leadPromotion.status, 'PASS');
+});
+
 // ─── review ─────────────────────────────────────────────────────────────────
 
 test('review reports each module verdict and publishes no aggregate of its own', async () => {
@@ -236,6 +283,7 @@ test('review reports each module verdict and publishes no aggregate of its own',
   assert.equal(review.application_status, 'PASS');
   for (const key of ['lineage', 'core3', 'harmony', 'readiness']) assert.ok(review[key], `${key} must be reported`);
   assert.ok(Array.isArray(review.lead_demotion));
+  assert.ok(Array.isArray(review.lead_promotion));
   assert.ok(!Object.hasOwn(review, 'ok'), 'review must not publish a single pass/fail of its own');
   assert.match(review.notice, /belongs to the module that produced it/);
 });
@@ -388,6 +436,8 @@ test('a technical PASS never produces a source, audio, player or in-game PASS', 
     confirmations: {
       source_complete: { value: true, reason: 'Complete.' },
       original_audio_required: { value: false, reason: 'No recording exists.' },
+      mobile_adaptation_reviewed: { value: true, reason: 'Gate 8 reviewed.', evidence: ['fixture Gate 8 review'] },
+      regression_reviewed: fullConfirmations.regression_reviewed,
       // Player readback deliberately not confirmed.
     },
   });
@@ -400,14 +450,83 @@ test('a technical PASS never produces a source, audio, player or in-game PASS', 
 
   const passing = await service.finalize(OWNER, run.projectId, { candidateId: run.candidateId, confirmations: fullConfirmations });
   assert.equal(passing.gates.technical, 'PASS');
-  // The axes that a serialization result cannot speak to stay where they were.
-  assert.equal(passing.gates.mobile_adaptation, 'PENDING');
+  // Gate 8 is a separate evidence-backed review. Serialization cannot set it,
+  // but the explicit confirmation above can.
+  assert.equal(passing.gates.mobile_adaptation, 'PASS');
   assert.equal(passing.gates.in_game, 'PENDING');
   assert.equal(passing.gates.audio, 'N/A', 'audio was explicitly marked not applicable, not passed');
 
   const { artifact } = await service.getArtifact(OWNER, passing.artifact_id);
   assert.equal(artifact.gates.in_game, 'PENDING', 'a stored artifact must not record an acceptance nobody gave');
   assert.ok(artifact.remaining_pending_gates.includes('in_game'));
+});
+
+test('Gate 8 blocks Final until an evidence-backed candidate review is recorded', async () => {
+  const service = app();
+  const run = await applyKeepOnlyCandidate(service, OWNER);
+  const withoutAdaptation = {
+    source_complete: fullConfirmations.source_complete,
+    player_readback: fullConfirmations.player_readback,
+    regression_reviewed: fullConfirmations.regression_reviewed,
+    original_audio_required: fullConfirmations.original_audio_required,
+  };
+  const blocked = await service.finalize(OWNER, run.projectId, {
+    candidateId: run.candidateId,
+    confirmations: withoutAdaptation,
+  });
+  assert.equal(blocked.operation, 'blocked');
+  assert.equal(blocked.gates.mobile_adaptation, 'PENDING');
+  assert.ok(blocked.blockers.includes('mobileAdaptation'));
+  assert.equal(blocked.mml, null);
+  assert.equal(blocked.artifact_id, null);
+
+  await rejects(service.finalize(OWNER, run.projectId, {
+    candidateId: run.candidateId,
+    confirmations: {
+      mobile_adaptation_reviewed: { value: true, reason: 'Claimed reviewed, but no evidence was supplied.' },
+    },
+  }), ERROR_CODES.INVALID_REQUEST);
+
+  const passed = await service.finalize(OWNER, run.projectId, {
+    candidateId: run.candidateId,
+    confirmations: fullConfirmations,
+  });
+  assert.equal(passed.operation, 'succeeded');
+  assert.equal(passed.gates.mobile_adaptation, 'PASS');
+});
+
+test('Gate 9 blocks Final until an evidence-backed candidate regression review is recorded', async () => {
+  const service = app();
+  const run = await applyKeepOnlyCandidate(service, OWNER);
+  const withoutRegression = {
+    source_complete: fullConfirmations.source_complete,
+    player_readback: fullConfirmations.player_readback,
+    mobile_adaptation_reviewed: fullConfirmations.mobile_adaptation_reviewed,
+    original_audio_required: fullConfirmations.original_audio_required,
+  };
+  const blocked = await service.finalize(OWNER, run.projectId, {
+    candidateId: run.candidateId,
+    confirmations: withoutRegression,
+  });
+  assert.equal(blocked.operation, 'blocked');
+  assert.equal(blocked.gates.regression, 'PENDING');
+  assert.ok(blocked.blockers.includes('regression'));
+  assert.equal(blocked.mml, null);
+  assert.equal(blocked.artifact_id, null);
+
+  await rejects(service.finalize(OWNER, run.projectId, {
+    candidateId: run.candidateId,
+    confirmations: {
+      regression_reviewed: { value: true, reason: 'Claimed reviewed, but no evidence was supplied.' },
+    },
+  }), ERROR_CODES.INVALID_REQUEST);
+
+  const passed = await service.finalize(OWNER, run.projectId, {
+    candidateId: run.candidateId,
+    confirmations: fullConfirmations,
+  });
+  assert.equal(passed.operation, 'succeeded');
+  assert.equal(passed.gates.regression, 'PASS');
 });
 
 test('operation status and Canonical gates are separate fields', async () => {
