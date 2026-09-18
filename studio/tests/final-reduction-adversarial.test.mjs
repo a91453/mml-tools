@@ -439,6 +439,57 @@ test('a decision on one copy of a duplicated source event does not settle the ot
   assert.equal(delivered.has(derivedEventId), false, 'the copy the reviewer omitted is gone');
 });
 
+test('aggregate role fields never combine the origin with a sibling copy', () => {
+  const { baseline, application, candidate, originEventId, derivedEventId } =
+    g11dCandidateWithDuplicate({ from: 'chord4-1', toRoles: ['Chord5'] });
+  const omitOrigin = reductionDecision({
+    id: 'omit-origin-only',
+    action: 'OMIT',
+    eventIds: [originEventId],
+    reason: 'The original enrichment voice is omitted while its justified copy remains.',
+    evidence: [`${FIXTURE_SOURCE_ID}#origin-omission`],
+  });
+  const plan = planFinalReduction({
+    baseline,
+    candidate,
+    parent: application,
+    decisions: [omitOrigin],
+    acceptedBy: 'adversary',
+  });
+  assert.equal(plan.status, 'PASS', JSON.stringify(plan.blockers));
+
+  const item = plan.items.find(entry => entry.baselineEventId === originEventId);
+  assert.equal(item.outcome, REDUCTION_OUTCOMES.KEEP, 'the source event is still delivered through its copy');
+  assert.equal(item.currentRole, 'Chord4');
+  assert.equal(item.proposedRole, null, 'the primary/origin manifestation is omitted; no invented Chord4 → Chord5 move');
+  assert.equal(item.decisionId, null, 'the omission did not drive the aggregate KEEP outcome');
+  assert.deepEqual(item.decisionIds, ['omit-origin-only']);
+  assert.deepEqual(item.evidence, [], 'top-level KEEP evidence is not borrowed from the sibling omission');
+
+  const origin = item.manifestations.find(entry => entry.candidateEventId === originEventId);
+  const copy = item.manifestations.find(entry => entry.candidateEventId === derivedEventId);
+  assert.equal(origin.outcome, REDUCTION_OUTCOMES.OMIT);
+  assert.equal(origin.currentRole, 'Chord4');
+  assert.equal(origin.proposedRole, null);
+  assert.deepEqual(origin.evidence, [`${FIXTURE_SOURCE_ID}#origin-omission`]);
+  assert.equal(copy.outcome, REDUCTION_OUTCOMES.KEEP);
+  assert.equal(copy.currentRole, 'Chord5');
+  assert.equal(copy.proposedRole, 'Chord5');
+
+  const result = applyFinalReduction({
+    baseline,
+    candidate,
+    parent: application,
+    decisions: [omitOrigin],
+    expectedPlanId: plan.id,
+    acceptedBy: 'adversary',
+  });
+  assert.equal(result.status, 'PASS');
+  const delivered = new Set(result.candidate.events.map(event => event.id));
+  assert.equal(delivered.has(originEventId), false);
+  assert.equal(delivered.has(derivedEventId), true);
+});
+
 test('an unresolved copy is never hidden by a settled one', () => {
   // Chord5 is free in this fixture, so the derived copy could equally have been
   // left role-less. Build that: a duplicate into a role, then strip that role
