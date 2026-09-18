@@ -90,9 +90,22 @@ export const EFFECTIVE_RULESET = Object.freeze({
     enrichment: Object.freeze(['Chord3', 'Chord4', 'Chord5']),
     leadIsNotVocalOnly: true,
     leadDemotionRequiresPositiveEvidence: true,
-    leadPromotionRequiresPositiveEvidence: true,
     unresolvedLeadDemotion: 'FAIL_OR_PENDING',
-    unresolvedLeadPromotion: 'FAIL_OR_PENDING',
+    // There is deliberately no `leadPromotionRequiresPositiveEvidence` /
+    // `unresolvedLeadPromotion` beside these two. MASTER_RULES 4 states the
+    // positive-evidence requirement for *demoting* a source-supported Lead; the
+    // published release declares no symmetric promotion policy, and this object
+    // is the executable echo of that release, not a place to extend it. Minting
+    // a Canonical-looking policy value here is exactly the implementation
+    // defining Canonical in reverse that section 0 forbids, and the migration
+    // invariant in studio/tests/bootstrap.test.mjs fails closed on it.
+    //
+    // The Lead Promotion Gate itself is unaffected and remains required. It is
+    // an IMPLEMENTER signal -- `STUDIO_IMPLEMENTATION.leadPromotionGate` and
+    // `LEAD_PROMOTION_GATE_PENDING` below -- implementing the traceability the
+    // published rules already require: MASTER_RULES 3 makes other-track-to-T1
+    // promotions enumerable in the baseline and forbids a silent role move, and
+    // ACCEPTANCE_CRITERIA Gate 2 requires every role move to be explainable.
     preserveSourceRoleUntilResolved: true,
     samePitchOverlapIsReviewNotAutoDelete: true,
     lowMidM2M7IsReviewNotAutoDelete: true,

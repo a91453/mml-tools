@@ -41,9 +41,13 @@ test('arrangement contract preserves mandatory baseline, Core3 and evidence-firs
   assert.match(EFFECTIVE_RULESET.arrangement.core3Meaning.Chord2, /Essential Inner/i);
   assert.equal(EFFECTIVE_RULESET.arrangement.leadIsNotVocalOnly, true);
   assert.equal(EFFECTIVE_RULESET.arrangement.leadDemotionRequiresPositiveEvidence, true);
-  assert.equal(EFFECTIVE_RULESET.arrangement.leadPromotionRequiresPositiveEvidence, true);
   assert.equal(EFFECTIVE_RULESET.arrangement.unresolvedLeadDemotion, 'FAIL_OR_PENDING');
-  assert.equal(EFFECTIVE_RULESET.arrangement.unresolvedLeadPromotion, 'FAIL_OR_PENDING');
+  // And no promotion counterpart: the published release states the positive-
+  // evidence requirement for demotion only, so declaring a symmetric promotion
+  // policy here would be this contract inventing a Canonical rule. The Lead
+  // Promotion Gate is an IMPLEMENTER signal instead, asserted below.
+  assert.equal('leadPromotionRequiresPositiveEvidence' in EFFECTIVE_RULESET.arrangement, false);
+  assert.equal('unresolvedLeadPromotion' in EFFECTIVE_RULESET.arrangement, false);
   assert.equal(EFFECTIVE_RULESET.arrangement.full6MustNotReduceCore3Completeness, true);
   assert.equal(EFFECTIVE_RULESET.arrangement.samePitchOverlapIsReviewNotAutoDelete, true);
   assert.equal(EFFECTIVE_RULESET.arrangement.simultaneousAttackDensityIsReviewNotAutoDelete, true);
