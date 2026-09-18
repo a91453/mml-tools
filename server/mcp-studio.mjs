@@ -1,6 +1,6 @@
 // The `studio_*` MCP control surface.
 //
-// Status: IMPLEMENTATION NOTES. Fourteen high-level tools over the Studio
+// Status: IMPLEMENTATION NOTES. High-level tools over the Studio
 // Application Service. Deliberately not one tool per backend function: a model
 // should reason about a project, its sources, a suggestion, a decision set, a
 // review and a Final artifact — not about `midi-file.mjs`, `role-candidates.mjs`,
@@ -56,6 +56,19 @@ const CONFIRMATIONS_DESCRIPTION = 'source_complete／version_drift_reviewed／pl
   + 'player_readback 為 PASS、NOT_RUN 或 N/A（未使用預覽／驗證素材時，附理由）；PASS 可附 mml_sha256 綁定實際回讀的 MML。'
   + 'source_complete 與 original_audio_required 綁定於 baseline，同一個 baseline 上的每個候選都持續有效；其餘五項綁定於本候選，換候選即失效並回報為 stale。'
   + 'in_game 無法由此設定。';
+
+const runId = { type: 'string', minLength: 36, maxLength: 36, description: '本服務發出的 run_id（run_ 開頭）。run 身分是 workflow instance，不是 baseline、候選或 artifact 的身分。' };
+const runIdempotencyKey = { type: 'string', minLength: 1, maxLength: 200, description: 'owner／專案／操作範圍內的 idempotency key，綁定於正規化後的請求指紋。同 key 同 payload 不重做；同 key 不同 payload 直接拒絕。' };
+const runAssetIds = { type: 'array', minItems: 1, maxItems: 64, items: { type: 'string', minLength: 36, maxLength: 36 }, description: '明確選定參與本次 run 的符號來源素材。省略時使用專案中所有符號來源。原曲音訊是證據，不是符號來源：本服務不做 audio-to-MIDI、不做分軌、不做人聲分離、不做音高轉譜。' };
+const runMeterText = { type: 'string', minLength: 1, maxLength: 2048, description: '來源確認的拍號圖，MML 來源才需要。未知時先詢問，不可假定。' };
+const runDecisions = { type: 'array', minItems: 1, maxItems: 500, items: structuredPayload(), description: '明確接受的編排決定，內容與 studio_decisions_apply 相同。建議不是接受：沒有這一欄時 run 會停在 awaiting_review，不會自行解決任何 PENDING。' };
+const runAcceptedBy = { type: 'string', minLength: 1, maxLength: 120, description: '審查者識別字串。這是呼叫端填寫的文字，會與實際通過驗證的 owner 身分分開記錄，本身不構成任何人已審查的證據。' };
+
+const RUN_REDUCTION_DESCRIPTION = '明確接受的 G12 收斂：decisions（至少一筆）、expected_plan_id（來自唯讀 plan）、accepted_by，以及選填且僅供診斷的 instrument_profile。'
+  + '省略時 run 只會產生唯讀 plan：若 ledger 顯示每個來源事件都已保留且沒有 blocker，就跳過且不產生 no-op 版本；否則停在 REDUCTION_DECISIONS_REQUIRED，附上 plan.id、未保留事件與原始 warning。OVERFLOW／PENDING 一律保留，字數不足不是刪音理由。';
+const RUN_ADAPTATION_DESCRIPTION = '明確接受的 Mobile 適配：profile（schema=mml-studio/mobile-adaptation-profile@1，需真實提供且附 reason／evidence）、expected_plan_id、accepted_by。'
+  + '省略時完全不做適配、不產生版本——但「沒做變更」不等於 Gate 8 通過，Gate 8 審查仍然必須另外提供。本服務不自造樂器音域或音量。';
+const RUN_FINALIZE_DESCRIPTION = 'finalize 選項：technical_timing_repair（明確 opt-in，預設 false，沒有自動模式）、pickup、final_partial（來源確認的弱起拍與末小節拍長，不會自行推測）。';
 
 export const STUDIO_MCP_TOOLS = [
   {
@@ -289,6 +302,105 @@ export const STUDIO_MCP_TOOLS = [
     annotations: writes,
   },
   {
+    name: 'studio_run_plan',
+    title: '一鍵流程規劃（唯讀）',
+    description: '唯讀規劃：回報這個專案接下來會走哪些既有步驟、哪些結果已經存在、哪些步驟需要你補資料或審查，以及有哪些能力／環境阻擋。'
+      + '本工具不建立 run、不建立 baseline、不寫 suggestion 快取、不產生候選、不套用任何決定，也不寫入任何紀錄；需要分析才知道的事會標成「需要 intake／suggestion」，不會為了產生計畫而先執行寫入。'
+      + 'run 狀態是實作進度，不是 Canonical 判定：completed 不等於 TECHNICAL_PASS、SOURCE_PASS、VALIDATED 或 IN_GAME_ACCEPTED。',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        project_id: projectId,
+        asset_ids: runAssetIds,
+        meter_text: runMeterText,
+        target_candidate_id: candidateId,
+        decisions: runDecisions,
+        accepted_by: runAcceptedBy,
+        final_reduction: structuredPayload(RUN_REDUCTION_DESCRIPTION),
+        mobile_adaptation: structuredPayload(RUN_ADAPTATION_DESCRIPTION),
+        confirmations: structuredPayload(CONFIRMATIONS_DESCRIPTION),
+        finalize: structuredPayload(RUN_FINALIZE_DESCRIPTION),
+      },
+      required: ['project_id'],
+      additionalProperties: false,
+    },
+    annotations: readOnly,
+  },
+  {
+    name: 'studio_run_start',
+    title: '啟動一鍵流程',
+    description: '建立一個 run，並執行目前輸入已經允許的有限步驟：既有來源匯入 → 角色建議 → 已明確接受的決定套用 → G12 六角色收斂 → Mobile 適配 → 候選審查 → finalize → run report。'
+      + '缺少已接受的決定、已接受的 plan、Mobile profile 或審查證據時，會停在對應位置並回傳可操作的 review request；建議不會被當成接受，PENDING 不會被改成 KEEP／OMIT／PASS，沒有資料也不會被寫成 N/A 或 not-required。'
+      + '執行模式是 bounded synchronous advancement：呼叫回傳後就沒有任何東西在背景執行，要繼續必須明確呼叫 studio_run_resume。'
+      + 'idempotency_key 由服務強制：同 key 同 payload 回傳同一個 run，不重複套用、不升版本、不重複產生 artifact；同 key 不同 payload 直接拒絕。'
+      + '套用成功不代表任何 Gate 通過，最終 in_game 仍為 PENDING。',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        project_id: projectId,
+        idempotency_key: runIdempotencyKey,
+        asset_ids: runAssetIds,
+        meter_text: runMeterText,
+        target_candidate_id: candidateId,
+        decisions: runDecisions,
+        accepted_by: runAcceptedBy,
+        final_reduction: structuredPayload(RUN_REDUCTION_DESCRIPTION),
+        mobile_adaptation: structuredPayload(RUN_ADAPTATION_DESCRIPTION),
+        confirmations: structuredPayload(CONFIRMATIONS_DESCRIPTION),
+        finalize: structuredPayload(RUN_FINALIZE_DESCRIPTION),
+      },
+      required: ['project_id'],
+      additionalProperties: false,
+    },
+    annotations: writes,
+  },
+  {
+    name: 'studio_run_status',
+    title: '一鍵流程狀態（唯讀）',
+    description: '唯讀查詢 run 的狀態、進度、每一步的 receipt、原始 blocker code、review requests、候選與 artifact 身分，以及 Canonical 與實作兩份分開的 provenance。'
+      + '省略 run_id 時回傳本專案的 run 摘要清單。本工具不寫入任何東西、不重跑 review、不推進 run。'
+      + '另外回報便宜可查的 staleness：來源 bytes、選定素材、baseline、候選或 rules snapshot 變了就會標出來，續跑時舊的核准不會被沿用。',
+    inputSchema: {
+      type: 'object',
+      properties: { project_id: projectId, run_id: runId },
+      required: ['project_id'],
+      additionalProperties: false,
+    },
+    annotations: readOnly,
+  },
+  {
+    name: 'studio_run_resume',
+    title: '續跑一鍵流程',
+    description: '在明確補上新的輸入、決定或證據之後，重新檢查每一個綁定並續跑同一個 run。'
+      + '每一步都會重新讀取實際狀態：來源 bytes、選定素材、baseline、候選、已接受決定、profile、plan 或 rules snapshot 有相關變動時就停住並回報，不會沿用已經不成立的核准或 PASS。'
+      + '正常補證據（Gate 4／8／9 審查、Core3 核准、Lead 證據、音訊報告）後可以對目前候選重新 review 並繼續，不會因為多了一筆證據就永久卡住。'
+      + 'expected_run_revision 提供樂觀併發：與目前 revision 不符時回傳 RUN_CONFLICT。'
+      + 'adopt_candidate_id 用來明確採用 run 之外的操作所產生的候選，會驗證 baseline 與 lineage；絕不自行挑時間最新的候選。'
+      + '若上次執行在 effect 與 receipt 之間中斷，而該 effect 無法用既有內容定址身分或已儲存的參照證明，run 會回報 interrupted／needs reconciliation 並指出未確認的步驟，不會盲目重放；確認狀態後以 reconcile=true 續跑。',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        project_id: projectId,
+        run_id: runId,
+        idempotency_key: runIdempotencyKey,
+        expected_run_revision: { type: 'integer', minimum: 1, maximum: 1000000, description: '上次讀到的 run revision；不符即拒絕，不覆蓋。' },
+        asset_ids: runAssetIds,
+        meter_text: runMeterText,
+        adopt_candidate_id: candidateId,
+        decisions: runDecisions,
+        accepted_by: runAcceptedBy,
+        final_reduction: structuredPayload(RUN_REDUCTION_DESCRIPTION),
+        mobile_adaptation: structuredPayload(RUN_ADAPTATION_DESCRIPTION),
+        confirmations: structuredPayload(CONFIRMATIONS_DESCRIPTION),
+        finalize: structuredPayload(RUN_FINALIZE_DESCRIPTION),
+        reconcile: { type: 'boolean', description: '明確宣告已確認中斷步驟的實際狀態，允許 run 繼續。預設 false。' },
+      },
+      required: ['project_id', 'run_id'],
+      additionalProperties: false,
+    },
+    annotations: writes,
+  },
+  {
     name: 'studio_job_status',
     title: '工作狀態',
     description: '以 job_id 查詢工作狀態與狀態轉換紀錄。本版本工作為同步執行，取得 job_id 時已是終態；能力查詢中的 background_execution 為 false。',
@@ -313,6 +425,22 @@ export const STUDIO_MCP_TOOLS = [
     annotations: readOnly,
   },
 ];
+
+// The run input, as the Application Service already spells it.
+//
+// A projection, not a translation: every field below is passed through under
+// the same name the service validates, and `project_id`/`run_id` are dropped
+// because they are the addressing, not the request. The service refuses an
+// unknown field, so a misspelling is reported rather than silently ignored --
+// which is the whole point, since a dropped `final_reduction` would otherwise
+// look like a caller that accepted no reduction.
+const RUN_INPUT_FIELDS = [
+  'idempotency_key', 'expected_run_revision', 'asset_ids', 'meter_text',
+  'target_candidate_id', 'adopt_candidate_id', 'decisions', 'accepted_by',
+  'final_reduction', 'mobile_adaptation', 'confirmations', 'finalize', 'reconcile',
+];
+
+const runInput = args => Object.fromEntries(RUN_INPUT_FIELDS.filter(name => args[name] !== undefined).map(name => [name, args[name]]));
 
 /**
  * Dispatch one `studio_*` tool to the Application Service.
@@ -373,6 +501,14 @@ export async function runStudioTool(name, args, { application, owner }) {
         pickup: args.pickup ?? null,
         finalPartial: args.final_partial ?? null,
       });
+    case 'studio_run_plan':
+      return application.planRun(owner, args.project_id, runInput(args));
+    case 'studio_run_start':
+      return application.startRun(owner, args.project_id, runInput(args));
+    case 'studio_run_status':
+      return application.getRun(owner, args.project_id, args.run_id ?? null);
+    case 'studio_run_resume':
+      return application.resumeRun(owner, args.project_id, args.run_id, runInput(args));
     case 'studio_job_status':
       return application.getJob(owner, args.job_id);
     case 'studio_artifact_get':

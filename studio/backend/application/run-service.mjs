@@ -708,11 +708,16 @@ export function createRunService({ canonical, projects, store, operations, seria
       candidateId: run.candidate_id,
       eventIds: undecided.map(item => item.baselineEventId),
       roles: undecided.map(item => item.currentRole ?? item.baselineRole),
-      missing: ['Explicitly accepted, event-level reduction decisions for the material the ledger does not simply retain. OVERFLOW and PENDING material stays retained and visible; a per-role character limit is never a reason to delete it, and unmapped General MIDI percussion is never assigned to a pitched role.'],
+      missing: [
+        'Explicitly accepted, event-level reduction decisions for the material the ledger does not simply retain. OVERFLOW and PENDING material stays retained and visible; a per-role character limit is never a reason to delete it, and unmapped General MIDI percussion is never assigned to a pitched role.',
+        'analysis_plan_id below is the id of this decision-free analysis plan and is NOT the expected_plan_id to resume with. A reduction plan id is bound to its decision set and its reviewer, so derive the plan again through planFinalReduction with the decisions and the accepted_by you intend to apply, and resume with that id.',
+      ],
       availableOperations: ['planFinalReduction', 'applyFinalReduction'],
       invalidatedBy: ['candidate', 'canonical', 'plan'],
       detail: {
-        plan_id: plan.id,
+        analysis_plan_id: plan.id,
+        analysis_plan_decision_count: (plan.decisions ?? []).length,
+        plan_accepted_by: plan.acceptedBy ?? null,
         accounting: summarizeAccounting(plan.accounting ?? {}),
         outcomes: undecided.reduce((counts, item) => ({ ...counts, [item.outcome]: (counts[item.outcome] ?? 0) + 1 }), {}),
         reason_codes: [...new Set(undecided.map(item => item.reasonCode).filter(Boolean))].slice(0, LIMITS.maxReviewRequestEventIds),
@@ -925,11 +930,21 @@ export function createRunService({ canonical, projects, store, operations, seria
       });
     }
     // Read-only first, always. The plan is what says whether a reduction
-    // decision is needed at all, and it is the plan id an apply has to name.
+    // decision is needed at all, and what the ledger cannot retain without one.
+    //
+    // It is NOT the id an apply names, and the review request is careful to say
+    // so. A reduction plan's identity is bound to its decision set and its
+    // reviewer by the reduction stage's own rule, so the plan derived here with
+    // no decisions has a different id from the plan derived with the decisions a
+    // reviewer goes on to accept. Presenting the analysis plan's id as the one
+    // to accept would hand every caller STALE_FINAL_REDUCTION_PLAN with no
+    // explanation. The reviewer is still carried through so the analysis and
+    // the eventual acceptance are at least derived for the same person.
+    const previewReviewer = normalized.final_reduction?.accepted_by ?? normalized.accepted_by ?? null;
     const preview = await operations.planFinalReduction(owner, projectId, {
       candidateId: run.candidate_id,
       decisions: normalized.final_reduction?.decisions ?? [],
-      acceptedBy: normalized.final_reduction?.accepted_by ?? null,
+      acceptedBy: previewReviewer,
       instrumentProfile: normalized.final_reduction?.instrument_profile ?? null,
     });
     const plan = preview.reduction.plan;
@@ -1093,7 +1108,10 @@ export function createRunService({ canonical, projects, store, operations, seria
             baselineId: run.baseline_id,
             candidateId: parent,
             eventIds: (adaptation.blockers ?? []).flatMap(entry => entry.eventIds ?? (entry.eventId ? [entry.eventId] : [])),
-            missing: ['The adaptation was refused by the adaptation stage. A refusal naming a Lead-bound event is the existing prohibition on re-pitching or re-voicing material a Lead evidence record still binds — including a Melody assigned from a role-less Source-Faithful Baseline. It is answered through the Lead evidence path, never by clearing the evidence, changing the baseline role, copying an older PASS or relaxing the profile.'],
+            missing: [
+              'The adaptation was refused by the adaptation stage. A refusal naming a Lead-bound event is the existing prohibition on re-pitching or re-voicing material a Lead evidence record still binds — including a Melody assigned from a role-less Source-Faithful Baseline. It is answered through the Lead evidence path, never by clearing the evidence, changing the baseline role, copying an older PASS or relaxing the profile.',
+              'A stale plan id means the plan inputs moved — most often because the profile changed — so the plan must be re-previewed and re-accepted before it can be applied.',
+            ],
             availableOperations: ['planMobileAdaptation', 'applyMobileAdaptation', 'reviewLeadEvidence', 'listBaselineEvents'],
             invalidatedBy: ['candidate', 'canonical', 'plan'],
             detail: { status: adaptation.status, expected_plan_id: normalized.mobile_adaptation.expected_plan_id, observed_plan_id: adaptation.plan?.id ?? null },

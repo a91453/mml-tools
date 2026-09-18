@@ -129,6 +129,10 @@ export function buildCapabilities({ canonical, storage, jobs, transports = [] })
       background_execution: false,
       automatic_continuation: false,
       cancellation: false,
+      // The existing deployment runs one process. Nothing here has been shown
+      // to be safe across processes or workers, so it is reported as absent
+      // rather than left for a reader to assume from the per-project lock.
+      cross_process_run_coordination: false,
       max_runs_per_project: LIMITS.maxRunsPerProject,
       max_steps_per_advance: LIMITS.maxRunStepsPerAdvance,
       idempotency: freeze({

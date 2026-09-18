@@ -140,6 +140,10 @@ test('every studio MCP tool dispatches to an operation the Application Service a
     studio_finalize: 'finalize',
     studio_job_status: 'getJob',
     studio_artifact_get: 'getArtifact',
+    studio_run_plan: 'planRun',
+    studio_run_start: 'startRun',
+    studio_run_status: 'getRun',
+    studio_run_resume: 'resumeRun',
   };
   for (const tool of STUDIO_MCP_TOOLS) {
     const operation = operations[tool.name];
@@ -165,6 +169,7 @@ test('every advertised studio tool is dispatchable, not just advertised', async 
     candidate_id: 'g11d:rev:0000000000000000',
     job_id: 'job_00000000000000000000000000000000',
     artifact_id: 'art_00000000000000000000000000000000',
+    run_id: 'run_00000000000000000000000000000000',
     approval: {},
     review: {},
     report: {},
