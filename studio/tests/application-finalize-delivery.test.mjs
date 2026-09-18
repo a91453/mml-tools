@@ -33,6 +33,7 @@ const CONFIRMATIONS = Object.freeze({
   source_complete: { value: true, reason: 'The fixture is the complete material.' },
   player_readback: { value: 'N/A', reason: 'No preview or verification assets are used for this cue.' },
   mobile_adaptation_reviewed: { value: true, reason: 'The fixture candidate was reviewed against Gate 8 and needs no additional Mobile adaptation.', evidence: ['fixture Gate 8 review'] },
+  regression_reviewed: { value: true, reason: 'The fixture candidate was reviewed against Gate 9.', evidence: ['fixture Gate 9 review'] },
   original_audio_required: { value: false, reason: 'The fixture workflow has no recording.' },
 });
 
@@ -158,7 +159,7 @@ test('source completeness cannot be confirmed for a baseline that reports its ow
   assert.equal(recorded.confirmations.source_complete.value, false, 'stating the incompleteness is still allowed');
 
   const candidateId = (await service.applyDecisions(OWNER, projectId, { decisions: keepEveryRole(incomplete) })).decisions.candidate_id;
-  const result = await service.finalize(OWNER, projectId, { candidateId, confirmations: { player_readback: CONFIRMATIONS.player_readback, original_audio_required: CONFIRMATIONS.original_audio_required } });
+  const result = await service.finalize(OWNER, projectId, { candidateId, confirmations: { player_readback: CONFIRMATIONS.player_readback, mobile_adaptation_reviewed: CONFIRMATIONS.mobile_adaptation_reviewed, regression_reviewed: CONFIRMATIONS.regression_reviewed, original_audio_required: CONFIRMATIONS.original_audio_required } });
   assert.equal(result.operation, 'blocked');
   assert.ok(result.blockers.includes('source'));
   assert.equal(result.artifact_id, null);
