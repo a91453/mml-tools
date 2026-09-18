@@ -495,6 +495,40 @@ test('Gate 8 blocks Final until an evidence-backed candidate review is recorded'
   assert.equal(passed.gates.mobile_adaptation, 'PASS');
 });
 
+test('Gate 9 blocks Final until an evidence-backed candidate regression review is recorded', async () => {
+  const service = app();
+  const run = await applyKeepOnlyCandidate(service, OWNER);
+  const withoutRegression = {
+    source_complete: fullConfirmations.source_complete,
+    player_readback: fullConfirmations.player_readback,
+    mobile_adaptation_reviewed: fullConfirmations.mobile_adaptation_reviewed,
+    original_audio_required: fullConfirmations.original_audio_required,
+  };
+  const blocked = await service.finalize(OWNER, run.projectId, {
+    candidateId: run.candidateId,
+    confirmations: withoutRegression,
+  });
+  assert.equal(blocked.operation, 'blocked');
+  assert.equal(blocked.gates.regression, 'PENDING');
+  assert.ok(blocked.blockers.includes('regression'));
+  assert.equal(blocked.mml, null);
+  assert.equal(blocked.artifact_id, null);
+
+  await rejects(service.finalize(OWNER, run.projectId, {
+    candidateId: run.candidateId,
+    confirmations: {
+      regression_reviewed: { value: true, reason: 'Claimed reviewed, but no evidence was supplied.' },
+    },
+  }), ERROR_CODES.INVALID_REQUEST);
+
+  const passed = await service.finalize(OWNER, run.projectId, {
+    candidateId: run.candidateId,
+    confirmations: fullConfirmations,
+  });
+  assert.equal(passed.operation, 'succeeded');
+  assert.equal(passed.gates.regression, 'PASS');
+});
+
 test('operation status and Canonical gates are separate fields', async () => {
   const service = app();
   const run = await applyKeepOnlyCandidate(service, OWNER);
