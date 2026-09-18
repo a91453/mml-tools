@@ -192,6 +192,7 @@ function readiness(project, overrides = {}) {
     playerReadback: 'PASS',
     originalAudioRequired: true,
     mobileAdaptation: 'PASS',
+    regressionReviewed: true,
     inGameAcceptance: 'PENDING',
     ...overrides,
   });
@@ -814,6 +815,7 @@ test('C2B a micro-timing analysis that cannot run fails closed as PENDING', () =
     playerReadback: 'PASS',
     originalAudioRequired: false,
     mobileAdaptation: 'PASS',
+    regressionReviewed: true,
   });
   assert.equal(result.gates.microTiming.status, 'PENDING');
   assert.deepEqual(result.gates.microTiming.blockers, ['MICRO_TIMING_ANALYSIS_FAILED']);
