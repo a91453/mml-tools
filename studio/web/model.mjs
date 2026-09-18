@@ -426,6 +426,10 @@ function analysisContext(w) {
   const readiness = evaluateProjectReadiness({ project, mmlValidation: technical, core3Report: core3, harmonyReport: harmony, leadDemotionReports: leadReports, lineageReport: lineage, versionDriftReviewed: reviewed(w, 'version'), originalAudioRequired: audioRequired, playerReadback: w.settings.preview === 'none' && reviewed(w, 'tempo') ? 'N/A' : 'PENDING', mobileAdaptation: reviewed(w, 'adaptation') ? 'PASS' : 'PENDING', regressionReviewed: reviewed(w, 'regression') });
   const gates = { ...readiness.gates };
   delete gates.inGameAcceptance;
+  // The shared readiness name is `mobileAdaptation`; the Web UI's long-lived
+  // public review name is `adaptation`. Present exactly one blocker here while
+  // keeping the full shared verdict intact on `readiness.gates`.
+  delete gates.mobileAdaptation;
   gates.intake = text(w.title) && text(w.settings.recording) && finiteNumber(w.settings.offset) && finiteNumber(w.settings.end) && Number(w.settings.offset) >= 0 && Number(w.settings.end) > Number(w.settings.offset)
     ? pass('VERSION_AND_RANGE_RECORDED') : pending('RECORDING_VERSION_AND_RANGE_REQUIRED');
   gates.source = hasUnsupported(asset) || hasUnsupported(w.assets.baseline) ? { status: asset.unsupported?.length || w.assets.baseline?.unsupported?.length ? 'UNSUPPORTED' : 'PENDING', reason: 'SOURCE_INCOMPLETE_OR_UNSUPPORTED' } : reviewGate(w, 'source');
