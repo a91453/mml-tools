@@ -178,6 +178,17 @@ function versionGate(lineageReport, reviewed) {
   return gate('PASS', { divergenceIncreased: lineageReport.divergenceIncreased ?? null, reviewed: Boolean(reviewed) });
 }
 
+function mobileAdaptationGate(value) {
+  const status = normalizeStatus(value, 'PENDING');
+  // ACCEPTANCE_CRITERIA Gate 8 is required for every Final candidate. "No
+  // adaptation was needed" is still a reviewed PASS, not N/A: the reviewer has
+  // established that the candidate needs no Mobile-specific transformation.
+  if (status === 'N/A' || status === 'NOT_RUN') {
+    return gate('PENDING', { blockers: ['MOBILE_ADAPTATION_REVIEW_REQUIRED'], reportedStatus: status });
+  }
+  return gate(status, status === 'PENDING' ? { blockers: ['MOBILE_ADAPTATION_REVIEW_REQUIRED'] } : {});
+}
+
 export function evaluateProjectReadiness({
   project,
   mmlValidation,
@@ -189,6 +200,7 @@ export function evaluateProjectReadiness({
   versionDriftReviewed = false,
   playerReadback = 'NOT_RUN',
   originalAudioRequired = true,
+  mobileAdaptation = 'PENDING',
   inGameAcceptance = 'PENDING',
 }) {
   if (!project || typeof project !== 'object') throw Error('Canonical project is required');
@@ -229,6 +241,7 @@ export function evaluateProjectReadiness({
     versionDrift: versionGate(lineageReport, versionDriftReviewed),
     originalAudio: audioGate(project, originalAudioRequired),
     playerReadback: gate(normalizeStatus(playerReadback, 'NOT_RUN')),
+    mobileAdaptation: mobileAdaptationGate(mobileAdaptation),
     inGameAcceptance: gate(normalizeStatus(inGameAcceptance, 'PENDING')),
     pendingDecisions: pendingDecisions.length
       ? gate('PENDING', { decisionIds: pendingDecisions.map(decision => decision.id) })
@@ -248,6 +261,7 @@ export function evaluateProjectReadiness({
     'versionDrift',
     'originalAudio',
     'playerReadback',
+    'mobileAdaptation',
     'pendingDecisions',
   ];
   const preGameBlocking = preGameGateNames.filter(name => !PASS_LIKE.has(gates[name].status));
@@ -259,6 +273,6 @@ export function evaluateProjectReadiness({
     finalAccepted,
     preGameBlocking: Object.freeze(preGameBlocking),
     gates,
-    notice: 'Module availability never certifies a song. Candidate readiness requires source completeness plus a real Source-Faithful Baseline snapshot whose event-level diff is computed against the candidate, evidence-backed review of any Lead removals/demotions and Lead additions/promotions, a source-aware micro-timing result with no confirmed technical residue and no unresolved sub-grid interval, and audio/arbitration/technical/player evidence. finalAccepted additionally requires in-game acceptance.',
+    notice: 'Module availability never certifies a song. Candidate readiness requires source completeness plus a real Source-Faithful Baseline snapshot whose event-level diff is computed against the candidate, evidence-backed review of any Lead removals/demotions and Lead additions/promotions, a source-aware micro-timing result with no confirmed technical residue and no unresolved sub-grid interval, and audio/arbitration/technical/player evidence plus an explicit evidence-backed Mobile adaptation review. finalAccepted additionally requires in-game acceptance.',
   });
 }
