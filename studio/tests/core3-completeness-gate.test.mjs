@@ -503,3 +503,138 @@ test('Studio Web blocks on the same Gate 4 gate and on its own Core3 review', as
   const after = analyzeWorkspace(recordReview(workspace, 'core3', 'Core3 單人完整性已審核：來源為單線，這是其完整實現。', 'fixture:score whole piece'));
   assert.equal(after.gates.core3Completeness.status, 'PASS');
 });
+
+// ─── the Gate 4 review must carry evidence, on every plane ──────────────────
+
+/** A project whose candidate keeps only the roles `keep` names, unchanged. */
+async function candidateWithRoles(service, title, keep) {
+  const fixture = sixRoleBaseline();
+  const created = (await service.createProject(OWNER, { title })).project;
+  const source = createCanonicalProject({
+    ...fixture,
+    events: fixture.events.filter(event => event.kind !== 'note' || keep.includes(event.role)),
+  });
+  await service.uploadAsset(OWNER, created.project_id, {
+    kind: 'canonical_project', filename: 'baseline.json', mediaType: 'application/json',
+    bytes: new TextEncoder().encode(JSON.stringify(source)),
+  });
+  await service.analyzeSources(OWNER, created.project_id);
+  const applied = await service.applyDecisions(OWNER, created.project_id, {
+    decisions: keep.map(role => ({
+      id: `keep:${role}`,
+      type: 'KEEP',
+      target: { eventIds: source.events.filter(event => event.kind === 'note' && event.role === role).map(event => event.id) },
+      fromRole: role,
+      reason: 'Reviewed: the source is carried unchanged.',
+      evidence: ['fixture:source'],
+      acceptedBy: 'reviewer:test',
+    })),
+  });
+  return { projectId: created.project_id, candidateId: applied.decisions.candidate_id };
+}
+
+test('core3_completeness_reviewed: true without evidence is refused', async () => {
+  const service = createStudioApplication();
+  const { projectId, candidateId } = await candidateWithRoles(service, 'Gate 4 evidence', ['Melody']);
+
+  // A reason string is not a review. Studio Web already requires a note and
+  // evidence for the same review, so accepting less here would be a parity hole
+  // an Agent/Application caller could walk through.
+  for (const confirmation of [
+    { value: true, reason: 'Reviewed; the reduced Core3 is complete for this source.', candidate_id: candidateId },
+    { value: true, reason: 'Reviewed.', evidence: [], candidate_id: candidateId },
+  ]) {
+    await assert.rejects(
+      () => service.recordConfirmations(OWNER, projectId, { core3_completeness_reviewed: confirmation }),
+      error => error.code === ERROR_CODES.INVALID_REQUEST,
+    );
+  }
+
+  // The refusal is the same one Gate 8 and Gate 9 already give.
+  for (const name of ['mobile_adaptation_reviewed', 'regression_reviewed']) {
+    await assert.rejects(
+      () => service.recordConfirmations(OWNER, projectId, { [name]: { value: true, reason: 'Reviewed.', candidate_id: candidateId } }),
+      error => error.code === ERROR_CODES.INVALID_REQUEST,
+      name,
+    );
+  }
+});
+
+test('a refused reason-only confirmation leaves the Core3 completeness gate PENDING', async () => {
+  const service = createStudioApplication();
+  const { projectId, candidateId } = await candidateWithRoles(service, 'Gate 4 reason only', ['Melody']);
+
+  const before = (await service.reviewCandidate(OWNER, projectId, { candidateId })).review;
+  assert.equal(before.core3_completeness.status, 'PENDING');
+
+  await assert.rejects(
+    () => service.recordConfirmations(OWNER, projectId, { core3_completeness_reviewed: { value: true, reason: 'looks fine', candidate_id: candidateId } }),
+    error => error.code === ERROR_CODES.INVALID_REQUEST,
+  );
+
+  // Nothing was recorded, so nothing was cleared -- and Finalize still refuses.
+  const after = (await service.reviewCandidate(OWNER, projectId, { candidateId })).review;
+  assert.equal(after.core3_completeness.reviewed, false);
+  assert.equal(after.core3_completeness.status, 'PENDING');
+  assert.ok(after.blockers.includes('core3Completeness'));
+  assert.ok((await service.finalize(OWNER, projectId, { candidateId })).blockers.includes('core3Completeness'));
+});
+
+test('an evidence-backed candidate-bound review clears the reviewable residue and nothing else', async () => {
+  const service = createStudioApplication();
+  const { projectId, candidateId } = await candidateWithRoles(service, 'Gate 4 evidenced', ['Melody', 'Chord1']);
+
+  const before = (await service.reviewCandidate(OWNER, projectId, { candidateId })).review;
+  assert.equal(before.core3_completeness.status, 'PENDING', 'the source carries no bass, which only a reviewer can speak to');
+  assert.equal(before.core3_completeness.reviewable, true);
+
+  await service.recordConfirmations(OWNER, projectId, {
+    core3_completeness_reviewed: {
+      value: true,
+      reason: 'Gate 4 reviewed: this source carries no bass line and the reduced Core3 is its complete realization.',
+      evidence: ['fixture:score whole piece'],
+      candidate_id: candidateId,
+    },
+  });
+
+  const after = (await service.reviewCandidate(OWNER, projectId, { candidateId })).review;
+  assert.equal(after.core3_completeness.status, 'PASS');
+  assert.equal(after.core3_completeness.reviewed, true);
+  assert.equal(after.blockers.includes('core3Completeness'), false);
+
+  // It answered Gate 4 and nothing else: the other required gates are untouched.
+  for (const gate of ['source', 'mobile_adaptation', 'regression']) {
+    assert.notEqual(after.gates[gate], 'PASS', `${gate} must not ride on the Core3 review`);
+  }
+});
+
+test('an absent Lead stays FAIL however much review evidence is recorded', async () => {
+  const service = createStudioApplication();
+  // A candidate with Chord1 and Chord2 but no Melody at all.
+  const { projectId, candidateId } = await candidateWithRoles(service, 'Gate 4 leadless', ['Chord1', 'Chord2']);
+
+  const before = (await service.reviewCandidate(OWNER, projectId, { candidateId })).review;
+  assert.equal(before.core3_completeness.status, 'FAIL');
+  assert.ok(before.core3_completeness.absentFunctions.includes('lead-continuity'));
+  assert.equal(before.core3_completeness.reviewable, false);
+
+  // The confirmation is well formed and carries evidence, so it records...
+  await service.recordConfirmations(OWNER, projectId, {
+    core3_completeness_reviewed: {
+      value: true,
+      reason: 'Reviewed: asserting this leadless arrangement is complete.',
+      evidence: ['fixture:score whole piece'],
+      candidate_id: candidateId,
+    },
+  });
+
+  // ...and the gate still FAILs, because a reviewer cannot supply a Lead by
+  // confirming one. This is a statement about the arrangement, not a gap in the
+  // evidence.
+  const after = (await service.reviewCandidate(OWNER, projectId, { candidateId })).review;
+  assert.equal(after.core3_completeness.reviewed, true, 'the review was recorded');
+  assert.equal(after.core3_completeness.status, 'FAIL');
+  assert.deepEqual([...after.core3_completeness.blockers], [CORE3_COMPLETENESS_BLOCKERS.INCOMPLETE]);
+  assert.ok(after.blockers.includes('core3Completeness'));
+  assert.ok((await service.finalize(OWNER, projectId, { candidateId })).blockers.includes('core3Completeness'));
+});

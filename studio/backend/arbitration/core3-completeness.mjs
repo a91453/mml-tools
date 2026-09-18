@@ -100,12 +100,27 @@ export const CORE3_COMPLETENESS_BLOCKERS = Object.freeze({
 /**
  * Grade the candidate's Core3 as a standalone three-role arrangement.
  *
- * `reviewed` is an explicit, candidate-bound, evidence-backed Gate 4 review. It
- * can only resolve the *unproven* residue; it never clears a proven-absent
- * function or an identity that depends on enrichment. It is deliberately not a
- * parameter a role decision, Lead evidence or a Lead promotion PASS can set:
- * those are different review axes and say nothing about whether Core3 stands up
- * on its own.
+ * `reviewed` is an explicit, candidate-bound, evidence-backed Gate 4 review, and
+ * what it can and cannot reach is exactly the PASS/FAIL/PENDING split above:
+ *
+ *   it may resolve   the reviewable unresolved residue -- a missing
+ *                    Chord1/Chord2 function, whose material the source may
+ *                    simply never have carried, and proven-essential material
+ *                    the delivered Core3 leaves in Chord3-Chord5
+ *   it cannot clear  an absent Lead
+ *   it cannot clear  the evaluator's own identity-depends-on-enrichment
+ *                    deficiency
+ *
+ * Those two are statements about the arrangement rather than gaps in the
+ * evidence, so the gate FAILs on them whatever a reviewer records. The residue
+ * is a question about this source that only a reviewer can answer, which is why
+ * it waits rather than failing.
+ *
+ * `reviewed` is deliberately not a parameter a role decision, Lead evidence or a
+ * Lead promotion PASS can set: those are different review axes and say nothing
+ * about whether Core3 stands up on its own. Its caller-side contract is equally
+ * deliberate -- `record()` refuses `core3_completeness_reviewed: true` without
+ * at least one evidence reference, so this flag cannot arrive from a bare claim.
  */
 export function evaluateCore3Completeness({ candidate, decompositions = null, reviewed = false } = {}) {
   if (!candidate?.events) throw Error('Core3 completeness requires a candidate Canonical project');

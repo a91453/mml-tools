@@ -82,6 +82,15 @@ const CONFIRMATION_SCOPE = Object.freeze({
   original_audio_required: 'baseline',
 });
 
+// Confirmations whose `true` is a reviewer's answer to a required gate, and the
+// gate each one answers. Recorded without evidence they would be a bare claim,
+// so `record()` refuses them.
+const EVIDENCE_REQUIRED_ON_TRUE = Object.freeze({
+  mobile_adaptation_reviewed: 'Gate 8',
+  regression_reviewed: 'Gate 9',
+  core3_completeness_reviewed: 'Gate 4 Core3 completeness',
+});
+
 const PLAYER_READBACK_VALUES = Object.freeze(['PASS', 'NOT_RUN', 'N/A']);
 const SHA256_HEX = /^[0-9a-f]{64}$/;
 
@@ -257,11 +266,17 @@ export function createReviewService({ canonical, projects, intake, arrangement, 
 
       if (input.value !== true && input.value !== false) fail(ERROR_CODES.INVALID_REQUEST, `confirmations.${name}.value must be true or false`);
       const evidence = normalizeEvidence(input.evidence);
-      if (name === 'mobile_adaptation_reviewed' && input.value === true && !evidence.length) {
-        fail(ERROR_CODES.INVALID_REQUEST, 'mobile_adaptation_reviewed PASS requires at least one evidence reference for the candidate-specific Gate 8 review.');
-      }
-      if (name === 'regression_reviewed' && input.value === true && !evidence.length) {
-        fail(ERROR_CODES.INVALID_REQUEST, 'regression_reviewed PASS requires at least one evidence reference for the candidate-specific Gate 9 review.');
+      // A candidate-specific gate review that carries no evidence is an
+      // assertion, not a review. Each of these three clears a required gate the
+      // modules deliberately leave PENDING until a human answers it, so a
+      // reason string on its own must not be enough -- and Studio Web already
+      // requires a note *and* evidence for the same three reviews, so anything
+      // less here would be a parity hole an Agent caller could walk through.
+      // Own keys only, as everywhere else a caller-supplied name indexes a
+      // table here: `constructor` resolves through the prototype and is truthy.
+      const gate = Object.hasOwn(EVIDENCE_REQUIRED_ON_TRUE, name) ? EVIDENCE_REQUIRED_ON_TRUE[name] : null;
+      if (gate && input.value === true && !evidence.length) {
+        fail(ERROR_CODES.INVALID_REQUEST, `${name} PASS requires at least one evidence reference for the candidate-specific ${gate} review.`);
       }
       // Source completeness cannot be asserted over a baseline whose own
       // adapters reported material they could not represent or inputs they
