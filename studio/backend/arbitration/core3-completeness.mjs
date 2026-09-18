@@ -43,6 +43,26 @@
 //     Chord2 is not read as a failure (that would be the density rule again)
 //     and not read as a pass either: it is unresolved until Gate 4 is answered.
 //
+// Why an absent Chord1/Chord2 function cannot be an automatic FAIL, even though
+// the underlying evaluator calls it INCOMPLETE
+// --------------------------------------------------------------------------
+// It is tempting to adopt the evaluator's own verdict wholesale and FAIL on its
+// `absentFunctions`. That does not work, because `absentFunctions` is derived
+// from the candidate's own lanes and cannot see whether the SOURCE carries
+// material for that function at all. Three sources produce an identical report
+// -- `INCOMPLETE`, `absentFunctions: ['bass-skeleton']`:
+//
+//   Melody + Chord1, source has no bass line      a legal reduced texture
+//   Melody alone, a solo line                     a legal reduced texture
+//   Melody + Chord1, bass left in Chord4          cleanup damage
+//
+// Failing on that signal would therefore reject the first two, which is exactly
+// "Chord1 and Chord2 must always contain notes". The third is real damage, and
+// it is caught where it can actually be proven: the source-continuity audit
+// reports the role move out of Core3, and the silence-gap test catches it here
+// whenever the material sounds while Core3 is silent. What is left over is a
+// question about this source that only a reviewer can answer, so it waits.
+//
 // What passes, fails and waits
 // ----------------------------
 //   PASS     the five functions are satisfied, or a reviewer answered Gate 4

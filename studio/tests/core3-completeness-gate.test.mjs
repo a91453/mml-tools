@@ -119,6 +119,41 @@ test('a complete Core3 passes Gate 4 without anyone reviewing it', () => {
   assert.equal(completeness.reviewed, false, 'nothing was reviewed away; the functions are satisfied');
 });
 
+test('the underlying evaluator cannot tell a reduced texture from dropped material, so absence waits', async () => {
+  // This is the fact the PENDING-for-an-absent-function choice rests on, and it
+  // is pinned because the opposite choice looks reasonable until you check.
+  // `absentFunctions` comes from the candidate's own lanes and cannot see
+  // whether the SOURCE ever carried material for that function. All three of
+  // these produce the same evaluator verdict:
+  const { suggestRoleCandidates } = await import('../backend/arrangement/role-candidates.mjs');
+  const sources = {
+    'source has no bass line': [...MELODY_ONLY, note({ id: 'h1', pitch: 64, start: 0, end: 4, role: 'Chord1' })],
+    'a solo line': MELODY_ONLY,
+    'bass exists but cleanup left it in Chord4': [
+      ...MELODY_ONLY,
+      note({ id: 'h1', pitch: 64, start: 0, end: 4, role: 'Chord1' }),
+      note({ id: 'b1', pitch: 48, start: 0, end: 4, role: 'Chord4' }),
+    ],
+  };
+  for (const [label, events] of Object.entries(sources)) {
+    const raw = suggestRoleCandidates(project('fixture:candidate', events)).core3;
+    assert.equal(raw.status, 'INCOMPLETE', label);
+    assert.ok(raw.absentFunctions.includes('bass-skeleton'), label);
+    assert.equal(raw.identityDependsOnEnrichment, false, label);
+  }
+
+  // Adopting that verdict wholesale would fail the first two, which is exactly
+  // "Chord1 and Chord2 must always contain notes". So this gate waits instead,
+  // and the third case is caught where it can be proven -- by the
+  // source-continuity audit, and by the silence-gap test whenever the material
+  // sounds while Core3 is silent.
+  for (const [label, events] of Object.entries(sources)) {
+    const report = evaluateCore3Completeness({ candidate: project('fixture:candidate', events) });
+    assert.equal(report.status, 'PENDING', label);
+    assert.equal(report.reviewable, true, label);
+  }
+});
+
 test('Gate 4 is not a track-density rule', () => {
   // A source that carries no bass material at all. An empty Chord2 here is a
   // legitimately reduced texture, not a deficiency, so it must not FAIL -- and

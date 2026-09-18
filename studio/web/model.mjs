@@ -468,8 +468,9 @@ function analysisContext(w) {
   const core3 = baseline ? evaluateCore3Continuity({ baseline, candidate, approvedChanges: (w.core3Approvals ?? []).filter(a => a.revision === w.revision) }) : pending('BASELINE_MISSING');
   // Gate 4's own question, beside the source-continuity audit above. The Web
   // `core3` review is the candidate-bound, evidence-backed reviewer judgement
-  // that can resolve the residue the evaluator could not prove; it can never
-  // clear a function proven absent.
+  // that resolves the residue the evaluator could not certify, a missing
+  // Chord1/Chord2 function included. It can never clear an absent Lead or a
+  // Core3 whose identity depends on enrichment: the gate FAILs on those.
   const core3Completeness = evaluateCore3Completeness({ candidate, reviewed: reviewed(w, 'core3') });
   const harmony = analyzeCrossSourceHarmony(project);
   // Stored Lead evidence is data. Each record is judged on every analysis by
