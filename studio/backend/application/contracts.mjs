@@ -39,10 +39,11 @@ export const ID_PREFIX = freeze({
   project: 'prj_',
   asset: 'ast_',
   job: 'job_',
+  run: 'run_',
   artifact: 'art_',
 });
 
-const OPAQUE_ID = /^(prj|ast|job)_[0-9a-f]{32}$/;
+const OPAQUE_ID = /^(prj|ast|job|run)_[0-9a-f]{32}$/;
 const ARTIFACT_ID = /^art_[0-9a-f]{64}$/;
 
 // Owned by `arrangement/decision-application.mjs`. Restated here as a
@@ -54,6 +55,7 @@ export const IDENTITY_MODEL = freeze({
   project_id: 'prj_<32 hex>, server-generated',
   asset_id: 'ast_<32 hex>, server-generated; never derived from the upload filename',
   job_id: 'job_<32 hex>, server-generated',
+  run_id: 'run_<32 hex>, server-generated; the identity of one workflow instance, never of a baseline, a candidate or an artifact',
   artifact_id: 'art_<sha256 of the artifact body>',
   baseline_id: 'bas:<baselineIdentityOf(project).contentDigest>, computed by the existing backend',
   candidate_id: 'g11d:rev:<sha256>, the existing G11-D revision id, used verbatim',
@@ -63,6 +65,7 @@ export const IDENTITY_MODEL = freeze({
 export const isProjectId = value => typeof value === 'string' && OPAQUE_ID.test(value) && value.startsWith(ID_PREFIX.project);
 export const isAssetId = value => typeof value === 'string' && OPAQUE_ID.test(value) && value.startsWith(ID_PREFIX.asset);
 export const isJobId = value => typeof value === 'string' && OPAQUE_ID.test(value) && value.startsWith(ID_PREFIX.job);
+export const isRunId = value => typeof value === 'string' && OPAQUE_ID.test(value) && value.startsWith(ID_PREFIX.run);
 export const isArtifactId = value => typeof value === 'string' && ARTIFACT_ID.test(value);
 export const isBaselineId = value => typeof value === 'string' && BASELINE_ID.test(value);
 export const isCandidateId = value => typeof value === 'string' && CANDIDATE_ID.test(value);
@@ -190,6 +193,20 @@ export const ERROR_CODES = freeze({
   SOURCE_INCOMPLETE: 'SOURCE_INCOMPLETE',
   JOB_NOT_FOUND: 'JOB_NOT_FOUND',
   JOB_FAILED: 'JOB_FAILED',
+  RUN_NOT_FOUND: 'RUN_NOT_FOUND',
+  // The caller's expected run revision is not the run's current revision, so
+  // the run moved under it. Distinct from an idempotency conflict: nothing
+  // about the request is malformed, the caller is simply not looking at the
+  // state it thought it was.
+  RUN_CONFLICT: 'RUN_CONFLICT',
+  // One idempotency key, two different request payloads. Refused rather than
+  // resolved in favour of either: the first request already bound the key, and
+  // overwriting its run would lose whatever the first payload produced.
+  IDEMPOTENCY_CONFLICT: 'IDEMPOTENCY_CONFLICT',
+  // A step's effect may or may not have been persisted before the process
+  // stopped, and no deterministic identity or stored reference settles it. The
+  // run reports exactly which step is unconfirmed instead of replaying it.
+  RUN_RECONCILIATION_REQUIRED: 'RUN_RECONCILIATION_REQUIRED',
   CANDIDATE_NOT_FOUND: 'CANDIDATE_NOT_FOUND',
   ARTIFACT_NOT_FOUND: 'ARTIFACT_NOT_FOUND',
   READINESS_BLOCKED: 'READINESS_BLOCKED',
@@ -216,6 +233,10 @@ export const ERROR_HTTP_STATUS = freeze({
   [ERROR_CODES.SOURCE_INCOMPLETE]: 422,
   [ERROR_CODES.JOB_NOT_FOUND]: 404,
   [ERROR_CODES.JOB_FAILED]: 422,
+  [ERROR_CODES.RUN_NOT_FOUND]: 404,
+  [ERROR_CODES.RUN_CONFLICT]: 409,
+  [ERROR_CODES.IDEMPOTENCY_CONFLICT]: 409,
+  [ERROR_CODES.RUN_RECONCILIATION_REQUIRED]: 409,
   [ERROR_CODES.CANDIDATE_NOT_FOUND]: 404,
   [ERROR_CODES.ARTIFACT_NOT_FOUND]: 404,
   [ERROR_CODES.READINESS_BLOCKED]: 409,
@@ -274,6 +295,18 @@ export const LIMITS = freeze({
   maxDecisionsPerRequest: 500,
   maxEventsPerPage: 500,
   maxTitleLength: 120,
+  // One project's stored workflow instances. A run record is small by
+  // construction (identities, fingerprints, step receipts and bounded review
+  // requests), and the cap keeps a project record bounded whatever a caller does.
+  maxRunsPerProject: 32,
+  maxRunStepsPerAdvance: 16,
+  maxReviewRequestsPerRun: 48,
+  // Review requests cite event ids so a reviewer can find the material. The
+  // full list stays behind `listBaselineEvents` and the stored reports; the
+  // request carries the first page and the true total.
+  maxReviewRequestEventIds: 50,
+  maxIdempotencyReceiptsPerRun: 32,
+  maxIdempotencyKeyLength: 200,
   maxFilenameLength: 255,
   maxStoreBytes: 400 * 1024 * 1024,
 });

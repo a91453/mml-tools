@@ -90,6 +90,19 @@ export function createFinalService({ canonical, projects, review, store }) {
 
   return Object.freeze({
     /**
+     * File one artifact against a project record.
+     *
+     * Exposed so the run orchestrator can store its own run report without
+     * owning a second copy of the artifact key convention, the id derivation or
+     * the project-record bookkeeping. It files an artifact; it can neither
+     * modify nor replace one that exists, because the id is the SHA-256 of the
+     * body — a different body is a different artifact, and an identical body is
+     * the same artifact filed again. A `final_mml` artifact's content and
+     * identity are therefore unreachable from here by construction.
+     */
+    fileArtifact,
+
+    /**
      * Candidate → Final MML artifact, or a structured refusal.
      *
      * Returns rather than throws when a Canonical gate blocks emission: a
