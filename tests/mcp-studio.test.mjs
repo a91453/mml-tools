@@ -233,6 +233,7 @@ const CONFIRMATIONS = {
   source_complete: { value: true, reason: 'Complete.' },
   player_readback: { value: 'PASS', reason: 'Read back.' },
   mobile_adaptation_reviewed: { value: true, reason: 'Gate 8 reviewed.', evidence: ['transport parity Gate 8 review'] },
+  regression_reviewed: { value: true, reason: 'Gate 9 reviewed.', evidence: ['transport parity Gate 9 review'] },
   original_audio_required: { value: false, reason: 'No recording.' },
 };
 
