@@ -75,6 +75,12 @@ test('capabilities report what this build does, not what it wishes it did', asyn
   assert.ok(!caps.gates.not_implemented_in_this_build.includes('mobile_adaptation'));
   assert.ok(!caps.gates.not_implemented_in_this_build.includes('in_game'));
   assert.ok(!caps.gates.never_settable_by_this_service.includes('mobile_adaptation'));
+
+  // Gate 9 has the same trust shape: explicit candidate-bound evidence, never
+  // inferred from a clean diff or a passing test suite.
+  assert.ok(caps.gates.settable_by_this_service.includes('regression'));
+  assert.ok(!caps.gates.not_implemented_in_this_build.includes('regression'));
+  assert.ok(!caps.gates.never_settable_by_this_service.includes('regression'));
   // Every axis is accounted for by exactly one of the three lists, so a future
   // axis cannot be added without saying which it is.
   const classified = [
