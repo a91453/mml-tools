@@ -19,7 +19,7 @@ import {
   createStudioApplication,
 } from '../backend/application/index.mjs';
 import { SOURCE_KINDS } from '../backend/canonical/index.mjs';
-import { canonicalProjectBytes } from './fixtures/application-fixtures.mjs';
+import { canonicalProjectBytes, sixRoleBaseline } from './fixtures/application-fixtures.mjs';
 
 const OWNER = 'owner:alice';
 const OTHER = 'owner:bob';
@@ -89,6 +89,57 @@ test('capabilities report what this build does, not what it wishes it did', asyn
     ...caps.gates.never_settable_by_this_service,
   ];
   assert.deepEqual([...classified].sort(), [...GATE_NAMES].sort());
+});
+
+// `axes` is the Acceptance gate vocabulary, not the list of things that can
+// block a Final. Readiness has its own pre-game gates and every one of them
+// reaches `blockers`, so a capability record that published only `axes` beside
+// an empty `not_implemented_in_this_build` read as a complete inventory and was
+// not one: an agent would meet a refusal naming `core3Completeness` or
+// `leadPromotion` without ever having seen the name.
+test('capabilities name every readiness gate that can block a Final, and name them correctly', async () => {
+  const caps = await app().capabilities();
+  const { evaluateProjectReadiness } = await import('../backend/final/index.mjs');
+
+  // Transcribed, not imported, so the record survives an unavailable Canonical.
+  // Equality with the real readiness gate set is what stops it drifting.
+  const readiness = evaluateProjectReadiness({ project: sixRoleBaseline() });
+  const blocking = new Set([...readiness.preGameBlocking, ...Object.keys(readiness.gates)]);
+  for (const name of caps.gates.readiness_gates_that_block_final) {
+    assert.ok(blocking.has(name), `${name} is advertised as a readiness gate but readiness does not report it`);
+  }
+  // The pre-game set is what decides `candidateReady`, so nothing in it may be
+  // missing from the record.
+  const everBlocking = Object.keys(readiness.gates).filter(name => name !== 'inGameAcceptance');
+  for (const name of everBlocking) {
+    assert.ok(
+      caps.gates.readiness_gates_that_block_final.includes(name),
+      `${name} can block a Final but is not advertised`,
+    );
+  }
+
+  // The two Gate 4 axes and the two Lead axes are each named with the operation
+  // that answers them, and no axis claims to be answerable by another's.
+  const axes = Object.fromEntries(caps.gates.review_axes_settable_by_this_service.map(entry => [entry.axis, entry]));
+  assert.equal(axes.core3_source_continuity.operation, 'approveCore3SourceChange');
+  assert.equal(axes.core3_source_continuity.readiness_gate, 'core3');
+  assert.equal(axes.core3_completeness.readiness_gate, 'core3Completeness');
+  assert.ok(axes.core3_completeness.operation.includes('core3_completeness_reviewed'));
+  for (const axis of ['lead_promotion', 'lead_demotion']) {
+    assert.ok(axes[axis].operation.includes('reviewLeadEvidence'), `${axis} must name the re-review path`);
+    assert.ok(!axes[axis].operation.includes('Core3'), 'a Lead operation is never a Core3 approval');
+  }
+  // Every named review axis is a readiness gate that actually exists.
+  for (const entry of caps.gates.review_axes_settable_by_this_service) {
+    assert.ok(blocking.has(entry.readiness_gate), `${entry.axis} names a readiness gate that does not exist`);
+  }
+
+  // The evidence rule an agent has to know before it records anything.
+  for (const gate of ['Gate 8', 'Gate 9', 'Gate 4']) assert.ok(caps.gates.notice.includes(gate));
+  assert.ok(caps.gates.notice.includes('core3_completeness'));
+  assert.ok(/never a Core3 approval/.test(caps.gates.notice));
+  assert.equal(caps.capabilities.lead_evidence_re_review, true);
+  assert.equal(caps.capabilities.core3_source_change_approval, true);
 });
 
 test('capabilities state the zero-cost and no-LLM position as facts', async () => {

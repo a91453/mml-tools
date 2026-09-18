@@ -101,14 +101,43 @@ export function buildCapabilities({ canonical, storage, jobs, transports = [] })
     identities: IDENTITY_MODEL,
 
     gates: freeze({
+      // The Acceptance gate axes this interface reports as such. It is NOT the
+      // full list of gates that can block a Final: shared readiness has its own
+      // pre-game gates, and every one of them reaches `blockers`. They are
+      // listed beside it rather than folded into it, because an agent that
+      // reads `axes` plus an empty `not_implemented_in_this_build` would
+      // otherwise take it for a complete inventory and be surprised by a
+      // refusal naming a gate it never saw.
       axes: GATE_NAMES,
+      // Exactly `preGameGateNames` in `final/readiness.mjs`, in its order. It is
+      // transcribed rather than imported so that this record can still be built
+      // when the Canonical engines are unavailable, and a regression asserts the
+      // two lists are equal so the transcription cannot drift.
+      readiness_gates_that_block_final: freeze([
+        'implementation', 'source', 'baseline', 'technical', 'microTiming',
+        'core3', 'core3Completeness', 'leadDemotion', 'leadPromotion',
+        'crossSourceHarmony', 'versionDrift', 'originalAudio', 'playerReadback',
+        'mobileAdaptation', 'regression', 'pendingDecisions',
+      ]),
+      // Scoped to `axes` above, and every axis there is in exactly one of the
+      // three lists below — a future Acceptance axis cannot be added without
+      // saying which it is.
       settable_by_this_service: freeze(['technical', 'source', 'audio', 'player_readback', 'mobile_adaptation', 'regression']),
-      // Gate 8 is settable only through the explicit candidate-bound,
-      // evidence-backed review confirmation. Parser/emitter success never sets
-      // it. in_game remains a standing prohibition for this service.
+      // Review axes this service can move that are not Acceptance gate axes.
+      // Listed because each is a separate question with its own operation, and
+      // an agent that cannot see them has no way to learn how to answer them.
+      review_axes_settable_by_this_service: freeze([
+        { axis: 'core3_source_continuity', gate: 'Gate 4 (source continuity)', readiness_gate: 'core3', operation: 'approveCore3SourceChange' },
+        { axis: 'core3_completeness', gate: 'Gate 4 (musical completeness)', readiness_gate: 'core3Completeness', operation: 'recordConfirmations.core3_completeness_reviewed' },
+        { axis: 'lead_promotion', gate: 'Gate 3 (promotion into Melody)', readiness_gate: 'leadPromotion', operation: 'applyDecisions.leadEvidence / reviewLeadEvidence' },
+        { axis: 'lead_demotion', gate: 'Gate 3 (demotion out of Melody)', readiness_gate: 'leadDemotion', operation: 'applyDecisions.leadEvidence / reviewLeadEvidence' },
+      ]),
+      // Each of these moves only through an explicit, candidate-bound,
+      // evidence-backed review. Parser/emitter/test success never sets one, and
+      // in_game remains a standing prohibition for this service.
       not_implemented_in_this_build: freeze([]),
       never_settable_by_this_service: freeze(['in_game']),
-      notice: 'mobile_adaptation and regression can reach PASS only from explicit candidate-bound evidence-backed Gate 8 / Gate 9 reviews; parser/emitter/test success does not upgrade them. in_game is recorded only by the user or a controlled target-client test. No parser, emitter, transport, job or model call can set in_game, so it stays PENDING.',
+      notice: 'mobile_adaptation, regression and core3_completeness can reach PASS only from explicit candidate-bound evidence-backed Gate 8 / Gate 9 / Gate 4 reviews, each of which requires at least one evidence reference; parser/emitter/test success does not upgrade them. The Core3 source-continuity axis moves only through per-change evidence-backed approvals, and the Lead axes only through the shared Lead grader re-run over a cited evidence record — a Lead approval is never a Core3 approval and neither axis of Gate 4 answers the other. in_game is recorded only by the user or a controlled target-client test. No parser, emitter, transport, job or model call can set in_game, so it stays PENDING.',
     }),
 
     audio: freeze({

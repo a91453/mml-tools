@@ -3,8 +3,12 @@
 // Status: IMPLEMENTATION NOTES. A transport and nothing else. It parses a
 // request, names one Application Service operation, and renders the result. It
 // holds no MML logic, no arrangement logic, no Canonical logic and no gate
-// logic, and there is no operation reachable here that is not reachable from
-// the Application Service directly or from MCP.
+// logic. Every route below is one Application Service operation.
+//
+// This surface is wider than the MCP one, not narrower: the binary plane and
+// the technical-validation routes are reachable only here. See the transport
+// note in `studio/backend/application/index.mjs` for which operations each
+// transport reaches and why.
 //
 // `/api/v1/*` is this repository's own interface, served by this process. It is
 // not a call to a third-party API, and nothing here acquires a credential,
@@ -316,8 +320,11 @@ export function createApiRouter({ application, ownerOf, challenge = null }) {
     ['GET', /^\/jobs\/([^/]+)$/, async (m, _r, owner) => json(await application.getJob(owner, m[1]))],
     ['GET', /^\/artifacts\/([^/]+)$/, async (m, _r, owner) => json(await application.getArtifact(owner, m[1]))],
 
-    // The technical check, reachable over HTTP. Same Application Service
-    // operation the MCP tools call, so the two transports cannot drift.
+    // The technical check, over HTTP. There is no `studio_*` tool for it, so
+    // this is the only transport that reaches it and an MCP-only agent cannot
+    // run a Canonical technical validation. Both engines are reachable and
+    // named apart: the legacy routes below are an explicitly labelled
+    // diagnostic whose PASS is never a Canonical PASS.
     //
     // `/technical/*` is the Published Canonical answer and fails closed when
     // the published rules are unavailable. `/technical/legacy/*` is the legacy

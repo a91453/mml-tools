@@ -493,11 +493,12 @@ function analysisContext(w) {
     catch (error) { return { status: 'PENDING', pass: false, eventId: event.id, destinationRole: e.destinationRole ?? null, blockers: [`LEAD_DEMOTION_EVIDENCE_INVALID: ${error.message}`], warnings: [] }; }
   });
   // The promotion mirror of the block above, through the same shared grader.
-  // Three things must hold before the evidence is graded at all, and each
+  // Four things must hold before the evidence is graded at all, and each
   // failure is a visible PENDING report rather than a thrown analysis:
   // the promoted event is still a Melody event of the candidate; the candidate
   // diff actually shows it arriving in Melody (so a record cannot outlive the
-  // move it describes); and its origin still resolves to a baseline event.
+  // move it describes); its origin still resolves to a baseline event; and the
+  // promoted event is still the note that origin describes.
   // The grade itself is `evaluateLeadPromotion` against the origin provenance,
   // and the report is re-keyed to the candidate event id afterwards because
   // that is the id shared readiness matches on.

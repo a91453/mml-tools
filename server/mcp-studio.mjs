@@ -54,7 +54,8 @@ const CONFIRMATIONS_DESCRIPTION = 'source_complete／version_drift_reviewed／pl
   + 'core3_completeness_reviewed 回答的是 Gate 4 的第二個問題（evaluator 無法證明完整的 Core3 是否仍站得住），它可以解決可審查的殘留（例如來源本來就沒有的 Chord1／Chord2 功能），但永遠無法消除缺席的 Lead，也無法消除身分依賴 Chord3–Chord5 的 Core3——那兩者 gate 直接 FAIL。'
   + 'Gate 4 的第一個問題（Core3 來源連續性）不在這裡：它由 studio_core3_change_approve 逐筆核准，兩者是不同 review axis，互不代替。'
   + 'player_readback 為 PASS、NOT_RUN 或 N/A（未使用預覽／驗證素材時，附理由）；PASS 可附 mml_sha256 綁定實際回讀的 MML。'
-  + '確認綁定於目前 baseline 與本候選，換候選即失效；in_game 無法由此設定。';
+  + 'source_complete 與 original_audio_required 綁定於 baseline，同一個 baseline 上的每個候選都持續有效；其餘五項綁定於本候選，換候選即失效並回報為 stale。'
+  + 'in_game 無法由此設定。';
 
 export const STUDIO_MCP_TOOLS = [
   {

@@ -8,8 +8,19 @@
 // HTTP adapter, the MCP adapter and any future server transport go through it:
 // they parse their own wire format, name an operation, and render the result.
 // None of them holds arrangement logic, Canonical logic, Final logic or a
-// second workflow, and no operation is reachable from one transport and not
-// another.
+// second workflow.
+//
+// Transport coverage is not uniform, and saying so is the point: a blanket
+// parity claim here is how `approveCore3SourceChange` came to exist with no
+// caller on either transport, leaving a required gate unclearable from the
+// Agent plane. The rule that does hold is narrower: every operation a reviewer
+// needs in order to move a gate is reachable from MCP, and `tests/
+// mcp-studio.test.mjs` asserts that operation-by-operation. The binary plane
+// (`uploadAsset`, `readAssetBytes`) is HTTP-only by construction, because no
+// tool carries bytes; `listAssets`, `getAsset`, `listJobs`,
+// `recordConfirmations` on its own (it is reachable inside
+// `studio_candidate_review` and `studio_finalize`) and the four technical
+// validation operations are HTTP-only today.
 //
 //     ChatGPT · Claude · Codex · future models · local agents
 //                            │
