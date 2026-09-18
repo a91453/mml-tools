@@ -144,6 +144,7 @@ export const REDUCTION_BLOCKERS = Object.freeze({
   DECISION_REJECTED: 'REDUCTION_DECISION_REJECTED_BY_ROLE_APPLICATION',
   OMISSION_EVIDENCE_REQUIRED: 'REDUCTION_OMISSION_EVIDENCE_REQUIRED',
   REDISTRIBUTION_EVIDENCE_REQUIRED: 'REDUCTION_REDISTRIBUTION_EVIDENCE_REQUIRED',
+  ACCEPT_OVERFLOW_TARGET_ASSIGNED: 'REDUCTION_ACCEPT_OVERFLOW_TARGET_ALREADY_ASSIGNED',
   PERCUSSION_IN_PITCHED_ROLE: 'REDUCTION_PERCUSSION_IN_PITCHED_ROLE',
   PERCUSSION_ROLE_ASSIGNMENT_REFUSED: 'REDUCTION_PERCUSSION_ROLE_ASSIGNMENT_REFUSED',
   CORE3_INCOMPLETE: 'REDUCTION_CORE3_INCOMPLETE',
@@ -690,6 +691,15 @@ export function planFinalReduction({
       const event = candidateById.get(eventId);
       if (!event) { addBlocker(REDUCTION_BLOCKERS.DECISION_TARGET_NOT_FOUND, { decisionId: decision.id, eventId }); continue; }
       if (event.kind !== 'note') { addBlocker(REDUCTION_BLOCKERS.DECISION_TARGET_NOT_A_NOTE, { decisionId: decision.id, eventId }); continue; }
+      // ACCEPT_OVERFLOW records that role-less material intentionally remains
+      // outside the six delivery roles. On an already assigned event the G11-D
+      // action it becomes is KEEP, which would preserve the role while the G12
+      // ledger falsely claimed the event was outside the six roles. Refuse that
+      // contradiction instead of letting a bookkeeping action relabel sound.
+      if (decision.action === REDUCTION_ACTIONS.ACCEPT_OVERFLOW && SIX_ROLES.includes(event.role)) {
+        addBlocker(REDUCTION_BLOCKERS.ACCEPT_OVERFLOW_TARGET_ASSIGNED, { decisionId: decision.id, eventId, currentRole: event.role });
+        continue;
+      }
       if (decisionByEventId.has(eventId)) {
         addBlocker(REDUCTION_BLOCKERS.DECISION_CONFLICT, { eventId, decisionIds: Object.freeze(uniqueSorted([decisionByEventId.get(eventId).id, decision.id])) });
         continue;
