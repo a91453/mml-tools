@@ -104,12 +104,113 @@ function baselineGate(project) {
     .map(event => [event.id, event]));
   const snapshotNotes = noteById(snapshot.events);
   const candidateNotes = noteById(project?.events);
-  const roleSwitched = [];
-  for (const [id, before] of snapshotNotes) {
-    const after = candidateNotes.get(id);
+
+  // Which candidate note IS this baseline note, and the reverse.
+  //
+  // This is the question the Lead gates actually turn on, and the diff cannot
+  // answer it: `alignNotes` pairs notes by structure -- exact, then
+  // role+onset+pitch, then role+onset -- and never by identity. Where both
+  // sides share an id space the structural guess is usually right and any
+  // mistake is caught below; where they do not, the guess is load-bearing and
+  // wrong in the one case that matters:
+  //
+  //   baseline   A Melody C5 @0      candidate   X Melody E5 @0
+  //              B Chord3 E5 @0                  Y Chord3 C5 @0
+  //
+  // The aligner pairs A with X and B with Y on role+onset and reports two pitch
+  // modifications; `roleMoved`, `added` and `removed` all come back empty.
+  // Reproduced before this was written: both Lead gates reported `N/A`, which
+  // is PASS-like, for a Lead swap carrying no evidence at all.
+  //
+  // Correspondence is established from identity and never from coincidence:
+  //
+  //   the same event id            a derived candidate keeps the baseline's ids
+  //   the same provenance citation one source, and the same source event ids,
+  //                                so two projects built from one source
+  //                                correspond even with unrelated ids
+  //   a derived-duplicate chain    `derivedFromEventId` is reversible
+  //
+  // Pitch and onset agreement prove nothing about which source event a note is
+  // -- that is exactly the substitution the Lead evidence binding refuses -- so
+  // they are never consulted. A citation that cannot be pinned to one source
+  // event establishes nothing either: the Canonical IR carries `sourceIds` and
+  // `sourceEventIds` as independent arrays with no pairing between them, so a
+  // multi-source note is ambiguous, and so is a citation two notes of the same
+  // project share.
+  const provenanceKey = event => {
+    const sourceIds = Array.isArray(event?.sourceIds) ? event.sourceIds : [];
+    const sourceEventIds = Array.isArray(event?.sourceEventIds) ? event.sourceEventIds : [];
+    if (sourceIds.length !== 1 || !sourceEventIds.length) return null;
+    const sourceId = typeof sourceIds[0] === 'string' ? sourceIds[0].trim() : '';
+    if (!sourceId) return null;
+    const cited = sourceEventIds.filter(id => typeof id === 'string' && id.trim()).map(id => id.trim()).sort();
+    return cited.length === sourceEventIds.length && cited.length ? `${sourceId}\u0000${cited.join('\u0001')}` : null;
+  };
+  const byProvenance = notes => {
+    const index = new Map();
+    const ambiguous = new Set();
+    for (const event of notes.values()) {
+      const key = provenanceKey(event);
+      if (!key) continue;
+      if (index.has(key)) ambiguous.add(key);
+      else index.set(key, event);
+    }
+    for (const key of ambiguous) index.delete(key);
+    return index;
+  };
+  const snapshotByProvenance = byProvenance(snapshotNotes);
+  const candidateByProvenance = byProvenance(candidateNotes);
+  const counterpartOf = (event, byId, byProv) => {
+    if (byId.has(event?.id)) return byId.get(event.id);
+    const key = provenanceKey(event);
+    return key ? byProv.get(key) ?? null : null;
+  };
+
+  // A derived duplicate declares the event it came from, and that chain is
+  // reversible, so a justified duplicate into Melody stays an ordinary
+  // answerable promotion rather than an open question. Bounded by a seen-set:
+  // this reads stored candidate metadata.
+  const tracesToSnapshot = event => {
+    const seen = new Set();
+    let current = event;
+    while (current && typeof current.id === 'string' && !seen.has(current.id)) {
+      if (counterpartOf(current, snapshotNotes, snapshotByProvenance)) return true;
+      seen.add(current.id);
+      const origin = current.metadata?.g11d?.derivedFromEventId;
+      if (typeof origin !== 'string' || !origin) return false;
+      current = candidateNotes.get(origin) ?? null;
+      if (!current) return snapshotNotes.has(origin);
+    }
+    return false;
+  };
+
+  // Lead membership across that correspondence. One note, the Lead on one side
+  // and not the other, is a Lead move whatever the alignment made of it.
+  // MASTER_RULES §4 requires positive role evidence to demote a
+  // source-supported Lead and Gate 3 requires the evidence chain for any Lead
+  // demotion; neither is conditional on a diff being able to pair the notes.
+  const demotedEventIds = [];
+  const promotedEventIds = [];
+  for (const before of snapshotNotes.values()) {
+    const after = counterpartOf(before, candidateNotes, candidateByProvenance);
     if (!after) continue;
-    if (before.role === 'Melody' && after.role !== 'Melody') roleSwitched.push(['demoted', id]);
-    else if (before.role !== 'Melody' && after.role === 'Melody') roleSwitched.push(['promoted', id]);
+    if (before.role === 'Melody' && after.role !== 'Melody') demotedEventIds.push(before.id);
+    else if (before.role !== 'Melody' && after.role === 'Melody') promotedEventIds.push(after.id);
+  }
+
+  // What correspondence could not reach. A pairing the aligner assumed, touching
+  // a Lead event that has no counterpart at all, leaves the Lead question
+  // neither proven nor refuted -- and Canonical requires it resolved, so it is
+  // PENDING rather than absent. Membership above has already settled every note
+  // that does have a counterpart, which is what keeps an ordinary shared-id
+  // project, an ordinary pitch edit and an equivalent re-import out of here.
+  const unresolvedDemotion = [];
+  const unresolvedPromotion = [];
+  for (const pair of [...(eventDiff.notes.modified ?? []), ...(eventDiff.notes.roleMoved ?? [])]) {
+    if (pair?.before?.role !== 'Melody' && pair?.after?.role !== 'Melody') continue;
+    const entry = Object.freeze({ beforeId: pair.before?.id ?? null, afterId: pair.after?.id ?? null, match: pair.match ?? null });
+    if (pair.before?.role === 'Melody' && !counterpartOf(pair.before, candidateNotes, candidateByProvenance)) unresolvedDemotion.push(entry);
+    if (pair.after?.role === 'Melody' && !tracesToSnapshot(pair.after)) unresolvedPromotion.push(entry);
   }
 
   return gate('PASS', {
@@ -120,9 +221,17 @@ function baselineGate(project) {
       removed: Object.freeze(leadRemoved),
       modified: Object.freeze(leadModified),
       roleMoved: Object.freeze(leadRoleMoved),
-      // One id, present on both sides, whose Lead membership changed.
-      demotedEventIds: Object.freeze(roleSwitched.filter(([kind]) => kind === 'demoted').map(([, id]) => id)),
-      promotedEventIds: Object.freeze(roleSwitched.filter(([kind]) => kind === 'promoted').map(([, id]) => id)),
+      // One note, corresponded across the two projects, whose Lead membership
+      // changed. Demotions name the baseline id, promotions the candidate id,
+      // which is what the respective reports are keyed on.
+      demotedEventIds: Object.freeze(demotedEventIds),
+      promotedEventIds: Object.freeze(promotedEventIds),
+      // Pairings the aligner assumed and identity cannot confirm, where a Lead
+      // role change can be neither proven nor ruled out.
+      identityUnresolved: Object.freeze({
+        demotion: Object.freeze(unresolvedDemotion),
+        promotion: Object.freeze(unresolvedPromotion),
+      }),
     }),
   });
 }
@@ -154,6 +263,27 @@ function evidenceReportGate(reports, requiredEventIds, { reportName, blocker, no
     : gate('PASS', { reviewed: relevant.length });
 }
 
+// A Lead gate cannot be more certain than the correspondence underneath it.
+//
+// `unresolved` names pairings the aligner assumed across an id space the two
+// projects do not share, each touching a Lead event. While one stands, whether
+// a Lead role changed is unknown -- so the gate is PENDING even when every
+// required event id it CAN name already has a PASS. The remedy is traceability,
+// not a citation: preserve the event ids, or carry a single-source provenance
+// pair on both sides, and the same material resolves to an ordinary proven move
+// or an ordinary proven edit. That is why this reports its own blocker rather
+// than `LEAD_*_EVIDENCE_REQUIRED`, which would send a reviewer to file evidence
+// that cannot answer it.
+function leadGateWithIdentity(result, unresolved) {
+  if (!unresolved.length) return result;
+  return gate('PENDING', {
+    ...result,
+    status: 'PENDING',
+    blockers: [...new Set([...(result.blockers ?? []), 'LEAD_IDENTITY_CORRESPONDENCE_UNRESOLVED'])],
+    unresolvedPairings: Object.freeze([...unresolved]),
+  });
+}
+
 function leadDemotionGate(reports, leadEventDiff = null) {
   const requiredEventIds = new Set();
   // Membership first: it is the one derivation that does not depend on the
@@ -170,11 +300,14 @@ function leadDemotionGate(reports, leadEventDiff = null) {
     const id = move.beforeId ?? move.afterId;
     if (typeof id === 'string' && id) requiredEventIds.add(id);
   }
-  return evidenceReportGate(reports, requiredEventIds, {
-    reportName: 'leadDemotionReports',
-    blocker: 'LEAD_DEMOTION_EVIDENCE_REQUIRED',
-    noneReason: 'No Lead demotion requires arbitration.',
-  });
+  return leadGateWithIdentity(
+    evidenceReportGate(reports, requiredEventIds, {
+      reportName: 'leadDemotionReports',
+      blocker: 'LEAD_DEMOTION_EVIDENCE_REQUIRED',
+      noneReason: 'No Lead demotion requires arbitration.',
+    }),
+    leadEventDiff?.identityUnresolved?.demotion ?? [],
+  );
 }
 
 function leadPromotionGate(reports, leadEventDiff = null) {
@@ -190,11 +323,14 @@ function leadPromotionGate(reports, leadEventDiff = null) {
     const id = move.afterId ?? move.beforeId;
     if (typeof id === 'string' && id) requiredEventIds.add(id);
   }
-  return evidenceReportGate(reports, requiredEventIds, {
-    reportName: 'leadPromotionReports',
-    blocker: 'LEAD_PROMOTION_EVIDENCE_REQUIRED',
-    noneReason: 'No Lead promotion requires arbitration.',
-  });
+  return leadGateWithIdentity(
+    evidenceReportGate(reports, requiredEventIds, {
+      reportName: 'leadPromotionReports',
+      blocker: 'LEAD_PROMOTION_EVIDENCE_REQUIRED',
+      noneReason: 'No Lead promotion requires arbitration.',
+    }),
+    leadEventDiff?.identityUnresolved?.promotion ?? [],
+  );
 }
 
 // G10. Published MOBILE_SYNTAX forbids technical micro-gaps and decomposition
