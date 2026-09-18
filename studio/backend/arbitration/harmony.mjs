@@ -12,6 +12,62 @@ export const RISK_INTERVALS = new Map([
 ]);
 
 const noteEvents = project => (project?.events ?? []).filter(event => event.kind === 'note');
+const cmpStr = (a, b) => (a < b ? -1 : a > b ? 1 : 0);
+
+// The overlap sweep a *transformation* stage needs, beside the cross-source
+// arbitration below.
+//
+// `analyzeCrossSourceHarmony` answers arbitration between disjoint sources and
+// keeps that job. It cannot answer "did my own transformation introduce one of
+// these pairs?", because the pairs a role move or an octave shift creates are
+// usually inside one source: a single imported MIDI puts every role on the same
+// source id, so a change that lands Melody a semitone from Chord1 is invisible
+// to a disjoint-source scan. This sweep therefore reads the same reviewed
+// interval set regardless of source identity.
+//
+// It defines no new Canonical harmony rule and publishes no verdict. A caller
+// scans before and after its own change and compares: a pre-existing pair stays
+// a warning for the existing review, and only a pair the change would introduce
+// is the caller's to block on.
+//
+// One pass over temporally overlapping pairs, ordered by exact rational beats,
+// so the work is bounded by the overlap budget below rather than by every pair
+// of notes in the song.
+export function overlapRisks(project) {
+  const spans = (project?.events ?? []).filter(e => e.kind === 'note')
+    .map(event => ({ event, start: f(event.start), end: f(event.end) }))
+    .sort((a, b) => a.start.cmp(b.start) || cmpStr(a.event.id, b.event.id));
+  const result = [];
+  let active = [];
+  for (const current of spans) {
+    active = active.filter(other => other.end.cmp(current.start) > 0);
+    for (const other of active) {
+      const distance = Math.abs(other.event.pitch - current.event.pitch);
+      const eventIds = [other.event.id, current.event.id].sort();
+      if (distance === 0) result.push({ kind: 'same-pitch-overlap', eventIds, pitch: current.event.pitch });
+      else if (RISK_INTERVALS.has(distance)) result.push({ kind: 'overlapping-dissonance', eventIds, interval: distance, intervalName: RISK_INTERVALS.get(distance) });
+    }
+    active.push(current);
+  }
+  return result.sort((a, b) => cmpStr(overlapRiskKey(a), overlapRiskKey(b)));
+}
+
+export const overlapRiskKey = risk => JSON.stringify([risk.kind, risk.eventIds, risk.pitch ?? null, risk.interval ?? null]);
+
+// Bound collision-report allocation for pathological dense inputs. Reaching
+// this implementation limit is PENDING, never a claim of collision freedom.
+export const OVERLAP_PAIR_BUDGET = 50000;
+export function overlapPairBudgetExceeded(notes, budget = OVERLAP_PAIR_BUDGET) {
+  const spans = notes.map(event => ({ start: f(event.start), end: f(event.end) })).sort((a, b) => a.start.cmp(b.start));
+  let active = [], pairs = 0;
+  for (const span of spans) {
+    active = active.filter(end => end.cmp(span.start) > 0);
+    pairs += active.length;
+    if (pairs > budget) return true;
+    active.push(span.end);
+  }
+  return false;
+}
 const maxF = (a, b) => f(a).cmp(b) >= 0 ? f(a) : f(b);
 const minF = (a, b) => f(a).cmp(b) <= 0 ? f(a) : f(b);
 const disjointSets = (left, right) => {
