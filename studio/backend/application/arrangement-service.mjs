@@ -72,6 +72,37 @@ export function createArrangementService({ canonical, projects, intake, store })
   };
 
   /**
+   * Every stored application from revision 1 up to this candidate, oldest first.
+   *
+   * Lead evidence is recorded on the revision that performed the role move and
+   * is deliberately not inherited by later candidates, while the readiness Lead
+   * gates derive what needs evidence from the candidate-versus-baseline diff,
+   * which does accumulate. Recovering the evidence therefore means reading the
+   * chain, not just the head.
+   *
+   * Only what is stored and linked is returned. A broken or missing link stops
+   * the walk and returns what was reachable; `applicationLineage()` then refuses
+   * an inconsistent chain outright, so a partial answer here becomes PENDING
+   * downstream rather than a silently shorter history. The `seen` set bounds the
+   * walk against a cycle in stored data.
+   */
+  const loadCandidateLineage = (record, candidateId) => {
+    const chain = [];
+    const seen = new Set();
+    let currentId = candidateId;
+    while (typeof currentId === 'string' && currentId && !seen.has(currentId)) {
+      seen.add(currentId);
+      const entry = record.candidates.find(candidate => candidate.candidate_id === currentId);
+      if (!entry) break;
+      const application = store.getJson(applicationKey(record.project_id, currentId));
+      if (!application?.candidate || !application?.revision) break;
+      chain.push(application);
+      currentId = entry.parent_candidate_id ?? null;
+    }
+    return chain.reverse();
+  };
+
+  /**
    * The baseline's events with their provenance, optionally one lane's, paged.
    *
    * Identity, role, pitch, timing and source identities only. No verdict is
@@ -125,6 +156,7 @@ export function createArrangementService({ canonical, projects, intake, store })
   return Object.freeze({
     suggestionFor,
     loadCandidate,
+    loadCandidateLineage,
     baselineEvents,
 
     /**

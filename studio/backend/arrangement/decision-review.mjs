@@ -36,6 +36,7 @@ import {
   candidateDigestOf,
   baselineIdentityOf,
   snapshotDigestOf,
+  leadContextDigestOf,
 } from './decision-application.mjs';
 
 /**
@@ -107,116 +108,137 @@ const pendingReport = (eventId, destinationRole, blockers) => Object.freeze({
   warnings: Object.freeze([]),
 });
 
+// ─── Lead evidence across the revision lineage ──────────────────────────────
+
+// Why a recovered Lead evidence record does not describe the candidate being
+// graded. Each one sends the gate back to PENDING; none of them is a musical
+// verdict, and none of them can turn a non-PASS into a PASS.
+export const LEAD_EVIDENCE_LINEAGE_BLOCKERS = Object.freeze({
+  // The promoted/demoted event is no longer in the candidate at all.
+  EVENT_NOT_IN_CANDIDATE: 'LEAD_EVIDENCE_EVENT_NOT_IN_CANDIDATE',
+  // The event is still there, but its musical identity moved: a citation about
+  // the event as it was is not a citation about the event as it is.
+  EVENT_CHANGED: 'LEAD_EVIDENCE_EVENT_CHANGED',
+  // The Core3 picture the continuity / Core3 claims were made about has moved.
+  CONTEXT_CHANGED: 'LEAD_EVIDENCE_CONTEXT_CHANGED',
+  // The role the evidence argued for is not the role the candidate now has.
+  DESTINATION_CHANGED: 'LEAD_EVIDENCE_DESTINATION_DOES_NOT_MATCH_CANDIDATE',
+});
+
 /**
- * The Lead Demotion reports the applied decisions' own evidence supports.
+ * Order and verify a chain of G11-D applications as one revision lineage.
  *
- * Deliberately a separate, named call rather than something
- * `reviewAppliedCandidate` does on its own: handing the readiness Lead gate a
- * set of reports is a step a caller takes explicitly, and every report is
- * produced by `evaluateLeadDemotion()` itself against the *baseline* event. A
- * decision whose evidence does not satisfy the gate produces a non-PASS report
- * here exactly as it did at application time; this never manufactures a PASS.
+ * Evidence recovered from an earlier revision is only worth re-grading if the
+ * chain it came from is the chain that produced this candidate. Every step is
+ * put through the same `applicationIntegrity()` the head application goes
+ * through -- an application result is data, and a restored, hand-built or
+ * edited one must not be able to introduce evidence the recording path never
+ * saw. On any failure the lineage is refused whole: no steps, therefore no
+ * recovered reports, therefore the readiness Lead gates stay PENDING. That is
+ * the closed direction, and it is the direction a missing application already
+ * takes.
  *
- * `baseline` may be the Source-Faithful baseline or the accepted previous
- * candidate the revision was applied onto -- both are identities the revision
- * binds -- and nothing else. Reports produced against the accepted previous are
- * information about the step just taken; readiness keys on the Source-Faithful
- * baseline and is handed reports made against that.
- *
- * Defence in depth, and not redundant. An application result is data: it can be
- * restored from storage, hand-built, mutated, or produced by a caller that
- * bypassed the recording path entirely, so `status === 'PASS'` is not evidence
- * that the scope checks ever ran. Both the identity binding and the one-event
- * containment are therefore re-established here, against the baseline event the
- * readiness Lead gate keys on -- because this is the last place a foreign
- * citation could be re-packaged as a PASS carrying the target event's id.
+ * Ordering is by `revision.index`, which is content-addressed inside
+ * `revision.id` and re-checked by `revisionIdentityMatches()`, so it cannot be
+ * renumbered without breaking integrity first. Indices must be contiguous from
+ * 1 and each step's `parentRevisionId` must name the step before it: a chain
+ * with a hole in it is a chain whose missing revision could have moved exactly
+ * the material the recovered evidence claims about.
  */
-export function leadDemotionReportsFromApplication(application, baseline) {
-  // A forged or inconsistent application produces no report at all. With no
-  // report, the readiness Lead gate stays PENDING for every Lead move the
-  // baseline diff finds -- the closed direction.
-  if (!requirePass(application, baseline)) return [];
-  const baselineById = new Map((baseline?.events ?? []).map(event => [event.id, event]));
-  const reports = [];
-  for (const entry of application.applied) {
+export function applicationLineage(applications, baseline) {
+  const reasons = [];
+  const empty = () => Object.freeze({ ok: false, against: null, steps: Object.freeze([]), reasons: Object.freeze([...new Set(reasons)]) });
+  if (!Array.isArray(applications)) {
+    reasons.push('LINEAGE_NOT_AN_ARRAY');
+    return empty();
+  }
+  if (!applications.length) return Object.freeze({ ok: true, against: null, steps: Object.freeze([]), reasons: Object.freeze([]) });
+
+  const steps = [];
+  let against = null;
+  for (const application of applications) {
+    const integrity = applicationIntegrity(application, baseline);
+    if (!integrity.ok) {
+      reasons.push(...integrity.reasons);
+      return empty();
+    }
+    // `applicationIntegrity` has already established that the reference handed
+    // in is one this revision binds -- its Source-Faithful baseline, or the
+    // accepted previous candidate it was applied onto. Both are legitimate for
+    // a single revision, so neither is rejected here; what is rejected is a
+    // chain that mixes them, because reports from two different references are
+    // not one set of reports. In practice a multi-step chain resolves as
+    // `baseline` for every step anyway: only revision N binds revision N-1's
+    // candidate as its parent, so passing a parent candidate for a longer chain
+    // fails integrity on the earlier steps first.
+    if (against === null) against = integrity.against;
+    else if (integrity.against !== against) {
+      reasons.push('LINEAGE_STEPS_AGAINST_DIFFERENT_REFERENCES');
+      return empty();
+    }
+    const index = application.revision?.index;
+    if (!Number.isInteger(index) || index < 1) {
+      reasons.push('LINEAGE_REVISION_INDEX_INVALID');
+      return empty();
+    }
+    steps.push({ application, revision: application.revision, index });
+  }
+
+  steps.sort((a, b) => a.index - b.index);
+  // Contiguous and parent-linked *among the steps supplied*, not necessarily
+  // from revision 1. A caller may legitimately hand in one application (the
+  // single-revision entry points below do exactly that) or the tail of a chain.
+  // A partial chain can only lose evidence, never launder it: every recovered
+  // record is still checked against the current candidate's event identity,
+  // destination role and Core3 context digest before it is re-graded, so a
+  // revision that is missing here and moved that material sends the record back
+  // to PENDING rather than through.
+  for (const [position, step] of steps.entries()) {
+    if (step.index !== steps[0].index + position) {
+      reasons.push('LINEAGE_INDEX_NOT_CONTIGUOUS');
+      return empty();
+    }
+    if (position > 0 && (step.revision.parentRevisionId ?? null) !== steps[position - 1].revision.id) {
+      reasons.push('LINEAGE_PARENT_REVISION_MISMATCH');
+      return empty();
+    }
+  }
+
+  return Object.freeze({
+    ok: true,
+    against,
+    steps: Object.freeze(steps.map(step => Object.freeze({ ...step }))),
+    reasons: Object.freeze([]),
+  });
+}
+
+// ─── per-application move classifiers ───────────────────────────────────────
+//
+// Lifted out of the two report builders so the single-revision and the lineage
+// paths classify moves with one implementation. Neither reads evidence nor
+// grades anything; they only say which applied events were Lead moves.
+
+function demotionMovesOf(application) {
+  const moves = [];
+  for (const entry of application.applied ?? []) {
     if (entry.type !== ACCEPTED_DECISION_TYPES.MOVE_ROLE && entry.type !== ACCEPTED_DECISION_TYPES.OMIT_FROM_SIX) continue;
     const destinationOf = item => (entry.type === ACCEPTED_DECISION_TYPES.OMIT_FROM_SIX ? 'omitted' : item.toRole);
     const demoted = (entry.events ?? []).filter(item =>
       item.fromRole === LEAD_ROLE
       && !(entry.type === ACCEPTED_DECISION_TYPES.MOVE_ROLE && item.toRole === LEAD_ROLE));
     if (!demoted.length) continue;
-
     // One evidence record, one Lead event. An entry claiming several is not
     // split, and its first event does not inherit the citation.
-    if ((entry.events ?? []).length !== 1) {
-      for (const item of demoted) {
-        reports.push(pendingReport(item.eventId, destinationOf(item), [DECISION_REJECTION.LEAD_EVIDENCE_MULTI_EVENT_SCOPE_UNSUPPORTED]));
-      }
-      continue;
-    }
-
-    for (const item of demoted) {
-      const event = baselineById.get(item.eventId);
-      if (!event) continue;
-      const destinationRole = destinationOf(item);
-      const scope = leadEvidenceIdentityBlockers(entry.leadEvidence, event);
-      if (scope.length) {
-        // Reported before the gate so the report carries the scope failure
-        // alone. The gate now runs the same binding itself, so this is a
-        // presentation choice, not the only thing standing between a foreign
-        // citation and a PASS under this event's id.
-        reports.push(pendingReport(event.id, destinationRole, scope.includes(LEAD_EVIDENCE_IDENTITY_MISMATCH) || scope.includes(LEAD_EVIDENCE_PROVENANCE_PAIR_AMBIGUOUS)
-          ? scope
-          : [...scope, LEAD_EVIDENCE_IDENTITY_MISMATCH]));
-        continue;
-      }
-      try {
-        reports.push(evaluateLeadDemotion({
-          ...(entry.leadEvidence ?? {}),
-          event,
-          destinationRole,
-          positiveReason: entry.leadEvidence?.positiveReason ?? entry.reason,
-        }));
-      } catch (error) {
-        reports.push(pendingReport(event.id, destinationRole, [`LEAD_DEMOTION_EVIDENCE_INVALID: ${error.message}`]));
-      }
-    }
+    const multiEvent = (entry.events ?? []).length !== 1;
+    for (const item of demoted) moves.push({ entry, item, eventId: item.eventId, destinationRole: destinationOf(item), multiEvent });
   }
-  return reports;
+  return moves;
 }
 
-/**
- * Re-grade every promotion into Melody that this application produced.
- *
- * Readiness keys promotion evidence on the *candidate* Melody event: a role
- * move/assignment keeps the source event id, while a justified duplicate gets a
- * derived event id. The musical evidence is nevertheless judged against the
- * source/baseline origin event so the citation cannot be laundered through a
- * derived id.
- */
-export function leadPromotionReportsFromApplication(application, baseline) {
-  if (!requirePass(application, baseline)) return [];
-  const baselineById = new Map((baseline?.events ?? []).map(event => [event.id, event]));
+function promotionMovesOf(application) {
   const candidateById = new Map((application?.candidate?.events ?? []).map(event => [event.id, event]));
-  const reports = [];
-
-  // A later revision may promote a duplicate created by an earlier revision.
-  // Its candidate event id is intentionally not a source-event id, but the
-  // derived metadata keeps a reversible chain back to the Source-Faithful
-  // baseline. Walk only that chain; never guess by pitch/time or array order.
-  const baselineOriginOf = eventId => {
-    const seen = new Set();
-    let currentId = eventId;
-    while (typeof currentId === 'string' && currentId && !seen.has(currentId)) {
-      if (baselineById.has(currentId)) return baselineById.get(currentId);
-      seen.add(currentId);
-      const event = candidateById.get(currentId);
-      currentId = event?.metadata?.g11d?.derivedFromEventId ?? null;
-    }
-    return null;
-  };
-
-  for (const entry of application.applied) {
+  const moves = [];
+  for (const entry of application.applied ?? []) {
     if (![ACCEPTED_DECISION_TYPES.ASSIGN_ROLE, ACCEPTED_DECISION_TYPES.MOVE_ROLE, ACCEPTED_DECISION_TYPES.DUPLICATE_WITH_JUSTIFICATION].includes(entry.type)) continue;
 
     const promoted = [];
@@ -234,62 +256,296 @@ export function leadPromotionReportsFromApplication(application, baseline) {
       }
     }
     if (!promoted.length) continue;
-
     // The application contract permits one Lead-affecting event per accepted
     // decision. Re-establish that boundary here rather than trusting a restored
     // application record to have run the interlock.
-    if ((entry.events ?? []).length !== 1) {
-      for (const { promotedEventId } of promoted) {
-        reports.push(pendingReport(promotedEventId, LEAD_ROLE, [DECISION_REJECTION.LEAD_EVIDENCE_MULTI_EVENT_SCOPE_UNSUPPORTED]));
-      }
+    const multiEvent = (entry.events ?? []).length !== 1;
+    for (const { item, promotedEventId } of promoted) moves.push({ entry, item, promotedEventId, multiEvent });
+  }
+  return moves;
+}
+
+// Does this candidate event still carry the musical identity the evidence was
+// graded against? Role is excluded deliberately: the role change *is* the move
+// the evidence argues for.
+const MUSICAL_IDENTITY_KEYS = Object.freeze(['pitch', 'start', 'end', 'volume']);
+const idList = (event, key) => JSON.stringify([...(event?.[key] ?? [])].map(String).sort());
+function musicalIdentityMatches(a, b) {
+  if (!a || !b) return false;
+  for (const key of MUSICAL_IDENTITY_KEYS) {
+    if (String(a[key] ?? '') !== String(b[key] ?? '')) return false;
+  }
+  return idList(a, 'sourceIds') === idList(b, 'sourceIds') && idList(a, 'sourceEventIds') === idList(b, 'sourceEventIds');
+}
+
+// Walk a derived duplicate's reversible chain back to the Source-Faithful
+// baseline. Never guess by pitch/time or array order.
+function baselineOriginOf(eventId, baselineById, candidateById) {
+  const seen = new Set();
+  let currentId = eventId;
+  while (typeof currentId === 'string' && currentId && !seen.has(currentId)) {
+    if (baselineById.has(currentId)) return baselineById.get(currentId);
+    seen.add(currentId);
+    const event = candidateById.get(currentId);
+    currentId = event?.metadata?.g11d?.derivedFromEventId ?? null;
+  }
+  return null;
+}
+
+// A digest failure is a reason to re-review, never a reason to throw the
+// analysis away or to pass by default.
+function safeLeadContextDigest(project) {
+  try {
+    return leadContextDigestOf(project);
+  } catch {
+    return null;
+  }
+}
+
+function contextStillMatches(step, candidateContextDigest) {
+  if (candidateContextDigest === null) return false;
+  const graded = safeLeadContextDigest(step.application?.candidate);
+  return graded !== null && graded === candidateContextDigest;
+}
+
+/**
+ * The Lead Demotion reports the accepted decisions' own evidence supports,
+ * recovered from the whole integrity-checked revision lineage and re-graded
+ * against the current candidate.
+ *
+ * Why the lineage rather than one application. The readiness Lead gates derive
+ * what needs evidence from the candidate-versus-Source-Faithful-baseline diff,
+ * which accumulates for the life of the project: a Lead event demoted in
+ * revision 1 is still demoted relative to the baseline in revision 9. The
+ * evidence, though, lives in the `applied[]` of the one revision that performed
+ * the move, and `metadata.g11d` deliberately does not inherit across revisions.
+ * Reading one revision therefore loses the evidence for every earlier move, and
+ * a revision that merely KEEPs an already-moved event produces no report at all
+ * -- leaving a gate no later decision could ever clear, because G11-D correctly
+ * refuses to re-apply a move that has already happened.
+ *
+ * Why this is a re-grade and not a carry-forward. Nothing recovered here is a
+ * stored verdict. The previous revision's PASS is never read; what is recovered
+ * is the *evidence record*, which is then put through `evaluateLeadDemotion()`
+ * again against the baseline event, exactly as at application time. On top of
+ * that, four things must still hold or the record is reported PENDING instead
+ * of graded: the event is still in the candidate (or still legitimately
+ * omitted), its musical identity is unchanged, the destination role the
+ * evidence argued for is the role the candidate actually has, and the Core3
+ * picture the continuity/Core3 claims were made about is unchanged. A candidate
+ * that moved any of those has an unproven claim again, and MASTER_RULES §4 says
+ * an unproven Lead decision is PENDING, not PASS.
+ *
+ * `baseline` is the Source-Faithful baseline. Every report is produced by
+ * `evaluateLeadDemotion()` itself; this never manufactures a PASS.
+ */
+export function leadDemotionReportsFromLineage({ applications, baseline, candidate }) {
+  const lineage = applicationLineage(applications, baseline);
+  if (!lineage.ok || !lineage.steps.length) return [];
+  const baselineById = new Map((baseline?.events ?? []).map(event => [event.id, event]));
+  const currentById = new Map((candidate?.events ?? []).map(event => [event.id, event]));
+  const contextDigest = safeLeadContextDigest(candidate);
+
+  // Oldest to newest: a later demotion of the same event replaces the earlier
+  // record, and a later promotion back to Lead withdraws it. Exactly one record
+  // per event id, because the readiness gate keys reports by event id and a
+  // second report for the same id would make the outcome order-dependent.
+  const records = new Map();
+  for (const step of lineage.steps) {
+    for (const move of demotionMovesOf(step.application)) records.set(move.eventId, { ...move, step });
+    for (const move of promotionMovesOf(step.application)) records.delete(move.promotedEventId);
+  }
+
+  const reports = [];
+  for (const record of records.values()) {
+    const { entry, eventId, destinationRole, multiEvent, step } = record;
+    if (multiEvent) {
+      reports.push(pendingReport(eventId, destinationRole, [DECISION_REJECTION.LEAD_EVIDENCE_MULTI_EVENT_SCOPE_UNSUPPORTED]));
+      continue;
+    }
+    const event = baselineById.get(eventId);
+    if (!event) continue;
+
+    // Scope before staleness, and deliberately so: a citation that does not
+    // describe this event is a fault in the evidence record itself, and it is
+    // reported as that rather than as a fact about the candidate. The order
+    // changes which reason is shown, never the outcome -- both are PENDING.
+    const scope = leadEvidenceIdentityBlockers(entry.leadEvidence, event);
+    if (scope.length) {
+      // Reported before the gate so the report carries the scope failure alone.
+      // The gate now runs the same binding itself, so this is a presentation
+      // choice, not the only thing standing between a foreign citation and a
+      // PASS under this event's id.
+      reports.push(pendingReport(event.id, destinationRole, scope.includes(LEAD_EVIDENCE_IDENTITY_MISMATCH) || scope.includes(LEAD_EVIDENCE_PROVENANCE_PAIR_AMBIGUOUS)
+        ? scope
+        : [...scope, LEAD_EVIDENCE_IDENTITY_MISMATCH]));
       continue;
     }
 
-    for (const { item, promotedEventId } of promoted) {
-      const origin = baselineOriginOf(item.eventId);
-      if (!origin) {
-        reports.push(Object.freeze({
-          ...pendingReport(promotedEventId, LEAD_ROLE, ['LEAD_PROMOTION_ORIGIN_NOT_IN_BASELINE']),
-          originEventId: null,
-        }));
-        continue;
-      }
-      // Grade the event as it existed immediately before this role move, while
-      // binding its citation to the source-faithful origin provenance. This is
-      // necessary for a derived event whose origin was already Melody: the
-      // derived copy is currently non-Lead even though its source ancestor was.
-      const evidenceEvent = { ...origin, id: item.eventId, role: item.fromRole ?? null };
-      const scope = leadEvidenceIdentityBlockers(entry.leadEvidence, evidenceEvent);
-      if (scope.length) {
-        reports.push(Object.freeze({
-          ...pendingReport(promotedEventId, LEAD_ROLE, scope.includes(LEAD_EVIDENCE_IDENTITY_MISMATCH) || scope.includes(LEAD_EVIDENCE_PROVENANCE_PAIR_AMBIGUOUS)
-            ? scope
-            : [...scope, LEAD_EVIDENCE_IDENTITY_MISMATCH]),
-          originEventId: origin.id,
-        }));
-        continue;
-      }
-      try {
-        const report = evaluateLeadPromotion({
+    const stale = demotionStaleness({ destinationRole, currentById, event, contextDigest, step });
+    if (stale.length) {
+      reports.push(pendingReport(event.id, destinationRole, stale));
+      continue;
+    }
+    try {
+      reports.push(Object.freeze({
+        ...evaluateLeadDemotion({
           ...(entry.leadEvidence ?? {}),
-          event: evidenceEvent,
-          destinationRole: LEAD_ROLE,
+          event,
+          destinationRole,
           positiveReason: entry.leadEvidence?.positiveReason ?? entry.reason,
-        });
-        reports.push(Object.freeze({
-          ...report,
-          eventId: promotedEventId,
-          originEventId: origin.id,
-        }));
-      } catch (error) {
-        reports.push(Object.freeze({
-          ...pendingReport(promotedEventId, LEAD_ROLE, [`LEAD_PROMOTION_EVIDENCE_INVALID: ${error.message}`]),
-          originEventId: origin.id,
-        }));
-      }
+        }),
+        gradedFromRevisionId: step.revision.id,
+      }));
+    } catch (error) {
+      reports.push(pendingReport(event.id, destinationRole, [`LEAD_DEMOTION_EVIDENCE_INVALID: ${error.message}`]));
     }
   }
   return reports;
+}
+
+// A demoted event either left Core3 for another role or left the six entirely.
+// Either way the destination the reviewer argued for must be the destination the
+// candidate actually has, and the event's musical identity must not have moved
+// under the citation.
+function demotionStaleness({ destinationRole, currentById, event, contextDigest, step }) {
+  const blockers = [];
+  const current = currentById.get(event.id);
+  if (destinationRole === 'omitted') {
+    if (current) blockers.push(LEAD_EVIDENCE_LINEAGE_BLOCKERS.DESTINATION_CHANGED);
+  } else if (!current) {
+    blockers.push(LEAD_EVIDENCE_LINEAGE_BLOCKERS.EVENT_NOT_IN_CANDIDATE);
+  } else {
+    if (current.role !== destinationRole) blockers.push(LEAD_EVIDENCE_LINEAGE_BLOCKERS.DESTINATION_CHANGED);
+    if (!musicalIdentityMatches(current, event)) blockers.push(LEAD_EVIDENCE_LINEAGE_BLOCKERS.EVENT_CHANGED);
+  }
+  if (!contextStillMatches(step, contextDigest)) blockers.push(LEAD_EVIDENCE_LINEAGE_BLOCKERS.CONTEXT_CHANGED);
+  return [...new Set(blockers)];
+}
+
+/**
+ * Re-grade every promotion into Melody the revision lineage produced.
+ *
+ * Readiness keys promotion evidence on the *candidate* Melody event: a role
+ * move/assignment keeps the source event id, while a justified duplicate gets a
+ * derived event id. The musical evidence is nevertheless judged against the
+ * source/baseline origin event so the citation cannot be laundered through a
+ * derived id.
+ *
+ * The lineage and re-grade reasoning is the same as for demotion above, and one
+ * asymmetry is worth naming: a promoted event is *already* Melody in every later
+ * candidate, so `evaluateLeadPromotion()` short-circuits to N/A if handed the
+ * candidate event. It is therefore graded as it stood immediately before the
+ * move -- which is also why "just re-supply the evidence on a KEEP" cannot work
+ * as a workaround, and why this recovery is the fix.
+ */
+export function leadPromotionReportsFromLineage({ applications, baseline, candidate }) {
+  const lineage = applicationLineage(applications, baseline);
+  if (!lineage.ok || !lineage.steps.length) return [];
+  const baselineById = new Map((baseline?.events ?? []).map(event => [event.id, event]));
+  const currentById = new Map((candidate?.events ?? []).map(event => [event.id, event]));
+  const contextDigest = safeLeadContextDigest(candidate);
+
+  const records = new Map();
+  for (const step of lineage.steps) {
+    for (const move of promotionMovesOf(step.application)) records.set(move.promotedEventId, { ...move, step });
+    for (const move of demotionMovesOf(step.application)) records.delete(move.eventId);
+  }
+
+  const reports = [];
+  for (const record of records.values()) {
+    const { entry, item, promotedEventId, multiEvent, step } = record;
+    if (multiEvent) {
+      reports.push(pendingReport(promotedEventId, LEAD_ROLE, [DECISION_REJECTION.LEAD_EVIDENCE_MULTI_EVENT_SCOPE_UNSUPPORTED]));
+      continue;
+    }
+
+    // The origin walk reads the candidate the move was applied to, because that
+    // is where the derived-duplicate chain for this step exists; the current
+    // candidate is consulted too so a duplicate created by a later revision
+    // still resolves.
+    const chain = new Map([
+      ...(step.application?.candidate?.events ?? []).map(event => [event.id, event]),
+      ...currentById,
+    ]);
+    const origin = baselineOriginOf(item.eventId, baselineById, chain);
+    if (!origin) {
+      reports.push(Object.freeze({
+        ...pendingReport(promotedEventId, LEAD_ROLE, ['LEAD_PROMOTION_ORIGIN_NOT_IN_BASELINE']),
+        originEventId: null,
+      }));
+      continue;
+    }
+
+    // Grade the event as it existed immediately before this role move, while
+    // binding its citation to the source-faithful origin provenance. This is
+    // necessary for a derived event whose origin was already Melody: the
+    // derived copy is currently non-Lead even though its source ancestor was.
+    const evidenceEvent = { ...origin, id: item.eventId, role: item.fromRole ?? null };
+    // Scope before staleness: see the note in the demotion builder above.
+    const scope = leadEvidenceIdentityBlockers(entry.leadEvidence, evidenceEvent);
+    if (scope.length) {
+      reports.push(Object.freeze({
+        ...pendingReport(promotedEventId, LEAD_ROLE, scope.includes(LEAD_EVIDENCE_IDENTITY_MISMATCH) || scope.includes(LEAD_EVIDENCE_PROVENANCE_PAIR_AMBIGUOUS)
+          ? scope
+          : [...scope, LEAD_EVIDENCE_IDENTITY_MISMATCH]),
+        originEventId: origin.id,
+      }));
+      continue;
+    }
+
+    const current = currentById.get(promotedEventId);
+    const stale = [];
+    if (!current) stale.push(LEAD_EVIDENCE_LINEAGE_BLOCKERS.EVENT_NOT_IN_CANDIDATE);
+    else {
+      if (current.role !== LEAD_ROLE) stale.push(LEAD_EVIDENCE_LINEAGE_BLOCKERS.DESTINATION_CHANGED);
+      if (!musicalIdentityMatches(current, origin)) stale.push(LEAD_EVIDENCE_LINEAGE_BLOCKERS.EVENT_CHANGED);
+    }
+    if (!contextStillMatches(step, contextDigest)) stale.push(LEAD_EVIDENCE_LINEAGE_BLOCKERS.CONTEXT_CHANGED);
+    if (stale.length) {
+      reports.push(Object.freeze({
+        ...pendingReport(promotedEventId, LEAD_ROLE, [...new Set(stale)]),
+        originEventId: origin.id,
+      }));
+      continue;
+    }
+    try {
+      const report = evaluateLeadPromotion({
+        ...(entry.leadEvidence ?? {}),
+        event: evidenceEvent,
+        destinationRole: LEAD_ROLE,
+        positiveReason: entry.leadEvidence?.positiveReason ?? entry.reason,
+      });
+      reports.push(Object.freeze({
+        ...report,
+        eventId: promotedEventId,
+        originEventId: origin.id,
+        gradedFromRevisionId: step.revision.id,
+      }));
+    } catch (error) {
+      reports.push(Object.freeze({
+        ...pendingReport(promotedEventId, LEAD_ROLE, [`LEAD_PROMOTION_EVIDENCE_INVALID: ${error.message}`]),
+        originEventId: origin.id,
+      }));
+    }
+  }
+  return reports;
+}
+
+/**
+ * The single-revision entry points, kept so existing callers and regressions are
+ * unaffected. A lineage of exactly one step is the same computation: the
+ * candidate the evidence was graded against *is* the candidate being graded, so
+ * every staleness check is satisfied by construction.
+ */
+export function leadDemotionReportsFromApplication(application, baseline) {
+  if (!requirePass(application, baseline)) return [];
+  return leadDemotionReportsFromLineage({ applications: [application], baseline, candidate: application.candidate });
+}
+
+export function leadPromotionReportsFromApplication(application, baseline) {
+  if (!requirePass(application, baseline)) return [];
+  return leadPromotionReportsFromLineage({ applications: [application], baseline, candidate: application.candidate });
 }
 
 /**

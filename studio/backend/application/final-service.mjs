@@ -149,8 +149,12 @@ export function createFinalService({ canonical, projects, review, store }) {
         }, 'Nothing was emitted. This candidate was accepted under a different Published Canonical rules snapshot than the one loaded now; re-run the suggestion and decisions under the loaded release.');
       }
 
-      const leadDemotionReports = engines.arrangement.leadDemotionReportsFromApplication(application, baselineProject);
-      const leadPromotionReports = engines.arrangement.leadPromotionReportsFromApplication(application, baselineProject);
+      // Same lineage recovery as review: evidence for a Lead move made in an
+      // earlier revision is recovered from that revision and re-graded against
+      // this candidate. A previous PASS is never inherited.
+      const leadReportInputs = { applications: ctx.applicationLineage, baseline: baselineProject, candidate: application.candidate };
+      const leadDemotionReports = engines.arrangement.leadDemotionReportsFromLineage(leadReportInputs);
+      const leadPromotionReports = engines.arrangement.leadPromotionReportsFromLineage(leadReportInputs);
       const lineage = engines.compare.compareCandidateLineage({ sourceBaseline: baselineProject, acceptedPrevious: parent, candidate: project });
       const core3 = engines.core3.evaluateCore3Continuity({ baseline: baselineProject, candidate: project, approvedChanges: [] });
       const harmony = engines.harmony.analyzeCrossSourceHarmony(project);

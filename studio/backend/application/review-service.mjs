@@ -171,7 +171,7 @@ export function createReviewService({ canonical, projects, intake, arrangement, 
     const candidateRulesSnapshot = application.revision?.canonicalIdentity?.rules_snapshot_sha ?? null;
     const loadedRulesSnapshot = engines.emitterContract.canonicalIdentity().rules_snapshot_sha;
 
-    return { engines, record, baseline, baselineProject, entry, application, confirmations, staleConfirmations: stale, audioReports, audioErrors, project, parent, candidateRulesSnapshot, loadedRulesSnapshot };
+    return { engines, record, baseline, baselineProject, entry, application, applicationLineage: arrangement.loadCandidateLineage(record, candidateId), confirmations, staleConfirmations: stale, audioReports, audioErrors, project, parent, candidateRulesSnapshot, loadedRulesSnapshot };
   };
 
   /** Record an explicit confirmation. Each one needs a stated reason. */
@@ -316,8 +316,14 @@ export function createReviewService({ canonical, projects, intake, arrangement, 
       const ctx = await context(owner, projectId, candidateId);
       const { engines, application, baselineProject, confirmations: recorded, project, parent } = ctx;
 
-      const leadDemotionReports = engines.arrangement.leadDemotionReportsFromApplication(application, baselineProject);
-      const leadPromotionReports = engines.arrangement.leadPromotionReportsFromApplication(application, baselineProject);
+      // Read the whole integrity-checked revision lineage, not just this
+      // revision: a Lead move made three revisions ago still needs evidence
+      // relative to the Source-Faithful baseline, and its evidence record lives
+      // on the revision that made it. Every recovered record is re-graded
+      // against the current candidate, never carried forward as a stored PASS.
+      const leadReportInputs = { applications: ctx.applicationLineage, baseline: baselineProject, candidate: application.candidate };
+      const leadDemotionReports = engines.arrangement.leadDemotionReportsFromLineage(leadReportInputs);
+      const leadPromotionReports = engines.arrangement.leadPromotionReportsFromLineage(leadReportInputs);
       const readinessInputs = {
         leadDemotionReports,
         leadPromotionReports,

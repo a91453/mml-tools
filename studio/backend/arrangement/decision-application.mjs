@@ -323,6 +323,44 @@ export function snapshotDigestOf(project) {
   return contentDigest(projectDigestShape(project, { excludeMetadataKeys: ['sourceFaithfulBaseline', 'g11d'] }));
 }
 
+/**
+ * The Core3 picture a Lead evidence record's continuity and Core3 claims were
+ * made about.
+ *
+ * `SOURCE_POLICY.md` §4 asks a Lead move for continuity after the move and for
+ * Core3 integrity. Both are claims about a *state*, not about an event in
+ * isolation: the same citation about the same event stops being proven once the
+ * Melody/Chord1/Chord2 material around it moves, changes pitch or timing, or
+ * appears or disappears. So when evidence recorded at one revision is recovered
+ * for a later candidate, this digest is what decides whether it still describes
+ * the candidate being graded, or has to go back to PENDING for re-review.
+ *
+ * Scoped to Core3 note events on purpose. Re-roling Chord3-Chord5 enrichment
+ * material does not touch either claim, and invalidating every Lead record on
+ * any edit anywhere would push reviewers to re-enter evidence mechanically,
+ * which is how a gate stops being read. Volume is included because prominence
+ * is part of what a Core3 role claim asserts.
+ *
+ * This is an implementation staleness rule. It adds no Canonical rule and
+ * decides no musical question: a changed digest means "not proven for this
+ * candidate", never "wrong".
+ */
+export function leadContextDigestOf(project) {
+  if (!isPlainObject(project)) throw Error('leadContextDigestOf requires a Canonical project');
+  const events = (project.events ?? [])
+    .filter(event => event?.kind === 'note' && CORE3_ROLE_NAMES.includes(event.role ?? ''))
+    .map(event => ({
+      id: event.id,
+      role: event.role,
+      pitch: event.pitch,
+      start: beatKey(event.start),
+      end: beatKey(event.end),
+      volume: event.volume ?? null,
+    }))
+    .sort((a, b) => cmpStr(a.id, b.id));
+  return contentDigest(events);
+}
+
 export function decisionSetDigestOf(normalizedDecisions) {
   const records = normalizedDecisions
     .map(decision => ({ ...decision }))
