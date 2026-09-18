@@ -960,15 +960,24 @@ export function planFinalReduction({
       manifestations: Object.freeze(manifestations),
       manifestationCount: manifestations.length,
       candidateEventIds: Object.freeze(uniqueSorted(manifestations.flatMap(entry => [entry.candidateEventId, ...entry.createdEventIds]))),
+      // These two fields describe the primary/origin manifestation as a pair.
+      // Never combine primary.currentRole with another copy's proposedRole: that
+      // would invent a role move no concrete candidate event performed. The
+      // aggregate outcome below may be driven by another manifestation, whose
+      // exact role pair remains in manifestations[].
       currentRole: primary.currentRole,
-      proposedRole: deciding?.proposedRole ?? primary.proposedRole,
+      proposedRole: primary.proposedRole,
       duplicateRoles: primary.duplicateRoles,
       outcome: rollUp,
       accounting: REDUCTION_ACCOUNTING_BUCKETS[rollUp],
       reasonCode: deciding?.reasonCode ?? primary.reasonCode,
-      decisionId: decisionIds.length === 1 ? decisionIds[0] : null,
+      // A single top-level decision id/evidence is meaningful only when the
+      // manifestation that drove the aggregate outcome actually carries it.
+      // Other decisions on sibling copies remain explicit in decisionIds[] and
+      // manifestations[] rather than being misattributed to the roll-up.
+      decisionId: deciding?.decisionId ?? null,
       decisionIds: Object.freeze(decisionIds),
-      evidence: Object.freeze(uniqueSorted(manifestations.flatMap(entry => entry.evidence))),
+      evidence: deciding?.evidence ?? primary.evidence,
       upstreamOmissionVerified: null,
       leadImpact: leading ? leading.leadImpact : primary.leadImpact,
       core3Impact: Object.freeze({
