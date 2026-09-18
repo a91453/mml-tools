@@ -153,7 +153,7 @@ event-level, and a lane-shaped omission is the bulk deletion `SOURCE_POLICY.md`
 | --- | --- | --- |
 | `KEEP` | `KEEP` | reason |
 | `REDISTRIBUTE` | `ASSIGN_ROLE` (unassigned) / `MOVE_ROLE` (assigned) | reason + ≥1 reference |
-| `DUPLICATE` | `DUPLICATE_WITH_JUSTIFICATION` | reason + ≥1 reference |
+| `DUPLICATE` | `DUPLICATE_WITH_JUSTIFICATION` | reason + ≥1 reference — *plan-time only, see below* |
 | `ACCEPT_OVERFLOW` | `KEEP` over role-less material | reason |
 | `OMIT` | `OMIT_FROM_SIX` | reason + ≥1 reference |
 
@@ -167,6 +167,24 @@ contract, and a Lead refusal surfaces as the G11-D rejection code it is.
 The acceptance bindings are computed from the baseline and Canonical release
 loaded at call time and are never taken from a caller — an identity a caller can
 supply is an identity a caller can make stale-proof.
+
+### `DUPLICATE` is graded, and cannot be applied in v1
+
+A duplicate copies its source event exactly, pitch and timing included, so it
+always sounds at the same pitch and time as the original it copies. That is a
+same-pitch overlap the plan would **introduce**, and the new-risk check blocks
+it — for any target role, on any baseline.
+
+The action exists because the Lead contract must be enforced on a duplication
+into Melody, and it is: the decision is normalized, translated and graded by the
+shared Lead grader at plan time. But no duplication can reach `apply` in v1, and
+the `createdEventIds` checks in both proofs are therefore defence in depth for a
+path apply cannot currently take. A regression pins this, so making duplication
+reachable is a deliberate change with a failing test rather than a silent one.
+
+A duplicate an *upstream* G11-D revision already accepted is a different thing
+entirely: it arrives inside the candidate, is not introduced by this plan, and
+is handled as an additional manifestation of its source event.
 
 ## Core3
 

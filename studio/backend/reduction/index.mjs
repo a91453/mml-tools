@@ -1360,6 +1360,14 @@ export const FINAL_REDUCTION_STATUS = Object.freeze({
   characterBudgetCanDeleteMusic: false,
   leadContractReused: true,
   leadShortcut: false,
+  // A duplicate copies its source event exactly, so it always sounds at the
+  // same pitch and time as the original and the new-risk check always blocks
+  // it. The action exists because the Lead contract has to be enforced on a
+  // duplication into Melody, and it is -- at plan time. No duplication can be
+  // applied in v1, and saying so is better than an action that silently never
+  // succeeds.
+  duplicationGradedAtPlanTime: true,
+  duplicationApplicable: false,
   core3EvaluatedIndependently: true,
   core3MaskableByEnrichment: false,
   harmonyModulesReused: true,

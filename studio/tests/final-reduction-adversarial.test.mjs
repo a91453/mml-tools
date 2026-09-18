@@ -17,6 +17,7 @@ import {
   REDUCTION_OUTCOMES,
   REDUCTION_REASON_CODES,
   REDUCTION_ACCOUNTING_BUCKETS,
+  FINAL_REDUCTION_STATUS,
 } from '../backend/reduction/index.mjs';
 import { createStudioApplication } from '../backend/application/index.mjs';
 import { createCanonicalProject, createCanonicalNoteEvent } from '../backend/canonical/index.mjs';
@@ -552,4 +553,46 @@ test('every delivered copy is delivered in the role the ledger records, across e
       }
     }
   }
+});
+
+test('DUPLICATE is enforceable at plan time but unreachable at apply, and says so', () => {
+  // A duplicate copies its source event exactly, pitch and timing included, so
+  // it always sounds at the same pitch and time as the original it copies. That
+  // is a same-pitch overlap this plan would introduce, and the new-risk check
+  // blocks it — for any target role, on any baseline.
+  //
+  // So the action is real where the stage contract needs it to be — the Lead
+  // contract is enforced on a duplication into Melody, graded at plan time —
+  // and can never be applied in v1. Pinned here so that becoming reachable is a
+  // deliberate change with a failing test, not a silent one, and so the
+  // `createdEventIds` checks are not mistaken for covering live apply.
+  for (const toRoles of [['Chord5'], ['Chord4']]) {
+    const plan = planFinalReduction({
+      baseline: baselineWithUnassignedRole(),
+      acceptedBy: 'adversary',
+      decisions: [reductionDecision({ id: 'dup', action: 'DUPLICATE', eventIds: ['chord1-1'], toRoles, reason: 'A justified doubling.' })],
+    });
+    assert.equal(plan.status, 'PENDING', `${toRoles}: ${JSON.stringify(plan.blockers)}`);
+    assert.ok(plan.blockers.some(blocker => blocker.code === REDUCTION_BLOCKERS.NEW_OVERLAP_RISK), `${toRoles}: ${JSON.stringify(plan.blockers.map(entry => entry.code))}`);
+    // The ledger still describes the duplication it would have performed, so a
+    // reviewer sees what was refused rather than an empty plan.
+    const item = plan.items.find(entry => entry.baselineEventId === 'chord1-1');
+    assert.deepEqual(item.manifestations[0].duplicateRoles, [...toRoles]);
+    assert.equal(item.manifestations[0].createdEventIds.length, 1);
+  }
+
+  // Into Melody it is blocked earlier, and by the right gate: the shared Lead
+  // grader refuses the promotion before any collision question is reached. Both
+  // roads are closed, for two different and correct reasons.
+  const intoLead = planFinalReduction({
+    baseline: baselineWithUnassignedRole(),
+    acceptedBy: 'adversary',
+    decisions: [reductionDecision({ id: 'dup-lead', action: 'DUPLICATE', eventIds: ['chord1-1'], toRoles: ['Melody'], reason: 'A doubling into the Lead role with no Lead evidence.' })],
+  });
+  assert.equal(intoLead.status, 'PENDING');
+  assert.ok(intoLead.blockers.some(blocker => blocker.rejection === 'LEAD_PROMOTION_EVIDENCE_REQUIRED'), JSON.stringify(intoLead.blockers));
+  assert.equal(intoLead.items.find(entry => entry.baselineEventId === 'chord1-1').leadImpact.kind, 'duplication');
+
+  assert.equal(FINAL_REDUCTION_STATUS.duplicationGradedAtPlanTime, true);
+  assert.equal(FINAL_REDUCTION_STATUS.duplicationApplicable, false);
 });
