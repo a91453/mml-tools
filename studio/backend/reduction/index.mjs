@@ -145,6 +145,7 @@ export const REDUCTION_BLOCKERS = Object.freeze({
   OMISSION_EVIDENCE_REQUIRED: 'REDUCTION_OMISSION_EVIDENCE_REQUIRED',
   REDISTRIBUTION_EVIDENCE_REQUIRED: 'REDUCTION_REDISTRIBUTION_EVIDENCE_REQUIRED',
   ACCEPT_OVERFLOW_TARGET_ASSIGNED: 'REDUCTION_ACCEPT_OVERFLOW_TARGET_ALREADY_ASSIGNED',
+  LEDGER_ROLE_MISMATCH: 'REDUCTION_LEDGER_ROLE_DISAGREES_WITH_PROJECTION',
   PERCUSSION_IN_PITCHED_ROLE: 'REDUCTION_PERCUSSION_IN_PITCHED_ROLE',
   PERCUSSION_ROLE_ASSIGNMENT_REFUSED: 'REDUCTION_PERCUSSION_ROLE_ASSIGNMENT_REFUSED',
   CORE3_INCOMPLETE: 'REDUCTION_CORE3_INCOMPLETE',
@@ -1023,6 +1024,26 @@ export function planFinalReduction({
         for (const created of entry.createdEventIds) {
           if (!proposedById.has(created)) addBlocker(REDUCTION_BLOCKERS.EVENT_UNACCOUNTED, { baselineEventId: item.baselineEventId, candidateEventId: created, detail: 'ledger predicted a duplicate the projection did not create' });
         }
+        // Presence is not the whole invariant. An event can be delivered and
+        // still be delivered somewhere the ledger denies -- a bookkeeping
+        // action whose role decision preserves the role while the ledger
+        // reports the material as outside the six roles is exactly that, and it
+        // passes every presence check. So the role the projection would deliver
+        // has to equal the role the ledger predicts, for every delivered copy.
+        if (delivered && (proposedById.get(entry.candidateEventId).role ?? null) !== (entry.proposedRole ?? null)) {
+          addBlocker(REDUCTION_BLOCKERS.LEDGER_ROLE_MISMATCH, {
+            baselineEventId: item.baselineEventId,
+            candidateEventId: entry.candidateEventId,
+            ledgerRole: entry.proposedRole ?? null,
+            projectedRole: proposedById.get(entry.candidateEventId).role ?? null,
+          });
+        }
+        for (const created of entry.createdEventIds) {
+          const role = proposedById.get(created)?.role ?? null;
+          if (role !== null && !(entry.duplicateRoles ?? []).includes(role)) {
+            addBlocker(REDUCTION_BLOCKERS.LEDGER_ROLE_MISMATCH, { baselineEventId: item.baselineEventId, candidateEventId: created, ledgerRole: Object.freeze([...(entry.duplicateRoles ?? [])]), projectedRole: role });
+          }
+        }
       }
       if (!item.manifestations.length && item.outcome !== REDUCTION_OUTCOMES.OMIT) {
         addBlocker(REDUCTION_BLOCKERS.EVENT_UNACCOUNTED, { baselineEventId: item.baselineEventId, detail: 'ledger reports a delivery for a baseline event with no candidate manifestation' });
@@ -1284,8 +1305,13 @@ export function applyFinalReduction({
       const delivered = outputById.has(entry.candidateEventId);
       if (entry.outcome === REDUCTION_OUTCOMES.OMIT && delivered) throw Error(`G12 INVARIANT VIOLATED: ${entry.candidateEventId} is recorded omitted but was delivered`);
       if (entry.outcome !== REDUCTION_OUTCOMES.OMIT && !delivered) throw Error(`G12 INVARIANT VIOLATED: ${entry.candidateEventId} is recorded retained but was not delivered`);
+      if (delivered && (outputById.get(entry.candidateEventId).role ?? null) !== (entry.proposedRole ?? null)) {
+        throw Error(`G12 INVARIANT VIOLATED: ${entry.candidateEventId} is recorded in ${entry.proposedRole ?? 'no role'} but was delivered in ${outputById.get(entry.candidateEventId).role ?? 'no role'}`);
+      }
       for (const created of entry.createdEventIds) {
         if (!outputById.has(created)) throw Error(`G12 INVARIANT VIOLATED: ${created} is recorded as a duplicate this reduction creates but was not delivered`);
+        const role = outputById.get(created).role ?? null;
+        if (role !== null && !(entry.duplicateRoles ?? []).includes(role)) throw Error(`G12 INVARIANT VIOLATED: the duplicate ${created} was delivered in ${role}, which the ledger does not record`);
       }
     }
   }

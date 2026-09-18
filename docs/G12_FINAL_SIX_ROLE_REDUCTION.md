@@ -107,6 +107,24 @@ manifestation**, not per entry: a baseline event with one omitted copy and one
 retained copy satisfies any entry-level test trivially, which is the case those
 checks exist for.
 
+### The ledger and the delivery must agree on the role, not just on presence
+
+Presence is not the whole invariant. An event can be delivered and still be
+delivered *somewhere the ledger denies* — a bookkeeping action whose underlying
+role decision preserves the role, while the ledger reports the material as
+outside the six roles, passes every presence check while the accounting lies.
+
+So both proofs also require, for every delivered copy, that the role the
+projection delivers equals the `proposedRole` the ledger records, and that a
+duplicate this plan creates lands in one of the `duplicateRoles` recorded for
+it. A disagreement is `REDUCTION_LEDGER_ROLE_DISAGREES_WITH_PROJECTION` in the
+plan and a thrown invariant violation at apply.
+
+`ACCEPT_OVERFLOW` on an event that already holds one of the six roles is
+refused up front for the same reason: the G11-D action it becomes is `KEEP`,
+which preserves the role, so accepting it would mean recording material as
+outside the delivery while it keeps sounding inside it.
+
 **`OMIT` is not something the planner can reach on its own.** "The six roles
 were full" is a capacity fact, not a licence to delete. An omission requires an
 explicit decision naming exact candidate events, with a reason, at least one

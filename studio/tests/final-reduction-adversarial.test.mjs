@@ -516,3 +516,40 @@ test('an unresolved copy is never hidden by a settled one', () => {
   // the unresolved case impossible to hide, and it is stated as data.
   assert.equal(item.outcome, REDUCTION_OUTCOMES.KEEP);
 });
+
+test('every delivered copy is delivered in the role the ledger records, across every shape', () => {
+  // The systemic form of the ACCEPT_OVERFLOW-on-assigned defect above: an event
+  // can be delivered and still be delivered somewhere the ledger denies, which
+  // passes every presence check. Asserted here from outside the engine, over
+  // each decision shape the stage supports, so a future action whose role
+  // decision diverges from its ledger entry is caught by its own regression and
+  // not only by the guard on the one action that first showed the problem.
+  const cases = [
+    ['no decisions', baselineWithUnassignedRole(), []],
+    ['redistribute', baselineWithUnassignedRole(), [PLACE]],
+    ['accept overflow', baselineWithOverflowLane(), [reductionDecision({ id: 'accept', action: 'ACCEPT_OVERFLOW', eventIds: ['overflow-1', 'overflow-2', 'overflow-3'], evidence: [], reason: 'Stays outside the six roles.' })]],
+    ['omit', baselineWithOverflowLane(), [reductionDecision({ id: 'omit', action: 'OMIT', eventIds: ['overflow-1'], reason: 'Accepted removal.', evidence: [`${FIXTURE_SOURCE_ID}#doubling`] })]],
+    ['keep', sixRoleBaseline(), [reductionDecision({ id: 'keep', action: 'KEEP', eventIds: ['chord3-1'], evidence: [], reason: 'Reviewed and accepted as is.' })]],
+  ];
+  for (const [label, baseline, decisions] of cases) {
+    const plan = planFinalReduction({ baseline, decisions, acceptedBy: 'adversary' });
+    assert.equal(plan.status, 'PASS', `${label}: ${JSON.stringify(plan.blockers)}`);
+    if (!decisions.length) continue;
+    const result = applyFinalReduction({ baseline, decisions, expectedPlanId: plan.id, acceptedBy: 'adversary' });
+    assert.equal(result.status, 'PASS', `${label}: ${JSON.stringify(result.blockers)}`);
+    const roleOf = new Map(result.candidate.events.map(event => [event.id, event.role ?? null]));
+    for (const item of result.ledger) {
+      for (const entry of item.manifestations) {
+        if (entry.outcome === REDUCTION_OUTCOMES.OMIT) {
+          assert.equal(roleOf.has(entry.candidateEventId), false, `${label}: ${entry.candidateEventId} is recorded omitted but was delivered`);
+          continue;
+        }
+        assert.equal(roleOf.get(entry.candidateEventId), entry.proposedRole ?? null,
+          `${label}: ${entry.candidateEventId} is recorded in ${entry.proposedRole ?? 'no role'} but was delivered in ${roleOf.get(entry.candidateEventId) ?? 'no role'}`);
+        for (const created of entry.createdEventIds) {
+          assert.ok((entry.duplicateRoles ?? []).includes(roleOf.get(created)), `${label}: the duplicate ${created} landed in a role the ledger does not record`);
+        }
+      }
+    }
+  }
+});
