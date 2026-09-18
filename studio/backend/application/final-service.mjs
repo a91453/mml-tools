@@ -22,7 +22,9 @@
 // An emitter PASS means the candidate was serialized exactly and re-parsed to
 // identical semantics under the authoritative Final parser. It certifies no
 // source completeness, no audio alignment, no player readback, no Mobile
-// adaptation and no in-game acceptance. The artifact carries the gate axes
+// adaptation and no in-game acceptance. Mobile adaptation is a separate
+// evidence-backed readiness gate; serializer success never substitutes for it.
+// The artifact carries the gate axes
 // beside the MML so that reading one can never be mistaken for the other.
 
 import { ERROR_CODES, GATE_STATUS, OPERATION_STATUS, fail, requireString } from './contracts.mjs';
@@ -165,6 +167,7 @@ export function createFinalService({ canonical, projects, review, store }) {
         versionDriftReviewed: recorded.version_drift_reviewed?.value === true,
         originalAudioRequired: recorded.original_audio_required?.value !== false,
         playerReadback: recorded.player_readback?.value ?? 'NOT_RUN',
+        mobileAdaptation: recorded.mobile_adaptation_reviewed?.value === true ? 'PASS' : 'PENDING',
         inGameAcceptance: 'PENDING',
       };
       const readiness = engines.final.evaluateProjectReadiness({ ...readinessInputs, mmlValidation: null });
