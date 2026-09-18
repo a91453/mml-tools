@@ -272,3 +272,41 @@ test('a justified duplicate into Melody is traceable through its derived chain',
   assert.deepEqual([...readiness.gates.leadPromotion.pendingEventIds], ['B#dup']);
   assert.equal(readinessOf(candidate, { promotion: [pass('B#dup', 'Melody')] }).gates.leadPromotion.status, 'PASS');
 });
+
+// ─── the same case on the plane it actually reaches ─────────────────────────
+//
+// The fixtures above drive readiness directly. This one drives the real Studio
+// Web analysis, because that is the plane where two projects genuinely arrive
+// with unrelated id spaces: two MML deliveries, parsed independently, produce
+// `b:note:Melody:1` and `c:note:Melody:1` for the same musical slot.
+//
+// Without the correspondence check this exact workspace reported
+// `leadDemotion: N/A`, `leadPromotion: N/A` and an empty Lead blocker list for
+// a swapped Lead. Verified by disabling the check and re-running.
+
+test('a disjoint-id Lead swap reaches Gate 3 through the real Studio Web analysis', async () => {
+  const { newWorkspace, analyzeWorkspace, intake } = await import('../web/model.mjs');
+  const settings = { meterText: '0 4/4', recording: '', offset: '', end: '', audioRequired: 'no', preview: 'none' };
+  const mmlAsset = (name, content, id) => intake({ name, content, id, meterText: '0 4/4' });
+
+  const workspace = { ...newWorkspace(), title: 'web lead swap', settings };
+  // Melody C / Chord1 E, against Melody E / Chord1 C: the Lead and the inner
+  // voice trade places at the same onset.
+  workspace.assets.baseline = mmlAsset('baseline.mml', 'MML@t120o5c1,t120o5e1,,,,;', 'b');
+  workspace.assets.candidate = mmlAsset('candidate.mml', 'MML@t120o5e1,t120o5c1,,,,;', 'c');
+
+  const report = analyzeWorkspace(workspace);
+  assert.equal(report.readiness.gates.baseline.status, 'PASS', 'the baseline snapshot is present, so the gate really ran');
+
+  for (const name of ['leadDemotion', 'leadPromotion']) {
+    const gate = report.readiness.gates[name];
+    assert.notEqual(gate.status, 'N/A', `${name} must not go quiet on a Web Lead swap`);
+    assert.equal(gate.status, 'PENDING');
+    assert.ok(gate.blockers.includes(UNRESOLVED));
+    assert.ok(report.readiness.preGameBlocking.includes(name));
+  }
+  // The ids really are disjoint -- that is what makes this the Web case.
+  const [pairing] = report.readiness.gates.leadDemotion.unresolvedPairings;
+  assert.notEqual(pairing.beforeId, pairing.afterId);
+  assert.notEqual(report.state, 'VALIDATED');
+});
