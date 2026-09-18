@@ -536,10 +536,14 @@ function suggestionsFor(event, capacity, analysis) {
 function roleAnalysisOf(project) {
   try {
     const suggestion = suggestRoleCandidates(project);
+    // The lane's own proposal field is `candidateRole`. Reading a field G11-C
+    // does not publish would leave this index silently empty, which is a
+    // suggestion list that quietly never suggests anything.
     const roleByEventId = new Map();
     for (const lane of suggestion.lanes ?? []) {
-      const role = (suggestion.roles ?? {})[lane.proposedRole] ? lane.proposedRole : lane.proposedRole ?? null;
-      for (const eventId of lane.eventIds ?? []) if (role) roleByEventId.set(eventId, role);
+      const role = lane.candidateRole ?? null;
+      if (!role || !SIX_ROLES.includes(role)) continue;
+      for (const eventId of lane.eventIds ?? []) roleByEventId.set(eventId, role);
     }
     return {
       ok: true,
@@ -557,7 +561,12 @@ function roleAnalysisOf(project) {
   }
 }
 
-const unsupportedEventIdsOf = analysis => new Set((analysis.unsupportedSourceMaterial ?? []).flatMap(item => item?.eventIds ?? []));
+// G11-C reports unsupported material one event at a time, as `eventId`. Reading
+// a plural field it does not publish would make the UNSUPPORTED_SOURCE_MATERIAL
+// reason code unreachable, and unsupported material would be reported under the
+// ordinary "a reviewer has not decided yet" code instead of as unsupported.
+const unsupportedEventIdsOf = analysis => new Set((analysis.unsupportedSourceMaterial ?? [])
+  .flatMap(item => (item?.eventIds ?? (string(item?.eventId) ? [item.eventId] : []))));
 
 /**
  * The parent application a derived candidate carries inside itself.
@@ -656,6 +665,10 @@ export function planFinalReduction({
   const unsupportedIds = unsupportedEventIdsOf(analysis);
   const budgetBefore = characterBudgetOf(candidate);
   const capacity = roleCapacityOf(candidate, budgetBefore.counts);
+  // Which roles are still free *after* this plan's own decisions. Classifying
+  // undecided material against the capacity before them would call an event
+  // PENDING on the strength of a slot the same plan has just filled.
+  let capacityAfter = capacity;
 
   // ── decision targets ──
   const decisionByEventId = new Map();
@@ -697,6 +710,10 @@ export function planFinalReduction({
   }
   const proposed = derivation?.status === 'PASS' ? derivation.candidate : candidate;
   const proposedById = new Map(proposed.events.map(event => [event.id, event]));
+  // Identical projects produce identical measurements, so a plan with no role
+  // change does not pay for a second Final emission to learn that.
+  const budgetAfter = proposed === candidate ? budgetBefore : characterBudgetOf(proposed);
+  if (proposed !== candidate) capacityAfter = roleCapacityOf(proposed, budgetAfter.counts);
   const proposedOmittedIds = new Set((derivation?.omitted ?? []).map(item => item.eventId));
 
   // ── event accounting ledger ──
@@ -794,8 +811,18 @@ export function planFinalReduction({
             proposedRole = null;
             break;
           default:
-            outcome = REDUCTION_OUTCOMES.KEEP;
-            reasonCode = REDUCTION_REASON_CODES.REVIEWER_ACCEPTED_KEEP;
+            // A KEEP over material that has no role does not retain it *in the
+            // six roles*: it accepts that it stays outside them. Recording that
+            // as `retained` would be the accounting claiming a delivery that
+            // never happens, so it converges with ACCEPT_OVERFLOW instead.
+            if (SIX_ROLES.includes(currentRole)) {
+              outcome = REDUCTION_OUTCOMES.KEEP;
+              reasonCode = REDUCTION_REASON_CODES.REVIEWER_ACCEPTED_KEEP;
+            } else {
+              outcome = REDUCTION_OUTCOMES.OVERFLOW;
+              reasonCode = REDUCTION_REASON_CODES.REVIEWER_ACCEPTED_OVERFLOW;
+              proposedRole = null;
+            }
             break;
         }
       } else if (percussion) {
@@ -810,7 +837,7 @@ export function planFinalReduction({
       } else if (unsupportedIds.has(event.id)) {
         outcome = REDUCTION_OUTCOMES.PENDING;
         reasonCode = REDUCTION_REASON_CODES.UNSUPPORTED_SOURCE_MATERIAL;
-      } else if (!capacity.free.length) {
+      } else if (!capacityAfter.free.length) {
         // Material with no role and no empty role to receive it. Placing it
         // would mean displacing or merging with something already delivered --
         // a musical decision, so it is reported as overflow and retained, not
@@ -862,7 +889,7 @@ export function planFinalReduction({
         }),
         reviewDependencies: Object.freeze(reviewDependenciesFor(outcome, affectsLead, CORE3.has(currentRole ?? '') || CORE3.has(proposedRole ?? ''))),
         suggestions: outcome === REDUCTION_OUTCOMES.PENDING && reasonCode === REDUCTION_REASON_CODES.ROLE_DECISION_REQUIRED
-          ? suggestionsFor(event, capacity, analysis)
+          ? suggestionsFor(event, capacityAfter, analysis)
           : Object.freeze([]),
         percussion,
       }));
@@ -910,6 +937,13 @@ export function planFinalReduction({
     addWarning(dependsOnEnrichment ? REDUCTION_WARNINGS.CORE3_DEPENDS_ON_ENRICHMENT : REDUCTION_WARNINGS.CORE3_UNRESOLVED, { blockers: Object.freeze([...(core3After.blockers ?? [])]) });
   }
 
+  // Both scanners read pitch, time and source identity -- never role. A pure
+  // role move therefore cannot introduce a pair, which is what makes a
+  // reduction safe to apply over an already-conflicted arrangement. What it
+  // must not do is *clear* one, and the before/after comparison is what proves
+  // the inherited risk survives into the review instead of being deleted.
+  // Duplication is the one action here that adds a sounding event, so it is the
+  // one that can introduce a pair, and it blocks when it does.
   const scanLimited = overlapPairBudgetExceeded(candidateNotes) || overlapPairBudgetExceeded(notes(proposed));
   if (scanLimited) addBlocker(REDUCTION_BLOCKERS.COLLISION_SCAN_LIMIT, { maxOverlappingPairs: OVERLAP_PAIR_BUDGET });
   const overlapBefore = scanLimited ? [] : overlapRisks(candidate);
@@ -926,7 +960,6 @@ export function planFinalReduction({
   for (const conflict of introducedConflicts) addBlocker(REDUCTION_BLOCKERS.NEW_CROSS_SOURCE_CONFLICT, { conflictId: conflict.id, kind: conflict.kind, leftEventId: conflict.leftEventId, rightEventId: conflict.rightEventId, intervalName: conflict.intervalName });
   if (harmonyBefore.unresolvedCount) addWarning(REDUCTION_WARNINGS.EXISTING_CROSS_SOURCE_CONFLICTS, { count: harmonyBefore.unresolvedCount });
 
-  const budgetAfter = characterBudgetOf(proposed);
   if (budgetAfter.status === 'NOT_MEASURED') addWarning(REDUCTION_WARNINGS.CHARACTER_BUDGET_NOT_MEASURED, { reason: budgetAfter.reason });
   else if (budgetAfter.overBudget.length) addWarning(REDUCTION_WARNINGS.CHARACTER_BUDGET_EXCEEDED, { roles: Object.freeze(budgetAfter.overBudget) });
 

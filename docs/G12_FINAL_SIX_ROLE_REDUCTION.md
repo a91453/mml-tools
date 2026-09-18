@@ -138,6 +138,14 @@ Both are run before and after. A pair the reduction would **introduce** blocks;
 a pair the input already had stays a visible warning for the existing review.
 No event is ever removed to make either list shorter.
 
+Both scanners read pitch, time and source identity — never role. So a *pure role
+move* cannot introduce a pair at all, which is what makes a reduction safe to
+apply over an already-conflicted arrangement. What it must not do is quietly
+*clear* one, and the before/after comparison is what proves the inherited risk
+survives into the review. `DUPLICATE` is the one action here that adds a
+sounding event, so it is the one that can introduce a pair — and it blocks when
+it does.
+
 ## Character budget
 
 Per-role MML character pressure is measured with the real Final emitter and
