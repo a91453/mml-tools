@@ -62,7 +62,7 @@ test('a player readback recorded for one candidate does not pass a different can
   const run = await applyKeepOnlyCandidate(service, OWNER);
   const first = await service.finalize(OWNER, run.projectId, {
     candidateId: run.candidateId,
-    confirmations: { ...baselineConfirmations, player_readback: { value: 'PASS', reason: 'Read back the first candidate.', evidence: ['session 1'] }, version_drift_reviewed: { value: true, reason: 'Reviewed the first candidate.' }, mobile_adaptation_reviewed: { value: true, reason: 'Reviewed Gate 8 for the first candidate.', evidence: ['Gate 8 review 1'] } },
+    confirmations: { ...baselineConfirmations, player_readback: { value: 'PASS', reason: 'Read back the first candidate.', evidence: ['session 1'] }, version_drift_reviewed: { value: true, reason: 'Reviewed the first candidate.' }, mobile_adaptation_reviewed: { value: true, reason: 'Reviewed Gate 8 for the first candidate.', evidence: ['Gate 8 review 1'] }, regression_reviewed: { value: true, reason: 'Reviewed Gate 9 for the first candidate.', evidence: ['Gate 9 review 1'] } },
   });
   assert.equal(first.operation, 'succeeded');
   assert.equal(first.gates.player_readback, 'PASS');
@@ -77,13 +77,16 @@ test('a player readback recorded for one candidate does not pass a different can
   assert.equal(result.mml, null);
   assert.notEqual(result.gates.player_readback, 'PASS');
   assert.notEqual(result.gates.mobile_adaptation, 'PASS');
+  assert.notEqual(result.gates.regression, 'PASS');
   assert.ok(result.blockers.includes('playerReadback'), JSON.stringify(result.blockers));
   assert.ok(result.blockers.includes('mobileAdaptation'), JSON.stringify(result.blockers));
+  assert.ok(result.blockers.includes('regression'), JSON.stringify(result.blockers));
 
   const review = (await service.reviewCandidate(OWNER, run.projectId, { candidateId: second })).review;
   assert.equal(review.confirmations.player_readback, undefined, 'a stale confirmation is not an effective one');
   assert.ok(review.stale_confirmations.some(entry => entry.name === 'player_readback' && entry.bound_candidate_id === run.candidateId));
   assert.ok(review.stale_confirmations.some(entry => entry.name === 'mobile_adaptation_reviewed' && entry.bound_candidate_id === run.candidateId));
+  assert.ok(review.stale_confirmations.some(entry => entry.name === 'regression_reviewed' && entry.bound_candidate_id === run.candidateId));
   // The baseline-scoped confirmations were made about this baseline and still hold.
   assert.equal(review.confirmations.source_complete.value, true);
 });
@@ -123,6 +126,7 @@ test('recorded confirmations carry the identity they were made about', async () 
     ...baselineConfirmations,
     player_readback: { value: 'NOT_RUN', reason: 'Not yet read back.', candidate_id: run.candidateId },
     mobile_adaptation_reviewed: { value: true, reason: 'Gate 8 reviewed.', evidence: ['fixture Gate 8 review'], candidate_id: run.candidateId },
+    regression_reviewed: { value: true, reason: 'Gate 9 reviewed.', evidence: ['fixture Gate 9 review'], candidate_id: run.candidateId },
   })).confirmations;
   assert.equal(recorded.source_complete.baseline_id, run.intake.baseline.baseline_id);
   assert.equal(recorded.source_complete.candidate_id, null);
@@ -130,11 +134,14 @@ test('recorded confirmations carry the identity they were made about', async () 
   assert.equal(recorded.player_readback.baseline_id, run.intake.baseline.baseline_id);
   assert.equal(recorded.mobile_adaptation_reviewed.candidate_id, run.candidateId);
   assert.equal(recorded.mobile_adaptation_reviewed.baseline_id, run.intake.baseline.baseline_id);
+  assert.equal(recorded.regression_reviewed.candidate_id, run.candidateId);
+  assert.equal(recorded.regression_reviewed.baseline_id, run.intake.baseline.baseline_id);
 
   // A candidate-scoped confirmation must say which candidate it is about.
   await rejects(service.recordConfirmations(OWNER, run.projectId, { player_readback: { value: 'PASS', reason: 'x' } }), ERROR_CODES.INVALID_REQUEST);
   await rejects(service.recordConfirmations(OWNER, run.projectId, { version_drift_reviewed: { value: true, reason: 'x' } }), ERROR_CODES.INVALID_REQUEST);
   await rejects(service.recordConfirmations(OWNER, run.projectId, { mobile_adaptation_reviewed: { value: true, reason: 'x', evidence: ['review'] } }), ERROR_CODES.INVALID_REQUEST);
+  await rejects(service.recordConfirmations(OWNER, run.projectId, { regression_reviewed: { value: true, reason: 'x', evidence: ['review'] } }), ERROR_CODES.INVALID_REQUEST);
   await rejects(service.recordConfirmations(OWNER, run.projectId, { player_readback: { value: 'PASS', reason: 'x', candidate_id: `g11d:rev:${'0'.repeat(64)}` } }), ERROR_CODES.CANDIDATE_NOT_FOUND);
   // Through review or finalize the candidate is the one being reviewed, and a
   // contradicting candidate_id inside the confirmation is refused.
@@ -149,7 +156,7 @@ test('player readback may be recorded as N/A when no preview assets are used, an
 
   const result = await service.finalize(OWNER, run.projectId, {
     candidateId: run.candidateId,
-    confirmations: { ...baselineConfirmations, player_readback: { value: 'N/A', reason: 'No preview or verification assets are used for this cue.' } },
+    confirmations: { ...baselineConfirmations, player_readback: { value: 'N/A', reason: 'No preview or verification assets are used for this cue.' }, mobile_adaptation_reviewed: { value: true, reason: 'Gate 8 reviewed.', evidence: ['fixture Gate 8 review'] }, regression_reviewed: { value: true, reason: 'Gate 9 reviewed.', evidence: ['fixture Gate 9 review'] } },
   });
   assert.equal(result.operation, 'succeeded');
   assert.equal(result.gates.player_readback, 'N/A', 'not applicable is reported as such, never upgraded to PASS');
@@ -163,7 +170,7 @@ test('a player readback PASS that names an MML digest only counts for that exact
   const run = await applyKeepOnlyCandidate(service, OWNER);
   const draft = await service.finalize(OWNER, run.projectId, {
     candidateId: run.candidateId,
-    confirmations: { ...baselineConfirmations, player_readback: { value: 'N/A', reason: 'No preview assets used yet.' } },
+    confirmations: { ...baselineConfirmations, player_readback: { value: 'N/A', reason: 'No preview assets used yet.' }, mobile_adaptation_reviewed: { value: true, reason: 'Gate 8 reviewed.', evidence: ['fixture Gate 8 review'] }, regression_reviewed: { value: true, reason: 'Gate 9 reviewed.', evidence: ['fixture Gate 9 review'] } },
   });
   assert.equal(draft.operation, 'succeeded');
 
