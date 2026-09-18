@@ -84,7 +84,7 @@ function imageWithoutGitMetadata(t) {
   }
   // Directory re-includes the allowlist admits wholesale.
   cpSync(resolve(root, 'studio/backend'), resolve(dir, 'studio/backend'), { recursive: true });
-  symlinkSync(resolve(root, 'node_modules'), resolve(dir, 'node_modules'), 'dir');
+  symlinkSync(resolve(root, 'node_modules'), resolve(dir, 'node_modules'), process.platform === 'win32' ? 'junction' : 'dir');
   assert.equal(existsSync(resolve(dir, '.git')), false, 'the fixture must reproduce the no-.git production condition');
   assert.equal(existsSync(resolve(dir, 'docs')), false, 'documents are read from Git objects, never from the image working tree');
   return dir;

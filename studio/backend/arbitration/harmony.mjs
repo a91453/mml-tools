@@ -2,7 +2,10 @@ import { f } from '../mml/index.mjs';
 
 const CORE3 = new Set(['Melody', 'Chord1', 'Chord2']);
 const ENRICHMENT = new Set(['Chord3', 'Chord4', 'Chord5']);
-const RISK_INTERVALS = new Map([
+// The reviewed interval set MOBILE/MASTER name for harmonic risk. Exported so a
+// later stage that has to ask "did my own transformation introduce one of
+// these?" reads the same list instead of restating it.
+export const RISK_INTERVALS = new Map([
   [1, 'm2'],
   [11, 'M7'],
   [13, 'm9'],

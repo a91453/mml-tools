@@ -159,6 +159,39 @@ export function createArrangementService({ canonical, projects, intake, store })
     loadCandidateLineage,
     baselineEvents,
 
+    async mobileAdaptation(owner, projectId, { candidateId, profile, expectedPlanId = null, acceptedBy = null, apply = false } = {}) {
+      const engines = await canonical.engines();
+      const { record, baseline, project } = await intake.project(owner, projectId);
+      const { application: parent } = loadCandidate(record, candidateId);
+      if (!engines.arrangement.applicationIntegrity(parent, project).ok) fail(ERROR_CODES.INVALID_REQUEST, 'The candidate no longer matches the current baseline.');
+      if (parent.revision.canonicalIdentity.rules_snapshot_sha !== engines.emitterContract.canonicalIdentity().rules_snapshot_sha) fail(ERROR_CODES.INVALID_REQUEST, 'The candidate belongs to a different Canonical snapshot.');
+      // Which events a recovered Lead report re-checks the identity of. Read from
+      // the whole stored lineage, because a promotion in one revision and a move
+      // back in a later one leaves the baseline and candidate roles equal while
+      // the surviving record still binds this event's pitch, timing and volume.
+      // Changing one of those would leave a gate no review could answer, so the
+      // engine refuses before the candidate exists.
+      const leadReportInputs = { applications: loadCandidateLineage(record, candidateId), baseline: project, candidate: parent.candidate };
+      const leadBoundEventIds = [...engines.arrangement.leadDemotionReportsFromLineage(leadReportInputs), ...engines.arrangement.leadPromotionReportsFromLineage(leadReportInputs)]
+        .map(report => report.eventId).filter(eventId => typeof eventId === 'string' && eventId);
+      let result;
+      try {
+        const input = { baseline: project, candidate: parent.candidate, profile, leadBoundEventIds };
+        if (!apply) return { candidate_id: candidateId, baseline_id: baseline.baseline_id, plan: engines.adaptation.planMobileAdaptation(input) };
+        result = engines.adaptation.applyMobileAdaptation({ ...input, parent, expectedPlanId, acceptedBy });
+      } catch (error) { fail(ERROR_CODES.INVALID_REQUEST, error.message); }
+      if (!result.didApply) return { applied: false, candidate_id: candidateId, baseline_id: baseline.baseline_id, status: result.status, unchanged: result.unchanged ?? false, blockers: result.blockers, plan: result.plan };
+      const adaptedId = result.revision.id;
+      store.putJson(applicationKey(record.project_id, adaptedId), result);
+      projects.save({ ...record, candidates: [...record.candidates.filter(entry => entry.candidate_id !== adaptedId), {
+        candidate_id: adaptedId, parent_candidate_id: candidateId, baseline_id: baseline.baseline_id,
+        revision_index: result.revision.index, created_at: now(), decision_count: result.plan.changes.length,
+        decision_ids: [result.plan.id], accepted_by: [acceptedBy.trim()], stage: 'MOBILE_ADAPTATION_V1',
+      }] });
+      return { applied: true, status: 'PASS', candidate_id: adaptedId, parent_candidate_id: candidateId, baseline_id: baseline.baseline_id,
+        plan: result.plan, diff_from_baseline: result.diffFromBaseline, diff_from_parent: result.diffFromParent, notice: result.notice };
+    },
+
     /**
      * Propose six-role candidates over the Source-Faithful Baseline.
      *

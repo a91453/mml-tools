@@ -59,6 +59,9 @@ The following are implemented and covered by the combined legacy + Studio CI sui
 - cross-source same-pitch / m2 / M7 / m9 harmony arbitration;
 - original-audio alignment worker and Node evidence bridge;
 - per-song Project Readiness;
+- evidence-backed Mobile Adaptation v1: uniform role octave shifts, relative
+  volume offsets and explicit defaults, with preview/apply/review and rollback,
+  refusing any event a Lead evidence record still binds;
 - G11-A Standard MIDI File intake into source-faithful Canonical evidence;
 - G11-B lossless, source-aware monophonic voice decomposition;
 - G11-C traceable six-role candidate suggestions with explicit pending/unassigned material;
@@ -73,6 +76,12 @@ ends at preserved source evidence, G11-B decomposition, G11-C candidate suggesti
 G11-D application of explicitly accepted arrangement decisions, and existing
 readiness information; G12 work, Final MML generation, Mobile adaptation and
 target-client acceptance remain separate stages.
+
+The separate [Mobile Adaptation v1](../docs/MOBILE_ADAPTATION_V1.md) stage now
+implements register and volume transformations for assigned, source-traceable
+candidates. It is available through HTTP/MCP and the local Web Worker. It does
+not supply an instrument audibility database, drum mapping, performer allocation,
+automatic collision repair, full reduction or G12, and does not certify Gate 8.
 
 G11-D produces a derived Candidate Canonical project from decisions a reviewer has
 explicitly accepted, without modifying the Source-Faithful Baseline. Its `PASS`

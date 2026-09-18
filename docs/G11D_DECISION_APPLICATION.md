@@ -559,6 +559,12 @@ optimization, automatic Mobile octave adaptation, volume balancing, instrument
 assignment, drum-face mapping, automatic collision repair and automatic source
 reduction.
 
+Register and volume transformations are now implemented in the separate
+[Mobile Adaptation v1](MOBILE_ADAPTATION_V1.md) stage. G11-D still does not accept
+these as role-decision types; its source-preserving role application remains
+unchanged. The new stage uses the shared revision envelope with its own stage
+identity and requires fresh downstream review.
+
 ## Duplication and same-source doubling
 
 A duplicate copies one source event exactly, so it always sounds at the same

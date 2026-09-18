@@ -111,11 +111,11 @@ test('with an Application Service the studio control surface is advertised', asy
   for (const leaked of ['midi_file', 'role_candidates', 'readiness', 'technical_timing_repair', 'mml_emitter', 'micro_gap']) {
     assert.ok(!names.some(name => name.includes(leaked)), `${leaked} is an implementation detail and must not be a tool`);
   }
-  // Fourteen studio tools beside the three base ones. The bound is about what a
+  // Sixteen studio tools beside the three base ones. The bound is about what a
   // model can hold, not about hiding operations: a review axis with no tool is
   // not a smaller surface, it is an unreachable one, and the two Gate 4 axes and
   // the Lead evidence re-review are each a separate question a reviewer answers.
-  assert.ok(tools.length <= 17, 'the surface must stay small enough for a model to reason about');
+  assert.ok(tools.length <= 19, 'the surface must stay small enough for a model to reason about');
 });
 
 // Every Application Service operation a reviewer has to reach, and the tool that
@@ -132,6 +132,8 @@ test('every reviewer-facing Application Service operation is reachable from a st
     ['reviewLeadEvidence', 'studio_lead_evidence_review'],
     ['attachAudioAlignment', 'studio_audio_alignment'],
     ['applyDecisions', 'studio_decisions_apply'],
+    ['planMobileAdaptation', 'studio_mobile_adaptation_plan'],
+    ['applyMobileAdaptation', 'studio_mobile_adaptation_apply'],
     ['finalize', 'studio_finalize'],
   ]) {
     assert.equal(typeof application[operation], 'function', `${operation} must exist on the Application Service`);

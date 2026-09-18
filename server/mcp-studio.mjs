@@ -23,7 +23,7 @@ const readOnly = { readOnlyHint: true, destructiveHint: false, idempotentHint: t
 const writes = { readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: false };
 
 const projectId = { type: 'string', minLength: 36, maxLength: 36, description: '本服務發出的 project_id（prj_ 開頭）。不可傳檔案路徑、暫存檔名或瀏覽器網址。' };
-const candidateId = { type: 'string', minLength: 10, maxLength: 128, description: '既有 G11-D revision id（g11d:rev: 開頭），由 studio_decisions_apply 產生。' };
+const candidateId = { type: 'string', minLength: 10, maxLength: 128, description: '候選 revision id（g11d:rev: 開頭），由 studio_decisions_apply 或 studio_mobile_adaptation_apply 產生。' };
 
 // A structured payload whose vocabulary belongs to the Application Service.
 //
@@ -144,6 +144,20 @@ export const STUDIO_MCP_TOOLS = [
       required: ['project_id', 'decisions'],
       additionalProperties: false,
     },
+    annotations: writes,
+  },
+  {
+    name: 'studio_mobile_adaptation_plan',
+    title: '預覽 Mobile 適配',
+    description: '依附有 reason/evidence 的 profile 自動規劃整個角色的最小八度調整與音量映射。profile schema=mml-studio/mobile-adaptation-profile@1，含 id、reason、evidence、roles；roles 以 Melody/Chord1–Chord5 為鍵，各值可含 pitchRange:[min,max]、volumeDelta、defaultVolume。音域上限 107，音量 0–15。沒有內建樂器校準，不猜測鼓面，不修剪音符。回傳 plan.id 與逐事件差異；PASS 僅表示可套用，不是 Gate 8 通過。已綁定 Lead 證據的事件（含僅由 revision lineage 記錄者）不可調整音高／音量；來源基準未指定角色時，被指派為 Melody 的事件即屬此類，v1 無法調整該 Melody。',
+    inputSchema: { type: 'object', properties: { project_id: projectId, candidate_id: candidateId, profile: structuredPayload() }, required: ['project_id', 'candidate_id', 'profile'], additionalProperties: false },
+    annotations: readOnly,
+  },
+  {
+    name: 'studio_mobile_adaptation_apply',
+    title: '套用 Mobile 適配並重新審核',
+    description: '重新計算適配計畫，只有 expected_plan_id 與目前 baseline/candidate/profile 一致時才原子套用。產生衍生 candidate、保留原始與前版，立即重新跑 review；舊 Gate 8/9、音訊與實機接受不會轉移。',
+    inputSchema: { type: 'object', properties: { project_id: projectId, candidate_id: candidateId, profile: structuredPayload(), expected_plan_id: { type: 'string' }, accepted_by: { type: 'string', minLength: 1, maxLength: 120 } }, required: ['project_id', 'candidate_id', 'profile', 'expected_plan_id', 'accepted_by'], additionalProperties: false },
     annotations: writes,
   },
   {
@@ -290,6 +304,10 @@ export async function runStudioTool(name, args, { application, owner }) {
       });
     case 'studio_audio_alignment':
       return application.attachAudioAlignment(owner, args.project_id, { candidateId: args.candidate_id, report: args.report });
+    case 'studio_mobile_adaptation_plan':
+      return application.planMobileAdaptation(owner, args.project_id, { candidateId: args.candidate_id, profile: args.profile });
+    case 'studio_mobile_adaptation_apply':
+      return application.applyMobileAdaptation(owner, args.project_id, { candidateId: args.candidate_id, profile: args.profile, expectedPlanId: args.expected_plan_id, acceptedBy: args.accepted_by });
     case 'studio_candidate_review':
       return application.reviewCandidate(owner, args.project_id, { candidateId: args.candidate_id, confirmations: args.confirmations ?? null });
     case 'studio_core3_change_approve':

@@ -754,6 +754,10 @@ rendered as a generic 500 with no message, path or stack.
 6. **Gate 8 and Gate 9 are explicit, not automatic.** `mobile_adaptation` and
    `regression` stay `PENDING` until candidate-bound evidence-backed reviews
    are recorded; parser/emitter/test success never upgrades either one.
+   [Mobile Adaptation v1](MOBILE_ADAPTATION_V1.md) adds the separate
+   `studio_mobile_adaptation_plan` / `studio_mobile_adaptation_apply` workflow
+   for source-traceable register/volume changes. Apply returns a new candidate
+   and a fresh review; it does not mark either gate reviewed.
 7. **MusicXML intake needs the runtime dependency.** Without it the engines
    report `ENGINE_UNAVAILABLE` rather than degrading silently.
 8. **MCP protocol modernization was not attempted.** The hand-written stateless

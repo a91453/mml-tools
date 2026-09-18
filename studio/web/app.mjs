@@ -16,6 +16,7 @@ const roles = ['Melody', 'Chord1', 'Chord2', 'Chord3', 'Chord4', 'Chord5'];
 const reviewLabels = { source: '來源完整與可追溯', version: 'Version Drift／已接受版本', lead: 'Lead 樂句、休止與接棒', core3: 'Core3 單人完整性', full6: 'Full6 和聲、重疊與密度', tempo: 'Tempo、拍號與時間範圍', audio: '原曲音訊證據', adaptation: 'Mobile 最小適配', regression: '回歸與已接受優點' };
 const gateLabels = { implementation: '分析模組', source: '來源完整性', baseline: '來源基準', technical: 'MML 技術語法', microTiming: '來源感知微時值（1/64 以下）', core3: 'Core3 來源連續性', core3Completeness: 'Core3 單人完整性（Gate 4）', leadDemotion: 'Lead 降級證據', leadPromotion: 'Lead 升級證據', crossSourceHarmony: '跨來源和聲', versionDrift: '版本差異', originalAudio: '原曲音訊', playerReadback: '播放器實際回讀', pendingDecisions: '待決仲裁', intake: '版本／音樂範圍', lead: 'Lead 審核', full6: 'Full6 審核', tempo: 'Tempo／時值審核', adaptation: 'Mobile 適配', regression: '回歸審核', deliveryIdentity: '交付事件一致性' };
 let workspace, report, identity, projects = [], audioFile = null, uploadController = null, busy = 0;
+let mobilePreview = null;
 const queued = createTaskQueue();
 const midiRequests = createSourceRequestLedger();
 const MAX_SOURCE_BYTES = 4194304;
@@ -71,6 +72,7 @@ async function refreshProjects() {
   $('#projects').innerHTML = options(projects.map(p => [p.id, p.title]), workspace?.id);
 }
 async function commit(next) {
+  mobilePreview = null;
   markBusy(true);
   try {
     const canonicalKey=JSON.stringify(identity.metadata);
@@ -389,6 +391,21 @@ function appliedDeliveryCard(attempt) {
   </div>`;
 }
 
+function mobileAdaptationSection() {
+  const plan = mobilePreview?.plan ?? report.mobileAdaptation?.plan;
+  const profile = mobilePreview?.profile ?? workspace.mobileAdaptation?.profile;
+  return `<section id="mobile-adaptation"><div class="section-heading"><h2>Mobile 適配 v1</h2><small>八度與音量</small></div><div class="card">
+    <p class="meta">填入本曲在目標樂器上有證據支持的音域與音量設定。系統會計算整個角色的最小八度移動，保留節奏、角色與音量起伏；有新碰撞或音量超界時會停止。空白欄位保持原樣。</p>
+    <form id="mobile-profile"><div class="field-grid">${input('profileId','設定名稱',profile?.id ?? '')}${input('reason','本曲適配理由',profile?.reason ?? '')}${input('evidence','證據位置（實機紀錄／音訊時間窗）',profile?.evidence?.join('; ') ?? '')}</div>
+    ${roles.map(role => { const rule = profile?.roles?.[role] ?? {}; return `<details><summary>${esc(role)}</summary><div class="field-grid">${input(`${role}-min`,'最低音高（0–107）',rule.pitchRange?.[0] ?? '', 'type="number" min="0" max="107" step="1"')}${input(`${role}-max`,'最高音高（0–107）',rule.pitchRange?.[1] ?? '', 'type="number" min="0" max="107" step="1"')}${input(`${role}-delta`,'音量增減（保留原有起伏）',rule.volumeDelta ?? '', 'type="number" min="-15" max="15" step="1"')}${input(`${role}-default`,'尚未決定音量的起始值（0–15）',rule.defaultVolume ?? '', 'type="number" min="0" max="15" step="1"')}</div></details>`; }).join('')}
+    <div class="actions"><button id="preview-mobile" ${workspace.assets?.baseline && workspace.assets?.candidate ? '' : 'disabled'}>預覽適配差異</button></div></form>
+    ${plan ? `<p>${badge(plan.status)} · ${mobilePreview ? `${plan.changes.length} 個音符需調整` : `適配已套用 · ${plan.changes.length} 個音符已調整`}</p>${plan.blockers.length ? detail('無法自動修正的項目', plan.blockers) : ''}${plan.warnings.length ? detail('仍需審核的項目',plan.warnings) : ''}${detail('逐音修改前後',plan.changes)}<p class="meta">套用只建立候選版本，仍需重新審核 Mobile、Core3 與回歸結果。尚未支援樂器指派、鼓面映射、碰撞修復與 G12。</p>` : ''}
+    ${mobilePreview && plan.status === 'PASS' && plan.changes.length ? '<button id="apply-mobile">套用此預覽並重新分析</button>' : ''}
+    ${workspace.mobileAdaptation ? '<button id="clear-mobile" class="secondary">還原適配前候選</button>' : ''}
+    <p class="meta">原始來源與基準保持可還原。調整設定會從原始候選重新計算；匯入備份後需重新預覽與套用。</p>
+  </div></section>`;
+}
+
 function finalDeliverySection() {
   const attempt = workspace.finalDelivery ?? null;
   const blocked = (report.blockers ?? []).filter(name => !['technical', 'deliveryIdentity'].includes(name));
@@ -425,6 +442,7 @@ function render() {
       <div class="card"><h3>記錄本輪人工審核</h3><p class="meta">只在已完成對照／聽驗時記錄；原因與證據綁定目前 revision。紀錄不會清除工具找到的未解決缺口或 unsupported。</p><form id="review-form"><div class="field-grid"><label>審核項目<select name="name">${options(Object.entries(reviewLabels),'source')}</select></label>${input('evidence','來源 ID、event、時間窗或實機紀錄','')}<label class="wide">審核結論與理由<textarea name="note" required></textarea></label></div><button>記錄已完成審核</button></form>${Object.entries(w.reviews).map(([name,v])=>`<div class="review-log"><strong>${esc(reviewLabels[name])}</strong> · ${esc(v.note)}<br><span class="muted">${esc(v.evidence)}</span></div>`).join('')}</div>
     </section>
     <section id="audio"><div class="section-heading"><h2>05　Audio evidence</h2><small>僅主動要求時上傳</small></div><div class="card"><p class="note safe">選取音訊只會留在本機。按下「要求 Audio Alignment」才會傳送該音訊及候選的衍生音符／時間特徵；MusicXML／MML 原始文字不會上傳。</p><p id="audio-file-status" class="meta">${audioFile?esc(`${audioFile.name} · ${(audioFile.size/1048576).toFixed(1)} MiB · 尚未上傳`):'未選取音訊。雲端未連線。'}</p><label class="file-button secondary">選擇 M4A／FLAC／WAV<input id="audio-file" type="file" accept=".m4a,.flac,.wav,audio/mp4,audio/flac,audio/wav"></label><details><summary>Audio Worker 連線（選用）</summary><label>HTTPS alignment endpoint<input id="audio-endpoint" type="url" placeholder="https://your-worker.example/align" autocomplete="off"></label><label>本次工作階段 access token<input id="audio-token" type="password" autocomplete="off"></label><p class="meta">Token 僅存於目前畫面記憶體。v1 沒有預設雲端服務；未設定時保持 PENDING。</p></details><div class="actions"><button id="request-audio" ${!audioFile || !w.assets.candidate?'disabled':''}>要求 Audio Alignment</button><button id="cancel-audio" class="quiet" ${uploadController?'':'disabled'}>取消上傳／等待</button><label class="file-button quiet">匯入既有 alignment report<input id="audio-report" type="file" accept=".json,application/json"></label></div><div id="audio-progress" role="status"></div>${detail('音訊證據、控制點、信心與漂移',w.audio?.report ?? {status:'PENDING',reason:'SONG_AUDIO_EVIDENCE_MISSING'})}<p class="meta">Audio evidence 不會修改、刪除或重排 symbolic events。信心分數本身不代表音高真值。</p></div></section>
+    ${mobileAdaptationSection()}
     ${finalDeliverySection()}
     <section id="delivery"><div class="section-heading"><h2>07　Readiness 與實機接受</h2>${badge(r.state)}</div><div class="card"><p class="note">${r.state==='CANDIDATE'?'目前為 Candidate，尚有必要 Gate 未通過。複製內容仍屬候選版本。':r.state==='VALIDATED'?'必要非實機 Gate 已通過。等待使用者於目標遊戲 client 實際接受。':'已有本輪 exact-MML 實機接受紀錄。'}</p><p class="meta">本節記錄的是<strong>實機接受</strong>。產生與匯出 Final MML 在上方第 06 節。「下載六軌對照文字」是含角色標題的<strong>對照用</strong>文字檔，<strong>不是</strong>可直接貼上的樂譜；可貼上的完整字串請用「複製完整 MML@」或第 06 節的匯出。</p><div class="actions"><button id="copy-mml" ${r.rawMml?'':'disabled'}>複製完整 MML@</button><button id="export-mml" class="secondary" ${r.rawMml?'':'disabled'}>下載六軌對照文字</button><button id="export-report" class="quiet">下載分析報告</button></div>${r.tracks?`${r.tracks.map((track,i)=>`<div class="track"><div class="row"><label for="track-${i}">${roles[i]} <small>${track.length} / ${PUBLISHED_ROLE_CHARACTER_LIMIT} 字元</small></label><button data-copy-track="${i}" class="quiet">複製</button></div><textarea id="track-${i}" class="code" readonly spellcheck="false">${esc(track)}</textarea></div>`).join('')}<p class="note">${P1_LOCAL_NOTE}</p>`:'<p class="empty">需有通過 Final 技術語法且與候選事件一致的六軌 MML。MusicXML／IR 不會自動縮編或猜測角色；可在第 06 節產生，或附上對應的交付 MML 進行回讀。</p>'}<details><summary>記錄 In-game Accepted</summary><form id="acceptance"><div class="field-grid">${input('client','Client／地區／版本','')}${input('instrument','樂器與軌道配置','')}${input('evidence','實機結果／截圖或紀錄定位','')}</div><button ${r.state==='CANDIDATE'?'disabled':''}>此 exact-MML 已實機接受</button></form>${w.acceptance?json(w.acceptance):''}</details></div></section>
     <details class="card"><summary>Published Canonical 與建置身分</summary><p class="meta">本機使用建置時由 Published main 取得並核驗的完整固定快照。離線模式不宣稱已確認最新 main。</p>${json(identity.metadata)}${identity.provenance?json(identity.provenance):''}${identity.documents.map(d=>`<details><summary>${esc(d.path)} · ${esc(d.authority)}</summary><a href="${esc(d.url)}" target="_blank" rel="noopener">GitHub 固定快照</a><pre>${esc(d.content)}</pre></details>`).join('')}</details>`;
@@ -510,6 +528,31 @@ async function copyText(value, textarea) {
   catch { showCopyFallback(value, textarea); }
 }
 function bind() {
+  $('#mobile-profile').onsubmit = event => {
+    event.preventDefault();
+    const data = Object.fromEntries(new FormData(event.target));
+    const profile = { schema: 'mml-studio/mobile-adaptation-profile@1', id: data.profileId, reason: data.reason, evidence: data.evidence.split(';').map(ref => ref.trim()).filter(Boolean), roles: {} };
+    for (const role of roles) {
+      const rule = {};
+      if (data[`${role}-min`] !== '' || data[`${role}-max`] !== '') rule.pitchRange = [data[`${role}-min`] === '' ? null : Number(data[`${role}-min`]), data[`${role}-max`] === '' ? null : Number(data[`${role}-max`])];
+      if (data[`${role}-delta`] !== '') rule.volumeDelta = Number(data[`${role}-delta`]);
+      if (data[`${role}-default`] !== '') rule.defaultVolume = Number(data[`${role}-default`]);
+      if (Object.keys(rule).length) profile.roles[role] = rule;
+    }
+    run(async () => { const plan = await call('previewMobileAdaptation', workspace, profile); mobilePreview = { profile, plan }; render(); });
+  };
+  const applyMobile = $('#apply-mobile');
+  if (applyMobile) applyMobile.onclick = () => {
+    const preview = mobilePreview;
+    run(async () => {
+      const result = await call('applyWorkspaceMobileAdaptation', workspace, { profile: preview.profile, expectedPlanId: preview.plan.id, acceptedBy: 'local-workspace-user' });
+      if (!result.applied) { mobilePreview = { profile: preview.profile, plan: result.plan }; render(); message(result.blockers?.map(item => item.code).join(', ') || '不需要調整'); return; }
+      await commit(result.workspace);
+      message('適配已套用；請檢查新的差異與 Gate。');
+    });
+  };
+  const clearMobile = $('#clear-mobile');
+  if (clearMobile) clearMobile.onclick = () => run(async () => commit(await call('clearMobileAdaptation', workspace)));
   $('#settings').onsubmit = event => { event.preventDefault(); const data=Object.fromEntries(new FormData(event.target)); run(async()=>{
     const next=await call('invalidate',workspace); next.title=data.title; const {title,...settings}=data; next.settings=settings;
     if(settings.meterText!==workspace.settings.meterText) for(const [slot,a] of Object.entries(next.assets)) if(a.format==='MML') next.assets[slot]=await call('intake',{name:a.name,content:a.content,id:a.project.sources[0].id,meterText:settings.meterText});

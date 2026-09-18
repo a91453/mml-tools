@@ -42,7 +42,7 @@ for (const dir of packageDirs) {
   test(`${songId}: manifest lists every package file exactly once with matching hashes and sizes`, () => {
     assert.equal(manifest.song_id, songId);
     assert.equal(manifest.import_path, `imports/song-reference/${songId}/`);
-    const actual = walk(dir).map(file => relative(dir, file)).filter(file => file !== 'package-manifest.json').sort();
+    const actual = walk(dir).map(file => relative(dir, file).replaceAll('\\', '/')).filter(file => file !== 'package-manifest.json').sort();
     assert.deepEqual([...listed.keys()].sort(), actual, 'listed files must equal the files on disk');
     assert.equal(listed.size, manifest.files.length, 'no duplicate paths');
     for (const [path, entry] of listed) {

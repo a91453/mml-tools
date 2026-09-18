@@ -289,6 +289,18 @@ export function createStudioApplication({
       }));
     },
 
+    async planMobileAdaptation(owner, projectId, input) {
+      return envelope({ operation: OPERATION_STATUS.SUCCEEDED, adaptation: await arrangement.mobileAdaptation(owner, projectId, { ...input, apply: false }) });
+    },
+
+    async applyMobileAdaptation(owner, projectId, input) {
+      return mutate(projectId, async () => {
+        const result = await arrangement.mobileAdaptation(owner, projectId, { ...input, apply: true });
+        const reviewResult = result.applied ? await review.review(owner, projectId, { candidateId: result.candidate_id }) : null;
+        return envelope({ operation: result.applied || result.unchanged ? OPERATION_STATUS.SUCCEEDED : OPERATION_STATUS.BLOCKED, adaptation: result, review: reviewResult });
+      });
+    },
+
     /**
      * Re-supply Lead evidence for an already-applied Lead move on one candidate.
      *

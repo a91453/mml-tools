@@ -52,6 +52,13 @@ export function buildCapabilities({ canonical, storage, jobs, transports = [] })
       voice_split: true,
       role_suggestion: true,
       arrangement_application: true,
+      mobile_adaptation: true,
+      mobile_register_adaptation: true,
+      mobile_volume_mapping: true,
+      automatic_instrument_assignment: false,
+      automatic_drum_face_mapping: false,
+      automatic_collision_repair: false,
+      automatic_performer_allocation: false,
       candidate_review: true,
       version_drift_comparison: true,
       readiness_evaluation: true,
@@ -99,6 +106,15 @@ export function buildCapabilities({ canonical, storage, jobs, transports = [] })
     }),
 
     identities: IDENTITY_MODEL,
+
+    mobile_adaptation: freeze({
+      version: 1,
+      profile_schema: 'mml-studio/mobile-adaptation-profile@1',
+      operations: freeze(['planMobileAdaptation', 'applyMobileAdaptation']),
+      supported: freeze(['uniform-role-octave-shift', 'relative-volume-offset', 'explicit-default-volume']),
+      notice: 'Requires a cited target profile and a candidate with assigned roles. Preview before apply; stale plans are refused. Atomic, reversible derived revision, with fresh review. Does not certify Gate 8, infer audibility, map MIDI velocity, reduce to six roles, or perform G12.',
+      refuses: freeze(['pitch or volume change on an event a Lead evidence record still binds, including one only the revision lineage records; a Melody assigned from a role-less Source-Faithful Baseline is such an event, so Melody is not adaptable on a Raw MIDI project in v1']),
+    }),
 
     gates: freeze({
       // The Acceptance gate axes this interface reports as such. It is NOT the

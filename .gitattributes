@@ -1,0 +1,3 @@
+# Canonical snapshots, byte-verified reference packages and reproducible Web
+# artifacts must not change when checked out on Windows with core.autocrlf.
+* text=auto eol=lf

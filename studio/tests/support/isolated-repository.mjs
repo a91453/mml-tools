@@ -67,7 +67,7 @@ export function isolatedRepository(t, { sources = DEFAULT_SOURCES } = {}) {
   gitIn(dir, ['update-ref', '--no-deref', 'HEAD', head]);
   gitIn(dir, ['update-ref', PUBLISHED_REF, published]);
   for (const path of sources) cpSync(resolve(repositoryRoot, path), resolve(dir, path), { recursive: true });
-  symlinkSync(resolve(repositoryRoot, 'node_modules'), resolve(dir, 'node_modules'), 'dir');
+  symlinkSync(resolve(repositoryRoot, 'node_modules'), resolve(dir, 'node_modules'), process.platform === 'win32' ? 'junction' : 'dir');
   const git = (...args) => gitIn(dir, args);
   return {
     dir,
