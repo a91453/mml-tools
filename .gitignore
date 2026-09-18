@@ -12,3 +12,4 @@ __pycache__/
 *.sqlite-wal
 .oss-export/
 .canonical-bootstrap.json
+package-lock.json
