@@ -232,6 +232,7 @@ async function walk(runner) {
 const CONFIRMATIONS = {
   source_complete: { value: true, reason: 'Complete.' },
   player_readback: { value: 'PASS', reason: 'Read back.' },
+  mobile_adaptation_reviewed: { value: true, reason: 'Gate 8 reviewed.', evidence: ['transport parity Gate 8 review'] },
   original_audio_required: { value: false, reason: 'No recording.' },
 };
 
