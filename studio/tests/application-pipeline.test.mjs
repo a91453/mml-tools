@@ -34,6 +34,7 @@ async function rejects(promise, code) {
 const fullConfirmations = {
   source_complete: { value: true, reason: 'The official source is the complete material for this cue.', evidence: ['official-midi'] },
   player_readback: { value: 'PASS', reason: 'The emitted MML was read back in the player.', evidence: ['player session log'] },
+  mobile_adaptation_reviewed: { value: true, reason: 'The candidate was reviewed for Mobile audibility/register/role preservation; no further adaptation is needed.', evidence: ['fixture Gate 8 review'] },
   original_audio_required: { value: false, reason: 'No released recording exists for this cue.' },
 };
 
@@ -434,6 +435,7 @@ test('a technical PASS never produces a source, audio, player or in-game PASS', 
     confirmations: {
       source_complete: { value: true, reason: 'Complete.' },
       original_audio_required: { value: false, reason: 'No recording exists.' },
+      mobile_adaptation_reviewed: { value: true, reason: 'Gate 8 reviewed.', evidence: ['fixture Gate 8 review'] },
       // Player readback deliberately not confirmed.
     },
   });
@@ -446,14 +448,48 @@ test('a technical PASS never produces a source, audio, player or in-game PASS', 
 
   const passing = await service.finalize(OWNER, run.projectId, { candidateId: run.candidateId, confirmations: fullConfirmations });
   assert.equal(passing.gates.technical, 'PASS');
-  // The axes that a serialization result cannot speak to stay where they were.
-  assert.equal(passing.gates.mobile_adaptation, 'PENDING');
+  // Gate 8 is a separate evidence-backed review. Serialization cannot set it,
+  // but the explicit confirmation above can.
+  assert.equal(passing.gates.mobile_adaptation, 'PASS');
   assert.equal(passing.gates.in_game, 'PENDING');
   assert.equal(passing.gates.audio, 'N/A', 'audio was explicitly marked not applicable, not passed');
 
   const { artifact } = await service.getArtifact(OWNER, passing.artifact_id);
   assert.equal(artifact.gates.in_game, 'PENDING', 'a stored artifact must not record an acceptance nobody gave');
   assert.ok(artifact.remaining_pending_gates.includes('in_game'));
+});
+
+test('Gate 8 blocks Final until an evidence-backed candidate review is recorded', async () => {
+  const service = app();
+  const run = await applyKeepOnlyCandidate(service, OWNER);
+  const withoutAdaptation = {
+    source_complete: fullConfirmations.source_complete,
+    player_readback: fullConfirmations.player_readback,
+    original_audio_required: fullConfirmations.original_audio_required,
+  };
+  const blocked = await service.finalize(OWNER, run.projectId, {
+    candidateId: run.candidateId,
+    confirmations: withoutAdaptation,
+  });
+  assert.equal(blocked.operation, 'blocked');
+  assert.equal(blocked.gates.mobile_adaptation, 'PENDING');
+  assert.ok(blocked.blockers.includes('mobileAdaptation'));
+  assert.equal(blocked.mml, null);
+  assert.equal(blocked.artifact_id, null);
+
+  await rejects(service.finalize(OWNER, run.projectId, {
+    candidateId: run.candidateId,
+    confirmations: {
+      mobile_adaptation_reviewed: { value: true, reason: 'Claimed reviewed, but no evidence was supplied.' },
+    },
+  }), ERROR_CODES.INVALID_REQUEST);
+
+  const passed = await service.finalize(OWNER, run.projectId, {
+    candidateId: run.candidateId,
+    confirmations: fullConfirmations,
+  });
+  assert.equal(passed.operation, 'succeeded');
+  assert.equal(passed.gates.mobile_adaptation, 'PASS');
 });
 
 test('operation status and Canonical gates are separate fields', async () => {
