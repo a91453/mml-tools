@@ -278,6 +278,22 @@ function musicalIdentityMatches(a, b) {
   return idList(a, 'sourceIds') === idList(b, 'sourceIds') && idList(a, 'sourceEventIds') === idList(b, 'sourceEventIds');
 }
 
+/**
+ * Resolve a candidate event back to the Source-Faithful baseline event it came
+ * from, walking only the reversible derived-duplicate chain.
+ *
+ * Exported so the Studio Web plane resolves a promotion origin with this exact
+ * walk rather than a second copy of it: the rule that a derived id is never
+ * matched by pitch, time or array order lives in one place.
+ */
+export function baselineOriginEvent(baselineProject, candidateProject, eventId) {
+  return baselineOriginOf(
+    eventId,
+    new Map((baselineProject?.events ?? []).map(event => [event.id, event])),
+    new Map((candidateProject?.events ?? []).map(event => [event.id, event])),
+  );
+}
+
 // Walk a derived duplicate's reversible chain back to the Source-Faithful
 // baseline. Never guess by pitch/time or array order.
 function baselineOriginOf(eventId, baselineById, candidateById) {

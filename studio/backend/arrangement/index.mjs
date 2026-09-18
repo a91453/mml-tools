@@ -64,5 +64,6 @@ export {
   leadPromotionReportsFromLineage,
   applicationLineage,
   applicationIntegrity,
+  baselineOriginEvent,
   LEAD_EVIDENCE_LINEAGE_BLOCKERS,
 } from './decision-review.mjs';
