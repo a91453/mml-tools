@@ -31,8 +31,8 @@
 // ------------------------------------------------
 // A confirmation is a statement about one specific identity. Source
 // completeness and the original-audio requirement are statements about the
-// baseline that was loaded; version-drift review and player readback are
-// statements about the candidate that was reviewed or read back. Each recorded
+// baseline that was loaded; version-drift review, Mobile adaptation review and
+// player readback are statements about the candidate that was reviewed. Each recorded
 // confirmation therefore carries the baseline id it was made under and, for the
 // candidate-scoped kinds, the candidate id it names. A confirmation whose
 // identity no longer matches — the baseline was replaced, or a different
@@ -65,6 +65,7 @@ const CONFIRMATIONS = Object.freeze({
   source_complete: 'readiness `source` gate: the sources loaded are confirmed to be the complete material for this song. Bound to the baseline.',
   version_drift_reviewed: 'readiness `versionDrift` gate: the divergence of this candidate from the accepted previous version has been reviewed. Bound to the candidate.',
   player_readback: 'readiness `playerReadback` gate: PASS (the emitted MML was read back in a player; may name the mml_sha256 that was read back), NOT_RUN, or N/A (no preview or verification assets are used for this cue, with the reason). Bound to the candidate.',
+  mobile_adaptation_reviewed: 'readiness `mobileAdaptation` gate: the candidate was reviewed against Acceptance Gate 8 and any Mobile adaptation (or the conclusion that none is needed) is minimal, role-preserving and evidence-backed. Bound to the candidate.',
   original_audio_required: 'readiness `originalAudio` applicability. Setting it false states the song-specific workflow does not require original audio, and must say why. Bound to the baseline.',
 });
 
@@ -73,6 +74,7 @@ const CONFIRMATION_SCOPE = Object.freeze({
   source_complete: 'baseline',
   version_drift_reviewed: 'candidate',
   player_readback: 'candidate',
+  mobile_adaptation_reviewed: 'candidate',
   original_audio_required: 'baseline',
 });
 
@@ -229,6 +231,10 @@ export function createReviewService({ canonical, projects, intake, arrangement, 
       }
 
       if (input.value !== true && input.value !== false) fail(ERROR_CODES.INVALID_REQUEST, `confirmations.${name}.value must be true or false`);
+      const evidence = normalizeEvidence(input.evidence);
+      if (name === 'mobile_adaptation_reviewed' && input.value === true && !evidence.length) {
+        fail(ERROR_CODES.INVALID_REQUEST, 'mobile_adaptation_reviewed PASS requires at least one evidence reference for the candidate-specific Gate 8 review.');
+      }
       // Source completeness cannot be asserted over a baseline whose own
       // adapters reported material they could not represent or inputs they
       // found incomplete. The evidence contradicts the claim, and a review is
@@ -243,7 +249,7 @@ export function createReviewService({ canonical, projects, intake, arrangement, 
           fail(ERROR_CODES.SOURCE_INCOMPLETE, 'The Source-Faithful Baseline reports incomplete inputs, so source completeness cannot be confirmed.', { incomplete_inputs: incomplete });
         }
       }
-      next[name] = { value: input.value, reason, evidence: normalizeEvidence(input.evidence), at: now(), ...binding };
+      next[name] = { value: input.value, reason, evidence, at: now(), ...binding };
     }
     projects.save({ ...record, confirmations: next });
     return Object.freeze({ confirmations: Object.freeze({ ...next }) });
@@ -313,6 +319,7 @@ export function createReviewService({ canonical, projects, intake, arrangement, 
         versionDriftReviewed: recorded.version_drift_reviewed?.value === true,
         originalAudioRequired: recorded.original_audio_required?.value !== false,
         playerReadback: recorded.player_readback?.value ?? 'NOT_RUN',
+        mobileAdaptation: recorded.mobile_adaptation_reviewed?.value === true ? 'PASS' : 'PENDING',
         // Never a parameter a caller can reach. See the header.
         inGameAcceptance: 'PENDING',
       };
@@ -386,9 +393,9 @@ function normalizeEvidence(evidence) {
  *               emitted MML and passes that in, so the gate is always a
  *               readiness verdict over something readiness actually graded —
  *               never the Final emitter's own PASS copied across.
- *   mobile_adaptation  No gate implements it in this build. It stays `PENDING`
- *               rather than borrowing `technical`, because Gate 8 adaptation is
- *               a different question from serialization.
+ *   mobile_adaptation  Readiness answers this from an explicit candidate-bound
+ *               evidence-backed Gate 8 review. Parser/emitter success never
+ *               upgrades it.
  *   in_game     `PENDING`, unconditionally and by construction.
  */
 export function gatesFrom(readiness) {
@@ -398,7 +405,7 @@ export function gatesFrom(readiness) {
     source: status('source'),
     audio: status('originalAudio'),
     player_readback: status('playerReadback'),
-    mobile_adaptation: GATE_STATUS.PENDING,
+    mobile_adaptation: status('mobileAdaptation'),
     in_game: GATE_STATUS.PENDING,
     notice: GATE_NOTICE,
   });
