@@ -467,13 +467,23 @@ export function createRunService({ canonical, projects, store, operations, seria
       return sameSelection(baseline.asset_ids, expectation.asset_ids) ? { baseline_id: baseline.baseline_id } : null;
     }
     if (expectation.kind === 'candidate') {
-      const match = record.candidates.find(entry => (entry.parent_candidate_id ?? null) === (expectation.parent_candidate_id ?? null)
-        && (expectation.stage === null ? !entry.stage : entry.stage === expectation.stage));
-      return match ? { candidate_id: match.candidate_id } : null;
+      // Matched on the parent, the stage and — where the step names one — the
+      // plan the reviewer accepted, which the candidate record stores as its
+      // `decision_ids`. Adoption then requires exactly ONE match: two
+      // candidates can share a parent and a stage when another run applied a
+      // different decision set from the same parent, and adopting whichever
+      // one `find` happened to reach would be guessing. An ambiguous answer is
+      // not an answer, so it is reported as unconfirmable instead.
+      const matches = record.candidates.filter(entry => (entry.parent_candidate_id ?? null) === (expectation.parent_candidate_id ?? null)
+        && (expectation.stage === null ? !entry.stage : entry.stage === expectation.stage)
+        && (expectation.plan_id === null || expectation.plan_id === undefined || (entry.decision_ids ?? []).includes(expectation.plan_id)));
+      if (matches.length > 1) return { ambiguous: true, candidate_ids: matches.map(entry => entry.candidate_id) };
+      return matches.length === 1 ? { candidate_id: matches[0].candidate_id } : null;
     }
     if (expectation.kind === 'artifact') {
-      const match = record.artifacts.find(entry => entry.candidate_id === expectation.candidate_id && entry.type === expectation.artifact_type);
-      return match ? { artifact_id: match.artifact_id } : null;
+      const matches = record.artifacts.filter(entry => entry.candidate_id === expectation.candidate_id && entry.type === expectation.artifact_type);
+      if (matches.length > 1) return { ambiguous: true, artifact_ids: matches.map(entry => entry.artifact_id) };
+      return matches.length === 1 ? { artifact_id: matches[0].artifact_id } : null;
     }
     return null;
   };
@@ -996,7 +1006,7 @@ export function createRunService({ canonical, projects, store, operations, seria
     const parent = run.candidate_id;
     const applied = await withEffect(owner, projectId, run, {
       step: RUN_STEP.FINAL_REDUCTION,
-      expectation: { kind: 'candidate', parent_candidate_id: parent, stage: REDUCTION_STAGE },
+      expectation: { kind: 'candidate', parent_candidate_id: parent, stage: REDUCTION_STAGE, plan_id: normalized.final_reduction.expected_plan_id },
       apply: async () => {
         const result = await operations.applyFinalReduction(owner, projectId, {
           candidateId: parent,
@@ -1089,7 +1099,7 @@ export function createRunService({ canonical, projects, store, operations, seria
     const parent = run.candidate_id;
     const applied = await withEffect(owner, projectId, run, {
       step: RUN_STEP.MOBILE_ADAPTATION,
-      expectation: { kind: 'candidate', parent_candidate_id: parent, stage: ADAPTATION_STAGE },
+      expectation: { kind: 'candidate', parent_candidate_id: parent, stage: ADAPTATION_STAGE, plan_id: normalized.mobile_adaptation.expected_plan_id },
       apply: async () => {
         const result = await operations.applyMobileAdaptation(owner, projectId, {
           candidateId: parent,
@@ -1416,6 +1426,30 @@ export function createRunService({ canonical, projects, store, operations, seria
   async function settlePendingStep(owner, projectId, record, run, normalized) {
     const pending = run.pending_step;
     const found = expectationSatisfiedBy(record, pending.expectation);
+    if (found?.ambiguous) {
+      return {
+        run: bumpRun(owner, projectId, run, {
+          state: RUN_STATE.INTERRUPTED,
+          needs_reconciliation: true,
+          halt: { reason: RUN_HALT.RECONCILIATION_REQUIRED, step: pending.step, at: now() },
+          steps: appendStep(run, stepReceipt({ step: pending.step, status: RUN_STEP_STATUS.UNCONFIRMED, detail: { reason: 'EFFECT_AMBIGUOUS', candidates: found.candidate_ids ?? found.artifact_ids ?? [] } })),
+          review_requests: [reviewRequest({
+            code: RUN_REVIEW_REQUEST.RECONCILIATION_REQUIRED,
+            step: pending.step,
+            blockers: [ERROR_CODES.RUN_RECONCILIATION_REQUIRED],
+            reportReference: 'run.pending_step',
+            baselineId: run.baseline_id,
+            candidateId: run.candidate_id,
+            missing: ['More than one stored result matches what this step was about, so which one it produced cannot be established and it is not adopted. Name the one to continue with through resumeRun.adopt_candidate_id, which verifies its baseline and its lineage.'],
+            availableOperations: ['getProject', 'getRun', 'resumeRun.adopt_candidate_id'],
+            invalidatedBy: ['candidate', 'baseline'],
+            detail: { unconfirmed_step: pending.step, marked_at: pending.at, matches: found.candidate_ids ?? found.artifact_ids ?? [] },
+          })],
+          blockers: [ERROR_CODES.RUN_RECONCILIATION_REQUIRED],
+        }),
+        halted: true,
+      };
+    }
     if (found) {
       const changes = {
         pending_step: null,
@@ -1633,7 +1667,23 @@ export function createRunService({ canonical, projects, store, operations, seria
       // An adopted candidate is a different candidate, so every candidate-bound
       // answer this run recorded about the previous one is re-asked: the review
       // and finalize receipts are dropped and both steps run again.
-      changes.steps = (run.steps ?? []).filter(entry => ![RUN_STEP.REVIEW, RUN_STEP.FINALIZE, RUN_STEP.REPORT].includes(entry.step));
+      let steps = (run.steps ?? []).filter(entry => ![RUN_STEP.REVIEW, RUN_STEP.FINALIZE, RUN_STEP.REPORT].includes(entry.step));
+      // Naming a candidate is also how a caller settles an interrupted step
+      // whose effect could not be told apart from another one. It is an
+      // explicit statement, checked against the baseline and the lineage above
+      // before it is accepted, and it is recorded as the reviewer's answer
+      // rather than as something the run established for itself.
+      if (run.pending_step?.expectation?.kind === 'candidate') {
+        steps = [...steps.filter(entry => entry.step !== run.pending_step.step), stepReceipt({
+          step: run.pending_step.step,
+          status: RUN_STEP_STATUS.SATISFIED,
+          resultReference: adopted.candidate_id,
+          detail: { reconciled: true, reason: 'EFFECT_NAMED_BY_REVIEWER', expectation: run.pending_step.expectation },
+        })];
+        changes.pending_step = null;
+        changes.needs_reconciliation = false;
+      }
+      changes.steps = steps;
       changes.gates = null;
       changes.readiness_blockers = [];
     }

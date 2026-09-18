@@ -466,6 +466,61 @@ test('an unconfirmable step is reported as interrupted and is never replayed on 
   });
 });
 
+test('an interrupted step whose effect cannot be told from another is not adopted on a guess', async () => {
+  await withDirectory(async directory => {
+    const app = createStudioApplication({ dataDirectory: directory, durability: 'persistent' });
+    const fixture = await projectWithSymbolicAsset(app, OWNER, { project: sixRoleBaseline() });
+    await app.analyzeSources(OWNER, fixture.projectId, { assetIds: [fixture.assetId] });
+
+    // A decision application is the one step whose stored result carries no
+    // plan id to match on, so two of them from the same parent are the case
+    // where "which effect was mine" genuinely cannot be answered.
+    const interrupted = createStudioApplication({
+      dataDirectory: directory,
+      durability: 'persistent',
+      runHooks: { afterEffect: ({ step }) => { if (step === RUN_STEP.APPLY_DECISIONS) throw Error('the process stopped after the effect'); } },
+    });
+    const error = await interrupted.startRun(OWNER, fixture.projectId, {
+      asset_ids: [fixture.assetId], decisions: runDecisionsFor(fixture.project), accepted_by: RUN_REVIEWER,
+    }).then(() => assert.fail('the injected fault must propagate'), problem => problem);
+    assert.match(error.message, /stopped after the effect/);
+
+    const restarted = createStudioApplication({ dataDirectory: directory, durability: 'persistent' });
+    const runId = (await restarted.getRun(OWNER, fixture.projectId)).runs[0].run_id;
+    const mine = (await restarted.getProject(OWNER, fixture.projectId)).project.candidates[0].candidate_id;
+
+    // Another caller applies a different accepted set from the same parent, so
+    // two candidates now match what the interrupted step was about.
+    const other = (await restarted.applyDecisions(OWNER, fixture.projectId, {
+      decisions: runDecisionsFor(fixture.project).map(decision => ({ ...decision, reason: `${decision.reason} Reviewed separately, outside the run.` })),
+    })).decisions.candidate_id;
+    assert.notEqual(other, mine);
+
+    // The run refuses to pick one, names both, and applies nothing.
+    const ambiguous = await restarted.resumeRun(OWNER, fixture.projectId, runId, {});
+    assert.equal(ambiguous.run.state, RUN_STATE.INTERRUPTED);
+    assert.equal(ambiguous.run.needs_reconciliation, true);
+    assert.equal(receiptOf(ambiguous.run, RUN_STEP.APPLY_DECISIONS).detail.reason, 'EFFECT_AMBIGUOUS');
+    assert.equal(ambiguous.run.candidate_id, null);
+    const request = ambiguous.run.review_requests.find(entry => entry.code === 'RECONCILIATION_REQUIRED');
+    assert.deepEqual([...request.detail.matches].sort(), [mine, other].sort());
+    assert.ok(request.available_operations.includes('resumeRun.adopt_candidate_id'));
+    // `reconcile: true` alone does not resolve it: the question is which one,
+    // not whether something happened.
+    const stillAmbiguous = await restarted.resumeRun(OWNER, fixture.projectId, runId, { reconcile: true });
+    assert.equal(stillAmbiguous.run.state, RUN_STATE.INTERRUPTED);
+
+    // Naming one settles it, after its baseline and lineage are checked.
+    const settled = await restarted.resumeRun(OWNER, fixture.projectId, runId, { adopt_candidate_id: mine, confirmations: FIXTURE_CONFIRMATIONS });
+    assert.equal(settled.run.needs_reconciliation, false);
+    assert.equal(settled.run.candidate_id, mine);
+    assert.equal(receiptOf(settled.run, RUN_STEP.APPLY_DECISIONS).detail.reason, 'EFFECT_NAMED_BY_REVIEWER');
+    assert.equal(settled.run.state, RUN_STATE.COMPLETED, JSON.stringify(settled.run.blockers));
+    const artifact = (await restarted.getArtifact(OWNER, settled.run.final_artifact_id)).artifact;
+    assert.equal(artifact.candidate_id, mine, 'the Final names the candidate the reviewer named, not the other one');
+  });
+});
+
 // ─── durability is reported, never assumed ──────────────────────────────────
 
 test('a filesystem run survives a new service instance and a memory run honestly does not', async () => {
