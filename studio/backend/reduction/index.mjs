@@ -1039,8 +1039,9 @@ export function planFinalReduction({
           });
         }
         for (const created of entry.createdEventIds) {
-          const role = proposedById.get(created)?.role ?? null;
-          if (role !== null && !(entry.duplicateRoles ?? []).includes(role)) {
+          if (!proposedById.has(created)) continue; // presence mismatch already recorded above
+          const role = proposedById.get(created).role ?? null;
+          if (!(entry.duplicateRoles ?? []).includes(role)) {
             addBlocker(REDUCTION_BLOCKERS.LEDGER_ROLE_MISMATCH, { baselineEventId: item.baselineEventId, candidateEventId: created, ledgerRole: Object.freeze([...(entry.duplicateRoles ?? [])]), projectedRole: role });
           }
         }
@@ -1311,7 +1312,7 @@ export function applyFinalReduction({
       for (const created of entry.createdEventIds) {
         if (!outputById.has(created)) throw Error(`G12 INVARIANT VIOLATED: ${created} is recorded as a duplicate this reduction creates but was not delivered`);
         const role = outputById.get(created).role ?? null;
-        if (role !== null && !(entry.duplicateRoles ?? []).includes(role)) throw Error(`G12 INVARIANT VIOLATED: the duplicate ${created} was delivered in ${role}, which the ledger does not record`);
+        if (!(entry.duplicateRoles ?? []).includes(role)) throw Error(`G12 INVARIANT VIOLATED: the duplicate ${created} was delivered in ${role ?? 'no role'}, which the ledger does not record`);
       }
     }
   }
