@@ -292,6 +292,7 @@ test('the whole pipeline is reachable over HTTP with the same status separation'
     confirmations: {
       source_complete: { value: true, reason: 'Complete.' },
       player_readback: { value: 'PASS', reason: 'Read back.' },
+      mobile_adaptation_reviewed: { value: true, reason: 'Gate 8 reviewed.', evidence: ['HTTP fixture Gate 8 review'] },
       original_audio_required: { value: false, reason: 'No recording.' },
     },
   });
