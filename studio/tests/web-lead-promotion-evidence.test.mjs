@@ -305,3 +305,40 @@ test('a derived id whose chain does not reach the baseline is refused at record 
   };
   assert.throws(() => recordLeadPromotionEvidence(broken, form({ promotedEventId: 'orphan#dup' })), /Source-Faithful Baseline/);
 });
+
+// ─── the Web plane's own re-review path ─────────────────────────────────────
+//
+// The Agent plane needed a new operation for this: there, evidence lives in the
+// `applied[]` of the revision that performed the move, so a later revision that
+// changed the Lead picture left a citation that could not be re-supplied --
+// G11-D refuses to re-apply a move that already happened.
+//
+// Studio Web does not have that problem, and this pins why rather than leaving
+// it as an assumption: both evidence arrays are read only while the record names
+// the CURRENT revision, and both writers replace by event id. So a new revision
+// asks for the evidence again, and re-recording through the same form is the
+// answer. The two planes reach the same place -- a citation must describe the
+// arrangement being graded -- by different routes, and neither carries a
+// previous PASS forward.
+
+test('Web Lead evidence is read only for the current revision, so a new revision asks again', () => {
+  const recorded = recordLeadPromotionEvidence(workspace(), form());
+  assert.equal(recorded.leadPromotionEvidence[0].revision, 0);
+  assert.equal(promotionReport(analyzeWorkspace(recorded)).status, 'PASS');
+
+  // A new revision. The record is still on the workspace for the audit trail,
+  // and is no longer read.
+  const advanced = { ...recorded, revision: recorded.revision + 1 };
+  assert.equal(advanced.leadPromotionEvidence.length, 1);
+  const stale = analyzeWorkspace(advanced);
+  assert.equal(stale.leadPromotionReports.length, 0, 'a record from an earlier revision feeds no report');
+  assert.equal(stale.readiness.gates.leadPromotion.status, 'PENDING');
+
+  // Re-recording through the same form is the re-review, and it is graded by
+  // the shared promotion gate again rather than restored from the old record.
+  const again = recordLeadPromotionEvidence(advanced, form());
+  assert.equal(again.leadPromotionEvidence.length, 1, 'the superseded record is replaced, not accumulated');
+  assert.equal(again.leadPromotionEvidence[0].revision, 1);
+  assert.equal(promotionReport(analyzeWorkspace(again)).status, 'PASS');
+  assert.equal(analyzeWorkspace(again).readiness.gates.leadPromotion.status, 'PASS');
+});
