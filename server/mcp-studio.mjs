@@ -152,7 +152,7 @@ export const STUDIO_MCP_TOOLS = [
       properties: {
         project_id: projectId,
         candidate_id: candidateId,
-        confirmations: structuredPayload('source_complete／version_drift_reviewed／player_readback／original_audio_required，每項需 reason。player_readback 為 PASS、NOT_RUN 或 N/A（未使用預覽／驗證素材時，附理由）；PASS 可附 mml_sha256 綁定實際回讀的 MML。確認綁定於目前 baseline 與本候選；in_game 無法由此設定。'),
+        confirmations: structuredPayload('source_complete／version_drift_reviewed／player_readback／mobile_adaptation_reviewed／regression_reviewed／original_audio_required，每項需 reason。Gate 8／9 的 reviewed=true 另需 evidence。player_readback 為 PASS、NOT_RUN 或 N/A（未使用預覽／驗證素材時，附理由）；PASS 可附 mml_sha256 綁定實際回讀的 MML。確認綁定於目前 baseline 與本候選；in_game 無法由此設定。'),
       },
       required: ['project_id', 'candidate_id'],
       additionalProperties: false,
