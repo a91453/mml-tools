@@ -87,13 +87,13 @@ export function buildCapabilities({ canonical, storage, jobs, transports = [] })
 
     gates: freeze({
       axes: GATE_NAMES,
-      settable_by_this_service: freeze(['technical', 'source', 'audio', 'player_readback', 'mobile_adaptation']),
+      settable_by_this_service: freeze(['technical', 'source', 'audio', 'player_readback', 'mobile_adaptation', 'regression']),
       // Gate 8 is settable only through the explicit candidate-bound,
       // evidence-backed review confirmation. Parser/emitter success never sets
       // it. in_game remains a standing prohibition for this service.
       not_implemented_in_this_build: freeze([]),
       never_settable_by_this_service: freeze(['in_game']),
-      notice: 'mobile_adaptation can reach PASS only from an explicit candidate-bound evidence-backed Gate 8 review; parser/emitter success does not upgrade it. in_game is recorded only by the user or a controlled target-client test. No parser, emitter, transport, job or model call can set in_game, so it stays PENDING.',
+      notice: 'mobile_adaptation and regression can reach PASS only from explicit candidate-bound evidence-backed Gate 8 / Gate 9 reviews; parser/emitter/test success does not upgrade them. in_game is recorded only by the user or a controlled target-client test. No parser, emitter, transport, job or model call can set in_game, so it stays PENDING.',
     }),
 
     audio: freeze({
