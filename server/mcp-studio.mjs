@@ -376,7 +376,9 @@ export const STUDIO_MCP_TOOLS = [
       + '正常補證據（Gate 4／8／9 審查、Core3 核准、Lead 證據、音訊報告）後可以對目前候選重新 review 並繼續，不會因為多了一筆證據就永久卡住。'
       + 'expected_run_revision 提供樂觀併發：與目前 revision 不符時回傳 RUN_CONFLICT。'
       + 'adopt_candidate_id 用來明確採用 run 之外的操作所產生的候選，會驗證 baseline 與 lineage；絕不自行挑時間最新的候選。'
-      + '若上次執行在 effect 與 receipt 之間中斷，而該 effect 無法用既有內容定址身分或已儲存的參照證明，run 會回報 interrupted／needs reconciliation 並指出未確認的步驟，不會盲目重放；確認狀態後以 reconcile=true 續跑。',
+      + '若上次執行在 effect 與 receipt 之間中斷，而該 effect 無法用既有內容定址身分或已儲存的參照證明，run 會回報 interrupted／needs reconciliation 並指出未確認的步驟，不會盲目重放；確認狀態後以 reconcile=true 續跑。'
+      + '若有多個相符結果而無法辨識是哪一個，candidate 用 adopt_candidate_id、artifact 用 adopt_artifact_id 明確指定，兩者都會嚴格驗證身分。'
+      + 'meter_text 是 intake input 而非顯示資訊：MML 來源是依它解析的。若既有 baseline 是用某個 meter 建立而本 run 未提供 meter，run 會明確阻擋而不是沿用；提供不同 meter 則重新 intake，綁在舊 baseline 的候選與確認不會被沿用。',
     inputSchema: {
       type: 'object',
       properties: {
@@ -387,6 +389,7 @@ export const STUDIO_MCP_TOOLS = [
         asset_ids: runAssetIds,
         meter_text: runMeterText,
         adopt_candidate_id: candidateId,
+        adopt_artifact_id: { type: 'string', minLength: 68, maxLength: 68, description: '明確指定要採用的 artifact（art_ 開頭），用來收束「中斷後有多個相符 artifact」的情況。會驗證型別、所屬候選，run report 另驗證其內容確實指向本 run；絕不以時間最新者代替。' },
         decisions: runDecisions,
         accepted_by: runAcceptedBy,
         final_reduction: structuredPayload(RUN_REDUCTION_DESCRIPTION),
@@ -436,8 +439,8 @@ export const STUDIO_MCP_TOOLS = [
 // look like a caller that accepted no reduction.
 const RUN_INPUT_FIELDS = [
   'idempotency_key', 'expected_run_revision', 'asset_ids', 'meter_text',
-  'target_candidate_id', 'adopt_candidate_id', 'decisions', 'accepted_by',
-  'final_reduction', 'mobile_adaptation', 'confirmations', 'finalize', 'reconcile',
+  'target_candidate_id', 'adopt_candidate_id', 'adopt_artifact_id', 'decisions',
+  'accepted_by', 'final_reduction', 'mobile_adaptation', 'confirmations', 'finalize', 'reconcile',
 ];
 
 const runInput = args => Object.fromEntries(RUN_INPUT_FIELDS.filter(name => args[name] !== undefined).map(name => [name, args[name]]));

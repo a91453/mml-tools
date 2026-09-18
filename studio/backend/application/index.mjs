@@ -186,6 +186,20 @@ export function createStudioApplication({
     findAsset: (record, assetId) => assets.find(record, assetId),
     fileArtifact: (record, artifact) => final.fileArtifact(record, artifact),
 
+    /**
+     * The run id an artifact's own body names, or null.
+     *
+     * Only a run report carries one. It exists so that reconciling an
+     * interrupted report step can tell this run's report from another run's for
+     * the same candidate by identity rather than by timestamp. It reads; it
+     * cannot write, and a missing or unreadable artifact answers null rather
+     * than failing a reconciliation that is already trying to be careful.
+     */
+    artifactRunId(owner, artifactId) {
+      try { return final.find(owner, artifactId)?.run_id ?? null; }
+      catch { return null; }
+    },
+
     async analyzeSources(owner, projectId, options = {}) {
       const { job, result } = await jobs.run(owner, projectId, JOB_TYPES.INTAKE, async () => {
         const { baseline } = await intake.run(owner, projectId, options);

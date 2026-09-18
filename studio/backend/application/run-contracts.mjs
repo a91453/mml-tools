@@ -141,6 +141,11 @@ export const RUN_HALT = freeze({
   BASELINE_CHANGED: 'RUN_BASELINE_CHANGED',
   CANDIDATE_CHANGED: 'RUN_CANDIDATE_CHANGED',
   CANONICAL_SNAPSHOT_CHANGED: 'RUN_CANONICAL_SNAPSHOT_CHANGED',
+  // The project's baseline was built from an intake input this run cannot
+  // prove it shares — in practice, an MML source's meter map. Re-ingesting
+  // under the run's own (absent) meter would silently produce a different
+  // baseline, so the run stops instead.
+  METER_BINDING_UNPROVABLE: 'RUN_BASELINE_INTAKE_INPUT_UNPROVABLE',
   RECONCILIATION_REQUIRED: 'RUN_RECONCILIATION_REQUIRED',
   STEP_BUDGET_EXHAUSTED: 'RUN_STEP_BUDGET_EXHAUSTED',
   CAPABILITY_UNSUPPORTED: 'RUN_CAPABILITY_UNSUPPORTED',
@@ -163,6 +168,7 @@ export const RUN_HALT = freeze({
 export const RUN_REVIEW_REQUEST = freeze({
   SOURCE_SELECTION_REQUIRED: 'SOURCE_SELECTION_REQUIRED',
   SYMBOLIC_SOURCE_REQUIRED: 'SYMBOLIC_SOURCE_REQUIRED',
+  SOURCE_METER_BINDING_REQUIRED: 'SOURCE_METER_BINDING_REQUIRED',
   ARRANGEMENT_DECISIONS_REQUIRED: 'ARRANGEMENT_DECISIONS_REQUIRED',
   ARRANGEMENT_DECISIONS_REFUSED: 'ARRANGEMENT_DECISIONS_REFUSED',
   REDUCTION_DECISIONS_REQUIRED: 'REDUCTION_DECISIONS_REQUIRED',
@@ -218,6 +224,7 @@ export const RUN_REQUEST_INVALIDATORS = freeze({
   canonical: 'the Published Canonical rules snapshot changes',
   decisions: 'the accepted decision set changes',
   plan: 'the reduction or adaptation plan id changes because its inputs changed',
+  meter: 'the source-confirmed meter map an MML source was ingested against changes, because the baseline is parsed against it',
 });
 
 export const RUN_SEPARATION_NOTICE = 'A run state is implementation progress, not a Canonical verdict. completed means this workflow instance reached the end of the steps its inputs allowed and the existing finalize delivered an artifact. A completed run, a succeeded operation and a succeeded job are each independent of TECHNICAL_PASS, SOURCE_PASS, PLAYER_READBACK_PASS, AUDIO_ALIGNMENT_PASS, MOBILE_ADAPTATION_PASS, VALIDATED and IN_GAME_ACCEPTED. in_game is never set by this service.';
