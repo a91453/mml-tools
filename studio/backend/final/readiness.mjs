@@ -69,6 +69,49 @@ function baselineGate(project) {
       changes: pair.changes,
     }));
 
+  // Melody membership by event id, computed independently of how the diff
+  // aligned notes -- and this is the thing the Lead gates key on, not the
+  // alignment.
+  //
+  // `compareCanonicalVersions` pairs notes structurally (role, then onset),
+  // never by id. So a candidate that swaps a Lead event with an inner voice at
+  // the same onset -- demote melody-1 to Chord3, promote chord3-1 to Melody --
+  // is aligned as the *same* Melody slot with a changed pitch, plus the
+  // same Chord3 slot with a changed pitch. `roleMoved` comes back EMPTY, and
+  // deriving the required set from it left both Lead gates with nothing to
+  // require: `N/A`, which is PASS-like, for a Lead swap with no evidence at
+  // all. Reproduced before this was written.
+  //
+  // Membership cannot be fooled that way: one event id, Melody on one side and
+  // not the other, is a Lead move whatever the alignment made of it.
+  // MASTER_RULES §4 requires positive role evidence for demoting a
+  // source-supported Lead, and ACCEPTANCE_CRITERIA Gate 3 requires the evidence
+  // chain for any Lead demotion; neither is conditional on a diff being able to
+  // pair the notes.
+  //
+  // Only ids present on BOTH sides are read this way, and that restriction is
+  // load-bearing rather than cautious. The two planes do not share an id space:
+  // a G11-D candidate is derived from the baseline and keeps its ids, but a
+  // Studio Web workspace can hold a baseline and a candidate imported as
+  // separate assets, whose ids are independently generated even when the music
+  // is identical. Treating a missing id as a move would then report every Lead
+  // event of such a workspace as both demoted and promoted. Those cases are
+  // already covered by `added`/`removed` above, which is where a note that
+  // genuinely arrives or leaves belongs -- so this adds the one case the
+  // alignment loses and nothing else.
+  const noteById = events => new Map((events ?? [])
+    .filter(event => event?.kind === 'note' && typeof event.id === 'string' && event.id)
+    .map(event => [event.id, event]));
+  const snapshotNotes = noteById(snapshot.events);
+  const candidateNotes = noteById(project?.events);
+  const roleSwitched = [];
+  for (const [id, before] of snapshotNotes) {
+    const after = candidateNotes.get(id);
+    if (!after) continue;
+    if (before.role === 'Melody' && after.role !== 'Melody') roleSwitched.push(['demoted', id]);
+    else if (before.role !== 'Melody' && after.role === 'Melody') roleSwitched.push(['promoted', id]);
+  }
+
   return gate('PASS', {
     baselineId: snapshot.id,
     eventDiff,
@@ -77,6 +120,9 @@ function baselineGate(project) {
       removed: Object.freeze(leadRemoved),
       modified: Object.freeze(leadModified),
       roleMoved: Object.freeze(leadRoleMoved),
+      // One id, present on both sides, whose Lead membership changed.
+      demotedEventIds: Object.freeze(roleSwitched.filter(([kind]) => kind === 'demoted').map(([, id]) => id)),
+      promotedEventIds: Object.freeze(roleSwitched.filter(([kind]) => kind === 'promoted').map(([, id]) => id)),
     }),
   });
 }
@@ -110,6 +156,12 @@ function evidenceReportGate(reports, requiredEventIds, { reportName, blocker, no
 
 function leadDemotionGate(reports, leadEventDiff = null) {
   const requiredEventIds = new Set();
+  // Membership first: it is the one derivation that does not depend on the
+  // diff being able to pair the notes. The alignment-derived ids below are kept
+  // as well -- the union can only require more, never less.
+  for (const id of leadEventDiff?.demotedEventIds ?? []) {
+    if (typeof id === 'string' && id) requiredEventIds.add(id);
+  }
   for (const id of leadEventDiff?.removed ?? []) {
     if (typeof id === 'string' && id) requiredEventIds.add(id);
   }
@@ -127,6 +179,9 @@ function leadDemotionGate(reports, leadEventDiff = null) {
 
 function leadPromotionGate(reports, leadEventDiff = null) {
   const requiredEventIds = new Set();
+  for (const id of leadEventDiff?.promotedEventIds ?? []) {
+    if (typeof id === 'string' && id) requiredEventIds.add(id);
+  }
   for (const id of leadEventDiff?.added ?? []) {
     if (typeof id === 'string' && id) requiredEventIds.add(id);
   }
