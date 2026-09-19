@@ -149,7 +149,12 @@ const encoder = new TextEncoder();
 //        a function, a symbol, a non-finite number, a Date. The depth and node
 //        budget is spent here rather than discovered by a recursion limit in
 //        `JSON.stringify` on the way to disk.
-const JSON_LIMITS = Object.freeze({ maxDepth: 10, maxNodes: 4000, maxStringLength: LIMITS.maxProposalRationaleLength });
+// The free-form structure a proposal carries -- a decision's `metadata`, a
+// Mobile `profile`, an instrument profile. Its own bound, deliberately not the
+// rationale's: the rationale is a top-level MCP string field held to the
+// inline-text rule every tool is held to, and these are nested values the
+// service bounds itself.
+const JSON_LIMITS = Object.freeze({ maxDepth: 10, maxNodes: 4000, maxStringLength: 4000 });
 const PROTOTYPE_KEYS = Object.freeze(['__proto__', 'constructor', 'prototype']);
 
 function rebuildJson(value, label, budget, depth = 0) {

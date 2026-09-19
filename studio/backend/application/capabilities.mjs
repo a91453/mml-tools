@@ -14,6 +14,25 @@
 
 import { ASSET_KIND_NAMES, GATE_NAMES, IDENTITY_MODEL, JOB_STATUS, LIMITS } from './contracts.mjs';
 import { RUN_EXECUTION_MODE, RUN_EXECUTION_NOTICE, RUN_RECORD_SCHEMA, RUN_REPORT_SCHEMA, RUN_SEPARATION_NOTICE, RUN_STATE_NAMES, RUN_STEP_OPERATION, RUN_STEP_ORDER } from './run-contracts.mjs';
+import {
+  ACCEPTABLE_AGENT_REVIEW,
+  AGENT_REVIEW_NAMES,
+  AGENT_REVIEW_NOTICE,
+  EVIDENCE_REF_KIND_NAMES,
+  EVIDENCE_SEPARATION_NOTICE,
+  EVIDENCE_TRUTH_CLASS_NAMES,
+  NEVER_AGENT_SETTLABLE,
+  PROPOSAL_AUTHORITY_NOTICE,
+  PROPOSAL_EXECUTION_NOTICE,
+  PROPOSAL_KIND_NAMES,
+  PROPOSAL_KIND_OPERATION,
+  PROPOSAL_MODEL_NOTICE,
+  PROPOSAL_PROTOCOL_VERSION,
+  PROPOSAL_RECORD_SCHEMA,
+  PROPOSAL_SEPARATION_NOTICE,
+  PROPOSAL_STATE_NAMES,
+  REQUEST_KEY_NOTICE,
+} from './proposal-contracts.mjs';
 
 const freeze = Object.freeze;
 
@@ -63,6 +82,18 @@ export function buildCapabilities({ canonical, storage, jobs, transports = [] })
       automatic_collision_repair: false,
       automatic_performer_allocation: false,
       candidate_review: true,
+      // The AI Proposal Protocol. `true` because the protocol exists and its
+      // records are durable -- NOT because anything about it is automatic.
+      // An external agent can submit a structured, citable, refusable
+      // statement about one open review request; nothing applies it but an
+      // explicit acceptance, and the three `false`s below say so as facts
+      // rather than leaving a reader to infer them.
+      ai_proposal_protocol: true,
+      proposal_persistence: true,
+      proposal_agent_review_policy: true,
+      automatic_proposal_acceptance: false,
+      automatic_proposal_generation: false,
+      server_side_model_calls: false,
       // One traceable, explicitly resumable workflow instance over the
       // operations already listed here. It is `true` because the run
       // orchestration exists; it adds no musical capability, and every `false`
@@ -163,9 +194,60 @@ export function buildCapabilities({ canonical, storage, jobs, transports = [] })
         'minting a no-op revision when no transformation is needed, and treating that as a gate result',
         'rewriting the content or identity of a Final artifact, or presenting an earlier candidate\'s MML as a later run output',
         'proceeding past a readiness blocker it does not recognise',
+        'advancing because a proposal exists: a stored proposal is an external agent\'s statement, and only its explicit acceptance reaches a resume',
       ]),
       execution_notice: RUN_EXECUTION_NOTICE,
       separation_notice: RUN_SEPARATION_NOTICE,
+    }),
+
+    // The AI Proposal Protocol. Stated beside `runs` rather than inside it,
+    // because a proposal is not a run step and an agent that reads one as the
+    // other will expect a run to move when a proposal is stored. It does not.
+    proposals: freeze({
+      version: PROPOSAL_PROTOCOL_VERSION,
+      record_schema: PROPOSAL_RECORD_SCHEMA,
+      states: PROPOSAL_STATE_NAMES,
+      // The classes this build supports, and the EXISTING operation each one
+      // reaches. `evidence_needed` reaches none, which is the point of it.
+      kinds: PROPOSAL_KIND_NAMES,
+      kind_operations: PROPOSAL_KIND_OPERATION,
+      operations: freeze(['proposalTargets', 'proposeDecision', 'getProposal', 'listProposals', 'resolveProposal']),
+      read_only_operations: freeze(['proposalTargets', 'getProposal', 'listProposals']),
+      agent_review_verdicts: AGENT_REVIEW_NAMES,
+      // One verdict, not a list. Everything else the policy can answer refuses.
+      acceptable_verdict: ACCEPTABLE_AGENT_REVIEW,
+      evidence_reference_kinds: EVIDENCE_REF_KIND_NAMES,
+      evidence_truth_classes: EVIDENCE_TRUTH_CLASS_NAMES,
+      max_proposals_per_project: LIMITS.maxProposalsPerProject,
+      max_rationale_length: LIMITS.maxProposalRationaleLength,
+      max_citations: LIMITS.maxProposalCitations,
+      // Facts, and each one is a thing an agent might otherwise assume.
+      automatic_acceptance: false,
+      automatic_continuation: false,
+      background_execution: false,
+      server_side_model_calls: false,
+      provider_specific_behaviour: false,
+      // What a proposal cannot settle at any evidence level, in any class.
+      never_agent_settlable: NEVER_AGENT_SETTLABLE,
+      refuses: freeze([
+        'applying anything on submission: storing a proposal mints no candidate, takes no revision, records no confirmation, moves no gate and does not advance the run',
+        'accepting a proposal on any verdict but REQUIRES_EXPLICIT_ACCEPTANCE, which is a single value rather than a list',
+        'reusing the agent\'s proposed_by as an acceptance, or letting a proposed decision name its own acceptedBy',
+        'answering a readiness gate, a blocked finalize, a changed input or an interrupted step with anything but a description of what is missing',
+        'recording source_complete, player_readback, the Gate 4 / 8 / 9 reviews, a Core3 approval, a Lead citation or in_game',
+        'resolving a PENDING, converting a suggestion into an acceptance, or treating an absence of evidence as N/A or not-required',
+        'citing an event, source, asset, artifact, job, candidate, run or report reference this project does not hold',
+        'collapsing symbolic and audio evidence into a single confidence score, or mislabelling which class a cited source belongs to',
+        'applying a proposal after the rules snapshot, baseline, candidate, asset selection, accepted decision set, run revision or review request it was bound to changed',
+        'deriving a second musical result: acceptance prepares the input and the existing operation performs the mutation',
+      ]),
+      request_key_notice: REQUEST_KEY_NOTICE,
+      agent_review_notice: AGENT_REVIEW_NOTICE,
+      evidence_separation_notice: EVIDENCE_SEPARATION_NOTICE,
+      execution_notice: PROPOSAL_EXECUTION_NOTICE,
+      separation_notice: PROPOSAL_SEPARATION_NOTICE,
+      authority_notice: PROPOSAL_AUTHORITY_NOTICE,
+      model_notice: PROPOSAL_MODEL_NOTICE,
     }),
 
     asset_storage: freeze({

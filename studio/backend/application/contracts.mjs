@@ -400,10 +400,12 @@ export const LIMITS = freeze({
   // agent does. An agent that has filled it is told so rather than silently
   // dropping its oldest statement.
   maxProposalsPerProject: 64,
-  // A rationale is prose for a human reviewer. Bounded so one proposal cannot
-  // push a project record past what a transport will serve, and so the two
-  // transports admit exactly the same length.
-  maxProposalRationaleLength: 4000,
+  // A rationale is prose for a human reviewer. 2048 is the inline-text bound
+  // every MCP string field is held to, and `tests/mcp-studio.test.mjs` asserts
+  // it: no tool is a way to push bulk data into a model's context or into this
+  // process. The service enforces the same number, so the two transports admit
+  // exactly the same length rather than one accepting what the other refuses.
+  maxProposalRationaleLength: 2048,
   maxProposalCitations: 50,
   maxProposalConflicts: 32,
   maxProposalNoteLength: 500,
