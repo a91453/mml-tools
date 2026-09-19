@@ -715,8 +715,15 @@ export function createRunService({ canonical, projects, store, operations, seria
   /** The attempt a stored entry records, or `undefined` where it records none. */
   const recordedAttempt = entry => (entry && Object.hasOwn(entry, 'effect_attempt_id') ? entry.effect_attempt_id : undefined);
 
-  /** Whether `reconcile: true` is honoured for a marker, and why. */
-  const reconcileSettles = (pending, expectation) => expectation === null || expectation === undefined;
+  /**
+   * Whether `reconcile: true` is honoured for a marker.
+   *
+   * True for exactly the state whose cause is `NO_EXPECTATION_RECORDED`, which
+   * is the only cause `RECONCILIATION_REMEDY` advertises it for. The two
+   * cannot drift: a regression asserts the table honours it for that cause and
+   * no other, and that what the run advertises is what it executes.
+   */
+  const reconcileSettles = expectation => expectation === null || expectation === undefined;
 
   /** What a reconciliation can conclude. Four answers, and three are not "rerun". */
   const EFFECT = Object.freeze({
@@ -783,7 +790,7 @@ export function createRunService({ canonical, projects, store, operations, seria
       // effect positively never landed. The one conclusion that re-runs a step.
       return opaque.length === 0
         ? { outcome: EFFECT.ABSENT }
-        : { outcome: EFFECT.UNPROVABLE, reason: 'EFFECT_ATTEMPT_NOT_RECORDED', opaque };
+        : { outcome: EFFECT.UNPROVABLE, reason: 'EFFECT_ATTEMPT_NOT_RECORDED' };
     };
 
     const sorted = [...current].sort();
@@ -2312,7 +2319,7 @@ export function createRunService({ canonical, projects, store, operations, seria
     // caller's inspection is the only evidence there can be. Where an
     // expectation exists, the record itself answers, and a boolean cannot
     // overrule it into a replay.
-    const settled = reconcileSettles(pending, expectation)
+    const settled = reconcileSettles(expectation)
       ? { outcome: pending.idempotent === true || normalized.reconcile ? EFFECT.ABSENT : EFFECT.UNPROVABLE, reason: 'NO_EXPECTATION_RECORDED' }
       : expectationSatisfiedBy(owner, record, expectation);
     // An identified Final whose body cannot be read is not an identified
