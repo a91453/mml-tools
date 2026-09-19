@@ -134,6 +134,38 @@ test('every proposal class states its downstream operation and its citation requ
   }
 });
 
+test('every declared evidence reference kind can actually be resolved', async () => {
+  // A kind declared in the vocabulary but missing from the service's resolver
+  // table would be a TypeError at read time rather than a refusal — and it
+  // would be reached only by a proposal that cited it, which is to say by an
+  // agent rather than by this suite. So the two are compared directly.
+  const { EVIDENCE_REF_KIND_NAMES } = await import('../backend/application/proposal-contracts.mjs');
+  const { createStudioApplication } = await import('../backend/application/index.mjs');
+  const { projectWithSymbolicAsset } = await import('./fixtures/run-fixtures.mjs');
+  const { PROPOSAL_KIND: KIND } = await import('../backend/application/proposal-contracts.mjs');
+
+  const app = createStudioApplication({});
+  const owner = 'owner:evidence-kinds';
+  const fixture = await projectWithSymbolicAsset(app, owner);
+  const started = await app.startRun(owner, fixture.projectId, { asset_ids: [fixture.assetId] });
+  const target = (await app.proposalTargets(owner, fixture.projectId, started.run.run_id)).targets[0];
+
+  for (const kind of EVIDENCE_REF_KIND_NAMES) {
+    // A deliberately unresolvable id of each kind. Every one must come back as
+    // a REFUSAL — never a crash, and never silently accepted.
+    const submitted = await app.proposeDecision(owner, fixture.projectId, {
+      run_id: started.run.run_id,
+      request_key: target.request_key,
+      kind: KIND.EVIDENCE_NEEDED,
+      proposed_by: 'agent',
+      rationale: `Citing an unresolvable ${kind} reference.`,
+      cites: { evidence_refs: [{ kind, id: 'nothing-this-project-holds', truth_class: 'project_history' }] },
+    });
+    assert.equal(submitted.proposal.agent_review.verdict, 'INVALID', `${kind} must resolve to a refusal`);
+    assert.ok(submitted.proposal.agent_review.refusals.includes('FABRICATED_EVIDENCE_REF'), kind);
+  }
+});
+
 // ─── D. proposal identity is its own family ─────────────────────────────────
 
 test('a proposal id is its own opaque identity and is not a run id', () => {

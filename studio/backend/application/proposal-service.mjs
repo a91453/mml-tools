@@ -713,7 +713,16 @@ export function createProposalService({ canonical, projects, store, operations, 
     }
 
     const resolvers = evidenceResolvers(record, run, citations);
-    const resolvedRefs = proposal.cites.evidence_refs.map(ref => ({ ...ref, ...resolvers[ref.kind](ref.id) }));
+    // `Object.hasOwn` rather than a bare lookup. `kind` is validated against the
+    // enum at submission, so it cannot be `constructor` today -- but a bracket
+    // read on an object literal finds `Object.prototype.constructor` if it ever
+    // could, and a kind with no resolver would be a TypeError at read time
+    // rather than a refusal. A reference this service cannot resolve is an
+    // unresolved reference, which is what `FABRICATED_EVIDENCE_REF` says.
+    const resolvedRefs = proposal.cites.evidence_refs.map(ref => ({
+      ...ref,
+      ...(Object.hasOwn(resolvers, ref.kind) ? resolvers[ref.kind](ref.id) : { ok: false }),
+    }));
     if (resolvedRefs.some(ref => !ref.ok)) invalid.push(PROPOSAL_REFUSAL.FABRICATED_EVIDENCE_REF);
 
     // Symbolic truth and audio truth stay in separate fields, and a citation
