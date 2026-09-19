@@ -89,6 +89,7 @@ import {
   isCandidateId,
   isJobId,
   isProjectId,
+  isProposalId,
   isRunId,
   withoutInternalProvenance,
 } from './contracts.mjs';
@@ -103,6 +104,7 @@ import { createReviewService } from './review-service.mjs';
 import { createFinalService } from './final-service.mjs';
 import { createTechnicalService } from './technical-service.mjs';
 import { createRunService } from './run-service.mjs';
+import { createProposalService } from './proposal-service.mjs';
 
 export const APPLICATION_VERSION = '1.0.0';
 
@@ -242,6 +244,32 @@ export function createStudioApplication({
       return (record.jobs ?? []).filter(entry => entry.result_artifact_id === artifactId).map(entry => entry.job_id);
     },
 
+    /**
+     * The Source-Faithful Baseline's events, for resolving a citation.
+     *
+     * Read-only, and the same projection `listBaselineEvents` serves. The
+     * proposal layer uses it to establish that a cited event id is an event
+     * this baseline actually holds, which is what makes "fabricated event id"
+     * a checkable claim rather than a wish.
+     */
+    baselineEvents: (owner, projectId, options = {}) => arrangement.baselineEvents(owner, projectId, options),
+
+    /**
+     * The baseline's source inventory: id, kind and Canonical authority.
+     *
+     * The authority is carried because symbolic truth and audio truth are
+     * separate evidence fields (`SOURCE_POLICY.md` §2), and a citation that
+     * mislabels which one it is collapses them by the back door. Read-only, and
+     * it arbitrates nothing about what either class may prove.
+     */
+    async baselineSources(owner, projectId) {
+      const { baseline, project } = await intake.project(owner, projectId);
+      return {
+        baseline_id: baseline.baseline_id,
+        sources: (project.sources ?? []).map(source => ({ id: source.id, kind: source.kind, authority: source.authority })),
+      };
+    },
+
     async analyzeSources(owner, projectId, options = {}) {
       const { job, result } = await jobs.run(owner, projectId, JOB_TYPES.INTAKE, async () => {
         const { baseline } = await intake.run(owner, projectId, options);
@@ -307,6 +335,22 @@ export function createStudioApplication({
     serialize: serialized,
     serviceVersion,
     hooks: runHooks,
+  });
+
+  // The AI Proposal Protocol. It is built AFTER the run service and takes it as
+  // a dependency, because an accepted proposal reaches an operation through the
+  // run's PUBLIC resume — the same door a caller who never used a proposal goes
+  // through. It is given the internal façade only for the two READ-ONLY plan
+  // derivations an acceptance needs, and it supplies no internal provenance
+  // key: a proposal is external input.
+  const proposals = createProposalService({
+    canonical,
+    projects,
+    store,
+    operations: internal,
+    runs,
+    serialize: serialized,
+    serviceVersion,
   });
 
   // Every significant result carries the Canonical provenance of the process
@@ -514,6 +558,50 @@ export function createStudioApplication({
       return envelope({ operation: OPERATION_STATUS.SUCCEEDED, ...result });
     },
 
+    // ── proposals ───────────────────────────────────────────────────────────
+    //
+    // The AI Proposal Protocol. An external agent reads a run's open review
+    // requests, submits a structured, citable, refusable statement about one of
+    // them, and a reviewer explicitly accepts or rejects it. Only an acceptance
+    // reaches an operation, and it reaches the SAME operation a manual caller
+    // reaches, with the same input. See `proposal-service.mjs`.
+    //
+    // Submitting applies nothing. There is no verdict here that moves a gate,
+    // records a confirmation, resolves a PENDING or advances a run, and there
+    // is no automatic acceptance of any kind in this build.
+
+    /** Read-only. Which of a run's open review requests an agent may answer, and how. */
+    async proposalTargets(owner, projectId, runId) {
+      return envelope({ operation: OPERATION_STATUS.SUCCEEDED, ...(await proposals.targets(owner, projectId, runId)) });
+    },
+
+    /** Store one agent's structured statement. Applies nothing. */
+    async proposeDecision(owner, projectId, input = {}) {
+      return envelope({ operation: OPERATION_STATUS.SUCCEEDED, ...(await proposals.propose(owner, projectId, publicInput(input))) });
+    },
+
+    /** Read-only. One stored proposal, with the Agent Review verdict recomputed now. */
+    async getProposal(owner, projectId, proposalId) {
+      return envelope({ operation: OPERATION_STATUS.SUCCEEDED, ...(await proposals.get(owner, projectId, proposalId)) });
+    },
+
+    /** Read-only. This project's proposals, optionally narrowed. */
+    async listProposals(owner, projectId, input = {}) {
+      return envelope({ operation: OPERATION_STATUS.SUCCEEDED, ...(await proposals.list(owner, projectId, input)) });
+    },
+
+    /**
+     * Record an explicit acceptance, rejection or withdrawal.
+     *
+     * An acceptance — and only an acceptance — routes the prepared input into
+     * the existing run resume path. The run's own answer comes back unchanged
+     * beside the proposal record; an applied proposal certifies nothing about
+     * it.
+     */
+    async resolveProposal(owner, projectId, proposalId, input = {}) {
+      return envelope({ operation: OPERATION_STATUS.SUCCEEDED, ...(await proposals.resolve(owner, projectId, proposalId, publicInput(input))) });
+    },
+
     // ── jobs and artifacts ──────────────────────────────────────────────────
 
     async getJob(owner, jobId) {
@@ -588,6 +676,7 @@ export {
   isCandidateId,
   isJobId,
   isProjectId,
+  isProposalId,
   isRunId,
 };
 export { buildCapabilities, INTERFACE_VERSION } from './capabilities.mjs';
@@ -614,5 +703,47 @@ export {
   RUN_STEP_STATUS,
 } from './run-contracts.mjs';
 export { PLAN_INPUT_KEYS, RECONCILIATION_REMEDY, RESUME_INPUT_KEYS, START_INPUT_KEYS } from './run-service.mjs';
+export {
+  ACCEPTABLE_AGENT_REVIEW,
+  AGENT_REVIEW,
+  AGENT_REVIEW_NAMES,
+  AGENT_REVIEW_NOTICE,
+  AGENT_REVIEW_ORDER,
+  CITATION_REQUIRED,
+  CITES_KEYS,
+  COLLAPSED_SCORE_KEYS,
+  EVIDENCE_REF_KIND,
+  EVIDENCE_REF_KIND_NAMES,
+  EVIDENCE_SEPARATION_NOTICE,
+  EVIDENCE_TRUTH_CLASS,
+  EVIDENCE_TRUTH_CLASS_NAMES,
+  LIST_PROPOSALS_INPUT_KEYS,
+  NEVER_AGENT_SETTLABLE,
+  PROPOSAL_ACTION_KEYS,
+  PROPOSAL_AUTHORITY_NOTICE,
+  PROPOSAL_EXECUTION_NOTICE,
+  PROPOSAL_INVALIDATORS,
+  PROPOSAL_KIND,
+  PROPOSAL_KIND_NAMES,
+  PROPOSAL_KIND_OPERATION,
+  PROPOSAL_MODEL_NOTICE,
+  PROPOSAL_PROTOCOL_VERSION,
+  PROPOSAL_RECORD_SCHEMA,
+  PROPOSAL_REFUSAL,
+  PROPOSAL_SEPARATION_NOTICE,
+  PROPOSAL_STATE,
+  PROPOSAL_STATE_NAMES,
+  PROPOSAL_TARGETS,
+  PROPOSE_INPUT_KEYS,
+  REQUEST_KEY_FIELDS,
+  REQUEST_KEY_NOTICE,
+  RESOLUTION,
+  RESOLUTION_NAMES,
+  RESOLVE_INPUT_KEYS,
+  UNKNOWN_REQUEST_TARGETS,
+  isProposalKind,
+  isRequestKey,
+  requestKeyOf,
+} from './proposal-contracts.mjs';
 export { INTERNAL_PROVENANCE_KEYS } from './contracts.mjs';
 export { ACCEPTED_MEDIA_TYPES } from './asset-service.mjs';

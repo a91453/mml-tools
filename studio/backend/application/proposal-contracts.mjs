@@ -335,6 +335,10 @@ export const AGENT_REVIEW_NOTICE = 'The Agent Review Policy answers whether a pr
 export const PROPOSAL_REFUSAL = freeze({
   // INVALID — the protocol itself.
   UNKNOWN_FIELD: 'UNKNOWN_FIELD',
+  // `__proto__`, `constructor`, `prototype`. Refused rather than sanitized: a
+  // caller told its field was dropped knows where it stands, and a caller whose
+  // field was silently turned into a prototype write does not.
+  PROTOTYPE_POLLUTING_KEY: 'PROTOTYPE_POLLUTING_KEY',
   UNKNOWN_PROPOSAL_KIND: 'UNKNOWN_PROPOSAL_KIND',
   ACTION_KIND_MISMATCH: 'ACTION_KIND_MISMATCH',
   FABRICATED_REQUEST_KEY: 'FABRICATED_REQUEST_KEY',
@@ -343,6 +347,12 @@ export const PROPOSAL_REFUSAL = freeze({
   FABRICATED_EVIDENCE_REF: 'FABRICATED_EVIDENCE_REF',
   CROSS_PROJECT_IDENTITY: 'CROSS_PROJECT_IDENTITY',
   SERVER_COMPUTED_FIELD_SUPPLIED: 'SERVER_COMPUTED_FIELD_SUPPLIED',
+  // A proposal that named its own accepting reviewer. `applyDecisions` reads a
+  // decision's own `acceptedBy` in preference to the call's, so an agent that
+  // could set it would write the acceptance binding itself and the reviewer who
+  // accepted the proposal would never appear on the decision at all. That is
+  // suggestion becoming acceptance in one field, so the field is refused.
+  ACCEPTANCE_IDENTITY_SUPPLIED: 'ACCEPTANCE_IDENTITY_SUPPLIED',
   COLLAPSED_CONFIDENCE_SCORE: 'COLLAPSED_CONFIDENCE_SCORE',
   EXPECTED_OPERATION_MISMATCH: 'EXPECTED_OPERATION_MISMATCH',
 
