@@ -221,6 +221,7 @@ function normalizeRunInput(input, { label = 'run input' } = {}) {
 
   const assetIds = source.asset_ids === undefined || source.asset_ids === null ? null : (() => {
     if (!Array.isArray(source.asset_ids)) fail(ERROR_CODES.INVALID_REQUEST, 'asset_ids must be an array of asset ids, or omitted to use every symbolic asset in the project.');
+    if (!source.asset_ids.length) fail(ERROR_CODES.INVALID_REQUEST, 'asset_ids must name at least one asset. Omit it to use every symbolic asset in the project; an empty list selects nothing and is not a way to ask for that.');
     if (source.asset_ids.length > LIMITS.maxAssetsPerProject) fail(ERROR_CODES.INVALID_REQUEST, `asset_ids is limited to ${LIMITS.maxAssetsPerProject} entries.`, { received: source.asset_ids.length });
     return source.asset_ids.map((id, index) => requireString(id, `asset_ids[${index}]`, { max: 64 }));
   })();
@@ -273,7 +274,7 @@ function normalizeRunInput(input, { label = 'run input' } = {}) {
       ? null
       : requireString(source.idempotency_key, 'idempotency_key', { max: LIMITS.maxIdempotencyKeyLength }),
     asset_ids: assetIds,
-    meter_text: source.meter_text === undefined || source.meter_text === null ? '' : requireString(source.meter_text, 'meter_text', { max: 4096, min: 0 }),
+    meter_text: source.meter_text === undefined || source.meter_text === null ? '' : requireString(source.meter_text, 'meter_text', { max: LIMITS.maxMeterTextLength, min: 0 }),
     target_candidate_id: source.target_candidate_id ?? null,
     adopt_candidate_id: source.adopt_candidate_id ?? null,
     adopt_artifact_id: source.adopt_artifact_id ?? null,
@@ -530,39 +531,167 @@ export function createRunService({ canonical, projects, store, operations, seria
     && (expectation.plan_id === null || expectation.plan_id === undefined || (entry.decision_ids ?? []).includes(expectation.plan_id));
 
   /**
-   * A bounded record of what already existed when a step was marked pending.
+   * A record of what already existed when a step was marked pending.
    *
-   * Bounded because it is stored, and `complete: false` rather than a silent
-   * truncation because a partial before-set cannot prove novelty: the matcher
-   * refuses to adopt anything at all in that case, and the step runs again.
+   * Two parts, and the second is what makes this exact rather than best-effort:
+   *
+   *   `ids`             bounded, for a reader of the receipt and for naming
+   *                     which of several new records is this run's. Truncated
+   *                     past `LIMITS.maxEffectBeforeSet`, and `complete` says
+   *                     so.
+   *   `count`/`digest`  constant size, and never truncated. Together they
+   *                     answer "is the current set the recorded one, or the
+   *                     recorded one plus exactly this record" for a set of any
+   *                     size — so a project with more matching records than the
+   *                     id cap still gets an exact answer rather than a guess.
    */
-  const beforeSet = ids => ({ ids: ids.slice(0, LIMITS.maxEffectBeforeSet), complete: ids.length <= LIMITS.maxEffectBeforeSet });
+  /**
+   * The digest of a set of record ids.
+   *
+   * A plain hash of the sorted ids joined by a newline, not `digestOf`: record
+   * ids are opaque tokens with no newline in them, so the join is unambiguous,
+   * and this carries no node budget — a reconciliation must not fail because
+   * the set it is reading is large.
+   */
+  const setDigest = ids => sha256Of(encoder.encode([...ids].sort().join('\n')));
 
   /**
-   * Whether an expectation's before-set can be trusted to prove novelty.
+   * How large a set this build will search for the one record that was added.
    *
-   * A marker with no before-set at all — one written by an earlier build and
-   * restored — cannot establish that a record postdates it either, so it is
-   * treated the same as a truncated one: nothing is adopted, and the step runs
-   * again rather than adopting something that may have been there all along.
+   * The search is quadratic, so it is bounded, and past the bound the answer is
+   * `EFFECT_IDENTITY_UNPROVABLE` — the run halts for a reader rather than
+   * guessing or replaying. Every set this service produces is orders of
+   * magnitude below it: matching artifacts of one type on one candidate, or
+   * candidates sharing a parent, a stage and an accepted plan.
    */
-  const beforeSetUsable = (expectation, key) => Array.isArray(expectation[key]) && expectation[`${key}_complete`] !== false;
+  const MAX_RECONCILE_SEARCH = LIMITS.maxEffectBeforeSet * 8;
 
+  const beforeSet = ids => {
+    const sorted = [...ids].sort();
+    return {
+      ids: sorted.slice(0, LIMITS.maxEffectBeforeSet),
+      complete: sorted.length <= LIMITS.maxEffectBeforeSet,
+      count: sorted.length,
+      digest: setDigest(sorted),
+    };
+  };
+
+  /** What a reconciliation can conclude. Four answers, and three are not "rerun". */
+  const EFFECT = Object.freeze({
+    ABSENT: 'EFFECT_ABSENT',
+    FOUND: 'EFFECT_FOUND',
+    AMBIGUOUS: 'EFFECT_AMBIGUOUS',
+    UNPROVABLE: 'EFFECT_IDENTITY_UNPROVABLE',
+  });
+
+  /**
+   * Which of the four answers the stored before-set supports, for a set-valued
+   * effect (a candidate, an artifact).
+   *
+   * `current` is every record that matches the expectation now. The recorded
+   * count and digest decide:
+   *
+   *   same digest              nothing was added → the effect never happened.
+   *   one more, and removing
+   *   exactly one record
+   *   reproduces the digest    that record is the effect. Exact at any size,
+   *                            and it is the record's identity that says so,
+   *                            never its timestamp.
+   *   more than one more       several records were added; which is this run's
+   *                            cannot be derived, so it is reported ambiguous
+   *                            for a caller to name — and only when the stored
+   *                            ids are complete, because naming one is only
+   *                            safe while membership of the before-set can
+   *                            still be checked.
+   *   anything else            records this step could have produced were
+   *                            removed or replaced since the marker was
+   *                            written. Nothing is concluded, and nothing is
+   *                            replayed.
+   *
+   * A marker with no recorded digest — one written by an earlier build and
+   * restored — proves nothing either way, so it is UNPROVABLE rather than
+   * "absent": treating it as absent would replay a non-idempotent effect.
+   */
+  const reconcileSet = (expectation, key, current) => {
+    const recorded = expectation[`${key}_digest`];
+    const count = expectation[`${key}_count`];
+    if (typeof recorded !== 'string' || typeof count !== 'number') {
+      return { outcome: EFFECT.UNPROVABLE, reason: 'BEFORE_SET_NOT_RECORDED' };
+    }
+    const sorted = [...current].sort();
+    if (setDigest(sorted) === recorded) return { outcome: EFFECT.ABSENT };
+    if (sorted.length === count + 1) {
+      if (sorted.length > MAX_RECONCILE_SEARCH) return { outcome: EFFECT.UNPROVABLE, reason: 'MATCHING_SET_TOO_LARGE_TO_SEARCH' };
+      const novel = sorted.filter(id => setDigest(sorted.filter(other => other !== id)) === recorded);
+      if (novel.length === 1) return { outcome: EFFECT.FOUND, id: novel[0] };
+      return { outcome: EFFECT.UNPROVABLE, reason: 'BEFORE_SET_NOT_A_SUBSET' };
+    }
+    if (sorted.length > count + 1) {
+      if (expectation[`${key}_complete`] === true && Array.isArray(expectation[key])) {
+        const known = expectation[key];
+        return { outcome: EFFECT.AMBIGUOUS, ids: sorted.filter(id => !known.includes(id)) };
+      }
+      return { outcome: EFFECT.UNPROVABLE, reason: 'SEVERAL_ADDED_AND_BEFORE_SET_TRUNCATED' };
+    }
+    return { outcome: EFFECT.UNPROVABLE, reason: 'RECORDS_REMOVED_SINCE_THE_MARKER' };
+  };
+
+  /**
+   * Whether a named record can be shown to postdate the marker.
+   *
+   * The named path never gets to conclude more than the automatic one. Removing
+   * the named record from the current set reproducing the recorded digest is
+   * proof; otherwise membership of the stored ids is the only evidence there
+   * is, and that is conclusive only while those ids are complete.
+   */
+  const namedRecordIsNovel = (expectation, key, current, id) => {
+    const recorded = expectation[`${key}_digest`];
+    if (typeof recorded !== 'string') return { proven: false, reason: 'BEFORE_SET_NOT_RECORDED' };
+    const sorted = [...current].sort();
+    if (setDigest(sorted.filter(other => other !== id)) === recorded) return { proven: true };
+    if (expectation[`${key}_complete`] !== true || !Array.isArray(expectation[key])) {
+      return { proven: false, reason: 'BEFORE_SET_TRUNCATED' };
+    }
+    return expectation[key].includes(id)
+      ? { proven: false, reason: 'RECORD_PREDATES_THE_MARKER' }
+      : { proven: true };
+  };
+
+  /** Every candidate that matches an expectation right now. */
+  const candidatesMatching = (record, expectation) => record.candidates
+    .filter(entry => candidateMatches(entry, expectation))
+    .map(entry => entry.candidate_id);
+
+  /** Every artifact that matches an expectation right now. */
+  const artifactsMatching = (record, expectation) => record.artifacts
+    .filter(entry => entry.candidate_id === expectation.candidate_id && entry.type === expectation.artifact_type)
+    .map(entry => entry.artifact_id);
+
+  /**
+   * What the stored marker lets this call conclude about a pending effect.
+   *
+   * Always one of the four `EFFECT` answers. `ABSENT` is the only one that
+   * lets a step run again, and it is returned only when the record positively
+   * shows the effect never landed — never as a stand-in for "cannot tell".
+   */
   const expectationSatisfiedBy = (owner, record, expectation) => {
-    if (!expectation) return null;
+    if (!expectation) return { outcome: EFFECT.UNPROVABLE, reason: 'NO_EXPECTATION_RECORDED' };
     if (expectation.kind === 'baseline') {
       // Asset ids do not identify a baseline. The meter map is an intake input
       // an MML source is parsed against, and a baseline that was already there
       // when the marker was written is by construction not this effect's
       // output. Both are checked, and both fail closed: an unproven identity is
       // never adopted, and the step runs again under the inputs it states.
+      // A project holds one baseline, so there is no set to overflow: either
+      // the committed baseline answers this step's inputs and is not the one
+      // that was already there, or the step never landed.
       const baseline = record.baseline;
-      if (!baseline) return null;
-      if (!sameSelection(baseline.asset_ids, expectation.asset_ids)) return null;
-      if (expectation.known_baseline_id !== undefined && baseline.baseline_id === expectation.known_baseline_id) return null;
+      if (!baseline) return { outcome: EFFECT.ABSENT };
+      if (!sameSelection(baseline.asset_ids, expectation.asset_ids)) return { outcome: EFFECT.ABSENT };
+      if (expectation.known_baseline_id !== undefined && baseline.baseline_id === expectation.known_baseline_id) return { outcome: EFFECT.ABSENT };
       if (expectation.meter_text_sha256 !== undefined
-        && meterBinding(baseline, expectation.meter_text_sha256 ?? null).state !== METER_BINDING.SATISFIED) return null;
-      return { baseline_id: baseline.baseline_id };
+        && meterBinding(baseline, expectation.meter_text_sha256 ?? null).state !== METER_BINDING.SATISFIED) return { outcome: EFFECT.ABSENT };
+      return { outcome: EFFECT.FOUND, baseline_id: baseline.baseline_id };
     }
     if (expectation.kind === 'candidate') {
       // Matched on the parent, the stage and — where the step names one — the
@@ -576,13 +705,9 @@ export function createRunService({ canonical, projects, store, operations, seria
       // add a candidate from the same parent, and adopting whichever one
       // `find` reached would be guessing. An ambiguous answer is not an
       // answer, so it is reported as unconfirmable instead.
-      if (!beforeSetUsable(expectation, 'known_candidate_ids')) return null;
-      const known = expectation.known_candidate_ids ?? [];
-      const matches = record.candidates
-        .filter(entry => candidateMatches(entry, expectation))
-        .filter(entry => !known.includes(entry.candidate_id));
-      if (matches.length > 1) return { ambiguous: true, kind: 'candidate', candidate_ids: matches.map(entry => entry.candidate_id) };
-      return matches.length === 1 ? { candidate_id: matches[0].candidate_id } : null;
+      const settled = reconcileSet(expectation, 'known_candidate_ids', candidatesMatching(record, expectation));
+      if (settled.outcome === EFFECT.FOUND) return { outcome: EFFECT.FOUND, candidate_id: settled.id };
+      return { ...settled, kind: 'candidate', candidate_ids: settled.ids };
     }
     if (expectation.kind === 'artifact') {
       // Candidate id and type alone do not identify one artifact. A candidate
@@ -600,16 +725,28 @@ export function createRunService({ canonical, projects, store, operations, seria
       //              it attempted the effect, and adopts the one that was not
       //              there. Never "the newest": a timestamp is not evidence of
       //              whose effect it was.
-      const matches = record.artifacts.filter(entry => entry.candidate_id === expectation.candidate_id && entry.type === expectation.artifact_type);
-      if (!expectation.expected_run_id && !beforeSetUsable(expectation, 'known_artifact_ids')) return null;
-      const owned = expectation.expected_run_id
-        ? matches.filter(entry => operations.artifactRunId(owner, entry.artifact_id) === expectation.expected_run_id)
-        : matches.filter(entry => !(expectation.known_artifact_ids ?? []).includes(entry.artifact_id));
-      if (owned.length > 1) return { ambiguous: true, kind: 'artifact', artifact_ids: owned.map(entry => entry.artifact_id) };
-      return owned.length === 1 ? { artifact_id: owned[0].artifact_id } : null;
+      const matches = artifactsMatching(record, expectation);
+      if (expectation.expected_run_id) {
+        const owned = matches.filter(id => operations.artifactRunId(owner, id) === expectation.expected_run_id);
+        if (owned.length > 1) return { outcome: EFFECT.AMBIGUOUS, kind: 'artifact', artifact_ids: owned };
+        return owned.length === 1
+          ? { outcome: EFFECT.FOUND, artifact_id: owned[0] }
+          : { outcome: EFFECT.ABSENT };
+      }
+      const settled = reconcileSet(expectation, 'known_artifact_ids', matches);
+      if (settled.outcome === EFFECT.FOUND) return { outcome: EFFECT.FOUND, artifact_id: settled.id };
+      return { ...settled, kind: 'artifact', artifact_ids: settled.ids };
     }
-    return null;
+    return { outcome: EFFECT.UNPROVABLE, reason: 'UNKNOWN_EXPECTATION_KIND' };
   };
+
+  /** A before-set's four fields, under one key, for storing on an expectation. */
+  const recordBeforeSet = (key, set) => ({
+    [key]: set.ids,
+    [`${key}_complete`]: set.complete,
+    [`${key}_count`]: set.count,
+    [`${key}_digest`]: set.digest,
+  });
 
   /** The matching artifacts that exist right now, for an effect's before-set. */
   const artifactsLike = (record, candidateId, artifactType) => beforeSet(record.artifacts
@@ -629,8 +766,7 @@ export function createRunService({ canonical, projects, store, operations, seria
    */
   const candidateExpectation = (record, { parent, stage = null, planId = null }) => {
     const expectation = { kind: 'candidate', parent_candidate_id: parent ?? null, stage, plan_id: planId };
-    const known = candidatesLike(record, expectation);
-    return { ...expectation, known_candidate_ids: known.ids, known_candidate_ids_complete: known.complete };
+    return { ...expectation, ...recordBeforeSet('known_candidate_ids', candidatesLike(record, expectation)) };
   };
 
   /**
@@ -656,10 +792,13 @@ export function createRunService({ canonical, projects, store, operations, seria
     await fire('beforeEffect', { step, run: current });
     const outcome = await apply();
     await fire('afterEffect', { step, run: current, outcome });
+    const steps = appendStep(current, outcome.receipt);
     current = bumpRun(owner, projectId, current, {
       pending_step: null,
-      steps: appendStep(current, outcome.receipt),
+      steps,
       ...(outcome.runChanges ?? {}),
+      // Whatever this effect replaced, nothing downstream of it survives it.
+      ...(replacesIdentity(current, outcome.runChanges) ? invalidateDownstream(current, step, steps) : {}),
     });
     await fire('beforeResponse', { step, run: current, outcome });
     return { run: current, outcome };
@@ -1452,8 +1591,7 @@ export function createRunService({ canonical, projects, store, operations, seria
         kind: 'artifact',
         candidate_id: candidateId,
         artifact_type: FINAL_ARTIFACT_TYPE,
-        known_artifact_ids: finalsBefore.ids,
-        known_artifact_ids_complete: finalsBefore.complete,
+        ...recordBeforeSet('known_artifact_ids', finalsBefore),
       },
       apply: async () => {
         const result = await operations.finalize(owner, projectId, {
@@ -1543,8 +1681,7 @@ export function createRunService({ canonical, projects, store, operations, seria
         candidate_id: run.candidate_id,
         artifact_type: RUN_REPORT_ARTIFACT_TYPE,
         expected_run_id: run.run_id,
-        known_artifact_ids: reportsBefore.ids,
-        known_artifact_ids_complete: reportsBefore.complete,
+        ...recordBeforeSet('known_artifact_ids', reportsBefore),
       },
       apply: async () => {
         const current = projects.load(owner, projectId);
@@ -1687,8 +1824,39 @@ export function createRunService({ canonical, projects, store, operations, seria
    */
   async function settlePendingStep(owner, projectId, record, run, normalized) {
     const pending = run.pending_step;
-    const found = expectationSatisfiedBy(owner, record, pending.expectation);
-    if (found?.ambiguous) {
+    const found = pending.expectation === null
+      ? { outcome: pending.idempotent === true || normalized.reconcile ? EFFECT.ABSENT : EFFECT.UNPROVABLE, reason: 'NO_EXPECTATION_RECORDED' }
+      : expectationSatisfiedBy(owner, record, pending.expectation);
+
+    // Neither presence nor absence established. This is NOT "absent": replaying
+    // a non-idempotent effect on a maybe would file a second Final. The run
+    // says which step is unconfirmed and stops.
+    if (found.outcome === EFFECT.UNPROVABLE) {
+      return {
+        run: bumpRun(owner, projectId, run, {
+          state: RUN_STATE.INTERRUPTED,
+          needs_reconciliation: true,
+          halt: { reason: RUN_HALT.RECONCILIATION_REQUIRED, step: pending.step, at: now() },
+          steps: appendStep(run, stepReceipt({ step: pending.step, status: RUN_STEP_STATUS.UNCONFIRMED, detail: { reason: EFFECT.UNPROVABLE, cause: found.reason ?? null } })),
+          review_requests: [reviewRequest({
+            code: RUN_REVIEW_REQUEST.RECONCILIATION_REQUIRED,
+            step: pending.step,
+            blockers: [ERROR_CODES.RUN_RECONCILIATION_REQUIRED],
+            reportReference: 'run.pending_step',
+            baselineId: run.baseline_id,
+            candidateId: run.candidate_id,
+            missing: ['Whether this step\'s effect was persisted cannot be established from what the marker recorded, so it is not replayed: repeating it could produce a second result for one attempt. Inspect the project record, then name the record this step produced (resumeRun.adopt_artifact_id or adopt_candidate_id) or resume with reconcile: true once the state is known.'],
+            availableOperations: ['getProject', 'getRun', 'getArtifact', 'resumeRun.adopt_artifact_id', 'resumeRun.adopt_candidate_id', 'resumeRun (reconcile)'],
+            invalidatedBy: ['candidate', 'baseline'],
+            detail: { unconfirmed_step: pending.step, marked_at: pending.at, cause: found.reason ?? null },
+          })],
+          blockers: [ERROR_CODES.RUN_RECONCILIATION_REQUIRED],
+        }),
+        halted: true,
+      };
+    }
+
+    if (found.outcome === EFFECT.AMBIGUOUS) {
       return {
         run: bumpRun(owner, projectId, run, {
           state: RUN_STATE.INTERRUPTED,
@@ -1716,7 +1884,7 @@ export function createRunService({ canonical, projects, store, operations, seria
         halted: true,
       };
     }
-    if (found) {
+    if (found.outcome === EFFECT.FOUND) {
       const changes = {
         pending_step: null,
         needs_reconciliation: false,
@@ -1728,7 +1896,17 @@ export function createRunService({ canonical, projects, store, operations, seria
           detail: { reconciled: true, reason: 'EFFECT_FOUND_BY_STORED_IDENTITY', expectation: pending.expectation },
         })),
       };
-      if (found.baseline_id) changes.baseline_id = found.baseline_id;
+      if (found.baseline_id) {
+        // An adopted intake is the same event as an intake that returned its
+        // receipt, so it leaves the run in the same state. `intake.run`
+        // replaced the baseline and deleted every candidate derived from the
+        // old one, so a run that kept pointing at one would be permanently
+        // blocked on RUN_CANDIDATE_CHANGED — a successful intake turned into an
+        // unresumable run by the loss of a receipt.
+        changes.baseline_id = found.baseline_id;
+        changes.candidate_id = null;
+        changes.candidate_lineage = [];
+      }
       if (found.candidate_id) {
         changes.candidate_id = found.candidate_id;
         changes.candidate_lineage = [...new Set([...run.candidate_lineage, found.candidate_id])];
@@ -1742,34 +1920,16 @@ export function createRunService({ canonical, projects, store, operations, seria
         changes.artifact_ids = [...new Set([...run.artifact_ids, found.artifact_id])];
         changes.state = RUN_STATE.COMPLETED;
       }
-      return { run: bumpRun(owner, projectId, run, changes), halted: false };
-    }
-    if (pending.expectation === null && pending.idempotent !== true && !normalized.reconcile) {
-      // No identity to check and no declaration that a repeat is safe. The run
-      // says which step is unconfirmed rather than replaying it.
+      // The same invariant an effect of this step applies: an adopted result
+      // is that result, so nothing this run recorded downstream of it survives.
       return {
-        run: bumpRun(owner, projectId, run, {
-          state: RUN_STATE.INTERRUPTED,
-          needs_reconciliation: true,
-          halt: { reason: RUN_HALT.RECONCILIATION_REQUIRED, step: pending.step, at: now() },
-          steps: appendStep(run, stepReceipt({ step: pending.step, status: RUN_STEP_STATUS.UNCONFIRMED, detail: { reason: 'EFFECT_NOT_CONFIRMED' } })),
-          review_requests: [reviewRequest({
-            code: RUN_REVIEW_REQUEST.RECONCILIATION_REQUIRED,
-            step: pending.step,
-            blockers: [ERROR_CODES.RUN_RECONCILIATION_REQUIRED],
-            reportReference: 'run.pending_step',
-            baselineId: run.baseline_id,
-            candidateId: run.candidate_id,
-            missing: ['Whether this step\'s effect was persisted cannot be established from a deterministic identity or a stored reference, so it is not replayed. Inspect the project record and resume with reconcile: true once the state is known.'],
-            availableOperations: ['getProject', 'getRun', 'resumeRun (reconcile)'],
-            invalidatedBy: ['candidate', 'baseline'],
-            detail: { unconfirmed_step: pending.step, marked_at: pending.at },
-          })],
-          blockers: [ERROR_CODES.RUN_RECONCILIATION_REQUIRED],
-        }),
-        halted: true,
+        run: bumpRun(owner, projectId, run, replacesIdentity(run, changes)
+          ? { ...changes, ...invalidateDownstream(run, pending.step, changes.steps) }
+          : changes),
+        halted: false,
       };
     }
+    // EFFECT_ABSENT: the record positively shows the effect never landed.
     return {
       run: bumpRun(owner, projectId, run, {
         pending_step: null,
@@ -1902,9 +2062,105 @@ export function createRunService({ canonical, projects, store, operations, seria
    * change with it, and the staleness check at the top of each step compares the
    * run's bindings against the committed state.
    */
+  /**
+   * Which steps this payload would give a different identity to.
+   *
+   * The same predicates `nextStep` reruns on, asked of the request rather than
+   * of the run, so "what this resume changes" and "what this run would redo"
+   * cannot disagree.
+   */
+  const stepsChangedBy = (run, normalized) => {
+    const changed = [];
+    const assetIds = normalized.asset_ids;
+    if ((assetIds !== null && !sameSelection(assetIds, run.inputs.asset_ids ?? (run.inputs.asset_digests ?? []).map(entry => entry.asset_id)))
+      || (normalized.meter_text && sha256Of(encoder.encode(normalized.meter_text)) !== (run.inputs.meter_text_sha256 ?? null))) {
+      changed.push(RUN_STEP.INTAKE);
+    }
+    if (normalized.decisions !== null && digestOf(normalized.decisions) !== (run.inputs.decision_set_fingerprint ?? null)) changed.push(RUN_STEP.APPLY_DECISIONS);
+    if (normalized.final_reduction !== null && digestOf(normalized.final_reduction) !== (run.inputs.reduction_fingerprint ?? null)) changed.push(RUN_STEP.FINAL_REDUCTION);
+    if (normalized.mobile_adaptation !== null && digestOf(normalized.mobile_adaptation) !== (run.inputs.adaptation_fingerprint ?? null)) changed.push(RUN_STEP.MOBILE_ADAPTATION);
+    if (normalized.confirmations !== null && digestOf(normalized.confirmations) !== (run.inputs.confirmation_fingerprint ?? null)) changed.push(RUN_STEP.REVIEW);
+    return changed;
+  };
+
+  /**
+   * A completed run is an audit record, not a workspace.
+   *
+   * Its report names the exact candidate and the exact Final it ended on, and a
+   * reviewer may already have read it. Advancing it again on a new material
+   * input would move what the run points at after the fact — so a material
+   * change is refused, and the work goes into a new run, which leaves both
+   * records intact and separately citable.
+   *
+   * This is the outer boundary only. Inside a live run, forward motion is
+   * unrestricted and safe because of `invalidateDownstream` below: supplying a
+   * new decision set, reduction, adaptation or meter map is how a run advances,
+   * and every result bound to the superseded identity is dropped rather than
+   * left standing. A replay, a read, evidence for a step that has not run, and
+   * settling an interrupted step are all unaffected here.
+   */
+  const refuseReopeningCompletedRun = (run, normalized) => {
+    if (run.state !== RUN_STATE.COMPLETED) return;
+    const changed = stepsChangedBy(run, normalized);
+    if (!changed.length) return;
+    fail(ERROR_CODES.RUN_CONFLICT, `This run is complete: its report names the candidate and the Final it ended on, so it is an audit record rather than a workspace. Start a new run for a different ${changed[0]} input.`, {
+      run_id: run.run_id,
+      run_state: run.state,
+      reason: 'COMPLETED_RUN_IS_AUDIT_CLOSED',
+      steps: changed,
+      candidate_id: run.candidate_id,
+      final_artifact_id: run.final_artifact_id ?? null,
+      report_artifact_id: run.report_artifact_id ?? null,
+      available_operations: ['getRun', 'getArtifact', 'startRun'],
+    });
+  };
+
+  /** Every step that runs after this one. */
+  const downstreamOf = step => RUN_STEP_ORDER.slice(RUN_STEP_ORDER.indexOf(step) + 1);
+
+  /**
+   * The workflow invariant: nothing a run holds may outlive the identity it names.
+   *
+   * When a step produces a new baseline or a new candidate, every result this
+   * run recorded downstream of it was computed against the identity that has
+   * just been superseded — the review verdict, the emitted Final, the run
+   * report that names both, and the gate and readiness snapshots. They are
+   * dropped together, so the steps that produced them run again against the new
+   * identity. Partial invalidation is the failure this prevents: a run that
+   * kept its report while its candidate moved ended `completed` with a report
+   * naming a different candidate and a different Final than the run itself.
+   *
+   * Applied from the effect's own result rather than per step, so a step that
+   * mints a new identity cannot forget to declare it.
+   */
+  const invalidateDownstream = (run, step, steps) => {
+    const later = new Set(downstreamOf(step));
+    return {
+      steps: steps.filter(entry => !later.has(entry.step)),
+      gates: null,
+      readiness_blockers: [],
+      ...(later.has(RUN_STEP.FINALIZE) ? { final_artifact_id: null } : {}),
+      ...(later.has(RUN_STEP.REPORT) ? { report_artifact_id: null } : {}),
+    };
+  };
+
+  /** Whether an effect's changes replace the identity later steps were built on. */
+  const replacesIdentity = (run, changes = {}) => (changes.baseline_id !== undefined && changes.baseline_id !== run.baseline_id)
+    || (changes.candidate_id !== undefined && changes.candidate_id !== run.candidate_id);
+
   function resumeChanges(owner, record, run, normalized) {
+    refuseReopeningCompletedRun(run, normalized);
     const inputs = { ...run.inputs };
-    if (normalized.asset_ids !== null) inputs.asset_ids = normalized.asset_ids;
+    // The selected assets and the bytes they hold are ONE identity. Recording
+    // new ids against the old digests would leave a run whose stated selection
+    // and whose intake-satisfaction evidence describe different sources — and
+    // intake satisfaction reads the digests, so a source added here would be
+    // silently left out of the Source-Faithful Baseline.
+    if (normalized.asset_ids !== null) {
+      const selection = assetSelection(record, normalized.asset_ids);
+      inputs.asset_ids = normalized.asset_ids;
+      inputs.asset_digests = selection.digests;
+    }
     if (normalized.meter_text) inputs.meter_text_sha256 = sha256Of(encoder.encode(normalized.meter_text));
     if (normalized.decisions !== null) inputs.decision_set_fingerprint = digestOf(normalized.decisions);
     if (normalized.final_reduction !== null) inputs.reduction_fingerprint = digestOf(normalized.final_reduction);
@@ -1961,14 +2217,23 @@ export function createRunService({ canonical, projects, store, operations, seria
             artifact_id: entry.artifact_id, artifact_run_id: named, expected_run_id: pending.expectation.expected_run_id,
           });
         }
-      } else if ((pending.expectation.known_artifact_ids ?? []).includes(entry.artifact_id)) {
+      } else {
         // Novelty: a Final's body names no run, so the marker's before-set is
-        // the evidence. An artifact that was already there when the marker was
-        // written cannot be what this step produced, however it is named.
-        fail(ERROR_CODES.INVALID_REQUEST, 'The artifact to adopt already existed when this step was marked pending, so it cannot be what this step produced.', {
-          artifact_id: entry.artifact_id, step: pending.step, marked_at: pending.at,
-          known_artifact_ids: pending.expectation.known_artifact_ids,
-        });
+        // the evidence, and the SAME evidence the automatic path uses. Naming
+        // one never concludes more: an artifact that was already there when the
+        // marker was written cannot be what this step produced, and an artifact
+        // whose novelty the stored before-set cannot establish is refused
+        // rather than accepted on the caller's word.
+        const novel = namedRecordIsNovel(pending.expectation, 'known_artifact_ids', artifactsMatching(record, pending.expectation), entry.artifact_id);
+        if (!novel.proven) {
+          fail(ERROR_CODES.INVALID_REQUEST, novel.reason === 'RECORD_PREDATES_THE_MARKER'
+            ? 'The artifact to adopt already existed when this step was marked pending, so it cannot be what this step produced.'
+            : 'Whether this artifact postdates the pending step cannot be established from what the marker recorded, so it is not adopted on request either.', {
+            artifact_id: entry.artifact_id, step: pending.step, marked_at: pending.at, reason: novel.reason,
+            known_artifact_ids: pending.expectation.known_artifact_ids,
+            known_artifact_ids_complete: pending.expectation.known_artifact_ids_complete ?? null,
+          });
+        }
       }
       changes.pending_step = null;
       changes.needs_reconciliation = false;
@@ -2017,9 +2282,9 @@ export function createRunService({ canonical, projects, store, operations, seria
       changes.candidate_id = adopted.candidate_id;
       changes.candidate_lineage = [...new Set([...run.candidate_lineage, adopted.candidate_id])];
       // An adopted candidate is a different candidate, so every candidate-bound
-      // answer this run recorded about the previous one is re-asked: the review
-      // and finalize receipts are dropped and both steps run again.
-      let steps = (run.steps ?? []).filter(entry => ![RUN_STEP.REVIEW, RUN_STEP.FINALIZE, RUN_STEP.REPORT].includes(entry.step));
+      // answer this run recorded about the previous one is re-asked, through
+      // the same invariant an effect that mints one applies.
+      let steps = invalidateDownstream(run, RUN_STEP.APPLY_DECISIONS, run.steps ?? []).steps;
       // Naming a candidate is also how a caller settles an interrupted step
       // whose effect could not be told apart from another one. It is an
       // explicit statement, checked against the baseline and the lineage above
@@ -2031,10 +2296,14 @@ export function createRunService({ canonical, projects, store, operations, seria
         // may write a receipt saying the effect happened. A candidate that was
         // already there when the marker was written cannot be this step's
         // output, so naming it is refused rather than recorded as the effect.
-        if ((run.pending_step.expectation.known_candidate_ids ?? []).includes(adopted.candidate_id)) {
-          fail(ERROR_CODES.INVALID_REQUEST, 'The candidate to adopt already existed when this step was marked pending, so it cannot be what this step produced. Resume without adopt_candidate_id to let the step run, or name the candidate this step actually produced.', {
-            candidate_id: adopted.candidate_id, step: run.pending_step.step, marked_at: run.pending_step.at,
+        const novel = namedRecordIsNovel(run.pending_step.expectation, 'known_candidate_ids', candidatesMatching(record, run.pending_step.expectation), adopted.candidate_id);
+        if (!novel.proven) {
+          fail(ERROR_CODES.INVALID_REQUEST, novel.reason === 'RECORD_PREDATES_THE_MARKER'
+            ? 'The candidate to adopt already existed when this step was marked pending, so it cannot be what this step produced. Resume without adopt_candidate_id to let the step run, or name the candidate this step actually produced.'
+            : 'Whether this candidate postdates the pending step cannot be established from what the marker recorded, so it is not adopted on request either.', {
+            candidate_id: adopted.candidate_id, step: run.pending_step.step, marked_at: run.pending_step.at, reason: novel.reason,
             known_candidate_ids: run.pending_step.expectation.known_candidate_ids,
+            known_candidate_ids_complete: run.pending_step.expectation.known_candidate_ids_complete ?? null,
           });
         }
         steps = [...steps.filter(entry => entry.step !== run.pending_step.step), stepReceipt({
@@ -2050,6 +2319,8 @@ export function createRunService({ canonical, projects, store, operations, seria
       changes.steps = steps;
       changes.gates = null;
       changes.readiness_blockers = [];
+      changes.final_artifact_id = null;
+      changes.report_artifact_id = null;
     }
     return changes;
   }

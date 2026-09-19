@@ -246,9 +246,24 @@ answers the step's description" and "this record is what the step produced":
 | finalize | the type and the candidate, minus the Final artifacts already filed for it — a Final's body names no run |
 | report | the run its body names. Exact, so no before-set is needed |
 
-A before-set is bounded (`LIMITS.maxEffectBeforeSet`) and records whether it is
-complete. An incomplete one proves no novelty, so nothing is adopted from it and
-the step runs again.
+A before-set records four things: the matching ids (bounded by
+`LIMITS.maxEffectBeforeSet`), whether that list is complete, and — never
+truncated — the **count** and the **digest of the sorted ids**. The count and
+the digest are what make this exact at any size:
+
+| What the current set shows | Conclusion |
+| --- | --- |
+| same digest | `EFFECT_ABSENT` — nothing was added, so the effect never landed |
+| one more, and removing exactly one record reproduces the digest | `EFFECT_FOUND` — that record is the effect, whatever the set's size |
+| more than one more, with the ids complete | `EFFECT_AMBIGUOUS` — a caller names which one |
+| anything else | `EFFECT_IDENTITY_UNPROVABLE` |
+
+`EFFECT_IDENTITY_UNPROVABLE` is **not** `EFFECT_ABSENT`. A step whose effect
+can be neither confirmed nor ruled out is reported `interrupted` and is never
+replayed: repeating a finalize on a maybe files a second Final for one attempt.
+The named remedies are held to the same rule — naming an artifact or a candidate
+settles *which* of a step's possible outputs it produced, and never makes a
+record the before-set cannot place after the marker into one.
 
 Three classes:
 
@@ -274,6 +289,45 @@ step that would ingest under a meter other than the one the run states does not
 run at all. It blocks `RUN_BASELINE_INTAKE_INPUT_UNPROVABLE` and asks for
 `meter_text`, rather than ingesting under an empty meter and filing a receipt
 fingerprinted with the stated one.
+
+An **adopted** effect is that effect, and leaves the run exactly where the same
+effect with its receipt would have. An adopted intake replaced the baseline and
+`intake.run` deleted the candidates bound to the old one, so the run drops its
+candidate pointer too — otherwise the loss of a receipt would turn a successful
+intake into a run permanently blocked on `RUN_CANDIDATE_CHANGED`.
+
+## 7.1 The workflow contract: a run goes forward
+
+Two rules, and together they are why a run's record can never describe two
+different results at once.
+
+**Nothing a run holds outlives the identity it names.** When a step produces a
+new baseline or a new candidate, every result this run recorded downstream of it
+— the review verdict, the gate and readiness snapshots, the emitted Final, the
+run report naming both — was computed against an identity that no longer stands,
+so all of it is dropped together and those steps run again. This is applied from
+the effect's own result rather than per step, so a step that mints a new
+identity cannot forget to declare it. Partial invalidation is the failure it
+prevents: a run that kept its report while its candidate moved ended
+`completed` with a report naming a different candidate and a different Final
+than the run itself.
+
+**A completed run is an audit record, not a workspace.** Its report names the
+exact candidate and the exact Final it ended on, and a reviewer may already have
+cited it. A resume carrying a material change — a different source selection,
+meter map, decision set, reduction, adaptation or confirmation set — is refused
+with `RUN_CONFLICT` and `reason: COMPLETED_RUN_IS_AUDIT_CLOSED`; the work
+belongs in a new run, which leaves both records intact and separately citable. A
+read, an idempotent replay, and settling an interrupted step are unaffected.
+
+Inside a live run, forward motion is unrestricted: supplying a decision set,
+an accepted reduction or adaptation plan, a confirmation or a different meter map
+is how a run advances, and the first rule is what makes that safe.
+
+The selected sources and their bytes are **one** identity: a resume that
+restates `asset_ids` rebinds `asset_digests` in the same write. Intake
+satisfaction reads the digests, so a run recording new ids against old digests
+would leave an added source silently out of the Source-Faithful Baseline.
 
 A temp-then-rename record write is not distributed exactly-once, and nothing here
 claims it is. What makes adoption safe is that the effect's identity is derived

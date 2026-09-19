@@ -310,6 +310,10 @@ export const LIMITS = freeze({
   // it is stored; a set larger than this records itself as incomplete, and an
   // incomplete before-set proves no novelty, so nothing is adopted from it.
   maxEffectBeforeSet: 64,
+  // The source-confirmed meter map an MML source is parsed against. One bound,
+  // so the HTTP and MCP surfaces accept exactly the same range rather than one
+  // rejecting what the other admits.
+  maxMeterTextLength: 2048,
   maxIdempotencyReceiptsPerRun: 32,
   maxIdempotencyKeyLength: 200,
   maxFilenameLength: 255,

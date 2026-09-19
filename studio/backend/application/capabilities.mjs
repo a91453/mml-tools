@@ -78,6 +78,12 @@ export function buildCapabilities({ canonical, storage, jobs, transports = [] })
       // baseline, candidate or artifact that predates the effect is never
       // adopted as it — by the automatic path or by a named one.
       run_effect_before_set: true,
+      // A run goes forward. Supplying a new decision set, reduction, adaptation
+      // or meter map advances a live run and drops every result bound to the
+      // identity it replaces; a COMPLETED run is an audit record and refuses a
+      // material change rather than moving what it points at.
+      run_monotonic_completion: true,
+      run_downstream_invalidation: true,
       // Advancement is caller-driven. There is no automatic restart, no timer
       // and no queue: a waiting run waits for an explicit resume call.
       automatic_run_continuation: false,

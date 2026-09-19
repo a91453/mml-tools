@@ -49,6 +49,8 @@ const structuredPayload = description => ({ type: 'object', additionalProperties
 // Gate 4's two questions are named apart on purpose: the source-continuity
 // audit is answered by `studio_core3_change_approve`, one change at a time, and
 // the musical-completeness review is answered here, and neither is the other.
+import { LIMITS } from '../studio/backend/application/index.mjs';
+
 const CONFIRMATIONS_DESCRIPTION = 'source_complete／version_drift_reviewed／player_readback／mobile_adaptation_reviewed／regression_reviewed／core3_completeness_reviewed／original_audio_required，每項需 reason。'
   + 'mobile_adaptation_reviewed（Gate 8）、regression_reviewed（Gate 9）與 core3_completeness_reviewed（Gate 4 Core3 musical completeness）這三項，value=true 時另需至少一筆 evidence：只有理由字串的審查會被拒絕。'
   + 'core3_completeness_reviewed 回答的是 Gate 4 的第二個問題（evaluator 無法證明完整的 Core3 是否仍站得住），它可以解決可審查的殘留（例如來源本來就沒有的 Chord1／Chord2 功能），但永遠無法消除缺席的 Lead，也無法消除身分依賴 Chord3–Chord5 的 Core3——那兩者 gate 直接 FAIL。'
@@ -59,8 +61,8 @@ const CONFIRMATIONS_DESCRIPTION = 'source_complete／version_drift_reviewed／pl
 
 const runId = { type: 'string', minLength: 36, maxLength: 36, description: '本服務發出的 run_id（run_ 開頭）。run 身分是 workflow instance，不是 baseline、候選或 artifact 的身分。' };
 const runIdempotencyKey = { type: 'string', minLength: 1, maxLength: 200, description: 'owner／專案／操作範圍內的 idempotency key，綁定於正規化後的請求指紋。同 key 同 payload 不重做；同 key 不同 payload 直接拒絕。' };
-const runAssetIds = { type: 'array', minItems: 1, maxItems: 64, items: { type: 'string', minLength: 36, maxLength: 36 }, description: '明確選定參與本次 run 的符號來源素材。省略時使用專案中所有符號來源。原曲音訊是證據，不是符號來源：本服務不做 audio-to-MIDI、不做分軌、不做人聲分離、不做音高轉譜。' };
-const runMeterText = { type: 'string', minLength: 1, maxLength: 2048, description: '來源確認的拍號圖，MML 來源才需要。未知時先詢問，不可假定。' };
+const runAssetIds = { type: 'array', minItems: 1, maxItems: LIMITS.maxAssetsPerProject, items: { type: 'string', minLength: 36, maxLength: 36 }, description: '明確選定參與本次 run 的符號來源素材。省略時使用專案中所有符號來源。原曲音訊是證據，不是符號來源：本服務不做 audio-to-MIDI、不做分軌、不做人聲分離、不做音高轉譜。' };
+const runMeterText = { type: 'string', minLength: 1, maxLength: LIMITS.maxMeterTextLength, description: '來源確認的拍號圖，MML 來源才需要。未知時先詢問，不可假定。' };
 const runDecisions = { type: 'array', minItems: 1, maxItems: 500, items: structuredPayload(), description: '明確接受的編排決定，內容與 studio_decisions_apply 相同。建議不是接受：沒有這一欄時 run 會停在 awaiting_review，不會自行解決任何 PENDING。' };
 const runAcceptedBy = { type: 'string', minLength: 1, maxLength: 120, description: '審查者識別字串。這是呼叫端填寫的文字，會與實際通過驗證的 owner 身分分開記錄，本身不構成任何人已審查的證據。' };
 
