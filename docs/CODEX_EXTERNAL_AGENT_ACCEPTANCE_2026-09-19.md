@@ -158,5 +158,8 @@ MIDI、M4A、完整 note payload 與本機依賴未提交 Git。不要把 metada
 當成已含歌曲。原本的缺來源 snapshot 已更新為本次實際歌曲的 metadata。
 
 網站按一次持續執行仍缺：PWA 與 Application Service 共用專案／run 狀態、外部
-agent 的 dispatch/continuation、大型報告的遠端分頁或檔案處理，以及真正 reviewer
-證據接回同一候選的流程。本輪沒有新增模型 SDK、queue／資料庫、費用服務或正式部署。
+agent 的 dispatch/continuation，以及真正 reviewer 證據接回同一候選的流程。
+本紀錄當時的大型報告遠端讀取缺口，已在
+[2026-09-20 後續修補](MCP_AGENT_AUDIT_2026-09-20.md)加入 `report_page`；
+這不代表網站已接通或本歌曲已通過審查。
+本輪沒有新增模型 SDK、queue／資料庫、費用服務或正式部署。

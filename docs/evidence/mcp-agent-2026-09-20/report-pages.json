@@ -1,0 +1,40 @@
+{
+  "transport": "Local actual MCP handler; not live OAuth verification",
+  "source_sha256": "58619209f743416fa2150471b079cc14796e92911000793fce98384603c18487",
+  "original_record_sha256": "abb3d886dead6d5577254adeda91dcda82e2d3bd7385b704c57efcd4c7a821df",
+  "copied_record_unchanged": true,
+  "results": [
+    {
+      "tool": "studio_arrangement_suggest",
+      "bytes": 794287,
+      "pages": 50,
+      "max_response_bytes": 47455,
+      "report_sha256": "4b7693f6aa140bb8ee8df1c15b78db02846a46e655f6f114d394bd674dae62e8",
+      "identical_to_application_service": true
+    },
+    {
+      "tool": "studio_final_reduction_plan",
+      "bytes": 4400080,
+      "pages": 276,
+      "max_response_bytes": 42230,
+      "report_sha256": "a55f99a8fc3581563a328671ae58efa234d6df7a27446af0229d9059d74be69c",
+      "identical_to_application_service": true
+    },
+    {
+      "tool": "studio_candidate_review",
+      "bytes": 1588180,
+      "pages": 100,
+      "max_response_bytes": 40481,
+      "report_sha256": "82fb71c970514c85b50560157f9ab23ab3b8eb8827cd16795ce2ec0f583dd6fd",
+      "identical_to_application_service": true
+    },
+    {
+      "tool": "studio_run_status",
+      "bytes": 15415,
+      "pages": 1,
+      "max_response_bytes": 37452,
+      "report_sha256": "eadd4c3208e739897bb5f6751bc1572b783d9c450490ae4d003497d7b8efdf3b",
+      "identical_to_application_service": true
+    }
+  ]
+}

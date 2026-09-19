@@ -78,6 +78,27 @@ technical service，並非只有 HTTP 可以技術驗證。
 - 原歌曲 record SHA-256 仍為
   `abb3d886dead6d5577254adeda91dcda82e2d3bd7385b704c57efcd4c7a821df`。
 
+### 真實 MIDI 的完整分頁回讀
+
+使用原《怪獣の花唄》MIDI 所建立的獨立 store，以及既有歌曲 store 的副本。
+每個工具先取得完整 Application Service JSON，再經實際 `handleMcp` 逐頁讀取，
+串接並比對完整文字、SHA-256 與 JSON 深度相等。這是報告資料傳輸的驗收，
+沒有把「完整讀到報告」當成「報告中的音樂審查已通過」。
+
+| 工具 | 完整 JSON bytes | 頁數 | 最大單次 MCP 回應 bytes | 結果 |
+| --- | ---: | ---: | ---: | --- |
+| arrangement suggestion | 794,287 | 50 | 47,455 | 完整一致 |
+| Final Six-Role Reduction plan | 4,400,080 | 276 | 42,230 | 完整一致 |
+| candidate review | 1,588,180 | 100 | 40,481 | 完整一致 |
+| run status | 15,415 | 1 | 37,452 | 完整一致 |
+
+最大單次回應包含 MCP 的 text／structuredContent 雙份 envelope。
+原歌曲 record 的 hash 與測試前相同；副本 record 亦逐位元組未變。
+量測及各完整報告 hash 保存在
+[report-pages.json](evidence/mcp-agent-2026-09-20/report-pages.json)。
+真實歌曲仍沒有 Final artifact，所以 Final MML 的分頁取得僅由既有
+direct／HTTP／MCP fixture parity test 驗證；不可宣稱真實 MML 已生成。
+
 ## 仍需接通／判斷的部分
 
 1. PWA 現在直接走 Web Worker，未與 Application Service 共用 project／run；
