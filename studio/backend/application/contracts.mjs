@@ -40,6 +40,7 @@ export const ID_PREFIX = freeze({
   asset: 'ast_',
   job: 'job_',
   run: 'run_',
+  proposal: 'pro_',
   artifact: 'art_',
   // One attempt at one mutating effect. Minted by the run service immediately
   // before the effect and written both on the pending marker and on the record
@@ -105,7 +106,7 @@ export const statedFields = (value, { omit = [] } = {}) => {
   return stated;
 };
 
-const OPAQUE_ID = /^(prj|ast|job|run)_[0-9a-f]{32}$/;
+const OPAQUE_ID = /^(prj|ast|job|run|pro)_[0-9a-f]{32}$/;
 const ARTIFACT_ID = /^art_[0-9a-f]{64}$/;
 
 // Owned by `arrangement/decision-application.mjs`. Restated here as a
@@ -118,6 +119,7 @@ export const IDENTITY_MODEL = freeze({
   asset_id: 'ast_<32 hex>, server-generated; never derived from the upload filename',
   job_id: 'job_<32 hex>, server-generated',
   run_id: 'run_<32 hex>, server-generated; the identity of one workflow instance, never of a baseline, a candidate or an artifact',
+  proposal_id: 'pro_<32 hex>, server-generated; the identity of one external agent\'s statement about one open review request, never of a decision, an acceptance, an evidence record or a gate result',
   artifact_id: 'art_<sha256 of the artifact body>',
   baseline_id: 'bas:<baselineIdentityOf(project).contentDigest>, computed by the existing backend',
   candidate_id: 'g11d:rev:<sha256>, the existing G11-D revision id, used verbatim',
@@ -128,6 +130,7 @@ export const isProjectId = value => typeof value === 'string' && OPAQUE_ID.test(
 export const isAssetId = value => typeof value === 'string' && OPAQUE_ID.test(value) && value.startsWith(ID_PREFIX.asset);
 export const isJobId = value => typeof value === 'string' && OPAQUE_ID.test(value) && value.startsWith(ID_PREFIX.job);
 export const isRunId = value => typeof value === 'string' && OPAQUE_ID.test(value) && value.startsWith(ID_PREFIX.run);
+export const isProposalId = value => typeof value === 'string' && OPAQUE_ID.test(value) && value.startsWith(ID_PREFIX.proposal);
 export const isArtifactId = value => typeof value === 'string' && ARTIFACT_ID.test(value);
 export const isBaselineId = value => typeof value === 'string' && BASELINE_ID.test(value);
 export const isCandidateId = value => typeof value === 'string' && CANDIDATE_ID.test(value);
@@ -269,6 +272,15 @@ export const ERROR_CODES = freeze({
   // stopped, and no deterministic identity or stored reference settles it. The
   // run reports exactly which step is unconfirmed instead of replaying it.
   RUN_RECONCILIATION_REQUIRED: 'RUN_RECONCILIATION_REQUIRED',
+  PROPOSAL_NOT_FOUND: 'PROPOSAL_NOT_FOUND',
+  // The proposal moved under the caller, is already resolved, or is being
+  // resolved into a state it cannot reach from the one it is in. Distinct from
+  // PROPOSAL_REFUSED: nothing about the proposal's content is at fault.
+  PROPOSAL_CONFLICT: 'PROPOSAL_CONFLICT',
+  // The Agent Review Policy will not let this proposal reach an operation. The
+  // verdict and its refusal codes travel in `details`; this code never says
+  // which, because a caller has to read the verdict rather than infer it.
+  PROPOSAL_REFUSED: 'PROPOSAL_REFUSED',
   CANDIDATE_NOT_FOUND: 'CANDIDATE_NOT_FOUND',
   ARTIFACT_NOT_FOUND: 'ARTIFACT_NOT_FOUND',
   READINESS_BLOCKED: 'READINESS_BLOCKED',
@@ -299,6 +311,9 @@ export const ERROR_HTTP_STATUS = freeze({
   [ERROR_CODES.RUN_CONFLICT]: 409,
   [ERROR_CODES.IDEMPOTENCY_CONFLICT]: 409,
   [ERROR_CODES.RUN_RECONCILIATION_REQUIRED]: 409,
+  [ERROR_CODES.PROPOSAL_NOT_FOUND]: 404,
+  [ERROR_CODES.PROPOSAL_CONFLICT]: 409,
+  [ERROR_CODES.PROPOSAL_REFUSED]: 409,
   [ERROR_CODES.CANDIDATE_NOT_FOUND]: 404,
   [ERROR_CODES.ARTIFACT_NOT_FOUND]: 404,
   [ERROR_CODES.READINESS_BLOCKED]: 409,
@@ -379,6 +394,19 @@ export const LIMITS = freeze({
   // The optimistic-concurrency precondition a caller may state. Bounded so the
   // two transports declare and enforce the same range.
   maxRunRevision: 1000000,
+  // One project's stored AI proposals. A proposal record is small by
+  // construction -- identities, bounded citations, bounded rationale and one
+  // bounded action -- and the cap keeps a project record bounded whatever an
+  // agent does. An agent that has filled it is told so rather than silently
+  // dropping its oldest statement.
+  maxProposalsPerProject: 64,
+  // A rationale is prose for a human reviewer. Bounded so one proposal cannot
+  // push a project record past what a transport will serve, and so the two
+  // transports admit exactly the same length.
+  maxProposalRationaleLength: 4000,
+  maxProposalCitations: 50,
+  maxProposalConflicts: 32,
+  maxProposalNoteLength: 500,
   maxIdempotencyReceiptsPerRun: 32,
   maxIdempotencyKeyLength: 200,
   maxFilenameLength: 255,
