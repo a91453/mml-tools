@@ -50,6 +50,7 @@ const structuredPayload = description => ({ type: 'object', additionalProperties
 // audit is answered by `studio_core3_change_approve`, one change at a time, and
 // the musical-completeness review is answered here, and neither is the other.
 import { LIMITS, PROPOSAL_KIND_NAMES, PROPOSAL_STATE_NAMES, RESOLUTION_NAMES } from '../studio/backend/application/index.mjs';
+import { PAGED_REPORT_TOOLS, REPORT_PAGE_SCHEMA, validateReportPage, readReportPage } from './report-page.mjs';
 
 const CONFIRMATIONS_DESCRIPTION = 'source_complete／version_drift_reviewed／player_readback／mobile_adaptation_reviewed／regression_reviewed／core3_completeness_reviewed／original_audio_required，每項需 reason。'
   + 'mobile_adaptation_reviewed（Gate 8）、regression_reviewed（Gate 9）與 core3_completeness_reviewed（Gate 4 Core3 musical completeness）這三項，value=true 時另需至少一筆 evidence：只有理由字串的審查會被拒絕。'
@@ -525,6 +526,12 @@ export const STUDIO_MCP_TOOLS = [
   },
 ];
 
+// Preserve the full, existing response by default. Paging is a transport view
+// on these existing reads, never an additional operation or stored artifact.
+for (const tool of STUDIO_MCP_TOOLS) {
+  if (PAGED_REPORT_TOOLS.has(tool.name)) tool.inputSchema.properties.report_page = REPORT_PAGE_SCHEMA;
+}
+
 // The run input, as the Application Service already spells it.
 //
 // A projection, not a translation: every field below is passed through under
@@ -568,6 +575,12 @@ const proposalFilter = args => pick(args, PROPOSAL_FILTER_FIELDS);
  * Application Service returns is what the model sees.
  */
 export async function runStudioTool(name, args, { application, owner }) {
+  const page = args.report_page === undefined ? null : validateReportPage(name, args);
+  const result = await dispatchStudioTool(name, args, { application, owner });
+  return page ? readReportPage(result, page) : result;
+}
+
+async function dispatchStudioTool(name, args, { application, owner }) {
   switch (name) {
     case 'studio_capabilities':
       return application.capabilities();

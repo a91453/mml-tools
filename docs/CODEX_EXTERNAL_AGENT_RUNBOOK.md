@@ -17,7 +17,7 @@ Application Service。不要把本機 run 誤認成網站既有歌曲。
 
 必須指定獨立 `--data-dir`。`store/` 使用既有 JSON record／blob store；
 `receipts/` 保留每次呼叫的時間、actor、參數與結果（不內嵌上傳 bytes）。
-真實歌曲的 suggestion／review／finalize 報告可能超過 MCP 的 512 KiB wire cap。
+真實歌曲的 suggestion／review／finalize 報告可能超過 MCP 的 512 KiB 序列化結果上限。
 CLI 的本機檔案路徑不套用網路回應限制；使用 `--output` 保存完整 JSON，再分段讀取，
 不要將整份大型報告貼進模型 context。網路 MCP 的限制完全保留。也可直接輸出報告：
 
@@ -31,6 +31,49 @@ node scripts/studio-agent.mjs --data-dir .studio-agent/my-song --actor agent:cod
 報告本文保存在本機 `--out` 檔，receipt 記錄輸出路徑與操作結果；稽核或跨機器搬移時
 必須一起保存兩者，不能只靠 store 或 `studio_artifact_get` 找回這份 review。
 三種報告均不推進 run、不覆寫既有輸出檔。`call --output` 可保存既有命令的完整結果。
+
+### 遠端 MCP 大型報告
+
+唯讀工具現在接受選填 `report_page`。這是同一份 Application Service 回應的
+JSON 文字分段，不是摘要、不會刪除事件、不新建 artifact；不帶此參數時仍回傳
+原完整結果，原 512 KiB 上限保留。適用 suggestion、reduction／adaptation plan、
+無 confirmations 的 review、run plan／status、proposal targets／status、
+project／baseline events／job／artifact 讀取。
+
+第一頁呼叫範例（MCP `tools/call` 的 params）：
+
+```json
+{
+  "name": "studio_arrangement_suggest",
+  "arguments": {
+    "project_id": "PROJECT_ID",
+    "report_page": { "path": [], "offset": 0, "length": 16000 }
+  }
+}
+```
+
+讀取回傳 `structuredContent.report_page`：
+
+1. 保存 `report_sha256`。它綁定完整 service 回應，包含 Canonical provenance。
+2. 下一次使用相同工具與業務參數、相同 `path`，把 `offset` 設成 `next_offset`，
+   並把 `expected_sha256` 設成第一頁的 `report_sha256`。
+3. 依序串接 `json_fragment`，直到 `next_offset` 為 `null` 才 `JSON.parse`。
+   offset 以 UTF-16 code units 計，不是 UTF-8 bytes。可用 UTF-8 SHA-256 核對
+   拼接文字是否符合 `value_sha256`；完整報告的兩個 hash 相同。
+4. `INVALID_REQUEST` 且 `details.reason=REPORT_CHANGED` 時，丟棄舊片段，重新讀第一頁。
+   不可把不同 hash 的頁面拼接。分頁不鎖定持久化快照，每頁都重新檢查 owner 並讀取現況。
+
+只需要一個區段時可使用例如 `path: ["review", "gates"]`，或 artifact 的
+`path: ["artifact", "mml"]`；path 是 JSON 欄位／陣列索引字串，不是檔案路徑。
+即使只讀一個區段，expected hash 仍綁整份報告；沒有讀其他區段不能宣稱全報告已審查。
+目前每頁會重新取得完整 service 報告；昂貴 plan 宜選擇所需區段，整份封存宜使用本機 CLI
+或既有 HTTP。這層不提供跨頁快取、不修改音樂計算。
+
+分頁拒絕 `confirmations` 與 `refresh: true`，且不適用 start／resume／accept／finalize
+等寫入命令。若寫入回傳 `PAYLOAD_TOO_LARGE`，操作可能已執行：先查看
+`operation_returned`、`operation`／`result_code`、`result_references` 與 `recovery_reads`，
+使用對應唯讀工具取回狀態，必要時加 `report_page`；不能因超限而盲目重送接受或 finalize。
+超限 envelope 不會替未保存的完整 operation report 建立歷史副本。
 
 actor 是 caller-supplied audit text，**不構成身分驗證或使用者已審查的證明**。
 CLI 固定 local owner 為 `local:external-agent`；不同 actor 不是不同帳戶。

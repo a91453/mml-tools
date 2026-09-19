@@ -368,7 +368,14 @@ const mcpRunner = application => {
     decisions: async (projectId, decisions) => (await call('studio_decisions_apply', { project_id: projectId, decisions })).decisions,
     review: async (projectId, candidate_id) => (await call('studio_candidate_review', { project_id: projectId, candidate_id })).review,
     finalize: (projectId, candidate_id) => call('studio_finalize', { project_id: projectId, candidate_id, confirmations: CONFIRMATIONS }),
-    artifact: async artifactId => (await call('studio_artifact_get', { artifact_id: artifactId })).artifact,
+    artifact: async artifactId => {
+      const full = await call('studio_artifact_get', { artifact_id: artifactId });
+      const page = await call('studio_artifact_get', { artifact_id: artifactId, report_page: { path: ['artifact', 'mml'] } });
+      assert.equal(page.report_page.next_offset, null, 'this fixture MML fits in one page');
+      assert.equal(JSON.parse(page.report_page.json_fragment), full.artifact.mml);
+      assert.deepEqual(page.canonical, full.canonical);
+      return full.artifact;
+    },
   };
 };
 

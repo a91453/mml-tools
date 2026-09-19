@@ -211,7 +211,7 @@ function oversizedResultDetails(tool, args, data, responseBytes) {
     ...(typeof data?.operation === 'string' && /^(succeeded|blocked)$/.test(data.operation) ? { operation: data.operation } : {}),
     ...(typeof data?.code === 'string' && /^[A-Z][A-Z0-9_]{0,79}$/.test(data.code) ? { result_code: data.code } : {}),
     result_references, recovery_reads,
-    recovery_notice: 'The service returned before the response-size check; this does not imply success or gate acceptance. Do not repeat a mutating call just because its response was too large. Inspect the referenced state first using the same authenticated owner. MCP reads may also exceed the cap; use their authenticated HTTP GET equivalents. The full report is not included or newly archived by this envelope.',
+    recovery_notice: 'The service returned before the response-size check; this does not imply success or gate acceptance. Do not repeat a mutating call just because its response was too large. Inspect the referenced state first using the same authenticated owner. For large reads, use report_page on the existing read tool (without confirmations or refresh), or its authenticated HTTP GET equivalent. The full report is not included or newly archived by this envelope.',
   };
 }
 
