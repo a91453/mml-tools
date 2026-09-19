@@ -426,6 +426,11 @@ export const LIMITS = freeze({
   // proposal that fits one surface fits the other rather than HTTP admitting
   // what MCP cannot carry. It holds a full 500-decision set with reasons and
   // evidence several times over.
+  //
+  // Measured on the record INCLUDING the agent review verdict stored beside it.
+  // It was measured before that verdict was attached, and the verdict repeats
+  // the caller's own `missing_evidence`, so the persisted record ran 11.9% past
+  // this number -- the same "the bound is not on the thing" defect one layer in.
   maxProposalBytes: 128 * 1024,
   // One project's OPEN AI proposals -- submitted or accepted. Counting only
   // the open ones is what makes the refusal's remedy true: resolving or

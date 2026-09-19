@@ -13,7 +13,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 
-import { mkdtemp, rm } from 'node:fs/promises';
+import { mkdtemp, readFile, readdir, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
@@ -355,6 +355,63 @@ test('a proposal is bounded in BYTES, not only in nodes, depth and string length
   const ordinary = await submit({ note: 'an ordinary amount of structure' });
   assert.equal(ordinary.proposal.agent_review.verdict, AGENT_REVIEW.REQUIRES_EXPLICIT_ACCEPTANCE);
   assert.ok(LIMITS.maxProposalBytes <= 131072, 'the ceiling must not exceed what MCP will carry, or HTTP admits what MCP cannot');
+});
+
+test('the byte bound is measured on the record that is actually stored', async () => {
+  // The bound above was measured on the record with `agent_review_at_submission`
+  // still null, and the verdict is then attached and stored. That verdict is not
+  // a constant: `REQUIRES_MORE_EVIDENCE` echoes the caller's own
+  // `missing_evidence` strings back into it. So a proposal measured at 129,906
+  // bytes was persisted at 146,681 -- 11.9% past the number the refusal quotes
+  // and the number the per-project budget is reckoned from.
+  //
+  // A bound that is measured on something other than what is stored is the
+  // defect this bound was added to fix, one layer further in.
+  await withDirectory(async directory => {
+  const app = createStudioApplication({ dataDirectory: directory, durability: 'persistent' });
+  const context = await prepared(app);
+  const decisions = proposable(context.fixture.project);
+  const filler = length => 'x'.repeat(length);
+  const notes = Array.from({ length: LIMITS.maxProposalConflicts }, (_, index) =>
+    (`${index}` + filler(LIMITS.maxProposalNoteLength)).slice(0, LIMITS.maxProposalNoteLength));
+
+  const submit = chunks => app.proposeDecision(OWNER, context.fixture.projectId, {
+    run_id: context.run.run_id,
+    request_key: context.target.request_key,
+    kind: PROPOSAL_KIND.ARRANGEMENT_DECISION,
+    proposed_by: AGENT,
+    rationale: filler(LIMITS.maxProposalRationaleLength),
+    action: { decisions: [{ ...decisions[0], metadata: { chunks } }, ...decisions.slice(1)] },
+    cites: { event_ids: [context.events[0].event_id] },
+    // Non-empty, so the policy answers REQUIRES_MORE_EVIDENCE and the verdict
+    // it stores carries these strings back.
+    missing_evidence: notes,
+    canonical_warnings: notes,
+  });
+
+  // The largest payload this build will take, found from below rather than
+  // asserted, so the test keeps working if the ceiling is ever retuned.
+  let largest = null;
+  for (let padding = 0; padding <= LIMITS.maxProposalBytes; padding += 4000) {
+    const chunks = [];
+    for (let left = padding; left > 0; left -= 4000) chunks.push(filler(Math.min(left, 4000)));
+    try { largest = await submit(chunks); } catch { break; }
+  }
+  assert.ok(largest, 'some payload must be accepted');
+  assert.equal(largest.proposal.agent_review.verdict, AGENT_REVIEW.REQUIRES_MORE_EVIDENCE);
+
+  // Measured on the bytes that reached the disk, not on a projection of them.
+  let storedBytes = null;
+  for (const name of await readdir(join(directory, 'records'))) {
+    const body = await readFile(join(directory, 'records', name), 'utf8');
+    if (!body.includes(largest.proposal.proposal_id)) continue;
+    const entry = JSON.parse(body).proposals.find(item => item.proposal_id === largest.proposal.proposal_id);
+    storedBytes = Buffer.byteLength(JSON.stringify(entry), 'utf8');
+  }
+  assert.ok(storedBytes !== null, 'the persisted proposal record was found');
+  assert.ok(storedBytes <= LIMITS.maxProposalBytes,
+    `a stored proposal is ${storedBytes} bytes against a declared bound of ${LIMITS.maxProposalBytes}`);
+  });
 });
 
 test('the proposal cap refuses with a remedy that actually works', async () => {

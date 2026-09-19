@@ -544,6 +544,17 @@ one surface fits the other. Worth naming precisely: the *manual* Phase 1 path
 consumes this structure transiently, and only the proposal record retains it —
 so this is new to Phase 2 rather than inherited.
 
+*"As it will be stored"* had to be made true a second time. The measurement ran
+before `agent_review_at_submission` was attached, and that verdict is stored
+with the record and is not a constant: `REQUIRES_MORE_EVIDENCE` repeats the
+caller's own `missing_evidence` strings back into it. A record measured at
+129,906 bytes was persisted at 146,681 — 11.9% past the number its own refusal
+quotes and the number the per-project budget is reckoned from. It is measured
+twice now: once before the policy runs, as a cheap refusal that spends no
+evaluation on a payload that cannot be stored whatever the verdict, and once
+after, which is the bound. A regression reads the bytes off the disk rather than
+off a projection of them.
+
 **The proposal cap named a remedy that did not exist.** It counted every
 proposal a project had ever held, and resolving one removes nothing, so
 "Resolve or withdraw one before submitting another" was a no-op and a project

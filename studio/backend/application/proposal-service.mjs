@@ -1169,16 +1169,29 @@ export function createProposalService({ canonical, projects, store, operations, 
       // free-form structure a proposal carries; none of them bounds its size,
       // and 4000 nodes times a 4000-character string is 15 MB inside every one
       // of them.
-      const proposalBytes = Buffer.byteLength(JSON.stringify(proposal), 'utf8');
-      if (proposalBytes > LIMITS.maxProposalBytes) {
-        fail(ERROR_CODES.PAYLOAD_TOO_LARGE, `A stored proposal is limited to ${LIMITS.maxProposalBytes} bytes; this one is ${proposalBytes}. The rationale, the citations and the action are each bounded in shape, and this is the bound on their total size.`, {
-          max_proposal_bytes: LIMITS.maxProposalBytes,
-          received_bytes: proposalBytes,
-        });
-      }
+      //
+      // Measured TWICE, and the second one is the bound. The first is a cheap
+      // refusal that spends no policy evaluation on a payload that cannot be
+      // stored whatever the verdict. But the stored record also carries the
+      // verdict, and the verdict is not a constant -- `REQUIRES_MORE_EVIDENCE`
+      // echoes the caller's own `missing_evidence` back into it -- so a record
+      // measured at 129,906 bytes was persisted at 146,681. A bound measured on
+      // something other than what is stored is the defect this bound exists to
+      // answer, one layer further in.
+      const refuseOversize = value => {
+        const bytes = Buffer.byteLength(JSON.stringify(value), 'utf8');
+        if (bytes > LIMITS.maxProposalBytes) {
+          fail(ERROR_CODES.PAYLOAD_TOO_LARGE, `A stored proposal is limited to ${LIMITS.maxProposalBytes} bytes; this one is ${bytes}. The rationale, the citations and the action are each bounded in shape, and this is the bound on their total size -- including the agent review verdict stored beside them, which repeats what the proposal declared was missing.`, {
+            max_proposal_bytes: LIMITS.maxProposalBytes,
+            received_bytes: bytes,
+          });
+        }
+      };
+      refuseOversize(proposal);
 
       const review = await agentReview(owner, record, proposal, provenance);
       proposal.agent_review_at_submission = review;
+      refuseOversize(proposal);
 
       const stored = await serialize(String(projectId), async () => {
         const current = projects.load(owner, projectId);
