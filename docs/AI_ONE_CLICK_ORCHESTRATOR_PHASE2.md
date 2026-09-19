@@ -461,12 +461,13 @@ a union, for the same reason the run operations have one each.
 | Attack | Answer |
 | --- | --- |
 | unknown field | refused at every level (`UNKNOWN_FIELD`), never ignored |
-| inherited / prototype-chain field | every request object is **rebuilt** from its own enumerable fields, so `Object.keys` and `obj.field` cannot disagree |
+| inherited / prototype-chain field | **left behind**, not refused — and that is the stronger answer. Every request object is rebuilt from its own enumerable fields onto a fresh one, so an inherited field never exists as far as the service is concerned and `Object.keys` and `obj.field` cannot disagree. Refusing one would mean walking a caller-controlled prototype chain, which is a hazard of its own |
 | `__proto__` / `constructor` / `prototype` as a key | refused by name at every level. The shared `statedFields` rebuild writes with `Object.defineProperty`, so an own `__proto__` from a parsed body survives as ordinary data instead of being consumed as a prototype write nobody can see |
 | fabricated event / source / evidence / request id | resolved against this project, refused when it does not |
 | cross-project, cross-owner identity | not refused so much as **not found**: the record is loaded for this owner and this project |
 | server-computed acceptance binding | refused (`SERVER_COMPUTED_FIELD_SUPPLIED`) |
 | agent-named accepting reviewer | refused (`ACCEPTANCE_IDENTITY_SUPPLIED`) |
+| agent-authored reviewer evidence record | refused (`REVIEWER_EVIDENCE_RECORD_SUPPLIED`): a decision may carry no `leadEvidence`, on the arrangement path and the reduction path alike |
 | internal provenance keys | stripped by the public boundary before any operation sees them |
 | collapsed confidence score | refused at every nesting level |
 | oversized rationale, deep nesting, huge arrays, too many proposals | bounded by `LIMITS`, spent as a budget rather than discovered by a recursion limit |
