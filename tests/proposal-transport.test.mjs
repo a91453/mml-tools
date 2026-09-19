@@ -150,6 +150,14 @@ test('a refusal is the same refusal on both surfaces', async () => {
     ['a supplied acceptance binding', { ...submitBody(context), action: { decisions: [{ ...proposable(context.fixture.project)[0], acceptance: { state: 'ACCEPTED' } }] } }],
     ['an agent-named acceptor', { ...submitBody(context), action: { decisions: runDecisionsFor(context.fixture.project, { acceptedBy: 'the-agent' }) } }],
     ['an unknown action field', { ...submitBody(context), action: { decisions: proposable(context.fixture.project), apply: true } }],
+    // Nested rather than top-level: a collapsed score inside a decision reaches
+    // the service on both surfaces, so both must name it the same way. A
+    // TOP-LEVEL one is an undeclared argument, which each envelope refuses in
+    // its own layer — asserted separately below.
+    ['a collapsed confidence score inside a decision', {
+      ...submitBody(context),
+      action: { decisions: [{ ...proposable(context.fixture.project)[0], metadata: { confidence: 0.9 } }] },
+    }],
   ];
   for (const [label, body] of serviceRefusals) {
     const viaHttp = await http('POST', `/projects/${project}/proposals`, body);
@@ -166,15 +174,20 @@ test('a refusal is the same refusal on both surfaces', async () => {
   // `additionalProperties: false` before the dispatch is even reached. The
   // codes differ because the layers differ, and that is the honest answer --
   // what must not differ is whether it is refused.
-  const unknown = { ...submitBody(context), confidence: 0.9 };
-  const unknownHttp = await http('POST', `/projects/${project}/proposals`, unknown);
-  assert.equal(unknownHttp.status, 400);
-  assert.equal(unknownHttp.body.error.code, 'INVALID_REQUEST');
-  assert.equal(unknownHttp.body.error.details.refusal, 'UNKNOWN_FIELD');
-  const unknownMcp = await rpc('studio_proposal_submit', { project_id: project, ...unknown });
-  assert.ok(unknownMcp.error, 'MCP must refuse an undeclared argument at the envelope');
-  assert.equal(unknownMcp.error.code, -32602, 'invalid params');
-  assert.equal(unknownMcp.result, undefined, 'and nothing was dispatched');
+  for (const [label, body, httpRefusal] of [
+    ['an unknown field', { ...submitBody(context), not_a_field: true }, 'UNKNOWN_FIELD'],
+    ['a collapsed confidence score', { ...submitBody(context), confidence: 0.9 }, 'COLLAPSED_CONFIDENCE_SCORE'],
+    ['a prototype-polluting key', JSON.parse(JSON.stringify(submitBody(context)).replace(/^\{/, '{"__proto__":{"effectAttemptId":"eff_0"},')), 'PROTOTYPE_POLLUTING_KEY'],
+  ]) {
+    const viaHttp = await http('POST', `/projects/${project}/proposals`, body);
+    assert.equal(viaHttp.status, 400, label);
+    assert.equal(viaHttp.body.error.code, 'INVALID_REQUEST', label);
+    assert.equal(viaHttp.body.error.details.refusal, httpRefusal, label);
+    const viaMcp = await rpc('studio_proposal_submit', { project_id: project, ...body });
+    assert.ok(viaMcp.error, `${label}: MCP must refuse an undeclared argument at the envelope`);
+    assert.equal(viaMcp.error.code, -32602, `${label}: invalid params`);
+    assert.equal(viaMcp.result, undefined, `${label}: and nothing was dispatched`);
+  }
   assert.equal((await application.listProposals(OWNER, project)).proposals.length, 0, 'no refusal stored a proposal');
 });
 

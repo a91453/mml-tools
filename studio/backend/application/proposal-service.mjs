@@ -123,6 +123,13 @@ import {
 const now = () => new Date().toISOString();
 const encoder = new TextEncoder();
 
+// Key names a proposal never carries, refused wherever one is accepted. After
+// `statedFields` was fixed to use `defineProperty`, an own `__proto__` from a
+// parsed request body reaches here as ordinary data -- which is exactly the
+// point: it is refused by name rather than silently consumed as a prototype
+// write nobody can see.
+const PROTOTYPE_KEYS = Object.freeze(['__proto__', 'constructor', 'prototype']);
+
 // ─── bounded, prototype-safe rebuild of free-form proposal structure ────────
 //
 // A proposal carries structure this layer does not own: a decision's
@@ -155,7 +162,6 @@ const encoder = new TextEncoder();
 // inline-text rule every tool is held to, and these are nested values the
 // service bounds itself.
 const JSON_LIMITS = Object.freeze({ maxDepth: 10, maxNodes: 4000, maxStringLength: 4000 });
-const PROTOTYPE_KEYS = Object.freeze(['__proto__', 'constructor', 'prototype']);
 
 function rebuildJson(value, label, budget, depth = 0) {
   if (depth > JSON_LIMITS.maxDepth) fail(ERROR_CODES.INVALID_REQUEST, `${label} is nested deeper than ${JSON_LIMITS.maxDepth} levels.`, { refusal: PROPOSAL_REFUSAL.UNKNOWN_FIELD });
@@ -195,6 +201,17 @@ const jsonBudget = () => ({ nodes: JSON_LIMITS.maxNodes });
 const closedObject = (value, label, allowed) => {
   requirePlainObject(value, label);
   for (const key of Object.keys(value)) {
+    // Named before the generic unknown-field refusal, because the codes exist
+    // so a caller can tell one problem from another without parsing prose. A
+    // `confidence` at the top level of a request and a `confidence` nested in a
+    // decision are the same mistake and now get the same answer, with the same
+    // notice about why symbolic and audio evidence stay in separate fields.
+    if (PROTOTYPE_KEYS.includes(key)) {
+      fail(ERROR_CODES.INVALID_REQUEST, `${label}.${key} is not an accepted field. A proposal has no field of that name, and one supplied here would be a prototype write rather than data.`, { refusal: PROPOSAL_REFUSAL.PROTOTYPE_POLLUTING_KEY });
+    }
+    if (COLLAPSED_SCORE_KEYS.includes(key)) {
+      fail(ERROR_CODES.INVALID_REQUEST, `${label}.${key} is not an accepted field. ${EVIDENCE_SEPARATION_NOTICE}`, { refusal: PROPOSAL_REFUSAL.COLLAPSED_CONFIDENCE_SCORE, collapsed_score_keys: [...COLLAPSED_SCORE_KEYS] });
+    }
     if (!allowed.has(key)) {
       fail(ERROR_CODES.INVALID_REQUEST, `${label}.${key} is not an accepted field`, { accepted: [...allowed], refusal: PROPOSAL_REFUSAL.UNKNOWN_FIELD });
     }
@@ -558,7 +575,6 @@ export function createProposalService({ canonical, projects, store, operations, 
       fail(ERROR_CODES.INVALID_REQUEST, 'accepted_by must name who accepted this proposal. The agent\'s proposed_by is what the agent called itself; it is not an acceptance, and this service will not reuse it as one.');
     }
     return {
-      idempotency_key: source.idempotency_key === undefined || source.idempotency_key === null ? null : requireString(source.idempotency_key, 'idempotency_key', { max: LIMITS.maxIdempotencyKeyLength }),
       resolution,
       accepted_by: source.accepted_by === undefined || source.accepted_by === null ? null : requireString(source.accepted_by, 'accepted_by', { max: 120 }),
       reason: source.reason === undefined || source.reason === null ? null : requireString(source.reason, 'reason', { max: LIMITS.maxProposalNoteLength }),

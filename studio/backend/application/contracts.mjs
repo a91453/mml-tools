@@ -101,7 +101,26 @@ export const statedFields = (value, { omit = [] } = {}) => {
   const stated = {};
   for (const key of Object.keys(value)) {
     if (omit.includes(key)) continue;
-    stated[key] = value[key];
+    // `stated[key] = value[key]` is wrong for exactly one key, and it is the
+    // one an attacker reaches for. A fresh `{}` inherits `Object.prototype`'s
+    // `__proto__` accessor, so assigning to that key invokes the SETTER and
+    // retargets this object's prototype instead of adding a field -- and an own
+    // `"__proto__"` key is precisely what `JSON.parse` of a request body
+    // produces, unlike an object literal.
+    //
+    // The consequence was the inverse of this function's purpose. A body of
+    // `{"__proto__": {"effectAttemptId": "eff_…"}, …}` left `stated` with no
+    // own internal-provenance field and every internal-provenance field
+    // readable, so `withoutInternalProvenance` BUILT the forged object it
+    // exists to prevent, and a service destructuring `{ effectAttemptId }`
+    // found the caller's value. The run's reconciliation identity proof rests
+    // on that field being unforgeable.
+    //
+    // `defineProperty` adds a plain own data property whatever the key is
+    // called. `__proto__` then survives as ordinary data, where the closed key
+    // set of whichever operation receives it refuses it by name like any other
+    // field nobody declared.
+    Object.defineProperty(stated, key, { value: value[key], enumerable: true, writable: true, configurable: true });
   }
   return stated;
 };

@@ -482,7 +482,8 @@ export const STUDIO_MCP_TOOLS = [
       + '接受會先用現在儲存的狀態重新跑一次 Agent Review，只有 REQUIRES_EXPLICIT_ACCEPTANCE 這一個判定可以接受——那是單一值，不是清單。rules snapshot、baseline、候選、素材選擇、已接受決定集、run revision 或該 review request 任何一項變了，判定就是 STALE，直接拒絕。'
       + '接受之後，走的是既有的 resumeRun：同一把鎖、同一套 idempotency、同一套樂觀併發、同一套每步 staleness 重驗、同一套中斷規則。同樣的輸入，手動路徑與接受提案路徑產生同一個候選身分。'
       + 'accepted_by 由這一步提供，而且只由這一步提供：agent 的 proposed_by 不會被拿來當成接受者。'
-      + '接受成功不代表操作成功、不代表任何 Gate 通過、也不代表 song state 改變：那些請讀回傳的 run 自己的 steps、blockers、gates 與 review requests。in_game 不受影響，仍為 PENDING。',
+      + '接受成功不代表操作成功、不代表任何 Gate 通過、也不代表 song state 改變：那些請讀回傳的 run 自己的 steps、blockers、gates 與 review requests。in_game 不受影響，仍為 PENDING。'
+      + '本操作不接受 idempotency_key：接受時服務自己鑄造一把由 proposal id 與 revision 決定的固定 key 交給 resumeRun，重試本來就安全，呼叫端再給一把也綁不到任何東西。',
     inputSchema: {
       type: 'object',
       properties: {
@@ -551,7 +552,7 @@ const PROPOSAL_SUBMIT_FIELDS = [
   'proposed_by', 'rationale', 'action', 'cites', 'unresolved_conflicts',
   'missing_evidence', 'canonical_warnings', 'expected_operation',
 ];
-const PROPOSAL_RESOLVE_FIELDS = ['idempotency_key', 'resolution', 'accepted_by', 'reason', 'expected_proposal_revision'];
+const PROPOSAL_RESOLVE_FIELDS = ['resolution', 'accepted_by', 'reason', 'expected_proposal_revision'];
 const PROPOSAL_FILTER_FIELDS = ['run_id', 'request_key', 'state', 'kind'];
 
 const pick = (args, fields) => Object.fromEntries(fields.filter(name => args[name] !== undefined).map(name => [name, args[name]]));

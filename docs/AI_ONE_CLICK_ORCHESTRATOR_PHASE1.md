@@ -279,7 +279,21 @@ states the field nowhere a key-based guard can see it and supplies it everywhere
 the service looks. So the boundaries do not filter a caller's object, they
 **rebuild** it: own enumerable fields onto a fresh object literal, internal
 provenance left out. Whatever prototype the caller attached does not come with
-it, and no inherited field of any name reaches a service. The same rebuild
+it, and no inherited field of any name reaches a service.
+
+The rebuild writes each field with `Object.defineProperty`, and that detail is
+load-bearing. A fresh `{}` inherits `Object.prototype`'s `__proto__` accessor,
+so `rebuilt[key] = value` for the key `"__proto__"` invokes the **setter** and
+retargets the rebuilt object's prototype instead of adding a field — and an own
+`"__proto__"` key is exactly what `JSON.parse` of a request body produces,
+unlike an object literal. A Phase 2 adversarial pass found the consequence, and
+it was the inverse of this mechanism's purpose: a body of
+`{"__proto__": {"effectAttemptId": "eff_…"}, …}` left the rebuilt object with
+no own internal-provenance field and every internal-provenance field readable,
+so `withoutInternalProvenance` *built* the forged object it exists to prevent.
+`defineProperty` adds a plain own data property whatever the key is called, so
+`__proto__` survives as ordinary data and is refused by name by whichever
+operation's closed key set receives it. The same rebuild
 applies to the run's own `closedObject`, so a run's `provided` — which answers
 "did this request ask for work", and on which the audit-closed contract rests —
 lists exactly the fields the run will read.

@@ -490,8 +490,18 @@ export const PROPOSE_INPUT_KEYS = freeze([
   'missing_evidence', 'canonical_warnings', 'expected_operation',
 ]);
 
+/**
+ * No `idempotency_key`, and the absence is deliberate.
+ *
+ * An acceptance already mints its own deterministic key —
+ * `proposal:<proposal_id>:<revision>` — and passes it to `runs.resume`, so
+ * retrying a resolve is safe by construction and a caller's key would bind
+ * nothing. Accepting one anyway would be the defect this protocol refuses
+ * elsewhere in as many words: a stated field that is validated, echoed nowhere
+ * and never read, which an agent reads back and believes was honoured.
+ */
 export const RESOLVE_INPUT_KEYS = freeze([
-  'idempotency_key', 'resolution', 'accepted_by', 'reason', 'expected_proposal_revision',
+  'resolution', 'accepted_by', 'reason', 'expected_proposal_revision',
 ]);
 
 export const LIST_PROPOSALS_INPUT_KEYS = freeze(['run_id', 'request_key', 'state', 'kind']);

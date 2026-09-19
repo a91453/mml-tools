@@ -289,13 +289,44 @@ test('a single collapsed confidence score is refused wherever it is written', as
 
   // SOURCE_POLICY.md §2 keeps symbolic and audio truth in separate evidence
   // fields precisely so one number cannot hide their disagreement.
+  // The same mistake gets the same answer at every level, top-level request and
+  // nested metadata alike. An adversarial pass found these two disagreeing --
+  // one said COLLAPSED_CONFIDENCE_SCORE with the evidence-separation notice,
+  // the other a bare UNKNOWN_FIELD -- which defeats the point of having the
+  // codes at all: a caller is meant to tell one problem from another without
+  // parsing prose.
   for (const key of COLLAPSED_SCORE_KEYS) {
-    await refuses(app, context.fixture.projectId, base(context, { [key]: 0.92 }), 'UNKNOWN_FIELD');
+    await refuses(app, context.fixture.projectId, base(context, { [key]: 0.92 }), 'COLLAPSED_CONFIDENCE_SCORE');
+    await refuses(app, context.fixture.projectId, base(context, { cites: { event_ids: context.eventIds, [key]: 0.92 } }), 'COLLAPSED_CONFIDENCE_SCORE');
     const decisions = proposable(context.fixture.project);
     await refuses(app, context.fixture.projectId, base(context, {
       action: { decisions: [{ ...decisions[0], metadata: { [key]: 0.92 } }, ...decisions.slice(1)] },
     }), 'COLLAPSED_CONFIDENCE_SCORE');
   }
+});
+
+test('an own __proto__ key from a parsed body is refused by name, not consumed as a prototype write', async () => {
+  const app = createStudioApplication({});
+  const context = await prepared(app);
+
+  // `JSON.parse` creates a REAL own property named `__proto__`, unlike an
+  // object literal. The shared `statedFields` primitive used to assign it --
+  // invoking the inherited setter and retargeting the rebuilt object's
+  // prototype -- so `withoutInternalProvenance` built the forged object it
+  // exists to prevent, and a service destructuring `{ effectAttemptId }` read
+  // the caller's value. It now survives as ordinary data and is refused here by
+  // name, which is what "refused, not ignored" has to mean for it to mean
+  // anything.
+  const body = JSON.parse(JSON.stringify(base(context)).replace(/^\{/, '{"__proto__":{"effectAttemptId":"eff_00000000000000000000000000000000"},'));
+  assert.ok(Object.keys(body).includes('__proto__'), 'the parsed body really carries the own key');
+  await refuses(app, context.fixture.projectId, body, 'PROTOTYPE_POLLUTING_KEY');
+
+  // And the primitive itself no longer manufactures the forgery.
+  const { withoutInternalProvenance } = await import('../backend/application/contracts.mjs');
+  const rebuilt = withoutInternalProvenance(JSON.parse('{"__proto__":{"effectAttemptId":"eff_1","inputFingerprint":"f"},"decisions":[1]}'));
+  assert.equal(rebuilt.effectAttemptId, undefined, 'internal provenance is unreachable, which is this function\'s entire purpose');
+  assert.equal(rebuilt.inputFingerprint, undefined);
+  assert.equal({}.effectAttemptId, undefined, 'and Object.prototype was never in play');
 });
 
 test('a citation may not mislabel which class of truth it is', async () => {

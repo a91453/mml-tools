@@ -40,7 +40,7 @@ Five operations over one new first-class durable record:
 | `proposeDecision` | yes, one record | Stores one agent's statement. Mints no candidate, takes no revision, records no confirmation, moves no gate, and does not advance the run — not even its revision. |
 | `getProposal` | **no** | Read-only. The stored statement, plus the Agent Review verdict **recomputed against what is stored now**. |
 | `listProposals` | **no** | Read-only. This project's proposals, optionally narrowed by run, request, state or class. |
-| `resolveProposal` | yes | Records an explicit acceptance, rejection or withdrawal. An acceptance — and only an acceptance — routes the prepared input into the existing run resume path. |
+| `resolveProposal` | yes | Records an explicit acceptance, rejection or withdrawal. An acceptance — and only an acceptance — routes the prepared input into the existing run resume path. It takes no `idempotency_key`: the acceptance mints its own deterministic one, so a caller's would bind nothing, and a stated field that binds nothing is the defect this protocol refuses elsewhere in as many words. |
 
 ### What Phase 2 is not
 
@@ -462,7 +462,7 @@ a union, for the same reason the run operations have one each.
 | --- | --- |
 | unknown field | refused at every level (`UNKNOWN_FIELD`), never ignored |
 | inherited / prototype-chain field | every request object is **rebuilt** from its own enumerable fields, so `Object.keys` and `obj.field` cannot disagree |
-| `__proto__` / `constructor` / `prototype` as a key | refused by name, and `Object.defineProperty` makes a prototype write structurally impossible besides |
+| `__proto__` / `constructor` / `prototype` as a key | refused by name at every level. The shared `statedFields` rebuild writes with `Object.defineProperty`, so an own `__proto__` from a parsed body survives as ordinary data instead of being consumed as a prototype write nobody can see |
 | fabricated event / source / evidence / request id | resolved against this project, refused when it does not |
 | cross-project, cross-owner identity | not refused so much as **not found**: the record is loaded for this owner and this project |
 | server-computed acceptance binding | refused (`SERVER_COMPUTED_FIELD_SUPPLIED`) |
@@ -476,6 +476,33 @@ MCP carries no bytes. Every proposal input is an identity, a small structured
 option or short text, and `rationale` is held to the same 2048-character
 inline-text bound every MCP string field is held to — enforced by the service,
 so neither transport admits what the other refuses.
+
+### One fix that belongs to Phase 1
+
+The adversarial pass found the worst defect not in this layer but under it.
+`statedFields` — the primitive `withoutInternalProvenance` is built from, and
+the one every operation boundary in the service depends on — rebuilt a request
+with `rebuilt[key] = value[key]`. For the single key `"__proto__"` that invokes
+the inherited setter and retargets the object's prototype rather than adding a
+field, and an own `"__proto__"` key is precisely what `JSON.parse` of a request
+body produces.
+
+So a body of `{"__proto__": {"effectAttemptId": "eff_…"}, …}` came back with no
+own internal-provenance field and every internal-provenance field *readable*: the
+function whose entire purpose is to make `effectAttemptId` unforgeable
+constructed the forgery, and a service destructuring `{ effectAttemptId }` read
+the caller's value. Phase 1's whole reconciliation identity proof — "a record
+carrying another attempt's id is somebody else's effect" — rests on that field
+being unsuppliable.
+
+The existing HTTP routes were not reachable, because each rebuilds its call
+shape from named body fields; the Phase 2 proposal routes pass the parsed body
+straight through, which is deliberate (it is what lets the service's closed
+schema *refuse* an unknown field rather than an adapter silently drop it) and is
+what made the primitive's weakness reachable. It is fixed at the root, in
+`contracts.mjs`, with `Object.defineProperty`, so every caller gets the
+guarantee the function always claimed — including a direct in-process one, which
+is what its own comment promised.
 
 ## 10. Transports
 
