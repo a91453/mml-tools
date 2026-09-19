@@ -234,17 +234,36 @@ effect, so naming it is refused rather than written down as the effect.
 ### Interruption
 
 Before each mutating effect the run stores a `pending_step` marker carrying the
-effect's expectation, and the expectation carries **what already existed when
-the marker was written**. That before-set is the difference between "this record
-answers the step's description" and "this record is what the step produced":
+effect's expectation. Identifying that effect afterwards takes **two** proofs,
+and neither implies the other:
 
-| Step | What identifies its effect |
-| --- | --- |
-| intake | the selected asset ids, the meter map the step was about (an MML source is parsed against it), and the baseline that was already committed — which is by construction not this step's output |
-| apply_decisions (G11-D) | the parent and the stage, minus the sibling candidates that already matched. G11-D names no accepted plan, so a candidate applied earlier from the same parent matches the filter exactly |
-| final_reduction / mobile_adaptation | the parent, the stage and the accepted plan id the candidate records, plus the same before-set |
-| finalize | the type and the candidate, minus the Final artifacts already filed for it — a Final's body names no run |
-| report | the run its body names. Exact, so no before-set is needed |
+| Proof | What it establishes | What it cannot establish |
+| --- | --- | --- |
+| **before-set** | the record **postdates the marker** — it was not already there when the effect was attempted | *whose* effect it is. Any concurrent writer satisfies novelty: another run's step, or a direct call on the same project |
+| **effect input binding** | the record **answers the input this step was executing** — the service that performed the effect recorded, beside the record and in the same record write, the fingerprint of the input it was applying | *when* it was produced. An identical earlier attempt answers the same input and predates the marker |
+
+A record is adopted only when **both** hold, on the automatic path and on the
+named one alike. A record that provably answers a different input is not a
+weaker match but somebody else's effect, so it is excluded from consideration
+entirely; when that leaves nothing, the record positively shows this step's own
+effect never landed.
+
+The input binding is **internal provenance**. It is not a Canonical rule, it
+takes no part in any content-addressed identity — not the candidate revision id,
+not the artifact id — and no transport can supply it: every transport builds its
+own call shape from named request fields, and this is not one of them. Because
+it is written in the same record write as the result, "result persisted, binding
+not persisted" is not a state the service can reach; a restored record that
+nonetheless carries no binding is reported `EFFECT_IDENTITY_UNPROVABLE` and
+never replayed blindly.
+
+| Step | Before-set | Input binding |
+| --- | --- | --- |
+| intake | the baseline that was already committed — which is by construction not this step's output | the selected asset ids and the meter map the step was about (an MML source is parsed against it), checked against the committed baseline itself |
+| apply_decisions (G11-D) | the sibling candidates that already matched the parent and the stage. G11-D names no accepted plan, so a candidate applied earlier from the same parent matches the filter exactly | the decision set **and** the reviewer the run named for it, recorded on the candidate the application minted |
+| final_reduction / mobile_adaptation | the same, narrowed further by the accepted plan id the candidate records | the same reduction or adaptation input the receipt fingerprints, recorded on the candidate |
+| finalize | the Final artifacts already filed for that candidate — a Final's body names no run | the candidate and the emit options (repair, pickup, final partial), recorded on the artifact entry |
+| report | recorded, for a reader of the receipt | none needed: the report's body names the run that produced it, which is already exact |
 
 A before-set records four things: the matching ids (bounded by
 `LIMITS.maxEffectBeforeSet`), whether that list is complete, and — never
@@ -254,16 +273,26 @@ the digest are what make this exact at any size:
 | What the current set shows | Conclusion |
 | --- | --- |
 | same digest | `EFFECT_ABSENT` — nothing was added, so the effect never landed |
-| one more, and removing exactly one record reproduces the digest | `EFFECT_FOUND` — that record is the effect, whatever the set's size |
-| more than one more, with the ids complete | `EFFECT_AMBIGUOUS` — a caller names which one |
+| one more, and removing exactly one record reproduces the digest | that record postdates the marker, whatever the set's size |
+| more than one more, with the ids complete | the records that postdate the marker |
 | anything else | `EFFECT_IDENTITY_UNPROVABLE` |
+
+The records that postdate the marker are then read against the binding:
+
+| What the bindings show | Conclusion |
+| --- | --- |
+| none of them answers this step's input | `EFFECT_ABSENT` — every record added since is another operation's, so this step's own never landed |
+| exactly one answers it | `EFFECT_FOUND` |
+| more than one answers it, or more than one records none | `EFFECT_AMBIGUOUS` — a caller names which one |
+| exactly one, and it records no binding at all | `EFFECT_IDENTITY_UNPROVABLE` |
 
 `EFFECT_IDENTITY_UNPROVABLE` is **not** `EFFECT_ABSENT`. A step whose effect
 can be neither confirmed nor ruled out is reported `interrupted` and is never
 replayed: repeating a finalize on a maybe files a second Final for one attempt.
 The named remedies are held to the same rule — naming an artifact or a candidate
 settles *which* of a step's possible outputs it produced, and never makes a
-record the before-set cannot place after the marker into one.
+record the before-set cannot place after the marker, or the binding shows
+answers another input, into one.
 
 What happens next follows from which of the four answers the record supports —
 **a missing or unusable identity is never read as "safe to replay"**:
@@ -283,8 +312,13 @@ What happens next follows from which of the four answers the record supports —
    rather than the newest one;
 3. **several records could be it** → `EFFECT_AMBIGUOUS`. The caller names one
    (`adopt_artifact_id`, `adopt_candidate_id`), held to the same identity the
-   automatic path uses, before-set included. Naming settles *which* of a step's
-   possible outputs it produced; it never widens what may count as one. Both
+   automatic path uses, before-set and input binding included. Naming settles
+   *which* of a step's possible outputs it produced; it never widens what may
+   count as one — a record that answers a different input is refused however it
+   is named. A record whose binding cannot be read is the one the automatic path
+   refuses and this one accepts, and that is the same set, not a wider one: the
+   reviewer is saying which member of it this step produced, and refusing those
+   too would leave the ambiguous answer advertising a remedy nobody can execute. Both
    ways of settling an artifact effect go through **one** transition, so a
    reviewer-named Final restores the same gates, emit status, technical
    validation, readiness blockers and finalize job that an automatically
@@ -297,6 +331,14 @@ What happens next follows from which of the four answers the record supports —
    maybe produces a second result for one attempt. A step that declared itself
    repeatable, or a caller who has inspected the record and resumes with
    `reconcile: true`, is what establishes absence.
+
+Settling a step **answers** the reconciliation, however it settles: found,
+named, or shown absent. So the halt, the `RUN_RECONCILIATION_REQUIRED` blocker
+and the `RECONCILIATION_REQUIRED` request are dropped with it. Only those are
+dropped — a readiness blocker is a fact about the song that a step recorded, and
+an adopted Final then states its own, read back from what it persisted. A run
+that kept reporting a reconciliation it had already performed would be naming
+work nobody can do, on a step that is settled.
 
 A **receipt stored but the response not delivered** is not an interruption of
 this kind at all: the next call sees the step complete, and an idempotency-key

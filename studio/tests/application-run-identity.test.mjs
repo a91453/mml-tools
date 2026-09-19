@@ -397,16 +397,18 @@ test('a genuinely ambiguous artifact is reconcilable by naming one, and not othe
     ));
 
     // Two Finals appear for this candidate while the receipt is lost: this
-    // run's, and one a second caller filed during the interruption. Neither is
-    // in the before-set, so novelty cannot separate them and a Final's body
-    // carries no run id. That is a real "cannot tell", and it must be solvable.
+    // run's, and one a second RUN filed under the same options during the
+    // interruption. Neither is in the before-set, a Final's body carries no run
+    // id, and both answer the very input this step was executing — so neither
+    // novelty nor the input binding separates them. That is a real "cannot
+    // tell", and it must be solvable.
     const concurrent = createStudioApplication(options);
     const interrupted = createStudioApplication({
       ...options,
       runHooks: {
         afterEffect: async ({ step }) => {
           if (step !== RUN_STEP.FINALIZE) return;
-          await concurrent.finalize(OWNER, fixture.projectId, { candidateId });
+          await concurrent.startRun(OWNER, fixture.projectId, { target_candidate_id: candidateId });
           throw Error('the process stopped after the effect');
         },
       },

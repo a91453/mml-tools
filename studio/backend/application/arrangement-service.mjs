@@ -159,7 +159,7 @@ export function createArrangementService({ canonical, projects, intake, store })
     loadCandidateLineage,
     baselineEvents,
 
-    async mobileAdaptation(owner, projectId, { candidateId, profile, expectedPlanId = null, acceptedBy = null, apply = false } = {}) {
+    async mobileAdaptation(owner, projectId, { candidateId, profile, expectedPlanId = null, acceptedBy = null, apply = false, inputFingerprint = null } = {}) {
       const engines = await canonical.engines();
       const { record, baseline, project } = await intake.project(owner, projectId);
       const { application: parent } = loadCandidate(record, candidateId);
@@ -187,6 +187,7 @@ export function createArrangementService({ canonical, projects, intake, store })
         candidate_id: adaptedId, parent_candidate_id: candidateId, baseline_id: baseline.baseline_id,
         revision_index: result.revision.index, created_at: now(), decision_count: result.plan.changes.length,
         decision_ids: [result.plan.id], accepted_by: [acceptedBy.trim()], stage: 'MOBILE_ADAPTATION_V1',
+        input_fingerprint: inputFingerprint,
       }] });
       return { applied: true, status: 'PASS', candidate_id: adaptedId, parent_candidate_id: candidateId, baseline_id: baseline.baseline_id,
         plan: result.plan, diff_from_baseline: result.diffFromBaseline, diff_from_parent: result.diffFromParent, notice: result.notice };
@@ -207,7 +208,7 @@ export function createArrangementService({ canonical, projects, intake, store })
      * the Lead and accounting checks read. A caller supplies decisions and the
      * plan id it reviewed; nothing else.
      */
-    async finalReduction(owner, projectId, { candidateId, decisions = [], expectedPlanId = null, acceptedBy = null, instrumentProfile = null, apply = false } = {}) {
+    async finalReduction(owner, projectId, { candidateId, decisions = [], expectedPlanId = null, acceptedBy = null, instrumentProfile = null, apply = false, inputFingerprint = null } = {}) {
       const engines = await canonical.engines();
       const { record, baseline, project } = await intake.project(owner, projectId);
       const { application: parent } = loadCandidate(record, candidateId);
@@ -236,6 +237,7 @@ export function createArrangementService({ canonical, projects, intake, store })
         candidate_id: reducedId, parent_candidate_id: candidateId, baseline_id: baseline.baseline_id,
         revision_index: result.revision.index, created_at: now(), decision_count: result.plan.decisions.length,
         decision_ids: [result.plan.id], accepted_by: [reviewer], stage: 'FINAL_SIX_ROLE_REDUCTION_V1',
+        input_fingerprint: inputFingerprint,
       }] });
       return { applied: true, status: 'PASS', candidate_id: reducedId, parent_candidate_id: candidateId, baseline_id: baseline.baseline_id,
         plan: result.plan, accounting: result.accounting, diff_from_baseline: result.diffFromBaseline, diff_from_parent: result.diffFromParent, notice: result.notice };
@@ -283,7 +285,7 @@ export function createArrangementService({ canonical, projects, intake, store })
      * result files no candidate and returns the backend's own rejection codes
      * unchanged.
      */
-    async applyDecisions(owner, projectId, { decisions, parentCandidateId = null, acceptedBy = null } = {}) {
+    async applyDecisions(owner, projectId, { decisions, parentCandidateId = null, acceptedBy = null, inputFingerprint = null } = {}) {
       if (!Array.isArray(decisions) || !decisions.length) {
         fail(ERROR_CODES.DECISION_REQUIRED, 'An accepted decision set is required; applying nothing does not mint a candidate.', {});
       }
@@ -367,6 +369,12 @@ export function createArrangementService({ canonical, projects, intake, store })
         decision_count: prepared.length,
         decision_ids: prepared.map(decision => decision.id),
         accepted_by: [...new Set(prepared.map(decision => decision.acceptance.acceptedBy))],
+        // Internal provenance: the fingerprint of the input this application
+        // was applying, or null when the caller named none. Written in the
+        // same record write as the entry, so a stop between minting the
+        // candidate and recording which input it answers cannot happen. It is
+        // not part of the revision identity and is not a Canonical rule.
+        input_fingerprint: inputFingerprint,
       };
 
       store.putJson(applicationKey(record.project_id, candidateId), application);

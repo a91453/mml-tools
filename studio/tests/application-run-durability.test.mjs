@@ -466,7 +466,7 @@ test('an unconfirmable step is reported as interrupted and is never replayed on 
   });
 });
 
-test('an interrupted step whose effect cannot be told from another is not adopted on a guess', async () => {
+test('an interrupted decision step recovers the candidate its own input produced, not another caller\'s', async () => {
   await withDirectory(async directory => {
     const app = createStudioApplication({ dataDirectory: directory, durability: 'persistent' });
     const fixture = await projectWithSymbolicAsset(app, OWNER, { project: sixRoleBaseline() });
@@ -474,7 +474,7 @@ test('an interrupted step whose effect cannot be told from another is not adopte
 
     // A decision application is the one step whose stored result carries no
     // plan id to match on, so two of them from the same parent are the case
-    // where "which effect was mine" genuinely cannot be answered.
+    // where novelty alone cannot say which candidate was this step's.
     const interrupted = createStudioApplication({
       dataDirectory: directory,
       durability: 'persistent',
@@ -490,34 +490,48 @@ test('an interrupted step whose effect cannot be told from another is not adopte
     const mine = (await restarted.getProject(OWNER, fixture.projectId)).project.candidates[0].candidate_id;
 
     // Another caller applies a different accepted set from the same parent, so
-    // two candidates now match what the interrupted step was about.
+    // two candidates now match what the interrupted step was about and BOTH
+    // postdate the marker. Novelty is exhausted here; the input binding is not.
     const other = (await restarted.applyDecisions(OWNER, fixture.projectId, {
       decisions: runDecisionsFor(fixture.project).map(decision => ({ ...decision, reason: `${decision.reason} Reviewed separately, outside the run.` })),
     })).decisions.candidate_id;
     assert.notEqual(other, mine);
 
-    // The run refuses to pick one, names both, and applies nothing.
-    const ambiguous = await restarted.resumeRun(OWNER, fixture.projectId, runId, {});
-    assert.equal(ambiguous.run.state, RUN_STATE.INTERRUPTED);
-    assert.equal(ambiguous.run.needs_reconciliation, true);
-    assert.equal(receiptOf(ambiguous.run, RUN_STEP.APPLY_DECISIONS).detail.reason, 'EFFECT_AMBIGUOUS');
-    assert.equal(ambiguous.run.candidate_id, null);
-    const request = ambiguous.run.review_requests.find(entry => entry.code === 'RECONCILIATION_REQUIRED');
-    assert.deepEqual([...request.detail.matches].sort(), [mine, other].sort());
-    assert.ok(request.available_operations.includes('resumeRun.adopt_candidate_id'));
-    // `reconcile: true` alone does not resolve it: the question is which one,
-    // not whether something happened.
-    const stillAmbiguous = await restarted.resumeRun(OWNER, fixture.projectId, runId, { reconcile: true });
-    assert.equal(stillAmbiguous.run.state, RUN_STATE.INTERRUPTED);
-
-    // Naming one settles it, after its baseline and lineage are checked.
-    const settled = await restarted.resumeRun(OWNER, fixture.projectId, runId, { adopt_candidate_id: mine, confirmations: FIXTURE_CONFIRMATIONS });
+    // The run continues on the candidate ITS OWN input produced. The other
+    // caller's records the input it was applied from, and it is not this
+    // step's, so it is excluded rather than guessed between or adopted.
+    const settled = await restarted.resumeRun(OWNER, fixture.projectId, runId, { confirmations: FIXTURE_CONFIRMATIONS });
     assert.equal(settled.run.needs_reconciliation, false);
     assert.equal(settled.run.candidate_id, mine);
-    assert.equal(receiptOf(settled.run, RUN_STEP.APPLY_DECISIONS).detail.reason, 'EFFECT_NAMED_BY_REVIEWER');
+    assert.equal(receiptOf(settled.run, RUN_STEP.APPLY_DECISIONS).detail.reason, 'EFFECT_FOUND_BY_STORED_IDENTITY');
     assert.equal(settled.run.state, RUN_STATE.COMPLETED, JSON.stringify(settled.run.blockers));
     const artifact = (await restarted.getArtifact(OWNER, settled.run.final_artifact_id)).artifact;
-    assert.equal(artifact.candidate_id, mine, 'the Final names the candidate the reviewer named, not the other one');
+    assert.equal(artifact.candidate_id, mine, 'the Final names the candidate this run applied, not the other one');
+
+    // Naming the other caller's candidate is refused for the same reason, so
+    // the reviewer path cannot conclude what the automatic one excluded.
+    const second = createStudioApplication({
+      dataDirectory: directory,
+      durability: 'persistent',
+      runHooks: { afterEffect: ({ step }) => { if (step === RUN_STEP.APPLY_DECISIONS) throw Error('the process stopped after the effect'); } },
+    });
+    const stopped = await second.startRun(OWNER, fixture.projectId, {
+      asset_ids: [fixture.assetId],
+      decisions: runDecisionsFor(fixture.project).map(decision => ({ ...decision, reason: `${decision.reason} A third accepted set.` })),
+      accepted_by: RUN_REVIEWER,
+    }).then(() => assert.fail('the injected fault must propagate'), problem => problem);
+    assert.match(stopped.message, /stopped after the effect/);
+    const third = createStudioApplication({ dataDirectory: directory, durability: 'persistent' });
+    const secondRunId = (await third.getRun(OWNER, fixture.projectId)).runs.find(entry => entry.run_id !== runId).run_id;
+    // A fourth accepted set, applied from the same parent AFTER the marker was
+    // written, so novelty is satisfied and only the binding stands in the way.
+    const fourth = (await third.applyDecisions(OWNER, fixture.projectId, {
+      decisions: runDecisionsFor(fixture.project).map(decision => ({ ...decision, reason: `${decision.reason} A fourth accepted set.` })),
+    })).decisions.candidate_id;
+    const refused = await third.resumeRun(OWNER, fixture.projectId, secondRunId, { adopt_candidate_id: fourth })
+      .then(() => assert.fail('a candidate applied from another input must not be adoptable'), problem => problem);
+    assert.equal(refused.code, 'INVALID_REQUEST');
+    assert.match(refused.message, /not the one this step was executing/);
   });
 });
 

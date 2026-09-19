@@ -184,7 +184,7 @@ export function createStudioApplication({
   const internal = {
     isSymbolicKind: kind => ASSET_KIND_INTAKE[kind]?.intake === true,
     findAsset: (record, assetId) => assets.find(record, assetId),
-    fileArtifact: (record, artifact) => final.fileArtifact(record, artifact),
+    fileArtifact: (record, artifact, options) => final.fileArtifact(record, artifact, options),
 
     /**
      * The run id an artifact's own body names, or null.

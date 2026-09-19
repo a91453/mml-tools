@@ -607,6 +607,60 @@ export function createRunService({ canonical, projects, store, operations, seria
     };
   };
 
+  /**
+   * The two proofs an adopted effect needs, and why neither implies the other.
+   *
+   *   BEFORE-SET            proves a record POSTDATES the marker. It answers
+   *                         "was this already there when the effect was
+   *                         attempted?" and nothing else. Novelty alone is
+   *                         satisfied by any concurrent writer: another run's
+   *                         step, or a direct call on the same project.
+   *   EFFECT INPUT BINDING  proves a record ANSWERS THE INPUT THIS STEP WAS
+   *                         EXECUTING. The service that performs the effect
+   *                         records, beside the record it produced and in the
+   *                         same record write, the fingerprint of the input it
+   *                         was applying; reconciliation compares it against
+   *                         the fingerprint the marker carries.
+   *
+   * Both are required before an effect is adopted automatically, and both are
+   * required before one is adopted on a reviewer's word. Neither implies the
+   * other: a record can postdate the marker and answer a different input --
+   * another run finalizing the same candidate with different options, a second
+   * decision set applied from the same parent -- and a record can answer this
+   * step's input and predate the marker, which is an earlier attempt's result
+   * and not this one's.
+   *
+   * The binding is internal provenance. It is not a Canonical rule, it takes
+   * no part in any content-addressed identity -- not the candidate revision,
+   * not the artifact id -- and no transport can supply it: every transport
+   * builds its own call shape from named request fields, and this is not one
+   * of them. Because it is written in the same record write as the result, a
+   * stop between filing the result and recording which input it answers is not
+   * a state this can reach; a record that nonetheless carries no binding is
+   * reported unprovable and never replayed blindly.
+   */
+  const INPUT_BINDING = Object.freeze({ MATCHES: 'MATCHES', DIFFERS: 'DIFFERS', UNREADABLE: 'UNREADABLE' });
+
+  /**
+   * Whether a stored record's recorded input is the one this step was applying.
+   *
+   * `expected` is what the marker recorded, and an expectation that declares
+   * none is settled by the before-set alone -- which is correct only where the
+   * step's identity is already exact, as a run report's body naming its run is.
+   * `recorded` is what the record carries: a string written by the effect,
+   * `null` when the operation ran outside a run and answers no step's input at
+   * all, and `undefined` only for a record written before bindings existed --
+   * the one case that proves nothing either way.
+   */
+  const inputBindingOf = (expected, recorded) => {
+    if (expected === null || expected === undefined) return INPUT_BINDING.MATCHES;
+    if (recorded === undefined) return INPUT_BINDING.UNREADABLE;
+    return recorded === expected ? INPUT_BINDING.MATCHES : INPUT_BINDING.DIFFERS;
+  };
+
+  /** The binding a stored entry carries, or `undefined` where it records none. */
+  const recordedBinding = entry => (entry && Object.hasOwn(entry, 'input_fingerprint') ? entry.input_fingerprint : undefined);
+
   /** What a reconciliation can conclude. Four answers, and three are not "rerun". */
   const EFFECT = Object.freeze({
     ABSENT: 'EFFECT_ABSENT',
@@ -643,24 +697,47 @@ export function createRunService({ canonical, projects, store, operations, seria
    * restored — proves nothing either way, so it is UNPROVABLE rather than
    * "absent": treating it as absent would replay a non-idempotent effect.
    */
-  const reconcileSet = (expectation, key, current) => {
+  const reconcileSet = (expectation, key, current, binding = () => INPUT_BINDING.MATCHES) => {
     const recorded = expectation[`${key}_digest`];
     const count = expectation[`${key}_count`];
     if (typeof recorded !== 'string' || typeof count !== 'number') {
       return { outcome: EFFECT.UNPROVABLE, reason: 'BEFORE_SET_NOT_RECORDED' };
     }
+
+    /**
+     * Which of the records that postdate the marker this step may claim.
+     *
+     * Novelty got them this far; the binding says which of them answer the
+     * input this step was executing. A record that provably answers a
+     * different input is not a weaker match, it is somebody else's effect, so
+     * it is removed from consideration entirely -- and when that leaves
+     * nothing, the record positively shows this step's own effect never
+     * landed, which is the one conclusion that lets it run again.
+     */
+    const settleNovel = novel => {
+      const possible = novel.filter(id => binding(id) !== INPUT_BINDING.DIFFERS);
+      const proven = possible.filter(id => binding(id) === INPUT_BINDING.MATCHES);
+      if (possible.length === 0) return { outcome: EFFECT.ABSENT };
+      if (possible.length === 1) {
+        return proven.length === 1
+          ? { outcome: EFFECT.FOUND, id: possible[0] }
+          : { outcome: EFFECT.UNPROVABLE, reason: 'EFFECT_INPUT_BINDING_NOT_RECORDED' };
+      }
+      return { outcome: EFFECT.AMBIGUOUS, ids: possible };
+    };
+
     const sorted = [...current].sort();
     if (setDigest(sorted) === recorded) return { outcome: EFFECT.ABSENT };
     if (sorted.length === count + 1) {
       if (sorted.length > MAX_RECONCILE_SEARCH) return { outcome: EFFECT.UNPROVABLE, reason: 'MATCHING_SET_TOO_LARGE_TO_SEARCH' };
       const novel = sorted.filter(id => setDigest(sorted.filter(other => other !== id)) === recorded);
-      if (novel.length === 1) return { outcome: EFFECT.FOUND, id: novel[0] };
+      if (novel.length === 1) return settleNovel(novel);
       return { outcome: EFFECT.UNPROVABLE, reason: 'BEFORE_SET_NOT_A_SUBSET' };
     }
     if (sorted.length > count + 1) {
       if (expectation[`${key}_complete`] === true && Array.isArray(expectation[key])) {
         const known = expectation[key];
-        return { outcome: EFFECT.AMBIGUOUS, ids: sorted.filter(id => !known.includes(id)) };
+        return settleNovel(sorted.filter(id => !known.includes(id)));
       }
       return { outcome: EFFECT.UNPROVABLE, reason: 'SEVERAL_ADDED_AND_BEFORE_SET_TRUNCATED' };
     }
@@ -668,23 +745,36 @@ export function createRunService({ canonical, projects, store, operations, seria
   };
 
   /**
-   * Whether a named record can be shown to postdate the marker.
+   * Whether a named record is the one this pending step produced.
    *
-   * The named path never gets to conclude more than the automatic one. Removing
-   * the named record from the current set reproducing the recorded digest is
-   * proof; otherwise membership of the stored ids is the only evidence there
-   * is, and that is conclusive only while those ids are complete.
+   * The named path never gets to conclude more than the automatic one, so it
+   * requires the same two proofs. Novelty: removing the named record from the
+   * current set reproducing the recorded digest is proof; otherwise membership
+   * of the stored ids is the only evidence there is, and that is conclusive
+   * only while those ids are complete. Binding: the record must not be one
+   * that provably answers a DIFFERENT input, which is another operation's
+   * output and never this step's whoever names it.
+   *
+   * A record whose binding cannot be read is refused by the automatic path and
+   * accepted here, and that is not the named path concluding more: it is the
+   * same `possible` set the automatic path computed, with a reviewer saying
+   * which member of it this step produced. Refusing those too would leave the
+   * ambiguous answer offering a remedy that can never be executed.
    */
-  const namedRecordIsNovel = (expectation, key, current, id) => {
+  const namedRecordIsThisEffect = (expectation, key, current, id, binding = () => INPUT_BINDING.MATCHES) => {
     const recorded = expectation[`${key}_digest`];
     if (typeof recorded !== 'string') return { proven: false, reason: 'BEFORE_SET_NOT_RECORDED' };
     const sorted = [...current].sort();
-    if (setDigest(sorted.filter(other => other !== id)) === recorded) return { proven: true };
-    if (expectation[`${key}_complete`] !== true || !Array.isArray(expectation[key])) {
-      return { proven: false, reason: 'BEFORE_SET_TRUNCATED' };
-    }
-    return expectation[key].includes(id)
-      ? { proven: false, reason: 'RECORD_PREDATES_THE_MARKER' }
+    const novel = setDigest(sorted.filter(other => other !== id)) === recorded
+      ? { proven: true }
+      : (expectation[`${key}_complete`] !== true || !Array.isArray(expectation[key]))
+        ? { proven: false, reason: 'BEFORE_SET_TRUNCATED' }
+        : expectation[key].includes(id)
+          ? { proven: false, reason: 'RECORD_PREDATES_THE_MARKER' }
+          : { proven: true };
+    if (!novel.proven) return novel;
+    return binding(id) === INPUT_BINDING.DIFFERS
+      ? { proven: false, reason: 'RECORD_ANSWERS_A_DIFFERENT_INPUT' }
       : { proven: true };
   };
 
@@ -754,6 +844,28 @@ export function createRunService({ canonical, projects, store, operations, seria
   };
 
   /**
+   * The state a reconciliation halt left on the run, cleared by settling it.
+   *
+   * An interrupted run halts on `RUN_RECONCILIATION_REQUIRED` and files a
+   * `RECONCILIATION_REQUIRED` request telling a reader to inspect the record
+   * and name what the step produced. Settling the step -- by finding the
+   * effect, by a reviewer naming it, or by establishing that it never landed
+   * -- answers exactly that question, so the halt, the blocker naming it and
+   * the request asking for it stop describing anything and are dropped.
+   *
+   * Only those are dropped. A readiness blocker is a fact about the song that
+   * a step recorded, not a fact about the interruption, so it survives
+   * untouched; an adopted Final then restores its own, read back from what it
+   * persisted.
+   */
+  const clearedReconciliationState = run => ({
+    halt: null,
+    needs_reconciliation: false,
+    blockers: (run.blockers ?? []).filter(code => code !== ERROR_CODES.RUN_RECONCILIATION_REQUIRED),
+    review_requests: (run.review_requests ?? []).filter(request => request.code !== RUN_REVIEW_REQUEST.RECONCILIATION_REQUIRED),
+  });
+
+  /**
    * The run-state transition an adopted artifact effect produces.
    *
    * One transition for both ways an artifact effect is settled — found by the
@@ -793,6 +905,11 @@ export function createRunService({ canonical, projects, store, operations, seria
       // run whose receipt arrived does — however it came to adopt the Final.
       changes.gates = restored.gates;
       changes.readiness_blockers = [...restored.readiness_blockers];
+      // The run's workflow blockers are what this Final says is unsatisfied,
+      // not what the interruption said. A recovered run that kept reporting
+      // `RUN_RECONCILIATION_REQUIRED` beside a restored Final would name a
+      // reconciliation nobody can perform, on a step that is settled.
+      changes.blockers = [...restored.readiness_blockers];
       if (restored.job_id) changes.job_ids = [...new Set([...run.job_ids, restored.job_id])];
     }
     if (expectation.artifact_type === FINAL_ARTIFACT_TYPE) changes.final_artifact_id = artifactId;
@@ -801,6 +918,25 @@ export function createRunService({ canonical, projects, store, operations, seria
       changes.state = RUN_STATE.COMPLETED;
     }
     return changes;
+  };
+
+  /**
+   * The input binding of a stored candidate, read against this expectation.
+   *
+   * Deliberately NOT folded into `candidateMatches`: the matcher defines the
+   * before-set, and a before-set narrowed by the binding would answer "was a
+   * record with my input already there" rather than "what was already there".
+   * Novelty and ownership stay two separate questions asked of the same set.
+   */
+  const candidateBinding = (record, expectation) => {
+    const byId = new Map(record.candidates.map(entry => [entry.candidate_id, entry]));
+    return id => inputBindingOf(expectation.effect_input_fingerprint, recordedBinding(byId.get(id)));
+  };
+
+  /** The input binding of a stored artifact, read against this expectation. */
+  const artifactBinding = (record, expectation) => {
+    const byId = new Map(record.artifacts.map(entry => [entry.artifact_id, entry]));
+    return id => inputBindingOf(expectation.effect_input_fingerprint, recordedBinding(byId.get(id)));
   };
 
   /** Every candidate that matches an expectation right now. */
@@ -861,7 +997,13 @@ export function createRunService({ canonical, projects, store, operations, seria
       // add a candidate from the same parent, and adopting whichever one
       // `find` reached would be guessing. An ambiguous answer is not an
       // answer, so it is reported as unconfirmable instead.
-      const settled = reconcileSet(expectation, 'known_candidate_ids', candidatesMatching(record, expectation));
+      // ...and then to what each of those records says it was applying. The
+      // before-set cannot tell this run's candidate from a candidate another
+      // caller applied from the same parent while this step was interrupted:
+      // both postdate the marker. The binding can, because the application
+      // that minted it recorded the input it was applying beside it.
+      const settled = reconcileSet(expectation, 'known_candidate_ids', candidatesMatching(record, expectation),
+        candidateBinding(record, expectation));
       if (settled.outcome === EFFECT.FOUND) return { outcome: EFFECT.FOUND, candidate_id: settled.id };
       return { ...settled, kind: 'candidate', candidate_ids: settled.ids };
     }
@@ -889,7 +1031,13 @@ export function createRunService({ canonical, projects, store, operations, seria
           ? { outcome: EFFECT.FOUND, artifact_id: owned[0] }
           : { outcome: EFFECT.ABSENT };
       }
-      const settled = reconcileSet(expectation, 'known_artifact_ids', matches);
+      //   binding    a Final's body names no run, and novelty alone does not
+      //              say whose Final it is: another run finalizing the same
+      //              candidate with different options also postdates the
+      //              marker. The filing recorded the input it was applying, so
+      //              a Final that answers other options is excluded rather
+      //              than adopted as this step's.
+      const settled = reconcileSet(expectation, 'known_artifact_ids', matches, artifactBinding(record, expectation));
       if (settled.outcome === EFFECT.FOUND) return { outcome: EFFECT.FOUND, artifact_id: settled.id };
       return { ...settled, kind: 'artifact', artifact_ids: settled.ids };
     }
@@ -920,9 +1068,17 @@ export function createRunService({ canonical, projects, store, operations, seria
    * The before-set is computed from the expectation itself, so a step cannot
    * record one filter and be matched by another.
    */
-  const candidateExpectation = (record, { parent, stage = null, planId = null }) => {
+  const candidateExpectation = (record, { parent, stage = null, planId = null, inputFingerprint = null }) => {
     const expectation = { kind: 'candidate', parent_candidate_id: parent ?? null, stage, plan_id: planId };
-    return { ...expectation, ...recordBeforeSet('known_candidate_ids', candidatesLike(record, expectation)) };
+    return {
+      ...expectation,
+      ...recordBeforeSet('known_candidate_ids', candidatesLike(record, expectation)),
+      // What this step was applying, for the record the effect will leave. The
+      // before-set is computed from the expectation WITHOUT it, so the binding
+      // narrows who may claim a novel record and never narrows what counts as
+      // already-there.
+      effect_input_fingerprint: inputFingerprint,
+    };
   };
 
   /**
@@ -1069,7 +1225,7 @@ export function createRunService({ canonical, projects, store, operations, seria
       asset_digests: selection.digests,
       meter_text_sha256: normalized.meter_text ? sha256Of(encoder.encode(normalized.meter_text)) : null,
       target_candidate_id: normalized.target_candidate_id,
-      decision_set_fingerprint: normalized.decisions === null ? null : digestOf(normalized.decisions),
+      decision_set_fingerprint: decisionStepFingerprint(normalized),
       reduction_fingerprint: normalized.final_reduction === null ? null : digestOf(normalized.final_reduction),
       adaptation_fingerprint: normalized.mobile_adaptation === null ? null : digestOf(normalized.mobile_adaptation),
       confirmation_fingerprint: normalized.confirmations === null ? null : digestOf(normalized.confirmations),
@@ -1369,20 +1525,24 @@ export function createRunService({ canonical, projects, store, operations, seria
         requests: [decisionsRequiredRequest(run)],
       });
     }
-    const fingerprint = digestOf(normalized.decisions);
+    const fingerprint = decisionStepFingerprint(normalized);
     const parent = run.candidate_id;
     const applied = await withEffect(owner, projectId, run, {
       step: RUN_STEP.APPLY_DECISIONS,
       inputFingerprint: fingerprint,
       // G11-D names no accepted plan, so the parent and the stage alone match
       // every sibling candidate applied earlier from the same parent. The
-      // before-set is what tells this step's candidate from those.
-      expectation: candidateExpectation(record, { parent }),
+      // before-set tells this step's candidate from those; the binding tells
+      // it from a candidate another caller applied from the same parent while
+      // this step was interrupted, which the before-set cannot -- both of them
+      // postdate the marker, and only one answers this decision set.
+      expectation: candidateExpectation(record, { parent, inputFingerprint: fingerprint }),
       apply: async () => {
         const result = await operations.applyDecisions(owner, projectId, {
           decisions: normalized.decisions,
           parentCandidateId: parent,
           acceptedBy: normalized.accepted_by,
+          inputFingerprint: fingerprint,
         });
         const decisions = result.decisions;
         if (!decisions.applied) {
@@ -1512,7 +1672,13 @@ export function createRunService({ canonical, projects, store, operations, seria
     const applied = await withEffect(owner, projectId, run, {
       step: RUN_STEP.FINAL_REDUCTION,
       inputFingerprint: fingerprint,
-      expectation: candidateExpectation(record, { parent, stage: REDUCTION_STAGE, planId: normalized.final_reduction.expected_plan_id }),
+      // The accepted plan id binds the decisions this reduction applies, so
+      // the parent, the stage and the plan already exclude another input's
+      // candidate. The binding is recorded anyway, because the plan id is the
+      // reviewer's *statement* of the input and this is the input the step
+      // actually executed: one rule for every candidate-minting step, so none
+      // of them rests on an argument about why it is the exception.
+      expectation: candidateExpectation(record, { parent, stage: REDUCTION_STAGE, planId: normalized.final_reduction.expected_plan_id, inputFingerprint: fingerprint }),
       apply: async () => {
         const result = await operations.applyFinalReduction(owner, projectId, {
           candidateId: parent,
@@ -1520,6 +1686,7 @@ export function createRunService({ canonical, projects, store, operations, seria
           expectedPlanId: normalized.final_reduction.expected_plan_id,
           acceptedBy: normalized.final_reduction.accepted_by,
           instrumentProfile: normalized.final_reduction.instrument_profile,
+          inputFingerprint: fingerprint,
         });
         const reduction = result.reduction;
         if (!reduction.applied) {
@@ -1606,13 +1773,14 @@ export function createRunService({ canonical, projects, store, operations, seria
     const applied = await withEffect(owner, projectId, run, {
       step: RUN_STEP.MOBILE_ADAPTATION,
       inputFingerprint: fingerprint,
-      expectation: candidateExpectation(record, { parent, stage: ADAPTATION_STAGE, planId: normalized.mobile_adaptation.expected_plan_id }),
+      expectation: candidateExpectation(record, { parent, stage: ADAPTATION_STAGE, planId: normalized.mobile_adaptation.expected_plan_id, inputFingerprint: fingerprint }),
       apply: async () => {
         const result = await operations.applyMobileAdaptation(owner, projectId, {
           candidateId: parent,
           profile: normalized.mobile_adaptation.profile,
           expectedPlanId: normalized.mobile_adaptation.expected_plan_id,
           acceptedBy: normalized.mobile_adaptation.accepted_by,
+          inputFingerprint: fingerprint,
         });
         const adaptation = result.adaptation;
         if (!adaptation.applied) {
@@ -1736,19 +1904,24 @@ export function createRunService({ canonical, projects, store, operations, seria
 
   async function finalizeStep(owner, projectId, record, run, normalized) {
     const candidateId = run.candidate_id;
-    const options = normalized.finalize ?? run.inputs.finalize_options ?? { technical_timing_repair: false, pickup: null, final_partial: null };
-    const fingerprint = digestOf({ candidate_id: candidateId, options });
+    const options = finalizeOptionsOf(run, normalized);
+    const fingerprint = finalizeStepFingerprint(candidateId, options);
     const finalsBefore = artifactsLike(record, candidateId, FINAL_ARTIFACT_TYPE);
     const applied = await withEffect(owner, projectId, run, {
       step: RUN_STEP.FINALIZE,
       inputFingerprint: fingerprint,
       // A Final artifact body carries no run id, so the before-set is what
-      // tells this run's Final apart from one that was already there.
+      // tells this run's Final apart from one that was already there -- and
+      // the binding is what tells it from a Final filed for the same candidate
+      // since, under other options. Novelty alone would adopt that one and
+      // report a run's stated repair, pickup and final partial over a Final
+      // emitted under none of them.
       expectation: {
         kind: 'artifact',
         candidate_id: candidateId,
         artifact_type: FINAL_ARTIFACT_TYPE,
         ...recordBeforeSet('known_artifact_ids', finalsBefore),
+        effect_input_fingerprint: fingerprint,
       },
       apply: async () => {
         const result = await operations.finalize(owner, projectId, {
@@ -1758,6 +1931,7 @@ export function createRunService({ canonical, projects, store, operations, seria
           technicalTimingRepair: options.technical_timing_repair === true,
           pickup: options.pickup,
           finalPartial: options.final_partial,
+          inputFingerprint: fingerprint,
         });
         const delivered = result.operation === OPERATION_STATUS.SUCCEEDED && result.artifact_id !== null;
         const requests = delivered ? [] : [
@@ -1913,6 +2087,30 @@ export function createRunService({ canonical, projects, store, operations, seria
     confirmation_fingerprint: run.inputs.confirmation_fingerprint ?? null,
   });
 
+  /**
+   * The APPLY_DECISIONS step's input identity: the decision set AND the
+   * reviewer the run named for it.
+   *
+   * One helper, used by every site that asks "is this the same decision step":
+   * the input the run records at start, the input a resume replaces, the
+   * fingerprint the marker and the receipt carry, the rerun decision, and the
+   * binding the minted candidate is recovered by. A top-level `accepted_by` is
+   * part of the input and not decoration: `applyDecisions` resolves each
+   * decision's reviewer as `decision.acceptedBy ?? accepted_by`, so the same
+   * decisions under a different named reviewer are a different acceptance and
+   * produce a different candidate. Four subtly different fingerprints for one
+   * step is how a step re-runs on an input it already applied, or skips one it
+   * has not.
+   */
+  const decisionStepFingerprint = ({ decisions, accepted_by: acceptedBy = null }) => (decisions === null || decisions === undefined
+    ? null
+    : digestOf({ decisions, accepted_by: acceptedBy ?? null }));
+
+  /** The FINALIZE step's input identity: the candidate and the emit options. */
+  const FINALIZE_DEFAULT_OPTIONS = Object.freeze({ technical_timing_repair: false, pickup: null, final_partial: null });
+  const finalizeOptionsOf = (run, normalized) => normalized.finalize ?? run.inputs.finalize_options ?? FINALIZE_DEFAULT_OPTIONS;
+  const finalizeStepFingerprint = (candidateId, options) => digestOf({ candidate_id: candidateId, options });
+
   /** The intake step's input identity: the selected assets and the meter map. */
   const intakeFingerprint = run => digestOf({
     asset_digests: run.inputs.asset_digests ?? [],
@@ -1933,11 +2131,11 @@ export function createRunService({ canonical, projects, store, operations, seria
       // Intake's inputs are the selected assets AND the meter map an MML source
       // is parsed against, which is exactly what its receipt fingerprinted.
       if (name === RUN_STEP.INTAKE) return receipt.input_fingerprint !== intakeFingerprint(run);
-      if (name === RUN_STEP.APPLY_DECISIONS) return Boolean(normalized.decisions?.length) && receipt.input_fingerprint !== digestOf(normalized.decisions);
+      if (name === RUN_STEP.APPLY_DECISIONS) return Boolean(normalized.decisions?.length) && receipt.input_fingerprint !== decisionStepFingerprint(normalized);
       if (name === RUN_STEP.FINAL_REDUCTION) return Boolean(normalized.final_reduction) && receipt.input_fingerprint !== digestOf(normalized.final_reduction);
       if (name === RUN_STEP.MOBILE_ADAPTATION) return Boolean(normalized.mobile_adaptation) && receipt.input_fingerprint !== digestOf(normalized.mobile_adaptation);
       if (name === RUN_STEP.REVIEW) return receipt.input_fingerprint !== reviewFingerprint(run);
-      if (name === RUN_STEP.FINALIZE) return receipt.input_fingerprint !== digestOf({ candidate_id: run.candidate_id, options: normalized.finalize ?? run.inputs.finalize_options ?? { technical_timing_repair: false, pickup: null, final_partial: null } });
+      if (name === RUN_STEP.FINALIZE) return receipt.input_fingerprint !== finalizeStepFingerprint(run.candidate_id, finalizeOptionsOf(run, normalized));
       // Derived from what the step produced rather than from the run's
       // lifecycle state: a step that runs later in the same advancement resets
       // the state to `running`, and keying the report on that would file a
@@ -2062,7 +2260,7 @@ export function createRunService({ canonical, projects, store, operations, seria
       // what it persisted, never re-derived by running the operation again.
       // An artifact effect goes through the same transition a reviewer-named
       // one does; only the recorded reason differs.
-      const changes = adoption ?? {
+      const changes = { ...clearedReconciliationState(run), ...(adoption ?? {
           pending_step: null,
           needs_reconciliation: false,
           steps: appendStep(run, stepReceipt({
@@ -2072,7 +2270,7 @@ export function createRunService({ canonical, projects, store, operations, seria
             resultReference: found.candidate_id ?? found.baseline_id ?? null,
             detail: { reconciled: true, reason: 'EFFECT_FOUND_BY_STORED_IDENTITY', expectation },
           })),
-        };
+        }) };
       if (found.baseline_id) {
         // An adopted intake is the same event as an intake that returned its
         // receipt, so it leaves the run in the same state. `intake.run`
@@ -2100,11 +2298,13 @@ export function createRunService({ canonical, projects, store, operations, seria
         halted: false,
       };
     }
-    // EFFECT_ABSENT: the record positively shows the effect never landed.
+    // EFFECT_ABSENT: the record positively shows the effect never landed. That
+    // is an answer to the reconciliation too, so a run that was halted asking
+    // for one stops asking: the step simply runs.
     return {
       run: bumpRun(owner, projectId, run, {
+        ...clearedReconciliationState(run),
         pending_step: null,
-        needs_reconciliation: false,
         steps: (run.steps ?? []).filter(entry => entry.step !== pending.step),
       }),
       halted: false,
@@ -2367,7 +2567,7 @@ export function createRunService({ canonical, projects, store, operations, seria
       inputs.asset_digests = selection.digests;
     }
     if (normalized.meter_text) inputs.meter_text_sha256 = sha256Of(encoder.encode(normalized.meter_text));
-    if (normalized.decisions !== null) inputs.decision_set_fingerprint = digestOf(normalized.decisions);
+    if (normalized.decisions !== null) inputs.decision_set_fingerprint = decisionStepFingerprint(normalized);
     if (normalized.final_reduction !== null) inputs.reduction_fingerprint = digestOf(normalized.final_reduction);
     if (normalized.mobile_adaptation !== null) inputs.adaptation_fingerprint = digestOf(normalized.mobile_adaptation);
     if (normalized.confirmations !== null) inputs.confirmation_fingerprint = digestOf(normalized.confirmations);
@@ -2435,12 +2635,17 @@ export function createRunService({ canonical, projects, store, operations, seria
         // marker was written cannot be what this step produced, and an artifact
         // whose novelty the stored before-set cannot establish is refused
         // rather than accepted on the caller's word.
-        const novel = namedRecordIsNovel(expectation, 'known_artifact_ids', artifactsMatching(record, expectation), entry.artifact_id);
+        const novel = namedRecordIsThisEffect(expectation, 'known_artifact_ids', artifactsMatching(record, expectation), entry.artifact_id,
+          artifactBinding(record, expectation));
         if (!novel.proven) {
           fail(ERROR_CODES.INVALID_REQUEST, novel.reason === 'RECORD_PREDATES_THE_MARKER'
             ? 'The artifact to adopt already existed when this step was marked pending, so it cannot be what this step produced.'
-            : 'Whether this artifact postdates the pending step cannot be established from what the marker recorded, so it is not adopted on request either.', {
+            : novel.reason === 'RECORD_ANSWERS_A_DIFFERENT_INPUT'
+              ? 'The artifact to adopt records the finalize options it was emitted under, and they are not the ones this step was executing, so it is another finalize\'s Final and not this step\'s output. Resume with the options it was emitted under, or let the step run.'
+              : 'Whether this artifact postdates the pending step cannot be established from what the marker recorded, so it is not adopted on request either.', {
             artifact_id: entry.artifact_id, step: pending.step, marked_at: pending.at, reason: novel.reason,
+            expected_input_fingerprint: expectation.effect_input_fingerprint ?? null,
+            artifact_input_fingerprint: recordedBinding(entry) ?? null,
             known_artifact_ids: expectation.known_artifact_ids,
             known_artifact_ids_complete: expectation.known_artifact_ids_complete ?? null,
           });
@@ -2464,6 +2669,10 @@ export function createRunService({ canonical, projects, store, operations, seria
       const replaced = replacesIdentity(run, adopted);
       return {
         ...changes,
+        // Naming the record this step produced answers the reconciliation, so
+        // the halt, the blocker and the request that asked for it are dropped
+        // before the adoption's own state is applied over them.
+        ...clearedReconciliationState(run),
         ...adopted,
         ...(replaced ? invalidateDownstream(run, pending.step, adopted.steps, { clearGates: replaced !== 'final' }) : {}),
       };
@@ -2512,12 +2721,17 @@ export function createRunService({ canonical, projects, store, operations, seria
         // may write a receipt saying the effect happened. A candidate that was
         // already there when the marker was written cannot be this step's
         // output, so naming it is refused rather than recorded as the effect.
-        const novel = namedRecordIsNovel(run.pending_step.expectation, 'known_candidate_ids', candidatesMatching(record, run.pending_step.expectation), adopted.candidate_id);
+        const novel = namedRecordIsThisEffect(run.pending_step.expectation, 'known_candidate_ids', candidatesMatching(record, run.pending_step.expectation), adopted.candidate_id,
+          candidateBinding(record, run.pending_step.expectation));
         if (!novel.proven) {
           fail(ERROR_CODES.INVALID_REQUEST, novel.reason === 'RECORD_PREDATES_THE_MARKER'
             ? 'The candidate to adopt already existed when this step was marked pending, so it cannot be what this step produced. Resume without adopt_candidate_id to let the step run, or name the candidate this step actually produced.'
-            : 'Whether this candidate postdates the pending step cannot be established from what the marker recorded, so it is not adopted on request either.', {
+            : novel.reason === 'RECORD_ANSWERS_A_DIFFERENT_INPUT'
+              ? 'The candidate to adopt records the input it was applied from, and it is not the one this step was executing, so it is another application\'s candidate and not this step\'s output. Resume with the input it was applied under, or let the step run.'
+              : 'Whether this candidate postdates the pending step cannot be established from what the marker recorded, so it is not adopted on request either.', {
             candidate_id: adopted.candidate_id, step: run.pending_step.step, marked_at: run.pending_step.at, reason: novel.reason,
+            expected_input_fingerprint: run.pending_step.expectation.effect_input_fingerprint ?? null,
+            candidate_input_fingerprint: recordedBinding(adopted) ?? null,
             known_candidate_ids: run.pending_step.expectation.known_candidate_ids,
             known_candidate_ids_complete: run.pending_step.expectation.known_candidate_ids_complete ?? null,
           });
@@ -2529,8 +2743,8 @@ export function createRunService({ canonical, projects, store, operations, seria
           resultReference: adopted.candidate_id,
           detail: { reconciled: true, reason: 'EFFECT_NAMED_BY_REVIEWER', expectation: run.pending_step.expectation },
         })];
+        Object.assign(changes, clearedReconciliationState(run));
         changes.pending_step = null;
-        changes.needs_reconciliation = false;
       }
       changes.steps = steps;
       changes.gates = null;
