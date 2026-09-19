@@ -410,3 +410,42 @@ test('the same idempotency key replays a proposal rather than storing a second o
   );
   assert.equal((await app.listProposals(OWNER, context.fixture.projectId)).proposals.length, 1);
 });
+
+test('a keyed retry still replays once the run has moved, which is when a retry happens', async () => {
+  // The case an idempotency key exists for is the one where the response was
+  // lost, and by the time the agent retries, the thing it was answering has
+  // often moved -- frequently *because* of the request it is retrying.
+  //
+  // The run's own resume decides idempotency BEFORE its revision precondition
+  // and says why in as many words. This did the opposite: it resolved the run
+  // and the request key first, so a same-key, same-payload retry arriving after
+  // any advancement was answered `REQUEST_NO_LONGER_OPEN` -- exactly the
+  // request the key exists to answer -- and the documented replay path could
+  // not be reached at all.
+  const app = createStudioApplication({});
+  const context = await prepared(app);
+  const input = base(context, { idempotency_key: 'agent-attempt-1' });
+
+  const first = await app.proposeDecision(OWNER, context.fixture.projectId, input);
+  assert.equal(first.replayed, false);
+
+  // Somebody advances the run, which closes the request this proposal answers.
+  await app.resumeRun(OWNER, context.fixture.projectId, context.run.run_id, {
+    decisions: runDecisionsFor(context.fixture.project, { acceptedBy: RUN_REVIEWER }), accepted_by: RUN_REVIEWER,
+  });
+
+  const replay = await app.proposeDecision(OWNER, context.fixture.projectId, input);
+  assert.equal(replay.replayed, true, 'the key is bound to this payload and must replay');
+  assert.equal(replay.proposal.proposal_id, first.proposal.proposal_id);
+  assert.equal((await app.listProposals(OWNER, context.fixture.projectId)).proposals.length, 1, 'and nothing was stored twice');
+  // The stored record comes back as it stands, with its verdict recomputed
+  // against what is stored NOW -- which is stale, and says so.
+  assert.equal(replay.proposal.agent_review.verdict, 'STALE');
+  assert.equal(replay.proposal.agent_review.acceptable, false);
+
+  // A different payload on that key is still refused, after the move as before.
+  await assert.rejects(
+    app.proposeDecision(OWNER, context.fixture.projectId, base(context, { idempotency_key: 'agent-attempt-1', rationale: 'Something else.' })),
+    error => error.code === 'IDEMPOTENCY_CONFLICT',
+  );
+});

@@ -356,6 +356,71 @@ test('a stored binding that predates the snapshot field is not a binding to ever
   });
 });
 
+test('a proposal is not stored bound to a run that moved while it was being prepared', async () => {
+  // `propose` reads the run, builds the binding and runs the Agent Review
+  // Policy all BEFORE it takes the project lock -- deliberately, because the
+  // policy resolves citations through the Canonical engines and holding the
+  // lock across a score decode would shut out every other writer.
+  //
+  // Nothing re-read the run once the lock was taken. So a resume committing in
+  // that window left the proposal stored against a revision and a request that
+  // had both moved, while the answer handed back said
+  // REQUIRES_EXPLICIT_ACCEPTANCE -- born stale, and told otherwise. The very
+  // next read of the same record said STALE.
+  //
+  // The interleave is deterministic rather than timed: the engine call the
+  // citation resolution makes is wrapped, and it commits the resume from inside
+  // that call, so the resume reaches the serializer first by construction.
+  let app = null;
+  let armed = false;
+  let raced = null;
+  let context = null;
+
+  app = createStudioApplication({
+    loadEngines: enginesWith(engines => ({
+      arrangement: {
+        ...engines.arrangement,
+        baselineIdentityOf: project => {
+          const identity = engines.arrangement.baselineIdentityOf(project);
+          if (armed) {
+            armed = false;
+            raced = app.resumeRun(OWNER, context.fixture.projectId, context.run.run_id, {
+              decisions: runDecisionsFor(context.fixture.project, { acceptedBy: RUN_REVIEWER }),
+              accepted_by: RUN_REVIEWER,
+            });
+          }
+          return identity;
+        },
+      },
+    })),
+  });
+
+  const fixture = await projectWithSymbolicAsset(app, OWNER);
+  const started = await app.startRun(OWNER, fixture.projectId, { asset_ids: [fixture.assetId] });
+  const targets = await app.proposalTargets(OWNER, fixture.projectId, started.run.run_id);
+  const target = targets.targets.find(entry => entry.admissible_kinds.includes(PROPOSAL_KIND.ARRANGEMENT_DECISION));
+  const events = await app.listBaselineEvents(OWNER, fixture.projectId, { limit: 3 });
+  context = { fixture, run: started.run };
+
+  armed = true;
+  const submitted = await app.proposeDecision(OWNER, fixture.projectId, {
+    run_id: started.run.run_id,
+    request_key: target.request_key,
+    kind: PROPOSAL_KIND.ARRANGEMENT_DECISION,
+    proposed_by: AGENT,
+    rationale: 'Keep every source-supported role.',
+    action: { decisions: proposable(fixture.project) },
+    cites: { event_ids: events.events.map(entry => entry.event_id) },
+  }).then(result => ({ ok: true, result }), error => ({ ok: false, error }));
+  await raced;
+  assert.ok(raced, 'the interleave must actually have fired');
+
+  // Refused, rather than stored bound to material that had already moved.
+  assert.equal(submitted.ok, false, 'a submission whose run moved under it must not be stored');
+  assert.equal(submitted.error.code, 'RUN_CONFLICT');
+  assert.equal((await app.listProposals(OWNER, fixture.projectId)).proposals.length, 0, 'and nothing was stored');
+});
+
 // ─── D. the run is not a place a proposal may be applied ────────────────────
 
 test('a completed run is audit-closed and accepts no proposal', async () => {

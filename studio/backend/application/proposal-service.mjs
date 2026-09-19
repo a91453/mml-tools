@@ -1090,6 +1090,51 @@ export function createProposalService({ canonical, projects, store, operations, 
       const normalized = normalizeProposeInput(input);
       const provenance = await canonical.provenance();
 
+      // What a key is bound to, computed from the caller's own normalized
+      // request and from nothing this service has to look up. That it needs no
+      // lookup is what lets the replay be decided first, below.
+      const fingerprint = digestOf({
+        run_id: normalized.run_id, request_key: normalized.request_key, kind: normalized.kind,
+        action: normalized.action, rationale: normalized.rationale, cites: normalized.cites,
+        unresolved_conflicts: normalized.unresolved_conflicts, missing_evidence: normalized.missing_evidence,
+        canonical_warnings: normalized.canonical_warnings, proposed_by: normalized.proposed_by,
+      });
+
+      // ── the replay is decided FIRST, and on its own.
+      //
+      // `runs.resume` decides idempotency before its revision precondition and
+      // says why at length: a request that succeeded advances the run, so the
+      // network retry of that exact request arrives with a precondition that is
+      // stale by construction. The same is true here and it is worse, because
+      // what this layer resolves first is not a revision but the REQUEST -- and
+      // the request a proposal answers is closed by the very advancement the
+      // proposal caused. Resolving it first answered REQUEST_NO_LONGER_OPEN to
+      // exactly the retry the key exists to answer, so the documented replay
+      // path could not be reached once anything had moved.
+      //
+      // Nothing is taken on trust: the key must still be bound to this payload,
+      // and what comes back is the STORED record with its verdict recomputed
+      // against what is stored now -- which is how a reader learns it is stale.
+      if (normalized.idempotency_key !== null) {
+        const bound = await serialize(String(projectId), async () =>
+          proposalsOf(projects.load(owner, projectId)).find(entry => entry.idempotency?.key === normalized.idempotency_key) ?? null);
+        if (bound) {
+          if (bound.idempotency.request_fingerprint !== fingerprint) {
+            fail(ERROR_CODES.IDEMPOTENCY_CONFLICT, 'This idempotency key is already bound to a different proposal payload. Use a new key, or resend the original payload.', {
+              proposal_id: bound.proposal_id,
+              bound_request_fingerprint: bound.idempotency.request_fingerprint,
+              received_request_fingerprint: fingerprint,
+            });
+          }
+          return Object.freeze({
+            proposal: proposalView(bound, await agentReview(owner, projects.load(owner, projectId), bound, provenance)),
+            replayed: true,
+            applied: false,
+            notice: 'This idempotency key is already bound to this proposal and this payload, so nothing was stored again. The proposal is returned as it stands, with its verdict recomputed against what is stored now.',
+          });
+        }
+      }
+
       // The citations are resolved BEFORE the lock, because resolving them
       // reads the baseline through the Canonical engines and a lock held
       // across that would shut out every other writer on this project for the
@@ -1157,12 +1202,9 @@ export function createProposalService({ canonical, projects, store, operations, 
         },
       };
 
-      const fingerprint = digestOf({
-        run_id: proposal.run_id, request_key: proposal.binding.request_key, kind: proposal.kind,
-        action: proposal.action, rationale: proposal.rationale, cites: proposal.cites,
-        unresolved_conflicts: proposal.unresolved_conflicts, missing_evidence: proposal.missing_evidence,
-        canonical_warnings: proposal.canonical_warnings, proposed_by: proposal.proposed_by,
-      });
+      // Computed above, from the same values: `findRun` matched this run_id and
+      // `requestsMatching` filtered on this request_key, so the record's copies
+      // and the caller's are the same strings by construction.
       proposal.idempotency.request_fingerprint = fingerprint;
 
       // Measured on the record as it will be STORED, after normalization, so
@@ -1197,6 +1239,9 @@ export function createProposalService({ canonical, projects, store, operations, 
 
       const stored = await serialize(String(projectId), async () => {
         const current = projects.load(owner, projectId);
+        // Still first, for the caller whose two attempts are genuinely
+        // concurrent rather than sequential: the replay decided before the run
+        // was resolved cannot see a record another caller is still storing.
         if (normalized.idempotency_key !== null) {
           const existing = proposalsOf(current).find(entry => entry.idempotency?.key === normalized.idempotency_key);
           if (existing) {
@@ -1210,6 +1255,34 @@ export function createProposalService({ canonical, projects, store, operations, 
             return { proposal: existing, replayed: true };
           }
         }
+        // ── the binding must still be the binding.
+        //
+        // Everything this proposal is bound to was read before this lock, and
+        // the policy verdict about to be returned was computed against it --
+        // through the Canonical engines, which is not quick. A resume that
+        // commits in that window leaves the record bound to a revision and a
+        // request that have both moved, and the answer handed back still says
+        // REQUIRES_EXPLICIT_ACCEPTANCE. The proposal is born stale and its own
+        // response says otherwise, which is the one thing this protocol takes
+        // care never to do; the very next read of it disagrees with the call
+        // that created it.
+        //
+        // So it is re-read here, where it is cheap: no engine work, just the
+        // record and a comparison of the binding against the one prepared.
+        // Refused rather than stored-and-marked-stale, because the caller's
+        // remedy is the same either way and a refusal cannot be misread.
+        const currentRun = findRun(current, normalized.run_id);
+        const stillOpen = requestsMatching(currentRun, normalized.request_key);
+        if (stillOpen.length !== 1 || digestOf(bindingOf(currentRun, stillOpen[0], provenance)) !== digestOf(proposal.binding)) {
+          fail(ERROR_CODES.RUN_CONFLICT, 'The run moved while this proposal was being prepared, so the request it answers is no longer the request it was written against. Re-read the run and submit against the request it is making now.', {
+            run_id: currentRun.run_id,
+            request_key: normalized.request_key,
+            prepared_run_revision: proposal.binding.run_revision,
+            current_run_revision: currentRun.revision,
+            open_request_keys: openRequests(currentRun).map(entry => entry.request_key),
+          });
+        }
+
         // Two caps, and they mean different things.
         //
         // The open cap is the one a caller can act on, and counting only the
