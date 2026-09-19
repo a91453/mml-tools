@@ -1301,6 +1301,7 @@ export function createProposalService({ canonical, projects, store, operations, 
             application,
           }),
           accepted: true,
+          retry: alreadyAccepted,
           review,
         };
       });
@@ -1333,7 +1334,25 @@ export function createProposalService({ canonical, projects, store, operations, 
         resumed = await runs.resume(owner, projectId, prepared.proposal.run_id, {
           ...translated.input,
           idempotency_key: application.idempotency_key,
-          expected_run_revision: application.expected_run_revision,
+          // The revision precondition belongs to the FIRST attempt and only to
+          // it. On a retry it asks the wrong question and asks it fatally.
+          //
+          // `resume` bumps the run's revision in its own first lock hold,
+          // before any step runs, and writes the idempotency receipt in a last
+          // hold after every step has finished. So for the whole duration of an
+          // advancement the run has moved and the key is unbound -- and a crash
+          // in that window left a retry carrying the pre-bump revision, which
+          // could then never match. The acceptance was recorded, the work may
+          // well have landed, and the one mechanism built to finish it could
+          // never succeed: the proposal was stuck `accepted` for good.
+          //
+          // Dropping it on a retry is not dropping the guard. The receipt is
+          // checked FIRST, so a run that did apply this replays it; and where
+          // there is no receipt, `resume` re-validates every binding at every
+          // step and holds an unsettled effect rather than replaying it. That
+          // machinery is strictly more thorough than a revision number, and it
+          // is the same reasoning that lets a retry skip the policy gate.
+          ...(prepared.retry ? {} : { expected_run_revision: application.expected_run_revision }),
         });
       } catch (error) {
         failure = { code: error?.code ?? ERROR_CODES.INVALID_REQUEST, message: String(error?.message ?? error).slice(0, 500), details: error?.details ?? {} };
@@ -1363,6 +1382,10 @@ export function createProposalService({ canonical, projects, store, operations, 
             run_state_after: resumed.run.state,
             candidate_id_after: resumed.run.candidate_id ?? null,
             replayed: resumed.replayed === true,
+            // Whether this acceptance completed on its first attempt or on a
+            // retry after an interruption. A reader of the record should not
+            // have to infer which from a timestamp.
+            settled_on_retry: prepared.retry === true,
           },
         });
       });

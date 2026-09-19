@@ -388,11 +388,29 @@ is therefore
 The window in the middle is closed with what Phase 1 already built rather than a
 second mechanism:
 
-* a crash between 1 and 2, or between 2 and 3, leaves the proposal `accepted`,
+* a crash between 1 and 2, or anywhere inside 2, leaves the proposal `accepted`,
   and retrying re-issues the **same** key — so a run that already applied it
   replays its own receipt instead of applying anything twice;
 * a concurrent writer that advanced the run in the window fails the revision
   precondition, so the acceptance is not applied to material it never saw.
+
+**The revision precondition belongs to the first attempt, and only to it.**
+`resume` bumps the run's revision in its own first lock hold, before any step
+runs, and writes the idempotency receipt in a last hold after every step has
+finished. So for the whole duration of an advancement the run has moved and the
+key is unbound — and a retry carrying the pre-bump revision as a precondition
+could never match. The acceptance was recorded, the work may well have landed,
+and the one mechanism built to finish it was the one thing that could not: the
+proposal stuck `accepted` for good. An adversarial pass found that, and the
+precondition is now sent on the first attempt only.
+
+Dropping it on a retry is not dropping the guard. The receipt is checked
+*first*, so a run that did apply this replays it; and where there is no receipt,
+`resume` re-validates every binding at every step and holds an unsettled effect
+rather than replaying it. That machinery is strictly more thorough than a
+revision number, and it is the same reasoning that lets a retry skip the policy
+gate. A regression drives all three interruption classes and requires the retry
+to complete with exactly one candidate for one acceptance.
 
 **A retry does not re-litigate the acceptance.** An acceptance is a recorded past
 act; a crash between it and its application advances the run, which makes the

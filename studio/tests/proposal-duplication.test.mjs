@@ -166,20 +166,57 @@ test('a crash between the acceptance and its application leaves the proposal acc
       assert.equal(finalCandidates.length, 1, 'the effect that landed was adopted, not repeated');
       assert.equal(finalCandidates[0].candidate_id, afterCrash[0].candidate_id, 'and it is the same one');
     }
-    // Either the retry completed the application, or it reported a real
-    // blocker. What it must never do is silently claim success while the run
-    // is somewhere else, so whichever happened is on the proposal's record.
+    // The retry COMPLETES. It used not to, and the reason is worth keeping:
+    // `resume` bumps the run's revision in its first lock hold, before any step
+    // runs, and writes the idempotency receipt only in a last hold after every
+    // step has finished. So for the whole duration of an advancement the run
+    // has moved and the key is unbound, and a retry carrying the pre-bump
+    // revision as a precondition could never match. The acceptance was
+    // recorded, the work had landed, and the one mechanism built to finish it
+    // was the one thing that could not: the proposal stuck `accepted` for good.
+    // An adversarial pass found that; the precondition now belongs to the first
+    // attempt only.
+    assert.ok(retry.ok, `the retry must complete, got ${retry.error?.code}: ${retry.error?.message}`);
     const settled = await restarted.getProposal(OWNER, context.fixture.projectId, context.proposal.proposal_id);
-    if (retry.ok) {
-      assert.equal(settled.proposal.state, PROPOSAL_STATE.APPLIED);
-      assert.equal(settled.proposal.application.conflict, null);
-      assert.equal(settled.proposal.application.run_revision_after, retry.result.run.revision);
-    } else {
-      assert.equal(settled.proposal.state, PROPOSAL_STATE.ACCEPTED);
-      assert.ok(settled.proposal.application.conflict, 'the blocker is recorded, not swallowed');
-      assert.match(retry.error.details.notice, /Nothing was applied twice/);
-    }
+    assert.equal(settled.proposal.state, PROPOSAL_STATE.APPLIED);
+    assert.equal(settled.proposal.application.conflict, null);
+    assert.equal(settled.proposal.application.run_revision_after, retry.result.run.revision);
+    assert.equal(settled.proposal.application.settled_on_retry, true, 'and the record says which attempt settled it');
   });
+});
+
+test('an interruption at any of the three points still ends with one application, and a finishable proposal', async () => {
+  // The three interruption classes the run's own durability regressions use.
+  // For each: the acceptance is recorded, the retry completes, and exactly one
+  // candidate exists for one acceptance.
+  for (const hook of ['beforeEffect', 'afterEffect', 'beforeResponse']) {
+    await withDirectory(async directory => {
+      const app = createStudioApplication({ dataDirectory: directory, durability: 'persistent' });
+      const context = await submitted(app);
+
+      const interrupted = createStudioApplication({
+        dataDirectory: directory,
+        durability: 'persistent',
+        runHooks: { [hook]: ({ step }) => { if (step === RUN_STEP.APPLY_DECISIONS) throw Error(`stopped at ${hook}`); } },
+      });
+      await interrupted.resolveProposal(OWNER, context.fixture.projectId, context.proposal.proposal_id, {
+        resolution: 'accept', accepted_by: RUN_REVIEWER,
+      }).then(() => assert.fail(`the injected fault at ${hook} must propagate`), error => error);
+
+      const restarted = createStudioApplication({ dataDirectory: directory, durability: 'persistent' });
+      const mid = await restarted.getProposal(OWNER, context.fixture.projectId, context.proposal.proposal_id);
+      assert.equal(mid.proposal.state, PROPOSAL_STATE.ACCEPTED, `${hook}: accepted, not applied`);
+
+      const retry = await restarted.resolveProposal(OWNER, context.fixture.projectId, context.proposal.proposal_id, {
+        resolution: 'accept', accepted_by: RUN_REVIEWER,
+      }).then(result => ({ ok: true, result }), error => ({ ok: false, error }));
+      assert.ok(retry.ok, `${hook}: the retry must complete, got ${retry.error?.code}: ${retry.error?.message}`);
+
+      const candidates = await candidatesOf(restarted, context.fixture.projectId);
+      assert.equal(candidates.length, 1, `${hook}: exactly one candidate for one acceptance, got ${candidates.length}`);
+      assert.equal((await restarted.getProposal(OWNER, context.fixture.projectId, context.proposal.proposal_id)).proposal.state, PROPOSAL_STATE.APPLIED, hook);
+    });
+  }
 });
 
 test('a rejection after an acceptance is refused, because the run may already have it', async () => {
