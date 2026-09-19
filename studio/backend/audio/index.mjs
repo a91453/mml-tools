@@ -43,6 +43,14 @@ export function validateAudioAlignmentReport(report, project) {
   if (confidence < 0.55) warnings.push('LOW_ALIGNMENT_CONFIDENCE');
   if (scoreCoverage < 0.90) warnings.push('LOW_SCORE_FRAME_COVERAGE');
   if (audioCoverage < 0.60) warnings.push('LOW_AUDIO_FRAME_COVERAGE');
+  // DTW can cover every frame while collapsing distinct beats onto the same
+  // recording instant. Confidence/coverage alone then hide a degenerate time
+  // map. Preserve it as diagnostic evidence, but keep the existing audio gate
+  // pending; no tempo threshold or symbolic correction is inferred here.
+  if (points.some((point, index) => index > 0
+    && point.beat > points[index - 1].beat && point.seconds === points[index - 1].seconds)) {
+    warnings.push('COLLAPSED_ALIGNMENT_INTERVAL');
+  }
 
   return Object.freeze({
     valid: true,

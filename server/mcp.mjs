@@ -181,6 +181,40 @@ function mcpToolsFor(context) {
   return context.application ? [...MCP_TOOLS, ...STUDIO_MCP_TOOLS] : MCP_TOOLS;
 }
 
+// A response cap is checked AFTER dispatch. A write may already have landed,
+// so preserve bounded recovery coordinates rather than suggesting a new write.
+// No report rows, source prose or arbitrary internal fields enter this envelope.
+function oversizedResultDetails(tool, args, data, responseBytes) {
+  const objects = [data, data?.run, data?.proposal, data?.artifact, data?.job, data?.project,
+    data?.decisions, data?.reduction, data?.adaptation, data?.suggestion, args];
+  const result_references = {};
+  for (const [key, pattern] of Object.entries({
+    project_id: /^prj_[0-9a-f]{32}$/, run_id: /^run_[0-9a-f]{32}$/,
+    proposal_id: /^pro_[0-9a-f]{32}$/, artifact_id: /^art_[0-9a-f]{64}$/,
+    candidate_id: /^g11d:rev:[0-9a-f]{64}$/, baseline_id: /^bas:[0-9a-f]{64}$/,
+    job_id: /^job_[0-9a-f]{32}$/,
+  })) {
+    const value = objects.map(object => object?.[key]).find(value => typeof value === 'string' && pattern.test(value));
+    if (value) result_references[key] = value;
+  }
+  const { project_id, run_id, proposal_id, artifact_id, job_id } = result_references;
+  const recovery_reads = [];
+  const add = (path, name, arguments_) => recovery_reads.push({ method: 'GET', path, mcp: { name, arguments: arguments_ } });
+  if (project_id && run_id) add(`/api/v1/projects/${project_id}/runs/${run_id}`, 'studio_run_status', { project_id, run_id });
+  if (project_id && proposal_id) add(`/api/v1/projects/${project_id}/proposals/${proposal_id}`, 'studio_proposal_status', { project_id, proposal_id });
+  if (artifact_id) add(`/api/v1/artifacts/${artifact_id}`, 'studio_artifact_get', { artifact_id });
+  if (job_id) add(`/api/v1/jobs/${job_id}`, 'studio_job_status', { job_id });
+  if (project_id) add(`/api/v1/projects/${project_id}`, 'studio_project_get', { project_id });
+  return {
+    max_bytes: 524288, response_bytes: responseBytes, tool_name: tool.name,
+    operation_returned: true,
+    ...(typeof data?.operation === 'string' && /^(succeeded|blocked)$/.test(data.operation) ? { operation: data.operation } : {}),
+    ...(typeof data?.code === 'string' && /^[A-Z][A-Z0-9_]{0,79}$/.test(data.code) ? { result_code: data.code } : {}),
+    result_references, recovery_reads,
+    recovery_notice: 'The service returned before the response-size check; this does not imply success or gate acceptance. Do not repeat a mutating call just because its response was too large. Inspect the referenced state first using the same authenticated owner. MCP reads may also exceed the cap; use their authenticated HTTP GET equivalents. The full report is not included or newly archived by this envelope.',
+  };
+}
+
 async function mcpReadBody(request) {
   const size = request.headers.get('content-length');
   if (size !== null && (!/^\d+$/.test(size) || Number(size) > MAX_BODY_BYTES)) throw Error('BODY_TOO_LARGE');
@@ -243,7 +277,7 @@ export async function handleMcp(request, { application = null, owner = null, all
   if (message.method === 'initialize') {
     if (!params || typeof params.protocolVersion !== 'string' || !params.clientInfo || typeof params.clientInfo.name !== 'string' || typeof params.clientInfo.version !== 'string' || !params.capabilities || typeof params.capabilities !== 'object' || Array.isArray(params.capabilities)) return mcpRpcError(id, -32602, 'Invalid initialize parameters');
     const instructions = application
-      ? `Studio control surface plus the original technical MML checks. Work in this order: studio_capabilities, studio_project_get, studio_sources_analyze, studio_arrangement_suggest, resolve every pending decision explicitly, studio_decisions_apply, studio_candidate_review, then studio_finalize once nothing blocks it. A suggestion is never an acceptance and PENDING is never a default. Gate axes are independent: technical success never establishes source, audio, player or in-game acceptance, and nothing you can call sets in_game. ${UPLOAD_INSTRUCTION}`
+      ? `Studio control surface plus the original technical MML checks. For an orchestrated song, discover studio_capabilities and studio_project_get, upload the sources, then studio_run_start with an idempotency_key. Inspect studio_run_status and studio_proposal_targets; submit a cited studio_proposal_submit, read its review, and use studio_proposal_resolve only for an explicitly authorized acceptance. Re-read the run after every operation. Use studio_run_resume for a new authorized advancement; nothing continues in the background after a response. Missing reviewer evidence must stay pending: never invent confirmations, Lead/Core3 evidence or gate acceptance. The direct operation tools remain available for deliberate reviewer workflows, not as shortcuts around proposal policy. A suggestion is never an acceptance and PENDING is never a default. Gate axes are independent: technical success never establishes source, audio, player or in-game acceptance, and nothing you can call sets in_game. ${UPLOAD_INSTRUCTION}`
       : 'Only technical MML checks. Pass MML and source-confirmed meter explicitly. Never interpret technical_ok as listening, source, player, or game acceptance. Tools do not rewrite songs or access conversation history.';
     result = { protocolVersion: MCP_VERSIONS.includes(params.protocolVersion) ? params.protocolVersion : MCP_VERSIONS[0], capabilities: { tools: { listChanged: false } }, serverInfo: { name: 'mml-workbench-tools', version: SERVICE_VERSION }, instructions };
   } else if (message.method === 'ping') result = {};
@@ -260,8 +294,11 @@ export async function handleMcp(request, { application = null, owner = null, all
       const data = await mcpRunTool(tool.name, args, context), serialized = JSON.stringify(data);
       // A deliberate, caller-actionable refusal rather than a fault, so it is
       // raised in the structured form that survives the sanitizer below.
-      if (mcpTextEncoder.encode(serialized).byteLength > 524288) {
-        throw new StudioApplicationError(ERROR_CODES.PAYLOAD_TOO_LARGE, '回應超過安全大小限制，請縮小输入或明細範圍。', { max_bytes: 524288 });
+      const responseBytes = mcpTextEncoder.encode(serialized).byteLength;
+      if (responseBytes > 524288) {
+        throw new StudioApplicationError(ERROR_CODES.PAYLOAD_TOO_LARGE,
+          'The operation already returned, but its full response exceeds the MCP size limit. Inspect recovery details before retrying.',
+          oversizedResultDetails(tool, args, data, responseBytes));
       }
       result = { content: [{ type: 'text', text: serialized }], structuredContent: data, isError: false };
     } catch (error) {

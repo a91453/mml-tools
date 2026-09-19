@@ -56,3 +56,50 @@ test('the envelope is honest when Published Canonical is unavailable, and absent
   assert.equal(legacy.isError, true);
   assert.equal(legacy.structuredContent.canonical, undefined);
 });
+
+test('an oversized result preserves completed operation references instead of inviting a blind retry', async () => {
+  const app = createStudioApplication({});
+  const project = (await app.createProject(OWNER, { title: 'Synthetic oversized run response' })).project;
+  let calls = 0;
+  const application = { ...app, startRun: async (...args) => {
+    calls++;
+    const result = await app.startRun(...args);
+    return { ...result, diagnostics: 'x'.repeat(600_000) };
+  } };
+  const result = (await (await call(application, 'studio_run_start', { project_id: project.project_id, idempotency_key: 'oversized-start' })).json()).result;
+  assert.equal(result.isError, true);
+  const error = result.structuredContent.error;
+  assert.equal(error.code, 'PAYLOAD_TOO_LARGE');
+  assert.equal(error.details.operation_returned, true);
+  assert.equal(error.details.tool_name, 'studio_run_start');
+  assert.equal(error.details.max_bytes, 524288);
+  assert.ok(error.details.response_bytes > error.details.max_bytes);
+  assert.equal(calls, 1);
+  const runs = (await app.getRun(OWNER, project.project_id)).runs;
+  assert.equal(runs.length, 1, 'the service already created the run');
+  assert.deepEqual(error.details.result_references, { project_id: project.project_id, run_id: runs[0].run_id });
+  assert.ok(error.details.recovery_reads.some(entry => entry.path === `/api/v1/projects/${project.project_id}/runs/${runs[0].run_id}` && entry.method === 'GET'));
+  assert.match(error.message, /already returned/);
+  assert.match(error.details.recovery_notice, /Do not repeat/);
+  const recovered = (await (await call(app, 'studio_run_status', { project_id: project.project_id, run_id: runs[0].run_id })).json()).result;
+  assert.equal(recovered.isError, false);
+  assert.equal(recovered.structuredContent.run.state, 'awaiting_review');
+  assert.deepEqual(JSON.parse(result.content[0].text), result.structuredContent);
+  assert.ok(JSON.stringify(result).length < 12000, 'the recovery envelope itself is bounded');
+});
+
+test('oversized blocked finalize keeps the business refusal and only bounded, known recovery fields', async () => {
+  const project_id = 'prj_' + '1'.repeat(32), candidate_id = 'g11d:rev:' + '2'.repeat(64), job_id = 'job_' + '3'.repeat(32);
+  const application = { ...createStudioApplication({}), finalize: async () => ({
+    operation: 'blocked', code: 'FINALIZATION_BLOCKED', candidate_id,
+    job: { job_id }, diagnostics: 'x'.repeat(600_000), secret: 'never-copy-this',
+  }) };
+  const result = (await (await call(application, 'studio_finalize', { project_id, candidate_id })).json()).result;
+  const { details } = result.structuredContent.error;
+  assert.equal(details.operation_returned, true, 'a returned operation is not necessarily successful');
+  assert.equal(details.operation, 'blocked');
+  assert.equal(details.result_code, 'FINALIZATION_BLOCKED');
+  assert.deepEqual(details.result_references, { project_id, candidate_id, job_id });
+  assert.doesNotMatch(JSON.stringify(result), /never-copy-this/);
+  assert.ok(details.recovery_reads.every(entry => entry.method === 'GET'));
+});

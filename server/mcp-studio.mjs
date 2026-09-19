@@ -444,7 +444,7 @@ export const STUDIO_MCP_TOOLS = [
         rationale: { type: 'string', minLength: 1, maxLength: LIMITS.maxProposalRationaleLength, description: '給人類審查者看的理由。這裡是散文該待的地方，不會被當成引用。' },
         action: structuredPayload('依 kind 而定的封閉欄位：arrangement_decision→decisions；final_reduction→decisions／instrument_profile／expected_plan_id／plan_accepted_by；mobile_adaptation→profile／expected_plan_id；source_selection→asset_ids／meter_text；candidate_selection→candidate_id；evidence_needed→完全不帶 action。未列欄位一律拒絕。'),
         cites: structuredPayload('event_ids／source_ids／evidence_refs（每筆 kind、id、truth_class，選填 note）。全部對本專案解析，解析不到就是偽造。'),
-        unresolved_conflicts: structuredPayload('尚未解決的來源分歧：summary、event_ids、source_ids、truth_classes。記錄而不裁決——MASTER_RULES.md §0 說兩個權威衝突時不要猜。'),
+        unresolved_conflicts: { type: 'array', maxItems: LIMITS.maxProposalConflicts, items: structuredPayload(), description: '尚未解決的來源分歧陣列；每筆含 summary、event_ids、source_ids、truth_classes。記錄而不裁決——MASTER_RULES.md §0 說兩個權威衝突時不要猜。' },
         missing_evidence: { type: 'array', maxItems: LIMITS.maxProposalConflicts, items: { type: 'string', maxLength: LIMITS.maxProposalNoteLength }, description: '還缺什麼證據才能決定。非空即代表本提案不足以進入操作。' },
         canonical_warnings: { type: 'array', maxItems: LIMITS.maxProposalConflicts, items: { type: 'string', maxLength: LIMITS.maxProposalNoteLength }, description: '提案者認為與 Canonical 規則相關、需要審查者注意的地方。這是提醒，不是裁決。' },
         expected_operation: { type: 'string', maxLength: 200, description: '提案者認為這份提案會走到哪一個既有操作。會與服務自己推導的比對，不符就拒絕——讓 agent 以為在提案 A 卻被套用成 B 是不可接受的。' },

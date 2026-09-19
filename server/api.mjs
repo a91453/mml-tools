@@ -406,9 +406,9 @@ export function createApiRouter({ application, ownerOf, challenge = null }) {
     ['GET', /^\/jobs\/([^/]+)$/, async (m, _r, owner) => json(await application.getJob(owner, m[1]))],
     ['GET', /^\/artifacts\/([^/]+)$/, async (m, _r, owner) => json(await application.getArtifact(owner, m[1]))],
 
-    // The technical check, over HTTP. There is no `studio_*` tool for it, so
-    // this is the only transport that reaches it and an MCP-only agent cannot
-    // run a Canonical technical validation. Both engines are reachable and
+    // The technical check, over HTTP. MCP reaches the same Canonical service
+    // through the original mml_validate / mml_overlap_details tools; it does
+    // not need a duplicate `studio_*` tool. Both engines are reachable and
     // named apart: the legacy routes below are an explicitly labelled
     // diagnostic whose PASS is never a Canonical PASS.
     //

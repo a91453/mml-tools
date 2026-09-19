@@ -2,6 +2,7 @@
 
 Status: IMPLEMENTATION NOTES。不是 Canonical，也不變更 Phase 1／2 policy。
 真實歌曲驗收狀態見 [本輪紀錄](CODEX_EXTERNAL_AGENT_ACCEPTANCE_2026-09-19.md)。
+後續 transport 與音訊缺陷見 [MCP 流程查核](MCP_AGENT_AUDIT_2026-09-20.md)。
 
 ## 已確認的入口與限制
 
