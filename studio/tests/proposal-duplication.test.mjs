@@ -282,6 +282,20 @@ test('an interrupted acceptance is not finished onto a run that moved on without
   );
   assert.equal((await app.getRun(OWNER, context.fixture.projectId, context.run.run_id)).run.candidate_id, manual.run.candidate_id,
     "and the reviewer's candidate is still the run's");
+
+  // And it stays refused. A refused retry records its own conflict, and if that
+  // record moved the precondition to wherever the run had got to, the NEXT
+  // retry would pass it -- the standing permission back, one round later. The
+  // precondition is pinned by the interrupted attempt and by nothing after it.
+  for (let round = 0; round < 3; round += 1) {
+    const again = await app.resolveProposal(OWNER, context.fixture.projectId, context.proposal.proposal_id, {
+      resolution: 'accept', accepted_by: RUN_REVIEWER,
+    }).then(result => ({ ok: true, result }), error => ({ ok: false, error }));
+    assert.equal(again.ok, false, `retry ${round + 2} must be refused too`);
+    assert.equal(again.error.code, 'RUN_CONFLICT');
+  }
+  assert.equal((await app.getProposal(OWNER, context.fixture.projectId, context.proposal.proposal_id)).proposal.state, PROPOSAL_STATE.ACCEPTED);
+  assert.deepEqual(await candidatesOf(app, context.fixture.projectId), candidatesBefore, 'and still nothing was minted');
 });
 
 test('a rejection after an acceptance is refused, because the run may already have it', async () => {

@@ -1470,13 +1470,25 @@ export function createProposalService({ canonical, projects, store, operations, 
           // precondition that can never match or no precondition at all -- and
           // the second turns an interrupted acceptance into a standing
           // permission over whatever the run becomes next.
+          //
+          // Written ONCE, by the attempt that was interrupted, and never again.
+          // Re-recording it on each failure would hand the standing permission
+          // straight back one round later: a retry refused because the run had
+          // moved would file the conflict, note the moved revision as the new
+          // precondition, and the retry after that would pass it. What a retry
+          // is pinned to is where its own interrupted application left the run,
+          // which is a fact about one moment and does not get a second opinion.
+          // A second interruption therefore leaves a proposal that can no
+          // longer be finished -- the same terminal `accepted` a persistently
+          // refusing run already produces -- and the remedy is the one the
+          // record states: a fresh proposal against the request as it stands.
           const runNow = runsOf(record).find(entry => entry.run_id === proposal.run_id) ?? null;
           return bumpProposal(owner, projectId, proposal, {
             application: {
               ...proposal.application,
               conflict: { ...failure, at: now() },
               derived,
-              run_revision_at_attempt: runNow?.revision ?? proposal.application.run_revision_at_attempt ?? null,
+              run_revision_at_attempt: proposal.application.run_revision_at_attempt ?? runNow?.revision ?? null,
             },
           });
         }

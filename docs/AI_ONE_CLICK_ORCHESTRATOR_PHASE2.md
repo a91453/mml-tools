@@ -436,6 +436,17 @@ requires the retry to complete with exactly one candidate for one acceptance;
 another drives a human reviewer's resume into the same window and requires the
 retry to be refused.
 
+That revision is written **once**, by the attempt that was interrupted, and
+never again. Re-recording it on each failure hands the standing permission back
+one round later: a retry refused because the run had moved would file its
+conflict, note the moved revision as the new precondition, and the retry after
+that would pass it. The regression drives four retries for that reason. The
+cost is stated rather than hidden: a proposal interrupted a *second* time can no
+longer be finished, and stays `accepted` with its blocker on the record — the
+same terminal state a persistently refusing run already produces, and the remedy
+is the one that state always had, a fresh proposal against the request as it
+stands.
+
 **A retry does not re-litigate the acceptance.** An acceptance is a recorded past
 act; a crash between it and its application advances the run, which makes the
 proposal stale, and re-running the policy there would refuse the very retry the
