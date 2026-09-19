@@ -107,7 +107,7 @@ export const PROPOSAL_PROTOCOL_VERSION = 1;
 // identity.
 export const REQUEST_KEY_FIELDS = freeze(['code', 'step', 'gate', 'report_reference', 'baseline_id', 'candidate_id']);
 
-export const REQUEST_KEY_NOTICE = 'A review request key is derived from the request\'s code, step, gate, report reference, baseline id and candidate id. It is not an index, not a timestamp and not a content digest of the request body. A key that no current request carries addresses nothing, and a proposal holding one is stale rather than applied to whatever looks closest.';
+export const REQUEST_KEY_NOTICE = 'A review request key is derived from the request\'s code, step, gate, report reference, baseline id and candidate id. It is not an index, not a timestamp and not a content digest of the request body. A key that no current request carries addresses nothing, and a proposal holding one is stale rather than applied to whatever looks closest. It identifies a request WITHIN one run and is not globally unique: two runs over the same baseline, waiting on the same thing, legitimately carry the same key. Every proposal therefore names its run_id, and a key is only ever resolved against the requests of that run -- so a key read from one run can never address another run\'s request, whether or not the two happen to collide.';
 
 /**
  * The stable key of one review request.
@@ -434,6 +434,16 @@ export const COLLAPSED_SCORE_KEYS = freeze(['confidence', 'score', 'certainty', 
  * prose belongs in `rationale`, where nobody can mistake it for a pointer.
  */
 export const EVIDENCE_REF_KIND = freeze({
+  /**
+   * A source in the Source-Faithful Baseline's own inventory.
+   *
+   * The one reference kind whose declared `truth_class` is CHECKED rather than
+   * only recorded: the intake adapters wrote down each source's Canonical
+   * authority, so "this is audio evidence" and "this is symbolic evidence" are
+   * answerable mechanically. Swapping them is how a single collapsed score
+   * gets in through the back door, one reference at a time.
+   */
+  SOURCE: 'source',
   ASSET: 'asset',
   ARTIFACT: 'artifact',
   JOB: 'job',

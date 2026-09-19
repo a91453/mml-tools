@@ -283,7 +283,12 @@ export function createProposalService({ canonical, projects, store, operations, 
   // merely refused: the record is loaded for this owner and this project, and
   // an identity that is not in it is simply not found.
 
-  const evidenceResolvers = (record, run) => ({
+  const evidenceResolvers = (record, run, citations) => ({
+    // Resolved against the baseline's own source inventory, and carrying the
+    // Canonical authority the intake adapters recorded, so the declared truth
+    // class can be checked rather than only believed.
+    [EVIDENCE_REF_KIND.SOURCE]: id => (citations.sources.has(id)
+      ? { ok: true, detail: { kind: citations.sources.get(id).kind, authority: citations.sources.get(id).authority } } : { ok: false }),
     [EVIDENCE_REF_KIND.ASSET]: id => (isAssetId(id) && record.assets.some(entry => entry.asset_id === id)
       ? { ok: true, detail: { kind: record.assets.find(entry => entry.asset_id === id).kind } } : { ok: false }),
     [EVIDENCE_REF_KIND.ARTIFACT]: id => (isArtifactId(id) && record.artifacts.some(entry => entry.artifact_id === id)
@@ -438,7 +443,19 @@ export function createProposalService({ canonical, projects, store, operations, 
         // derives the plan itself at acceptance, through the existing read-only
         // operation, and a stated id that does not match the derived one is
         // reported as stale rather than overridden.
-        expected_plan_id: source.expected_plan_id === undefined || source.expected_plan_id === null ? null : requireString(source.expected_plan_id, `${label}.expected_plan_id`, { max: 200 }),
+        //
+        // A reduction plan id is bound to its decision set AND its reviewer, so
+        // a stated id means nothing without the reviewer it was derived under.
+        // Requiring the pair is what keeps the expectation checkable instead of
+        // decorative -- an un-checkable stated field is worse than no field,
+        // because an agent reads it back and believes it was honoured.
+        expected_plan_id: source.expected_plan_id === undefined || source.expected_plan_id === null ? null : (() => {
+          const stated = requireString(source.expected_plan_id, `${label}.expected_plan_id`, { max: 200 });
+          if (source.plan_accepted_by === undefined || source.plan_accepted_by === null) {
+            fail(ERROR_CODES.INVALID_REQUEST, `${label}.expected_plan_id needs ${label}.plan_accepted_by: a reduction plan id is bound to its decision set and to the reviewer it was derived under, so an id without that reviewer names nothing this service can check.`, { refusal: PROPOSAL_REFUSAL.ACTION_KIND_MISMATCH });
+          }
+          return stated;
+        })(),
         plan_accepted_by: source.plan_accepted_by === undefined || source.plan_accepted_by === null ? null : requireString(source.plan_accepted_by, `${label}.plan_accepted_by`, { max: 120 }),
       };
     }
@@ -598,6 +615,24 @@ export function createProposalService({ canonical, projects, store, operations, 
     if ((run.candidate_id ?? null) !== (bound.candidate_id ?? null)) stale.push(PROPOSAL_REFUSAL.CANDIDATE_CHANGED);
     if (run.revision !== bound.run_revision) stale.push(PROPOSAL_REFUSAL.RUN_REVISION_CHANGED);
     if (assetSelectionDigest(run) !== bound.asset_selection_digest) stale.push(PROPOSAL_REFUSAL.ASSET_SELECTION_CHANGED);
+    // The three above compare the proposal against the RUN. These three compare
+    // it against the PROJECT, and both halves are needed: a run holds what it
+    // recorded, so re-ingesting under new sources, applying a revision from
+    // outside the run or re-uploading an asset moves the material without
+    // moving anything the run wrote down. The run would still halt on its own
+    // staleness when the acceptance reached it -- Phase 1 re-validates every
+    // binding per step -- but a proposal a reader is told is applicable, and
+    // which then halts the run the moment it is accepted, is a proposal whose
+    // verdict was answering the wrong question.
+    if (bound.baseline_id !== null && (record.baseline?.baseline_id ?? null) !== bound.baseline_id) stale.push(PROPOSAL_REFUSAL.BASELINE_CHANGED);
+    if (bound.candidate_id !== null && !record.candidates.some(entry => entry.candidate_id === bound.candidate_id)) stale.push(PROPOSAL_REFUSAL.CANDIDATE_CHANGED);
+    if (Array.isArray(run.inputs?.asset_ids)) {
+      const byId = new Map(record.assets.map(asset => [asset.asset_id, asset]));
+      for (const entry of run.inputs.asset_digests ?? []) {
+        const asset = byId.get(entry.asset_id);
+        if (!asset || asset.sha256 !== entry.sha256 || asset.size !== entry.size) stale.push(PROPOSAL_REFUSAL.ASSET_SELECTION_CHANGED);
+      }
+    }
     if ((run.inputs?.decision_set_fingerprint ?? null) !== (bound.decision_set_fingerprint ?? null)) stale.push(PROPOSAL_REFUSAL.DECISION_SET_CHANGED);
     // A completed run is an audit record, not a workspace, and an interrupted
     // one is waiting on somebody to look at a stored record. Neither is a place
@@ -619,18 +654,22 @@ export function createProposalService({ canonical, projects, store, operations, 
     // ── INVALID. Re-checked, because a citation resolves against material that
     // another caller can move even while the bindings above still hold.
     const invalid = [];
-    const resolvers = evidenceResolvers(record, run);
-    const resolvedRefs = proposal.cites.evidence_refs.map(ref => ({ ...ref, ...resolvers[ref.kind](ref.id) }));
-    if (resolvedRefs.some(ref => !ref.ok)) invalid.push(PROPOSAL_REFUSAL.FABRICATED_EVIDENCE_REF);
 
+    // The baseline half first: an evidence reference may name a source, and
+    // whether it resolves is a question only the baseline's own inventory
+    // answers.
+    const citedSourceIds = [...new Set([
+      ...proposal.cites.source_ids,
+      ...proposal.cites.evidence_refs.filter(ref => ref.kind === EVIDENCE_REF_KIND.SOURCE).map(ref => ref.id),
+    ])];
     let citations = { events: new Set(), sources: new Map() };
-    if (proposal.cites.event_ids.length || proposal.cites.source_ids.length) {
+    if (proposal.cites.event_ids.length || citedSourceIds.length) {
       // A baseline that cannot be read is not an agent's forgery, and must not
       // be reported as one. "This identity is not in the baseline" and "there
       // is no baseline to look in" are different facts with different remedies,
       // and collapsing them would accuse a correct proposal of fabricating a
       // citation every time intake had been re-run underneath it.
-      try { citations = await resolveBaselineCitations(owner, record.project_id, proposal.cites); }
+      try { citations = await resolveBaselineCitations(owner, record.project_id, { event_ids: proposal.cites.event_ids, source_ids: citedSourceIds }); }
       catch (error) {
         return verdictOf(AGENT_REVIEW.STALE, [PROPOSAL_REFUSAL.BASELINE_CHANGED], {
           ...detail,
@@ -641,17 +680,22 @@ export function createProposalService({ canonical, projects, store, operations, 
       if (proposal.cites.event_ids.some(id => !citations.events.has(id))) invalid.push(PROPOSAL_REFUSAL.FABRICATED_EVENT_ID);
       if (proposal.cites.source_ids.some(id => !citations.sources.has(id))) invalid.push(PROPOSAL_REFUSAL.FABRICATED_SOURCE_ID);
     }
+
+    const resolvers = evidenceResolvers(record, run, citations);
+    const resolvedRefs = proposal.cites.evidence_refs.map(ref => ({ ...ref, ...resolvers[ref.kind](ref.id) }));
+    if (resolvedRefs.some(ref => !ref.ok)) invalid.push(PROPOSAL_REFUSAL.FABRICATED_EVIDENCE_REF);
+
     // Symbolic truth and audio truth stay in separate fields, and a citation
     // that mislabels which one it is collapses them by the back door. The check
     // is mechanical — the Canonical source authority the intake adapters
     // recorded — and it arbitrates nothing about what either class may prove.
-    for (const id of proposal.cites.source_ids) {
-      const source = citations.sources.get(id);
+    for (const ref of proposal.cites.evidence_refs) {
+      if (ref.kind !== EVIDENCE_REF_KIND.SOURCE) continue;
+      const source = citations.sources.get(ref.id);
       if (!source) continue;
       const isAudio = source.authority === 'primary-audio';
-      const declaredAudio = proposal.cites.evidence_refs.some(ref => ref.id === id && ref.truth_class === EVIDENCE_TRUTH_CLASS.AUDIO);
-      const declaredSymbolic = proposal.cites.evidence_refs.some(ref => ref.id === id && ref.truth_class === EVIDENCE_TRUTH_CLASS.SYMBOLIC);
-      if ((isAudio && declaredSymbolic) || (!isAudio && declaredAudio)) invalid.push(PROPOSAL_REFUSAL.COLLAPSED_CONFIDENCE_SCORE);
+      if (isAudio && ref.truth_class === EVIDENCE_TRUTH_CLASS.SYMBOLIC) invalid.push(PROPOSAL_REFUSAL.COLLAPSED_CONFIDENCE_SCORE);
+      if (!isAudio && ref.truth_class === EVIDENCE_TRUTH_CLASS.AUDIO) invalid.push(PROPOSAL_REFUSAL.COLLAPSED_CONFIDENCE_SCORE);
     }
     if (proposal.action && Object.hasOwn(proposal.action, 'asset_ids')) {
       if (proposal.action.asset_ids.some(id => !record.assets.some(entry => entry.asset_id === id))) invalid.push(PROPOSAL_REFUSAL.CROSS_PROJECT_IDENTITY);
@@ -812,6 +856,28 @@ export function createProposalService({ canonical, projects, store, operations, 
       });
       const planId = preview.reduction?.plan?.id ?? null;
       if (!planId) fail(ERROR_CODES.PROPOSAL_REFUSED, 'The existing reduction plan operation produced no plan id for these decisions, so there is nothing to apply.', { refusal: PROPOSAL_REFUSAL.REDUCTION_PLAN_INPUTS_CHANGED });
+
+      // The agent's stated expectation, checked against a plan derived under
+      // the reviewer the agent named. It is never the id that gets applied --
+      // that is always the one derived under the ACCEPTING reviewer above --
+      // but a stated expectation that no longer holds means the material moved
+      // under the proposal, and that is stale rather than something to ignore.
+      if (proposal.action.expected_plan_id !== null) {
+        const stated = await operations.planFinalReduction(owner, projectId, {
+          candidateId: proposal.binding.candidate_id,
+          decisions: structuredClone(proposal.action.decisions),
+          acceptedBy: proposal.action.plan_accepted_by,
+          instrumentProfile: proposal.action.instrument_profile,
+        });
+        if ((stated.reduction?.plan?.id ?? null) !== proposal.action.expected_plan_id) {
+          fail(ERROR_CODES.PROPOSAL_REFUSED, 'The reduction plan this proposal named is not the plan its own decisions produce now, under the reviewer it named. Its inputs moved after it was written.', {
+            refusal: PROPOSAL_REFUSAL.REDUCTION_PLAN_INPUTS_CHANGED,
+            proposed_plan_id: proposal.action.expected_plan_id,
+            plan_accepted_by: proposal.action.plan_accepted_by,
+            derived_plan_id: stated.reduction?.plan?.id ?? null,
+          });
+        }
+      }
       return {
         input: {
           final_reduction: {
@@ -1131,8 +1197,25 @@ export function createProposalService({ canonical, projects, store, operations, 
 
         // ── the acceptance gate. Re-evaluated here, under the lock, against
         // what is stored now — never from the verdict recorded at submission.
-        const review = await agentReview(owner, record, proposal, provenance);
-        if (!review.acceptable) {
+        //
+        // Skipped for a proposal that is ALREADY accepted and carries an
+        // application marker, and the order matters for the same reason it
+        // matters on a run resume: an acceptance is a recorded past act, and
+        // what a retry has left to do is finish applying it. Re-running the
+        // policy there would refuse the very retry the marker exists for —
+        // a crash between the acceptance and its application advances the run,
+        // which makes the proposal stale, which would leave it accepted and
+        // permanently unfinishable.
+        //
+        // Nothing is being taken on trust. The retry re-issues the SAME
+        // deterministic idempotency key, so a run that already applied it
+        // replays its own receipt; and it carries the run revision the
+        // acceptance observed, so a run that moved for any other reason fails
+        // the precondition and is refused. Safety here is the run's, which is
+        // where it belongs.
+        const alreadyAccepted = proposal.state === PROPOSAL_STATE.ACCEPTED && proposal.application !== null;
+        const review = alreadyAccepted ? null : await agentReview(owner, record, proposal, provenance);
+        if (review && !review.acceptable) {
           fail(ERROR_CODES.PROPOSAL_REFUSED, 'The Agent Review Policy will not let this proposal reach an operation.', {
             proposal_id: proposal.proposal_id,
             agent_review: review,
@@ -1156,7 +1239,7 @@ export function createProposalService({ canonical, projects, store, operations, 
           conflict: null,
         };
         return {
-          proposal: proposal.state === PROPOSAL_STATE.ACCEPTED ? proposal : bumpProposal(owner, projectId, proposal, {
+          proposal: alreadyAccepted ? proposal : bumpProposal(owner, projectId, proposal, {
             state: PROPOSAL_STATE.ACCEPTED,
             resolution: { resolution: RESOLUTION.ACCEPT, resolved_by: owner, accepted_by: normalized.accepted_by, reason: normalized.reason, at: now() },
             application,
