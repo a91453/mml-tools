@@ -61,5 +61,37 @@
     "run_id": "run_d24f9dfe1f1a2bdafe0474727b4f496b",
     "listening": "NOT_RUN",
     "musical_review": "PENDING"
+  },
+  "review_followup": {
+    "date": "2026-09-20",
+    "reviewed_head": "ecbbb46bb481ad4395729c9df6f01c140e1f1bee",
+    "scope": "F1 stale export refusal and provenance; F2 accurate local report notices; F3 missing-tool guard",
+    "focused_cli_tests": { "pass": 9, "fail": 0 },
+    "full_suite": {
+      "command": "node scripts/bootstrap-stress.mjs --runs=1 --keep-logs -- node --test --test-reporter=tap --test-concurrency=4 tests/*.test.mjs studio/tests/*.test.mjs",
+      "pass": 1722,
+      "fail": 0,
+      "exit_code": 0,
+      "seconds": 83.98,
+      "bootstrap_attempts": 197,
+      "published_identities": ["3b107d537ca1c0a183cbb059d8ddc1b9c6c389f3"],
+      "snapshot_identities": ["0a172900a01fdf39c2e9e84cf176961320b779ea"],
+      "shared_refs_untouched": true,
+      "note": "The bootstrap-stress summary retains pass/fail counts, not the skip count."
+    },
+    "studio_web_build": "PASS",
+    "diff_check": "PASS",
+    "audio_and_browser": "NOT_RERUN_FOR_CLI_ONLY_FIXES; earlier results above are historical",
+    "real_song_recheck": {
+      "review": "EXECUTED_WITHOUT_CONFIRMATIONS_OR_STORE_ARTIFACT",
+      "state": "awaiting_review",
+      "revision": 12,
+      "halt": "AWAITING_ACCEPTED_REDUCTION_DECISIONS",
+      "project_record_unchanged": true,
+      "project_record_sha256": "abb3d886dead6d5577254adeda91dcda82e2d3bd7385b704c57efcd4c7a821df",
+      "export_error": "AGENT_INPUT_REFUSED",
+      "mml_generated": false,
+      "additional_user_intervention_requests": 0
+    }
   }
 }

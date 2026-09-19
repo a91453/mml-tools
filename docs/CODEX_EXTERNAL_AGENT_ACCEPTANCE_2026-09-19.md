@@ -8,6 +8,8 @@ intake、suggestion、proposal 提交與 agent 接受、保留來源的 candidat
 歌曲 MML；音樂品質、聽驗與實機均未通過。** 不是端到端完成聲明。
 
 操作方式見 [runbook](CODEX_EXTERNAL_AGENT_RUNBOOK.md)。
+針對 `ecbbb46` 的後續 Code Review 修正與複驗，見
+[9/20 修正紀錄](CODEX_EXTERNAL_AGENT_REVIEW_FIXES_2026-09-20.md)；下列初次驗收數字保留為歷史。
 
 ## 規則與現況查核
 
@@ -63,7 +65,7 @@ note 62、tick 258240、`track:0/event:1719`。因此 intake 的 `source_complet
 | Apply decisions | 成功保留全部 1,545 notes；7 個 KEEP 僅表示原事件不變，**角色仍為 null**，沒有把 PENDING 角色改成 confirmed |
 | Final Six-Role Reduction | 只完成既有 plan 分析；1545 PENDING events 全數保留，17 overlap risks，Core3 incomplete；未套用 reduction |
 | Mobile Adaptation | 未執行；尚無確定角色／實際 instrument profile，不自造 profile |
-| Review | 在同一候選上另行實際執行；沒有任何 confirmation |
+| Review | 在同一候選上另行實際執行；沒有任何 confirmation，未建立 store artifact；報告與 receipt 另存本機 |
 | Finalize | 在同一候選上另行實際嘗試；`operation=blocked`、`FINALIZATION_BLOCKED`，沒有 artifact／MML |
 | 音訊對齊 | 既有 audio worker 已完成實際 M4A alignment，但結果異常，沒有附加成 gate 證據 |
 

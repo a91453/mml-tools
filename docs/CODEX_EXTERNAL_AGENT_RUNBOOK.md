@@ -26,8 +26,10 @@ node scripts/studio-agent.mjs --data-dir .studio-agent/my-song --actor agent:cod
 node scripts/studio-agent.mjs --data-dir .studio-agent/my-song --actor agent:codex report --project-id PROJECT_ID --candidate-id CANDIDATE_ID --kind review --out review.json
 ```
 
-`review` 沿用 service 的普通 report artifact 寫入，沒有 confirmations；三種報告均
-不推進 run、不覆寫既有輸出檔。`call --output` 可保存既有命令的完整結果。
+`review` 只由 service 重算報告，不寫入 store artifact、不記錄 confirmations。
+報告本文保存在本機 `--out` 檔，receipt 記錄輸出路徑與操作結果；稽核或跨機器搬移時
+必須一起保存兩者，不能只靠 store 或 `studio_artifact_get` 找回這份 review。
+三種報告均不推進 run、不覆寫既有輸出檔。`call --output` 可保存既有命令的完整結果。
 
 actor 是 caller-supplied audit text，**不構成身分驗證或使用者已審查的證明**。
 CLI 固定 local owner 為 `local:external-agent`；不同 actor 不是不同帳戶。
@@ -215,6 +217,12 @@ node scripts/studio-agent.mjs --data-dir $work --actor agent:codex export --proj
 ```
 
 只匯出 `completed` run 所指、candidate ID 相符且實際有 MML 的 `final_mml`；
+匯出前重讀 `getRun`，若其 `staleness` 非空，拒絕輸出且不改寫 run。
+拒絕回應／receipt 的 `error.details` 保留 run ID、完整 `staleness`、
+`staleness_notice` 與當前 `canonical`。先以 `studio_run_status` 核對來源／baseline／
+候選／規則綁定，再透過既有流程處理；不能刪除失效訊號或直接把舊 run 改成可交付。
+成功回應／receipt 也保留 `staleness`、`staleness_notice`、`canonical`；
+這是服務當次可檢查的綁定結果，並非重新執行所有音樂或實機驗收。
 不覆寫既有檔案。回應與 receipt 同時保留完整 artifact，包括 technical check、
 `round_trip`、character counts、remaining gates。事件回讀不是音訊聽驗，也不是
 外部 player loaded-state readback，更不是 `IN_GAME_ACCEPTED`。

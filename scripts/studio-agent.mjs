@@ -34,9 +34,10 @@ Dispatched results, including refusals, are saved in DIR/receipts. Run state liv
 An operation returning successfully is not song acceptance. Inspect run.state and gates.
 `;
 
-function refuse(message) {
+function refuse(message, details = null) {
   const error = new Error(message);
   error.code = 'AGENT_INPUT_REFUSED';
+  error.details = details;
   throw error;
 }
 
@@ -59,7 +60,9 @@ export function checkAgentCall(name, args, actor) {
 // Full local output and receipts preserve those reports without widening MCP.
 export async function callAgentTool(application, name, args, actor) {
   checkAgentCall(name, args, actor);
-  try { mcpCheckSchema(STUDIO_MCP_TOOLS.find(tool => tool.name === name).inputSchema, args); }
+  const tool = STUDIO_MCP_TOOLS.find(tool => tool.name === name);
+  if (!tool) return { error: { code: 'INTERNAL_ERROR', message: 'The request could not be completed.' } };
+  try { mcpCheckSchema(tool.inputSchema, args); }
   catch (error) { return { error: { code: -32602, message: error.message } }; }
   try { return await runStudioTool(name, args, { application, owner: LOCAL_AGENT_OWNER }); }
   catch (error) {
@@ -120,18 +123,27 @@ export async function main(argv = process.argv.slice(2)) {
             ? await application.planFinalReduction(LOCAL_AGENT_OWNER, input.project_id, { candidateId: input.candidate_id })
             : await application.reviewCandidate(LOCAL_AGENT_OWNER, input.project_id, { candidateId: input.candidate_id });
         writeFileSync(input.out, JSON.stringify(report, null, 2) + '\n', { encoding: 'utf8', flag: 'wx' });
+        const notice = {
+          suggestion: 'Suggestion reports contain proposals, not accepted decisions.',
+          reduction: 'Reduction reports preview the plan without applying its decisions.',
+          review: 'Review recomputes the report, writes no store artifact and records no confirmation. Preserve the local report file and receipt for the audit trail.',
+        }[values.kind];
         result = { output: input.out, kind: values.kind, operation: report.operation, baseline_id: report.suggestion?.baseline_id,
           lane_count: report.suggestion?.lane_count, pending_lane_count: report.suggestion?.pending.count,
-          notice: 'Full Application Service report saved locally. No report rows were discarded; read the file in bounded sections. Review writes its ordinary report artifact but records no confirmation and advances no run.' };
+          notice: `Full Application Service report saved locally. No report rows were discarded; read the file in bounded sections. No run is advanced. ${notice}` };
       } else if (command === 'export') {
         if (!values['project-id'] || !values['run-id'] || !values.out) refuse('export requires --project-id, --run-id and --out.');
         input = { project_id: values['project-id'], run_id: values['run-id'], out: resolve(values.out) };
-        const { run } = await application.getRun(LOCAL_AGENT_OWNER, input.project_id, input.run_id);
+        const { run, staleness, staleness_notice, canonical } = await application.getRun(LOCAL_AGENT_OWNER, input.project_id, input.run_id);
         if (run.state !== 'completed' || !run.final_artifact_id) refuse(`Run ${run.run_id} is ${run.state}; no completed Final artifact to export.`);
+        if (staleness.length) refuse(
+          `Run ${run.run_id} is bound to changed inputs (${staleness.map(entry => entry.code).join(', ')}). Re-read the run and resolve its bindings before exporting.`,
+          { run_id: run.run_id, staleness, staleness_notice, canonical },
+        );
         const { artifact } = await application.getArtifact(LOCAL_AGENT_OWNER, run.final_artifact_id);
         if (artifact.type !== 'final_mml' || artifact.candidate_id !== run.candidate_id || !artifact.mml) refuse('Final artifact does not match this run candidate or contains no delivered MML.');
         writeFileSync(input.out, artifact.mml, { encoding: 'utf8', flag: 'wx' });
-        result = { output: input.out, run_id: run.run_id, artifact };
+        result = { output: input.out, run_id: run.run_id, artifact, staleness, staleness_notice, canonical };
       } else refuse(`Unknown command: ${command}`);
     } catch (error) {
       result = { error: { code: error.code ?? 'LOCAL_ERROR', message: error.message, details: error.details ?? null } };

@@ -8,7 +8,8 @@ import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { callAgentTool, checkAgentCall, LOCAL_AGENT_OWNER } from '../scripts/studio-agent.mjs';
 import { createStudioApplication } from '../studio/backend/application/index.mjs';
-import { canonicalProjectBytes, sixRoleBaseline, runDecisionsFor, FIXTURE_CONFIRMATIONS } from '../studio/tests/fixtures/run-fixtures.mjs';
+import { STUDIO_MCP_TOOLS } from '../server/mcp-studio.mjs';
+import { canonicalProjectBytes, sixRoleBaseline, runDecisionsFor, projectWithSymbolicAsset, FIXTURE_CONFIRMATIONS } from '../studio/tests/fixtures/run-fixtures.mjs';
 import { sixSourceVoices } from '../studio/tests/fixtures/midi-fixtures.mjs';
 
 const cli = fileURLToPath(new URL('../scripts/studio-agent.mjs', import.meta.url));
@@ -65,6 +66,7 @@ test('binary synthetic MIDI enters the existing intake and suggestion engines th
   const stored = JSON.parse(readFileSync(output, 'utf8'));
   assert.equal(stored.suggestion.lane_count, report.lane_count);
   assert.equal(stored.suggestion.pending.count, report.pending_lane_count);
+  assert.doesNotMatch(report.notice, /Review/);
   assert.equal(call('studio_run_status', { project_id, run_id: run.run_id }).run.revision, run.revision, 'report does not advance the run');
   command(['report', '--project-id', project_id, '--kind', 'suggestion', '--out', output], 1);
 });
@@ -110,8 +112,84 @@ test('agent proposals stop at review; independent fixture reviewer unlocks real 
   assert.equal(exported.artifact.gates.technical, 'PASS');
   assert.equal(exported.artifact.gates.in_game, 'PENDING');
   assert.equal(exported.artifact.round_trip.status, 'PASS');
+  const status = call('studio_run_status', identity);
+  assert.deepEqual(exported.staleness, []);
+  assert.equal(exported.staleness_notice, status.staleness_notice);
+  assert.deepEqual(exported.canonical, status.canonical);
   command(['export', '--project-id', project_id, '--run-id', run.run_id, '--out', output], 1);
   assert.equal(readFileSync(output, 'utf8'), exported.artifact.mml, 'existing output is never overwritten');
+});
+
+test('export refuses a completed run after a real baseline replacement and preserves the service evidence', async t => {
+  const { dir, command } = workspace(t);
+  const app = createStudioApplication({ dataDirectory: join(dir, 'store'), durability: 'persistent' });
+  const fixture = await projectWithSymbolicAsset(app, LOCAL_AGENT_OWNER);
+  // Test-only reviewer inputs for a synthetic cue, never real-song evidence.
+  const { run } = await app.startRun(LOCAL_AGENT_OWNER, fixture.projectId, {
+    asset_ids: [fixture.assetId], decisions: runDecisionsFor(fixture.project),
+    accepted_by: 'fixture-run-reviewer', confirmations: FIXTURE_CONFIRMATIONS,
+  });
+  assert.equal(run.state, 'completed');
+  const second = (await app.uploadAsset(LOCAL_AGENT_OWNER, fixture.projectId, {
+    kind: 'canonical_project', filename: 'replacement.json', mediaType: 'application/json',
+    bytes: canonicalProjectBytes(sixRoleBaseline({ id: 'fixture:replacement', title: 'Replacement' })),
+  })).asset;
+  await app.analyzeSources(LOCAL_AGENT_OWNER, fixture.projectId, { assetIds: [second.asset_id] });
+  const status = await app.getRun(LOCAL_AGENT_OWNER, fixture.projectId, run.run_id);
+  assert.equal(status.run.state, 'completed', 'historical completion itself is unchanged');
+  assert.ok(status.staleness.some(entry => entry.code === 'RUN_BASELINE_CHANGED'));
+  assert.ok(status.staleness.some(entry => entry.code === 'RUN_CANDIDATE_CHANGED'));
+
+  const output = join(dir, 'stale.mml');
+  const result = command(['export', '--project-id', fixture.projectId, '--run-id', run.run_id, '--out', output], 1);
+  assert.equal(result.error.code, 'AGENT_INPUT_REFUSED');
+  assert.deepEqual(result.error.details, {
+    run_id: run.run_id, staleness: status.staleness,
+    staleness_notice: status.staleness_notice, canonical: status.canonical,
+  });
+  assert.equal(existsSync(output), false);
+  const receipts = readdirSync(join(dir, 'receipts')).map(name => JSON.parse(readFileSync(join(dir, 'receipts', name), 'utf8')));
+  assert.equal(receipts.length, 1);
+  assert.deepEqual(receipts[0].result, result);
+  assert.deepEqual(await app.getRun(LOCAL_AGENT_OWNER, fixture.projectId, run.run_id), status, 'refusal never rewrites the run');
+  assert.equal(existsSync(join(dir, '.agent.lock')), false);
+});
+
+test('review and reduction reports leave store bytes unchanged and describe only their own operation', async t => {
+  const { dir, command } = workspace(t);
+  const app = createStudioApplication({ dataDirectory: join(dir, 'store'), durability: 'persistent' });
+  const fixture = await projectWithSymbolicAsset(app, LOCAL_AGENT_OWNER);
+  const { run } = await app.startRun(LOCAL_AGENT_OWNER, fixture.projectId, {
+    asset_ids: [fixture.assetId], decisions: runDecisionsFor(fixture.project), accepted_by: 'fixture-run-reviewer',
+  });
+  assert.equal(run.state, 'awaiting_review');
+  assert.ok(run.candidate_id);
+  const storeBytes = () => Object.fromEntries(['records', 'blobs'].flatMap(folder =>
+    readdirSync(join(dir, 'store', folder)).sort().map(name => [`${folder}/${name}`, readFileSync(join(dir, 'store', folder, name)).toString('base64')])));
+  const before = storeBytes();
+  for (const kind of ['review', 'reduction']) {
+    const output = join(dir, `${kind}.json`);
+    const report = command(['report', '--kind', kind, '--project-id', fixture.projectId, '--candidate-id', run.candidate_id, '--out', output]);
+    const stored = JSON.parse(readFileSync(output, 'utf8'));
+    assert.equal(stored.operation, 'succeeded');
+    if (kind === 'review') {
+      assert.match(report.notice, /no store artifact/);
+      assert.deepEqual(stored.review.confirmations, {});
+    } else assert.doesNotMatch(report.notice, /Review/);
+    assert.deepEqual(storeBytes(), before, `${kind} files no artifact and changes no confirmations or run`);
+    const receipts = readdirSync(join(dir, 'receipts')).map(name => JSON.parse(readFileSync(join(dir, 'receipts', name), 'utf8')));
+    assert.ok(receipts.some(receipt => receipt.command === 'report' && receipt.result.kind === kind && receipt.result.output === output));
+  }
+});
+
+test('an allowed tool missing from the registry is an internal fault rather than invalid caller input', async t => {
+  const index = STUDIO_MCP_TOOLS.findIndex(tool => tool.name === 'studio_project_create');
+  const [tool] = STUDIO_MCP_TOOLS.splice(index, 1);
+  t.after(() => STUDIO_MCP_TOOLS.splice(index, 0, tool));
+  const createProject = t.mock.fn(() => assert.fail('a missing tool must not dispatch'));
+  const result = await callAgentTool({ createProject }, 'studio_project_create', { title: 'fixture' }, actor);
+  assert.deepEqual(result, { error: { code: 'INTERNAL_ERROR', message: 'The request could not be completed.' } });
+  assert.equal(createProject.mock.callCount(), 0);
 });
 
 test('adapter cannot turn a direct operation or forged actor into a proposal acceptance', () => {
