@@ -23,7 +23,7 @@ Four operations:
 
 | Operation | Writes? | What it does |
 | --- | --- | --- |
-| `planRun` | **no** | Read-only. Names the steps it would take, the results that already exist, what needs caller input, and what is blocked. |
+| `planRun` | **no** | Read-only. Names the steps it would take, the results that already exist, what needs caller input, and what is blocked. It describes the start it names: the same asset selection (an omitted `asset_ids` means every symbolic asset in the project *now*), the same meter binding, and — when its own intake would replace the baseline — the named candidate echoed as `target_candidate_invalidated_by_intake` rather than reported as a satisfied result. |
 | `startRun` | yes | Creates the run record and takes the steps the supplied inputs already allow. |
 | `getRun` | **no** | Read-only run state, progress, blockers and review requests. Without a run id, the project's run list. |
 | `resumeRun` | yes | Re-validates every binding and advances again, after explicit new input, decisions or evidence. |
@@ -227,26 +227,53 @@ and the run continues.
 
 A candidate produced by an operation outside the run is adopted only when named
 (`adopt_candidate_id`) and only after its baseline and lineage are verified —
-never by being the newest.
+never by being the newest. Naming one is not a way past the interruption rules
+below: a candidate recorded in a pending step's before-set predates that step's
+effect, so naming it is refused rather than written down as the effect.
 
 ### Interruption
 
 Before each mutating effect the run stores a `pending_step` marker carrying the
-effect's expectation. Three classes:
+effect's expectation, and the expectation carries **what already existed when
+the marker was written**. That before-set is the difference between "this record
+answers the step's description" and "this record is what the step produced":
+
+| Step | What identifies its effect |
+| --- | --- |
+| intake | the selected asset ids, the meter map the step was about (an MML source is parsed against it), and the baseline that was already committed — which is by construction not this step's output |
+| apply_decisions (G11-D) | the parent and the stage, minus the sibling candidates that already matched. G11-D names no accepted plan, so a candidate applied earlier from the same parent matches the filter exactly |
+| final_reduction / mobile_adaptation | the parent, the stage and the accepted plan id the candidate records, plus the same before-set |
+| finalize | the type and the candidate, minus the Final artifacts already filed for it — a Final's body names no run |
+| report | the run its body names. Exact, so no before-set is needed |
+
+A before-set is bounded (`LIMITS.maxEffectBeforeSet`) and records whether it is
+complete. An incomplete one proves no novelty, so nothing is adopted from it and
+the step runs again.
+
+Three classes:
 
 1. **stopped before the mutation** — the expectation is absent, so the step runs
    again;
 2. **effect persisted, receipt not stored** — the expectation is found by the
-   existing content-addressed baseline/candidate identity, or by the stored
-   artifact reference for a Final or a run report, so the effect is *adopted*
-   and the receipt written. Nothing is replayed, so no volume offset stacks and
-   no duplicate Final is produced;
+   identity above, so the effect is *adopted* and the receipt written. Nothing
+   is replayed, so no volume offset stacks and no duplicate Final is produced;
 3. **receipt stored, response not delivered** — the next call sees the step
    complete; an idempotency-key replay returns the same run.
 
 When neither presence nor absence can be established, the run reports
 `interrupted` with `needs_reconciliation`, names the exact unconfirmed step, and
-**refuses to replay it** until a caller resumes with `reconcile: true`.
+**refuses to replay it** until a caller resumes with `reconcile: true`. Where
+more than one record could be the effect, the caller names one
+(`adopt_artifact_id`, `adopt_candidate_id`) — and the named record is held to
+the same identity the automatic path uses, before-set included. Naming settles
+*which* of a step's possible outputs it produced; it never widens what may count
+as one.
+
+Only the request carries a meter map's text — the run stores its digest — so a
+step that would ingest under a meter other than the one the run states does not
+run at all. It blocks `RUN_BASELINE_INTAKE_INPUT_UNPROVABLE` and asks for
+`meter_text`, rather than ingesting under an empty meter and filing a receipt
+fingerprinted with the stated one.
 
 A temp-then-rename record write is not distributed exactly-once, and nothing here
 claims it is. What makes adoption safe is that the effect's identity is derived

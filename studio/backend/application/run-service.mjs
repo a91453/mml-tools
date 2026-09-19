@@ -518,25 +518,70 @@ export function createRunService({ canonical, projects, store, operations, seria
   // A temp-then-rename record write is not distributed exactly-once and is not
   // claimed to be. What makes adoption safe is that the effect's identity is
   // derived from its content, so finding it is finding *this* effect.
+  /**
+   * Whether a stored candidate is one this expectation describes.
+   *
+   * The before-set and the matcher below are built from this one predicate, so
+   * "which candidates existed before the effect" and "which candidates could be
+   * the effect" can never drift apart.
+   */
+  const candidateMatches = (entry, expectation) => (entry.parent_candidate_id ?? null) === (expectation.parent_candidate_id ?? null)
+    && (expectation.stage === null || expectation.stage === undefined ? !entry.stage : entry.stage === expectation.stage)
+    && (expectation.plan_id === null || expectation.plan_id === undefined || (entry.decision_ids ?? []).includes(expectation.plan_id));
+
+  /**
+   * A bounded record of what already existed when a step was marked pending.
+   *
+   * Bounded because it is stored, and `complete: false` rather than a silent
+   * truncation because a partial before-set cannot prove novelty: the matcher
+   * refuses to adopt anything at all in that case, and the step runs again.
+   */
+  const beforeSet = ids => ({ ids: ids.slice(0, LIMITS.maxEffectBeforeSet), complete: ids.length <= LIMITS.maxEffectBeforeSet });
+
+  /**
+   * Whether an expectation's before-set can be trusted to prove novelty.
+   *
+   * A marker with no before-set at all — one written by an earlier build and
+   * restored — cannot establish that a record postdates it either, so it is
+   * treated the same as a truncated one: nothing is adopted, and the step runs
+   * again rather than adopting something that may have been there all along.
+   */
+  const beforeSetUsable = (expectation, key) => Array.isArray(expectation[key]) && expectation[`${key}_complete`] !== false;
+
   const expectationSatisfiedBy = (owner, record, expectation) => {
     if (!expectation) return null;
     if (expectation.kind === 'baseline') {
+      // Asset ids do not identify a baseline. The meter map is an intake input
+      // an MML source is parsed against, and a baseline that was already there
+      // when the marker was written is by construction not this effect's
+      // output. Both are checked, and both fail closed: an unproven identity is
+      // never adopted, and the step runs again under the inputs it states.
       const baseline = record.baseline;
       if (!baseline) return null;
-      return sameSelection(baseline.asset_ids, expectation.asset_ids) ? { baseline_id: baseline.baseline_id } : null;
+      if (!sameSelection(baseline.asset_ids, expectation.asset_ids)) return null;
+      if (expectation.known_baseline_id !== undefined && baseline.baseline_id === expectation.known_baseline_id) return null;
+      if (expectation.meter_text_sha256 !== undefined
+        && meterBinding(baseline, expectation.meter_text_sha256 ?? null).state !== METER_BINDING.SATISFIED) return null;
+      return { baseline_id: baseline.baseline_id };
     }
     if (expectation.kind === 'candidate') {
       // Matched on the parent, the stage and — where the step names one — the
       // plan the reviewer accepted, which the candidate record stores as its
-      // `decision_ids`. Adoption then requires exactly ONE match: two
-      // candidates can share a parent and a stage when another run applied a
-      // different decision set from the same parent, and adopting whichever
-      // one `find` happened to reach would be guessing. An ambiguous answer is
-      // not an answer, so it is reported as unconfirmable instead.
-      const matches = record.candidates.filter(entry => (entry.parent_candidate_id ?? null) === (expectation.parent_candidate_id ?? null)
-        && (expectation.stage === null ? !entry.stage : entry.stage === expectation.stage)
-        && (expectation.plan_id === null || expectation.plan_id === undefined || (entry.decision_ids ?? []).includes(expectation.plan_id)));
-      if (matches.length > 1) return { ambiguous: true, candidate_ids: matches.map(entry => entry.candidate_id) };
+      // `decision_ids`; then narrowed to what was NOT already there when the
+      // marker was written. The before-set is what the plan id cannot supply on
+      // its own: G11-D names no plan, so a sibling candidate applied earlier
+      // from the same parent matches the filter exactly, and adopting it would
+      // record another decision set's candidate as this run's effect.
+      // Adoption then requires exactly ONE remaining match: two runs can each
+      // add a candidate from the same parent, and adopting whichever one
+      // `find` reached would be guessing. An ambiguous answer is not an
+      // answer, so it is reported as unconfirmable instead.
+      if (!beforeSetUsable(expectation, 'known_candidate_ids')) return null;
+      const known = expectation.known_candidate_ids ?? [];
+      const matches = record.candidates
+        .filter(entry => candidateMatches(entry, expectation))
+        .filter(entry => !known.includes(entry.candidate_id));
+      if (matches.length > 1) return { ambiguous: true, kind: 'candidate', candidate_ids: matches.map(entry => entry.candidate_id) };
       return matches.length === 1 ? { candidate_id: matches[0].candidate_id } : null;
     }
     if (expectation.kind === 'artifact') {
@@ -556,6 +601,7 @@ export function createRunService({ canonical, projects, store, operations, seria
       //              there. Never "the newest": a timestamp is not evidence of
       //              whose effect it was.
       const matches = record.artifacts.filter(entry => entry.candidate_id === expectation.candidate_id && entry.type === expectation.artifact_type);
+      if (!expectation.expected_run_id && !beforeSetUsable(expectation, 'known_artifact_ids')) return null;
       const owned = expectation.expected_run_id
         ? matches.filter(entry => operations.artifactRunId(owner, entry.artifact_id) === expectation.expected_run_id)
         : matches.filter(entry => !(expectation.known_artifact_ids ?? []).includes(entry.artifact_id));
@@ -566,9 +612,26 @@ export function createRunService({ canonical, projects, store, operations, seria
   };
 
   /** The matching artifacts that exist right now, for an effect's before-set. */
-  const artifactsLike = (record, candidateId, artifactType) => record.artifacts
+  const artifactsLike = (record, candidateId, artifactType) => beforeSet(record.artifacts
     .filter(entry => entry.candidate_id === candidateId && entry.type === artifactType)
-    .map(entry => entry.artifact_id);
+    .map(entry => entry.artifact_id));
+
+  /** The matching candidates that exist right now, for an effect's before-set. */
+  const candidatesLike = (record, expectation) => beforeSet(record.candidates
+    .filter(entry => candidateMatches(entry, expectation))
+    .map(entry => entry.candidate_id));
+
+  /**
+   * A candidate-producing step's expectation, with its before-set attached.
+   *
+   * The before-set is computed from the expectation itself, so a step cannot
+   * record one filter and be matched by another.
+   */
+  const candidateExpectation = (record, { parent, stage = null, planId = null }) => {
+    const expectation = { kind: 'candidate', parent_candidate_id: parent ?? null, stage, plan_id: planId };
+    const known = candidatesLike(record, expectation);
+    return { ...expectation, known_candidate_ids: known.ids, known_candidate_ids_complete: known.complete };
+  };
 
   /**
    * Run one mutating step: mark it pending, apply the effect, store the receipt.
@@ -890,11 +953,48 @@ export function createRunService({ canonical, projects, store, operations, seria
       });
     }
     const assetIds = selection.selected.map(asset => asset.asset_id);
-    const fingerprint = digestOf({ asset_digests: selection.digests, meter_text_sha256: run.inputs.meter_text_sha256 });
+
+    // The meter map is an intake input, and only the request carries its text:
+    // the run stores its digest, which cannot be re-ingested from. So a step
+    // that would ingest under a meter other than the one this run states does
+    // not run at all. Without this, a resume that omits `meter_text` after an
+    // interrupted meter-stating intake would build a baseline from an EMPTY
+    // meter and file a receipt fingerprinted with the stated one — a receipt
+    // describing inputs the baseline was not built from.
+    const statedMeterDigest = run.inputs.meter_text_sha256 ?? null;
+    const requestMeterDigest = normalized.meter_text ? sha256Of(encoder.encode(normalized.meter_text)) : null;
+    if (statedMeterDigest !== null && requestMeterDigest !== statedMeterDigest) {
+      return halt(owner, projectId, run, {
+        state: RUN_STATE.BLOCKED,
+        reason: RUN_HALT.METER_BINDING_UNPROVABLE,
+        step: RUN_STEP.INTAKE,
+        requests: [stalenessRequest({
+          code: RUN_HALT.METER_BINDING_UNPROVABLE,
+          detail: {
+            reason: 'RUN_METER_INPUT_NOT_SUPPLIED',
+            baseline_id: record.baseline?.baseline_id ?? null,
+            consumed: true,
+            baseline_meter_text_sha256: record.baseline?.intake_inputs?.meter_text_sha256 ?? null,
+            run_meter_text_sha256: statedMeterDigest,
+            request_meter_text_sha256: requestMeterDigest,
+          },
+        })],
+      });
+    }
+    const fingerprint = digestOf({ asset_digests: selection.digests, meter_text_sha256: statedMeterDigest });
     const applied = await withEffect(owner, projectId, run, {
       step: RUN_STEP.INTAKE,
       inputFingerprint: fingerprint,
-      expectation: { kind: 'baseline', asset_ids: assetIds },
+      // Asset ids alone do not identify a baseline: the meter map is an intake
+      // input an MML source is parsed against, so the marker carries it, and it
+      // carries the baseline that was already committed so that one can never
+      // be mistaken for this step's output.
+      expectation: {
+        kind: 'baseline',
+        asset_ids: assetIds,
+        meter_text_sha256: run.inputs.meter_text_sha256 ?? null,
+        known_baseline_id: record.baseline?.baseline_id ?? null,
+      },
       apply: async () => {
         const result = await operations.analyzeSources(owner, projectId, { assetIds, meterText: normalized.meter_text });
         const baseline = result.baseline;
@@ -978,7 +1078,10 @@ export function createRunService({ canonical, projects, store, operations, seria
     const applied = await withEffect(owner, projectId, run, {
       step: RUN_STEP.APPLY_DECISIONS,
       inputFingerprint: fingerprint,
-      expectation: { kind: 'candidate', parent_candidate_id: parent, stage: null },
+      // G11-D names no accepted plan, so the parent and the stage alone match
+      // every sibling candidate applied earlier from the same parent. The
+      // before-set is what tells this step's candidate from those.
+      expectation: candidateExpectation(record, { parent }),
       apply: async () => {
         const result = await operations.applyDecisions(owner, projectId, {
           decisions: normalized.decisions,
@@ -1113,7 +1216,7 @@ export function createRunService({ canonical, projects, store, operations, seria
     const applied = await withEffect(owner, projectId, run, {
       step: RUN_STEP.FINAL_REDUCTION,
       inputFingerprint: fingerprint,
-      expectation: { kind: 'candidate', parent_candidate_id: parent, stage: REDUCTION_STAGE, plan_id: normalized.final_reduction.expected_plan_id },
+      expectation: candidateExpectation(record, { parent, stage: REDUCTION_STAGE, planId: normalized.final_reduction.expected_plan_id }),
       apply: async () => {
         const result = await operations.applyFinalReduction(owner, projectId, {
           candidateId: parent,
@@ -1207,7 +1310,7 @@ export function createRunService({ canonical, projects, store, operations, seria
     const applied = await withEffect(owner, projectId, run, {
       step: RUN_STEP.MOBILE_ADAPTATION,
       inputFingerprint: fingerprint,
-      expectation: { kind: 'candidate', parent_candidate_id: parent, stage: ADAPTATION_STAGE, plan_id: normalized.mobile_adaptation.expected_plan_id },
+      expectation: candidateExpectation(record, { parent, stage: ADAPTATION_STAGE, planId: normalized.mobile_adaptation.expected_plan_id }),
       apply: async () => {
         const result = await operations.applyMobileAdaptation(owner, projectId, {
           candidateId: parent,
@@ -1339,12 +1442,19 @@ export function createRunService({ canonical, projects, store, operations, seria
     const candidateId = run.candidate_id;
     const options = normalized.finalize ?? run.inputs.finalize_options ?? { technical_timing_repair: false, pickup: null, final_partial: null };
     const fingerprint = digestOf({ candidate_id: candidateId, options });
+    const finalsBefore = artifactsLike(record, candidateId, FINAL_ARTIFACT_TYPE);
     const applied = await withEffect(owner, projectId, run, {
       step: RUN_STEP.FINALIZE,
       inputFingerprint: fingerprint,
       // A Final artifact body carries no run id, so the before-set is what
       // tells this run's Final apart from one that was already there.
-      expectation: { kind: 'artifact', candidate_id: candidateId, artifact_type: FINAL_ARTIFACT_TYPE, known_artifact_ids: artifactsLike(record, candidateId, FINAL_ARTIFACT_TYPE) },
+      expectation: {
+        kind: 'artifact',
+        candidate_id: candidateId,
+        artifact_type: FINAL_ARTIFACT_TYPE,
+        known_artifact_ids: finalsBefore.ids,
+        known_artifact_ids_complete: finalsBefore.complete,
+      },
       apply: async () => {
         const result = await operations.finalize(owner, projectId, {
           candidateId,
@@ -1423,6 +1533,7 @@ export function createRunService({ canonical, projects, store, operations, seria
    */
   async function reportStep(owner, projectId, record, run) {
     const finalizeReceipt = receiptOf(run, RUN_STEP.FINALIZE);
+    const reportsBefore = artifactsLike(record, run.candidate_id, RUN_REPORT_ARTIFACT_TYPE);
     const applied = await withEffect(owner, projectId, run, {
       step: RUN_STEP.REPORT,
       // A run report names its run, so identity settles it exactly; the
@@ -1432,7 +1543,8 @@ export function createRunService({ canonical, projects, store, operations, seria
         candidate_id: run.candidate_id,
         artifact_type: RUN_REPORT_ARTIFACT_TYPE,
         expected_run_id: run.run_id,
-        known_artifact_ids: artifactsLike(record, run.candidate_id, RUN_REPORT_ARTIFACT_TYPE),
+        known_artifact_ids: reportsBefore.ids,
+        known_artifact_ids_complete: reportsBefore.complete,
       },
       apply: async () => {
         const current = projects.load(owner, projectId);
@@ -1837,13 +1949,26 @@ export function createRunService({ canonical, projects, store, operations, seria
           artifact_id: entry.artifact_id, artifact_candidate_id: entry.candidate_id, expected_candidate_id: pending.expectation.candidate_id,
         });
       }
+      // The same effect identity the automatic reconciliation uses, in the same
+      // order, so naming an artifact can never settle a step that finding it
+      // could not. Naming settles WHICH of the step's possible outputs it
+      // produced; it does not widen what may count as one.
       if (pending.expectation.expected_run_id) {
+        // Exact: a run report's body names the run that produced it.
         const named = operations.artifactRunId(owner, entry.artifact_id);
         if (named !== pending.expectation.expected_run_id) {
           fail(ERROR_CODES.INVALID_REQUEST, 'The artifact to adopt names a different run, so it is another run\'s report and not this run\'s output.', {
             artifact_id: entry.artifact_id, artifact_run_id: named, expected_run_id: pending.expectation.expected_run_id,
           });
         }
+      } else if ((pending.expectation.known_artifact_ids ?? []).includes(entry.artifact_id)) {
+        // Novelty: a Final's body names no run, so the marker's before-set is
+        // the evidence. An artifact that was already there when the marker was
+        // written cannot be what this step produced, however it is named.
+        fail(ERROR_CODES.INVALID_REQUEST, 'The artifact to adopt already existed when this step was marked pending, so it cannot be what this step produced.', {
+          artifact_id: entry.artifact_id, step: pending.step, marked_at: pending.at,
+          known_artifact_ids: pending.expectation.known_artifact_ids,
+        });
       }
       changes.pending_step = null;
       changes.needs_reconciliation = false;
@@ -1901,6 +2026,17 @@ export function createRunService({ canonical, projects, store, operations, seria
       // before it is accepted, and it is recorded as the reviewer's answer
       // rather than as something the run established for itself.
       if (run.pending_step?.expectation?.kind === 'candidate') {
+        // Settling an interrupted effect and adopting a candidate produced
+        // outside the run are two different statements, and only the first one
+        // may write a receipt saying the effect happened. A candidate that was
+        // already there when the marker was written cannot be this step's
+        // output, so naming it is refused rather than recorded as the effect.
+        if ((run.pending_step.expectation.known_candidate_ids ?? []).includes(adopted.candidate_id)) {
+          fail(ERROR_CODES.INVALID_REQUEST, 'The candidate to adopt already existed when this step was marked pending, so it cannot be what this step produced. Resume without adopt_candidate_id to let the step run, or name the candidate this step actually produced.', {
+            candidate_id: adopted.candidate_id, step: run.pending_step.step, marked_at: run.pending_step.at,
+            known_candidate_ids: run.pending_step.expectation.known_candidate_ids,
+          });
+        }
         steps = [...steps.filter(entry => entry.step !== run.pending_step.step), stepReceipt({
           step: run.pending_step.step,
           status: RUN_STEP_STATUS.SATISFIED,
@@ -1965,6 +2101,7 @@ export function createRunService({ canonical, projects, store, operations, seria
 
       const steps = [];
       const requests = [];
+      let intakeReplacesBaseline = false;
       const add = (step, status, detail = {}) => steps.push(Object.freeze({ step, status, operation: RUN_STEP_OPERATION[step], ...detail }));
 
       const targetEntry = normalized.target_candidate_id === null
@@ -1986,8 +2123,14 @@ export function createRunService({ canonical, projects, store, operations, seria
       // different meter map is not this run's baseline.
       const plannedMeterDigest = normalized.meter_text ? sha256Of(encoder.encode(normalized.meter_text)) : null;
       const plannedBinding = meterBinding(record.baseline, plannedMeterDigest);
+      // The selection a start would snapshot, compared to the baseline's own —
+      // for the named asset ids AND for the omitted case, where the contract
+      // says "every symbolic asset in the project now". Treating an omitted
+      // list as an automatic match would answer "satisfied" for a project that
+      // has gained a source since its baseline, while the start it describes
+      // re-ingests. `selection` has already resolved the omitted case.
       const assetsMatchBaseline = Boolean(record.baseline)
-        && (normalized.asset_ids === null || sameSelection(record.baseline.asset_ids, selection.digests.map(entry => entry.asset_id)));
+        && sameSelection(record.baseline.asset_ids, selection.digests.map(entry => entry.asset_id));
 
       if (!selection.selected.length && !record.baseline) {
         add(RUN_STEP.INTAKE, RUN_STEP_STATUS.AWAITING_INPUT, { needs: ['a symbolic source asset'] });
@@ -2004,24 +2147,44 @@ export function createRunService({ canonical, projects, store, operations, seria
       } else if (assetsMatchBaseline && plannedBinding.state === METER_BINDING.SATISFIED) {
         add(RUN_STEP.INTAKE, RUN_STEP_STATUS.SATISFIED, { existing: { baseline_id: record.baseline.baseline_id, source_complete: record.baseline.source_complete } });
       } else {
+        intakeReplacesBaseline = true;
         add(RUN_STEP.INTAKE, RUN_STEP_STATUS.PLANNED, {
           will_select_asset_ids: selection.digests.map(entry => entry.asset_id),
           ...(plannedBinding.state === METER_BINDING.REBUILD
             ? { rebuild_reason: 'The stored baseline was ingested against a different meter map than this run states, and an MML source is parsed against its meter map.' }
             : {}),
+          ...(current ? { invalidates_candidate_id: current.candidate_id } : {}),
         });
       }
 
-      if (current && !normalized.decisions?.length) {
+      // A candidate descends from the baseline it was derived from. When this
+      // plan's intake replaces that baseline, `intake.run` clears the
+      // candidates bound to it, so the named candidate will not exist by the
+      // time apply_decisions is reached. It is still echoed as what the caller
+      // asked for — but it is not a downstream result this plan may treat as
+      // satisfied, because the start this plan describes will re-derive one.
+      const invalidatedCandidate = intakeReplacesBaseline ? current : null;
+      const usableCandidate = invalidatedCandidate ? null : current;
+
+      if (usableCandidate && !normalized.decisions?.length) {
         add(RUN_STEP.SUGGEST, RUN_STEP_STATUS.SKIPPED, { reason: 'A candidate is already available, so no new suggestion is needed to reach review. A suggestion would be derived only to support new decisions.' });
-        add(RUN_STEP.APPLY_DECISIONS, RUN_STEP_STATUS.SATISFIED, { existing: { candidate_id: current.candidate_id, stage: current.stage ?? 'G11D_DECISION_APPLICATION' } });
+        add(RUN_STEP.APPLY_DECISIONS, RUN_STEP_STATUS.SATISFIED, { existing: { candidate_id: usableCandidate.candidate_id, stage: usableCandidate.stage ?? 'G11D_DECISION_APPLICATION' } });
       } else {
-        add(RUN_STEP.SUGGEST, record.baseline ? RUN_STEP_STATUS.PLANNED : RUN_STEP_STATUS.AWAITING_INPUT, { needs: record.baseline ? [] : ['intake must produce a Source-Faithful Baseline first'] });
+        const invalidated = invalidatedCandidate
+          ? {
+            invalidated_candidate_id: invalidatedCandidate.candidate_id,
+            invalidated_reason: 'This plan re-ingests the sources, which replaces the Source-Faithful Baseline and clears the candidates derived from it. The named candidate will not exist when this step is reached, so it is not a satisfied result.',
+          }
+          : {};
+        add(RUN_STEP.SUGGEST, record.baseline || intakeReplacesBaseline ? RUN_STEP_STATUS.PLANNED : RUN_STEP_STATUS.AWAITING_INPUT, {
+          needs: record.baseline || intakeReplacesBaseline ? [] : ['intake must produce a Source-Faithful Baseline first'],
+          ...invalidated,
+        });
         if (!normalized.decisions?.length) {
-          add(RUN_STEP.APPLY_DECISIONS, RUN_STEP_STATUS.AWAITING_INPUT, { needs: ['an explicitly accepted arrangement decision set'] });
+          add(RUN_STEP.APPLY_DECISIONS, RUN_STEP_STATUS.AWAITING_INPUT, { needs: ['an explicitly accepted arrangement decision set'], ...invalidated });
           requests.push(decisionsRequiredRequest({ baseline_id: record.baseline?.baseline_id ?? null, steps: [] }));
         } else {
-          add(RUN_STEP.APPLY_DECISIONS, RUN_STEP_STATUS.PLANNED, { decision_count: normalized.decisions.length });
+          add(RUN_STEP.APPLY_DECISIONS, RUN_STEP_STATUS.PLANNED, { decision_count: normalized.decisions.length, ...invalidated });
         }
       }
 
@@ -2055,7 +2218,10 @@ export function createRunService({ canonical, projects, store, operations, seria
           // Echoed only when the caller supplied it. `candidate_ids` above is
           // the set to choose from; this service does not choose.
           target_candidate_id: current?.candidate_id ?? null,
-          candidate_selection_notice: 'target_candidate_id is echoed only when the caller named it. A run never adopts a candidate for being the newest, so a project holding candidates does not make apply_decisions satisfied.',
+          // Echoed as the caller's requested input either way, and flagged when
+          // this plan's own intake would remove it.
+          target_candidate_invalidated_by_intake: Boolean(invalidatedCandidate),
+          candidate_selection_notice: 'target_candidate_id is echoed only when the caller named it. A run never adopts a candidate for being the newest, so a project holding candidates does not make apply_decisions satisfied. A candidate this plan\'s own intake would replace is echoed with target_candidate_invalidated_by_intake and is not reported as a satisfied downstream result.',
           artifact_ids: Object.freeze(record.artifacts.map(entry => entry.artifact_id)),
           run_ids: Object.freeze(runsOf(record).map(entry => entry.run_id)),
         }),

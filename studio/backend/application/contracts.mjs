@@ -305,6 +305,11 @@ export const LIMITS = freeze({
   // full list stays behind `listBaselineEvents` and the stored reports; the
   // request carries the first page and the true total.
   maxReviewRequestEventIds: 50,
+  // What already existed when a step was marked pending, so an interrupted
+  // effect can be told from something that was already there. Bounded because
+  // it is stored; a set larger than this records itself as incomplete, and an
+  // incomplete before-set proves no novelty, so nothing is adopted from it.
+  maxEffectBeforeSet: 64,
   maxIdempotencyReceiptsPerRun: 32,
   maxIdempotencyKeyLength: 200,
   maxFilenameLength: 255,

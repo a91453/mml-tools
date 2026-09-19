@@ -74,6 +74,10 @@ export function buildCapabilities({ canonical, storage, jobs, transports = [] })
       run_idempotency: true,
       run_optimistic_concurrency: true,
       run_interruption_reconciliation: true,
+      // An interrupted step's marker records what already existed, so a
+      // baseline, candidate or artifact that predates the effect is never
+      // adopted as it — by the automatic path or by a named one.
+      run_effect_before_set: true,
       // Advancement is caller-driven. There is no automatic restart, no timer
       // and no queue: a waiting run waits for an explicit resume call.
       automatic_run_continuation: false,
