@@ -98,6 +98,56 @@ test('a proposal cannot author a Lead evidence record, however well formed it is
   assert.deepEqual((await app.getProject(OWNER, context.fixture.projectId)).project.candidates, []);
 });
 
+test('a reduction decision may not carry a Lead evidence record either', async () => {
+  // `leadEvidence` is in the REDUCTION engine's decision key set as well as the
+  // arrangement engine's, and a G12 REDISTRIBUTE into Melody is a Lead move.
+  // One refusal covers both because both classes share the decision key check;
+  // this pins that they do, so a later split of that branch cannot reopen the
+  // hole on the path nobody was looking at.
+  const { baselineWithUnassignedRole, FIXTURE_SOURCE_ID } = await import('./fixtures/g12-fixtures.mjs');
+  const app = createStudioApplication({});
+  const fixture = await projectWithSymbolicAsset(app, OWNER, { project: baselineWithUnassignedRole() });
+  const started = await app.startRun(OWNER, fixture.projectId, {
+    asset_ids: [fixture.assetId],
+    decisions: runDecisionsFor(fixture.project, { exclude: ['Chord5'], acceptedBy: RUN_REVIEWER }),
+    accepted_by: RUN_REVIEWER,
+  });
+  const target = (await app.proposalTargets(OWNER, fixture.projectId, started.run.run_id))
+    .targets.find(entry => entry.code === 'REDUCTION_DECISIONS_REQUIRED');
+  assert.ok(target, 'the run must be waiting on reduction decisions');
+
+  await assert.rejects(
+    app.proposeDecision(OWNER, fixture.projectId, {
+      run_id: started.run.run_id,
+      request_key: target.request_key,
+      kind: PROPOSAL_KIND.FINAL_REDUCTION,
+      proposed_by: AGENT,
+      rationale: 'Redistribute the unassigned lane into Melody.',
+      action: {
+        decisions: [{
+          id: 'redistribute-into-melody',
+          action: 'REDISTRIBUTE',
+          eventIds: ['chord5-1'],
+          toRole: 'Melody',
+          reason: 'The agent believes this is the lead.',
+          evidence: [`${FIXTURE_SOURCE_ID}#Chord5`],
+          leadEvidence: {
+            sourceIdentity: { sourceId: FIXTURE_SOURCE_ID, sourceEventId: `${FIXTURE_SOURCE_ID}#chord5-1` },
+            sectionRole: 'instrumental-lead',
+            scoreEvidence: { availability: 'available', classification: 'lead', citation: 'I, the model, recall the score.' },
+            audioEvidence: { availability: 'available', classification: 'foreground', citation: 'I, the model, recall the recording.' },
+            continuity: { checked: true, createsLeadGap: false },
+            core3: { checked: true, status: 'INTACT' },
+            destinationReason: 'The agent is confident.',
+          },
+        }],
+      },
+      cites: { event_ids: ['chord5-1'], source_ids: [FIXTURE_SOURCE_ID] },
+    }),
+    error => error.code === 'INVALID_REQUEST' && error.details.refusal === 'REVIEWER_EVIDENCE_RECORD_SUPPLIED',
+  );
+});
+
 test('the Lead move itself stays proposable, and lands on PENDING rather than PASS', async () => {
   // Refusing the evidence record must not refuse the proposal. An agent can
   // still say "this belongs in Melody, and here is why"; what it cannot do is
