@@ -16,8 +16,17 @@
 // unchanged, and nothing in this layer can raise them.
 
 import { ASSET_KIND_INTAKE, ERROR_CODES, LIMITS, fail } from './contracts.mjs';
+import { sha256Of } from './store.mjs';
 
 const now = () => new Date().toISOString();
+const encoder = new TextEncoder();
+
+// Which adapter actually reads the caller's meter map. Only the MML adapter
+// does: a MIDI or MusicXML source carries its own meter, and a Canonical IR
+// upload is rebuilt through the IR constructors. So the meter is an *intake
+// input* for some selections and irrelevant to others, and which one it is has
+// to be recorded rather than guessed at by a later reader.
+const consumesMeterText = kind => ASSET_KIND_INTAKE[kind]?.adapter === 'mml';
 
 // The Canonical source id a symbolic asset becomes. Derived from the bytes, so
 // re-uploading the same file produces the same source, event and project
@@ -165,6 +174,22 @@ export function createIntakeService({ canonical, projects, assets, store }) {
         source_complete: project.metadata?.sourceComplete === true,
         incomplete_inputs: [...(project.metadata?.incompleteInputs ?? [])],
         formats: ingested.map(entry => ({ asset_id: entry.asset.asset_id, kind: entry.asset.kind, format: entry.format })),
+        // Implementer provenance: which inputs this baseline was actually built
+        // from, beyond the asset ids. It is recorded because the meter map is an
+        // intake input for an MML source — `normalizeMMLSource` parses against
+        // it — so a baseline built under one meter is not the baseline a caller
+        // asking for another meter means, and nothing else on this record could
+        // tell the two apart. `meter_text_sha256` is null when no selected
+        // adapter read the meter at all, which is the honest way to say
+        // "irrelevant here" rather than "empty". This is provenance about an
+        // implementation input; it defines no Canonical rule and grades nothing.
+        intake_inputs: {
+          meter_text_sha256: selected.some(asset => consumesMeterText(asset.kind))
+            ? sha256Of(encoder.encode(meterText))
+            : null,
+          meter_text_consumed_by: selected.filter(asset => consumesMeterText(asset.kind)).map(asset => asset.asset_id),
+          notice: 'Implementer provenance for the inputs this baseline was built from. meter_text_sha256 is null when no selected source adapter reads a meter map.',
+        },
         warnings: summarize(project.metadata?.warnings ?? []),
         unsupported: summarize(project.metadata?.unsupported ?? []),
       };

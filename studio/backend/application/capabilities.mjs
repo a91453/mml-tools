@@ -13,6 +13,7 @@
 // agent read it as any of those.
 
 import { ASSET_KIND_NAMES, GATE_NAMES, IDENTITY_MODEL, JOB_STATUS, LIMITS } from './contracts.mjs';
+import { RUN_EXECUTION_MODE, RUN_EXECUTION_NOTICE, RUN_RECORD_SCHEMA, RUN_REPORT_SCHEMA, RUN_SEPARATION_NOTICE, RUN_STATE_NAMES, RUN_STEP_OPERATION, RUN_STEP_ORDER } from './run-contracts.mjs';
 
 const freeze = Object.freeze;
 
@@ -62,6 +63,31 @@ export function buildCapabilities({ canonical, storage, jobs, transports = [] })
       automatic_collision_repair: false,
       automatic_performer_allocation: false,
       candidate_review: true,
+      // One traceable, explicitly resumable workflow instance over the
+      // operations already listed here. It is `true` because the run
+      // orchestration exists; it adds no musical capability, and every `false`
+      // above stays `false` — in particular a run does not make this build
+      // capable of background execution, cancellation, audio transcription or
+      // an in-game test.
+      one_click_run_orchestration: true,
+      run_step_receipts: true,
+      run_idempotency: true,
+      run_optimistic_concurrency: true,
+      run_interruption_reconciliation: true,
+      // An interrupted step's marker records what already existed, so a
+      // baseline, candidate or artifact that predates the effect is never
+      // adopted as it — by the automatic path or by a named one.
+      run_effect_before_set: true,
+      // A run goes forward. Supplying a new decision set, reduction, adaptation
+      // or meter map advances a live run and drops every result bound to the
+      // identity it replaces; a COMPLETED run is an audit record and refuses a
+      // material change rather than moving what it points at.
+      run_monotonic_completion: true,
+      run_downstream_invalidation: true,
+      // Advancement is caller-driven. There is no automatic restart, no timer
+      // and no queue: a waiting run waits for an explicit resume call.
+      automatic_run_continuation: false,
+      cross_process_run_coordination: false,
       version_drift_comparison: true,
       readiness_evaluation: true,
       micro_gap_enforcement: true,
@@ -95,6 +121,51 @@ export function buildCapabilities({ canonical, storage, jobs, transports = [] })
       job_cancellation: jobs?.cancellation === true,
       execution_model: jobs?.executionModel ?? 'synchronous-completion',
       notice: jobs?.notice ?? 'Work runs inline in the request that created the job and the job is already terminal when it is returned. The lifecycle is recorded, not simulated: no background queue, worker pool or external queue service exists in this build.',
+    }),
+
+    // How a run actually behaves. Stated as facts beside the job record above,
+    // because the two are different things and an agent that reads one as the
+    // other will wait for something that is not happening.
+    runs: freeze({
+      version: 1,
+      record_schema: RUN_RECORD_SCHEMA,
+      report_schema: RUN_REPORT_SCHEMA,
+      execution_mode: RUN_EXECUTION_MODE,
+      states: RUN_STATE_NAMES,
+      steps: RUN_STEP_ORDER,
+      step_operations: RUN_STEP_OPERATION,
+      operations: freeze(['planRun', 'startRun', 'getRun', 'resumeRun']),
+      read_only_operations: freeze(['planRun', 'getRun']),
+      background_execution: false,
+      automatic_continuation: false,
+      cancellation: false,
+      // The existing deployment runs one process. Nothing here has been shown
+      // to be safe across processes or workers, so it is reported as absent
+      // rather than left for a reader to assume from the per-project lock.
+      cross_process_run_coordination: false,
+      max_runs_per_project: LIMITS.maxRunsPerProject,
+      max_steps_per_advance: LIMITS.maxRunStepsPerAdvance,
+      idempotency: freeze({
+        scope: 'owner + project + run operation',
+        binding: 'the normalized request fingerprint the key was first used with',
+        enforced_by: 'the Application Service run record, not a transport annotation',
+        same_key_same_payload: 'the same run is returned; nothing is re-applied, no revision is taken and no artifact is produced',
+        same_key_different_payload: 'refused with IDEMPOTENCY_CONFLICT; the original run is untouched',
+      }),
+      refuses: freeze([
+        'converting a suggestion into an acceptance, or a PENDING into KEEP / OMIT / PASS',
+        'writing source_complete, player_readback, or the Gate 4 / 8 / 9 reviews that a caller did not state with a reason',
+        'recording player_readback as N/A or original_audio_required as false because data is missing',
+        'applying a reduction or an adaptation that a caller did not accept with the plan id it reviewed',
+        'reusing an approval, confirmation, plan or PASS after the source bytes, asset selection, baseline, candidate, accepted decisions, profile, plan or rules snapshot it was bound to changed',
+        'adopting a candidate produced outside the run without it being named and its lineage and baseline verified',
+        'replaying a step whose effect cannot be established from a deterministic identity or a stored reference',
+        'minting a no-op revision when no transformation is needed, and treating that as a gate result',
+        'rewriting the content or identity of a Final artifact, or presenting an earlier candidate\'s MML as a later run output',
+        'proceeding past a readiness blocker it does not recognise',
+      ]),
+      execution_notice: RUN_EXECUTION_NOTICE,
+      separation_notice: RUN_SEPARATION_NOTICE,
     }),
 
     asset_storage: freeze({

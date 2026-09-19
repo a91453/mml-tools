@@ -347,6 +347,24 @@ export function createApiRouter({ application, ownerOf, challenge = null }) {
       }));
     }],
 
+    // ── runs ────────────────────────────────────────────────────────────────
+    //
+    // One traceable, explicitly resumable workflow instance over the operations
+    // above. The same run service answers the `studio_run_*` MCP tools: there
+    // is one workflow, not one per transport.
+    //
+    // `plan` is POST because it takes a body, not because it writes: it creates
+    // no run and writes nothing at all. `/runs/plan` is listed before the
+    // collection route so the more specific path wins.
+    ['POST', /^\/projects\/([^/]+)\/runs\/plan$/, async (m, request, owner) =>
+      json(await application.planRun(owner, m[1], await readJson(request)))],
+    ['POST', /^\/projects\/([^/]+)\/runs$/, async (m, request, owner) =>
+      json(await application.startRun(owner, m[1], await readJson(request)), 201)],
+    ['GET', /^\/projects\/([^/]+)\/runs$/, async (m, _r, owner) => json(await application.getRun(owner, m[1], null))],
+    ['GET', /^\/projects\/([^/]+)\/runs\/([^/]+)$/, async (m, _r, owner) => json(await application.getRun(owner, m[1], m[2]))],
+    ['POST', /^\/projects\/([^/]+)\/runs\/([^/]+)\/resume$/, async (m, request, owner) =>
+      json(await application.resumeRun(owner, m[1], m[2], await readJson(request)))],
+
     ['GET', /^\/projects\/([^/]+)\/jobs$/, async (m, _r, owner) => json(await application.listJobs(owner, m[1]))],
     ['GET', /^\/jobs\/([^/]+)$/, async (m, _r, owner) => json(await application.getJob(owner, m[1]))],
     ['GET', /^\/artifacts\/([^/]+)$/, async (m, _r, owner) => json(await application.getArtifact(owner, m[1]))],

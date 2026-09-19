@@ -516,6 +516,70 @@ requirements. A promotion can therefore never satisfy a missing demotion report
 or vice versa, and a candidate with an ungraded promotion is blocked before the
 Final emitter is called.
 
+### 9.1 The One-Click Orchestrator
+
+A **run** composes the operations above into one traceable, explicitly
+resumable workflow instance. It is documented in full in
+[AI One-Click Orchestrator — Phase 1](AI_ONE_CLICK_ORCHESTRATOR_PHASE1.md);
+what matters here is where it sits in this interface.
+
+```
+planRun    read-only. Which steps it would take, what already exists, what
+           needs caller input, what is blocked. Writes nothing.
+startRun   create the run and take the steps the supplied inputs allow.
+getRun     read-only state, progress, raw blockers and review requests.
+resumeRun  re-validate every binding and advance again, after explicit new
+           input, decisions or evidence.
+```
+
+Steps, in the only order a run takes them:
+
+```
+intake → suggest → apply_decisions → final_reduction → mobile_adaptation
+       → review → finalize → report
+```
+
+Each step is one of the operations already described in this document. The run
+adds no musical capability and publishes no verdict: it decides *which existing
+operation to call next*, and it stops at the first point where a decision, an
+evidence record or a capability is missing.
+
+Three things keep it from becoming a way around this interface's own rules:
+
+* **it holds no allow-list of blockers.** A run proceeds only while
+  `readiness.preGameBlocking` is empty. A gate this layer has never heard of
+  produces a review request with `known: false`, no operation hint, and still
+  blocks. The pre-emission exemption is the Final service's own
+  `PRE_EMISSION_EXEMPT_GATES`, imported rather than restated, so the run cannot
+  become a second exemption policy or extend the exemption;
+* **it records only what a caller stated.** `source_complete`,
+  `player_readback`, the Gate 4 / 8 / 9 reviews and `original_audio_required`
+  reach the record through the existing `recordConfirmations` path or not at
+  all. No suggestion becomes an acceptance, no `PENDING` becomes KEEP / OMIT /
+  PASS, and missing data never becomes `N/A` or `not required`. A skipped Mobile
+  adaptation is **not** a Gate 8 result;
+* **a run state is not a gate.** `completed` means this workflow instance
+  reached the end of the steps its inputs allowed and the existing `finalize`
+  delivered an artifact. It is independent of `TECHNICAL_PASS`, `SOURCE_PASS`,
+  `VALIDATED` and `IN_GAME_ACCEPTED`, and `in_game` stays `PENDING`.
+
+A run is **not a job**: a job records one unit of inline work, a run records a
+multi-step instance across several such calls and references the job ids they
+produced. Neither gains background execution or cancellation by the other
+existing; both are still `false`.
+
+Advancement is bounded and synchronous. When a `startRun` or `resumeRun` call
+returns, nothing is executing: no queue, no worker pool, no timer, no automatic
+restart. A waiting run waits for another explicit call.
+
+Because a run takes the per-project lock once per step rather than once per
+advancement, `index.mjs` holds an `internal` façade — the body of each composed
+operation, without the lock and without the provenance envelope — and the public
+method is that body plus both. It is not a way around a check: every owner,
+Canonical, integrity, evidence and acceptance check lives in the service the
+body calls, so both callers get the identical refusal. It exists because a run
+holding the project lock cannot call a public method that takes the same lock.
+
 ## 10. Finalize
 
 `final-service.mjs` calls `emitFinalMml` once. The emitter already owns the
@@ -586,6 +650,11 @@ POST   /api/v1/projects/:project_id/decisions
 POST   /api/v1/projects/:project_id/confirmations
 POST   /api/v1/projects/:project_id/review
 POST   /api/v1/projects/:project_id/finalize
+POST   /api/v1/projects/:project_id/runs/plan
+POST   /api/v1/projects/:project_id/runs
+GET    /api/v1/projects/:project_id/runs
+GET    /api/v1/projects/:project_id/runs/:run_id
+POST   /api/v1/projects/:project_id/runs/:run_id/resume
 GET    /api/v1/projects/:project_id/jobs
 GET    /api/v1/jobs/:job_id
 GET    /api/v1/artifacts/:artifact_id
@@ -609,16 +678,33 @@ The technical endpoints refuse a malformed request (`INVALID_REQUEST`, HTTP
 400) exactly where the MCP tool schemas refuse it, rather than grading the
 mistake as a technical verdict.
 
+The five `runs` routes are the One-Click Orchestrator (§9.1).
+`POST …/runs/plan` is a POST because it takes a body, not because it writes:
+it creates no run and writes nothing at all, and a regression digests the whole
+store before and after to prove it. `GET …/runs` and `GET …/runs/:run_id` are
+likewise read-only. `/runs/plan` is listed before the collection route so the
+more specific path wins.
+
 ## 12. MCP control surface
 
-Fourteen `studio_*` tools, plus the three original tools unchanged:
+The `studio_*` tools, plus the three original tools unchanged:
 
 `studio_capabilities`, `studio_project_create`, `studio_project_get` (without
 `project_id`: the owner's project list), `studio_sources_analyze`,
 `studio_baseline_events`, `studio_arrangement_suggest`, `studio_decisions_apply`,
 `studio_audio_alignment`, `studio_candidate_review`,
 `studio_core3_change_approve`, `studio_lead_evidence_review`, `studio_finalize`,
-`studio_job_status`, `studio_artifact_get`.
+`studio_final_reduction_plan`, `studio_final_reduction_apply`,
+`studio_mobile_adaptation_plan`, `studio_mobile_adaptation_apply`,
+`studio_run_plan`, `studio_run_start`, `studio_run_status`,
+`studio_run_resume`, `studio_job_status`, `studio_artifact_get`.
+
+The four run tools are four rather than one for the same reason the reduction
+and adaptation previews are separate from their applies: `studio_run_plan` and
+`studio_run_status` write nothing and are annotated read-only, while
+`studio_run_start` and `studio_run_resume` mutate. Collapsing a read-only plan
+into the operation that applies decisions is one typo away from a mutation
+nobody previewed.
 
 **Every review axis a reviewer has to move has a tool**, and a regression
 asserts it operation by operation. That rule is written down because the
@@ -676,6 +762,13 @@ Parity is also a reachability contract: every Application Service read an
 agent needs to make a Canonical decision — the project list, the per-event
 provenance of the baseline — is served on both adapters, and a regression
 compares the two answers.
+
+The run is held to the same contract, field for field:
+`tests/studio-run-transport.test.mjs` runs one fixture over each adapter and
+compares the whole run projection with only the server-generated ids, the
+wall-clock times and the per-project fingerprints removed — then compares the
+delivered MML and the artifact's gate axes. A second workflow hiding behind one
+adapter is what that assertion exists to rule out.
 
 An `artifact_id` is deliberately *not* expected to match across transports: it is
 content-addressed over a body naming the project it belongs to and when it was
@@ -767,11 +860,28 @@ rendered as a generic 500 with no message, path or stack.
 9. **One meter map per candidate.** Final re-validation derives the meter map
    from the candidate's meter events; a candidate declaring none skips
    re-validation and says so in `readiness_summary.technical_validation`.
+10. **A run advances only when it is called.** Bounded synchronous
+   advancement: `runs.automatic_continuation` is `false`, and a run in
+   `awaiting_review`, `blocked` or `interrupted` stays there until an explicit
+   `resumeRun`. Nothing polls, retries or restarts it.
+11. **No cross-process run coordination.** The per-project serializer is
+   in-process. `runs.cross_process_run_coordination` is `false`, and a
+   temp-then-rename record write is not claimed to provide distributed
+   exactly-once. What makes an interrupted step safe to adopt is that its effect
+   is content-addressed, not that the write was atomic across processes.
+12. **The `run_report` artifact is a run's summary, not a verdict.** It names
+   the exact final candidate and the exact Final artifact and certifies nothing.
+   It cannot modify a `final_mml` artifact: `fileArtifact` derives an id from the
+   SHA-256 of the body, so a different body is a different artifact.
 
 ## 18. Deferred
 
 - Official MCP SDK adoption and protocol modernization.
-- Real background job execution and cancellation.
+- Real background job execution and cancellation, and automatic run
+  continuation.
+- **The AI Proposal protocol and any agent review policy.** Phase 1 of the
+  One-Click Orchestrator connects no model, and a fixture's human confirmations
+  are not a permission a model can grant itself.
 - Multi-user authentication and per-user isolation at the transport.
 - A Studio UI over the new API.
 - Server-side invocation of the audio worker.

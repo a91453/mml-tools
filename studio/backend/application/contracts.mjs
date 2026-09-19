@@ -39,10 +39,73 @@ export const ID_PREFIX = freeze({
   project: 'prj_',
   asset: 'ast_',
   job: 'job_',
+  run: 'run_',
   artifact: 'art_',
+  // One attempt at one mutating effect. Minted by the run service immediately
+  // before the effect and written both on the pending marker and on the record
+  // the effect produced, so a recovered run can say "this record is what THAT
+  // attempt produced" instead of "this record looks like what such an attempt
+  // would produce". Internal provenance: see INTERNAL_PROVENANCE_KEYS.
+  effectAttempt: 'eff_',
 });
 
-const OPAQUE_ID = /^(prj|ast|job)_[0-9a-f]{32}$/;
+/**
+ * The fields no caller may supply, on any operation, through the public
+ * Application Service.
+ *
+ * They are the run's own record of which attempt at which step produced a
+ * stored record. A caller who could set them could make an unrelated record
+ * claim to be an interrupted step's effect, which is exactly the thing
+ * reconciliation refuses to guess at. The public surface strips them; the
+ * run-internal facade is the only path that supplies them.
+ */
+export const INTERNAL_PROVENANCE_KEYS = freeze(['inputFingerprint', 'effectAttemptId']);
+
+/**
+ * One operation input, rebuilt from the fields the caller actually stated.
+ *
+ * Deleting the internal keys from a copy is not enough, and neither is
+ * checking whether the caller set them as own properties: every service reads
+ * its input by ordinary property access, which walks the prototype chain. A
+ * caller who hands over `Object.create({ effectAttemptId })` states the field
+ * nowhere `Object.hasOwn` can see it and supplies it everywhere the service
+ * looks -- which is the whole forge this boundary exists to stop.
+ *
+ * So the input is REBUILT: own enumerable fields only, onto a fresh object
+ * literal, with the internal keys left out. Whatever prototype the caller
+ * attached does not come with it, and no inherited field of any name reaches a
+ * service. A public request is what the caller stated, not what it arranged to
+ * be found.
+ *
+ * Shallow on purpose. The internal keys are top-level fields of an operation
+ * input, and every nested structure is validated by the service that owns it
+ * against its own closed key set -- read from own keys, exactly as here.
+ */
+export const withoutInternalProvenance = input => (input === null || typeof input !== 'object' || Array.isArray(input)
+  ? input
+  : statedFields(input, { omit: INTERNAL_PROVENANCE_KEYS }));
+
+/**
+ * The fields a caller actually stated on one request object.
+ *
+ * Own enumerable fields, copied onto a fresh object literal. Whatever
+ * prototype the caller attached is left behind, so a later `value.field` reads
+ * only what a `Object.keys` guard could also see. Every boundary that both
+ * VALIDATES a request by its keys and READS it by name needs this, because JS
+ * disagrees with itself about what "has a field" means: `Object.keys` says own,
+ * property access says own-or-inherited. A caller who knows that can state a
+ * field where the check cannot see it and have it read where it counts.
+ */
+export const statedFields = (value, { omit = [] } = {}) => {
+  const stated = {};
+  for (const key of Object.keys(value)) {
+    if (omit.includes(key)) continue;
+    stated[key] = value[key];
+  }
+  return stated;
+};
+
+const OPAQUE_ID = /^(prj|ast|job|run)_[0-9a-f]{32}$/;
 const ARTIFACT_ID = /^art_[0-9a-f]{64}$/;
 
 // Owned by `arrangement/decision-application.mjs`. Restated here as a
@@ -54,6 +117,7 @@ export const IDENTITY_MODEL = freeze({
   project_id: 'prj_<32 hex>, server-generated',
   asset_id: 'ast_<32 hex>, server-generated; never derived from the upload filename',
   job_id: 'job_<32 hex>, server-generated',
+  run_id: 'run_<32 hex>, server-generated; the identity of one workflow instance, never of a baseline, a candidate or an artifact',
   artifact_id: 'art_<sha256 of the artifact body>',
   baseline_id: 'bas:<baselineIdentityOf(project).contentDigest>, computed by the existing backend',
   candidate_id: 'g11d:rev:<sha256>, the existing G11-D revision id, used verbatim',
@@ -63,6 +127,7 @@ export const IDENTITY_MODEL = freeze({
 export const isProjectId = value => typeof value === 'string' && OPAQUE_ID.test(value) && value.startsWith(ID_PREFIX.project);
 export const isAssetId = value => typeof value === 'string' && OPAQUE_ID.test(value) && value.startsWith(ID_PREFIX.asset);
 export const isJobId = value => typeof value === 'string' && OPAQUE_ID.test(value) && value.startsWith(ID_PREFIX.job);
+export const isRunId = value => typeof value === 'string' && OPAQUE_ID.test(value) && value.startsWith(ID_PREFIX.run);
 export const isArtifactId = value => typeof value === 'string' && ARTIFACT_ID.test(value);
 export const isBaselineId = value => typeof value === 'string' && BASELINE_ID.test(value);
 export const isCandidateId = value => typeof value === 'string' && CANDIDATE_ID.test(value);
@@ -190,6 +255,20 @@ export const ERROR_CODES = freeze({
   SOURCE_INCOMPLETE: 'SOURCE_INCOMPLETE',
   JOB_NOT_FOUND: 'JOB_NOT_FOUND',
   JOB_FAILED: 'JOB_FAILED',
+  RUN_NOT_FOUND: 'RUN_NOT_FOUND',
+  // The caller's expected run revision is not the run's current revision, so
+  // the run moved under it. Distinct from an idempotency conflict: nothing
+  // about the request is malformed, the caller is simply not looking at the
+  // state it thought it was.
+  RUN_CONFLICT: 'RUN_CONFLICT',
+  // One idempotency key, two different request payloads. Refused rather than
+  // resolved in favour of either: the first request already bound the key, and
+  // overwriting its run would lose whatever the first payload produced.
+  IDEMPOTENCY_CONFLICT: 'IDEMPOTENCY_CONFLICT',
+  // A step's effect may or may not have been persisted before the process
+  // stopped, and no deterministic identity or stored reference settles it. The
+  // run reports exactly which step is unconfirmed instead of replaying it.
+  RUN_RECONCILIATION_REQUIRED: 'RUN_RECONCILIATION_REQUIRED',
   CANDIDATE_NOT_FOUND: 'CANDIDATE_NOT_FOUND',
   ARTIFACT_NOT_FOUND: 'ARTIFACT_NOT_FOUND',
   READINESS_BLOCKED: 'READINESS_BLOCKED',
@@ -216,6 +295,10 @@ export const ERROR_HTTP_STATUS = freeze({
   [ERROR_CODES.SOURCE_INCOMPLETE]: 422,
   [ERROR_CODES.JOB_NOT_FOUND]: 404,
   [ERROR_CODES.JOB_FAILED]: 422,
+  [ERROR_CODES.RUN_NOT_FOUND]: 404,
+  [ERROR_CODES.RUN_CONFLICT]: 409,
+  [ERROR_CODES.IDEMPOTENCY_CONFLICT]: 409,
+  [ERROR_CODES.RUN_RECONCILIATION_REQUIRED]: 409,
   [ERROR_CODES.CANDIDATE_NOT_FOUND]: 404,
   [ERROR_CODES.ARTIFACT_NOT_FOUND]: 404,
   [ERROR_CODES.READINESS_BLOCKED]: 409,
@@ -274,6 +357,30 @@ export const LIMITS = freeze({
   maxDecisionsPerRequest: 500,
   maxEventsPerPage: 500,
   maxTitleLength: 120,
+  // One project's stored workflow instances. A run record is small by
+  // construction (identities, fingerprints, step receipts and bounded review
+  // requests), and the cap keeps a project record bounded whatever a caller does.
+  maxRunsPerProject: 32,
+  maxRunStepsPerAdvance: 16,
+  maxReviewRequestsPerRun: 48,
+  // Review requests cite event ids so a reviewer can find the material. The
+  // full list stays behind `listBaselineEvents` and the stored reports; the
+  // request carries the first page and the true total.
+  maxReviewRequestEventIds: 50,
+  // What already existed when a step was marked pending, so an interrupted
+  // effect can be told from something that was already there. Bounded because
+  // it is stored; a set larger than this records itself as incomplete, and an
+  // incomplete before-set proves no novelty, so nothing is adopted from it.
+  maxEffectBeforeSet: 64,
+  // The source-confirmed meter map an MML source is parsed against. One bound,
+  // so the HTTP and MCP surfaces accept exactly the same range rather than one
+  // rejecting what the other admits.
+  maxMeterTextLength: 2048,
+  // The optimistic-concurrency precondition a caller may state. Bounded so the
+  // two transports declare and enforce the same range.
+  maxRunRevision: 1000000,
+  maxIdempotencyReceiptsPerRun: 32,
+  maxIdempotencyKeyLength: 200,
   maxFilenameLength: 255,
   maxStoreBytes: 400 * 1024 * 1024,
 });

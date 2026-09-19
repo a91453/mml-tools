@@ -22,6 +22,12 @@
 // `studio_candidate_review` and `studio_finalize`) and the four technical
 // validation operations are HTTP-only today.
 //
+// The four run operations — `planRun`, `startRun`, `getRun`, `resumeRun` —
+// compose the operations above into one traceable, explicitly resumable
+// workflow instance. They add no musical capability: every step is one of the
+// calls already listed, and a run stops at the first point where a decision,
+// an evidence record or a capability is missing. See `run-service.mjs`.
+//
 //     ChatGPT · Claude · Codex · future models · local agents
 //                            │
 //                    MCP adapter · HTTP adapter
@@ -69,6 +75,7 @@ import {
   GATE_NOTICE,
   GATE_STATUS,
   IDENTITY_MODEL,
+  INTERNAL_PROVENANCE_KEYS,
   JOB_STATUS,
   JOB_TYPES,
   LIMITS,
@@ -82,6 +89,8 @@ import {
   isCandidateId,
   isJobId,
   isProjectId,
+  isRunId,
+  withoutInternalProvenance,
 } from './contracts.mjs';
 import { createCanonicalGate } from './provenance.mjs';
 import { createStore } from './store.mjs';
@@ -93,6 +102,7 @@ import { createArrangementService } from './arrangement-service.mjs';
 import { createReviewService } from './review-service.mjs';
 import { createFinalService } from './final-service.mjs';
 import { createTechnicalService } from './technical-service.mjs';
+import { createRunService } from './run-service.mjs';
 
 export const APPLICATION_VERSION = '1.0.0';
 
@@ -136,6 +146,10 @@ function createProjectSerializer() {
  *   unavailable Published Canonical. Production passes nothing.
  * @param {string[]} [options.transports]    Which adapters are wired in front of
  *   this instance, for capability discovery.
+ * @param {object}   [options.runHooks]     Test seam for simulating an
+ *   interruption inside a run step, in the same spirit as `loadEngines`.
+ *   Production passes nothing. See `run-service.mjs` for the three hooks and
+ *   the three interruption classes they stand in for.
  */
 export function createStudioApplication({
   dataDirectory = null,
@@ -144,6 +158,7 @@ export function createStudioApplication({
   loadEngines = undefined,
   serviceVersion = APPLICATION_VERSION,
   transports = [],
+  runHooks = undefined,
 } = {}) {
   const canonical = createCanonicalGate(loadEngines ? { load: loadEngines } : {});
   const store = createStore({ directory: dataDirectory, durability, maxBytes: maxStoreBytes });
@@ -157,6 +172,142 @@ export function createStudioApplication({
   const technical = createTechnicalService({ serviceVersion, canonical });
   const serialized = createProjectSerializer();
   const mutate = (projectId, work) => serialized(String(projectId), work);
+
+  // One implementation per operation, reached two ways.
+  //
+  /**
+   * One operation input as it arrives from OUTSIDE this service.
+   *
+   * The run records which attempt at which step produced a stored record, and
+   * reconciliation adopts an interrupted step's effect on the strength of it.
+   * A caller who could set those fields could make any record claim to be an
+   * interrupted step's effect -- which is the one thing this whole mechanism
+   * exists to refuse. The transports already build their own call shapes from
+   * named request fields, so nothing reaches here over HTTP or MCP; this is
+   * the boundary itself rather than a property of how the transports happen to
+   * be written today, and it holds for a direct in-process caller too.
+   *
+   * The run does not go through it: `internal` IS the run-only path.
+   */
+  const publicInput = input => withoutInternalProvenance(input);
+
+  // `internal` holds the body of every operation the run orchestrator composes.
+  // The public method below is that body plus the per-project lock and the
+  // provenance envelope; the orchestrator calls the body directly and takes the
+  // lock itself, once per step. That is not a way around a check: every owner,
+  // Canonical, integrity, evidence and acceptance check lives in the service
+  // the body calls, so both callers get the identical refusal. It exists
+  // because a run holding the project lock cannot call a public method that
+  // takes the same lock — one project key, acquired twice, deadlocks.
+  const internal = {
+    isSymbolicKind: kind => ASSET_KIND_INTAKE[kind]?.intake === true,
+    findAsset: (record, assetId) => assets.find(record, assetId),
+    fileArtifact: (record, artifact, options) => final.fileArtifact(record, artifact, options),
+
+    /**
+     * The run id an artifact's own body names, or null.
+     *
+     * Only a run report carries one. It exists so that reconciling an
+     * interrupted report step can tell this run's report from another run's for
+     * the same candidate by identity rather than by timestamp. It reads; it
+     * cannot write, and a missing or unreadable artifact answers null rather
+     * than failing a reconciliation that is already trying to be careful.
+     */
+    artifactRunId(owner, artifactId) {
+      try { return final.find(owner, artifactId)?.run_id ?? null; }
+      catch { return null; }
+    },
+
+    /**
+     * A stored artifact's body, for reconstructing what an effect recorded.
+     *
+     * An interrupted effect that persisted its artifact left the facts about
+     * it in the artifact: a Final carries its own emit status, its gates and
+     * its readiness summary. Reading them back is how an adopted effect ends
+     * with the same audit state as one whose receipt arrived — without running
+     * the emitter a second time. Read-only, and a missing or unreadable
+     * artifact answers null rather than failing a careful reconciliation.
+     */
+    artifactBody(owner, artifactId) {
+      try { return final.find(owner, artifactId) ?? null; }
+      catch { return null; }
+    },
+
+    /**
+     * The jobs that produced a given artifact, by the reference the job itself
+     * stored. Never "the newest job": an artifact with no uniquely identifying
+     * job is left without one rather than attributed to a guess.
+     */
+    jobsForArtifact(record, artifactId) {
+      return (record.jobs ?? []).filter(entry => entry.result_artifact_id === artifactId).map(entry => entry.job_id);
+    },
+
+    async analyzeSources(owner, projectId, options = {}) {
+      const { job, result } = await jobs.run(owner, projectId, JOB_TYPES.INTAKE, async () => {
+        const { baseline } = await intake.run(owner, projectId, options);
+        return { result: baseline, reference: baseline.baseline_id };
+      });
+      return { operation: OPERATION_STATUS.SUCCEEDED, job, baseline: result };
+    },
+
+    async suggestArrangement(owner, projectId, options = {}) {
+      return { operation: OPERATION_STATUS.SUCCEEDED, suggestion: await arrangement.suggest(owner, projectId, options) };
+    },
+
+    async applyDecisions(owner, projectId, input) {
+      const result = await arrangement.applyDecisions(owner, projectId, input);
+      return {
+        // The application either applied the whole set or applied nothing. A
+        // refused set is a real answer about the decisions, so it is reported
+        // with its own codes rather than raised as a transport failure.
+        operation: result.applied ? OPERATION_STATUS.SUCCEEDED : OPERATION_STATUS.BLOCKED,
+        code: result.applied ? null : ERROR_CODES.DECISION_REQUIRED,
+        decisions: result,
+      };
+    },
+
+    async planFinalReduction(owner, projectId, input) {
+      return { operation: OPERATION_STATUS.SUCCEEDED, reduction: await arrangement.finalReduction(owner, projectId, { ...input, apply: false }) };
+    },
+
+    async applyFinalReduction(owner, projectId, input) {
+      const result = await arrangement.finalReduction(owner, projectId, { ...input, apply: true });
+      const reviewResult = result.applied ? await review.review(owner, projectId, { candidateId: result.candidate_id }) : null;
+      return { operation: result.applied ? OPERATION_STATUS.SUCCEEDED : OPERATION_STATUS.BLOCKED, reduction: result, review: reviewResult };
+    },
+
+    async planMobileAdaptation(owner, projectId, input) {
+      return { operation: OPERATION_STATUS.SUCCEEDED, adaptation: await arrangement.mobileAdaptation(owner, projectId, { ...input, apply: false }) };
+    },
+
+    async applyMobileAdaptation(owner, projectId, input) {
+      const result = await arrangement.mobileAdaptation(owner, projectId, { ...input, apply: true });
+      const reviewResult = result.applied ? await review.review(owner, projectId, { candidateId: result.candidate_id }) : null;
+      return { operation: result.applied || result.unchanged ? OPERATION_STATUS.SUCCEEDED : OPERATION_STATUS.BLOCKED, adaptation: result, review: reviewResult };
+    },
+
+    async reviewCandidate(owner, projectId, input) {
+      return { operation: OPERATION_STATUS.SUCCEEDED, review: await review.review(owner, projectId, input) };
+    },
+
+    async finalize(owner, projectId, input) {
+      const { job, result } = await jobs.run(owner, projectId, JOB_TYPES.FINALIZE, async () => {
+        const outcome = await final.finalize(owner, projectId, input);
+        return { result: outcome, artifactId: outcome.artifact_id, reference: outcome.candidate_id };
+      });
+      return { ...result, job };
+    },
+  };
+
+  const runs = createRunService({
+    canonical,
+    projects,
+    store,
+    operations: internal,
+    serialize: serialized,
+    serviceVersion,
+    hooks: runHooks,
+  });
 
   // Every significant result carries the Canonical provenance of the process
   // that produced it, with its five identities kept separate. A result that
@@ -219,13 +370,7 @@ export function createStudioApplication({
      * caller should be able to look up rather than hold a request open for.
      */
     async analyzeSources(owner, projectId, options = {}) {
-      return mutate(projectId, async () => {
-        const { job, result } = await jobs.run(owner, projectId, JOB_TYPES.INTAKE, async () => {
-          const { baseline } = await intake.run(owner, projectId, options);
-          return { result: baseline, reference: baseline.baseline_id };
-        });
-        return envelope({ operation: OPERATION_STATUS.SUCCEEDED, job, baseline: result });
-      });
+      return mutate(projectId, async () => envelope(await internal.analyzeSources(owner, projectId, options)));
     },
 
     /**
@@ -261,21 +406,11 @@ export function createStudioApplication({
     },
 
     async suggestArrangement(owner, projectId, options = {}) {
-      return mutate(projectId, async () => envelope({ operation: OPERATION_STATUS.SUCCEEDED, suggestion: await arrangement.suggest(owner, projectId, options) }));
+      return mutate(projectId, async () => envelope(await internal.suggestArrangement(owner, projectId, options)));
     },
 
     async applyDecisions(owner, projectId, input) {
-      return mutate(projectId, async () => {
-        const result = await arrangement.applyDecisions(owner, projectId, input);
-        return envelope({
-          // The application either applied the whole set or applied nothing. A
-          // refused set is a real answer about the decisions, so it is reported
-          // with its own codes rather than raised as a transport failure.
-          operation: result.applied ? OPERATION_STATUS.SUCCEEDED : OPERATION_STATUS.BLOCKED,
-          code: result.applied ? null : ERROR_CODES.DECISION_REQUIRED,
-          decisions: result,
-        });
-      });
+      return mutate(projectId, async () => envelope(await internal.applyDecisions(owner, projectId, publicInput(input))));
     },
 
     async approveCore3SourceChange(owner, projectId, input) {
@@ -294,7 +429,7 @@ export function createStudioApplication({
      * no candidate is minted, whatever the plan says.
      */
     async planFinalReduction(owner, projectId, input) {
-      return envelope({ operation: OPERATION_STATUS.SUCCEEDED, reduction: await arrangement.finalReduction(owner, projectId, { ...input, apply: false }) });
+      return envelope(await internal.planFinalReduction(owner, projectId, publicInput(input)));
     },
 
     /**
@@ -306,23 +441,15 @@ export function createStudioApplication({
      * review says otherwise.
      */
     async applyFinalReduction(owner, projectId, input) {
-      return mutate(projectId, async () => {
-        const result = await arrangement.finalReduction(owner, projectId, { ...input, apply: true });
-        const reviewResult = result.applied ? await review.review(owner, projectId, { candidateId: result.candidate_id }) : null;
-        return envelope({ operation: result.applied ? OPERATION_STATUS.SUCCEEDED : OPERATION_STATUS.BLOCKED, reduction: result, review: reviewResult });
-      });
+      return mutate(projectId, async () => envelope(await internal.applyFinalReduction(owner, projectId, publicInput(input))));
     },
 
     async planMobileAdaptation(owner, projectId, input) {
-      return envelope({ operation: OPERATION_STATUS.SUCCEEDED, adaptation: await arrangement.mobileAdaptation(owner, projectId, { ...input, apply: false }) });
+      return envelope(await internal.planMobileAdaptation(owner, projectId, publicInput(input)));
     },
 
     async applyMobileAdaptation(owner, projectId, input) {
-      return mutate(projectId, async () => {
-        const result = await arrangement.mobileAdaptation(owner, projectId, { ...input, apply: true });
-        const reviewResult = result.applied ? await review.review(owner, projectId, { candidateId: result.candidate_id }) : null;
-        return envelope({ operation: result.applied || result.unchanged ? OPERATION_STATUS.SUCCEEDED : OPERATION_STATUS.BLOCKED, adaptation: result, review: reviewResult });
-      });
+      return mutate(projectId, async () => envelope(await internal.applyMobileAdaptation(owner, projectId, publicInput(input))));
     },
 
     /**
@@ -340,7 +467,7 @@ export function createStudioApplication({
     },
 
     async reviewCandidate(owner, projectId, input) {
-      return mutate(projectId, async () => envelope({ operation: OPERATION_STATUS.SUCCEEDED, review: await review.review(owner, projectId, input) }));
+      return mutate(projectId, async () => envelope(await internal.reviewCandidate(owner, projectId, input)));
     },
 
     async recordConfirmations(owner, projectId, confirmations) {
@@ -354,13 +481,37 @@ export function createStudioApplication({
      * record as well as from the result.
      */
     async finalize(owner, projectId, input) {
-      return mutate(projectId, async () => {
-        const { job, result } = await jobs.run(owner, projectId, JOB_TYPES.FINALIZE, async () => {
-          const outcome = await final.finalize(owner, projectId, input);
-          return { result: outcome, artifactId: outcome.artifact_id, reference: outcome.candidate_id };
-        });
-        return envelope({ ...result, job });
-      });
+      return mutate(projectId, async () => envelope(await internal.finalize(owner, projectId, publicInput(input))));
+    },
+
+    // ── runs ────────────────────────────────────────────────────────────────
+    //
+    // One traceable, explicitly resumable workflow instance over the operations
+    // above. A run is not a job and not a background worker: it advances only
+    // inside the call that asked it to, and it stops at the first point where a
+    // decision, an evidence record or a capability is missing. See
+    // `run-service.mjs` for what it will and will not do on a caller's behalf.
+
+    /** Read-only. Creates no run and writes nothing at all. */
+    async planRun(owner, projectId, input = {}) {
+      return envelope({ operation: OPERATION_STATUS.SUCCEEDED, plan: await runs.plan(owner, projectId, input) });
+    },
+
+    /** Create a run and take the steps the supplied inputs already allow. */
+    async startRun(owner, projectId, input = {}) {
+      const result = await runs.start(owner, projectId, input);
+      return envelope({ operation: OPERATION_STATUS.SUCCEEDED, ...result });
+    },
+
+    /** Read-only run state, or this project's run list when no id is named. */
+    async getRun(owner, projectId, runId = null) {
+      return envelope({ operation: OPERATION_STATUS.SUCCEEDED, ...(await runs.get(owner, projectId, runId)) });
+    },
+
+    /** Re-check an existing run and advance it with new input. */
+    async resumeRun(owner, projectId, runId, input = {}) {
+      const result = await runs.resume(owner, projectId, runId, input);
+      return envelope({ operation: OPERATION_STATUS.SUCCEEDED, ...result });
     },
 
     // ── jobs and artifacts ──────────────────────────────────────────────────
@@ -437,10 +588,31 @@ export {
   isCandidateId,
   isJobId,
   isProjectId,
+  isRunId,
 };
 export { buildCapabilities, INTERFACE_VERSION } from './capabilities.mjs';
 export { createCanonicalGate, provenanceOf, unloadedProvenance } from './provenance.mjs';
 export { PRE_EMISSION_EXEMPT_GATES, FINAL_ARTIFACT_SCHEMA } from './final-service.mjs';
 export { CONFIRMATIONS, CONFIRMATION_SCOPE, PLAYER_READBACK_VALUES, STALE_CONFIRMATION, gatesFrom } from './review-service.mjs';
 export { PROJECT_RECORD_SCHEMA } from './project-service.mjs';
+export {
+  READINESS_GATE_OPERATIONS,
+  RUN_AUTHORITY_NOTICE,
+  RUN_EXECUTION_MODE,
+  RUN_EXECUTION_NOTICE,
+  RUN_HALT,
+  RUN_RECORD_SCHEMA,
+  RUN_REPORT_ARTIFACT_TYPE,
+  RUN_REPORT_SCHEMA,
+  RUN_REVIEW_REQUEST,
+  RUN_SEPARATION_NOTICE,
+  RUN_STATE,
+  RUN_STATE_NAMES,
+  RUN_STEP,
+  RUN_STEP_OPERATION,
+  RUN_STEP_ORDER,
+  RUN_STEP_STATUS,
+} from './run-contracts.mjs';
+export { PLAN_INPUT_KEYS, RECONCILIATION_REMEDY, RESUME_INPUT_KEYS, START_INPUT_KEYS } from './run-service.mjs';
+export { INTERNAL_PROVENANCE_KEYS } from './contracts.mjs';
 export { ACCEPTED_MEDIA_TYPES } from './asset-service.mjs';
