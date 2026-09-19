@@ -11,8 +11,8 @@ MCP schema checker 與 `runStudioTool` dispatcher，再由 Application Service
 呼叫原有音樂引擎。`upload` 使用既有 `uploadAsset`；`export` 讀取既有
 Final artifact。沒有 HTTP listener、模型 SDK、queue、新資料庫或部署。
 
-現有的遠端 HTTP／MCP 仍可使用；此 CLI **不連接遠端服務**，也不讀取
-Studio PWA 的 IndexedDB。PWA 目前直接呼叫 Web Worker 引擎，沒有使用
+CLI 預設使用本機 store；加上 `--service-url` 可連既有遠端 HTTP／MCP，見下節。
+它不讀取 Studio PWA 的 IndexedDB。PWA 目前直接呼叫 Web Worker 引擎，沒有使用
 Application Service。不要把本機 run 誤認成網站既有歌曲。
 
 必須指定獨立 `--data-dir`。`store/` 使用既有 JSON record／blob store；
@@ -82,6 +82,39 @@ CLI 固定 local owner 為 `local:external-agent`；不同 actor 不是不同帳
 Application Service 程序寫入 `store/`。原服務沒有跨程序協調能力。
 若程序被強制終止，先檢查 `.agent.lock` 的 PID 與 run／proposal／step
 紀錄，確認沒有程序仍在寫入後才移除 lock。不要以重送接受來猜測結果。
+
+## 既有服務的遠端模式
+
+先由既有 OAuth／PKCE 登入流程取得該服務的 access token，透過環境變數
+`MML_STUDIO_ACCESS_TOKEN` 提供。CLI 不取得密碼、不新增登入方式、不自動刷新 token。
+不要把 token 寫入 request JSON、命令參數、Git 或對話。過期後重新取得既有服務的 token。
+`--token-env NAME` 可改用另一個環境變數名稱。
+
+```powershell
+$remote = @('--data-dir', '.studio-agent/remote-song', '--actor', 'agent:codex', '--service-url', 'https://YOUR_SERVICE_ORIGIN')
+node scripts/studio-agent.mjs @remote tools
+$created = node scripts/studio-agent.mjs @remote call studio_project_create --input create-project.json | ConvertFrom-Json
+node scripts/studio-agent.mjs @remote upload --project-id $created.project.project_id --file song.mid --kind third_party_midi
+# 將上一步真正回傳的 project_id、asset_id 與固定 idempotency_key 存入 start.json
+node scripts/studio-agent.mjs @remote call studio_run_start --input start.json --output started.json
+node scripts/studio-agent.mjs @remote report --project-id $created.project.project_id --kind suggestion --out remote-suggestion.json
+```
+
+`create-project.json` 內容為 `{"title":"歌曲版本與獨立驗收"}`。
+其他 call／report／export 與本機語法相同，所有命令都需帶同一組遠端參數。
+請使用獨立的 remote data-dir：該目錄只保存 lock、receipts 與指定輸出，歌曲／run
+保存在遠端 service，不會建立本機 store。receipt 的 owner 為 null，因 CLI 不能
+冒認 OAuth owner；service_origin 與 agent actor 會保存，token 不寫入 receipt。
+
+上傳走既有 HTTP multipart，MCP 仍不收檔案 bytes。report 與 export 所需的大型
+唯讀回應會透過 report_page 完整回讀並驗證雜湊；失敗不寫出半份檔案。
+call 不自動重送寫入。網路斷線／逾時為 REMOTE_REQUEST_UNCERTAIN：服務可能已執行，
+先讀 project／run 狀態；不要換新 idempotency key 盲目重做。
+URL 僅接受 HTTPS origin，或明確的 127.0.0.1／[::1] HTTP 測試入口；不跟隨 redirect。
+遠端與本機使用相同 agent／schema 檢查，無 confirmations 或 reviewer 權限捷徑。
+
+這完成外部 agent 的遠端入口，尚未把 PWA IndexedDB 專案接成 service project。
+後續優先級見 [接續清單](AI_AGENT_PRIORITY_BACKLOG.md)。
 
 ## Canonical 與來源準備
 

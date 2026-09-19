@@ -105,6 +105,8 @@ direct／HTTP／MCP fixture parity test 驗證；不可宣稱真實 MML 已生�
    網站按鈕、來源上傳與 agent continuation 還沒有同一條工作流。
 2. MCP 本身不收 binary；host 需把附件交給既有 authenticated HTTP upload。
    舊 Sites worker 只暴露三個 technical tools，完整 Studio 在獨立服務入口。
+   後續 `65b90d6` 已把 HTTP upload 與 MCP 接進同一 CLI 的遠端模式；
+   [優先級與真實驗證](AI_AGENT_PRIORITY_BACKLOG.md)另記，PWA 尚未接入。
 3. 沒給 Mobile profile 時 run 會跳過 adaptation，而 Gate 8 request 只接受
    evidence_needed；不能藉此自行放寬 proposal policy 來補 profile。
 4. 真實歌曲的 orphan NoteOff、角色來源證據、可靠錄音對齊與聽驗仍待處理。
