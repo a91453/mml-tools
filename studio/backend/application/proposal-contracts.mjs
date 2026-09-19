@@ -380,6 +380,13 @@ export const PROPOSAL_REFUSAL = freeze({
 
   // STALE — a binding moved.
   CANONICAL_SNAPSHOT_CHANGED: 'CANONICAL_SNAPSHOT_CHANGED',
+  // Neither side of that comparison can be named: the proposal's binding
+  // records no rules snapshot, or this service has none loaded. Distinct from
+  // CANONICAL_SNAPSHOT_CHANGED on purpose -- "the release moved under you" and
+  // "nobody can say which release either of us means" have different remedies,
+  // and collapsing them would report a proposal written under no known rules as
+  // though it had been written under a known one that has since moved.
+  CANONICAL_SNAPSHOT_UNKNOWN: 'CANONICAL_SNAPSHOT_UNKNOWN',
   BASELINE_CHANGED: 'BASELINE_CHANGED',
   CANDIDATE_CHANGED: 'CANDIDATE_CHANGED',
   ASSET_SELECTION_CHANGED: 'ASSET_SELECTION_CHANGED',

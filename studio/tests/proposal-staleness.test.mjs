@@ -267,6 +267,95 @@ test('a proposal bound to one rules snapshot will not be applied under another',
   });
 });
 
+test('a proposal that names no rules snapshot is never applicable, whatever is published now', async () => {
+  // Reachable with no fault injection beyond the one this repository already
+  // uses for an unavailable Published Canonical, and with no record editing:
+  // the deployment comes up without its Canonical source -- a missing bootstrap
+  // token, an unreachable snapshot -- and an agent submits while it is down.
+  //
+  // `bindingOf` then records `rules_snapshot_sha: null`, because that is
+  // honestly what was loaded. The defect was what happened next: the staleness
+  // check read a null binding as "no snapshot to disagree with" and skipped
+  // itself, so the proposal was `REQUIRES_EXPLICIT_ACCEPTANCE` while Canonical
+  // judgment was stopped, and stayed applicable under every release published
+  // afterwards. Unknown is not a wildcard anywhere else in this protocol, and
+  // the rules release is the last place it could be one.
+  await withDirectory(async directory => {
+    const app = createStudioApplication({ dataDirectory: directory, durability: 'persistent' });
+    const fixture = await projectWithSymbolicAsset(app, OWNER);
+    const started = await app.startRun(OWNER, fixture.projectId, { asset_ids: [fixture.assetId] });
+    const applied = await app.resumeRun(OWNER, fixture.projectId, started.run.run_id, {
+      decisions: runDecisionsFor(fixture.project, { acceptedBy: RUN_REVIEWER }), accepted_by: RUN_REVIEWER,
+    });
+    const candidateId = applied.run.candidate_id;
+
+    const second = await app.startRun(OWNER, fixture.projectId, { asset_ids: [fixture.assetId] });
+    const targets = await app.proposalTargets(OWNER, fixture.projectId, second.run.run_id);
+    const target = targets.targets.find(entry => entry.admissible_kinds.includes(PROPOSAL_KIND.CANDIDATE_SELECTION));
+
+    const down = createStudioApplication({
+      dataDirectory: directory,
+      durability: 'persistent',
+      loadEngines: async () => { throw Error('Published Manifest is unavailable'); },
+    });
+    assert.equal((await down.capabilities()).canonical.status, 'CANONICAL_NOT_LOADED');
+
+    const submitted = await down.proposeDecision(OWNER, fixture.projectId, {
+      run_id: second.run.run_id,
+      request_key: target.request_key,
+      kind: PROPOSAL_KIND.CANDIDATE_SELECTION,
+      proposed_by: AGENT,
+      rationale: 'Adopt the candidate that already exists.',
+      action: { candidate_id: candidateId },
+    });
+    assert.equal(submitted.proposal.binding.rules_snapshot_sha, null, 'it honestly records that it knows of none');
+    // While Canonical is down nothing may read as applicable: the published
+    // rules are what an acceptance would be judged under, and there are none.
+    assert.equal(submitted.proposal.agent_review.verdict, AGENT_REVIEW.STALE);
+    assert.ok(submitted.proposal.agent_review.refusals.includes('CANONICAL_SNAPSHOT_UNKNOWN'));
+
+    // And it does not become applicable when a release is published again. The
+    // proposal was written under rules this service cannot name; naming one now
+    // does not retroactively bind it to that one.
+    const up = createStudioApplication({ dataDirectory: directory, durability: 'persistent' });
+    const reread = await up.getProposal(OWNER, fixture.projectId, submitted.proposal.proposal_id);
+    assert.match(reread.canonical.rules_snapshot_sha, /^[0-9a-f]{40}$/);
+    assert.equal(reread.proposal.agent_review.verdict, AGENT_REVIEW.STALE);
+    assert.equal(reread.proposal.agent_review.acceptable, false);
+    await refusesAcceptance(up, fixture.projectId, submitted.proposal.proposal_id, 'CANONICAL_SNAPSHOT_UNKNOWN');
+  });
+});
+
+test('a stored binding that predates the snapshot field is not a binding to every snapshot', async () => {
+  // The restore half of the same rule. A record written by a schema without the
+  // field comes back with the field absent, and an absent field must not read
+  // as "matches whatever is loaded now".
+  await withDirectory(async directory => {
+    const app = createStudioApplication({ dataDirectory: directory, durability: 'persistent' });
+    const context = await proposedAgainstDecisions(app);
+
+    const files = await readdir(join(directory, 'records'));
+    let patched = false;
+    for (const name of files) {
+      const path = join(directory, 'records', name);
+      const body = await readFile(path, 'utf8');
+      if (!body.includes(context.proposal.proposal_id)) continue;
+      const record = JSON.parse(body);
+      const stored = record.proposals.find(entry => entry.proposal_id === context.proposal.proposal_id);
+      delete stored.binding.rules_snapshot_sha;
+      await writeFile(path, JSON.stringify(record));
+      patched = true;
+    }
+    assert.ok(patched, 'the stored proposal record was found and downgraded');
+
+    const restored = createStudioApplication({ dataDirectory: directory, durability: 'persistent' });
+    const reread = await restored.getProposal(OWNER, context.fixture.projectId, context.proposal.proposal_id);
+    assert.equal(reread.proposal.agent_review.verdict, AGENT_REVIEW.STALE);
+    assert.ok(reread.proposal.agent_review.refusals.includes('CANONICAL_SNAPSHOT_UNKNOWN'));
+    await refusesAcceptance(restored, context.fixture.projectId, context.proposal.proposal_id, 'CANONICAL_SNAPSHOT_UNKNOWN');
+  });
+});
+
 // ─── D. the run is not a place a proposal may be applied ────────────────────
 
 test('a completed run is audit-closed and accepts no proposal', async () => {

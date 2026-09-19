@@ -653,7 +653,21 @@ export function createProposalService({ canonical, projects, store, operations, 
       return verdictOf(AGENT_REVIEW.STALE, [PROPOSAL_REFUSAL.REQUEST_NO_LONGER_OPEN], { ...detail, run_present: false });
     }
     const bound = proposal.binding;
-    if (canonicalProvenance.rules_snapshot_sha && bound.rules_snapshot_sha && canonicalProvenance.rules_snapshot_sha !== bound.rules_snapshot_sha) stale.push(PROPOSAL_REFUSAL.CANONICAL_SNAPSHOT_CHANGED);
+    // Unknown is not a wildcard, on either side.
+    //
+    // This read `loaded && bound && loaded !== bound`, so a binding with no
+    // snapshot -- written while the Published Canonical could not be loaded, or
+    // restored from a schema that predates the field -- skipped the check
+    // entirely and stayed applicable under every release published afterwards.
+    // A service that cannot name the rules it is loading now cannot say the two
+    // agree either, so both absences are refused rather than passed over. That
+    // is the same discipline as an unrecognised request code admitting nothing
+    // but a description of what is missing: what this layer cannot establish,
+    // it does not assume.
+    const boundSnapshot = Object.hasOwn(bound, 'rules_snapshot_sha') && bound.rules_snapshot_sha ? bound.rules_snapshot_sha : null;
+    const loadedSnapshot = canonicalProvenance.rules_snapshot_sha ?? null;
+    if (boundSnapshot === null || loadedSnapshot === null) stale.push(PROPOSAL_REFUSAL.CANONICAL_SNAPSHOT_UNKNOWN);
+    else if (loadedSnapshot !== boundSnapshot) stale.push(PROPOSAL_REFUSAL.CANONICAL_SNAPSHOT_CHANGED);
     if ((run.baseline_id ?? null) !== (bound.baseline_id ?? null)) stale.push(PROPOSAL_REFUSAL.BASELINE_CHANGED);
     if ((run.candidate_id ?? null) !== (bound.candidate_id ?? null)) stale.push(PROPOSAL_REFUSAL.CANDIDATE_CHANGED);
     if (run.revision !== bound.run_revision) stale.push(PROPOSAL_REFUSAL.RUN_REVISION_CHANGED);

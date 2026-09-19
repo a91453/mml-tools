@@ -476,6 +476,20 @@ already tried to settle that effect and failed. Reading the flag alone left a
 window — the whole window that matters — in which a proposal could be accepted
 onto a step that may or may not exist. The adversarial review found that too.
 
+**A snapshot nobody can name is not a snapshot that matches.** The Canonical
+half of that binding compared `loaded && bound && loaded !== bound`, so a
+binding with no snapshot skipped the comparison altogether. Two states reach
+that: a proposal submitted while the Published Canonical could not be loaded,
+which honestly records `rules_snapshot_sha: null`, and a record restored from a
+schema that predates the field. Both read as `REQUIRES_EXPLICIT_ACCEPTANCE` —
+the first while Canonical judgment was stopped, and both under every release
+published afterwards. A missing field is not a wildcard anywhere else in this
+protocol, and the rules release is the last place it could be one, so an absence
+on either side is now its own refusal, `CANONICAL_SNAPSHOT_UNKNOWN`, kept
+distinct from `CANONICAL_SNAPSHOT_CHANGED` because "the release moved under
+you" and "nobody can say which release either of us means" have different
+remedies.
+
 A baseline that cannot be *read* is `STALE`, not a fabricated citation: "this
 identity is not in the baseline" and "there is no baseline to look in" are
 different facts with different remedies, and collapsing them would accuse a
