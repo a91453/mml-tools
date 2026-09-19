@@ -28,6 +28,7 @@
 
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import { createHash } from 'node:crypto';
 import { mkdtemp, readFile, readdir, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -757,5 +758,247 @@ test('a restored legacy REPORT marker adopts the existing report that names its 
       // The second pass has no pending marker left, so it is the no-work path.
       if (what === 'reconcile') assert.equal(receiptOf(resumed.run, RUN_STEP.REPORT).detail.expectation.recovered_from_run_identity, true);
     }
+  });
+});
+
+// ─── 7. one adoption transition, however the effect is settled ──────────────
+
+/** The audit facts a Final artifact itself carries. */
+const factsFromFinal = body => ({
+  gates: body.gates,
+  readiness_blockers: [...(body.readiness_summary?.pre_game_blocking ?? [])],
+  emit_status: body.emit_status,
+  technical_validation: body.readiness_summary?.technical_validation ?? null,
+});
+
+/** The same facts, as the run and its report state them. */
+const factsFromRun = (run, report, finalizeReceipt) => ({
+  gates: run.gates,
+  readiness_blockers: [...(run.readiness_blockers ?? [])],
+  emit_status: finalizeReceipt?.detail?.emit_status ?? null,
+  technical_validation: finalizeReceipt?.detail?.technical_validation ?? null,
+  report_gates: report?.gates ?? null,
+  report_emit_status: report?.emit_status ?? null,
+});
+
+/**
+ * Two Finals for one candidate, one of them this run's, with the receipt lost.
+ *
+ * The same genuinely-ambiguous situation the identity suite establishes: a
+ * second caller finalized during the interruption, neither Final is in the
+ * before-set, and a Final's body carries no run id — so novelty cannot separate
+ * them and a reviewer must name one.
+ */
+async function ambiguousFinals(directory) {
+  const options = { dataDirectory: directory, durability: 'persistent' };
+  const setup = createStudioApplication(options);
+  const fixture = await projectWithSymbolicAsset(setup, OWNER, { project: sixRoleBaseline() });
+  await setup.analyzeSources(OWNER, fixture.projectId, { assetIds: [fixture.assetId] });
+  const candidateId = (await setup.applyDecisions(OWNER, fixture.projectId, { decisions: runDecisionsFor(fixture.project) })).decisions.candidate_id;
+  await setup.recordConfirmations(OWNER, fixture.projectId, Object.fromEntries(
+    Object.entries(FIXTURE_CONFIRMATIONS).map(([name, value]) => [name, {
+      ...value,
+      ...(['source_complete', 'original_audio_required'].includes(name) ? {} : { candidate_id: candidateId }),
+    }]),
+  ));
+
+  const concurrent = createStudioApplication(options);
+  const interrupted = createStudioApplication({
+    ...options,
+    runHooks: {
+      afterEffect: async ({ step }) => {
+        if (step !== RUN_STEP.FINALIZE) return;
+        await concurrent.finalize(OWNER, fixture.projectId, { candidateId });
+        throw Error('the process stopped after the finalize effect');
+      },
+    },
+  });
+  const stopped = await interrupted.startRun(OWNER, fixture.projectId, { target_candidate_id: candidateId })
+    .then(() => assert.fail('the injected fault must propagate'), error => error);
+  assert.match(stopped.message, /stopped after the finalize effect/);
+
+  const restarted = createStudioApplication(options);
+  const runId = (await restarted.getRun(OWNER, fixture.projectId)).runs[0].run_id;
+  return { ...fixture, candidateId, runId, app: restarted };
+}
+
+test('a reviewer-named persisted Final restores the same audit facts as automatic Final recovery', async () => {
+  // The automatic path, for comparison: one Final, receipt lost, adopted.
+  const automatic = await withDirectory(async directory => {
+    const app = createStudioApplication({ dataDirectory: directory, durability: 'persistent' });
+    const fixture = await readyCandidate(app);
+    const stopped = await stopsAfter(directory, RUN_STEP.FINALIZE)
+      .startRun(OWNER, fixture.projectId, { target_candidate_id: fixture.candidateId, confirmations: FIXTURE_CONFIRMATIONS })
+      .then(() => assert.fail('the injected fault must propagate'), error => error);
+    assert.match(stopped.message, /stopped after the finalize effect/);
+    const restarted = createStudioApplication({ dataDirectory: directory, durability: 'persistent' });
+    const runId = (await restarted.getRun(OWNER, fixture.projectId)).runs[0].run_id;
+    const resumed = await restarted.resumeRun(OWNER, fixture.projectId, runId, {});
+    const receipt = receiptOf(resumed.run, RUN_STEP.FINALIZE);
+    const body = (await restarted.getArtifact(OWNER, resumed.run.final_artifact_id)).artifact;
+    const report = (await restarted.getArtifact(OWNER, resumed.run.report_artifact_id)).artifact;
+    assert.equal(receipt.detail.reason, 'EFFECT_FOUND_BY_STORED_IDENTITY');
+    return {
+      artifact: factsFromFinal(body),
+      run: factsFromRun(resumed.run, report, receipt),
+      job_named: Boolean(receipt.job_id),
+      run_job_count: resumed.run.job_ids.length,
+      report_job_count: report.job_ids.length,
+    };
+  });
+
+  // The named path, on a genuinely ambiguous pair.
+  const named = await withDirectory(async directory => {
+    const fixture = await ambiguousFinals(directory);
+    const { app } = fixture;
+    const finals = finalsFor((await app.getProject(OWNER, fixture.projectId)).project, fixture.candidateId);
+    assert.equal(finals.length, 2, 'two indistinguishable Finals');
+
+    const ambiguous = await app.resumeRun(OWNER, fixture.projectId, fixture.runId, {});
+    assert.equal(ambiguous.run.state, RUN_STATE.INTERRUPTED);
+    assert.equal(receiptOf(ambiguous.run, RUN_STEP.FINALIZE).detail.reason, 'EFFECT_AMBIGUOUS');
+
+    const chosen = finals[0];
+    const resumed = await app.resumeRun(OWNER, fixture.projectId, fixture.runId, { adopt_artifact_id: chosen });
+    assert.equal(resumed.run.state, RUN_STATE.COMPLETED, JSON.stringify(resumed.run.blockers));
+    assert.equal(resumed.run.final_artifact_id, chosen);
+    const receipt = receiptOf(resumed.run, RUN_STEP.FINALIZE);
+    assert.equal(receipt.detail.reason, 'EFFECT_NAMED_BY_REVIEWER', 'the provenance differs, and only the provenance');
+    assert.equal(receipt.detail.restored_from, 'final_artifact');
+    const body = (await app.getArtifact(OWNER, chosen)).artifact;
+    const report = (await app.getArtifact(OWNER, resumed.run.report_artifact_id)).artifact;
+    assert.equal(finalsFor((await app.getProject(OWNER, fixture.projectId)).project, fixture.candidateId).length, 2,
+      'naming one emitted nothing');
+    return {
+      artifact: factsFromFinal(body),
+      run: factsFromRun(resumed.run, report, receipt),
+      job_named: Boolean(receipt.job_id),
+      run_job_count: resumed.run.job_ids.length,
+      report_job_count: report.job_ids.length,
+    };
+  });
+
+  // Each run states exactly what its own Final carries...
+  for (const [what, side] of [['automatic', automatic], ['named', named]]) {
+    assert.deepEqual(side.run.gates, side.artifact.gates, `${what}: gates`);
+    assert.deepEqual(side.run.readiness_blockers, side.artifact.readiness_blockers, `${what}: readiness blockers`);
+    assert.equal(side.run.emit_status, side.artifact.emit_status, `${what}: emit status`);
+    assert.deepEqual(side.run.technical_validation, side.artifact.technical_validation, `${what}: technical validation`);
+    assert.deepEqual(side.run.report_gates, side.artifact.gates, `${what}: report gates`);
+    assert.equal(side.run.report_emit_status, side.artifact.emit_status, `${what}: report emit status`);
+    assert.equal(side.job_named, true, `${what}: the job that produced the Final was found by its own reference`);
+  }
+
+  // ...and the two paths restore the same shape of audit state as each other.
+  assert.deepEqual(Object.keys(named.run).sort(), Object.keys(automatic.run).sort());
+  assert.equal(named.run_job_count, automatic.run_job_count);
+  assert.equal(named.report_job_count, automatic.report_job_count);
+  assert.equal(named.run.emit_status, automatic.run.emit_status);
+  assert.deepEqual(named.run.gates, automatic.run.gates);
+});
+
+test('an ambiguous legacy REPORT marker can be resolved by naming one report that names the run', async () => {
+  await withDirectory(async directory => {
+    const app = createStudioApplication({ dataDirectory: directory, durability: 'persistent' });
+    const fixture = await readyCandidate(app);
+    const done = await app.startRun(OWNER, fixture.projectId, { target_candidate_id: fixture.candidateId, confirmations: FIXTURE_CONFIRMATIONS });
+    const report1 = done.run.report_artifact_id;
+    assert.ok(report1);
+
+    // A second run report whose body names this exact run, beside a marker
+    // written before expectations existed. Both are filed as this run's output,
+    // so the run-id identity alone cannot separate them.
+    const firstBody = (await app.getArtifact(OWNER, report1)).artifact;
+    const twin = { ...firstBody, created_at: new Date(Date.parse(firstBody.created_at) + 1000).toISOString() };
+    delete twin.artifact_id;
+    const twinJson = JSON.stringify(twin);
+    const twinId = `art_${createHash('sha256').update(twinJson).digest('hex')}`;
+    await writeFile(
+      join(directory, 'blobs', `${createHash('sha256').update(`artifact:${fixture.projectId}:${twinId}`).digest('hex')}.bin`),
+      JSON.stringify({ ...twin, artifact_id: twinId }),
+    );
+    const records = join(directory, 'records');
+    const [name] = await readdir(records);
+    const stored = JSON.parse(await readFile(join(records, name), 'utf8'));
+    const entry = stored.artifacts.find(artifact => artifact.artifact_id === report1);
+    stored.artifacts.push({ ...entry, artifact_id: twinId, created_at: twin.created_at });
+    const run = stored.runs.find(candidate => candidate.run_id === done.run.run_id);
+    run.state = RUN_STATE.RUNNING;
+    run.report_artifact_id = null;
+    run.steps = run.steps.filter(step => step.step !== RUN_STEP.REPORT);
+    run.pending_step = { step: RUN_STEP.REPORT, expectation: null, idempotent: false, input_fingerprint: null, at: new Date().toISOString() };
+    await writeFile(join(records, name), JSON.stringify(stored));
+
+    const restarted = createStudioApplication({ dataDirectory: directory, durability: 'persistent' });
+    const reportsBefore = (await restarted.getProject(OWNER, fixture.projectId)).project
+      .artifacts.filter(artifact => artifact.type === 'run_report');
+    assert.equal(reportsBefore.length, 2);
+
+    // Two reports name this run, so the run refuses to pick — and offers a
+    // remedy it can actually execute.
+    const ambiguous = await restarted.resumeRun(OWNER, fixture.projectId, done.run.run_id, {});
+    assert.equal(ambiguous.run.state, RUN_STATE.INTERRUPTED);
+    assert.equal(ambiguous.run.needs_reconciliation, true);
+    assert.equal(receiptOf(ambiguous.run, RUN_STEP.REPORT).detail.reason, 'EFFECT_AMBIGUOUS');
+    const request = ambiguous.run.review_requests.find(item => item.code === 'RECONCILIATION_REQUIRED');
+    assert.ok(request.available_operations.includes('resumeRun.adopt_artifact_id'));
+    assert.equal((await restarted.getRun(OWNER, fixture.projectId, done.run.run_id)).run.pending_step.expectation, null,
+      'the stored marker still carries no expectation: the remedy must work without one');
+
+    // The advertised remedy executes.
+    const resolved = await restarted.resumeRun(OWNER, fixture.projectId, done.run.run_id, { adopt_artifact_id: report1 });
+    assert.equal(resolved.run.state, RUN_STATE.COMPLETED, JSON.stringify(resolved.run.blockers));
+    assert.equal(resolved.run.report_artifact_id, report1, 'the run points at the report the reviewer named');
+    assert.equal(resolved.run.pending_step, null);
+    assert.equal(receiptOf(resolved.run, RUN_STEP.REPORT).detail.reason, 'EFFECT_NAMED_BY_REVIEWER');
+    assert.equal(
+      (await restarted.getProject(OWNER, fixture.projectId)).project.artifacts.filter(artifact => artifact.type === 'run_report').length,
+      2,
+      'resolving it filed no third report',
+    );
+
+    // And the identity still holds: a report naming another run is refused.
+    const other = await app.startRun(OWNER, (await readyCandidate(app)).projectId, {});
+    assert.ok(other.run.run_id);
+  });
+});
+
+test('a persisted Final whose body cannot be read is reported unprovable, not adopted or re-emitted', async () => {
+  await withDirectory(async directory => {
+    const app = createStudioApplication({ dataDirectory: directory, durability: 'persistent' });
+    const fixture = await readyCandidate(app);
+    const stopped = await stopsAfter(directory, RUN_STEP.FINALIZE)
+      .startRun(OWNER, fixture.projectId, { target_candidate_id: fixture.candidateId, confirmations: FIXTURE_CONFIRMATIONS })
+      .then(() => assert.fail('the injected fault must propagate'), error => error);
+    assert.match(stopped.message, /stopped after the finalize effect/);
+
+    const restarted = createStudioApplication({ dataDirectory: directory, durability: 'persistent' });
+    const runId = (await restarted.getRun(OWNER, fixture.projectId)).runs[0].run_id;
+    const finals = finalsFor((await restarted.getProject(OWNER, fixture.projectId)).project, fixture.candidateId);
+    assert.equal(finals.length, 1);
+
+    // Normal storage writes the body with the entry, so this is corruption:
+    // the record still lists the Final, and its body is gone.
+    await rm(join(directory, 'blobs', `${createHash('sha256').update(`artifact:${fixture.projectId}:${finals[0]}`).digest('hex')}.bin`));
+
+    const resumed = await restarted.resumeRun(OWNER, fixture.projectId, runId, {});
+    assert.equal(resumed.run.state, RUN_STATE.INTERRUPTED, 'the identity cannot be established');
+    assert.equal(resumed.run.needs_reconciliation, true);
+    assert.equal(receiptOf(resumed.run, RUN_STEP.FINALIZE).detail.reason, 'EFFECT_IDENTITY_UNPROVABLE');
+    assert.equal(receiptOf(resumed.run, RUN_STEP.FINALIZE).detail.cause, 'FINAL_ARTIFACT_BODY_UNREADABLE');
+    assert.equal(resumed.run.final_artifact_id, null, 'nothing was adopted');
+    assert.equal(
+      finalsFor((await restarted.getProject(OWNER, fixture.projectId)).project, fixture.candidateId).length,
+      1,
+      'and the emitter was not run again',
+    );
+
+    // Naming it is refused for the same reason, rather than adopting a Final
+    // with none of the facts it is supposed to carry.
+    await assert.rejects(
+      restarted.resumeRun(OWNER, fixture.projectId, runId, { adopt_artifact_id: finals[0] }),
+      error => error.code === ERROR_CODES.RUN_RECONCILIATION_REQUIRED
+        && error.details.reason === 'FINAL_ARTIFACT_BODY_UNREADABLE',
+    );
   });
 });

@@ -284,7 +284,12 @@ What happens next follows from which of the four answers the record supports —
 3. **several records could be it** → `EFFECT_AMBIGUOUS`. The caller names one
    (`adopt_artifact_id`, `adopt_candidate_id`), held to the same identity the
    automatic path uses, before-set included. Naming settles *which* of a step's
-   possible outputs it produced; it never widens what may count as one;
+   possible outputs it produced; it never widens what may count as one. Both
+   ways of settling an artifact effect go through **one** transition, so a
+   reviewer-named Final restores the same gates, emit status, technical
+   validation, readiness blockers and finalize job that an automatically
+   recovered one does; only the recorded reason differs
+   (`EFFECT_NAMED_BY_REVIEWER` versus `EFFECT_FOUND_BY_STORED_IDENTITY`);
 4. **nothing can be established** → `EFFECT_IDENTITY_UNPROVABLE`. The run
    reports `interrupted` with `needs_reconciliation` and names the exact
    unconfirmed step. It **replays nothing**: a marker with no usable expectation
@@ -302,7 +307,19 @@ names the run that produced it — so a pending report is settled by that identi
 even when the marker was restored without an expectation. It is adopted when one
 report names this run, reported ambiguous when several do, and left to the
 policy above when none does; a missing marker never files a second report for a
-run that already has one.
+run that already has one. **Every** path that reads a pending marker reads it
+through one `effectivePendingExpectation` — settling it, deciding whether a
+request asks for new work, and validating a named artifact — so the remedy an
+ambiguous state advertises is one that path can execute, rather than one the
+audit-closed guard then refuses.
+
+A Final whose stored body cannot be read is **not** an identified effect: the
+audit facts adoption promises are unreachable, so the run reports
+`EFFECT_IDENTITY_UNPROVABLE` with cause `FINAL_ARTIFACT_BODY_UNREADABLE`,
+adopts nothing and does not run the emitter again — and naming it is refused for
+the same reason. Normal storage writes the body with the record entry, so this
+is residual restored-record and corruption hardening rather than an ordinary
+path; its regression reaches it by deleting the stored body.
 
 Only the request carries a meter map's text — the run stores its digest — so a
 step that would ingest under a meter other than the one the run states does not

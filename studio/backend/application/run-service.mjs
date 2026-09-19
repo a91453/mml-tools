@@ -723,6 +723,86 @@ export function createRunService({ canonical, projects, store, operations, seria
     };
   };
 
+  /**
+   * The expectation a pending step is actually settled against.
+   *
+   * Every path that reads a pending marker reads it through this: settling it,
+   * deciding whether a request is asking for new work, and validating a named
+   * artifact. A marker and the rule applied to it cannot disagree if there is
+   * only one place that says what the marker means.
+   *
+   * The run report is the one step whose identity does not depend on the
+   * marker: its body names the run that produced it. So a report marker written
+   * by an earlier build, or restored without its expectation, is settled by
+   * that identity — and `candidate_id: null` means "any candidate", as
+   * `artifactsMatching` reads it, because the run id in the body is already
+   * exact and a restored run may have moved candidate since.
+   */
+  const effectivePendingExpectation = run => {
+    const pending = run.pending_step;
+    if (!pending) return null;
+    if (pending.step === RUN_STEP.REPORT && !pending.expectation?.expected_run_id) {
+      return {
+        kind: 'artifact',
+        artifact_type: RUN_REPORT_ARTIFACT_TYPE,
+        expected_run_id: run.run_id,
+        candidate_id: null,
+        recovered_from_run_identity: true,
+      };
+    }
+    return pending.expectation ?? null;
+  };
+
+  /**
+   * The run-state transition an adopted artifact effect produces.
+   *
+   * One transition for both ways an artifact effect is settled — found by the
+   * stored identity, or named by a reviewer — so the two differ in how the run
+   * came by the result and in nothing else. A named Final restores the same
+   * audit facts an automatically recovered one does, from the same source.
+   */
+  const adoptedArtifactChanges = (owner, record, run, { step, expectation, artifactId, inputFingerprint, reason }) => {
+    const restored = expectation.artifact_type === FINAL_ARTIFACT_TYPE
+      ? restoredFinal(owner, record, artifactId)
+      : null;
+    // A Final whose own body cannot be read cannot supply the audit facts this
+    // adoption promises — what the emitter graded, and what readiness said at
+    // emission. Adopting it anyway would leave a run reporting a Final with no
+    // gates and no emit status; re-running the emitter would produce a second
+    // Final for one attempt. Neither: the caller is told the identity cannot be
+    // established. Normal storage writes the body with the entry, so this is
+    // restored-record and corruption hardening rather than an ordinary path.
+    if (expectation.artifact_type === FINAL_ARTIFACT_TYPE && restored === null) return null;
+    const changes = {
+      pending_step: null,
+      needs_reconciliation: false,
+      artifact_ids: [...new Set([...run.artifact_ids, artifactId])],
+      steps: appendStep(run, stepReceipt({
+        step,
+        status: RUN_STEP_STATUS.SATISFIED,
+        inputFingerprint: inputFingerprint ?? null,
+        resultReference: artifactId,
+        jobId: restored?.job_id ?? null,
+        blockers: restored ? [...restored.readiness_blockers] : [],
+        detail: { reconciled: true, reason, expectation, ...(restored ? restored.detail : {}) },
+      })),
+    };
+    if (restored) {
+      // The facts the Final itself carries: what the emitter graded, and what
+      // readiness said at emission. A recovered run reports them exactly as a
+      // run whose receipt arrived does — however it came to adopt the Final.
+      changes.gates = restored.gates;
+      changes.readiness_blockers = [...restored.readiness_blockers];
+      if (restored.job_id) changes.job_ids = [...new Set([...run.job_ids, restored.job_id])];
+    }
+    if (expectation.artifact_type === FINAL_ARTIFACT_TYPE) changes.final_artifact_id = artifactId;
+    if (expectation.artifact_type === RUN_REPORT_ARTIFACT_TYPE) {
+      changes.report_artifact_id = artifactId;
+      changes.state = RUN_STATE.COMPLETED;
+    }
+    return changes;
+  };
+
   /** Every candidate that matches an expectation right now. */
   const candidatesMatching = (record, expectation) => record.candidates
     .filter(entry => candidateMatches(entry, expectation))
@@ -1901,26 +1981,24 @@ export function createRunService({ canonical, projects, store, operations, seria
    */
   async function settlePendingStep(owner, projectId, record, run, normalized) {
     const pending = run.pending_step;
-    // A run report names the run that produced it, so the report step has an
-    // exact identity that does not depend on what the marker recorded. A marker
-    // written by an earlier build, or restored without its expectation, is
-    // settled by that identity rather than by the generic "no expectation"
-    // policy — which would read absence into a missing marker and file a second
-    // report for a run that already has one.
-    const expectation = pending.step === RUN_STEP.REPORT && !pending.expectation?.expected_run_id
-      ? {
-        kind: 'artifact',
-        artifact_type: RUN_REPORT_ARTIFACT_TYPE,
-        expected_run_id: run.run_id,
-        // No candidate filter: the run id in the report's own body is the
-        // identity, and a restored run may have moved candidate since.
-        candidate_id: null,
-        recovered_from_run_identity: true,
-      }
-      : pending.expectation;
-    const found = expectation === null || expectation === undefined
+    const expectation = effectivePendingExpectation(run);
+    const settled = expectation === null || expectation === undefined
       ? { outcome: pending.idempotent === true || normalized.reconcile ? EFFECT.ABSENT : EFFECT.UNPROVABLE, reason: 'NO_EXPECTATION_RECORDED' }
       : expectationSatisfiedBy(owner, record, expectation);
+    // An identified Final whose body cannot be read is not an identified
+    // effect: the facts it is supposed to restore are unreachable.
+    const adoption = settled.outcome === EFFECT.FOUND && settled.artifact_id
+      ? adoptedArtifactChanges(owner, record, run, {
+        step: pending.step,
+        expectation,
+        artifactId: settled.artifact_id,
+        inputFingerprint: pending.input_fingerprint,
+        reason: 'EFFECT_FOUND_BY_STORED_IDENTITY',
+      })
+      : null;
+    const found = settled.outcome === EFFECT.FOUND && settled.artifact_id && adoption === null
+      ? { outcome: EFFECT.UNPROVABLE, reason: 'FINAL_ARTIFACT_BODY_UNREADABLE' }
+      : settled;
 
     // Neither presence nor absence established. This is NOT "absent": replaying
     // a non-idempotent effect on a maybe would file a second Final. The run
@@ -1982,35 +2060,19 @@ export function createRunService({ canonical, projects, store, operations, seria
       // An adopted effect is that effect, so the receipt and the run state it
       // leaves behind are the ones the effect itself recorded — read back from
       // what it persisted, never re-derived by running the operation again.
-      const restored = found.artifact_id && expectation?.artifact_type === FINAL_ARTIFACT_TYPE
-        ? restoredFinal(owner, record, found.artifact_id)
-        : null;
-      const changes = {
-        pending_step: null,
-        needs_reconciliation: false,
-        steps: appendStep(run, stepReceipt({
-          step: pending.step,
-          status: RUN_STEP_STATUS.SATISFIED,
-          inputFingerprint: pending.input_fingerprint ?? null,
-          resultReference: found.candidate_id ?? found.baseline_id ?? found.artifact_id ?? null,
-          jobId: restored?.job_id ?? null,
-          blockers: restored ? [...restored.readiness_blockers] : [],
-          detail: {
-            reconciled: true,
-            reason: 'EFFECT_FOUND_BY_STORED_IDENTITY',
-            expectation,
-            ...(restored ? restored.detail : {}),
-          },
-        })),
-      };
-      if (restored) {
-        // The facts the Final itself carries: what the emitter graded, and what
-        // readiness said at emission. A recovered run reports them exactly as a
-        // run whose receipt arrived does.
-        changes.gates = restored.gates;
-        changes.readiness_blockers = [...restored.readiness_blockers];
-        if (restored.job_id) changes.job_ids = [...new Set([...run.job_ids, restored.job_id])];
-      }
+      // An artifact effect goes through the same transition a reviewer-named
+      // one does; only the recorded reason differs.
+      const changes = adoption ?? {
+          pending_step: null,
+          needs_reconciliation: false,
+          steps: appendStep(run, stepReceipt({
+            step: pending.step,
+            status: RUN_STEP_STATUS.SATISFIED,
+            inputFingerprint: pending.input_fingerprint ?? null,
+            resultReference: found.candidate_id ?? found.baseline_id ?? null,
+            detail: { reconciled: true, reason: 'EFFECT_FOUND_BY_STORED_IDENTITY', expectation },
+          })),
+        };
       if (found.baseline_id) {
         // An adopted intake is the same event as an intake that returned its
         // receipt, so it leaves the run in the same state. `intake.run`
@@ -2025,15 +2087,6 @@ export function createRunService({ canonical, projects, store, operations, seria
       if (found.candidate_id) {
         changes.candidate_id = found.candidate_id;
         changes.candidate_lineage = [...new Set([...run.candidate_lineage, found.candidate_id])];
-      }
-      if (found.artifact_id && expectation.artifact_type === FINAL_ARTIFACT_TYPE) {
-        changes.final_artifact_id = found.artifact_id;
-        changes.artifact_ids = [...new Set([...run.artifact_ids, found.artifact_id])];
-      }
-      if (found.artifact_id && expectation.artifact_type === RUN_REPORT_ARTIFACT_TYPE) {
-        changes.report_artifact_id = found.artifact_id;
-        changes.artifact_ids = [...new Set([...run.artifact_ids, found.artifact_id])];
-        changes.state = RUN_STATE.COMPLETED;
       }
       // The same invariant an effect of this step applies: an adopted result
       // is that result, so nothing this run recorded downstream of it survives
@@ -2210,7 +2263,7 @@ export function createRunService({ canonical, projects, store, operations, seria
    * candidate, which is the reopening this guard exists to refuse.
    */
   const workflowInputsIn = (run, normalized) => {
-    const pendingKind = run.pending_step?.expectation?.kind ?? null;
+    const pendingKind = effectivePendingExpectation(run)?.kind ?? null;
     const exempt = new Set(NON_WORKFLOW_INPUT_KEYS);
     if (pendingKind === 'candidate') exempt.add('adopt_candidate_id');
     if (pendingKind === 'artifact') exempt.add('adopt_artifact_id');
@@ -2340,33 +2393,39 @@ export function createRunService({ canonical, projects, store, operations, seria
     // else: it files nothing, emits nothing and grades nothing.
     if (normalized.adopt_artifact_id !== null) {
       const pending = run.pending_step;
-      if (pending?.expectation?.kind !== 'artifact') {
+      // The SAME expectation the automatic path settles against, so the remedy
+      // an ambiguous state advertises is one this path can actually execute.
+      const expectation = effectivePendingExpectation(run);
+      if (expectation?.kind !== 'artifact') {
         fail(ERROR_CODES.INVALID_REQUEST, 'adopt_artifact_id settles an interrupted artifact step, and this run has none pending.', {
-          run_id: run.run_id, pending_step: pending?.step ?? null, pending_expectation_kind: pending?.expectation?.kind ?? null,
+          run_id: run.run_id, pending_step: pending?.step ?? null, pending_expectation_kind: expectation?.kind ?? null,
         });
       }
       const entry = record.artifacts.find(artifact => artifact.artifact_id === normalized.adopt_artifact_id);
       if (!entry) fail(ERROR_CODES.ARTIFACT_NOT_FOUND, 'Unknown artifact', { artifact_id: normalized.adopt_artifact_id, project_id: record.project_id });
-      if (entry.type !== pending.expectation.artifact_type) {
+      if (entry.type !== expectation.artifact_type) {
         fail(ERROR_CODES.INVALID_REQUEST, 'The artifact to adopt is not of the type this interrupted step produces.', {
-          artifact_id: entry.artifact_id, artifact_type: entry.type, expected_artifact_type: pending.expectation.artifact_type,
+          artifact_id: entry.artifact_id, artifact_type: entry.type, expected_artifact_type: expectation.artifact_type,
         });
       }
-      if (entry.candidate_id !== pending.expectation.candidate_id) {
+      // A null candidate is the wildcard `artifactsMatching` reads, not a
+      // demand that the artifact have no candidate.
+      if (expectation.candidate_id !== null && expectation.candidate_id !== undefined
+        && entry.candidate_id !== expectation.candidate_id) {
         fail(ERROR_CODES.INVALID_REQUEST, 'The artifact to adopt was produced for a different candidate than this interrupted step was about.', {
-          artifact_id: entry.artifact_id, artifact_candidate_id: entry.candidate_id, expected_candidate_id: pending.expectation.candidate_id,
+          artifact_id: entry.artifact_id, artifact_candidate_id: entry.candidate_id, expected_candidate_id: expectation.candidate_id,
         });
       }
       // The same effect identity the automatic reconciliation uses, in the same
       // order, so naming an artifact can never settle a step that finding it
       // could not. Naming settles WHICH of the step's possible outputs it
       // produced; it does not widen what may count as one.
-      if (pending.expectation.expected_run_id) {
+      if (expectation.expected_run_id) {
         // Exact: a run report's body names the run that produced it.
         const named = operations.artifactRunId(owner, entry.artifact_id);
-        if (named !== pending.expectation.expected_run_id) {
+        if (named !== expectation.expected_run_id) {
           fail(ERROR_CODES.INVALID_REQUEST, 'The artifact to adopt names a different run, so it is another run\'s report and not this run\'s output.', {
-            artifact_id: entry.artifact_id, artifact_run_id: named, expected_run_id: pending.expectation.expected_run_id,
+            artifact_id: entry.artifact_id, artifact_run_id: named, expected_run_id: expectation.expected_run_id,
           });
         }
       } else {
@@ -2376,33 +2435,38 @@ export function createRunService({ canonical, projects, store, operations, seria
         // marker was written cannot be what this step produced, and an artifact
         // whose novelty the stored before-set cannot establish is refused
         // rather than accepted on the caller's word.
-        const novel = namedRecordIsNovel(pending.expectation, 'known_artifact_ids', artifactsMatching(record, pending.expectation), entry.artifact_id);
+        const novel = namedRecordIsNovel(expectation, 'known_artifact_ids', artifactsMatching(record, expectation), entry.artifact_id);
         if (!novel.proven) {
           fail(ERROR_CODES.INVALID_REQUEST, novel.reason === 'RECORD_PREDATES_THE_MARKER'
             ? 'The artifact to adopt already existed when this step was marked pending, so it cannot be what this step produced.'
             : 'Whether this artifact postdates the pending step cannot be established from what the marker recorded, so it is not adopted on request either.', {
             artifact_id: entry.artifact_id, step: pending.step, marked_at: pending.at, reason: novel.reason,
-            known_artifact_ids: pending.expectation.known_artifact_ids,
-            known_artifact_ids_complete: pending.expectation.known_artifact_ids_complete ?? null,
+            known_artifact_ids: expectation.known_artifact_ids,
+            known_artifact_ids_complete: expectation.known_artifact_ids_complete ?? null,
           });
         }
       }
-      changes.pending_step = null;
-      changes.needs_reconciliation = false;
-      changes.artifact_ids = [...new Set([...run.artifact_ids, entry.artifact_id])];
-      if (entry.type === FINAL_ARTIFACT_TYPE) changes.final_artifact_id = entry.artifact_id;
-      if (entry.type === RUN_REPORT_ARTIFACT_TYPE) {
-        changes.report_artifact_id = entry.artifact_id;
-        changes.state = RUN_STATE.COMPLETED;
-      }
-      changes.steps = [...(run.steps ?? []).filter(step => step.step !== pending.step), stepReceipt({
+      // The same transition the automatic path applies, so a named Final
+      // restores the same audit facts a recovered one does. Only the recorded
+      // reason differs: how this run came by the result.
+      const adopted = adoptedArtifactChanges(owner, record, run, {
         step: pending.step,
-        status: RUN_STEP_STATUS.SATISFIED,
-        inputFingerprint: pending.input_fingerprint ?? null,
-        resultReference: entry.artifact_id,
-        detail: { reconciled: true, reason: 'EFFECT_NAMED_BY_REVIEWER', expectation: pending.expectation },
-      })];
-      return changes;
+        expectation,
+        artifactId: entry.artifact_id,
+        inputFingerprint: pending.input_fingerprint,
+        reason: 'EFFECT_NAMED_BY_REVIEWER',
+      });
+      if (adopted === null) {
+        fail(ERROR_CODES.RUN_RECONCILIATION_REQUIRED, 'This Final\'s stored body cannot be read, so adopting it would record a Final with none of the facts it is supposed to carry. It is not adopted, and the emitter is not run again.', {
+          artifact_id: entry.artifact_id, step: pending.step, reason: 'FINAL_ARTIFACT_BODY_UNREADABLE',
+        });
+      }
+      const replaced = replacesIdentity(run, adopted);
+      return {
+        ...changes,
+        ...adopted,
+        ...(replaced ? invalidateDownstream(run, pending.step, adopted.steps, { clearGates: replaced !== 'final' }) : {}),
+      };
     }
 
     // A candidate produced outside this run is adopted only when it is named,
