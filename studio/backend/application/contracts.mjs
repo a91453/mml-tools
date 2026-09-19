@@ -61,13 +61,48 @@ export const ID_PREFIX = freeze({
  */
 export const INTERNAL_PROVENANCE_KEYS = freeze(['inputFingerprint', 'effectAttemptId']);
 
-/** One operation input with every internal-provenance field removed. */
-export const withoutInternalProvenance = input => {
-  if (input === null || typeof input !== 'object' || Array.isArray(input)) return input;
-  if (!INTERNAL_PROVENANCE_KEYS.some(key => Object.hasOwn(input, key))) return input;
-  const stripped = { ...input };
-  for (const key of INTERNAL_PROVENANCE_KEYS) delete stripped[key];
-  return stripped;
+/**
+ * One operation input, rebuilt from the fields the caller actually stated.
+ *
+ * Deleting the internal keys from a copy is not enough, and neither is
+ * checking whether the caller set them as own properties: every service reads
+ * its input by ordinary property access, which walks the prototype chain. A
+ * caller who hands over `Object.create({ effectAttemptId })` states the field
+ * nowhere `Object.hasOwn` can see it and supplies it everywhere the service
+ * looks -- which is the whole forge this boundary exists to stop.
+ *
+ * So the input is REBUILT: own enumerable fields only, onto a fresh object
+ * literal, with the internal keys left out. Whatever prototype the caller
+ * attached does not come with it, and no inherited field of any name reaches a
+ * service. A public request is what the caller stated, not what it arranged to
+ * be found.
+ *
+ * Shallow on purpose. The internal keys are top-level fields of an operation
+ * input, and every nested structure is validated by the service that owns it
+ * against its own closed key set -- read from own keys, exactly as here.
+ */
+export const withoutInternalProvenance = input => (input === null || typeof input !== 'object' || Array.isArray(input)
+  ? input
+  : statedFields(input, { omit: INTERNAL_PROVENANCE_KEYS }));
+
+/**
+ * The fields a caller actually stated on one request object.
+ *
+ * Own enumerable fields, copied onto a fresh object literal. Whatever
+ * prototype the caller attached is left behind, so a later `value.field` reads
+ * only what a `Object.keys` guard could also see. Every boundary that both
+ * VALIDATES a request by its keys and READS it by name needs this, because JS
+ * disagrees with itself about what "has a field" means: `Object.keys` says own,
+ * property access says own-or-inherited. A caller who knows that can state a
+ * field where the check cannot see it and have it read where it counts.
+ */
+export const statedFields = (value, { omit = [] } = {}) => {
+  const stated = {};
+  for (const key of Object.keys(value)) {
+    if (omit.includes(key)) continue;
+    stated[key] = value[key];
+  }
+  return stated;
 };
 
 const OPAQUE_ID = /^(prj|ast|job|run)_[0-9a-f]{32}$/;

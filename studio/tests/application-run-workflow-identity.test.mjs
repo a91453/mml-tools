@@ -1680,3 +1680,185 @@ test('a caller cannot forge the run\'s own provenance through the public operati
     }
   });
 });
+
+// ─── 10. an upgrade is not a wildcard, and a prototype is not a request ─────
+//
+// Two ways a build that records attempt ids could still be talked out of them:
+// a marker restored from a build that recorded none, which must not be read as
+// "matches anything"; and a caller-attached prototype, which JS lets a service
+// read while every key-based guard looks straight past it.
+
+/** Rewrite a pending marker into the shape a pre-attempt-id build wrote. */
+async function markerWithoutAttempt(directory, runId) {
+  const records = join(directory, 'records');
+  const [name] = await readdir(records);
+  const stored = JSON.parse(await readFile(join(records, name), 'utf8'));
+  const run = stored.runs.find(entry => entry.run_id === runId);
+  assert.match(run.pending_step.effect_attempt_id, /^eff_[0-9a-f]{32}$/, 'this build records one');
+  delete run.pending_step.effect_attempt_id;
+  delete run.pending_step.expectation.effect_attempt_id;
+  await writeFile(join(records, name), JSON.stringify(stored));
+  return run.pending_step;
+}
+
+test('a restored marker that recorded no attempt never claims a later attempt\'s candidate', async () => {
+  await withDirectory(async directory => {
+    const options = { dataDirectory: directory, durability: 'persistent' };
+    const app = createStudioApplication(options);
+    const fixture = await projectWithSymbolicAsset(app, OWNER, { project: sixRoleBaseline() });
+    await app.analyzeSources(OWNER, fixture.projectId, { assetIds: [fixture.assetId] });
+    const mine = runDecisionsFor(fixture.project);
+
+    const stopped = await stopsBefore(directory, RUN_STEP.APPLY_DECISIONS)
+      .startRun(OWNER, fixture.projectId, { asset_ids: [fixture.assetId], decisions: mine, accepted_by: RUN_REVIEWER })
+      .then(() => assert.fail('the injected fault must propagate'), error => error);
+    assert.match(stopped.message, /stopped before the apply_decisions effect/);
+    const restarted = createStudioApplication(options);
+    const runId = (await restarted.getRun(OWNER, fixture.projectId)).runs[0].run_id;
+    const legacy = await markerWithoutAttempt(directory, runId);
+    assert.equal(legacy.expectation.effect_attempt_id, undefined);
+
+    // A LATER run applies a different decision set from the same parent, and
+    // its candidate carries a real attempt id of its own. Novelty holds for it
+    // — nothing else about the restored marker can rule it in or out.
+    const other = createStudioApplication(options);
+    const runB = await other.startRun(OWNER, fixture.projectId, {
+      asset_ids: [fixture.assetId], decisions: runDecisionsFor(fixture.project, { exclude: ['Chord3'] }),
+      accepted_by: 'Reviewer-B', confirmations: FIXTURE_CONFIRMATIONS,
+    });
+    const entry = (await other.getProject(OWNER, fixture.projectId)).project.candidates
+      .find(candidate => candidate.candidate_id === runB.run.candidate_id);
+    assert.match(entry.effect_attempt_id, /^eff_[0-9a-f]{32}$/, 'a real attempt id, not a missing one');
+
+    const resumed = await other.resumeRun(OWNER, fixture.projectId, runId, { decisions: mine, accepted_by: RUN_REVIEWER });
+    assert.equal(resumed.run.state, RUN_STATE.INTERRUPTED);
+    assert.equal(receiptOf(resumed.run, RUN_STEP.APPLY_DECISIONS).detail.reason, 'EFFECT_IDENTITY_UNPROVABLE');
+    assert.equal(receiptOf(resumed.run, RUN_STEP.APPLY_DECISIONS).detail.cause, 'EFFECT_ATTEMPT_EXPECTATION_NOT_RECORDED');
+    assert.equal(resumed.run.candidate_id, null, 'the other run\'s candidate is not this restored run\'s');
+
+    // Naming it cannot bypass what the marker never recorded either.
+    await assert.rejects(
+      other.resumeRun(OWNER, fixture.projectId, runId, { adopt_candidate_id: runB.run.candidate_id, decisions: mine, accepted_by: RUN_REVIEWER }),
+      error => error.code === ERROR_CODES.INVALID_REQUEST && error.details.reason === 'EFFECT_ATTEMPT_EXPECTATION_NOT_RECORDED',
+    );
+    const request = resumed.run.review_requests.find(entry2 => entry2.code === 'RECONCILIATION_REQUIRED');
+    assert.deepEqual(request.available_operations, ['getProject', 'getRun', 'startRun']);
+    assert.deepEqual(request.detail.remedy, { reconcile: false, adopt: false });
+  });
+});
+
+test('a restored marker that recorded no attempt never claims a later run\'s Final', async () => {
+  await withDirectory(async directory => {
+    const options = { dataDirectory: directory, durability: 'persistent' };
+    const app = createStudioApplication(options);
+    const fixture = await readyCandidate(app);
+    const { candidateId } = fixture;
+    await app.recordConfirmations(OWNER, fixture.projectId, Object.fromEntries(
+      Object.entries(FIXTURE_CONFIRMATIONS).map(([name, value]) => [name, {
+        ...value, ...(['source_complete', 'original_audio_required'].includes(name) ? {} : { candidate_id: candidateId }),
+      }]),
+    ));
+    const probe = await app.finalize(OWNER, fixture.projectId, { candidateId });
+    const readBackSha = createHash('sha256').update(probe.mml, 'utf8').digest('hex');
+
+    const stopped = await stopsBefore(directory, RUN_STEP.FINALIZE)
+      .startRun(OWNER, fixture.projectId, { target_candidate_id: candidateId })
+      .then(() => assert.fail('the injected fault must propagate'), error => error);
+    assert.match(stopped.message, /stopped before the finalize effect/);
+    const restarted = createStudioApplication(options);
+    const runId = (await restarted.getRun(OWNER, fixture.projectId)).runs[0].run_id;
+    assert.equal(receiptOf((await restarted.getRun(OWNER, fixture.projectId, runId)).run, RUN_STEP.REVIEW).detail.gates.player_readback, 'N/A');
+    await markerWithoutAttempt(directory, runId);
+
+    // Evidence this run never reviewed, then a later run finalizes under it.
+    // This is exactly the Round 7 defect, and an upgrade must not revive it.
+    const other = createStudioApplication(options);
+    await other.recordConfirmations(OWNER, fixture.projectId, {
+      player_readback: { value: 'PASS', reason: 'Read back in a player.', mml_sha256: readBackSha, candidate_id: candidateId },
+    });
+    const runB = await other.startRun(OWNER, fixture.projectId, { target_candidate_id: candidateId });
+    assert.equal((await other.getArtifact(OWNER, runB.run.final_artifact_id)).artifact.gates.player_readback, 'PASS');
+
+    const resumed = await other.resumeRun(OWNER, fixture.projectId, runId, {});
+    assert.equal(resumed.run.state, RUN_STATE.INTERRUPTED);
+    assert.equal(receiptOf(resumed.run, RUN_STEP.FINALIZE).detail.cause, 'EFFECT_ATTEMPT_EXPECTATION_NOT_RECORDED');
+    assert.equal(resumed.run.final_artifact_id, null, 'a gate this run never established is not adopted across an upgrade');
+    await assert.rejects(
+      other.resumeRun(OWNER, fixture.projectId, runId, { adopt_artifact_id: runB.run.final_artifact_id }),
+      error => error.code === ERROR_CODES.INVALID_REQUEST && error.details.reason === 'EFFECT_ATTEMPT_EXPECTATION_NOT_RECORDED',
+    );
+  });
+});
+
+test('internal provenance inherited through a caller prototype is stripped at the public boundary', async () => {
+  await withDirectory(async directory => {
+    const options = { dataDirectory: directory, durability: 'persistent' };
+    const app = createStudioApplication(options);
+    const fixture = await projectWithSymbolicAsset(app, OWNER, { project: sixRoleBaseline() });
+    await app.analyzeSources(OWNER, fixture.projectId, { assetIds: [fixture.assetId] });
+    const mine = runDecisionsFor(fixture.project);
+
+    const stopped = await stopsBefore(directory, RUN_STEP.APPLY_DECISIONS)
+      .startRun(OWNER, fixture.projectId, { asset_ids: [fixture.assetId], decisions: mine, accepted_by: RUN_REVIEWER })
+      .then(() => assert.fail('the injected fault must propagate'), error => error);
+    assert.match(stopped.message, /stopped before the apply_decisions effect/);
+    const restarted = createStudioApplication(options);
+    const runId = (await restarted.getRun(OWNER, fixture.projectId)).runs[0].run_id;
+    const marker = (await restarted.getRun(OWNER, fixture.projectId, runId)).run.pending_step;
+
+    // The real pending attempt, stated where no `Object.hasOwn` guard can see
+    // it and every ordinary property read can.
+    const forged = Object.create({
+      effectAttemptId: marker.effect_attempt_id,
+      inputFingerprint: marker.input_fingerprint,
+    });
+    forged.decisions = runDecisionsFor(fixture.project, { exclude: ['Chord3'] });
+    assert.deepEqual(Object.keys(forged), ['decisions'], 'nothing internal is an own property');
+    assert.equal(forged.effectAttemptId, marker.effect_attempt_id, 'and yet an ordinary read finds it');
+    for (const key of INTERNAL_PROVENANCE_KEYS) assert.ok(!Object.hasOwn(forged, key));
+
+    const applied = await restarted.applyDecisions(OWNER, fixture.projectId, forged);
+    const entry = (await restarted.getProject(OWNER, fixture.projectId)).project.candidates
+      .find(candidate => candidate.candidate_id === applied.decisions.candidate_id);
+    assert.equal(entry.effect_attempt_id, null, 'the public surface states no attempt, however the caller arranged it');
+    assert.equal(entry.input_fingerprint, null);
+
+    // So the run still finds nothing of its own, and the forged record is not
+    // adoptable by name either.
+    const resumed = await restarted.resumeRun(OWNER, fixture.projectId, runId, { decisions: mine, accepted_by: RUN_REVIEWER });
+    assert.notEqual(resumed.run.candidate_id, applied.decisions.candidate_id, 'the forged candidate is not this attempt\'s effect');
+    // Its own effect was shown absent, so the step ran — and a re-run is a new
+    // attempt, which is what the candidate it applied records.
+    const applure = (await restarted.getProject(OWNER, fixture.projectId)).project.candidates
+      .find(candidate => candidate.candidate_id === resumed.run.candidate_id);
+    assert.match(applure.effect_attempt_id, /^eff_[0-9a-f]{32}$/);
+    assert.notEqual(applure.effect_attempt_id, entry.effect_attempt_id);
+  });
+});
+
+test('a run input is the fields the caller stated, not the ones its prototype supplies', async () => {
+  const app = createStudioApplication({});
+  const fixture = await projectWithSymbolicAsset(app, OWNER, { project: sixRoleBaseline() });
+  await app.analyzeSources(OWNER, fixture.projectId, { assetIds: [fixture.assetId] });
+  const started = await app.startRun(OWNER, fixture.projectId, { asset_ids: [fixture.assetId] });
+  assert.equal(started.run.state, RUN_STATE.AWAITING_REVIEW);
+  assert.equal(started.run.candidate_id, null, 'waiting for a decision set');
+
+  // `closedObject` reads own keys and everything after it reads `source.field`.
+  // A decision set on the prototype would be applied by the run while
+  // `provided` — which answers "did this request ask for work" — listed
+  // nothing, so the audit-closed and no-work contracts would be reading a
+  // different request than the one being executed.
+  const forged = Object.create({ decisions: runDecisionsFor(fixture.project), accepted_by: RUN_REVIEWER });
+  const resumed = await app.resumeRun(OWNER, fixture.projectId, started.run.run_id, forged);
+  assert.equal(resumed.run.candidate_id, null, 'a field the caller did not state is not a decision set');
+  assert.equal(resumed.run.state, RUN_STATE.AWAITING_REVIEW);
+  assert.equal(resumed.run.inputs.decision_set_fingerprint, null);
+
+  // Stating it is how a run advances, and that path is unchanged.
+  const stated = await app.resumeRun(OWNER, fixture.projectId, started.run.run_id, {
+    decisions: runDecisionsFor(fixture.project), accepted_by: RUN_REVIEWER, confirmations: FIXTURE_CONFIRMATIONS,
+  });
+  assert.ok(stated.run.candidate_id);
+  assert.equal(stated.run.state, RUN_STATE.COMPLETED, JSON.stringify(stated.run.blockers));
+});

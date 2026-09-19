@@ -271,6 +271,19 @@ result, "result persisted, attempt not persisted" is not a state the service can
 reach; a restored record that nonetheless carries none is reported
 `EFFECT_IDENTITY_UNPROVABLE` and never replayed blindly.
 
+**A request is the fields the caller stated.** Every request boundary here both
+validates a request by its keys and reads it by name, and JS disagrees with
+itself about what "has a field" means: `Object.keys` says own, property access
+says own-or-inherited. A caller handing over `Object.create({ effectAttemptId })`
+states the field nowhere a key-based guard can see it and supplies it everywhere
+the service looks. So the boundaries do not filter a caller's object, they
+**rebuild** it: own enumerable fields onto a fresh object literal, internal
+provenance left out. Whatever prototype the caller attached does not come with
+it, and no inherited field of any name reaches a service. The same rebuild
+applies to the run's own `closedObject`, so a run's `provided` — which answers
+"did this request ask for work", and on which the audit-closed contract rests —
+lists exactly the fields the run will read.
+
 | Step | Before-set | Effect attempt |
 | --- | --- | --- |
 | intake | the baseline that was already committed — which is by construction not this step's output | exempt, and the one exemption: a project holds ONE baseline, and the step's own identity is exact — the selected asset ids and the meter map the step was about, checked against the committed baseline itself. There is no set of candidates to tell apart |
@@ -297,9 +310,24 @@ one record carries a given attempt id:
 
 | What the attempt ids show | Conclusion |
 | --- | --- |
+| **the marker recorded no attempt**, and anything was added | `EFFECT_IDENTITY_UNPROVABLE` — see below |
 | one of them is this attempt's | `EFFECT_FOUND` |
 | none is, and none is opaque | `EFFECT_ABSENT` — every record added since belongs to another attempt, so this one's never landed |
 | none is, and one or more records no attempt at all | `EFFECT_IDENTITY_UNPROVABLE` — no reviewer can establish from an opaque record which attempt produced it either |
+
+**A marker that recorded no attempt is not a wildcard.** It is a marker a build
+without attempt ids wrote, restored into a build that has them, and it can
+establish nothing about a record minted since: reading it as "matches anything"
+would hand the restored run the first record that postdates its before-set,
+which is ownership-by-novelty revived by an upgrade. So it is
+`EFFECT_ATTEMPT_EXPECTATION_NOT_RECORDED` — unprovable, not nameable, and not
+settled by `reconcile`. Nothing falls back to the before-set alone, the input
+fingerprint, a timestamp or a reviewer's word: the run says the record is
+missing what it needs and points at a new run. Where nothing was added at all,
+the answer is still `EFFECT_ABSENT` — that conclusion never needed the attempt
+id. The two steps whose identity is exact without one, intake against the
+committed baseline and a run report whose body names its run, are settled before
+the attempt id is ever consulted, which is why they can be exempt.
 
 `EFFECT_AMBIGUOUS` remains for the one identity that is exact per record rather
 than per attempt: two run reports whose bodies both name this run. There, naming
@@ -310,8 +338,9 @@ can be neither confirmed nor ruled out is reported `interrupted` and is never
 replayed: repeating a finalize on a maybe files a second Final for one attempt.
 The named remedies are held to the same rule — naming an artifact or a candidate
 settles *which* of a step's possible outputs it produced, and never makes a
-record the before-set cannot place after the marker, or the binding shows
-answers another input, into one.
+record into one that the before-set cannot place after the marker, that another
+attempt produced, that records no attempt, or that the marker recorded no
+attempt to hold it to.
 
 What happens next follows from which of the four answers the record supports —
 **a missing or unusable identity is never read as "safe to replay"**:
@@ -364,7 +393,7 @@ one table, `RECONCILIATION_REMEDY`, rather than written once for every cause:
 | --- | --- | --- | --- |
 | `NO_EXPECTATION_RECORDED` | settles it | nothing to hold a name to | inspection + `resumeRun (reconcile)` |
 | `MATCHING_SET_TOO_LARGE_TO_SEARCH`, `BEFORE_SET_NOT_A_SUBSET`, `RECORDS_REMOVED_SINCE_THE_MARKER` | no | settles it | inspection + `resumeRun.adopt_*` |
-| `BEFORE_SET_NOT_RECORDED`, `SEVERAL_ADDED_AND_BEFORE_SET_TRUNCATED`, `EFFECT_ATTEMPT_NOT_RECORDED`, `FINAL_ARTIFACT_BODY_UNREADABLE` | no | no | inspection + `startRun`, and the request says the record itself is missing what the run needs — repair it outside the service, or start a new run |
+| `BEFORE_SET_NOT_RECORDED`, `SEVERAL_ADDED_AND_BEFORE_SET_TRUNCATED`, `EFFECT_ATTEMPT_NOT_RECORDED`, `EFFECT_ATTEMPT_EXPECTATION_NOT_RECORDED`, `FINAL_ARTIFACT_BODY_UNREADABLE` | no | no | inspection + `startRun`, and the request says the record itself is missing what the run needs — repair it outside the service, or start a new run |
 
 `reconcile: true` is honoured for exactly one cause, and it is the one where the
 caller's inspection is the only evidence there can be: a marker that recorded no

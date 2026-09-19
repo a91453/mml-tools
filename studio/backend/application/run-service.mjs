@@ -67,6 +67,7 @@ import {
   isCandidateId,
   isRunId,
   requirePlainObject,
+  statedFields,
   requireString,
 } from './contracts.mjs';
 import { PRE_EMISSION_EXEMPT_GATES } from './final-service.mjs';
@@ -259,6 +260,10 @@ export const RECONCILIATION_REMEDY = Object.freeze({
   BEFORE_SET_NOT_RECORDED: { reconcile: false, name: false },
   SEVERAL_ADDED_AND_BEFORE_SET_TRUNCATED: { reconcile: false, name: false },
   EFFECT_ATTEMPT_NOT_RECORDED: { reconcile: false, name: false },
+  // A marker restored from a build that recorded no attempt. Nothing this
+  // service offers can establish what it never wrote down, and a reviewer
+  // naming a record cannot either -- the marker says nothing to hold it to.
+  EFFECT_ATTEMPT_EXPECTATION_NOT_RECORDED: { reconcile: false, name: false },
   EFFECT_ATTEMPT_NOT_UNIQUE: { reconcile: false, name: false },
   FINAL_ARTIFACT_BODY_UNREADABLE: { reconcile: false, name: false },
   UNKNOWN_EXPECTATION_KIND: { reconcile: false, name: false },
@@ -279,17 +284,27 @@ const REDUCTION_INPUT_KEYS = new Set(['decisions', 'expected_plan_id', 'accepted
 const ADAPTATION_INPUT_KEYS = new Set(['profile', 'expected_plan_id', 'accepted_by']);
 const FINALIZE_INPUT_KEYS = new Set(['technical_timing_repair', 'pickup', 'final_partial']);
 
+/**
+ * One request object, checked against its closed key set and REBUILT from it.
+ *
+ * Rebuilt, not just checked: the check reads own keys and everything after it
+ * reads `source.field`, which walks the prototype. A caller handing over
+ * `Object.create({ decisions })` states the field nowhere the check can see it
+ * and supplies it everywhere the run reads it -- and `provided`, which is what
+ * "did this request ask for work" is answered from, would not list it. What
+ * comes back here is the caller's stated fields on a fresh object, so the two
+ * readings cannot disagree.
+ */
 const closedObject = (value, label, allowed) => {
   requirePlainObject(value, label);
   for (const key of Object.keys(value)) {
     if (!allowed.has(key)) fail(ERROR_CODES.INVALID_REQUEST, `${label}.${key} is not an accepted field`, { accepted: [...allowed] });
   }
-  return value;
+  return statedFields(value);
 };
 
 function normalizeRunInput(input, { label = 'run input', allowed = RUN_INPUT_KEYS } = {}) {
-  const source = input ?? {};
-  closedObject(source, label, allowed instanceof Set ? allowed : new Set(allowed));
+  const source = closedObject(input ?? {}, label, allowed instanceof Set ? allowed : new Set(allowed));
 
   const assetIds = source.asset_ids === undefined || source.asset_ids === null ? null : (() => {
     if (!Array.isArray(source.asset_ids)) fail(ERROR_CODES.INVALID_REQUEST, 'asset_ids must be an array of asset ids, or omitted to use every symbolic asset in the project.');
@@ -693,21 +708,32 @@ export function createRunService({ canonical, projects, store, operations, seria
    * state this can reach; a record that nonetheless carries none is reported
    * unprovable and never replayed blindly.
    */
-  const EFFECT_ATTEMPT = Object.freeze({ MATCHES: 'MATCHES', DIFFERS: 'DIFFERS', UNREADABLE: 'UNREADABLE' });
+  const EFFECT_ATTEMPT = Object.freeze({
+    MATCHES: 'MATCHES',
+    DIFFERS: 'DIFFERS',
+    UNREADABLE: 'UNREADABLE',
+    UNRECORDED: 'UNRECORDED',
+  });
 
   /**
    * Whether a stored record is what this step's attempt produced.
    *
-   * `expected` is the attempt id the marker recorded, and an expectation that
-   * declares none is settled by the before-set alone -- which is correct only
-   * where the step's identity is already exact, as a run report's body naming
-   * its run is. `recorded` is what the record carries: an id written by the
-   * effect, `null` when the operation ran outside a run and is no step's
-   * attempt at all, and `undefined` only for a record written before attempt
-   * ids existed -- the one case that proves nothing either way.
+   * `expected` is the attempt id the marker recorded. A marker that recorded
+   * none is `UNRECORDED`, and that is NOT a wildcard: it is a marker a build
+   * without attempt ids wrote, restored into a build that has them, and it can
+   * establish nothing about a record minted since. Treating it as "matches
+   * anything" would hand a restored run the first record that postdates its
+   * before-set -- which is the ownership-by-novelty this replaced, revived by
+   * an upgrade. The steps whose identity really is exact without an attempt id
+   * -- intake against the committed baseline, a run report whose body names its
+   * run -- are settled before this is ever consulted.
+   *
+   * `recorded` is what the record carries: an id written by the effect, `null`
+   * when the operation ran outside a run and is no step's attempt at all, and
+   * `undefined` only for a record written before attempt ids existed.
    */
   const effectAttemptOf = (expected, recorded) => {
-    if (expected === null || expected === undefined) return EFFECT_ATTEMPT.MATCHES;
+    if (expected === null || expected === undefined) return EFFECT_ATTEMPT.UNRECORDED;
     if (recorded === undefined) return EFFECT_ATTEMPT.UNREADABLE;
     return recorded === expected ? EFFECT_ATTEMPT.MATCHES : EFFECT_ATTEMPT.DIFFERS;
   };
@@ -761,7 +787,7 @@ export function createRunService({ canonical, projects, store, operations, seria
    * restored — proves nothing either way, so it is UNPROVABLE rather than
    * "absent": treating it as absent would replay a non-idempotent effect.
    */
-  const reconcileSet = (expectation, key, current, attempt = () => EFFECT_ATTEMPT.MATCHES) => {
+  const reconcileSet = (expectation, key, current, attempt) => {
     const recorded = expectation[`${key}_digest`];
     const count = expectation[`${key}_count`];
     if (typeof recorded !== 'string' || typeof count !== 'number') {
@@ -781,14 +807,23 @@ export function createRunService({ canonical, projects, store, operations, seria
      * establish from an opaque record which attempt produced it either.
      */
     const settleNovel = novel => {
-      const mine = novel.filter(id => attempt(id) === EFFECT_ATTEMPT.MATCHES);
+      // Nothing was added at all, so nothing needs identifying: the effect
+      // never landed, whatever the marker does or does not record.
+      if (novel.length === 0) return { outcome: EFFECT.ABSENT };
+      const verdict = new Map(novel.map(id => [id, attempt(id)]));
+      // The marker itself records no attempt, and a record postdates it. This
+      // is a restored, mixed-version marker: it cannot claim what it never
+      // named, and no later evidence can supply what was never written down.
+      if ([...verdict.values()].includes(EFFECT_ATTEMPT.UNRECORDED)) {
+        return { outcome: EFFECT.UNPROVABLE, reason: 'EFFECT_ATTEMPT_EXPECTATION_NOT_RECORDED' };
+      }
+      const mine = novel.filter(id => verdict.get(id) === EFFECT_ATTEMPT.MATCHES);
       if (mine.length === 1) return { outcome: EFFECT.FOUND, id: mine[0] };
       if (mine.length > 1) return { outcome: EFFECT.UNPROVABLE, reason: 'EFFECT_ATTEMPT_NOT_UNIQUE' };
-      const opaque = novel.filter(id => attempt(id) === EFFECT_ATTEMPT.UNREADABLE);
       // Nothing carries this attempt id and nothing is opaque: every record
       // added since the marker belongs to another attempt, so this one's
       // effect positively never landed. The one conclusion that re-runs a step.
-      return opaque.length === 0
+      return novel.every(id => verdict.get(id) === EFFECT_ATTEMPT.DIFFERS)
         ? { outcome: EFFECT.ABSENT }
         : { outcome: EFFECT.UNPROVABLE, reason: 'EFFECT_ATTEMPT_NOT_RECORDED' };
     };
@@ -831,7 +866,7 @@ export function createRunService({ canonical, projects, store, operations, seria
    * request, and offers the remedies that can actually be executed for that
    * cause instead.
    */
-  const namedRecordIsThisEffect = (expectation, key, current, id, attempt = () => EFFECT_ATTEMPT.MATCHES) => {
+  const namedRecordIsThisEffect = (expectation, key, current, id, attempt) => {
     const recorded = expectation[`${key}_digest`];
     if (typeof recorded !== 'string') return { proven: false, reason: 'BEFORE_SET_NOT_RECORDED' };
     const sorted = [...current].sort();
@@ -846,6 +881,7 @@ export function createRunService({ canonical, projects, store, operations, seria
     const bound = attempt(id);
     if (bound === EFFECT_ATTEMPT.DIFFERS) return { proven: false, reason: 'RECORD_IS_ANOTHER_ATTEMPT' };
     if (bound === EFFECT_ATTEMPT.UNREADABLE) return { proven: false, reason: 'EFFECT_ATTEMPT_NOT_RECORDED' };
+    if (bound === EFFECT_ATTEMPT.UNRECORDED) return { proven: false, reason: 'EFFECT_ATTEMPT_EXPECTATION_NOT_RECORDED' };
     return { proven: true };
   };
 
