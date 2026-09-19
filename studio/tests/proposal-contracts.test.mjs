@@ -109,9 +109,14 @@ test('exactly one agent review verdict is actionable, and it is the one that say
   assert.deepEqual([...AGENT_REVIEW_ORDER].sort(), [...AGENT_REVIEW_NAMES].sort(), 'every verdict has a place in the ladder');
   assert.equal(new Set(AGENT_REVIEW_ORDER).size, AGENT_REVIEW_ORDER.length, 'the ladder lists each verdict once');
   // The refusing verdicts come first, so "which problem does this have" has one
-  // answer rather than a set a caller has to rank.
-  assert.equal(AGENT_REVIEW_ORDER[0], AGENT_REVIEW.INVALID);
-  assert.equal(AGENT_REVIEW_ORDER[1], AGENT_REVIEW.STALE);
+  // answer rather than a set a caller has to rank. STALE is ahead of INVALID
+  // and the order is load-bearing: every INVALID check is evaluated AGAINST the
+  // bindings, so when those have moved a forgery verdict would accuse an honest
+  // proposal of fabricating citations that a re-ingested baseline simply no
+  // longer holds. This ladder is what the policy actually evaluates, asserted
+  // here so the constant cannot drift from it again.
+  assert.equal(AGENT_REVIEW_ORDER[0], AGENT_REVIEW.STALE);
+  assert.equal(AGENT_REVIEW_ORDER[1], AGENT_REVIEW.INVALID);
   assert.equal(AGENT_REVIEW_ORDER.at(-1), ACCEPTABLE_AGENT_REVIEW);
 });
 

@@ -107,7 +107,7 @@ export const PROPOSAL_PROTOCOL_VERSION = 1;
 // identity.
 export const REQUEST_KEY_FIELDS = freeze(['code', 'step', 'gate', 'report_reference', 'baseline_id', 'candidate_id']);
 
-export const REQUEST_KEY_NOTICE = 'A review request key is derived from the request\'s code, step, gate, report reference, baseline id and candidate id. It is not an index, not a timestamp and not a content digest of the request body. A key that no current request carries addresses nothing, and a proposal holding one is stale rather than applied to whatever looks closest. It identifies a request WITHIN one run and is not globally unique: two runs over the same baseline, waiting on the same thing, legitimately carry the same key. Every proposal therefore names its run_id, and a key is only ever resolved against the requests of that run -- so a key read from one run can never address another run\'s request, whether or not the two happen to collide.';
+export const REQUEST_KEY_NOTICE = 'Two open requests that share all six identity fields share one key, which the run does produce: every non-meter staleness reason is projected onto one fixed shape, so an asset change and a Canonical snapshot change on the same run key alike. Such a key is refused as ambiguous rather than resolved to either -- picking one is how ownership-by-position returns -- and it costs nothing, because the requests that can collide admit only a description of what is missing. A review request key is derived from the request\'s code, step, gate, report reference, baseline id and candidate id. It is not an index, not a timestamp and not a content digest of the request body. A key that no current request carries addresses nothing, and a proposal holding one is stale rather than applied to whatever looks closest. It identifies a request WITHIN one run and is not globally unique: two runs over the same baseline, waiting on the same thing, legitimately carry the same key. Every proposal therefore names its run_id, and a key is only ever resolved against the requests of that run -- so a key read from one run can never address another run\'s request, whether or not the two happen to collide.';
 
 /**
  * The stable key of one review request.
@@ -304,10 +304,24 @@ export const AGENT_REVIEW = freeze({
 
 export const AGENT_REVIEW_NAMES = freeze(Object.values(AGENT_REVIEW));
 
-/** The ladder, highest-priority first. The first rule that matches is the verdict. */
+/**
+ * The ladder, in the order the policy evaluates it. The first rule that matches
+ * is the verdict.
+ *
+ * STALE is first, ahead of INVALID, and the order is load-bearing rather than
+ * incidental. Everything INVALID checks is checked AGAINST the bindings: a
+ * cited event id is resolved against the baseline the proposal names, a cited
+ * report reference against the requests the run is currently making. When those
+ * bindings have moved, the forgery check is not merely redundant, it is
+ * actively misleading -- an agent whose baseline was re-ingested underneath it
+ * would be told its citations were fabricated, which is a different accusation
+ * with a different remedy. Staleness explains why the identities no longer
+ * resolve, so it is reported first and the forgery checks run only once the
+ * material they are evaluated against is still the material.
+ */
 export const AGENT_REVIEW_ORDER = freeze([
-  AGENT_REVIEW.INVALID,
   AGENT_REVIEW.STALE,
+  AGENT_REVIEW.INVALID,
   AGENT_REVIEW.NOT_AGENT_SETTLABLE,
   AGENT_REVIEW.REQUIRES_MORE_EVIDENCE,
   AGENT_REVIEW.PROPOSABLE,
@@ -353,6 +367,14 @@ export const PROPOSAL_REFUSAL = freeze({
   // accepted the proposal would never appear on the decision at all. That is
   // suggestion becoming acceptance in one field, so the field is refused.
   ACCEPTANCE_IDENTITY_SUPPLIED: 'ACCEPTANCE_IDENTITY_SUPPLIED',
+  // A proposal that authored a reviewer's own evidence record -- in practice a
+  // decision's `leadEvidence`. The shared Lead grader checks that a citation
+  // BINDS to a real baseline source identity; it cannot check that anybody
+  // actually read the score, so a well-formed record written by an agent grades
+  // exactly like one written by a reviewer and moves the Gate 3 axes to PASS.
+  // That is a machine authoring the evidence for its own proposal, which is the
+  // one thing `NEVER_AGENT_SETTLABLE` says a proposal never does.
+  REVIEWER_EVIDENCE_RECORD_SUPPLIED: 'REVIEWER_EVIDENCE_RECORD_SUPPLIED',
   COLLAPSED_CONFIDENCE_SCORE: 'COLLAPSED_CONFIDENCE_SCORE',
   EXPECTED_OPERATION_MISMATCH: 'EXPECTED_OPERATION_MISMATCH',
 

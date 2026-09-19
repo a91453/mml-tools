@@ -270,6 +270,16 @@ set a caller has to rank.
 | `PROPOSABLE` | In scope, bound and complete, but this class reaches no operation: it records a position for a reviewer. |
 | `REQUIRES_EXPLICIT_ACCEPTANCE` | In scope, bound, complete, naming an existing operation. **The only verdict an acceptance may act on.** |
 
+The ladder is evaluated in that order and `STALE` is deliberately **above**
+`INVALID`. Every `INVALID` check is evaluated *against* the bindings — a cited
+event id against the baseline the proposal names, a cited report reference
+against the requests the run is currently making — so when those bindings have
+moved, a forgery verdict is not merely redundant but actively misleading: an
+agent whose baseline was re-ingested underneath it would be told its citations
+were fabricated, which is a different accusation with a different remedy.
+`AGENT_REVIEW_ORDER` states this order, and a regression asserts the constant
+matches what the policy walks.
+
 `ACCEPTABLE_AGENT_REVIEW` is a **single value**, not a list. A list is something
 a later change appends to without noticing what it has widened; a single value
 has to be deliberately replaced, and a regression asserts it is still one value.
@@ -307,6 +317,28 @@ content-addressed candidate id** for the same decisions. There is only one path;
 the proposal layer is a way of filling in its arguments. A regression asserts it
 directly, and it is the assertion the whole design rests on: if those ids ever
 differ, this layer has grown a second mutation engine.
+
+### A machine may not author the evidence for its own proposal
+
+`leadEvidence` is a candidate-bound **reviewer** record, and the one field on a
+decision a proposal may not carry.
+
+The shared Lead grader checks that a citation *binds*: that its `sourceIdentity`
+names a real Source-Faithful Baseline source event, that continuity holds, that
+Core3 survives. It cannot check that anyone actually read the score, because
+nothing can. An independent adversarial review of this code as first written
+exploited exactly that: a well-formed record whose score citation read *"I, the
+model, recall the score shows an inner voice here"* passed the grader through an
+accepted proposal and moved **both** Gate 3 axes to `PASS`, with every other
+guard in this protocol working as designed.
+
+So a proposed decision carrying `leadEvidence` is refused
+(`REVIEWER_EVIDENCE_RECORD_SUPPLIED`). The move itself stays proposable — an
+agent can still say "this belongs in Melody, and here is why" — and without a
+citation the engine holds it `PENDING`, which is the honest state and exactly
+what `SOURCE_POLICY.md` §4 requires of incomplete Lead evidence. A reviewer
+supplies the citation through `applyDecisions` or `reviewLeadEvidence`, the
+paths that already exist and already bind it to a named reviewer.
 
 ### The reviewer is supplied by the acceptance, and only by the acceptance
 
@@ -406,9 +438,15 @@ Phase 1 re-validates every binding per step — but a proposal a reader is told 
 applicable, and which halts the run the moment it is accepted, is a proposal
 whose verdict was answering the wrong question.
 
-A completed (audit-closed) run and a run needing reconciliation accept no
-proposal at all, and `proposalTargets` says so with `accepts_proposals: false`
-before an agent writes anything.
+A completed (audit-closed) run and a run whose step may or may not have landed
+accept no proposal at all, and `proposalTargets` says so with
+`accepts_proposals: false` before an agent writes anything. **Both** interruption
+markers are read, because they are written at different moments: `pending_step`
+is written before a mutating effect and survives a crash, while the derived
+`needs_reconciliation` flag is written only once a *later* advancement has
+already tried to settle that effect and failed. Reading the flag alone left a
+window — the whole window that matters — in which a proposal could be accepted
+onto a step that may or may not exist. The adversarial review found that too.
 
 A baseline that cannot be *read* is `STALE`, not a fabricated citation: "this
 identity is not in the baseline" and "there is no baseline to look in" are
@@ -522,6 +560,7 @@ No mock stands in anywhere.
 | `studio/tests/proposal-security.test.mjs` | forged identities, unknown and inherited fields, prototype keys, server-computed fields, collapsed scores, bounds, replay |
 | `studio/tests/proposal-agent-review-policy.test.mjs` | the Lead evidence boundary, Gate 8, Gate 9, the ladder, recomputation |
 | `studio/tests/proposal-duplication.test.mjs` | one acceptance, one application — across retries, concurrency and a crash in the window |
+| `studio/tests/proposal-adversarial.test.mjs` | the four escalations an independent adversarial review found, kept in the shape they were found in |
 | `tests/proposal-transport.test.mjs` | HTTP/MCP parity, and what Phase 2 did not add |
 
 ## 15. Not covered by Phase 2

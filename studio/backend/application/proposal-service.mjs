@@ -264,10 +264,10 @@ export function createProposalService({ canonical, projects, store, operations, 
   //
   // A run's open review requests, addressed by the key each one carries. Two
   // answers are refused rather than resolved: a key no current request carries,
-  // and a key more than one carries. The second cannot happen for the requests
-  // this build produces — their report references differ — but "cannot happen"
-  // is not a reason to pick one, and picking one is how ownership-by-position
-  // comes back.
+  // and a key more than one carries. The second DOES happen — `stalenessRequest`
+  // projects every non-meter reason onto one fixed shape with no baseline and
+  // no candidate — and it is refused rather than resolved, because picking one
+  // is how ownership-by-position comes back.
 
   const openRequests = run => (run.review_requests ?? []);
 
@@ -431,6 +431,26 @@ export function createProposalService({ canonical, projects, store, operations, 
           // belong in `rationale`, and the reviewer's in the acceptance.
           if (key === 'acceptedBy' || key === 'note') {
             fail(ERROR_CODES.INVALID_REQUEST, `${label}.decisions[${index}].${key} must not be supplied by a proposal. A proposal does not name who accepted it: the explicit acceptance supplies accepted_by and its own reason, and this service uses those. State the proposer's reasoning in rationale.`, { refusal: PROPOSAL_REFUSAL.ACCEPTANCE_IDENTITY_SUPPLIED });
+          }
+          // `leadEvidence` is a candidate-bound REVIEWER record, and the one
+          // field on a decision that a proposal must not author.
+          //
+          // The shared Lead grader checks that a citation BINDS: that its
+          // sourceIdentity names a real Source-Faithful Baseline source event,
+          // that continuity holds, that Core3 survives. It cannot check that
+          // anyone actually read the score, because nothing can. So a
+          // well-formed record whose score citation says "the model recalls the
+          // score shows an inner voice here" grades exactly like one a reviewer
+          // wrote, and both Gate 3 axes reach PASS -- a machine manufacturing
+          // the evidence for its own proposal, which is precisely what
+          // NEVER_AGENT_SETTLABLE says a proposal never does.
+          //
+          // The move itself stays proposable. Without evidence the engine holds
+          // it PENDING, which is the honest state, and a reviewer supplies the
+          // citation through `applyDecisions` or `reviewLeadEvidence` -- the
+          // paths that already exist and already bind it to a named reviewer.
+          if (key === 'leadEvidence') {
+            fail(ERROR_CODES.INVALID_REQUEST, `${label}.decisions[${index}].leadEvidence must not be supplied by a proposal. A Lead evidence citation is a candidate-bound reviewer record: the shared Lead grader can check that it binds to a real baseline source identity, but not that anybody read the source, so an agent-authored one would move Gate 3 on the strength of its own assertion. Propose the move without it -- it stays PENDING, which is the honest state -- and let a reviewer supply the citation through applyDecisions or reviewLeadEvidence.`, { refusal: PROPOSAL_REFUSAL.REVIEWER_EVIDENCE_RECORD_SUPPLIED });
           }
         }
         return rebuildJson(entry, `${label}.decisions[${index}]`, budget);
@@ -640,12 +660,23 @@ export function createProposalService({ canonical, projects, store, operations, 
     // run itself, so a reader of the proposal is told why without having to
     // accept it to find out.
     if (run.state === RUN_STATE.COMPLETED || run.report_artifact_id) stale.push(PROPOSAL_REFUSAL.RUN_AUDIT_CLOSED);
+    // Both markers, because they are set at different moments. `pending_step`
+    // is written BEFORE a mutating effect and survives a crash; the derived
+    // `needs_reconciliation` flag is written only once a LATER advancement has
+    // already tried to settle that effect and failed. Reading the flag alone
+    // leaves a window -- the whole window that matters -- in which a run's step
+    // may or may not have landed and a proposal would be accepted onto it.
+    if (run.pending_step) stale.push(PROPOSAL_REFUSAL.RUN_NEEDS_RECONCILIATION);
     if (run.needs_reconciliation === true) stale.push(PROPOSAL_REFUSAL.RUN_NEEDS_RECONCILIATION);
 
     const matching = requestsMatching(run, bound.request_key);
     if (matching.length === 0) stale.push(PROPOSAL_REFUSAL.REQUEST_NO_LONGER_OPEN);
-    // Exact per request rather than per key is the property this depends on, so
-    // "which of several" is refused rather than resolved by position.
+    // Refused rather than resolved by position. The run does produce colliding
+    // keys -- every non-meter staleness reason is projected onto one fixed
+    // shape, so an asset change and a Canonical snapshot change on one run key
+    // alike -- and picking either is how ownership-by-position returns. It
+    // costs nothing: the requests that can collide admit only a description of
+    // what is missing, which applies nothing.
     if (matching.length > 1) stale.push(PROPOSAL_REFUSAL.REQUEST_AMBIGUOUS);
     if (stale.length) return verdictOf(AGENT_REVIEW.STALE, stale, { ...detail, invalidated_by: PROPOSAL_INVALIDATORS });
 
@@ -958,7 +989,7 @@ export function createProposalService({ canonical, projects, store, operations, 
         // A run that is closed or waiting on an inspection accepts no proposal
         // at all, and saying so here is cheaper than letting an agent write one
         // and learn it at acceptance.
-        accepts_proposals: !(run.state === RUN_STATE.COMPLETED || run.report_artifact_id || run.needs_reconciliation === true),
+        accepts_proposals: !(run.state === RUN_STATE.COMPLETED || run.report_artifact_id || run.pending_step || run.needs_reconciliation === true),
         targets: Object.freeze(openRequests(run).map(request => {
           const admissible = admissibleKinds(request);
           return Object.freeze({
