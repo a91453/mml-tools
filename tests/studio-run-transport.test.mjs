@@ -22,7 +22,7 @@ import { join } from 'node:path';
 import { API_PREFIX, createApiRouter } from '../server/api.mjs';
 import { handleMcp } from '../server/mcp.mjs';
 import { STUDIO_MCP_TOOLS } from '../server/mcp-studio.mjs';
-import { createStudioApplication } from '../studio/backend/application/index.mjs';
+import { LIMITS, PLAN_INPUT_KEYS, RESUME_INPUT_KEYS, START_INPUT_KEYS, createStudioApplication } from '../studio/backend/application/index.mjs';
 import { FIXTURE_CONFIRMATIONS, RUN_REVIEWER, projectWithSymbolicAsset, runDecisionsFor, sixRoleBaseline } from '../studio/tests/fixtures/run-fixtures.mjs';
 
 const ORIGIN = 'https://mml.example';
@@ -440,3 +440,114 @@ function nest(depth) {
   for (let index = 0; index < depth; index += 1) value = { nested: value };
   return value;
 }
+
+// ─── the input contract is one contract, per operation ──────────────────────
+//
+// A union of every run field, applied to every run operation, lets one
+// transport admit what another rejects and lets a caller send a field the
+// operation does not read. These lock the two surfaces to one set per
+// operation and to one constant per bound, field for field, in both directions.
+
+const runTool = name => STUDIO_MCP_TOOLS.find(entry => entry.name === name);
+const declaredKeys = (name, ...transportOnly) => Object.keys(runTool(name).inputSchema.properties)
+  .filter(key => !transportOnly.includes(key)).sort();
+
+test('each run operation accepts exactly one set of fields, on both transports', async () => {
+  // What MCP declares and what the service accepts are the same set, per
+  // operation — so neither surface can drift without this failing.
+  assert.deepEqual(declaredKeys('studio_run_plan', 'project_id'), [...PLAN_INPUT_KEYS].sort());
+  assert.deepEqual(declaredKeys('studio_run_start', 'project_id'), [...START_INPUT_KEYS].sort());
+  assert.deepEqual(declaredKeys('studio_run_resume', 'project_id', 'run_id'), [...RESUME_INPUT_KEYS].sort());
+
+  // And the sets differ in the ways the operations differ, rather than being
+  // one union three times.
+  assert.equal(PLAN_INPUT_KEYS.includes('idempotency_key'), false, 'a read-only plan writes nothing');
+  assert.equal(START_INPUT_KEYS.includes('expected_run_revision'), false, 'a run that does not exist has no revision');
+  assert.equal(START_INPUT_KEYS.includes('adopt_candidate_id'), false, 'a new run has no interrupted step');
+  assert.equal(RESUME_INPUT_KEYS.includes('target_candidate_id'), false, 'a resume adopts, it does not target');
+
+  const { http, mcp } = transports();
+  const fixture = await projectWithSymbolicAsset(createStudioApplication({}), OWNER, { project: sixRoleBaseline() });
+  const project = (await http('POST', '/projects', { title: 'Field contract' })).body.project;
+
+  // A field the operation does not read is refused rather than silently
+  // ignored — over HTTP, which has no schema in front of it.
+  const planned = await http('POST', `/projects/${project.project_id}/runs/plan`, { reconcile: true });
+  assert.equal(planned.status, 400);
+  assert.equal(planned.body.error.code, 'INVALID_REQUEST');
+  assert.match(planned.body.error.message, /not an accepted field/);
+
+  const started = await http('POST', `/projects/${project.project_id}/runs`, { adopt_candidate_id: `g11d:rev:${'a'.repeat(64)}` });
+  assert.equal(started.status, 400);
+  assert.equal(started.body.error.code, 'INVALID_REQUEST');
+
+  const created = await http('POST', `/projects/${project.project_id}/runs`, {});
+  const runId = created.body.run.run_id;
+  const resumed = await http('POST', `/projects/${project.project_id}/runs/${runId}/resume`, { target_candidate_id: `g11d:rev:${'a'.repeat(64)}` });
+  assert.equal(resumed.status, 400, 'target_candidate_id is not a resume field, and is not a silent no-op either');
+  assert.equal(resumed.body.error.code, 'INVALID_REQUEST');
+
+  // The same payload over MCP is refused too, rather than reaching the service
+  // and being dropped there.
+  const overMcp = await mcp('studio_run_resume', { project_id: project.project_id, run_id: runId, target_candidate_id: `g11d:rev:${'a'.repeat(64)}` });
+  assert.ok(overMcp === undefined || overMcp.isError === true, String(JSON.stringify(overMcp)).slice(0, 200));
+  assert.ok(fixture.assetId);
+});
+
+test('every shared bound is one constant, and both surfaces sit on it', async () => {
+  const properties = runTool('studio_run_resume').inputSchema.properties;
+  const planProperties = runTool('studio_run_plan').inputSchema.properties;
+
+  // Declared bounds are the service's own constants, not a second copy.
+  assert.equal(properties.asset_ids.maxItems, LIMITS.maxAssetsPerProject);
+  assert.equal(properties.meter_text.maxLength, LIMITS.maxMeterTextLength);
+  assert.equal(properties.decisions.maxItems, LIMITS.maxDecisionsPerRequest);
+  assert.equal(properties.idempotency_key.maxLength, LIMITS.maxIdempotencyKeyLength);
+  assert.equal(properties.expected_run_revision.maximum, LIMITS.maxRunRevision);
+  assert.equal(planProperties.asset_ids.maxItems, LIMITS.maxAssetsPerProject);
+  assert.equal(planProperties.meter_text.maxLength, LIMITS.maxMeterTextLength);
+
+  // The minima MCP declares are minima the service enforces, so an empty value
+  // is not accepted on one surface and rejected on the other.
+  assert.equal(properties.asset_ids.minItems, 1);
+  assert.equal(properties.meter_text.minLength, 1);
+  assert.equal(properties.decisions.minItems, 1);
+  assert.equal(properties.expected_run_revision.minimum, 1);
+
+  const { http } = transports();
+  const project = (await http('POST', '/projects', { title: 'Boundaries' })).body.project;
+  const plan = payload => http('POST', `/projects/${project.project_id}/runs/plan`, payload);
+  const refused = async (payload, what) => {
+    const response = await plan(payload);
+    assert.equal(response.status, 400, `${what} must be refused: ${JSON.stringify(response.body).slice(0, 200)}`);
+    assert.equal(response.body.error.code, 'INVALID_REQUEST');
+  };
+
+  // empty
+  await refused({ asset_ids: [] }, 'an empty asset selection');
+  await refused({ meter_text: '' }, 'an explicitly empty meter map');
+  await refused({ decisions: [] }, 'an empty decision set');
+
+  // exact max passes normalisation (it may still fail on what the ids resolve
+  // to, which is a different answer from "this request is malformed"), and one
+  // over is refused as malformed.
+  const asset = 'a'.repeat(36);
+  const atCap = await plan({ asset_ids: Array.from({ length: LIMITS.maxAssetsPerProject }, (_, index) => `${asset.slice(0, 32)}${String(index).padStart(4, '0')}`) });
+  assert.notEqual(atCap.body.error?.code, 'INVALID_REQUEST', 'the cap itself is accepted');
+  await refused({ asset_ids: Array.from({ length: LIMITS.maxAssetsPerProject + 1 }, () => asset) }, 'one asset over the cap');
+  const atMeter = await plan({ meter_text: '4'.repeat(LIMITS.maxMeterTextLength) });
+  assert.notEqual(atMeter.body.error?.code, 'INVALID_REQUEST', 'the meter cap itself is accepted');
+  await refused({ meter_text: '4'.repeat(LIMITS.maxMeterTextLength + 1) }, 'one character over the meter cap');
+
+  // the revision bound, on the operation that has one
+  const created = await http('POST', `/projects/${project.project_id}/runs`, {});
+  const runId = created.body.run.run_id;
+  const resume = payload => http('POST', `/projects/${project.project_id}/runs/${runId}/resume`, payload);
+  assert.notEqual((await resume({ expected_run_revision: LIMITS.maxRunRevision })).body.error?.code, 'INVALID_REQUEST');
+  const overMax = await resume({ expected_run_revision: LIMITS.maxRunRevision + 1 });
+  assert.equal(overMax.status, 400);
+  assert.equal(overMax.body.error.code, 'INVALID_REQUEST');
+  const underMin = await resume({ expected_run_revision: 0 });
+  assert.equal(underMin.status, 400);
+  assert.equal(underMin.body.error.code, 'INVALID_REQUEST');
+});

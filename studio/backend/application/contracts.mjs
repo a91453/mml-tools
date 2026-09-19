@@ -314,6 +314,9 @@ export const LIMITS = freeze({
   // so the HTTP and MCP surfaces accept exactly the same range rather than one
   // rejecting what the other admits.
   maxMeterTextLength: 2048,
+  // The optimistic-concurrency precondition a caller may state. Bounded so the
+  // two transports declare and enforce the same range.
+  maxRunRevision: 1000000,
   maxIdempotencyReceiptsPerRun: 32,
   maxIdempotencyKeyLength: 200,
   maxFilenameLength: 255,

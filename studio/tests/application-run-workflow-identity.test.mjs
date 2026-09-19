@@ -306,7 +306,7 @@ test('a completed run cannot be reopened into a candidate whose report still nam
     }),
     error => error.code === ERROR_CODES.RUN_CONFLICT
       && error.details.reason === 'COMPLETED_RUN_IS_AUDIT_CLOSED'
-      && error.details.steps.includes(RUN_STEP.MOBILE_ADAPTATION),
+      && error.details.refused_fields.includes('mobile_adaptation'),
   );
 
   // Nothing moved: the run still names the candidate, Final and report it ended
@@ -371,7 +371,7 @@ test('a new candidate inside a live run drops every result bound to the old one'
   assert.equal(record.artifacts.find(entry => entry.artifact_id === adapted.run.final_artifact_id).candidate_id, candidate2);
 });
 
-test('a restored run that already holds a report does not keep it across a new candidate', async () => {
+test('a live or restored run cannot keep a report that names a superseded Final', async () => {
   await withDirectory(async directory => {
     const app = createStudioApplication({ dataDirectory: directory, durability: 'persistent' });
     const fixture = await projectWithSymbolicAsset(app, OWNER, { project: sixRoleBaseline() });
@@ -382,41 +382,215 @@ test('a restored run that already holds a report does not keep it across a new c
     const report1 = done.run.report_artifact_id;
     assert.ok(final1 && report1);
 
-    // A completed run is audit-closed, so this state is not reachable through
-    // the service. It is reachable in a restored or hand-edited record — which
-    // is what the invariant is for — so the record is edited here to produce a
-    // run that still holds a Final and a report while it is live again.
+    // A record restored with the run live again while it still holds the Final
+    // and the report of candidate1 — the state a crash or a restore can leave,
+    // and the one in which a report could come to name a superseded Final.
     const records = join(directory, 'records');
     const [name] = await readdir(records);
     const stored = JSON.parse(await readFile(join(records, name), 'utf8'));
-    const run = stored.runs.find(entry => entry.run_id === done.run.run_id);
-    run.state = RUN_STATE.AWAITING_REVIEW;
+    stored.runs.find(entry => entry.run_id === done.run.run_id).state = RUN_STATE.AWAITING_REVIEW;
     await writeFile(join(records, name), JSON.stringify(stored));
 
     const restarted = createStudioApplication({ dataDirectory: directory, durability: 'persistent' });
     const live = (await restarted.getRun(OWNER, fixture.projectId, done.run.run_id)).run;
     assert.equal(live.state, RUN_STATE.AWAITING_REVIEW);
-    assert.equal(live.final_artifact_id, final1, 'it still holds the Final of candidate1');
-    assert.equal(live.report_artifact_id, report1, 'and the report naming it');
+    assert.equal(live.report_artifact_id, report1);
 
+    // Replacing the Final under that report — by re-finalizing with different
+    // options, or by moving to another candidate — is refused: a run that has
+    // produced its report takes no further workflow input, whatever its stored
+    // state field says.
+    for (const payload of [
+      { finalize: { technical_timing_repair: true } },
+      { confirmations: FIXTURE_CONFIRMATIONS },
+    ]) {
+      await assert.rejects(
+        restarted.resumeRun(OWNER, fixture.projectId, done.run.run_id, payload),
+        error => error.code === ERROR_CODES.RUN_CONFLICT
+          && error.details.reason === 'COMPLETED_RUN_IS_AUDIT_CLOSED'
+          && error.details.report_artifact_id === report1,
+        `${Object.keys(payload)[0]} must be refused`,
+      );
+    }
+
+    // Nothing moved, and the report still names the Final it was written for.
+    const after = (await restarted.getRun(OWNER, fixture.projectId, done.run.run_id)).run;
+    assert.equal(after.final_artifact_id, final1);
+    assert.equal(after.report_artifact_id, report1);
+    const body = (await restarted.getArtifact(OWNER, report1)).artifact;
+    assert.equal(body.final_artifact_id, final1);
+    assert.equal(body.candidate_id, candidate1);
+    assert.equal(
+      finalsFor((await restarted.getProject(OWNER, fixture.projectId)).project, candidate1).length,
+      1,
+      'and no second Final was emitted under the report naming the first',
+    );
+  });
+});
+
+// ─── 5. audit-closed is a contract, not a field list ────────────────────────
+
+test('a completed run refuses every workflow input, finalize options included', async () => {
+  const app = createStudioApplication({});
+  const fixture = await projectWithSymbolicAsset(app, OWNER, { project: sixRoleBaseline() });
+  await app.analyzeSources(OWNER, fixture.projectId, { assetIds: [fixture.assetId] });
+  const candidate1 = (await app.applyDecisions(OWNER, fixture.projectId, { decisions: runDecisionsFor(fixture.project) })).decisions.candidate_id;
+  const done = await app.startRun(OWNER, fixture.projectId, { target_candidate_id: candidate1, confirmations: FIXTURE_CONFIRMATIONS });
+  assert.equal(done.run.state, RUN_STATE.COMPLETED, JSON.stringify(done.run.blockers));
+  const { revision, final_artifact_id: final1, report_artifact_id: report1 } = done.run;
+
+  // Every field that asks for work, including the ones an enumerated list of
+  // "material" fields missed: finalize options re-emit, and adoption rebuilds
+  // the run around another candidate or another artifact.
+  const descendantPlan = (await app.planMobileAdaptation(OWNER, fixture.projectId, {
+    candidateId: candidate1, profile: mobileProfile({ Chord5: { defaultVolume: 9 } }),
+  })).adaptation.plan;
+  const descendant = (await app.applyMobileAdaptation(OWNER, fixture.projectId, {
+    candidateId: candidate1, profile: mobileProfile({ Chord5: { defaultVolume: 9 } }),
+    expectedPlanId: descendantPlan.id, acceptedBy: RUN_REVIEWER,
+  })).adaptation.candidate_id;
+
+  const payloads = [
+    ['finalize', { finalize: { technical_timing_repair: true } }],
+    ['finalize.pickup', { finalize: { pickup: 1 } }],
+    ['adopt_candidate_id', { adopt_candidate_id: descendant }],
+    ['adopt_artifact_id', { adopt_artifact_id: final1 }],
+    ['reconcile', { reconcile: true }],
+    ['decisions', { decisions: runDecisionsFor(fixture.project) }],
+    ['confirmations', { confirmations: FIXTURE_CONFIRMATIONS }],
+    ['asset_ids', { asset_ids: [fixture.assetId] }],
+  ];
+  for (const [what, payload] of payloads) {
+    await assert.rejects(
+      app.resumeRun(OWNER, fixture.projectId, done.run.run_id, payload),
+      error => error.code === ERROR_CODES.RUN_CONFLICT
+        && error.details.reason === 'COMPLETED_RUN_IS_AUDIT_CLOSED'
+        && error.details.refused_fields.length > 0,
+      `${what} must be refused on a completed run`,
+    );
+  }
+
+  // Nothing moved, and no revision was spent refusing.
+  const after = (await app.getRun(OWNER, fixture.projectId, done.run.run_id)).run;
+  assert.equal(after.revision, revision);
+  assert.equal(after.candidate_id, candidate1);
+  assert.equal(after.final_artifact_id, final1);
+  assert.equal(after.report_artifact_id, report1);
+  const body = (await app.getArtifact(OWNER, report1)).artifact;
+  assert.equal(body.final_artifact_id, final1);
+  assert.equal(finalsFor((await app.getProject(OWNER, fixture.projectId)).project, candidate1).length, 1);
+});
+
+test('a completed run cannot be reopened through candidate adoption', async () => {
+  const app = createStudioApplication({});
+  const fixture = await projectWithSymbolicAsset(app, OWNER, { project: sixRoleBaseline() });
+  await app.analyzeSources(OWNER, fixture.projectId, { assetIds: [fixture.assetId] });
+  const candidate1 = (await app.applyDecisions(OWNER, fixture.projectId, { decisions: runDecisionsFor(fixture.project) })).decisions.candidate_id;
+  const done = await app.startRun(OWNER, fixture.projectId, { target_candidate_id: candidate1, confirmations: FIXTURE_CONFIRMATIONS });
+  const final1 = done.run.final_artifact_id;
+  const report1 = done.run.report_artifact_id;
+
+  // A descendant with a legitimate baseline and lineage — everything
+  // adopt_candidate_id verifies — produced outside the run.
+  const profile = mobileProfile({ Chord5: { defaultVolume: 9 } });
+  const plan = (await app.planMobileAdaptation(OWNER, fixture.projectId, { candidateId: candidate1, profile })).adaptation.plan;
+  const candidate2 = (await app.applyMobileAdaptation(OWNER, fixture.projectId, {
+    candidateId: candidate1, profile, expectedPlanId: plan.id, acceptedBy: RUN_REVIEWER,
+  })).adaptation.candidate_id;
+  assert.notEqual(candidate2, candidate1);
+
+  await assert.rejects(
+    app.resumeRun(OWNER, fixture.projectId, done.run.run_id, { adopt_candidate_id: candidate2 }),
+    error => error.code === ERROR_CODES.RUN_CONFLICT
+      && error.details.reason === 'COMPLETED_RUN_IS_AUDIT_CLOSED'
+      && error.details.refused_fields.includes('adopt_candidate_id'),
+  );
+
+  // The audit record is untouched, down to the report body.
+  const after = (await app.getRun(OWNER, fixture.projectId, done.run.run_id)).run;
+  assert.equal(after.state, RUN_STATE.COMPLETED);
+  assert.equal(after.candidate_id, candidate1);
+  assert.equal(after.final_artifact_id, final1);
+  assert.equal(after.report_artifact_id, report1);
+  const body = (await app.getArtifact(OWNER, report1)).artifact;
+  assert.equal(body.candidate_id, candidate1);
+  assert.equal(body.final_artifact_id, final1);
+});
+
+test('a bare resume of a completed run takes no revision and re-emits nothing', async () => {
+  const app = createStudioApplication({});
+  const fixture = await projectWithSymbolicAsset(app, OWNER, { project: sixRoleBaseline() });
+  await app.analyzeSources(OWNER, fixture.projectId, { assetIds: [fixture.assetId] });
+  const candidate1 = (await app.applyDecisions(OWNER, fixture.projectId, { decisions: runDecisionsFor(fixture.project) })).decisions.candidate_id;
+  const done = await app.startRun(OWNER, fixture.projectId, { target_candidate_id: candidate1, confirmations: FIXTURE_CONFIRMATIONS });
+
+  const again = await app.resumeRun(OWNER, fixture.projectId, done.run.run_id, {});
+  assert.equal(again.advanced, false);
+  assert.equal(again.run.revision, done.run.revision, 'a run with nothing to do mints no revision');
+  assert.equal(again.run.state, RUN_STATE.COMPLETED);
+  assert.equal(again.run.final_artifact_id, done.run.final_artifact_id);
+  assert.equal(again.run.report_artifact_id, done.run.report_artifact_id);
+  assert.match(again.notice, /no step ran, no revision was taken/);
+  assert.equal(finalsFor((await app.getProject(OWNER, fixture.projectId)).project, candidate1).length, 1);
+});
+
+test('a material resume cannot hide behind recovery of an already-persisted terminal report', async () => {
+  await withDirectory(async directory => {
+    const app = createStudioApplication({ dataDirectory: directory, durability: 'persistent' });
+    const fixture = await projectWithSymbolicAsset(app, OWNER, { project: sixRoleBaseline() });
+    await app.analyzeSources(OWNER, fixture.projectId, { assetIds: [fixture.assetId] });
+    const candidate1 = (await app.applyDecisions(OWNER, fixture.projectId, { decisions: runDecisionsFor(fixture.project) })).decisions.candidate_id;
+
+    // The report effect landed; the receipt did not. The workflow is finished,
+    // and only the bookkeeping is missing.
+    const stopped = await stopsAfter(directory, RUN_STEP.REPORT)
+      .startRun(OWNER, fixture.projectId, { target_candidate_id: candidate1, confirmations: FIXTURE_CONFIRMATIONS })
+      .then(() => assert.fail('the injected fault must propagate'), error => error);
+    assert.match(stopped.message, /stopped after the report effect/);
+
+    const restarted = createStudioApplication({ dataDirectory: directory, durability: 'persistent' });
+    const runId = (await restarted.getRun(OWNER, fixture.projectId)).runs[0].run_id;
+    const before = (await restarted.getRun(OWNER, fixture.projectId, runId)).run;
+    assert.equal(before.pending_step.step, RUN_STEP.REPORT);
+    assert.notEqual(before.state, RUN_STATE.COMPLETED, 'the record does not know it finished');
+    const record = (await restarted.getProject(OWNER, fixture.projectId)).project;
+    const persisted = record.artifacts.filter(entry => entry.type === 'run_report');
+    assert.equal(persisted.length, 1, 'but the project holds its report');
+
+    // A resume that also carries new work is refused: the run cannot both
+    // recover its audit identity and be carried on into different work, and
+    // accepting the payload while doing neither is worse than either.
     const profile = mobileProfile({ Chord5: { defaultVolume: 9 } });
     const plan = (await restarted.planMobileAdaptation(OWNER, fixture.projectId, { candidateId: candidate1, profile })).adaptation.plan;
-    const adapted = await restarted.resumeRun(OWNER, fixture.projectId, done.run.run_id, {
-      mobile_adaptation: { profile, expected_plan_id: plan.id, accepted_by: RUN_REVIEWER },
-      confirmations: FIXTURE_CONFIRMATIONS,
-    });
+    await assert.rejects(
+      restarted.resumeRun(OWNER, fixture.projectId, runId, {
+        mobile_adaptation: { profile, expected_plan_id: plan.id, accepted_by: RUN_REVIEWER },
+      }),
+      error => error.code === ERROR_CODES.RUN_CONFLICT
+        && error.details.reason === 'COMPLETED_RUN_IS_AUDIT_CLOSED'
+        && error.details.refused_fields.includes('mobile_adaptation')
+        && error.details.report_artifact_id === persisted[0].artifact_id,
+    );
 
-    const candidate2 = adapted.run.candidate_id;
-    assert.notEqual(candidate2, candidate1);
-    assert.notEqual(adapted.run.report_artifact_id, report1, 'the report bound to the superseded candidate did not survive it');
-    assert.notEqual(adapted.run.final_artifact_id, final1, 'and neither did the Final');
-    const body = (await restarted.getArtifact(OWNER, adapted.run.report_artifact_id)).artifact;
-    assert.equal(body.candidate_id, candidate2, 'the run and its report name the same candidate');
-    assert.equal(body.final_artifact_id, adapted.run.final_artifact_id);
+    // The refusal recorded nothing: no candidate, no Final, no adaptation
+    // receipt, and no trace of the payload in the run's inputs.
+    const refused = (await restarted.getRun(OWNER, fixture.projectId, runId)).run;
+    assert.equal(refused.candidate_id, candidate1, 'the request produced no new candidate');
+    assert.notEqual(statusOf(refused, RUN_STEP.MOBILE_ADAPTATION), RUN_STEP_STATUS.COMPLETED, 'and was not recorded as executed');
+    assert.equal(refused.inputs.adaptation_fingerprint ?? null, null);
+    const still = (await restarted.getProject(OWNER, fixture.projectId)).project;
+    assert.equal(still.candidates.length, 1);
+    assert.equal(still.artifacts.filter(entry => entry.type === 'run_report').length, 1);
 
-    // The superseded report is untouched, still truthfully naming its own.
-    const older = (await restarted.getArtifact(OWNER, report1)).artifact;
-    assert.equal(older.candidate_id, candidate1);
-    assert.equal(older.final_artifact_id, final1);
+    // A bare resume recovers the audit identity and stops there.
+    const recovered = await restarted.resumeRun(OWNER, fixture.projectId, runId, {});
+    assert.equal(recovered.run.state, RUN_STATE.COMPLETED);
+    assert.equal(recovered.run.report_artifact_id, persisted[0].artifact_id);
+    assert.equal(recovered.run.pending_step, null);
+    assert.equal(
+      (await restarted.getProject(OWNER, fixture.projectId)).project.artifacts.filter(entry => entry.type === 'run_report').length,
+      1,
+      'recovery adopts the report it produced rather than filing a second one',
+    );
   });
 });

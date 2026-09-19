@@ -198,11 +198,38 @@ function boundedGate(entry) {
 // Only these fields exist. An unknown field is refused rather than ignored: a
 // caller that misspells `final_reduction` must not be told its reduction
 // decisions were accepted.
-const RUN_INPUT_KEYS = new Set([
-  'idempotency_key', 'asset_ids', 'meter_text', 'target_candidate_id', 'adopt_candidate_id',
-  'adopt_artifact_id', 'decisions', 'accepted_by', 'final_reduction', 'mobile_adaptation',
-  'confirmations', 'finalize', 'expected_run_revision', 'reconcile',
+/**
+ * What each run operation accepts — one closed set per operation, not a union.
+ *
+ * A union lets one transport admit a field another rejects, and lets a caller
+ * send a field the operation does not read: `target_candidate_id` on a resume
+ * was accepted and silently ignored, and `reconcile` was accepted by a
+ * read-only plan. These sets are exported so the MCP tool schemas can be locked
+ * to them field for field, which is what makes "HTTP and MCP accept the same
+ * inputs" a checkable claim rather than an intention.
+ */
+export const PLAN_INPUT_KEYS = Object.freeze([
+  'asset_ids', 'meter_text', 'target_candidate_id', 'decisions', 'accepted_by',
+  'final_reduction', 'mobile_adaptation', 'confirmations', 'finalize',
 ]);
+export const START_INPUT_KEYS = Object.freeze(['idempotency_key', ...PLAN_INPUT_KEYS]);
+export const RESUME_INPUT_KEYS = Object.freeze([
+  'idempotency_key', 'expected_run_revision', 'asset_ids', 'meter_text',
+  'adopt_candidate_id', 'adopt_artifact_id', 'decisions', 'accepted_by',
+  'final_reduction', 'mobile_adaptation', 'confirmations', 'finalize', 'reconcile',
+]);
+
+/**
+ * The only request fields that carry no workflow work.
+ *
+ * Everything else asks the run to do or to change something, which is what an
+ * audit-closed run refuses. Stating the exception rather than enumerating the
+ * material fields is deliberate: a list of "material" fields is a list that can
+ * be missed, and `finalize` was missed from one.
+ */
+const NON_WORKFLOW_INPUT_KEYS = new Set(['idempotency_key', 'expected_run_revision']);
+
+const RUN_INPUT_KEYS = new Set([...PLAN_INPUT_KEYS, ...START_INPUT_KEYS, ...RESUME_INPUT_KEYS]);
 const REDUCTION_INPUT_KEYS = new Set(['decisions', 'expected_plan_id', 'accepted_by', 'instrument_profile']);
 const ADAPTATION_INPUT_KEYS = new Set(['profile', 'expected_plan_id', 'accepted_by']);
 const FINALIZE_INPUT_KEYS = new Set(['technical_timing_repair', 'pickup', 'final_partial']);
@@ -215,9 +242,9 @@ const closedObject = (value, label, allowed) => {
   return value;
 };
 
-function normalizeRunInput(input, { label = 'run input' } = {}) {
+function normalizeRunInput(input, { label = 'run input', allowed = RUN_INPUT_KEYS } = {}) {
   const source = input ?? {};
-  closedObject(source, label, RUN_INPUT_KEYS);
+  closedObject(source, label, allowed instanceof Set ? allowed : new Set(allowed));
 
   const assetIds = source.asset_ids === undefined || source.asset_ids === null ? null : (() => {
     if (!Array.isArray(source.asset_ids)) fail(ERROR_CODES.INVALID_REQUEST, 'asset_ids must be an array of asset ids, or omitted to use every symbolic asset in the project.');
@@ -228,6 +255,7 @@ function normalizeRunInput(input, { label = 'run input' } = {}) {
 
   const decisions = source.decisions === undefined || source.decisions === null ? null : (() => {
     if (!Array.isArray(source.decisions)) fail(ERROR_CODES.INVALID_REQUEST, 'decisions must be an array of explicitly accepted arrangement decisions.');
+    if (!source.decisions.length) fail(ERROR_CODES.INVALID_REQUEST, 'decisions must name at least one explicitly accepted arrangement decision. Omit the field to leave the run waiting for one; an empty set is not an acceptance.');
     if (source.decisions.length > LIMITS.maxDecisionsPerRequest) fail(ERROR_CODES.INVALID_REQUEST, `A decision set is limited to ${LIMITS.maxDecisionsPerRequest} decisions.`, { received: source.decisions.length });
     return source.decisions;
   })();
@@ -274,7 +302,7 @@ function normalizeRunInput(input, { label = 'run input' } = {}) {
       ? null
       : requireString(source.idempotency_key, 'idempotency_key', { max: LIMITS.maxIdempotencyKeyLength }),
     asset_ids: assetIds,
-    meter_text: source.meter_text === undefined || source.meter_text === null ? '' : requireString(source.meter_text, 'meter_text', { max: LIMITS.maxMeterTextLength, min: 0 }),
+    meter_text: source.meter_text === undefined || source.meter_text === null ? '' : requireString(source.meter_text, 'meter_text', { max: LIMITS.maxMeterTextLength, min: 1 }),
     target_candidate_id: source.target_candidate_id ?? null,
     adopt_candidate_id: source.adopt_candidate_id ?? null,
     adopt_artifact_id: source.adopt_artifact_id ?? null,
@@ -285,12 +313,15 @@ function normalizeRunInput(input, { label = 'run input' } = {}) {
     confirmations: source.confirmations === undefined || source.confirmations === null ? null : requirePlainObject(source.confirmations, 'confirmations'),
     finalize: finalizeOptions,
     expected_run_revision: source.expected_run_revision === undefined || source.expected_run_revision === null ? null : (() => {
-      if (!Number.isSafeInteger(source.expected_run_revision) || source.expected_run_revision < 1) {
-        fail(ERROR_CODES.INVALID_REQUEST, 'expected_run_revision must be the positive integer revision the caller last observed.');
+      if (!Number.isSafeInteger(source.expected_run_revision) || source.expected_run_revision < 1 || source.expected_run_revision > LIMITS.maxRunRevision) {
+        fail(ERROR_CODES.INVALID_REQUEST, `expected_run_revision must be the revision the caller last observed: an integer from 1 to ${LIMITS.maxRunRevision}.`);
       }
       return source.expected_run_revision;
     })(),
     reconcile: source.reconcile === true,
+    // The keys the caller actually sent, so "did this request ask for work"
+    // is answered from the request rather than from a maintained field list.
+    provided: Object.freeze(Object.keys(source)),
   };
   for (const field of ['target_candidate_id', 'adopt_candidate_id']) {
     if (normalized[field] !== null && !isCandidateId(normalized[field])) {
@@ -793,12 +824,13 @@ export function createRunService({ canonical, projects, store, operations, seria
     const outcome = await apply();
     await fire('afterEffect', { step, run: current, outcome });
     const steps = appendStep(current, outcome.receipt);
+    const replaced = replacesIdentity(current, outcome.runChanges);
     current = bumpRun(owner, projectId, current, {
       pending_step: null,
       steps,
       ...(outcome.runChanges ?? {}),
       // Whatever this effect replaced, nothing downstream of it survives it.
-      ...(replacesIdentity(current, outcome.runChanges) ? invalidateDownstream(current, step, steps) : {}),
+      ...(replaced ? invalidateDownstream(current, step, steps, { clearGates: replaced !== 'final' }) : {}),
     });
     await fire('beforeResponse', { step, run: current, outcome });
     return { run: current, outcome };
@@ -1971,6 +2003,10 @@ export function createRunService({ canonical, projects, store, operations, seria
       const settled = await settlePendingStep(owner, projectId, record, run, normalized);
       if (settled.halted) return settled;
       run = settled.run;
+      // Settling the terminal report is the end of the workflow, not a step on
+      // the way to more of it. Falling through here carried a run past its own
+      // completed audit identity into different work.
+      if (run.state === RUN_STATE.COMPLETED) return { run, halted: true };
     }
 
     const provenance = await canonical.provenance();
@@ -2063,54 +2099,73 @@ export function createRunService({ canonical, projects, store, operations, seria
    * run's bindings against the committed state.
    */
   /**
-   * Which steps this payload would give a different identity to.
+   * This run's terminal report, if one exists — in the record OR in the project.
    *
-   * The same predicates `nextStep` reruns on, asked of the request rather than
-   * of the run, so "what this resume changes" and "what this run would redo"
-   * cannot disagree.
+   * A run report names the run that produced it, so a report naming this run is
+   * this run's terminal output whether or not its receipt was ever stored. That
+   * second case is what a crash between the report effect and its receipt
+   * leaves behind: the workflow finished, and only the bookkeeping did not.
    */
-  const stepsChangedBy = (run, normalized) => {
-    const changed = [];
-    const assetIds = normalized.asset_ids;
-    if ((assetIds !== null && !sameSelection(assetIds, run.inputs.asset_ids ?? (run.inputs.asset_digests ?? []).map(entry => entry.asset_id)))
-      || (normalized.meter_text && sha256Of(encoder.encode(normalized.meter_text)) !== (run.inputs.meter_text_sha256 ?? null))) {
-      changed.push(RUN_STEP.INTAKE);
-    }
-    if (normalized.decisions !== null && digestOf(normalized.decisions) !== (run.inputs.decision_set_fingerprint ?? null)) changed.push(RUN_STEP.APPLY_DECISIONS);
-    if (normalized.final_reduction !== null && digestOf(normalized.final_reduction) !== (run.inputs.reduction_fingerprint ?? null)) changed.push(RUN_STEP.FINAL_REDUCTION);
-    if (normalized.mobile_adaptation !== null && digestOf(normalized.mobile_adaptation) !== (run.inputs.adaptation_fingerprint ?? null)) changed.push(RUN_STEP.MOBILE_ADAPTATION);
-    if (normalized.confirmations !== null && digestOf(normalized.confirmations) !== (run.inputs.confirmation_fingerprint ?? null)) changed.push(RUN_STEP.REVIEW);
-    return changed;
+  const terminalReportOf = (owner, record, run) => run.report_artifact_id
+    ?? record.artifacts.find(entry => entry.type === RUN_REPORT_ARTIFACT_TYPE
+      && operations.artifactRunId(owner, entry.artifact_id) === run.run_id)?.artifact_id
+    ?? null;
+
+  /** Whether a run has produced its terminal report and is therefore closed. */
+  const auditClosed = (owner, record, run) => run.state === RUN_STATE.COMPLETED || terminalReportOf(owner, record, run) !== null;
+
+  /**
+   * The fields of this request that ask the run to do or change something.
+   *
+   * Settling an interrupted step is recovery of the run's OWN identity rather
+   * than new work, so the field that settles the step actually pending is not
+   * counted — and only that one. `adopt_candidate_id` against a pending
+   * artifact step does not settle anything: it moves the run onto another
+   * candidate, which is the reopening this guard exists to refuse.
+   */
+  const workflowInputsIn = (run, normalized) => {
+    const pendingKind = run.pending_step?.expectation?.kind ?? null;
+    const exempt = new Set(NON_WORKFLOW_INPUT_KEYS);
+    if (pendingKind === 'candidate') exempt.add('adopt_candidate_id');
+    if (pendingKind === 'artifact') exempt.add('adopt_artifact_id');
+    if (run.pending_step) exempt.add('reconcile');
+    return (normalized.provided ?? []).filter(key => !exempt.has(key));
   };
 
   /**
-   * A completed run is an audit record, not a workspace.
+   * An audit-closed run is a record, not a workspace.
    *
    * Its report names the exact candidate and the exact Final it ended on, and a
-   * reviewer may already have read it. Advancing it again on a new material
-   * input would move what the run points at after the fact — so a material
-   * change is refused, and the work goes into a new run, which leaves both
-   * records intact and separately citable.
+   * reviewer may already have cited it. So it accepts NO new workflow input —
+   * not a decision set, not finalize options, not `reconcile`, and not
+   * `adopt_candidate_id` or `adopt_artifact_id`, which would rebuild it around
+   * a different candidate or a different Final. Stating the exception
+   * (`NON_WORKFLOW_INPUT_KEYS`) rather than listing the material fields is the
+   * point: a list of material fields is a list that can be missed, and
+   * `finalize` was missed from one, which reopened a completed run into a
+   * second Final while it kept the report naming the first.
    *
-   * This is the outer boundary only. Inside a live run, forward motion is
-   * unrestricted and safe because of `invalidateDownstream` below: supplying a
-   * new decision set, reduction, adaptation or meter map is how a run advances,
-   * and every result bound to the superseded identity is dropped rather than
-   * left standing. A replay, a read, evidence for a step that has not run, and
-   * settling an interrupted step are all unaffected here.
+   * A run whose report exists only in the project — the crash between the report
+   * effect and its receipt — is closed too. Its recovery is a bare resume, which
+   * settles the audit identity and nothing else; a resume that also carries new
+   * work is refused rather than silently doing one and not the other.
+   *
+   * An idempotency replay is decided BEFORE this guard, so a genuine retry of
+   * the request that completed the run is unaffected.
    */
-  const refuseReopeningCompletedRun = (run, normalized) => {
-    if (run.state !== RUN_STATE.COMPLETED) return;
-    const changed = stepsChangedBy(run, normalized);
-    if (!changed.length) return;
-    fail(ERROR_CODES.RUN_CONFLICT, `This run is complete: its report names the candidate and the Final it ended on, so it is an audit record rather than a workspace. Start a new run for a different ${changed[0]} input.`, {
+  const refuseWorkOnAuditClosedRun = (owner, record, run, normalized) => {
+    if (!auditClosed(owner, record, run)) return;
+    const asked = workflowInputsIn(run, normalized);
+    if (!asked.length) return;
+    const report = terminalReportOf(owner, record, run);
+    fail(ERROR_CODES.RUN_CONFLICT, 'This run has produced its run report, which names the candidate and the Final it ended on. It is an audit record rather than a workspace, so it takes no further workflow input. Start a new run for this work.', {
       run_id: run.run_id,
       run_state: run.state,
       reason: 'COMPLETED_RUN_IS_AUDIT_CLOSED',
-      steps: changed,
+      refused_fields: asked,
       candidate_id: run.candidate_id,
       final_artifact_id: run.final_artifact_id ?? null,
-      report_artifact_id: run.report_artifact_id ?? null,
+      report_artifact_id: report,
       available_operations: ['getRun', 'getArtifact', 'startRun'],
     });
   };
@@ -2133,23 +2188,34 @@ export function createRunService({ canonical, projects, store, operations, seria
    * Applied from the effect's own result rather than per step, so a step that
    * mints a new identity cannot forget to declare it.
    */
-  const invalidateDownstream = (run, step, steps) => {
+  const invalidateDownstream = (run, step, steps, { clearGates = true } = {}) => {
     const later = new Set(downstreamOf(step));
     return {
       steps: steps.filter(entry => !later.has(entry.step)),
-      gates: null,
-      readiness_blockers: [],
+      ...(clearGates ? { gates: null, readiness_blockers: [] } : {}),
       ...(later.has(RUN_STEP.FINALIZE) ? { final_artifact_id: null } : {}),
       ...(later.has(RUN_STEP.REPORT) ? { report_artifact_id: null } : {}),
     };
   };
 
-  /** Whether an effect's changes replace the identity later steps were built on. */
-  const replacesIdentity = (run, changes = {}) => (changes.baseline_id !== undefined && changes.baseline_id !== run.baseline_id)
-    || (changes.candidate_id !== undefined && changes.candidate_id !== run.candidate_id);
+  /**
+   * Which identity an effect's changes replace, if any.
+   *
+   * The run report names BOTH the candidate and the Final, so a replaced Final
+   * invalidates it exactly as a replaced candidate does — `rerun(REPORT)` asks
+   * only whether the run holds a report, and that predicate is correct only
+   * because this clears it. The gates and the readiness snapshot are
+   * candidate-bound, so a Final-only replacement leaves them alone.
+   */
+  const replacesIdentity = (run, changes = {}) => {
+    if (changes.baseline_id !== undefined && changes.baseline_id !== run.baseline_id) return 'baseline';
+    if (changes.candidate_id !== undefined && changes.candidate_id !== run.candidate_id) return 'candidate';
+    if (changes.final_artifact_id !== undefined && changes.final_artifact_id !== run.final_artifact_id) return 'final';
+    return null;
+  };
 
   function resumeChanges(owner, record, run, normalized) {
-    refuseReopeningCompletedRun(run, normalized);
+    refuseWorkOnAuditClosedRun(owner, record, run, normalized);
     const inputs = { ...run.inputs };
     // The selected assets and the bytes they hold are ONE identity. Recording
     // new ids against the old digests would leave a run whose stated selection
@@ -2337,12 +2403,10 @@ export function createRunService({ canonical, projects, store, operations, seria
      * analysis in order to describe it.
      */
     async plan(owner, projectId, input = {}) {
-      const normalized = normalizeRunInput(input, { label: 'plan input' });
-      if (normalized.idempotency_key !== null) fail(ERROR_CODES.INVALID_REQUEST, 'A read-only plan writes nothing, so it binds no idempotency key.');
-      if (normalized.expected_run_revision !== null) fail(ERROR_CODES.INVALID_REQUEST, 'expected_run_revision applies to resumeRun; a plan reads no run.');
-      if (normalized.adopt_candidate_id !== null || normalized.adopt_artifact_id !== null) {
-        fail(ERROR_CODES.INVALID_REQUEST, 'A read-only plan adopts nothing: adopt_candidate_id and adopt_artifact_id settle an interrupted step on an existing run.');
-      }
+      // A read-only plan writes nothing, so it binds no idempotency key, reads
+      // no run revision and adopts nothing. Those fields are simply not in its
+      // accepted set, rather than accepted and then refused one at a time.
+      const normalized = normalizeRunInput(input, { label: 'plan input', allowed: PLAN_INPUT_KEYS });
       const provenance = await canonical.provenance();
       const record = projects.load(owner, projectId);
       const selection = assetSelection(record, normalized.asset_ids);
@@ -2504,10 +2568,9 @@ export function createRunService({ canonical, projects, store, operations, seria
 
     /** Create a run and advance it as far as the supplied inputs allow. */
     async start(owner, projectId, input = {}) {
-      const normalized = normalizeRunInput(input, { label: 'run input' });
-      if (normalized.expected_run_revision !== null) fail(ERROR_CODES.INVALID_REQUEST, 'expected_run_revision applies to resumeRun: a run that does not exist yet has no revision to expect.');
-      if (normalized.adopt_candidate_id !== null) fail(ERROR_CODES.INVALID_REQUEST, 'adopt_candidate_id applies to resumeRun: adopting a candidate produced outside the run is a resume decision.');
-      if (normalized.adopt_artifact_id !== null) fail(ERROR_CODES.INVALID_REQUEST, 'adopt_artifact_id applies to resumeRun: it settles an interrupted step on an existing run.');
+      // A run that does not exist yet has no revision to expect and no
+      // interrupted step to settle, so neither field is in its accepted set.
+      const normalized = normalizeRunInput(input, { label: 'run input', allowed: START_INPUT_KEYS });
       const fingerprint = requestFingerprintOf(normalized);
       const provenance = await canonical.provenance();
 
@@ -2550,7 +2613,7 @@ export function createRunService({ canonical, projects, store, operations, seria
 
     /** Re-check an existing run and advance it with new input. */
     async resume(owner, projectId, runId, input = {}) {
-      const normalized = normalizeRunInput(input, { label: 'resume input' });
+      const normalized = normalizeRunInput(input, { label: 'resume input', allowed: RESUME_INPUT_KEYS });
       const fingerprint = requestFingerprintOf(normalized);
 
       const prepared = await serialize(String(projectId), async () => {
@@ -2585,9 +2648,23 @@ export function createRunService({ canonical, projects, store, operations, seria
             run_id: run.run_id, expected_run_revision: normalized.expected_run_revision, current_run_revision: run.revision,
           });
         }
+        // A run that is closed and is not being asked for anything is returned
+        // as it stands. Reopening it to `running` and completing it again
+        // would mint revisions that record no work and no decision.
+        if (auditClosed(owner, record, run) && !workflowInputsIn(run, normalized).length && !run.pending_step) {
+          return { run, replayed: false, settled: true };
+        }
         return { run: bumpRun(owner, projectId, run, resumeChanges(owner, record, run, normalized)), replayed: false };
       });
 
+      if (prepared.settled) {
+        return Object.freeze({
+          run: runView(prepared.run),
+          replayed: false,
+          advanced: false,
+          notice: 'This run has produced its run report and was asked for nothing further, so no step ran, no revision was taken and no artifact was produced. It is returned as it stands.',
+        });
+      }
       if (prepared.replayed) {
         return Object.freeze({
           run: runView(prepared.run),

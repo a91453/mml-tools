@@ -60,10 +60,10 @@ const CONFIRMATIONS_DESCRIPTION = 'source_complete／version_drift_reviewed／pl
   + 'in_game 無法由此設定。';
 
 const runId = { type: 'string', minLength: 36, maxLength: 36, description: '本服務發出的 run_id（run_ 開頭）。run 身分是 workflow instance，不是 baseline、候選或 artifact 的身分。' };
-const runIdempotencyKey = { type: 'string', minLength: 1, maxLength: 200, description: 'owner／專案／操作範圍內的 idempotency key，綁定於正規化後的請求指紋。同 key 同 payload 不重做；同 key 不同 payload 直接拒絕。' };
+const runIdempotencyKey = { type: 'string', minLength: 1, maxLength: LIMITS.maxIdempotencyKeyLength, description: 'owner／專案／操作範圍內的 idempotency key，綁定於正規化後的請求指紋。同 key 同 payload 不重做；同 key 不同 payload 直接拒絕。' };
 const runAssetIds = { type: 'array', minItems: 1, maxItems: LIMITS.maxAssetsPerProject, items: { type: 'string', minLength: 36, maxLength: 36 }, description: '明確選定參與本次 run 的符號來源素材。省略時使用專案中所有符號來源。原曲音訊是證據，不是符號來源：本服務不做 audio-to-MIDI、不做分軌、不做人聲分離、不做音高轉譜。' };
 const runMeterText = { type: 'string', minLength: 1, maxLength: LIMITS.maxMeterTextLength, description: '來源確認的拍號圖，MML 來源才需要。未知時先詢問，不可假定。' };
-const runDecisions = { type: 'array', minItems: 1, maxItems: 500, items: structuredPayload(), description: '明確接受的編排決定，內容與 studio_decisions_apply 相同。建議不是接受：沒有這一欄時 run 會停在 awaiting_review，不會自行解決任何 PENDING。' };
+const runDecisions = { type: 'array', minItems: 1, maxItems: LIMITS.maxDecisionsPerRequest, items: structuredPayload(), description: '明確接受的編排決定，內容與 studio_decisions_apply 相同。建議不是接受：沒有這一欄時 run 會停在 awaiting_review，不會自行解決任何 PENDING。' };
 const runAcceptedBy = { type: 'string', minLength: 1, maxLength: 120, description: '審查者識別字串。這是呼叫端填寫的文字，會與實際通過驗證的 owner 身分分開記錄，本身不構成任何人已審查的證據。' };
 
 const RUN_REDUCTION_DESCRIPTION = '明確接受的 G12 收斂：decisions（至少一筆）、expected_plan_id（來自唯讀 plan）、accepted_by，以及選填且僅供診斷的 instrument_profile。'
@@ -387,7 +387,7 @@ export const STUDIO_MCP_TOOLS = [
         project_id: projectId,
         run_id: runId,
         idempotency_key: runIdempotencyKey,
-        expected_run_revision: { type: 'integer', minimum: 1, maximum: 1000000, description: '上次讀到的 run revision；不符即拒絕，不覆蓋。' },
+        expected_run_revision: { type: 'integer', minimum: 1, maximum: LIMITS.maxRunRevision, description: '上次讀到的 run revision；不符即拒絕，不覆蓋。' },
         asset_ids: runAssetIds,
         meter_text: runMeterText,
         adopt_candidate_id: candidateId,

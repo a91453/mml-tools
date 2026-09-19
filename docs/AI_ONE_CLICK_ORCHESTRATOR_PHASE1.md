@@ -302,7 +302,8 @@ Two rules, and together they are why a run's record can never describe two
 different results at once.
 
 **Nothing a run holds outlives the identity it names.** When a step produces a
-new baseline or a new candidate, every result this run recorded downstream of it
+new baseline, a new candidate or a new Final — the report names the candidate
+AND the Final — every result this run recorded downstream of it
 — the review verdict, the gate and readiness snapshots, the emitted Final, the
 run report naming both — was computed against an identity that no longer stands,
 so all of it is dropped together and those steps run again. This is applied from
@@ -312,13 +313,24 @@ prevents: a run that kept its report while its candidate moved ended
 `completed` with a report naming a different candidate and a different Final
 than the run itself.
 
-**A completed run is an audit record, not a workspace.** Its report names the
-exact candidate and the exact Final it ended on, and a reviewer may already have
-cited it. A resume carrying a material change — a different source selection,
-meter map, decision set, reduction, adaptation or confirmation set — is refused
-with `RUN_CONFLICT` and `reason: COMPLETED_RUN_IS_AUDIT_CLOSED`; the work
-belongs in a new run, which leaves both records intact and separately citable. A
-read, an idempotent replay, and settling an interrupted step are unaffected.
+**An audit-closed run is a record, not a workspace.** A run is audit-closed once
+its run report exists — in the run record, OR in the project naming this run,
+which is what a crash between the report effect and its receipt leaves behind.
+Such a run accepts **no workflow input at all**. The rule is stated as its
+exception rather than as a list of material fields, because a list of material
+fields is a list that can be missed:
+
+| Field | On an audit-closed run |
+| --- | --- |
+| `idempotency_key`, `expected_run_revision` | address the request, not the song — accepted |
+| the field that settles the step actually pending (`adopt_artifact_id` for a pending artifact, `adopt_candidate_id` for a pending candidate, `reconcile`) | recovery of this run's own identity — accepted |
+| everything else, including `finalize` options and adoption with no matching pending step | refused, `RUN_CONFLICT` / `reason: COMPLETED_RUN_IS_AUDIT_CLOSED`, with `refused_fields` naming them |
+
+An idempotency replay is decided **before** this guard, so a genuine retry of
+the request that completed the run is unaffected. A resume that asks for nothing
+returns the run as it stands: no step runs, no revision is taken, nothing is
+re-emitted. The work belongs in a new run, which leaves both records intact and
+separately citable.
 
 Inside a live run, forward motion is unrestricted: supplying a decision set,
 an accepted reduction or adaptation plan, a confirmation or a different meter map
@@ -335,6 +347,26 @@ from its content. After a process restart, only a configured and actually
 retained filesystem store can recover anything; a memory store stays honestly
 `ephemeral`, and recovery needs an explicit resume call — there is no automatic
 restart.
+
+## 7.2 One input contract per operation
+
+Each run operation has its own closed set of accepted fields —
+`PLAN_INPUT_KEYS`, `START_INPUT_KEYS`, `RESUME_INPUT_KEYS`, exported from the
+Application Service — rather than one union applied three times. A union lets
+one transport admit what another rejects, and lets a caller send a field the
+operation does not read: `target_candidate_id` on a resume was accepted and
+silently ignored, and `reconcile` was accepted by a read-only plan. Both are
+now `INVALID_REQUEST`, naming the accepted fields.
+
+Every bound is one constant in `LIMITS`, referenced by the service and by the
+MCP tool schemas: `maxAssetsPerProject`, `maxMeterTextLength`,
+`maxDecisionsPerRequest`, `maxIdempotencyKeyLength`, `maxRunRevision`. The
+minima MCP declares are minima the service enforces, so an empty `asset_ids`,
+an explicitly empty `meter_text` and an empty `decisions` are refused on both
+surfaces rather than accepted on one. A transport parity regression asserts the
+declared property set equals the operation's key set field for field, and that
+each declared bound is the constant — in both directions, so neither surface can
+drift silently.
 
 ## 8. Transports
 

@@ -571,4 +571,5 @@ export {
   RUN_STEP_ORDER,
   RUN_STEP_STATUS,
 } from './run-contracts.mjs';
+export { PLAN_INPUT_KEYS, RESUME_INPUT_KEYS, START_INPUT_KEYS } from './run-service.mjs';
 export { ACCEPTED_MEDIA_TYPES } from './asset-service.mjs';
