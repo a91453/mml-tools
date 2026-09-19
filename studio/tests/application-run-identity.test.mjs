@@ -48,7 +48,7 @@ const rejects = (promise, code) => assert.rejects(promise, error => error.code =
 
 const withDirectory = async body => {
   const directory = await mkdtemp(join(tmpdir(), 'mml-run-identity-'));
-  try { return await body(directory); } finally { await rm(directory, { recursive: true, force: true }); }
+  try { return await body(directory); } finally { await rm(directory, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 }); }
 };
 
 const finalsFor = (record, candidateId) => record.artifacts

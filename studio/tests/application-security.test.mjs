@@ -88,7 +88,7 @@ test('an upload filename never appears on disk', async () => {
     for (const name of await readdir(join(directory, 'blobs'))) assert.match(name, /^[0-9a-f]{64}\.bin$/);
     for (const name of await readdir(join(directory, 'records'))) assert.match(name, /^[0-9a-f]{32}\.json$/);
   } finally {
-    await rm(directory, { recursive: true, force: true });
+    await rm(directory, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 });
   }
 });
 
@@ -207,7 +207,7 @@ test('stored asset bytes are refused if they no longer match their recorded iden
 
     assert.throws(() => service.readAssetBytes(ALICE, project.project_id, asset.asset_id), error => error.code === ERROR_CODES.ASSET_NOT_FOUND);
   } finally {
-    await rm(directory, { recursive: true, force: true });
+    await rm(directory, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 });
   }
 });
 

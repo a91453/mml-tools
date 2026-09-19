@@ -81,7 +81,7 @@ async function storeDigest(directory) {
 
 const withDirectory = async body => {
   const directory = await mkdtemp(join(tmpdir(), 'mml-run-transport-'));
-  try { return await body(directory); } finally { await rm(directory, { recursive: true, force: true }); }
+  try { return await body(directory); } finally { await rm(directory, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 }); }
 };
 
 // ─── parity ─────────────────────────────────────────────────────────────────

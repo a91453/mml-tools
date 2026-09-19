@@ -32,7 +32,8 @@ const proposable = project => runDecisionsFor(project, {}).map(({ acceptedBy, no
 
 const withDirectory = async body => {
   const directory = await mkdtemp(join(tmpdir(), 'mml-proposal-duplication-'));
-  try { return await body(directory); } finally { await rm(directory, { recursive: true, force: true }); }
+  // Windows can briefly retain a file handle after the final atomic write.
+  try { return await body(directory); } finally { await rm(directory, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 }); }
 };
 
 /** A submitted, applicable arrangement proposal on a fresh run. */

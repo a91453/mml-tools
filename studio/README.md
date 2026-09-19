@@ -82,6 +82,13 @@ The following are implemented and covered by the combined legacy + Studio CI sui
   auditable, refusable way for an external agent to answer one of those review
   requests ([Phase 2](../docs/AI_ONE_CLICK_ORCHESTRATOR_PHASE2.md)).
 
+For a local Codex/external-agent session, use the
+[persistent CLI runbook](../docs/CODEX_EXTERNAL_AGENT_RUNBOOK.md). It uses the
+existing Application Service and records agent actions explicitly. The
+[real-song execution record](../docs/CODEX_EXTERNAL_AGENT_ACCEPTANCE_2026-09-19.md)
+distinguishes completed operations from source/reviewer blockers and does not
+claim a Final MML where the gates refused one.
+
 The implemented pipeline above has no known module-level blocker that prevents
 continued Studio development on `main`. That does not certify any song and does
 not mean the Studio roadmap is complete. In particular, the current Raw MIDI path

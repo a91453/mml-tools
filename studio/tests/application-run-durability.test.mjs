@@ -40,7 +40,8 @@ const rejects = (promise, code) => assert.rejects(promise, error => error.code =
 
 const withDirectory = async body => {
   const directory = await mkdtemp(join(tmpdir(), 'mml-run-durability-'));
-  try { return await body(directory); } finally { await rm(directory, { recursive: true, force: true }); }
+  // Windows can briefly retain a file handle after the final atomic write.
+  try { return await body(directory); } finally { await rm(directory, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 }); }
 };
 
 /** A project with one symbolic asset and a prepared G11-D candidate. */

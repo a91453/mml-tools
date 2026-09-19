@@ -65,7 +65,9 @@ function mcpReply(body, status = 200, headers = {}) {
 function mcpRpcError(id, code, message, status = 200) {
   return mcpReply({ jsonrpc: '2.0', id, error: { code, message } }, status);
 }
-function mcpCheckSchema(schema, value, path = 'arguments') {
+// Shared with the local file-output adapter; network response bounds below
+// remain unchanged. There is one tool-input schema checker on both paths.
+export function mcpCheckSchema(schema, value, path = 'arguments') {
   if (schema.type === 'object') {
     if (value === null || typeof value !== 'object' || Array.isArray(value)) throw Error(`${path} must be an object`);
     // An object schema with no declared properties and `additionalProperties`
