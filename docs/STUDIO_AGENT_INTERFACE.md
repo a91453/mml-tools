@@ -580,6 +580,78 @@ Canonical, integrity, evidence and acceptance check lives in the service the
 body calls, so both callers get the identical refusal. It exists because a run
 holding the project lock cannot call a public method that takes the same lock.
 
+### 9.2 The AI Proposal Protocol
+
+Phase 1 deliberately left a run's review requests for a human to answer. The
+**proposal protocol** is the formal way an external agent may answer one. It is
+documented in full in
+[AI One-Click Orchestrator — Phase 2](AI_ONE_CLICK_ORCHESTRATOR_PHASE2.md); what
+matters here is where it sits in this interface.
+
+```
+proposalTargets   read-only. Which of a run's open review requests an agent may
+                  answer, with which classes, what each would reach, and what
+                  the upstream module says is missing. Writes nothing.
+proposeDecision   store one agent's statement. Applies nothing.
+getProposal       read-only. The statement, plus the Agent Review verdict
+listProposals     recomputed against what is stored NOW.
+resolveProposal   record an explicit acceptance, rejection or withdrawal.
+```
+
+A proposal is a **fourth** vocabulary axis beside the three this document
+already keeps apart, and it is the one most easily read as a verdict, because it
+is written in the language of a decision:
+
+```
+proposal ≠ accepted decision ≠ evidence ≠ gate PASS ≠ IN_GAME_ACCEPTED
+```
+
+Submitting applies nothing: no candidate is minted, no revision is taken, no
+confirmation is recorded, no gate moves, and the run's revision does not change.
+Only an explicit acceptance by a named reviewer reaches an operation, and it
+reaches it through `resumeRun` — the same public door a caller who never used a
+proposal goes through, with the same lock, idempotency, optimistic concurrency,
+per-step staleness re-validation and interruption rules. For the same input the
+two paths produce the **same content-addressed candidate id**, which is the
+property the design rests on and which a regression asserts directly.
+
+Four things keep it from becoming a way around this interface's own rules:
+
+* **a request is addressed by a derived key, never by position.** Each review
+  request now carries `request_key`, a digest of its code, step, gate, report
+  reference, baseline and candidate. It is stable while the request is the same
+  request and changes when the material moves, so a proposal written against
+  old material cannot address the new request at all. It is scoped to its run:
+  every proposal names its `run_id`, and a key is only resolved against that
+  run's requests;
+* **the target table is closed.** A request code the table has never heard of
+  admits a *description of what is missing* and nothing else — the same
+  discipline `READINESS_GATE_OPERATIONS` uses for an unrecognised gate. Every
+  readiness gate, every blocked finalize, every changed input and every
+  interrupted step admits only that, because answering one of those is a
+  reviewer's confirmation, approval, evidence record or inspection;
+* **the Agent Review Policy judges binding, not music.** It answers whether a
+  proposal carries enough binding, evidence and authority to be handed to the
+  operation it names. Whether a Lead belongs in Melody is still arbitrated by
+  the existing engines under the published rules. Its ladder has exactly one
+  actionable verdict, `REQUIRES_EXPLICIT_ACCEPTANCE`, held as a single value
+  rather than a list, and the verdict is recomputed on every read rather than
+  cached — a cached safety check is a safety check that can be wrong;
+* **the reviewer comes from the acceptance.** A proposed decision may carry
+  neither `acceptedBy` nor `note` nor `acceptance`: `applyDecisions` reads a
+  decision's own `acceptedBy` in preference to the call's, so an agent that
+  could set it would name the accepting reviewer itself. `proposed_by` is
+  caller-supplied text for the audit trail and is never reused as an acceptance.
+
+Citations resolve or they are fabrications: event ids through the same
+`listBaselineEvents` projection an agent uses, source ids against the baseline's
+own inventory, and evidence references against this project's assets, artifacts,
+jobs, candidates, runs and the report references the run itself supplied. A URL,
+a filename and a recollection are none of those. Every reference states its own
+`truth_class`, and a single collapsed confidence score is refused rather than
+dropped — `SOURCE_POLICY.md` §2 keeps symbolic and audio truth in separate
+fields precisely so one number cannot hide their disagreement.
+
 ## 10. Finalize
 
 `final-service.mjs` calls `emitFinalMml` once. The emitter already owns the
@@ -655,6 +727,11 @@ POST   /api/v1/projects/:project_id/runs
 GET    /api/v1/projects/:project_id/runs
 GET    /api/v1/projects/:project_id/runs/:run_id
 POST   /api/v1/projects/:project_id/runs/:run_id/resume
+GET    /api/v1/projects/:project_id/runs/:run_id/proposal-targets
+POST   /api/v1/projects/:project_id/proposals
+GET    /api/v1/projects/:project_id/proposals
+GET    /api/v1/projects/:project_id/proposals/:proposal_id
+POST   /api/v1/projects/:project_id/proposals/:proposal_id/resolve
 GET    /api/v1/projects/:project_id/jobs
 GET    /api/v1/jobs/:job_id
 GET    /api/v1/artifacts/:artifact_id
@@ -678,6 +755,14 @@ The technical endpoints refuse a malformed request (`INVALID_REQUEST`, HTTP
 400) exactly where the MCP tool schemas refuse it, rather than grading the
 mistake as a technical verdict.
 
+The five `proposals` routes are the AI Proposal Protocol (§9.2). `POST
+…/proposals` writes one record and nothing else: no candidate, no revision, no
+confirmation, no gate, and not even the run's revision. `POST
+…/proposals/:proposal_id/resolve` is the only one of the five that can reach an
+operation, and it reaches it through the same `resumeRun` a manual caller uses.
+The two `GET`s are read-only and recompute the Agent Review verdict against what
+is stored now.
+
 The five `runs` routes are the One-Click Orchestrator (§9.1).
 `POST …/runs/plan` is a POST because it takes a body, not because it writes:
 it creates no run and writes nothing at all, and a regression digests the whole
@@ -697,12 +782,20 @@ The `studio_*` tools, plus the three original tools unchanged:
 `studio_final_reduction_plan`, `studio_final_reduction_apply`,
 `studio_mobile_adaptation_plan`, `studio_mobile_adaptation_apply`,
 `studio_run_plan`, `studio_run_start`, `studio_run_status`,
-`studio_run_resume`, `studio_job_status`, `studio_artifact_get`.
+`studio_run_resume`, `studio_proposal_targets`, `studio_proposal_submit`,
+`studio_proposal_status`, `studio_proposal_resolve`, `studio_job_status`,
+`studio_artifact_get`.
 
 The four run tools are four rather than one for the same reason the reduction
 and adaptation previews are separate from their applies: `studio_run_plan` and
 `studio_run_status` write nothing and are annotated read-only, while
-`studio_run_start` and `studio_run_resume` mutate. Collapsing a read-only plan
+`studio_run_start` and `studio_run_resume` mutate. The four proposal tools are
+four for the same reason twice over: `studio_proposal_targets` and
+`studio_proposal_status` write nothing and answer different questions — what a
+*run* is waiting for, and what a stored *proposal* says — while
+`studio_proposal_submit` and `studio_proposal_resolve` are the two halves the
+protocol exists to keep apart, because merging them would make submitting a
+proposal into accepting it. Collapsing a read-only plan
 into the operation that applies decisions is one typo away from a mutation
 nobody previewed.
 
