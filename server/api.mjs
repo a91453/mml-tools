@@ -381,8 +381,16 @@ export function createApiRouter({ application, ownerOf, challenge = null }) {
     ['GET', /^\/projects\/([^/]+)\/proposals$/, async (m, request, owner) => {
       const query = new URL(request.url).searchParams;
       // Only the filters the operation accepts, and only when the caller stated
-      // them. A query string is a caller's input like any other: an unknown
-      // parameter is not quietly ignored, it never reaches the closed key set.
+      // them, so a query string cannot smuggle a field past the operation's own
+      // closed key set.
+      //
+      // An unknown parameter IS dropped here rather than refused, and that is
+      // worth saying plainly: the MCP tool refuses it (`additionalProperties:
+      // false`), so the two surfaces differ on this one point. It is a
+      // read-only filter over records the caller already owns, so dropping one
+      // narrows nothing and reaches nothing -- but a comment claiming the
+      // stricter behaviour would be the kind of stated-but-untrue thing this
+      // protocol refuses elsewhere.
       const filter = {};
       for (const name of ['run_id', 'request_key', 'state', 'kind']) {
         if (query.has(name)) filter[name] = query.get(name);

@@ -302,6 +302,15 @@ not one: a cached safety check is a safety check that can be wrong. The verdict
 the proposal was written under is kept beside the live one as
 `agent_review_at_submission`, so a reviewer can see that the two differ and why.
 
+One acceptance does not re-run it, and the exception is named here rather than
+only where it is implemented: a **retry** of an acceptance that was already
+recorded skips the policy gate, because that acceptance's own application moves
+the run and would then read as stale to a policy looking at revisions. What
+stands in its place is the run's, not this layer's — the same idempotency key,
+and the revision precondition carried forward to where the interrupted attempt
+left the run, so a retry can only finish the application it is a retry of.
+§7 is the whole argument.
+
 ## 7. Acceptance, and why there is only one mutation path
 
 An acceptance translates the proposal into the ordinary input of the ordinary
