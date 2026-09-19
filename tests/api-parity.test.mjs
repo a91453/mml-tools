@@ -144,6 +144,14 @@ test('every studio MCP tool dispatches to an operation the Application Service a
     studio_run_start: 'startRun',
     studio_run_status: 'getRun',
     studio_run_resume: 'resumeRun',
+    studio_proposal_targets: 'proposalTargets',
+    studio_proposal_submit: 'proposeDecision',
+    // One tool, two reads, exactly as `studio_run_status` and
+    // `studio_project_get` already work: with an id it is the record, without
+    // one it is the project's list. The map names the operation a caller
+    // reaches with an id.
+    studio_proposal_status: 'getProposal',
+    studio_proposal_resolve: 'resolveProposal',
   };
   for (const tool of STUDIO_MCP_TOOLS) {
     const operation = operations[tool.name];

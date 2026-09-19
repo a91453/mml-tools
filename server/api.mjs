@@ -365,6 +365,43 @@ export function createApiRouter({ application, ownerOf, challenge = null }) {
     ['POST', /^\/projects\/([^/]+)\/runs\/([^/]+)\/resume$/, async (m, request, owner) =>
       json(await application.resumeRun(owner, m[1], m[2], await readJson(request)))],
 
+    // ── proposals ───────────────────────────────────────────────────────────
+    //
+    // The AI Proposal Protocol. The same proposal service answers the
+    // `studio_proposal_*` MCP tools: there is one protocol, not one per
+    // transport, and neither adapter holds a policy of its own.
+    //
+    // Submitting is a POST because it writes a record, and it writes ONLY that
+    // record: no candidate, no revision, no confirmation, no gate and no run
+    // advancement. Resolving is where an acceptance can reach an operation.
+    ['GET', /^\/projects\/([^/]+)\/runs\/([^/]+)\/proposal-targets$/, async (m, _r, owner) =>
+      json(await application.proposalTargets(owner, m[1], m[2]))],
+    ['POST', /^\/projects\/([^/]+)\/proposals$/, async (m, request, owner) =>
+      json(await application.proposeDecision(owner, m[1], await readJson(request)), 201)],
+    ['GET', /^\/projects\/([^/]+)\/proposals$/, async (m, request, owner) => {
+      const query = new URL(request.url).searchParams;
+      // Only the filters the operation accepts, and only when the caller stated
+      // them, so a query string cannot smuggle a field past the operation's own
+      // closed key set.
+      //
+      // An unknown parameter IS dropped here rather than refused, and that is
+      // worth saying plainly: the MCP tool refuses it (`additionalProperties:
+      // false`), so the two surfaces differ on this one point. It is a
+      // read-only filter over records the caller already owns, so dropping one
+      // narrows nothing and reaches nothing -- but a comment claiming the
+      // stricter behaviour would be the kind of stated-but-untrue thing this
+      // protocol refuses elsewhere.
+      const filter = {};
+      for (const name of ['run_id', 'request_key', 'state', 'kind']) {
+        if (query.has(name)) filter[name] = query.get(name);
+      }
+      return json(await application.listProposals(owner, m[1], filter));
+    }],
+    ['GET', /^\/projects\/([^/]+)\/proposals\/([^/]+)$/, async (m, _r, owner) =>
+      json(await application.getProposal(owner, m[1], m[2]))],
+    ['POST', /^\/projects\/([^/]+)\/proposals\/([^/]+)\/resolve$/, async (m, request, owner) =>
+      json(await application.resolveProposal(owner, m[1], m[2], await readJson(request)))],
+
     ['GET', /^\/projects\/([^/]+)\/jobs$/, async (m, _r, owner) => json(await application.listJobs(owner, m[1]))],
     ['GET', /^\/jobs\/([^/]+)$/, async (m, _r, owner) => json(await application.getJob(owner, m[1]))],
     ['GET', /^\/artifacts\/([^/]+)$/, async (m, _r, owner) => json(await application.getArtifact(owner, m[1]))],

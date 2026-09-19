@@ -38,7 +38,8 @@ studio/
     final/           per-song readiness evaluation
     application/     the Application Service: one orchestration boundary for
                      the HTTP and MCP adapters, including the One-Click
-                     Orchestrator run (run-service.mjs)
+                     Orchestrator run (run-service.mjs) and the AI Proposal
+                     Protocol (proposal-service.mjs)
     audio/           Node audio-evidence bridge
   audio-worker/      Python/FFmpeg original-audio alignment
   web/               local-first iPhone/iPad UI and PWA sources
@@ -72,7 +73,14 @@ The following are implemented and covered by the combined legacy + Studio CI sui
 - G11-C traceable six-role candidate suggestions with explicit pending/unassigned material;
 - local Studio Web Raw MIDI `.mid` / `.midi` intake, persistence, re-ingest and presentation;
 - content-derived Raw MIDI source identity using the full SHA-256 of the exact source bytes;
-- WebKit/Chromium regression coverage for the local Web path, including Raw MIDI.
+- WebKit/Chromium regression coverage for the local Web path, including Raw MIDI;
+- the One-Click Orchestrator run: one traceable, explicitly resumable workflow
+  instance over the operations above, which stops at the first point where a
+  decision, an evidence record or a capability is missing
+  ([Phase 1](../docs/AI_ONE_CLICK_ORCHESTRATOR_PHASE1.md));
+- the AI Proposal Protocol and Agent Review Policy: a structured, durable,
+  auditable, refusable way for an external agent to answer one of those review
+  requests ([Phase 2](../docs/AI_ONE_CLICK_ORCHESTRATOR_PHASE2.md)).
 
 The implemented pipeline above has no known module-level blocker that prevents
 continued Studio development on `main`. That does not certify any song and does
@@ -82,6 +90,16 @@ G11-D application of explicitly accepted arrangement decisions, and existing
 readiness information; the G12 Final Six-Role Reduction, Final MML generation,
 Mobile adaptation and target-client acceptance remain separate stages, each of
 which has to be run and reviewed on its own.
+
+The AI Proposal Protocol is a protocol, not an automation. Submitting a proposal
+mints no candidate, takes no revision, records no confirmation, moves no gate and
+does not advance the run. Only an explicit acceptance by a named reviewer reaches
+an operation, and it reaches the **existing** operation through the ordinary
+`resumeRun` path, so the manual path and the accepted-proposal path produce the
+same content-addressed candidate for the same input. A proposal is not an
+accepted decision, not evidence, not a gate PASS and never `IN_GAME_ACCEPTED`.
+No model is called by this service, no provider SDK or credential is held, and
+every agent goes through the identical contract.
 
 The separate [Mobile Adaptation v1](../docs/MOBILE_ADAPTATION_V1.md) stage now
 implements register and volume transformations for assigned, source-traceable

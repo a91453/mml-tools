@@ -72,6 +72,7 @@ import {
 } from './contracts.mjs';
 import { PRE_EMISSION_EXEMPT_GATES } from './final-service.mjs';
 import { ID_PREFIX, newId, sha256Of } from './store.mjs';
+import { requestKeyOf } from './proposal-contracts.mjs';
 import {
   READINESS_GATE_OPERATIONS,
   RUN_AUTHORITY_NOTICE,
@@ -431,11 +432,19 @@ function reviewRequest({
   eventIds = null, roles = null, existingEvidence = null, missing = [],
   availableOperations = null, invalidatedBy = [], known = true, detail = null,
 }) {
+  // The identity an agent addresses this request by, derived from what makes it
+  // this request rather than from its position in a list. Computed here, at the
+  // one place a request is built, so every request carries one and no caller has
+  // to reconstruct the rule. See `proposal-contracts.requestKeyOf`.
+  const identity = {
+    code, step, gate, report_reference: reportReference, baseline_id: baselineId, candidate_id: candidateId,
+  };
   return Object.freeze({
     code,
     step,
     gate,
     known,
+    request_key: requestKeyOf(identity),
     blockers: Object.freeze(blockers.slice(0, LIMITS.maxReviewRequestEventIds).map(blocker => (typeof blocker === 'string' ? blocker : Object.freeze({ ...blocker })))),
     report_reference: reportReference,
     baseline_id: baselineId,

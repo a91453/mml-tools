@@ -49,7 +49,7 @@ const structuredPayload = description => ({ type: 'object', additionalProperties
 // Gate 4's two questions are named apart on purpose: the source-continuity
 // audit is answered by `studio_core3_change_approve`, one change at a time, and
 // the musical-completeness review is answered here, and neither is the other.
-import { LIMITS } from '../studio/backend/application/index.mjs';
+import { LIMITS, PROPOSAL_KIND_NAMES, PROPOSAL_STATE_NAMES, RESOLUTION_NAMES } from '../studio/backend/application/index.mjs';
 
 const CONFIRMATIONS_DESCRIPTION = 'source_complete／version_drift_reviewed／player_readback／mobile_adaptation_reviewed／regression_reviewed／core3_completeness_reviewed／original_audio_required，每項需 reason。'
   + 'mobile_adaptation_reviewed（Gate 8）、regression_reviewed（Gate 9）與 core3_completeness_reviewed（Gate 4 Core3 musical completeness）這三項，value=true 時另需至少一筆 evidence：只有理由字串的審查會被拒絕。'
@@ -406,6 +406,100 @@ export const STUDIO_MCP_TOOLS = [
     annotations: writes,
   },
   {
+    name: 'studio_proposal_targets',
+    title: '可提案標的（唯讀）',
+    description: '唯讀列出這個 run 目前真的正在等待的 review request，以及每一項可以用哪些 proposal class 回答、各自會走到哪一個既有操作、是否需要可解析的引用，以及上游模組自己說的缺什麼。'
+      + '標的只來自 run 自己的 review_requests：run 沒有在問的事不會出現，本工具也不會發明任何標的。'
+      + 'request_key 是 review request 的身分，由 code／step／gate／report reference／baseline／candidate 推導而來，不是陣列位置、不是時間、也不是請求內容的雜湊；素材一變，key 就跟著變，舊 proposal 因此無法再指到新的 request。'
+      + 'readiness gate、被擋住的 finalize、輸入已變更與中斷待確認這四類，只接受 evidence_needed：回答它們的是審查者的 confirmation／核准／證據紀錄或人工檢視，proposal 再詳細都不是那些。'
+      + '本工具不建立 proposal、不推進 run、不寫入任何東西。',
+    inputSchema: {
+      type: 'object',
+      properties: { project_id: projectId, run_id: runId },
+      required: ['project_id', 'run_id'],
+      additionalProperties: false,
+    },
+    annotations: readOnly,
+  },
+  {
+    name: 'studio_proposal_submit',
+    title: '提交 AI 提案',
+    description: '把一份結構化、可稽核、可拒絕的提案存進來，內容是「這個 run 目前這一筆 review request 應該怎麼回答，以及為什麼」。'
+      + '提交本身不套用任何東西：不產生候選、不升 revision、不記錄 confirmation、不移動任何 gate，run 的 revision 連動都不會動。要真的套用，必須另外做一次明確的 studio_proposal_resolve 接受。'
+      + '本協定與模型無關：沒有 provider SDK、沒有模型金鑰、沒有模型識別欄位，本服務也不呼叫任何模型。proposed_by 只是呼叫端自己填的文字，會與通過驗證的 owner 身分分開記錄，本身不構成任何人已審查或已接受的證據。'
+      + 'cites 裡的每一筆都必須是本專案真的持有、而且本服務可以解析的身分（baseline event id、source id，或 asset／artifact／job／candidate／run／該 run 自己給過的 report_reference）；網址、檔名、對話片段與模型的印象都不是，會被拒絕——那些請寫在 rationale。'
+      + '每一筆 evidence_ref 都必須標明 truth_class（symbolic／audio／in_game／community／project_history），而且不接受任何單一信心分數（confidence／score／certainty／probability／likelihood）：SOURCE_POLICY.md 要求符號證據與音訊證據分欄保存，就是為了不讓一個數字蓋掉兩者的分歧。把原曲音訊來源標成 symbolic（或反之）同樣會被拒絕。'
+      + 'missing_evidence 或 unresolved_conflicts 只要非空，判定就是 REQUIRES_MORE_EVIDENCE：agent 自己說證據不足時，本服務不會反過來判它證據充足。PENDING 是合法且重要的結果，evidence_needed 這個 class 就是為它存在的。'
+      + 'decisions 不可自帶 acceptedBy、note 或 acceptance：接受者由接受那一步指定，acceptance binding 由服務在套用當下從實際載入的素材計算。',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        project_id: projectId,
+        run_id: runId,
+        idempotency_key: runIdempotencyKey,
+        expected_run_revision: { type: 'integer', minimum: 1, maximum: LIMITS.maxRunRevision, description: '撰寫這份提案時讀到的 run revision；不符即拒絕，不會套用到 agent 沒看過的素材上。' },
+        request_key: { type: 'string', minLength: 68, maxLength: 68, description: 'studio_proposal_targets 給的 review request 身分（req: 開頭）。由服務推導，呼叫端不自行構造；指不到任何目前開著的 request 就直接拒絕，不會找最接近的一筆。' },
+        kind: { type: 'string', enum: [...PROPOSAL_KIND_NAMES], description: 'proposal class。必須是該 request 允許的其中之一，否則回報 NOT_AGENT_SETTLABLE。' },
+        proposed_by: { type: 'string', minLength: 1, maxLength: 120, description: '提案者識別字串。呼叫端自填的文字，不是通過驗證的身分，也不是接受者。' },
+        rationale: { type: 'string', minLength: 1, maxLength: LIMITS.maxProposalRationaleLength, description: '給人類審查者看的理由。這裡是散文該待的地方，不會被當成引用。' },
+        action: structuredPayload('依 kind 而定的封閉欄位：arrangement_decision→decisions；final_reduction→decisions／instrument_profile／expected_plan_id／plan_accepted_by；mobile_adaptation→profile／expected_plan_id；source_selection→asset_ids／meter_text；candidate_selection→candidate_id；evidence_needed→完全不帶 action。未列欄位一律拒絕。'),
+        cites: structuredPayload('event_ids／source_ids／evidence_refs（每筆 kind、id、truth_class，選填 note）。全部對本專案解析，解析不到就是偽造。'),
+        unresolved_conflicts: structuredPayload('尚未解決的來源分歧：summary、event_ids、source_ids、truth_classes。記錄而不裁決——MASTER_RULES.md §0 說兩個權威衝突時不要猜。'),
+        missing_evidence: { type: 'array', maxItems: LIMITS.maxProposalConflicts, items: { type: 'string', maxLength: LIMITS.maxProposalNoteLength }, description: '還缺什麼證據才能決定。非空即代表本提案不足以進入操作。' },
+        canonical_warnings: { type: 'array', maxItems: LIMITS.maxProposalConflicts, items: { type: 'string', maxLength: LIMITS.maxProposalNoteLength }, description: '提案者認為與 Canonical 規則相關、需要審查者注意的地方。這是提醒，不是裁決。' },
+        expected_operation: { type: 'string', maxLength: 200, description: '提案者認為這份提案會走到哪一個既有操作。會與服務自己推導的比對，不符就拒絕——讓 agent 以為在提案 A 卻被套用成 B 是不可接受的。' },
+      },
+      required: ['project_id', 'run_id', 'request_key', 'kind', 'proposed_by', 'rationale'],
+      additionalProperties: false,
+    },
+    annotations: writes,
+  },
+  {
+    name: 'studio_proposal_status',
+    title: '提案狀態（唯讀）',
+    description: '唯讀查詢提案。給 proposal_id 時回傳該筆提案的完整內容、繫結身分、引用、以及「用現在儲存的狀態重新計算」的 Agent Review 判定；省略時回傳本專案的提案清單，可用 run_id／request_key／state／kind 篩選。'
+      + '判定永遠是當場重算的，不是提交當時的快取：快取一份安全檢查，就是一份可能已經錯了的安全檢查。提交當時的判定會另外保留在 agent_review_at_submission，供稽核比對。'
+      + '本工具不寫入任何東西、不接受任何提案、不推進 run。',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        project_id: projectId,
+        proposal_id: { type: 'string', minLength: 36, maxLength: 36, description: '本服務發出的 proposal_id（pro_ 開頭）。' },
+        run_id: runId,
+        request_key: { type: 'string', minLength: 68, maxLength: 68 },
+        state: { type: 'string', enum: [...PROPOSAL_STATE_NAMES] },
+        kind: { type: 'string', enum: [...PROPOSAL_KIND_NAMES] },
+      },
+      required: ['project_id'],
+      additionalProperties: false,
+    },
+    annotations: readOnly,
+  },
+  {
+    name: 'studio_proposal_resolve',
+    title: '明確接受／拒絕提案',
+    description: '對一份提案記錄明確的接受、拒絕或撤回。拒絕與撤回只是紀錄；接受是唯一會走到既有操作的路徑。'
+      + '接受會先用現在儲存的狀態重新跑一次 Agent Review，只有 REQUIRES_EXPLICIT_ACCEPTANCE 這一個判定可以接受——那是單一值，不是清單。rules snapshot、baseline、候選、素材選擇、已接受決定集、run revision 或該 review request 任何一項變了，判定就是 STALE，直接拒絕。'
+      + '接受之後，走的是既有的 resumeRun：同一把鎖、同一套 idempotency、同一套樂觀併發、同一套每步 staleness 重驗、同一套中斷規則。同樣的輸入，手動路徑與接受提案路徑產生同一個候選身分。'
+      + 'accepted_by 由這一步提供，而且只由這一步提供：agent 的 proposed_by 不會被拿來當成接受者。'
+      + '接受成功不代表操作成功、不代表任何 Gate 通過、也不代表 song state 改變：那些請讀回傳的 run 自己的 steps、blockers、gates 與 review requests。in_game 不受影響，仍為 PENDING。'
+      + '本操作不接受 idempotency_key：接受時服務自己鑄造一把由 proposal id 與 revision 決定的固定 key 交給 resumeRun，重試本來就安全，呼叫端再給一把也綁不到任何東西。',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        project_id: projectId,
+        proposal_id: { type: 'string', minLength: 36, maxLength: 36 },
+        resolution: { type: 'string', enum: [...RESOLUTION_NAMES], description: 'accept／reject／withdraw。' },
+        accepted_by: { type: 'string', minLength: 1, maxLength: 120, description: '接受者識別字串，resolution=accept 時必填。這是接受這件事本身的紀錄，與提案者分開。' },
+        reason: { type: 'string', maxLength: LIMITS.maxProposalNoteLength, description: '接受或拒絕的理由，記錄在提案上。' },
+        expected_proposal_revision: { type: 'integer', minimum: 1, maximum: LIMITS.maxRunRevision, description: '上次讀到的提案 revision；不符即拒絕，不覆蓋。' },
+      },
+      required: ['project_id', 'proposal_id', 'resolution'],
+      additionalProperties: false,
+    },
+    annotations: writes,
+  },
+  {
     name: 'studio_job_status',
     title: '工作狀態',
     description: '以 job_id 查詢工作狀態與狀態轉換紀錄。本版本工作為同步執行，取得 job_id 時已是終態；能力查詢中的 background_execution 為 false。',
@@ -446,6 +540,25 @@ const RUN_INPUT_FIELDS = [
 ];
 
 const runInput = args => Object.fromEntries(RUN_INPUT_FIELDS.filter(name => args[name] !== undefined).map(name => [name, args[name]]));
+
+// The same discipline for the proposal operations: only the fields the caller
+// actually stated, and only fields the operation accepts. A field that is not
+// listed here never reaches the service, and a field that is listed reaches it
+// exactly as sent -- the Application Service's own closed key set is what
+// refuses an unknown one, so the two surfaces cannot drift into accepting
+// different things.
+const PROPOSAL_SUBMIT_FIELDS = [
+  'idempotency_key', 'run_id', 'expected_run_revision', 'request_key', 'kind',
+  'proposed_by', 'rationale', 'action', 'cites', 'unresolved_conflicts',
+  'missing_evidence', 'canonical_warnings', 'expected_operation',
+];
+const PROPOSAL_RESOLVE_FIELDS = ['resolution', 'accepted_by', 'reason', 'expected_proposal_revision'];
+const PROPOSAL_FILTER_FIELDS = ['run_id', 'request_key', 'state', 'kind'];
+
+const pick = (args, fields) => Object.fromEntries(fields.filter(name => args[name] !== undefined).map(name => [name, args[name]]));
+const proposalInput = args => pick(args, PROPOSAL_SUBMIT_FIELDS);
+const proposalResolveInput = args => pick(args, PROPOSAL_RESOLVE_FIELDS);
+const proposalFilter = args => pick(args, PROPOSAL_FILTER_FIELDS);
 
 /**
  * Dispatch one `studio_*` tool to the Application Service.
@@ -514,6 +627,19 @@ export async function runStudioTool(name, args, { application, owner }) {
       return application.getRun(owner, args.project_id, args.run_id ?? null);
     case 'studio_run_resume':
       return application.resumeRun(owner, args.project_id, args.run_id, runInput(args));
+    case 'studio_proposal_targets':
+      return application.proposalTargets(owner, args.project_id, args.run_id);
+    case 'studio_proposal_submit':
+      return application.proposeDecision(owner, args.project_id, proposalInput(args));
+    case 'studio_proposal_status':
+      // The same read the HTTP adapter serves as GET /proposals and
+      // GET /proposals/:id. Without an id there is nothing to look up, so the
+      // project's own filtered list is the answer.
+      return args.proposal_id === undefined
+        ? application.listProposals(owner, args.project_id, proposalFilter(args))
+        : application.getProposal(owner, args.project_id, args.proposal_id);
+    case 'studio_proposal_resolve':
+      return application.resolveProposal(owner, args.project_id, args.proposal_id, proposalResolveInput(args));
     case 'studio_job_status':
       return application.getJob(owner, args.job_id);
     case 'studio_artifact_get':

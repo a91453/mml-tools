@@ -40,6 +40,7 @@ export const ID_PREFIX = freeze({
   asset: 'ast_',
   job: 'job_',
   run: 'run_',
+  proposal: 'pro_',
   artifact: 'art_',
   // One attempt at one mutating effect. Minted by the run service immediately
   // before the effect and written both on the pending marker and on the record
@@ -100,12 +101,31 @@ export const statedFields = (value, { omit = [] } = {}) => {
   const stated = {};
   for (const key of Object.keys(value)) {
     if (omit.includes(key)) continue;
-    stated[key] = value[key];
+    // `stated[key] = value[key]` is wrong for exactly one key, and it is the
+    // one an attacker reaches for. A fresh `{}` inherits `Object.prototype`'s
+    // `__proto__` accessor, so assigning to that key invokes the SETTER and
+    // retargets this object's prototype instead of adding a field -- and an own
+    // `"__proto__"` key is precisely what `JSON.parse` of a request body
+    // produces, unlike an object literal.
+    //
+    // The consequence was the inverse of this function's purpose. A body of
+    // `{"__proto__": {"effectAttemptId": "eff_…"}, …}` left `stated` with no
+    // own internal-provenance field and every internal-provenance field
+    // readable, so `withoutInternalProvenance` BUILT the forged object it
+    // exists to prevent, and a service destructuring `{ effectAttemptId }`
+    // found the caller's value. The run's reconciliation identity proof rests
+    // on that field being unforgeable.
+    //
+    // `defineProperty` adds a plain own data property whatever the key is
+    // called. `__proto__` then survives as ordinary data, where the closed key
+    // set of whichever operation receives it refuses it by name like any other
+    // field nobody declared.
+    Object.defineProperty(stated, key, { value: value[key], enumerable: true, writable: true, configurable: true });
   }
   return stated;
 };
 
-const OPAQUE_ID = /^(prj|ast|job|run)_[0-9a-f]{32}$/;
+const OPAQUE_ID = /^(prj|ast|job|run|pro)_[0-9a-f]{32}$/;
 const ARTIFACT_ID = /^art_[0-9a-f]{64}$/;
 
 // Owned by `arrangement/decision-application.mjs`. Restated here as a
@@ -118,6 +138,7 @@ export const IDENTITY_MODEL = freeze({
   asset_id: 'ast_<32 hex>, server-generated; never derived from the upload filename',
   job_id: 'job_<32 hex>, server-generated',
   run_id: 'run_<32 hex>, server-generated; the identity of one workflow instance, never of a baseline, a candidate or an artifact',
+  proposal_id: 'pro_<32 hex>, server-generated; the identity of one external agent\'s statement about one open review request, never of a decision, an acceptance, an evidence record or a gate result',
   artifact_id: 'art_<sha256 of the artifact body>',
   baseline_id: 'bas:<baselineIdentityOf(project).contentDigest>, computed by the existing backend',
   candidate_id: 'g11d:rev:<sha256>, the existing G11-D revision id, used verbatim',
@@ -128,6 +149,7 @@ export const isProjectId = value => typeof value === 'string' && OPAQUE_ID.test(
 export const isAssetId = value => typeof value === 'string' && OPAQUE_ID.test(value) && value.startsWith(ID_PREFIX.asset);
 export const isJobId = value => typeof value === 'string' && OPAQUE_ID.test(value) && value.startsWith(ID_PREFIX.job);
 export const isRunId = value => typeof value === 'string' && OPAQUE_ID.test(value) && value.startsWith(ID_PREFIX.run);
+export const isProposalId = value => typeof value === 'string' && OPAQUE_ID.test(value) && value.startsWith(ID_PREFIX.proposal);
 export const isArtifactId = value => typeof value === 'string' && ARTIFACT_ID.test(value);
 export const isBaselineId = value => typeof value === 'string' && BASELINE_ID.test(value);
 export const isCandidateId = value => typeof value === 'string' && CANDIDATE_ID.test(value);
@@ -269,6 +291,15 @@ export const ERROR_CODES = freeze({
   // stopped, and no deterministic identity or stored reference settles it. The
   // run reports exactly which step is unconfirmed instead of replaying it.
   RUN_RECONCILIATION_REQUIRED: 'RUN_RECONCILIATION_REQUIRED',
+  PROPOSAL_NOT_FOUND: 'PROPOSAL_NOT_FOUND',
+  // The proposal moved under the caller, is already resolved, or is being
+  // resolved into a state it cannot reach from the one it is in. Distinct from
+  // PROPOSAL_REFUSED: nothing about the proposal's content is at fault.
+  PROPOSAL_CONFLICT: 'PROPOSAL_CONFLICT',
+  // The Agent Review Policy will not let this proposal reach an operation. The
+  // verdict and its refusal codes travel in `details`; this code never says
+  // which, because a caller has to read the verdict rather than infer it.
+  PROPOSAL_REFUSED: 'PROPOSAL_REFUSED',
   CANDIDATE_NOT_FOUND: 'CANDIDATE_NOT_FOUND',
   ARTIFACT_NOT_FOUND: 'ARTIFACT_NOT_FOUND',
   READINESS_BLOCKED: 'READINESS_BLOCKED',
@@ -299,6 +330,9 @@ export const ERROR_HTTP_STATUS = freeze({
   [ERROR_CODES.RUN_CONFLICT]: 409,
   [ERROR_CODES.IDEMPOTENCY_CONFLICT]: 409,
   [ERROR_CODES.RUN_RECONCILIATION_REQUIRED]: 409,
+  [ERROR_CODES.PROPOSAL_NOT_FOUND]: 404,
+  [ERROR_CODES.PROPOSAL_CONFLICT]: 409,
+  [ERROR_CODES.PROPOSAL_REFUSED]: 409,
   [ERROR_CODES.CANDIDATE_NOT_FOUND]: 404,
   [ERROR_CODES.ARTIFACT_NOT_FOUND]: 404,
   [ERROR_CODES.READINESS_BLOCKED]: 409,
@@ -379,6 +413,45 @@ export const LIMITS = freeze({
   // The optimistic-concurrency precondition a caller may state. Bounded so the
   // two transports declare and enforce the same range.
   maxRunRevision: 1000000,
+  // One proposal, as it is STORED. The bound that was missing: the free-form
+  // structure a proposal carries was spent against a node, depth and string
+  // budget, and none of those is a byte budget. 4000 nodes times a 4000-char
+  // string is 15 MB inside every declared limit, and an adversarial pass
+  // stored 7 MB through the public surface without exceeding a single one of
+  // them -- while the record's own comment claimed it was "small by
+  // construction". A proposal record is small because this number says so and
+  // the service measures it, which is the only way that sentence can be true.
+  //
+  // 128 KiB is the MCP transport's own body cap (`MAX_BODY_BYTES`), so a
+  // proposal that fits one surface fits the other rather than HTTP admitting
+  // what MCP cannot carry. It holds a full 500-decision set with reasons and
+  // evidence several times over.
+  //
+  // Measured on the record INCLUDING the agent review verdict stored beside it.
+  // It was measured before that verdict was attached, and the verdict repeats
+  // the caller's own `missing_evidence`, so the persisted record ran 11.9% past
+  // this number -- the same "the bound is not on the thing" defect one layer in.
+  maxProposalBytes: 128 * 1024,
+  // One project's OPEN AI proposals -- submitted or accepted. Counting only
+  // the open ones is what makes the refusal's remedy true: resolving or
+  // withdrawing one frees a slot, exactly as it says. Counting every proposal
+  // ever made, as this did, made that sentence a no-op and the cap terminal.
+  maxProposalsPerProject: 64,
+  // And the lifetime total a project retains, resolved records included. A
+  // resolved proposal is an audit record and is never evicted -- an agent that
+  // has filled the project is told so rather than silently losing its oldest
+  // statement -- so the total needs its own ceiling, and the refusal for it
+  // promises no remedy because there is none but a new project.
+  maxProposalsRetainedPerProject: 128,
+  // A rationale is prose for a human reviewer. 2048 is the inline-text bound
+  // every MCP string field is held to, and `tests/mcp-studio.test.mjs` asserts
+  // it: no tool is a way to push bulk data into a model's context or into this
+  // process. The service enforces the same number, so the two transports admit
+  // exactly the same length rather than one accepting what the other refuses.
+  maxProposalRationaleLength: 2048,
+  maxProposalCitations: 50,
+  maxProposalConflicts: 32,
+  maxProposalNoteLength: 500,
   maxIdempotencyReceiptsPerRun: 32,
   maxIdempotencyKeyLength: 200,
   maxFilenameLength: 255,
