@@ -1338,6 +1338,10 @@ export function createProposalService({ canonical, projects, store, operations, 
         const application = proposal.application ?? {
           idempotency_key: `proposal:${proposal.proposal_id}:${proposal.revision}`,
           expected_run_revision: run.revision,
+          // Where an interrupted attempt left the run, written by phase 3. A
+          // retry carries it as its precondition, so it finishes the
+          // application it is a retry of and nothing else.
+          run_revision_at_attempt: null,
           accepted_by: normalized.accepted_by,
           attempted_at: now(),
           run_revision_after: null,
@@ -1386,8 +1390,7 @@ export function createProposalService({ canonical, projects, store, operations, 
         resumed = await runs.resume(owner, projectId, prepared.proposal.run_id, {
           ...translated.input,
           idempotency_key: application.idempotency_key,
-          // The revision precondition belongs to the FIRST attempt and only to
-          // it. On a retry it asks the wrong question and asks it fatally.
+          // The revision precondition MOVES on a retry; it is not dropped.
           //
           // `resume` bumps the run's revision in its own first lock hold,
           // before any step runs, and writes the idempotency receipt in a last
@@ -1398,13 +1401,24 @@ export function createProposalService({ canonical, projects, store, operations, 
           // well have landed, and the one mechanism built to finish it could
           // never succeed: the proposal was stuck `accepted` for good.
           //
-          // Dropping it on a retry is not dropping the guard. The receipt is
-          // checked FIRST, so a run that did apply this replays it; and where
-          // there is no receipt, `resume` re-validates every binding at every
-          // step and holds an unsettled effect rather than replaying it. That
-          // machinery is strictly more thorough than a revision number, and it
-          // is the same reasoning that lets a retry skip the policy gate.
-          ...(prepared.retry ? {} : { expected_run_revision: application.expected_run_revision }),
+          // Sending no precondition at all fixed that and opened a worse hole.
+          // A retry also skips the policy gate, so an acceptance whose
+          // application was interrupted became a standing permission: whatever
+          // the run had since become -- a different reviewer's decision set, a
+          // different candidate, a request that was no longer open -- the retry
+          // reached `runs.resume` anyway and the proposal was recorded
+          // `applied`, naming an advancement it had not caused.
+          //
+          // So the precondition is carried forward instead, to the revision the
+          // interrupted attempt LEFT the run at, which phase 3 records under the
+          // lock. A retry then finishes exactly the application it is a retry
+          // of, and a run that moved for any other reason fails the
+          // precondition -- which is what makes skipping the policy gate safe
+          // rather than merely convenient. The receipt is still checked first,
+          // so a run that did apply this replays it either way.
+          expected_run_revision: prepared.retry
+            ? application.run_revision_at_attempt ?? application.expected_run_revision
+            : application.expected_run_revision,
         });
       } catch (error) {
         failure = { code: error?.code ?? ERROR_CODES.INVALID_REQUEST, message: String(error?.message ?? error).slice(0, 500), details: error?.details ?? {} };
@@ -1419,8 +1433,22 @@ export function createProposalService({ canonical, projects, store, operations, 
           // proposal stays `accepted` so a retry re-issues the same key rather
           // than starting a second application, and the conflict is recorded
           // rather than swallowed.
+          //
+          // Where the run was left is recorded with it, and it is what a retry
+          // binds itself to. Without it a retry has nothing to pin: the
+          // revision the ACCEPTANCE observed is stale the moment this
+          // acceptance's own resume bumps it, so the only alternatives are a
+          // precondition that can never match or no precondition at all -- and
+          // the second turns an interrupted acceptance into a standing
+          // permission over whatever the run becomes next.
+          const runNow = runsOf(record).find(entry => entry.run_id === proposal.run_id) ?? null;
           return bumpProposal(owner, projectId, proposal, {
-            application: { ...proposal.application, conflict: { ...failure, at: now() }, derived },
+            application: {
+              ...proposal.application,
+              conflict: { ...failure, at: now() },
+              derived,
+              run_revision_at_attempt: runNow?.revision ?? proposal.application.run_revision_at_attempt ?? null,
+            },
           });
         }
         return bumpProposal(owner, projectId, proposal, {

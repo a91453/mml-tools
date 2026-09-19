@@ -394,30 +394,40 @@ second mechanism:
 * a concurrent writer that advanced the run in the window fails the revision
   precondition, so the acceptance is not applied to material it never saw.
 
-**The revision precondition belongs to the first attempt, and only to it.**
-`resume` bumps the run's revision in its own first lock hold, before any step
-runs, and writes the idempotency receipt in a last hold after every step has
-finished. So for the whole duration of an advancement the run has moved and the
-key is unbound — and a retry carrying the pre-bump revision as a precondition
-could never match. The acceptance was recorded, the work may well have landed,
-and the one mechanism built to finish it was the one thing that could not: the
-proposal stuck `accepted` for good. An adversarial pass found that, and the
-precondition is now sent on the first attempt only.
+**The revision precondition moves on a retry; it is not dropped.** `resume`
+bumps the run's revision in its own first lock hold, before any step runs, and
+writes the idempotency receipt in a last hold after every step has finished. So
+for the whole duration of an advancement the run has moved and the key is
+unbound — and a retry carrying the pre-bump revision as a precondition could
+never match. The acceptance was recorded, the work may well have landed, and the
+one mechanism built to finish it was the one thing that could not: the proposal
+stuck `accepted` for good. An adversarial pass found that.
 
-Dropping it on a retry is not dropping the guard. The receipt is checked
-*first*, so a run that did apply this replays it; and where there is no receipt,
-`resume` re-validates every binding at every step and holds an unsettled effect
-rather than replaying it. That machinery is strictly more thorough than a
-revision number, and it is the same reasoning that lets a retry skip the policy
-gate. A regression drives all three interruption classes and requires the retry
-to complete with exactly one candidate for one acceptance.
+Sending no precondition at all fixed it and opened a worse hole, which a later
+pass found in turn. A retry also skips the policy gate, so an acceptance whose
+application had been interrupted became a *standing permission*: whatever the
+run had since become — another reviewer's decision set, another candidate, a
+request that was no longer open — the retry reached `runs.resume` anyway, and
+the proposal was recorded `applied` naming an advancement it had not caused,
+with the policy's own read of it saying `STALE` at the same moment.
+
+So the precondition is **carried forward** rather than dropped: phase 3 records
+the revision the interrupted attempt left the run at, and a retry sends that as
+its `expected_run_revision`. A retry then finishes exactly the application it is
+a retry of, and a run that moved for any other reason fails the precondition and
+is refused. The receipt is still checked *first*, so a run that did apply this
+replays it either way. A regression drives all three interruption classes and
+requires the retry to complete with exactly one candidate for one acceptance;
+another drives a human reviewer's resume into the same window and requires the
+retry to be refused.
 
 **A retry does not re-litigate the acceptance.** An acceptance is a recorded past
 act; a crash between it and its application advances the run, which makes the
 proposal stale, and re-running the policy there would refuse the very retry the
 marker exists for. So the policy gate is skipped for a proposal that is already
 `accepted` and carries a marker — and nothing is taken on trust, because safety
-there is the run's: the same key, or the revision precondition. This mirrors
+there is the run's: the same key, and the carried-forward revision precondition
+that pins the retry to the run the acceptance was applying to. This mirrors
 Phase 1's own ordering, where an idempotency replay is decided *before* the
 audit-closed guard.
 

@@ -219,6 +219,71 @@ test('an interruption at any of the three points still ends with one application
   }
 });
 
+test('an interrupted acceptance is not finished onto a run that moved on without it', async () => {
+  // The retry above exists so an acceptance whose application was interrupted
+  // can still finish. It must finish THAT application, on the run the
+  // acceptance was recorded against -- not be a standing permission to apply a
+  // proposal to whatever the run has since become.
+  //
+  // The retry skips the Agent Review Policy, and it has to: `resume` bumps the
+  // run's revision before any step runs, so a proposal whose own application
+  // moved the run reads as stale to a policy that is only looking at revisions.
+  // What pins it instead is the run's own precondition, carried forward to the
+  // revision the interrupted attempt LEFT the run at. So a run that moved for
+  // any other reason -- here, a human reviewer applying a different decision
+  // set -- fails that precondition, and the acceptance cannot be finished onto
+  // material it never saw.
+  let armed = true;
+  const app = createStudioApplication({
+    runHooks: {
+      beforeResponse: ({ step }) => {
+        if (armed && step === RUN_STEP.APPLY_DECISIONS) { armed = false; throw Error('stopped before the response'); }
+      },
+    },
+  });
+  const context = await submitted(app);
+
+  await app.resolveProposal(OWNER, context.fixture.projectId, context.proposal.proposal_id, {
+    resolution: 'accept', accepted_by: RUN_REVIEWER,
+  }).then(() => assert.fail('the injected fault must propagate'), error => error);
+  const mid = await app.getProposal(OWNER, context.fixture.projectId, context.proposal.proposal_id);
+  assert.equal(mid.proposal.state, PROPOSAL_STATE.ACCEPTED, 'accepted, not applied');
+
+  // A human reviewer takes the run somewhere else entirely, with a decision set
+  // of their own.
+  const theirs = runDecisionsFor(context.fixture.project, { acceptedBy: 'a-different-reviewer' })
+    .map(decision => (decision.fromRole === 'Chord5'
+      ? { ...decision, id: `omit:${decision.id}`, type: 'OMIT_FROM_SIX', reason: 'The reviewer dropped this role.' }
+      : decision));
+  const manual = await app.resumeRun(OWNER, context.fixture.projectId, context.run.run_id, {
+    decisions: theirs, accepted_by: 'a-different-reviewer',
+  });
+  const candidatesBefore = await candidatesOf(app, context.fixture.projectId);
+
+  // The policy says so in as many words, on an ordinary read.
+  const stale = await app.getProposal(OWNER, context.fixture.projectId, context.proposal.proposal_id);
+  assert.equal(stale.proposal.agent_review.verdict, 'STALE');
+  assert.equal(stale.proposal.agent_review.acceptable, false);
+
+  // And the retry is refused rather than applied to the reviewer's run.
+  const retry = await app.resolveProposal(OWNER, context.fixture.projectId, context.proposal.proposal_id, {
+    resolution: 'accept', accepted_by: RUN_REVIEWER,
+  }).then(result => ({ ok: true, result }), error => ({ ok: false, error }));
+  assert.equal(retry.ok, false, 'an acceptance may not be finished onto a run that moved on without it');
+  assert.equal(retry.error.code, 'RUN_CONFLICT');
+
+  const settled = await app.getProposal(OWNER, context.fixture.projectId, context.proposal.proposal_id);
+  assert.equal(settled.proposal.state, PROPOSAL_STATE.ACCEPTED, 'and it is not recorded as applied');
+  assert.ok(settled.proposal.application.conflict, 'the blocker is on the record');
+  assert.deepEqual(
+    await candidatesOf(app, context.fixture.projectId),
+    candidatesBefore,
+    'nothing was minted by the refused retry',
+  );
+  assert.equal((await app.getRun(OWNER, context.fixture.projectId, context.run.run_id)).run.candidate_id, manual.run.candidate_id,
+    "and the reviewer's candidate is still the run's");
+});
+
 test('a rejection after an acceptance is refused, because the run may already have it', async () => {
   const app = createStudioApplication({});
   const context = await submitted(app);
