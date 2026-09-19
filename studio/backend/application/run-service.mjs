@@ -688,14 +688,59 @@ export function createRunService({ canonical, projects, store, operations, seria
       : { proven: true };
   };
 
+  /**
+   * The audit state a persisted Final already recorded, read back from it.
+   *
+   * A `final_mml` artifact carries what the emitter graded — its emit status,
+   * its gate map and the readiness summary at emission — and the job that
+   * produced it stored the artifact's id, so the job is found by that reference
+   * rather than by being the newest. Everything here is read; nothing is
+   * re-derived, and nothing is invented: an artifact whose body cannot be read
+   * restores nothing and an artifact no job uniquely claims gets no job id.
+   */
+  const restoredFinal = (owner, record, artifactId) => {
+    const body = operations.artifactBody(owner, artifactId);
+    if (!body) return null;
+    const jobs = operations.jobsForArtifact(record, artifactId);
+    return {
+      gates: body.gates ?? null,
+      readiness_blockers: [...(body.readiness_summary?.pre_game_blocking ?? [])],
+      // Exactly one job claims this artifact, or none is recorded. Attributing
+      // a Final to a job that merely ran nearby would put a false identity in
+      // the run report.
+      job_id: jobs.length === 1 ? jobs[0] : null,
+      detail: {
+        operation: OPERATION_STATUS.SUCCEEDED,
+        emit_status: body.emit_status ?? null,
+        gates: body.gates ?? null,
+        technical_timing_repair: body.technical_timing_repair ?? null,
+        technical_validation: body.readiness_summary?.technical_validation ?? null,
+        artifact_id: artifactId,
+        candidate_id: body.candidate_id ?? null,
+        restored_from: 'final_artifact',
+        restored_job_ids: jobs,
+      },
+    };
+  };
+
   /** Every candidate that matches an expectation right now. */
   const candidatesMatching = (record, expectation) => record.candidates
     .filter(entry => candidateMatches(entry, expectation))
     .map(entry => entry.candidate_id);
 
   /** Every artifact that matches an expectation right now. */
+  /**
+   * Every artifact that matches an expectation right now.
+   *
+   * A null `candidate_id` means "any candidate", which only the report-by-run
+   * -identity recovery uses: the run id inside the report's body is already an
+   * exact identity, so filtering by the run's current candidate would hide the
+   * very report it is looking for. Every other expectation names its candidate.
+   */
   const artifactsMatching = (record, expectation) => record.artifacts
-    .filter(entry => entry.candidate_id === expectation.candidate_id && entry.type === expectation.artifact_type)
+    .filter(entry => entry.type === expectation.artifact_type)
+    .filter(entry => expectation.candidate_id === null || expectation.candidate_id === undefined
+      || entry.candidate_id === expectation.candidate_id)
     .map(entry => entry.artifact_id);
 
   /**
@@ -1856,9 +1901,26 @@ export function createRunService({ canonical, projects, store, operations, seria
    */
   async function settlePendingStep(owner, projectId, record, run, normalized) {
     const pending = run.pending_step;
-    const found = pending.expectation === null
+    // A run report names the run that produced it, so the report step has an
+    // exact identity that does not depend on what the marker recorded. A marker
+    // written by an earlier build, or restored without its expectation, is
+    // settled by that identity rather than by the generic "no expectation"
+    // policy — which would read absence into a missing marker and file a second
+    // report for a run that already has one.
+    const expectation = pending.step === RUN_STEP.REPORT && !pending.expectation?.expected_run_id
+      ? {
+        kind: 'artifact',
+        artifact_type: RUN_REPORT_ARTIFACT_TYPE,
+        expected_run_id: run.run_id,
+        // No candidate filter: the run id in the report's own body is the
+        // identity, and a restored run may have moved candidate since.
+        candidate_id: null,
+        recovered_from_run_identity: true,
+      }
+      : pending.expectation;
+    const found = expectation === null || expectation === undefined
       ? { outcome: pending.idempotent === true || normalized.reconcile ? EFFECT.ABSENT : EFFECT.UNPROVABLE, reason: 'NO_EXPECTATION_RECORDED' }
-      : expectationSatisfiedBy(owner, record, pending.expectation);
+      : expectationSatisfiedBy(owner, record, expectation);
 
     // Neither presence nor absence established. This is NOT "absent": replaying
     // a non-idempotent effect on a maybe would file a second Final. The run
@@ -1917,6 +1979,12 @@ export function createRunService({ canonical, projects, store, operations, seria
       };
     }
     if (found.outcome === EFFECT.FOUND) {
+      // An adopted effect is that effect, so the receipt and the run state it
+      // leaves behind are the ones the effect itself recorded — read back from
+      // what it persisted, never re-derived by running the operation again.
+      const restored = found.artifact_id && expectation?.artifact_type === FINAL_ARTIFACT_TYPE
+        ? restoredFinal(owner, record, found.artifact_id)
+        : null;
       const changes = {
         pending_step: null,
         needs_reconciliation: false,
@@ -1925,9 +1993,24 @@ export function createRunService({ canonical, projects, store, operations, seria
           status: RUN_STEP_STATUS.SATISFIED,
           inputFingerprint: pending.input_fingerprint ?? null,
           resultReference: found.candidate_id ?? found.baseline_id ?? found.artifact_id ?? null,
-          detail: { reconciled: true, reason: 'EFFECT_FOUND_BY_STORED_IDENTITY', expectation: pending.expectation },
+          jobId: restored?.job_id ?? null,
+          blockers: restored ? [...restored.readiness_blockers] : [],
+          detail: {
+            reconciled: true,
+            reason: 'EFFECT_FOUND_BY_STORED_IDENTITY',
+            expectation,
+            ...(restored ? restored.detail : {}),
+          },
         })),
       };
+      if (restored) {
+        // The facts the Final itself carries: what the emitter graded, and what
+        // readiness said at emission. A recovered run reports them exactly as a
+        // run whose receipt arrived does.
+        changes.gates = restored.gates;
+        changes.readiness_blockers = [...restored.readiness_blockers];
+        if (restored.job_id) changes.job_ids = [...new Set([...run.job_ids, restored.job_id])];
+      }
       if (found.baseline_id) {
         // An adopted intake is the same event as an intake that returned its
         // receipt, so it leaves the run in the same state. `intake.run`
@@ -1943,20 +2026,23 @@ export function createRunService({ canonical, projects, store, operations, seria
         changes.candidate_id = found.candidate_id;
         changes.candidate_lineage = [...new Set([...run.candidate_lineage, found.candidate_id])];
       }
-      if (found.artifact_id && pending.expectation.artifact_type === FINAL_ARTIFACT_TYPE) {
+      if (found.artifact_id && expectation.artifact_type === FINAL_ARTIFACT_TYPE) {
         changes.final_artifact_id = found.artifact_id;
         changes.artifact_ids = [...new Set([...run.artifact_ids, found.artifact_id])];
       }
-      if (found.artifact_id && pending.expectation.artifact_type === RUN_REPORT_ARTIFACT_TYPE) {
+      if (found.artifact_id && expectation.artifact_type === RUN_REPORT_ARTIFACT_TYPE) {
         changes.report_artifact_id = found.artifact_id;
         changes.artifact_ids = [...new Set([...run.artifact_ids, found.artifact_id])];
         changes.state = RUN_STATE.COMPLETED;
       }
       // The same invariant an effect of this step applies: an adopted result
-      // is that result, so nothing this run recorded downstream of it survives.
+      // is that result, so nothing this run recorded downstream of it survives
+      // — and, exactly as in `withEffect`, a Final-only replacement leaves the
+      // candidate-bound gates alone rather than clearing what it just restored.
+      const adoptionReplaced = replacesIdentity(run, changes);
       return {
-        run: bumpRun(owner, projectId, run, replacesIdentity(run, changes)
-          ? { ...changes, ...invalidateDownstream(run, pending.step, changes.steps) }
+        run: bumpRun(owner, projectId, run, adoptionReplaced
+          ? { ...changes, ...invalidateDownstream(run, pending.step, changes.steps, { clearGates: adoptionReplaced !== 'final' }) }
           : changes),
         halted: false,
       };
@@ -2652,6 +2738,22 @@ export function createRunService({ canonical, projects, store, operations, seria
         // as it stands. Reopening it to `running` and completing it again
         // would mint revisions that record no work and no decision.
         if (auditClosed(owner, record, run) && !workflowInputsIn(run, normalized).length && !run.pending_step) {
+          // An idempotency key makes a retry safe by binding it to the work a
+          // request performed. There is no work here to bind one to, and a key
+          // that looks accepted but is bound to nothing would break the one
+          // guarantee it exists for: the same key with a different payload must
+          // be refused, and it cannot be if the key was never recorded. An
+          // EXISTING receipt for this key is replayed above, before this.
+          if (normalized.idempotency_key !== null) {
+            fail(ERROR_CODES.RUN_CONFLICT, 'This run has produced its run report and this request asks for no work, so there is nothing for an idempotency key to bind to. Retrying it is already safe: resume without the key, or use the key on the request that does the work — in a new run.', {
+              run_id: run.run_id,
+              run_state: run.state,
+              reason: 'NO_WORK_TO_BIND_AN_IDEMPOTENCY_KEY',
+              idempotency_key: normalized.idempotency_key,
+              bound_keys: (run.idempotency?.receipts ?? []).map(entry => entry.key),
+              available_operations: ['getRun', 'getArtifact', 'startRun'],
+            });
+          }
           return { run, replayed: false, settled: true };
         }
         return { run: bumpRun(owner, projectId, run, resumeChanges(owner, record, run, normalized)), replayed: false };

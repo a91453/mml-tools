@@ -594,3 +594,168 @@ test('a material resume cannot hide behind recovery of an already-persisted term
     );
   });
 });
+
+// ─── 6. recovery restores facts; it does not re-derive them ─────────────────
+
+/** A project with a candidate that is ready to finalize. */
+async function readyCandidate(app) {
+  const fixture = await projectWithSymbolicAsset(app, OWNER, { project: sixRoleBaseline() });
+  await app.analyzeSources(OWNER, fixture.projectId, { assetIds: [fixture.assetId] });
+  const candidateId = (await app.applyDecisions(OWNER, fixture.projectId, { decisions: runDecisionsFor(fixture.project) })).decisions.candidate_id;
+  return { ...fixture, candidateId };
+}
+
+/** Everything a reader of a finished run learns about the song from it. */
+const auditFacts = (run, report, finalizeReceipt) => ({
+  run_state: run.state,
+  gates: run.gates,
+  readiness_blockers: [...(run.readiness_blockers ?? [])],
+  emit_status: finalizeReceipt?.detail?.emit_status ?? null,
+  finalize_gates: finalizeReceipt?.detail?.gates ?? null,
+  finalize_names_a_job: Boolean(finalizeReceipt?.job_id),
+  job_count: run.job_ids.length,
+  report_gates: report.gates,
+  report_emit_status: report.emit_status,
+  report_readiness_blockers: [...(report.readiness_blockers ?? [])],
+  report_job_count: report.job_ids.length,
+  report_names_the_runs_candidate: report.final_candidate_id === run.candidate_id,
+  report_names_the_runs_final: report.final_artifact_id === run.final_artifact_id,
+});
+
+test('a recovered persisted Final produces the same audit facts as an uninterrupted Final', async () => {
+  const uninterrupted = await withDirectory(async directory => {
+    const app = createStudioApplication({ dataDirectory: directory, durability: 'persistent' });
+    const fixture = await readyCandidate(app);
+    const done = await app.startRun(OWNER, fixture.projectId, { target_candidate_id: fixture.candidateId, confirmations: FIXTURE_CONFIRMATIONS });
+    assert.equal(done.run.state, RUN_STATE.COMPLETED, JSON.stringify(done.run.blockers));
+    const report = (await app.getArtifact(OWNER, done.run.report_artifact_id)).artifact;
+    return { facts: auditFacts(done.run, report, receiptOf(done.run, RUN_STEP.FINALIZE)), run: done.run };
+  });
+
+  const recovered = await withDirectory(async directory => {
+    const app = createStudioApplication({ dataDirectory: directory, durability: 'persistent' });
+    const fixture = await readyCandidate(app);
+
+    // The Final was emitted and filed, and its finalize job finished. Only the
+    // run's own receipt was lost.
+    const stopped = await stopsAfter(directory, RUN_STEP.FINALIZE)
+      .startRun(OWNER, fixture.projectId, { target_candidate_id: fixture.candidateId, confirmations: FIXTURE_CONFIRMATIONS })
+      .then(() => assert.fail('the injected fault must propagate'), error => error);
+    assert.match(stopped.message, /stopped after the finalize effect/);
+
+    const restarted = createStudioApplication({ dataDirectory: directory, durability: 'persistent' });
+    const runId = (await restarted.getRun(OWNER, fixture.projectId)).runs[0].run_id;
+    const midway = (await restarted.getProject(OWNER, fixture.projectId)).project;
+    assert.equal(finalsFor(midway, fixture.candidateId).length, 1, 'the Final is on disk');
+    assert.equal((await restarted.getRun(OWNER, fixture.projectId, runId)).run.final_artifact_id, null, 'the run does not know it yet');
+
+    const resumed = await restarted.resumeRun(OWNER, fixture.projectId, runId, {});
+    assert.equal(resumed.run.state, RUN_STATE.COMPLETED, JSON.stringify(resumed.run.blockers));
+    assert.equal(finalsFor((await restarted.getProject(OWNER, fixture.projectId)).project, fixture.candidateId).length, 1,
+      'recovery adopted the Final rather than emitting a second one');
+
+    const receipt = receiptOf(resumed.run, RUN_STEP.FINALIZE);
+    assert.equal(receipt.status, RUN_STEP_STATUS.SATISFIED, 'the receipt says it was adopted, not re-run');
+    assert.equal(receipt.detail.restored_from, 'final_artifact');
+    const report = (await restarted.getArtifact(OWNER, resumed.run.report_artifact_id)).artifact;
+    return { facts: auditFacts(resumed.run, report, receipt), run: resumed.run };
+  });
+
+  // Every fact a reader learns about the song is the same. Artifact ids and
+  // timestamps are not, and are not compared: they are per execution.
+  assert.deepEqual(recovered.facts, uninterrupted.facts);
+  assert.equal(recovered.facts.emit_status, 'PASS');
+  assert.ok(recovered.facts.gates, 'the gates were restored rather than cleared');
+  assert.equal(recovered.facts.finalize_names_a_job, true, 'and the job that produced the Final was found by its own reference');
+  assert.equal(recovered.facts.job_count, uninterrupted.facts.job_count);
+});
+
+test('a no-work closed resume never leaves an apparently used idempotency key unbound', async () => {
+  const app = createStudioApplication({});
+  const fixture = await readyCandidate(app);
+  const done = await app.startRun(OWNER, fixture.projectId, {
+    target_candidate_id: fixture.candidateId, confirmations: FIXTURE_CONFIRMATIONS, idempotency_key: 'start-key',
+  });
+  assert.equal(done.run.state, RUN_STATE.COMPLETED, JSON.stringify(done.run.blockers));
+
+  // A bare resume: nothing to do, nothing taken.
+  const bare = await app.resumeRun(OWNER, fixture.projectId, done.run.run_id, {});
+  assert.equal(bare.advanced, false);
+  assert.equal(bare.run.revision, done.run.revision);
+
+  // A key that is already bound is replayed, above the audit guard.
+  const started = await app.startRun(OWNER, fixture.projectId, {
+    target_candidate_id: fixture.candidateId, confirmations: FIXTURE_CONFIRMATIONS, idempotency_key: 'start-key',
+  });
+  assert.equal(started.replayed, true);
+  assert.equal(started.run.run_id, done.run.run_id);
+
+  // A NEW key on a request with no work is refused rather than looking bound:
+  // a key recorded against nothing cannot later refuse a different payload,
+  // which is the only guarantee it exists for.
+  await assert.rejects(
+    app.resumeRun(OWNER, fixture.projectId, done.run.run_id, { idempotency_key: 'unbound-key' }),
+    error => error.code === ERROR_CODES.RUN_CONFLICT
+      && error.details.reason === 'NO_WORK_TO_BIND_AN_IDEMPOTENCY_KEY'
+      && error.details.idempotency_key === 'unbound-key',
+  );
+  const after = (await app.getRun(OWNER, fixture.projectId, done.run.run_id)).run;
+  assert.equal(after.revision, done.run.revision, 'the refusal took no revision');
+  assert.equal((after.idempotency?.receipts ?? []).some(entry => entry.key === 'unbound-key'), false, 'and bound nothing');
+
+  // The capability this protects, on a run that did bind a key: the same key
+  // with a different payload is refused as a conflict, not applied. A separate
+  // project, so this run reaches review rather than inheriting one.
+  const second = await readyCandidate(app);
+  const live = await app.startRun(OWNER, second.projectId, { target_candidate_id: second.candidateId });
+  const key = { idempotency_key: 'resume-key', confirmations: FIXTURE_CONFIRMATIONS };
+  const first = await app.resumeRun(OWNER, second.projectId, live.run.run_id, key);
+  assert.ok((first.run.idempotency?.receipts ?? []).some(entry => entry.key === 'resume-key'), 'the key bound to the work it did');
+  const replay = await app.resumeRun(OWNER, second.projectId, live.run.run_id, key);
+  assert.equal(replay.replayed, true);
+  await assert.rejects(
+    app.resumeRun(OWNER, second.projectId, live.run.run_id, { idempotency_key: 'resume-key', finalize: { technical_timing_repair: true } }),
+    error => error.code === ERROR_CODES.IDEMPOTENCY_CONFLICT,
+  );
+});
+
+test('a restored legacy REPORT marker adopts the existing report that names its run', async () => {
+  await withDirectory(async directory => {
+    const app = createStudioApplication({ dataDirectory: directory, durability: 'persistent' });
+    const fixture = await readyCandidate(app);
+    const done = await app.startRun(OWNER, fixture.projectId, { target_candidate_id: fixture.candidateId, confirmations: FIXTURE_CONFIRMATIONS });
+    const report1 = done.run.report_artifact_id;
+    assert.ok(report1);
+
+    // A marker written before expectations existed, restored: the report effect
+    // landed, and the marker cannot say what it was about.
+    const records = join(directory, 'records');
+    const [name] = await readdir(records);
+    const stored = JSON.parse(await readFile(join(records, name), 'utf8'));
+    const run = stored.runs.find(entry => entry.run_id === done.run.run_id);
+    run.state = RUN_STATE.RUNNING;
+    run.report_artifact_id = null;
+    run.steps = run.steps.filter(entry => entry.step !== RUN_STEP.REPORT);
+    run.pending_step = { step: RUN_STEP.REPORT, expectation: null, idempotent: false, input_fingerprint: null, at: new Date().toISOString() };
+    await writeFile(join(records, name), JSON.stringify(stored));
+
+    const restarted = createStudioApplication({ dataDirectory: directory, durability: 'persistent' });
+    assert.equal((await restarted.getRun(OWNER, fixture.projectId, done.run.run_id)).run.pending_step.expectation, null);
+
+    // The report's own body names this run, which is an exact identity the
+    // marker never needed to carry. Both a bare resume and an explicit
+    // reconcile adopt it; neither files a second report.
+    for (const [what, payload] of [['reconcile', { reconcile: true }], ['a bare resume', {}]]) {
+      const resumed = await restarted.resumeRun(OWNER, fixture.projectId, done.run.run_id, payload);
+      assert.equal(resumed.run.state, RUN_STATE.COMPLETED, `${what}: ${JSON.stringify(resumed.run.blockers)}`);
+      assert.equal(resumed.run.report_artifact_id, report1, `${what} adopted the report this run produced`);
+      assert.equal(
+        (await restarted.getProject(OWNER, fixture.projectId)).project.artifacts.filter(entry => entry.type === 'run_report').length,
+        1,
+        `${what} filed no second report`,
+      );
+      // The second pass has no pending marker left, so it is the no-work path.
+      if (what === 'reconcile') assert.equal(receiptOf(resumed.run, RUN_STEP.REPORT).detail.expectation.recovered_from_run_identity, true);
+    }
+  });
+});

@@ -265,24 +265,44 @@ The named remedies are held to the same rule — naming an artifact or a candida
 settles *which* of a step's possible outputs it produced, and never makes a
 record the before-set cannot place after the marker into one.
 
-Three classes:
+What happens next follows from which of the four answers the record supports —
+**a missing or unusable identity is never read as "safe to replay"**:
 
-1. **stopped before the mutation** — the expectation is absent, so the step runs
-   again;
-2. **effect persisted, receipt not stored** — the expectation is found by the
-   identity above, so the effect is *adopted* and the receipt written. Nothing
-   is replayed, so no volume offset stacks and no duplicate Final is produced;
-3. **receipt stored, response not delivered** — the next call sees the step
-   complete; an idempotency-key replay returns the same run.
+1. **stopped before the mutation** → `EFFECT_ABSENT`. The record positively
+   shows nothing was added, so the step runs again. This is the only answer that
+   re-runs a step;
+2. **effect persisted, receipt not stored** → `EFFECT_FOUND`. The effect is
+   *adopted*, never replayed, so no volume offset stacks and no duplicate Final
+   is produced. An adopted effect leaves the run where the same effect with its
+   receipt would have: an adopted intake drops the candidate pointer its own
+   baseline invalidated, and an adopted Final restores the gates, the emit
+   status, the readiness summary and the finalize job **from what the Final
+   artifact and the job records already hold** — read back, not re-derived, and
+   never by running the emitter again. An artifact whose body cannot be read
+   restores nothing, and a Final that no single job claims is given no job id
+   rather than the newest one;
+3. **several records could be it** → `EFFECT_AMBIGUOUS`. The caller names one
+   (`adopt_artifact_id`, `adopt_candidate_id`), held to the same identity the
+   automatic path uses, before-set included. Naming settles *which* of a step's
+   possible outputs it produced; it never widens what may count as one;
+4. **nothing can be established** → `EFFECT_IDENTITY_UNPROVABLE`. The run
+   reports `interrupted` with `needs_reconciliation` and names the exact
+   unconfirmed step. It **replays nothing**: a marker with no usable expectation
+   is this case, not the first one, because repeating a non-idempotent step on a
+   maybe produces a second result for one attempt. A step that declared itself
+   repeatable, or a caller who has inspected the record and resumes with
+   `reconcile: true`, is what establishes absence.
 
-When neither presence nor absence can be established, the run reports
-`interrupted` with `needs_reconciliation`, names the exact unconfirmed step, and
-**refuses to replay it** until a caller resumes with `reconcile: true`. Where
-more than one record could be the effect, the caller names one
-(`adopt_artifact_id`, `adopt_candidate_id`) — and the named record is held to
-the same identity the automatic path uses, before-set included. Naming settles
-*which* of a step's possible outputs it produced; it never widens what may count
-as one.
+A **receipt stored but the response not delivered** is not an interruption of
+this kind at all: the next call sees the step complete, and an idempotency-key
+replay returns the same run.
+
+The run report is the one step with an exact identity of its own — its body
+names the run that produced it — so a pending report is settled by that identity
+even when the marker was restored without an expectation. It is adopted when one
+report names this run, reported ambiguous when several do, and left to the
+policy above when none does; a missing marker never files a second report for a
+run that already has one.
 
 Only the request carries a meter map's text — the run stores its digest — so a
 step that would ingest under a meter other than the one the run states does not

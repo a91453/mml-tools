@@ -200,6 +200,30 @@ export function createStudioApplication({
       catch { return null; }
     },
 
+    /**
+     * A stored artifact's body, for reconstructing what an effect recorded.
+     *
+     * An interrupted effect that persisted its artifact left the facts about
+     * it in the artifact: a Final carries its own emit status, its gates and
+     * its readiness summary. Reading them back is how an adopted effect ends
+     * with the same audit state as one whose receipt arrived — without running
+     * the emitter a second time. Read-only, and a missing or unreadable
+     * artifact answers null rather than failing a careful reconciliation.
+     */
+    artifactBody(owner, artifactId) {
+      try { return final.find(owner, artifactId) ?? null; }
+      catch { return null; }
+    },
+
+    /**
+     * The jobs that produced a given artifact, by the reference the job itself
+     * stored. Never "the newest job": an artifact with no uniquely identifying
+     * job is left without one rather than attributed to a guess.
+     */
+    jobsForArtifact(record, artifactId) {
+      return (record.jobs ?? []).filter(entry => entry.result_artifact_id === artifactId).map(entry => entry.job_id);
+    },
+
     async analyzeSources(owner, projectId, options = {}) {
       const { job, result } = await jobs.run(owner, projectId, JOB_TYPES.INTAKE, async () => {
         const { baseline } = await intake.run(owner, projectId, options);
