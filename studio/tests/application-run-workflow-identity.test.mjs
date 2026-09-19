@@ -33,7 +33,7 @@ import { mkdtemp, readFile, readdir, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
-import { createStudioApplication, ERROR_CODES, LIMITS, RUN_STATE, RUN_STEP, RUN_STEP_STATUS } from '../backend/application/index.mjs';
+import { createStudioApplication, ERROR_CODES, INTERNAL_PROVENANCE_KEYS, LIMITS, RECONCILIATION_REMEDY, RUN_STATE, RUN_STEP, RUN_STEP_STATUS } from '../backend/application/index.mjs';
 import {
   FIXTURE_CONFIRMATIONS, RUN_REVIEWER, canonicalProjectBytes, mobileProfile,
   projectWithSymbolicAsset, runDecisionsFor, sixRoleBaseline,
@@ -789,7 +789,18 @@ const factsFromRun = (run, report, finalizeReceipt) => ({
  * before-set, and a Final's body carries no run id — so novelty cannot separate
  * them and a reviewer must name one.
  */
-async function ambiguousFinals(directory) {
+/**
+ * A run whose own Final exists and whose automatic recovery cannot conclude.
+ *
+ * Once every filing records the attempt that produced it, two runs finalizing
+ * one candidate are no longer indistinguishable — each recovers its own. What
+ * is still unprovable is a before-set the record no longer matches: a Final
+ * that was there when the marker was written has since been removed, so the
+ * current set is neither the recorded one nor the recorded one plus exactly
+ * one. The run refuses to conclude from that, and a reviewer naming the Final
+ * this attempt actually filed is what settles it.
+ */
+async function interruptedFinalNeedingAName(directory) {
   const options = { dataDirectory: directory, durability: 'persistent' };
   const setup = createStudioApplication(options);
   const fixture = await projectWithSymbolicAsset(setup, OWNER, { project: sixRoleBaseline() });
@@ -802,30 +813,26 @@ async function ambiguousFinals(directory) {
     }]),
   ));
 
-  const concurrent = createStudioApplication(options);
-  const interrupted = createStudioApplication({
-    ...options,
-    runHooks: {
-      afterEffect: async ({ step }) => {
-        if (step !== RUN_STEP.FINALIZE) return;
-        // A SECOND RUN finalizing the same candidate under the same options.
-        // That is what genuine ambiguity is now: both Finals postdate the
-        // marker AND both answer the input this step was executing, so
-        // neither novelty nor the input binding separates them. A direct
-        // `finalize` call would not be ambiguous — it answers no step's input
-        // and is excluded rather than guessed between.
-        await concurrent.startRun(OWNER, fixture.projectId, { target_candidate_id: candidateId });
-        throw Error('the process stopped after the finalize effect');
-      },
-    },
-  });
-  const stopped = await interrupted.startRun(OWNER, fixture.projectId, { target_candidate_id: candidateId })
+  // One Final already filed, so the marker's before-set is not empty.
+  const predecessor = (await setup.finalize(OWNER, fixture.projectId, { candidateId })).artifact_id;
+  assert.ok(predecessor);
+
+  const stopped = await stopsAfter(directory, RUN_STEP.FINALIZE)
+    .startRun(OWNER, fixture.projectId, { target_candidate_id: candidateId })
     .then(() => assert.fail('the injected fault must propagate'), error => error);
   assert.match(stopped.message, /stopped after the finalize effect/);
 
+  // The predecessor is withdrawn from the record after the marker was written,
+  // so the before-set no longer describes the set the run is looking at.
+  const records = join(directory, 'records');
+  const [name] = await readdir(records);
+  const stored = JSON.parse(await readFile(join(records, name), 'utf8'));
+  stored.artifacts = stored.artifacts.filter(artifact => artifact.artifact_id !== predecessor);
+  await writeFile(join(records, name), JSON.stringify(stored));
+
   const restarted = createStudioApplication(options);
   const runId = (await restarted.getRun(OWNER, fixture.projectId)).runs[0].run_id;
-  return { ...fixture, candidateId, runId, app: restarted };
+  return { ...fixture, candidateId, runId, predecessor, app: restarted };
 }
 
 test('a reviewer-named persisted Final restores the same audit facts as automatic Final recovery', async () => {
@@ -853,16 +860,17 @@ test('a reviewer-named persisted Final restores the same audit facts as automati
     };
   });
 
-  // The named path, on a genuinely ambiguous pair.
+  // The named path, on a run whose before-set no longer describes the record.
   const named = await withDirectory(async directory => {
-    const fixture = await ambiguousFinals(directory);
+    const fixture = await interruptedFinalNeedingAName(directory);
     const { app } = fixture;
     const finals = finalsFor((await app.getProject(OWNER, fixture.projectId)).project, fixture.candidateId);
-    assert.equal(finals.length, 2, 'two indistinguishable Finals');
+    assert.equal(finals.length, 1, 'only the Final this run filed is still on record');
 
-    const ambiguous = await app.resumeRun(OWNER, fixture.projectId, fixture.runId, {});
-    assert.equal(ambiguous.run.state, RUN_STATE.INTERRUPTED);
-    assert.equal(receiptOf(ambiguous.run, RUN_STEP.FINALIZE).detail.reason, 'EFFECT_AMBIGUOUS');
+    const unprovable = await app.resumeRun(OWNER, fixture.projectId, fixture.runId, {});
+    assert.equal(unprovable.run.state, RUN_STATE.INTERRUPTED);
+    assert.equal(receiptOf(unprovable.run, RUN_STEP.FINALIZE).detail.reason, 'EFFECT_IDENTITY_UNPROVABLE');
+    assert.equal(receiptOf(unprovable.run, RUN_STEP.FINALIZE).detail.cause, 'RECORDS_REMOVED_SINCE_THE_MARKER');
 
     const chosen = finals[0];
     const resumed = await app.resumeRun(OWNER, fixture.projectId, fixture.runId, { adopt_artifact_id: chosen });
@@ -873,7 +881,7 @@ test('a reviewer-named persisted Final restores the same audit facts as automati
     assert.equal(receipt.detail.restored_from, 'final_artifact');
     const body = (await app.getArtifact(OWNER, chosen)).artifact;
     const report = (await app.getArtifact(OWNER, resumed.run.report_artifact_id)).artifact;
-    assert.equal(finalsFor((await app.getProject(OWNER, fixture.projectId)).project, fixture.candidateId).length, 2,
+    assert.equal(finalsFor((await app.getProject(OWNER, fixture.projectId)).project, fixture.candidateId).length, 1,
       'naming one emitted nothing');
     return {
       artifact: factsFromFinal(body),
@@ -1054,7 +1062,7 @@ test('a Final filed under different options is not this step\'s effect', async (
   });
 });
 
-test('naming a Final filed under different options is refused, as the automatic path refused it', async () => {
+test('naming another attempt\'s Final is refused, as the automatic path refused it', async () => {
   await withDirectory(async directory => {
     const app = createStudioApplication({ dataDirectory: directory, durability: 'persistent' });
     const fixture = await readyCandidate(app);
@@ -1075,8 +1083,9 @@ test('naming a Final filed under different options is refused, as the automatic 
     await assert.rejects(
       restarted.resumeRun(OWNER, fixture.projectId, runId, { adopt_artifact_id: other.artifact_id }),
       error => error.code === ERROR_CODES.INVALID_REQUEST
-        && error.details.reason === 'RECORD_ANSWERS_A_DIFFERENT_INPUT'
-        && error.details.expected_input_fingerprint !== error.details.artifact_input_fingerprint,
+        && error.details.reason === 'RECORD_IS_ANOTHER_ATTEMPT'
+        && error.details.artifact_effect_attempt_id === null
+        && typeof error.details.expected_effect_attempt_id === 'string',
       'naming settles which of the step\'s possible outputs it produced, never what may count as one',
     );
     assert.equal((await restarted.getRun(OWNER, fixture.projectId, runId)).run.final_artifact_id, null);
@@ -1113,7 +1122,7 @@ test('a candidate applied from a different decision set is not this step\'s effe
   });
 });
 
-test('an adopted candidate must carry the input the interrupted step was applying', async () => {
+test('an adopted candidate must carry the attempt the interrupted step was making', async () => {
   await withDirectory(async directory => {
     const app = createStudioApplication({ dataDirectory: directory, durability: 'persistent' });
     const fixture = await projectWithSymbolicAsset(app, OWNER, { project: sixRoleBaseline() });
@@ -1134,8 +1143,9 @@ test('an adopted candidate must carry the input the interrupted step was applyin
     await assert.rejects(
       restarted.resumeRun(OWNER, fixture.projectId, runId, { adopt_candidate_id: other, decisions: mine, accepted_by: RUN_REVIEWER }),
       error => error.code === ERROR_CODES.INVALID_REQUEST
-        && error.details.reason === 'RECORD_ANSWERS_A_DIFFERENT_INPUT'
-        && error.details.expected_input_fingerprint !== error.details.candidate_input_fingerprint,
+        && error.details.reason === 'RECORD_IS_ANOTHER_ATTEMPT'
+        && error.details.candidate_effect_attempt_id === null
+        && typeof error.details.expected_effect_attempt_id === 'string',
     );
     assert.equal((await restarted.getRun(OWNER, fixture.projectId, runId)).run.candidate_id, null, 'nothing was adopted');
   });
@@ -1191,13 +1201,13 @@ test('the reviewer a run names is part of the decision step\'s input, at every s
 
 test('settling an interrupted step clears the reconciliation it settled, and nothing else', async () => {
   await withDirectory(async directory => {
-    const fixture = await ambiguousFinals(directory);
+    const fixture = await interruptedFinalNeedingAName(directory);
     const { app } = fixture;
 
-    const ambiguous = await app.resumeRun(OWNER, fixture.projectId, fixture.runId, {});
-    assert.equal(ambiguous.run.state, RUN_STATE.INTERRUPTED);
-    assert.deepEqual(ambiguous.run.blockers, [ERROR_CODES.RUN_RECONCILIATION_REQUIRED]);
-    assert.deepEqual(ambiguous.run.review_requests.map(entry => entry.code), ['RECONCILIATION_REQUIRED']);
+    const halted = await app.resumeRun(OWNER, fixture.projectId, fixture.runId, {});
+    assert.equal(halted.run.state, RUN_STATE.INTERRUPTED);
+    assert.deepEqual(halted.run.blockers, [ERROR_CODES.RUN_RECONCILIATION_REQUIRED]);
+    assert.deepEqual(halted.run.review_requests.map(entry => entry.code), ['RECONCILIATION_REQUIRED']);
 
     // Naming the Final answers the very question the halt asked, so the halt,
     // the blocker naming it and the request asking for it stop describing
@@ -1259,7 +1269,7 @@ test('a step whose effect is shown absent stops the run asking for a reconciliat
   });
 });
 
-test('a record written before bindings existed is unprovable automatically and still nameable', async () => {
+test('a record written before attempt ids existed is unprovable, and naming it is refused too', async () => {
   await withDirectory(async directory => {
     const app = createStudioApplication({ dataDirectory: directory, durability: 'persistent' });
     const fixture = await projectWithSymbolicAsset(app, OWNER, { project: sixRoleBaseline() });
@@ -1270,14 +1280,15 @@ test('a record written before bindings existed is unprovable automatically and s
       .then(() => assert.fail('the injected fault must propagate'), error => error);
     assert.match(stopped.message, /stopped after the apply_decisions effect/);
 
-    // The effect landed and its binding did not: the one state a same-write
-    // binding cannot reach, and therefore the one a restored record can.
+    // The effect landed and the attempt it belongs to did not: the one state a
+    // same-write attempt id cannot reach, and therefore the one a restored
+    // record can.
     const records = join(directory, 'records');
     const [name] = await readdir(records);
     const stored = JSON.parse(await readFile(join(records, name), 'utf8'));
     const runId = stored.runs[0].run_id;
     const candidateId = stored.candidates[0].candidate_id;
-    delete stored.candidates[0].input_fingerprint;
+    delete stored.candidates[0].effect_attempt_id;
     await writeFile(join(records, name), JSON.stringify(stored));
 
     // Not "absent": replaying would apply the decisions a second time. Not
@@ -1286,19 +1297,27 @@ test('a record written before bindings existed is unprovable automatically and s
     const halted = await restarted.resumeRun(OWNER, fixture.projectId, runId, { decisions, accepted_by: RUN_REVIEWER });
     assert.equal(halted.run.state, RUN_STATE.INTERRUPTED);
     assert.equal(receiptOf(halted.run, RUN_STEP.APPLY_DECISIONS).detail.reason, 'EFFECT_IDENTITY_UNPROVABLE');
-    assert.equal(receiptOf(halted.run, RUN_STEP.APPLY_DECISIONS).detail.cause, 'EFFECT_INPUT_BINDING_NOT_RECORDED');
+    assert.equal(receiptOf(halted.run, RUN_STEP.APPLY_DECISIONS).detail.cause, 'EFFECT_ATTEMPT_NOT_RECORDED');
     assert.equal(halted.run.candidate_id, null);
     assert.equal((await restarted.getProject(OWNER, fixture.projectId)).project.candidates.length, 1, 'and nothing was applied again');
 
-    // The advertised remedy executes: the reviewer says which of the records
-    // the automatic path could not exclude this step produced.
-    const settled = await restarted.resumeRun(OWNER, fixture.projectId, runId, {
-      adopt_candidate_id: candidateId, decisions, accepted_by: RUN_REVIEWER, confirmations: FIXTURE_CONFIRMATIONS,
-    });
-    assert.equal(settled.run.candidate_id, candidateId);
-    assert.equal(settled.run.state, RUN_STATE.COMPLETED, JSON.stringify(settled.run.blockers));
-    assert.ok(!settled.run.blockers.includes(ERROR_CODES.RUN_RECONCILIATION_REQUIRED));
-    assert.equal((await restarted.getProject(OWNER, fixture.projectId)).project.candidates.length, 1);
+    // Naming it is refused for the same reason the automatic path refused it: a
+    // reviewer reading an opaque record knows no more about which attempt
+    // produced it than the service does, and `EFFECT_NAMED_BY_REVIEWER` is
+    // read downstream as a settled effect rather than as someone's belief.
+    await assert.rejects(
+      restarted.resumeRun(OWNER, fixture.projectId, runId, {
+        adopt_candidate_id: candidateId, decisions, accepted_by: RUN_REVIEWER,
+      }),
+      error => error.code === ERROR_CODES.INVALID_REQUEST && error.details.reason === 'EFFECT_ATTEMPT_NOT_RECORDED',
+    );
+
+    // And the run says so rather than advertising an operation that refuses.
+    const request = halted.run.review_requests.find(entry => entry.code === 'RECONCILIATION_REQUIRED');
+    assert.deepEqual(request.available_operations, ['getProject', 'getRun', 'startRun']);
+    assert.deepEqual(request.detail.remedy, { reconcile: false, adopt: false });
+    assert.match(request.missing.join(' '), /Neither naming a record nor reconcile: true can settle this cause/);
+    assert.equal((await restarted.getProject(OWNER, fixture.projectId)).project.candidates.length, 1, 'nothing was applied again');
   });
 });
 
@@ -1394,5 +1413,270 @@ test('a recovered Final states what it carries, over the blockers the interrupte
     const body = (await restarted.getArtifact(OWNER, resumed.run.final_artifact_id)).artifact;
     assert.deepEqual(resumed.run.blockers, [...body.readiness_summary.pre_game_blocking]);
     assert.deepEqual(resumed.run.readiness_blockers, [...body.readiness_summary.pre_game_blocking]);
+  });
+});
+
+// ─── 9. an attempt, not a description of one ────────────────────────────────
+//
+// A digest of a step's arguments describes what the step was ASKED to do. It
+// cannot describe what the operation READ: `finalize` grades the candidate's
+// review state at the moment it emits — the confirmations, the player readback
+// and its MML binding, the Core3 approvals, the Lead evidence, the audio
+// alignment — none of which is an argument of the step. So each mutating
+// effect is given an opaque attempt id instead, minted before the effect and
+// written beside the record it produced, and recovery matches on that.
+
+const RECONCILIATION_INSPECTION = ['getProject', 'getRun', 'getArtifact', 'startRun'];
+
+test('a Final emitted under review state this run never saw is not its effect', async () => {
+  await withDirectory(async directory => {
+    const options = { dataDirectory: directory, durability: 'persistent' };
+    const app = createStudioApplication(options);
+    const fixture = await readyCandidate(app);
+    const { candidateId } = fixture;
+    await app.recordConfirmations(OWNER, fixture.projectId, Object.fromEntries(
+      Object.entries(FIXTURE_CONFIRMATIONS).map(([name, value]) => [name, {
+        ...value, ...(['source_complete', 'original_audio_required'].includes(name) ? {} : { candidate_id: candidateId }),
+      }]),
+    ));
+
+    // A known Final, so the exact MML a reviewer could read back is known.
+    const probe = await app.finalize(OWNER, fixture.projectId, { candidateId });
+    assert.equal(probe.player_readback_binding.recorded, 'N/A');
+    const readBackSha = createHash('sha256').update(probe.mml, 'utf8').digest('hex');
+
+    // Run A reviews this candidate while the readback is N/A, and stops before
+    // its own finalize effect runs.
+    const stopped = await stopsBefore(directory, RUN_STEP.FINALIZE)
+      .startRun(OWNER, fixture.projectId, { target_candidate_id: candidateId })
+      .then(() => assert.fail('the injected fault must propagate'), error => error);
+    assert.match(stopped.message, /stopped before the finalize effect/);
+    const restarted = createStudioApplication(options);
+    const runA = (await restarted.getRun(OWNER, fixture.projectId)).runs[0].run_id;
+    const marker = (await restarted.getRun(OWNER, fixture.projectId, runA)).run.pending_step;
+    assert.equal(receiptOf((await restarted.getRun(OWNER, fixture.projectId, runA)).run, RUN_STEP.REVIEW).detail.gates.player_readback, 'N/A');
+
+    // The reviewer now records a PASS readback naming that exact MML, and a
+    // second run finalizes the same candidate under the SAME options. Its
+    // Final is graded under evidence run A never reviewed.
+    await restarted.recordConfirmations(OWNER, fixture.projectId, {
+      player_readback: { value: 'PASS', reason: 'Read back in a player.', mml_sha256: readBackSha, candidate_id: candidateId },
+    });
+    const runB = await restarted.startRun(OWNER, fixture.projectId, { target_candidate_id: candidateId });
+    assert.equal(runB.run.state, RUN_STATE.COMPLETED, JSON.stringify(runB.run.blockers));
+    const project = (await restarted.getProject(OWNER, fixture.projectId)).project;
+    const bEntry = project.artifacts.find(entry => entry.artifact_id === runB.run.final_artifact_id);
+    assert.equal(bEntry.input_fingerprint, marker.input_fingerprint,
+      'the two steps state identical inputs: a digest of the arguments cannot separate them');
+    assert.notEqual(bEntry.effect_attempt_id, marker.effect_attempt_id, 'the attempt that produced it can');
+    assert.equal((await restarted.getArtifact(OWNER, runB.run.final_artifact_id)).artifact.gates.player_readback, 'PASS');
+
+    // So run A does not adopt it. Its own effect is shown absent and the step
+    // runs, rather than the run reporting a gate it never established.
+    const resumed = await restarted.resumeRun(OWNER, fixture.projectId, runA, {});
+    assert.equal(resumed.run.state, RUN_STATE.COMPLETED, JSON.stringify(resumed.run.blockers));
+    assert.notEqual(resumed.run.final_artifact_id, runB.run.final_artifact_id);
+    assert.equal(receiptOf(resumed.run, RUN_STEP.FINALIZE).status, RUN_STEP_STATUS.COMPLETED,
+      'the step ran: its own attempt positively left nothing');
+    // A re-run is a new attempt, so what it files carries a new id — never the
+    // abandoned marker's, and never the other run's.
+    const mine = (await restarted.getProject(OWNER, fixture.projectId)).project.artifacts
+      .find(entry => entry.artifact_id === resumed.run.final_artifact_id);
+    assert.match(mine.effect_attempt_id, /^eff_[0-9a-f]{32}$/);
+    assert.notEqual(mine.effect_attempt_id, bEntry.effect_attempt_id);
+    assert.notEqual(mine.effect_attempt_id, marker.effect_attempt_id, 'the abandoned attempt is not reused');
+  });
+});
+
+test('naming another attempt\'s Final is refused however identical its stated options', async () => {
+  await withDirectory(async directory => {
+    const options = { dataDirectory: directory, durability: 'persistent' };
+    const app = createStudioApplication(options);
+    const fixture = await readyCandidate(app);
+    await app.recordConfirmations(OWNER, fixture.projectId, Object.fromEntries(
+      Object.entries(FIXTURE_CONFIRMATIONS).map(([name, value]) => [name, {
+        ...value, ...(['source_complete', 'original_audio_required'].includes(name) ? {} : { candidate_id: fixture.candidateId }),
+      }]),
+    ));
+    const stopped = await stopsBefore(directory, RUN_STEP.FINALIZE)
+      .startRun(OWNER, fixture.projectId, { target_candidate_id: fixture.candidateId })
+      .then(() => assert.fail('the injected fault must propagate'), error => error);
+    assert.match(stopped.message, /stopped before the finalize effect/);
+
+    const restarted = createStudioApplication(options);
+    const runA = (await restarted.getRun(OWNER, fixture.projectId)).runs[0].run_id;
+    const runB = await restarted.startRun(OWNER, fixture.projectId, { target_candidate_id: fixture.candidateId });
+    assert.ok(runB.run.final_artifact_id);
+
+    await assert.rejects(
+      restarted.resumeRun(OWNER, fixture.projectId, runA, { adopt_artifact_id: runB.run.final_artifact_id }),
+      error => error.code === ERROR_CODES.INVALID_REQUEST && error.details.reason === 'RECORD_IS_ANOTHER_ATTEMPT',
+    );
+    assert.equal((await restarted.getRun(OWNER, fixture.projectId, runA)).run.final_artifact_id, null);
+  });
+});
+
+test('every operation an unprovable interruption advertises can be executed for that cause', async () => {
+  // `reconcile` is honoured for exactly one cause, and the table says which.
+  assert.deepEqual(
+    Object.entries(RECONCILIATION_REMEDY).filter(([, remedy]) => remedy.reconcile).map(([cause]) => cause),
+    ['NO_EXPECTATION_RECORDED'],
+  );
+
+  const causes = new Map();
+  const capture = run => {
+    const request = run.review_requests.find(entry => entry.code === 'RECONCILIATION_REQUIRED');
+    const receipt = run.steps.find(entry => entry.status === RUN_STEP_STATUS.UNCONFIRMED);
+    assert.ok(request && receipt, 'an unprovable interruption files a request naming its cause');
+    causes.set(receipt.detail.cause, request);
+    return request;
+  };
+
+  // (a) no expectation recorded → `reconcile: true`, and it executes.
+  await withDirectory(async directory => {
+    const app = createStudioApplication({ dataDirectory: directory, durability: 'persistent' });
+    const fixture = await readyCandidate(app);
+    const stopped = await stopsBefore(directory, RUN_STEP.FINALIZE)
+      .startRun(OWNER, fixture.projectId, { target_candidate_id: fixture.candidateId, confirmations: FIXTURE_CONFIRMATIONS })
+      .then(() => assert.fail('the injected fault must propagate'), error => error);
+    assert.match(stopped.message, /stopped before the finalize effect/);
+    const records = join(directory, 'records');
+    const [name] = await readdir(records);
+    const stored = JSON.parse(await readFile(join(records, name), 'utf8'));
+    const runId = stored.runs[0].run_id;
+    stored.runs[0].pending_step = { ...stored.runs[0].pending_step, expectation: null };
+    await writeFile(join(records, name), JSON.stringify(stored));
+
+    const restarted = createStudioApplication({ dataDirectory: directory, durability: 'persistent' });
+    const request = capture((await restarted.resumeRun(OWNER, fixture.projectId, runId, {})).run);
+    assert.ok(request.available_operations.includes('resumeRun (reconcile)'));
+    assert.ok(!request.available_operations.some(operation => operation.startsWith('resumeRun.adopt')));
+    const settled = await restarted.resumeRun(OWNER, fixture.projectId, runId, { reconcile: true });
+    assert.equal(settled.run.state, RUN_STATE.COMPLETED, JSON.stringify(settled.run.blockers));
+  });
+
+  // (b) a record that names no attempt → nothing to execute, and it says so.
+  await withDirectory(async directory => {
+    const app = createStudioApplication({ dataDirectory: directory, durability: 'persistent' });
+    const fixture = await projectWithSymbolicAsset(app, OWNER, { project: sixRoleBaseline() });
+    await app.analyzeSources(OWNER, fixture.projectId, { assetIds: [fixture.assetId] });
+    const decisions = runDecisionsFor(fixture.project);
+    const stopped = await stopsAfter(directory, RUN_STEP.APPLY_DECISIONS)
+      .startRun(OWNER, fixture.projectId, { asset_ids: [fixture.assetId], decisions, accepted_by: RUN_REVIEWER })
+      .then(() => assert.fail('the injected fault must propagate'), error => error);
+    assert.match(stopped.message, /stopped after the apply_decisions effect/);
+    const records = join(directory, 'records');
+    const [name] = await readdir(records);
+    const stored = JSON.parse(await readFile(join(records, name), 'utf8'));
+    const runId = stored.runs[0].run_id;
+    const candidateId = stored.candidates[0].candidate_id;
+    delete stored.candidates[0].effect_attempt_id;
+    await writeFile(join(records, name), JSON.stringify(stored));
+
+    const restarted = createStudioApplication({ dataDirectory: directory, durability: 'persistent' });
+    const request = capture((await restarted.resumeRun(OWNER, fixture.projectId, runId, { decisions, accepted_by: RUN_REVIEWER })).run);
+    assert.deepEqual(request.available_operations, ['getProject', 'getRun', 'startRun']);
+    // And both operations it does NOT advertise really do refuse.
+    await assert.rejects(restarted.resumeRun(OWNER, fixture.projectId, runId, { adopt_candidate_id: candidateId, decisions, accepted_by: RUN_REVIEWER }));
+    const stillStuck = await restarted.resumeRun(OWNER, fixture.projectId, runId, { reconcile: true, decisions, accepted_by: RUN_REVIEWER });
+    assert.equal(stillStuck.run.state, RUN_STATE.INTERRUPTED, 'reconcile: true is not advertised because it does not settle this');
+  });
+
+  // (c) a before-set the record no longer matches → naming, and it executes.
+  await withDirectory(async directory => {
+    const fixture = await interruptedFinalNeedingAName(directory);
+    const request = capture((await fixture.app.resumeRun(OWNER, fixture.projectId, fixture.runId, {})).run);
+    assert.ok(request.available_operations.includes('resumeRun.adopt_artifact_id'));
+    assert.ok(!request.available_operations.includes('resumeRun (reconcile)'));
+    const mine = finalsFor((await fixture.app.getProject(OWNER, fixture.projectId)).project, fixture.candidateId)[0];
+    const settled = await fixture.app.resumeRun(OWNER, fixture.projectId, fixture.runId, { adopt_artifact_id: mine });
+    assert.equal(settled.run.state, RUN_STATE.COMPLETED, JSON.stringify(settled.run.blockers));
+    assert.equal(settled.run.final_artifact_id, mine);
+  });
+
+  // (d) a stored Final whose body is gone → nothing to execute.
+  await withDirectory(async directory => {
+    const app = createStudioApplication({ dataDirectory: directory, durability: 'persistent' });
+    const fixture = await readyCandidate(app);
+    const stopped = await stopsAfter(directory, RUN_STEP.FINALIZE)
+      .startRun(OWNER, fixture.projectId, { target_candidate_id: fixture.candidateId, confirmations: FIXTURE_CONFIRMATIONS })
+      .then(() => assert.fail('the injected fault must propagate'), error => error);
+    assert.match(stopped.message, /stopped after the finalize effect/);
+    const restarted = createStudioApplication({ dataDirectory: directory, durability: 'persistent' });
+    const runId = (await restarted.getRun(OWNER, fixture.projectId)).runs[0].run_id;
+    const finals = finalsFor((await restarted.getProject(OWNER, fixture.projectId)).project, fixture.candidateId);
+    await rm(join(directory, 'blobs', `${createHash('sha256').update(`artifact:${fixture.projectId}:${finals[0]}`).digest('hex')}.bin`));
+    const request = capture((await restarted.resumeRun(OWNER, fixture.projectId, runId, {})).run);
+    assert.deepEqual(request.available_operations, ['getProject', 'getRun', 'getArtifact', 'startRun']);
+  });
+
+  // Whatever the cause, every advertised operation is one this build honours
+  // for it, or a read-only way to look at the damage.
+  assert.deepEqual([...causes.keys()].sort(),
+    ['EFFECT_ATTEMPT_NOT_RECORDED', 'FINAL_ARTIFACT_BODY_UNREADABLE', 'NO_EXPECTATION_RECORDED', 'RECORDS_REMOVED_SINCE_THE_MARKER']);
+  for (const [cause, request] of causes) {
+    const remedy = RECONCILIATION_REMEDY[cause];
+    assert.ok(remedy, `${cause} is in the remedy table`);
+    for (const operation of request.available_operations) {
+      const executable = (remedy.reconcile && operation === 'resumeRun (reconcile)')
+        || (remedy.name && operation.startsWith('resumeRun.adopt'));
+      assert.ok(executable || RECONCILIATION_INSPECTION.includes(operation),
+        `${cause} advertises ${operation}, which it neither honours nor offers as inspection`);
+    }
+    assert.deepEqual(request.detail.remedy, { reconcile: remedy.reconcile === true, adopt: remedy.name === true });
+  }
+});
+
+test('a caller cannot forge the run\'s own provenance through the public operations', async () => {
+  await withDirectory(async directory => {
+    const options = { dataDirectory: directory, durability: 'persistent' };
+    const app = createStudioApplication(options);
+    const fixture = await projectWithSymbolicAsset(app, OWNER, { project: sixRoleBaseline() });
+    await app.analyzeSources(OWNER, fixture.projectId, { assetIds: [fixture.assetId] });
+    const decisions = runDecisionsFor(fixture.project);
+
+    // A run is interrupted with a real attempt id on its marker.
+    const stopped = await stopsBefore(directory, RUN_STEP.APPLY_DECISIONS)
+      .startRun(OWNER, fixture.projectId, { asset_ids: [fixture.assetId], decisions, accepted_by: RUN_REVIEWER })
+      .then(() => assert.fail('the injected fault must propagate'), error => error);
+    assert.match(stopped.message, /stopped before the apply_decisions effect/);
+    const restarted = createStudioApplication(options);
+    const runId = (await restarted.getRun(OWNER, fixture.projectId)).runs[0].run_id;
+    const marker = (await restarted.getRun(OWNER, fixture.projectId, runId)).run.pending_step;
+    assert.match(marker.effect_attempt_id, /^eff_[0-9a-f]{32}$/);
+
+    // A caller applies a decision set through the PUBLIC operation, claiming
+    // that exact attempt. This is not an HTTP request: it is the Application
+    // Service's own method, called directly.
+    const forged = await restarted.applyDecisions(OWNER, fixture.projectId, {
+      decisions: runDecisionsFor(fixture.project, { exclude: ['Chord3'] }),
+      inputFingerprint: marker.input_fingerprint,
+      effectAttemptId: marker.effect_attempt_id,
+    });
+    const entry = (await restarted.getProject(OWNER, fixture.projectId)).project.candidates
+      .find(candidate => candidate.candidate_id === forged.decisions.candidate_id);
+    for (const key of INTERNAL_PROVENANCE_KEYS) assert.ok(key === 'inputFingerprint' || key === 'effectAttemptId');
+    assert.equal(entry.input_fingerprint, null, 'the public surface supplies no input fingerprint');
+    assert.equal(entry.effect_attempt_id, null, 'and no attempt id');
+
+    // So the claim buys nothing: the run still finds nothing of its own, and
+    // naming the forged candidate is refused.
+    const resumed = await restarted.resumeRun(OWNER, fixture.projectId, runId, { decisions, accepted_by: RUN_REVIEWER });
+    assert.notEqual(resumed.run.candidate_id, forged.decisions.candidate_id, 'the forged candidate is not this attempt\'s effect');
+    const applied = (await restarted.getProject(OWNER, fixture.projectId)).project.candidates
+      .find(candidate => candidate.candidate_id === resumed.run.candidate_id);
+    assert.match(applied.effect_attempt_id, /^eff_[0-9a-f]{32}$/, 'the run applied, and recorded, an attempt of its own');
+    assert.notEqual(applied.effect_attempt_id, entry.effect_attempt_id);
+
+    // The same holds for the Final path.
+    const finalized = await restarted.finalize(OWNER, fixture.projectId, {
+      candidateId: resumed.run.candidate_id, effectAttemptId: marker.effect_attempt_id, inputFingerprint: 'forged',
+    });
+    if (finalized.artifact_id) {
+      const artifact = (await restarted.getProject(OWNER, fixture.projectId)).project.artifacts
+        .find(item => item.artifact_id === finalized.artifact_id);
+      assert.equal(artifact.effect_attempt_id, null);
+      assert.equal(artifact.input_fingerprint, null);
+    }
   });
 });

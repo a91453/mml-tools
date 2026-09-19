@@ -75,6 +75,7 @@ import {
   GATE_NOTICE,
   GATE_STATUS,
   IDENTITY_MODEL,
+  INTERNAL_PROVENANCE_KEYS,
   JOB_STATUS,
   JOB_TYPES,
   LIMITS,
@@ -89,6 +90,7 @@ import {
   isJobId,
   isProjectId,
   isRunId,
+  withoutInternalProvenance,
 } from './contracts.mjs';
 import { createCanonicalGate } from './provenance.mjs';
 import { createStore } from './store.mjs';
@@ -173,6 +175,22 @@ export function createStudioApplication({
 
   // One implementation per operation, reached two ways.
   //
+  /**
+   * One operation input as it arrives from OUTSIDE this service.
+   *
+   * The run records which attempt at which step produced a stored record, and
+   * reconciliation adopts an interrupted step's effect on the strength of it.
+   * A caller who could set those fields could make any record claim to be an
+   * interrupted step's effect -- which is the one thing this whole mechanism
+   * exists to refuse. The transports already build their own call shapes from
+   * named request fields, so nothing reaches here over HTTP or MCP; this is
+   * the boundary itself rather than a property of how the transports happen to
+   * be written today, and it holds for a direct in-process caller too.
+   *
+   * The run does not go through it: `internal` IS the run-only path.
+   */
+  const publicInput = input => withoutInternalProvenance(input);
+
   // `internal` holds the body of every operation the run orchestrator composes.
   // The public method below is that body plus the per-project lock and the
   // provenance envelope; the orchestrator calls the body directly and takes the
@@ -392,7 +410,7 @@ export function createStudioApplication({
     },
 
     async applyDecisions(owner, projectId, input) {
-      return mutate(projectId, async () => envelope(await internal.applyDecisions(owner, projectId, input)));
+      return mutate(projectId, async () => envelope(await internal.applyDecisions(owner, projectId, publicInput(input))));
     },
 
     async approveCore3SourceChange(owner, projectId, input) {
@@ -411,7 +429,7 @@ export function createStudioApplication({
      * no candidate is minted, whatever the plan says.
      */
     async planFinalReduction(owner, projectId, input) {
-      return envelope(await internal.planFinalReduction(owner, projectId, input));
+      return envelope(await internal.planFinalReduction(owner, projectId, publicInput(input)));
     },
 
     /**
@@ -423,15 +441,15 @@ export function createStudioApplication({
      * review says otherwise.
      */
     async applyFinalReduction(owner, projectId, input) {
-      return mutate(projectId, async () => envelope(await internal.applyFinalReduction(owner, projectId, input)));
+      return mutate(projectId, async () => envelope(await internal.applyFinalReduction(owner, projectId, publicInput(input))));
     },
 
     async planMobileAdaptation(owner, projectId, input) {
-      return envelope(await internal.planMobileAdaptation(owner, projectId, input));
+      return envelope(await internal.planMobileAdaptation(owner, projectId, publicInput(input)));
     },
 
     async applyMobileAdaptation(owner, projectId, input) {
-      return mutate(projectId, async () => envelope(await internal.applyMobileAdaptation(owner, projectId, input)));
+      return mutate(projectId, async () => envelope(await internal.applyMobileAdaptation(owner, projectId, publicInput(input))));
     },
 
     /**
@@ -463,7 +481,7 @@ export function createStudioApplication({
      * record as well as from the result.
      */
     async finalize(owner, projectId, input) {
-      return mutate(projectId, async () => envelope(await internal.finalize(owner, projectId, input)));
+      return mutate(projectId, async () => envelope(await internal.finalize(owner, projectId, publicInput(input))));
     },
 
     // ── runs ────────────────────────────────────────────────────────────────
@@ -595,5 +613,6 @@ export {
   RUN_STEP_ORDER,
   RUN_STEP_STATUS,
 } from './run-contracts.mjs';
-export { PLAN_INPUT_KEYS, RESUME_INPUT_KEYS, START_INPUT_KEYS } from './run-service.mjs';
+export { PLAN_INPUT_KEYS, RECONCILIATION_REMEDY, RESUME_INPUT_KEYS, START_INPUT_KEYS } from './run-service.mjs';
+export { INTERNAL_PROVENANCE_KEYS } from './contracts.mjs';
 export { ACCEPTED_MEDIA_TYPES } from './asset-service.mjs';

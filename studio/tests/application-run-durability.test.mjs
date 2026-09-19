@@ -466,7 +466,7 @@ test('an unconfirmable step is reported as interrupted and is never replayed on 
   });
 });
 
-test('an interrupted decision step recovers the candidate its own input produced, not another caller\'s', async () => {
+test('an interrupted decision step recovers the candidate its own attempt produced, not another caller\'s', async () => {
   await withDirectory(async directory => {
     const app = createStudioApplication({ dataDirectory: directory, durability: 'persistent' });
     const fixture = await projectWithSymbolicAsset(app, OWNER, { project: sixRoleBaseline() });
@@ -508,7 +508,7 @@ test('an interrupted decision step recovers the candidate its own input produced
     const artifact = (await restarted.getArtifact(OWNER, settled.run.final_artifact_id)).artifact;
     assert.equal(artifact.candidate_id, mine, 'the Final names the candidate this run applied, not the other one');
 
-    // Naming the other caller's candidate is refused for the same reason, so
+    // Naming another attempt's candidate is refused for the same reason, so
     // the reviewer path cannot conclude what the automatic one excluded.
     const second = createStudioApplication({
       dataDirectory: directory,
@@ -531,7 +531,7 @@ test('an interrupted decision step recovers the candidate its own input produced
     const refused = await third.resumeRun(OWNER, fixture.projectId, secondRunId, { adopt_candidate_id: fourth })
       .then(() => assert.fail('a candidate applied from another input must not be adoptable'), problem => problem);
     assert.equal(refused.code, 'INVALID_REQUEST');
-    assert.match(refused.message, /not the one this step was executing/);
+    assert.match(refused.message, /not this step's attempt/);
   });
 });
 

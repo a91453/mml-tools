@@ -385,7 +385,7 @@ test('an interrupted run report is identified by the run it names, not by anothe
   });
 });
 
-test('a genuinely ambiguous artifact is reconcilable by naming one, and not otherwise', async () => {
+test('two Finals for one candidate are told apart by the attempt that produced each', async () => {
   await withDirectory(async directory => {
     const options = { dataDirectory: directory, durability: 'persistent' };
     const setup = createStudioApplication(options);
@@ -396,19 +396,20 @@ test('a genuinely ambiguous artifact is reconcilable by naming one, and not othe
       Object.entries(FIXTURE_CONFIRMATIONS).map(([name, value]) => [name, { ...value, ...(['source_complete', 'original_audio_required'].includes(name) ? {} : { candidate_id: candidateId }) }]),
     ));
 
-    // Two Finals appear for this candidate while the receipt is lost: this
-    // run's, and one a second RUN filed under the same options during the
-    // interruption. Neither is in the before-set, a Final's body carries no run
-    // id, and both answer the very input this step was executing — so neither
-    // novelty nor the input binding separates them. That is a real "cannot
-    // tell", and it must be solvable.
+    // Two Finals appear for this candidate while a receipt is lost: this run's,
+    // and one a second RUN filed under the same options during the
+    // interruption. Neither is in the before-set, a Final's body names no run,
+    // and every explicit input of the two steps is identical — so nothing about
+    // what the step was ASKED to do separates them. What does is that each
+    // filing recorded the attempt that produced it.
     const concurrent = createStudioApplication(options);
+    let other = null;
     const interrupted = createStudioApplication({
       ...options,
       runHooks: {
         afterEffect: async ({ step }) => {
           if (step !== RUN_STEP.FINALIZE) return;
-          await concurrent.startRun(OWNER, fixture.projectId, { target_candidate_id: candidateId });
+          other = (await concurrent.startRun(OWNER, fixture.projectId, { target_candidate_id: candidateId })).run;
           throw Error('the process stopped after the effect');
         },
       },
@@ -418,38 +419,23 @@ test('a genuinely ambiguous artifact is reconcilable by naming one, and not othe
     assert.match(error.message, /stopped after the effect/);
 
     const restarted = createStudioApplication(options);
-    const runId = (await restarted.getRun(OWNER, fixture.projectId)).runs[0].run_id;
+    const runId = (await restarted.getRun(OWNER, fixture.projectId)).runs.find(entry => entry.run_id !== other.run_id).run_id;
     const finals = finalsFor((await restarted.getProject(OWNER, fixture.projectId)).project, candidateId);
-    assert.equal(finals.length, 2, 'two indistinguishable Finals');
+    assert.equal(finals.length, 2, 'two Finals, neither naming a run');
+    assert.ok(other.final_artifact_id);
 
-    // The run refuses to pick, names both, and offers the remedy that can
-    // actually resolve an artifact — not the candidate one.
-    const ambiguous = await restarted.resumeRun(OWNER, fixture.projectId, runId, {});
-    assert.equal(ambiguous.run.state, RUN_STATE.INTERRUPTED);
-    assert.equal(ambiguous.run.needs_reconciliation, true);
-    assert.equal(receiptOf(ambiguous.run, RUN_STEP.FINALIZE).detail.reason, 'EFFECT_AMBIGUOUS');
-    assert.equal(ambiguous.run.final_artifact_id, null);
-    const request = requestFor(ambiguous.run, 'RECONCILIATION_REQUIRED');
-    assert.deepEqual([...request.detail.matches].sort(), [...finals].sort());
-    assert.ok(request.available_operations.includes('resumeRun.adopt_artifact_id'));
-    assert.ok(!request.available_operations.includes('resumeRun.adopt_candidate_id'), 'the candidate remedy cannot resolve an artifact');
-    assert.match(request.missing.join(' '), /adopt_artifact_id/);
-
-    // `reconcile: true` does not resolve it: the open question is which one.
-    const still = await restarted.resumeRun(OWNER, fixture.projectId, runId, { reconcile: true });
-    assert.equal(still.run.state, RUN_STATE.INTERRUPTED);
-    assert.equal(still.run.final_artifact_id, null);
-
-    // Naming one settles it, after its type and candidate are verified, and the
-    // run finishes on the artifact the reviewer named.
-    const chosen = finals[0];
-    const settled = await restarted.resumeRun(OWNER, fixture.projectId, runId, { adopt_artifact_id: chosen });
-    assert.equal(settled.run.needs_reconciliation, false);
-    assert.equal(settled.run.final_artifact_id, chosen);
-    assert.equal(receiptOf(settled.run, RUN_STEP.FINALIZE).detail.reason, 'EFFECT_NAMED_BY_REVIEWER');
-    assert.equal(settled.run.state, RUN_STATE.COMPLETED, JSON.stringify(settled.run.blockers));
-    const report = (await restarted.getArtifact(OWNER, settled.run.report_artifact_id)).artifact;
-    assert.equal(report.final_artifact_id, chosen, 'the report names the Final the run adopted');
-    assert.equal(finalsFor((await restarted.getProject(OWNER, fixture.projectId)).project, candidateId).length, 2, 'nothing was replayed');
+    // No guess, and no "which one did you mean": the interrupted run recovers
+    // the Final ITS attempt filed, and the other run keeps its own.
+    const resumed = await restarted.resumeRun(OWNER, fixture.projectId, runId, {});
+    assert.equal(resumed.run.state, RUN_STATE.COMPLETED, JSON.stringify(resumed.run.blockers));
+    assert.equal(receiptOf(resumed.run, RUN_STEP.FINALIZE).detail.reason, 'EFFECT_FOUND_BY_STORED_IDENTITY');
+    assert.notEqual(resumed.run.final_artifact_id, other.final_artifact_id, 'the other run\'s Final is not this one\'s effect');
+    assert.ok(finals.includes(resumed.run.final_artifact_id));
+    assert.equal(
+      finalsFor((await restarted.getProject(OWNER, fixture.projectId)).project, candidateId).length, 2,
+      'and nothing was replayed',
+    );
+    const report = (await restarted.getArtifact(OWNER, resumed.run.report_artifact_id)).artifact;
+    assert.equal(report.final_artifact_id, resumed.run.final_artifact_id, 'the report names the Final this run produced');
   });
 });

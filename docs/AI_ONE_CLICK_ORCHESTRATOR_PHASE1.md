@@ -240,30 +240,44 @@ and neither implies the other:
 | Proof | What it establishes | What it cannot establish |
 | --- | --- | --- |
 | **before-set** | the record **postdates the marker** — it was not already there when the effect was attempted | *whose* effect it is. Any concurrent writer satisfies novelty: another run's step, or a direct call on the same project |
-| **effect input binding** | the record **answers the input this step was executing** — the service that performed the effect recorded, beside the record and in the same record write, the fingerprint of the input it was applying | *when* it was produced. An identical earlier attempt answers the same input and predates the marker |
+| **effect attempt** | the record **is what this attempt produced** — before each mutating effect the run mints an opaque attempt id and stores it on the marker, and the service that performs the effect writes the same id beside the record it produced | *when* it was produced. An earlier attempt of the same step carries its own id and predates this marker |
 
 A record is adopted only when **both** hold, on the automatic path and on the
-named one alike. A record that provably answers a different input is not a
-weaker match but somebody else's effect, so it is excluded from consideration
-entirely; when that leaves nothing, the record positively shows this step's own
-effect never landed.
+named one alike. A record carrying another attempt's id is not a weaker match
+but somebody else's effect, so it is excluded from consideration entirely; when
+that leaves nothing and nothing opaque remains, the record positively shows
+this step's own effect never landed.
 
-The input binding is **internal provenance**. It is not a Canonical rule, it
-takes no part in any content-addressed identity — not the candidate revision id,
-not the artifact id — and no transport can supply it: every transport builds its
-own call shape from named request fields, and this is not one of them. Because
-it is written in the same record write as the result, "result persisted, binding
-not persisted" is not a state the service can reach; a restored record that
-nonetheless carries no binding is reported `EFFECT_IDENTITY_UNPROVABLE` and
-never replayed blindly.
+**Why an attempt id and not a digest of the step's inputs.** A digest can only
+cover what the step passes explicitly. `finalize` also reads the candidate's
+*current* review state — the recorded confirmations, the player readback and its
+MML binding, the Core3 approvals, the Lead evidence, the audio alignment — none
+of which is an argument of the step. Two runs can therefore state byte-identical
+options and emit under different effective review state, and an input digest
+cannot tell them apart: an interrupted run would adopt a Final graded under
+evidence it never saw and report its gates as its own. The attempt id needs no
+enumeration of what an operation reads, because it names the attempt rather than
+its arguments. The input fingerprint is still recorded, for the audit trail and
+for the rerun decision, and it is not what recovery matches on.
 
-| Step | Before-set | Input binding |
+Both are **internal provenance**. Neither is a Canonical rule, neither takes any
+part in a content-addressed identity — not the candidate revision id, not the
+artifact id — and no caller can supply either: they are
+`INTERNAL_PROVENANCE_KEYS`, and the public Application Service strips them from
+every operation input, so only the run-internal façade reaches them. That is the
+boundary itself rather than a property of how the transports happen to be
+written. Because the attempt id is written in the same record write as the
+result, "result persisted, attempt not persisted" is not a state the service can
+reach; a restored record that nonetheless carries none is reported
+`EFFECT_IDENTITY_UNPROVABLE` and never replayed blindly.
+
+| Step | Before-set | Effect attempt |
 | --- | --- | --- |
-| intake | the baseline that was already committed — which is by construction not this step's output | the selected asset ids and the meter map the step was about (an MML source is parsed against it), checked against the committed baseline itself |
-| apply_decisions (G11-D) | the sibling candidates that already matched the parent and the stage. G11-D names no accepted plan, so a candidate applied earlier from the same parent matches the filter exactly | the decision set **and** the reviewer the run named for it, recorded on the candidate the application minted |
-| final_reduction / mobile_adaptation | the same, narrowed further by the accepted plan id the candidate records | the same reduction or adaptation input the receipt fingerprints, recorded on the candidate |
-| finalize | the Final artifacts already filed for that candidate — a Final's body names no run | the candidate and the emit options (repair, pickup, final partial), recorded on the artifact entry |
-| report | recorded, for a reader of the receipt | none needed: the report's body names the run that produced it, which is already exact |
+| intake | the baseline that was already committed — which is by construction not this step's output | exempt, and the one exemption: a project holds ONE baseline, and the step's own identity is exact — the selected asset ids and the meter map the step was about, checked against the committed baseline itself. There is no set of candidates to tell apart |
+| apply_decisions (G11-D) | the sibling candidates that already matched the parent and the stage. G11-D names no accepted plan, so a candidate applied earlier from the same parent matches the filter exactly | recorded on the candidate the application minted |
+| final_reduction / mobile_adaptation | the same, narrowed further by the accepted plan id the candidate records | recorded on the candidate |
+| finalize | the Final artifacts already filed for that candidate — a Final's body names no run | recorded on the artifact entry |
+| report | recorded, for a reader of the receipt | exempt: the report's body names the run that produced it, which is already exact |
 
 A before-set records four things: the matching ids (bounded by
 `LIMITS.maxEffectBeforeSet`), whether that list is complete, and — never
@@ -277,14 +291,19 @@ the digest are what make this exact at any size:
 | more than one more, with the ids complete | the records that postdate the marker |
 | anything else | `EFFECT_IDENTITY_UNPROVABLE` |
 
-The records that postdate the marker are then read against the binding:
+The records that postdate the marker are then read against the attempt id. It is
+exact, so "which of several" is not a question this can be left with — at most
+one record carries a given attempt id:
 
-| What the bindings show | Conclusion |
+| What the attempt ids show | Conclusion |
 | --- | --- |
-| none of them answers this step's input | `EFFECT_ABSENT` — every record added since is another operation's, so this step's own never landed |
-| exactly one answers it | `EFFECT_FOUND` |
-| more than one answers it, or more than one records none | `EFFECT_AMBIGUOUS` — a caller names which one |
-| exactly one, and it records no binding at all | `EFFECT_IDENTITY_UNPROVABLE` |
+| one of them is this attempt's | `EFFECT_FOUND` |
+| none is, and none is opaque | `EFFECT_ABSENT` — every record added since belongs to another attempt, so this one's never landed |
+| none is, and one or more records no attempt at all | `EFFECT_IDENTITY_UNPROVABLE` — no reviewer can establish from an opaque record which attempt produced it either |
+
+`EFFECT_AMBIGUOUS` remains for the one identity that is exact per record rather
+than per attempt: two run reports whose bodies both name this run. There, naming
+one genuinely settles which, and that is the remedy the run advertises.
 
 `EFFECT_IDENTITY_UNPROVABLE` is **not** `EFFECT_ABSENT`. A step whose effect
 can be neither confirmed nor ruled out is reported `interrupted` and is never
@@ -310,16 +329,20 @@ What happens next follows from which of the four answers the record supports —
    never by running the emitter again. An artifact whose body cannot be read
    restores nothing, and a Final that no single job claims is given no job id
    rather than the newest one;
-3. **several records could be it** → `EFFECT_AMBIGUOUS`. The caller names one
-   (`adopt_artifact_id`, `adopt_candidate_id`), held to the same identity the
-   automatic path uses, before-set and input binding included. Naming settles
+3. **a reviewer names the record** → `adopt_artifact_id`, `adopt_candidate_id`.
+   Either because several records carry an identity that is exact per record
+   rather than per attempt (`EFFECT_AMBIGUOUS`: two reports naming this run), or
+   because the automatic path could not conclude and the table below says naming
+   settles that cause. The named record is held to the same identity the
+   automatic path uses, before-set and attempt id included. Naming settles
    *which* of a step's possible outputs it produced; it never widens what may
-   count as one — a record that answers a different input is refused however it
-   is named. A record whose binding cannot be read is the one the automatic path
-   refuses and this one accepts, and that is the same set, not a wider one: the
-   reviewer is saying which member of it this step produced, and refusing those
-   too would leave the ambiguous answer advertising a remedy nobody can execute. Both
-   ways of settling an artifact effect go through **one** transition, so a
+   count as one. A record carrying another attempt's id is refused however it is
+   named, and so is a record carrying none: a reviewer reading an opaque record
+   knows no more about which attempt produced it than the service does, and
+   `EFFECT_NAMED_BY_REVIEWER` is read downstream as a settled effect rather than
+   as someone's belief. Where naming cannot conclude, the run says so instead of
+   listing it. Both ways of settling an artifact effect go through **one**
+   transition, so a
    reviewer-named Final restores the same gates, emit status, technical
    validation, readiness blockers and finalize job that an automatically
    recovered one does; only the recorded reason differs
@@ -331,6 +354,24 @@ What happens next follows from which of the four answers the record supports —
    maybe produces a second result for one attempt. A step that declared itself
    repeatable, or a caller who has inspected the record and resumes with
    `reconcile: true`, is what establishes absence.
+
+**What an unprovable interruption advertises is what it will honour.** A listed
+operation a reader cannot execute is worse than no hint: it sends them round a
+loop that returns the same refusal. So the operations are derived per cause from
+one table, `RECONCILIATION_REMEDY`, rather than written once for every cause:
+
+| Cause | `reconcile: true` | naming a record | What is advertised |
+| --- | --- | --- | --- |
+| `NO_EXPECTATION_RECORDED` | settles it | nothing to hold a name to | inspection + `resumeRun (reconcile)` |
+| `MATCHING_SET_TOO_LARGE_TO_SEARCH`, `BEFORE_SET_NOT_A_SUBSET`, `RECORDS_REMOVED_SINCE_THE_MARKER` | no | settles it | inspection + `resumeRun.adopt_*` |
+| `BEFORE_SET_NOT_RECORDED`, `SEVERAL_ADDED_AND_BEFORE_SET_TRUNCATED`, `EFFECT_ATTEMPT_NOT_RECORDED`, `FINAL_ARTIFACT_BODY_UNREADABLE` | no | no | inspection + `startRun`, and the request says the record itself is missing what the run needs — repair it outside the service, or start a new run |
+
+`reconcile: true` is honoured for exactly one cause, and it is the one where the
+caller's inspection is the only evidence there can be: a marker that recorded no
+expectation at all. Where an expectation exists, the record itself answers, and a
+boolean cannot overrule it into the replay that files a second Final. Every
+advertised operation is either one the build honours for that exact cause or a
+read-only way to look at the damage, and a regression asserts it cause by cause.
 
 Settling a step **answers** the reconciliation, however it settles: found,
 named, or shown absent. So the halt, the `RUN_RECONCILIATION_REQUIRED` blocker

@@ -68,7 +68,7 @@ export const PRE_EMISSION_EXEMPT_GATES = Object.freeze(['technical']);
 export function createFinalService({ canonical, projects, review, store }) {
   const artifactKey = (projectId, artifactId) => `artifact:${projectId}:${artifactId}`;
 
-  const fileArtifact = (record, artifact, { inputFingerprint = null } = {}) => {
+  const fileArtifact = (record, artifact, { inputFingerprint = null, effectAttemptId = null } = {}) => {
     const body = JSON.stringify(artifact);
     const artifactId = `art_${sha256Of(encoder.encode(body))}`;
     const entry = {
@@ -79,14 +79,20 @@ export function createFinalService({ canonical, projects, review, store }) {
       created_at: artifact.created_at,
       size: encoder.encode(body).byteLength,
       media_type: 'application/json',
-      // Internal provenance: the fingerprint of the input the caller was
-      // applying when it filed this artifact, or null when the call named
-      // none. It is written in the same record write as the entry, so a stop
-      // between filing the artifact and recording which input it answers is
-      // not a state this can reach. It takes no part in the artifact's
-      // identity -- the id is the SHA-256 of the body and nothing here is in
-      // the body -- and it is not a Canonical rule.
+      // Internal provenance, written in the same record write as the entry,
+      // so a stop between filing the artifact and recording what produced it
+      // is not a state this can reach. Neither field takes any part in the
+      // artifact's identity -- the id is the SHA-256 of the body and neither
+      // is in the body -- and neither is a Canonical rule.
+      //
+      //   input_fingerprint   which explicit input the caller was applying.
+      //                       For audit and for rerun decisions.
+      //   effect_attempt_id   WHICH ATTEMPT at a step produced this record.
+      //                       Exact: a second attempt, by this run or another,
+      //                       carries a different one however identical its
+      //                       inputs. This is what recovery matches on.
       input_fingerprint: inputFingerprint,
+      effect_attempt_id: effectAttemptId,
     };
     store.putJson(artifactKey(record.project_id, artifactId), { ...artifact, artifact_id: artifactId });
     projects.save({
@@ -118,7 +124,7 @@ export function createFinalService({ canonical, projects, review, store }) {
      * and the two must not arrive as the same thing. `operation` says whether
      * the orchestration ran; `gates` says what the song satisfies.
      */
-    async finalize(owner, projectId, { candidateId, technicalTimingRepair = false, confirmations = null, pickup = null, finalPartial = null, inputFingerprint = null } = {}) {
+    async finalize(owner, projectId, { candidateId, technicalTimingRepair = false, confirmations = null, pickup = null, finalPartial = null, inputFingerprint = null, effectAttemptId = null } = {}) {
       if (technicalTimingRepair !== true && technicalTimingRepair !== false) {
         fail(ERROR_CODES.INVALID_REQUEST, 'technical_timing_repair must be true or false. There is no automatic mode: the repair transforms the musical candidate and stays an explicit opt-in.');
       }
@@ -341,7 +347,7 @@ export function createFinalService({ canonical, projects, review, store }) {
       // `final_mml` artifact is the record of a Final that happened; minting
       // one for an emission the parser rejected would leave a retrievable
       // artifact that later reads as a delivered Final.
-      const artifactId = delivered ? fileArtifact(projects.load(owner, projectId), artifact, { inputFingerprint }).artifactId : null;
+      const artifactId = delivered ? fileArtifact(projects.load(owner, projectId), artifact, { inputFingerprint, effectAttemptId }).artifactId : null;
 
       return {
         // A technical gate that did not pass after emission is a Canonical

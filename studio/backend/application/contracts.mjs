@@ -41,7 +41,34 @@ export const ID_PREFIX = freeze({
   job: 'job_',
   run: 'run_',
   artifact: 'art_',
+  // One attempt at one mutating effect. Minted by the run service immediately
+  // before the effect and written both on the pending marker and on the record
+  // the effect produced, so a recovered run can say "this record is what THAT
+  // attempt produced" instead of "this record looks like what such an attempt
+  // would produce". Internal provenance: see INTERNAL_PROVENANCE_KEYS.
+  effectAttempt: 'eff_',
 });
+
+/**
+ * The fields no caller may supply, on any operation, through the public
+ * Application Service.
+ *
+ * They are the run's own record of which attempt at which step produced a
+ * stored record. A caller who could set them could make an unrelated record
+ * claim to be an interrupted step's effect, which is exactly the thing
+ * reconciliation refuses to guess at. The public surface strips them; the
+ * run-internal facade is the only path that supplies them.
+ */
+export const INTERNAL_PROVENANCE_KEYS = freeze(['inputFingerprint', 'effectAttemptId']);
+
+/** One operation input with every internal-provenance field removed. */
+export const withoutInternalProvenance = input => {
+  if (input === null || typeof input !== 'object' || Array.isArray(input)) return input;
+  if (!INTERNAL_PROVENANCE_KEYS.some(key => Object.hasOwn(input, key))) return input;
+  const stripped = { ...input };
+  for (const key of INTERNAL_PROVENANCE_KEYS) delete stripped[key];
+  return stripped;
+};
 
 const OPAQUE_ID = /^(prj|ast|job|run)_[0-9a-f]{32}$/;
 const ARTIFACT_ID = /^art_[0-9a-f]{64}$/;
