@@ -190,6 +190,13 @@ function rebuildJson(value, label, budget, depth = 0) {
     if (COLLAPSED_SCORE_KEYS.includes(key)) {
       fail(ERROR_CODES.INVALID_REQUEST, `${label}.${key} is not an accepted field. ${EVIDENCE_SEPARATION_NOTICE}`, { refusal: PROPOSAL_REFUSAL.COLLAPSED_CONFIDENCE_SCORE, collapsed_score_keys: [...COLLAPSED_SCORE_KEYS] });
     }
+    // A key is bounded like a value. It was not, and a key costs no node, so
+    // `{ "<100000 chars>": 1 }` spent one of four thousand. That gap is not
+    // what made a 7 MB proposal storable -- the byte ceiling below is what
+    // answers that -- but an unmeasured string is an unmeasured string.
+    if (key.length > JSON_LIMITS.maxStringLength) {
+      fail(ERROR_CODES.PAYLOAD_TOO_LARGE, `${label} carries a field name longer than ${JSON_LIMITS.maxStringLength} characters.`);
+    }
     Object.defineProperty(rebuilt, key, { value: rebuildJson(value[key], `${label}.${key}`, budget, depth + 1), enumerable: true, writable: true, configurable: true });
   }
   return rebuilt;
@@ -1014,7 +1021,14 @@ export function createProposalService({ canonical, projects, store, operations, 
         // A run that is closed or waiting on an inspection accepts no proposal
         // at all, and saying so here is cheaper than letting an agent write one
         // and learn it at acceptance.
-        accepts_proposals: !(run.state === RUN_STATE.COMPLETED || run.report_artifact_id || run.pending_step || run.needs_reconciliation === true),
+        // Reflects what the WRITE side will actually honour, the storage caps
+        // included. It used to answer `true` on a project that had filled its
+        // proposal budget, so the read side advertised a capability every
+        // submission was then refused -- the same "a stated thing that is not
+        // true" defect this protocol refuses everywhere else.
+        accepts_proposals: !(run.state === RUN_STATE.COMPLETED || run.report_artifact_id || run.pending_step || run.needs_reconciliation === true)
+          && proposalsOf(record).filter(entry => OPEN_PROPOSAL_STATES.includes(entry.state)).length < LIMITS.maxProposalsPerProject
+          && proposalsOf(record).length < LIMITS.maxProposalsRetainedPerProject,
         targets: Object.freeze(openRequests(run).map(request => {
           const admissible = admissibleKinds(request);
           return Object.freeze({
@@ -1135,6 +1149,20 @@ export function createProposalService({ canonical, projects, store, operations, 
       });
       proposal.idempotency.request_fingerprint = fingerprint;
 
+      // Measured on the record as it will be STORED, after normalization, so
+      // the number means what a reader of `maxProposalBytes` thinks it means.
+      // The node, depth and string budgets above bound the SHAPE of the
+      // free-form structure a proposal carries; none of them bounds its size,
+      // and 4000 nodes times a 4000-character string is 15 MB inside every one
+      // of them.
+      const proposalBytes = Buffer.byteLength(JSON.stringify(proposal), 'utf8');
+      if (proposalBytes > LIMITS.maxProposalBytes) {
+        fail(ERROR_CODES.PAYLOAD_TOO_LARGE, `A stored proposal is limited to ${LIMITS.maxProposalBytes} bytes; this one is ${proposalBytes}. The rationale, the citations and the action are each bounded in shape, and this is the bound on their total size.`, {
+          max_proposal_bytes: LIMITS.maxProposalBytes,
+          received_bytes: proposalBytes,
+        });
+      }
+
       const review = await agentReview(owner, record, proposal, provenance);
       proposal.agent_review_at_submission = review;
 
@@ -1153,8 +1181,32 @@ export function createProposalService({ canonical, projects, store, operations, 
             return { proposal: existing, replayed: true };
           }
         }
-        if (proposalsOf(current).length >= LIMITS.maxProposalsPerProject) {
-          fail(ERROR_CODES.STORAGE_FULL, `This project already holds the maximum of ${LIMITS.maxProposalsPerProject} proposals. Resolve or withdraw one before submitting another.`, { max_proposals: LIMITS.maxProposalsPerProject });
+        // Two caps, and they mean different things.
+        //
+        // The open cap is the one a caller can act on, and counting only the
+        // OPEN proposals is what makes its remedy true. It used to count every
+        // proposal the project had ever held, so "resolve or withdraw one"
+        // was a no-op: resolving removes nothing, and the project was locked
+        // out of the protocol for good at 64. An adversarial pass followed the
+        // instruction exactly and got the same refusal back.
+        const open = proposalsOf(current).filter(entry => OPEN_PROPOSAL_STATES.includes(entry.state));
+        if (open.length >= LIMITS.maxProposalsPerProject) {
+          fail(ERROR_CODES.STORAGE_FULL, `This project already holds the maximum of ${LIMITS.maxProposalsPerProject} open proposals. Resolve or withdraw one before submitting another.`, {
+            max_open_proposals: LIMITS.maxProposalsPerProject,
+            open_proposals: open.length,
+            retained_proposals: proposalsOf(current).length,
+          });
+        }
+        // The retention cap is the one nothing frees, because a resolved
+        // proposal is an audit record and is never evicted. So it promises no
+        // remedy: there is none but a new project, and saying otherwise would
+        // repeat the mistake above.
+        if (proposalsOf(current).length >= LIMITS.maxProposalsRetainedPerProject) {
+          fail(ERROR_CODES.STORAGE_FULL, `This project has retained its lifetime maximum of ${LIMITS.maxProposalsRetainedPerProject} proposals. Resolved proposals are audit records and are not removed, so nothing frees a slot here; continue in a new project, which leaves both records intact and separately citable.`, {
+            max_retained_proposals: LIMITS.maxProposalsRetainedPerProject,
+            retained_proposals: proposalsOf(current).length,
+            remedy: 'startRun in a new project',
+          });
         }
         return { proposal: putProposal(owner, projectId, proposal), replayed: false };
       });

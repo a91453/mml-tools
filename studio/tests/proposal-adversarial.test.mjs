@@ -17,7 +17,7 @@ import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
-import { AGENT_REVIEW, AGENT_REVIEW_ORDER, PROPOSAL_KIND, RUN_STEP, createStudioApplication } from '../backend/application/index.mjs';
+import { AGENT_REVIEW, AGENT_REVIEW_ORDER, LIMITS, PROPOSAL_KIND, RUN_STEP, createStudioApplication } from '../backend/application/index.mjs';
 import { RUN_REVIEWER, projectWithSymbolicAsset, runDecisionsFor } from './fixtures/run-fixtures.mjs';
 
 const OWNER = 'owner:proposal-adversarial';
@@ -309,4 +309,104 @@ test('two open requests that share a key are refused as ambiguous rather than re
   // which reaches no operation at all.
   const { PROPOSAL_TARGETS, PROPOSAL_KIND: KIND } = await import('../backend/application/proposal-contracts.mjs');
   assert.deepEqual([...PROPOSAL_TARGETS.RUN_INPUT_CHANGED], [KIND.EVIDENCE_NEEDED]);
+});
+
+// ─── E. a bound that is only a shape is not a bound ─────────────────────────
+
+test('a proposal is bounded in BYTES, not only in nodes, depth and string length', async () => {
+  const app = createStudioApplication({});
+  const context = await prepared(app);
+  const decisions = proposable(context.fixture.project);
+  const submit = metadata => app.proposeDecision(OWNER, context.fixture.projectId, {
+    run_id: context.run.run_id,
+    request_key: context.target.request_key,
+    kind: PROPOSAL_KIND.ARRANGEMENT_DECISION,
+    proposed_by: AGENT,
+    rationale: 'Keep every source-supported role.',
+    action: { decisions: [{ ...decisions[0], metadata }, ...decisions.slice(1)] },
+    cites: { event_ids: [context.events[0].event_id] },
+  });
+
+  // The payload the adversarial pass used, and the one that matters: it breaks
+  // NO declared bound. 1850 values, each a string of exactly maxStringLength,
+  // is 1851 of 4000 nodes at depth 3 — and 7 MB. The node, depth and string
+  // budgets bound the SHAPE of a proposal's free-form structure; none of them
+  // bounds its size, and 4000 nodes times a 4000-character string is 15 MB
+  // inside every one of them. It was stored verbatim in the project record,
+  // while that record's own comment called a proposal "small by construction".
+  await assert.rejects(
+    submit({ notes: Array.from({ length: 1850 }, () => 'x'.repeat(4000)) }),
+    error => {
+      assert.equal(error.code, 'PAYLOAD_TOO_LARGE');
+      assert.equal(error.details.max_proposal_bytes, LIMITS.maxProposalBytes);
+      assert.ok(error.details.received_bytes > LIMITS.maxProposalBytes);
+      return true;
+    },
+  );
+
+  // A long KEY is bounded too. It costs no node, so 75 keys of 100,000
+  // characters spent 75 of 4000 — a separate gap from the one above, and not
+  // the one that made a 7 MB proposal storable.
+  const fatKeys = {};
+  for (let index = 0; index < 75; index += 1) fatKeys[`k${index}${'A'.repeat(100000)}`] = 1;
+  await assert.rejects(submit(fatKeys), error => error.code === 'PAYLOAD_TOO_LARGE' && /field name longer than/.test(error.message));
+
+  // And an ordinary proposal is unaffected.
+  const ordinary = await submit({ note: 'an ordinary amount of structure' });
+  assert.equal(ordinary.proposal.agent_review.verdict, AGENT_REVIEW.REQUIRES_EXPLICIT_ACCEPTANCE);
+  assert.ok(LIMITS.maxProposalBytes <= 131072, 'the ceiling must not exceed what MCP will carry, or HTTP admits what MCP cannot');
+});
+
+test('the proposal cap refuses with a remedy that actually works', async () => {
+  const app = createStudioApplication({});
+  const context = await prepared(app);
+  const describe = index => ({
+    run_id: context.run.run_id,
+    request_key: context.target.request_key,
+    kind: PROPOSAL_KIND.EVIDENCE_NEEDED,
+    proposed_by: AGENT,
+    rationale: `Statement ${index}: what is missing here.`,
+    missing_evidence: ['A score covering this section.'],
+  });
+
+  const ids = [];
+  for (let index = 0; index < LIMITS.maxProposalsPerProject; index += 1) {
+    ids.push((await app.proposeDecision(OWNER, context.fixture.projectId, describe(index))).proposal.proposal_id);
+  }
+
+  // At the cap, and the read side says so. It used to answer `true` here while
+  // every submission was refused — a capability advertised by the read side
+  // that the write side could never honour.
+  assert.equal((await app.proposalTargets(OWNER, context.fixture.projectId, context.run.run_id)).accepts_proposals, false);
+  await assert.rejects(
+    app.proposeDecision(OWNER, context.fixture.projectId, describe(999)),
+    error => {
+      assert.equal(error.code, 'STORAGE_FULL');
+      assert.match(error.message, /Resolve or withdraw one/);
+      return true;
+    },
+  );
+
+  // Following the stated remedy works. It did not: the cap counted every
+  // proposal the project had ever held, resolving removes nothing, and the
+  // project was locked out of the protocol permanently at the cap. An
+  // adversarial pass followed the instruction exactly and got the same
+  // refusal back — a refusal naming a remedy that does not exist is the same
+  // defect as a stated field that binds nothing.
+  await app.resolveProposal(OWNER, context.fixture.projectId, ids[0], { resolution: 'reject', reason: 'Freeing a slot, as the refusal says to.' });
+  assert.equal((await app.proposalTargets(OWNER, context.fixture.projectId, context.run.run_id)).accepts_proposals, true,
+    'the slot is free, and the read side says so before anything is written into it');
+  const after = await app.proposeDecision(OWNER, context.fixture.projectId, describe(1000));
+  assert.equal(after.proposal.agent_review.verdict, AGENT_REVIEW.PROPOSABLE, 'resolving one really freed a slot');
+  // And filling it again puts the project back at the cap, which is the point:
+  // the slot was freed, not the cap raised.
+  assert.equal((await app.proposalTargets(OWNER, context.fixture.projectId, context.run.run_id)).accepts_proposals, false);
+
+  // The resolved one is still on the record: nothing is evicted, which is why
+  // the lifetime total has its own ceiling and its own refusal — one that
+  // promises no remedy, because there is none but a new project.
+  const listed = (await app.listProposals(OWNER, context.fixture.projectId)).proposals;
+  assert.equal(listed.length, LIMITS.maxProposalsPerProject + 1);
+  assert.ok(listed.some(entry => entry.proposal_id === ids[0] && entry.state === 'rejected'));
+  assert.ok(LIMITS.maxProposalsRetainedPerProject > LIMITS.maxProposalsPerProject);
 });

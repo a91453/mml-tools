@@ -488,13 +488,48 @@ a union, for the same reason the run operations have one each.
 | agent-authored reviewer evidence record | refused (`REVIEWER_EVIDENCE_RECORD_SUPPLIED`): a decision may carry no `leadEvidence`, on the arrangement path and the reduction path alike |
 | internal provenance keys | stripped by the public boundary before any operation sees them |
 | collapsed confidence score | refused at every nesting level |
-| oversized rationale, deep nesting, huge arrays, too many proposals | bounded by `LIMITS`, spent as a budget rather than discovered by a recursion limit |
+| oversized rationale, deep nesting, huge arrays, long field names | bounded by `LIMITS`, spent as a budget rather than discovered by a recursion limit |
+| an oversized proposal that breaks no *shape* bound | bounded in **bytes** by `maxProposalBytes`, measured on the record as it will be stored. The node, depth and string budgets bound a proposal's shape; none of them bounds its size, and 4000 nodes × a 4000-character string is 15 MB inside every one of them |
+| too many proposals | two caps: `maxProposalsPerProject` counts the **open** ones, so the refusal's "resolve or withdraw one" is true, and `maxProposalsRetainedPerProject` bounds the lifetime total and promises no remedy, because a resolved proposal is an audit record and nothing evicts it |
 | stale proposal replay | the policy, recomputed; plus the run's own per-step re-validation |
 
 MCP carries no bytes. Every proposal input is an identity, a small structured
 option or short text, and `rationale` is held to the same 2048-character
 inline-text bound every MCP string field is held to — enforced by the service,
 so neither transport admits what the other refuses.
+
+### Two bounds that were shapes, not sizes
+
+The same pass found two places where this layer stated something that was not
+true, both in its own storage bounds. Neither is a security escalation — the
+security properties all held — and both are the failure this protocol refuses
+everywhere else: *a stated thing that is not so*.
+
+**A proposal was bounded in shape, not in size.** The free-form structure a
+proposal carries was spent against a node, depth and string-length budget, and
+none of those is a byte budget. A payload of 1850 values, each a string of
+exactly `maxStringLength`, is 1851 of 4000 nodes at depth 3 — and 7 MB, stored
+verbatim in the project record, while that record's own comment called a
+proposal "small by construction". The declared budget alone permits 15 MB per
+proposal. A long field *name* was a second, smaller gap: a key costs no node, so
+75 keys of 100,000 characters spent 75 of 4000.
+
+`maxProposalBytes` is now measured on the record as it will be stored, and keys
+are bounded like values. 128 KiB is MCP's own body cap, so a proposal that fits
+one surface fits the other. Worth naming precisely: the *manual* Phase 1 path
+consumes this structure transiently, and only the proposal record retains it —
+so this is new to Phase 2 rather than inherited.
+
+**The proposal cap named a remedy that did not exist.** It counted every
+proposal a project had ever held, and resolving one removes nothing, so
+"Resolve or withdraw one before submitting another" was a no-op and a project
+was locked out of the protocol for good at 64. `proposalTargets` also went on
+answering `accepts_proposals: true` there, advertising a capability every
+submission was then refused.
+
+The open cap now counts only open proposals, so its remedy is true; a separate
+retention cap bounds the lifetime total and promises no remedy, because there is
+none but a new project; and `accepts_proposals` reflects both.
 
 ### One fix that belongs to Phase 1
 

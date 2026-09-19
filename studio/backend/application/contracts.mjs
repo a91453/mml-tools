@@ -413,12 +413,31 @@ export const LIMITS = freeze({
   // The optimistic-concurrency precondition a caller may state. Bounded so the
   // two transports declare and enforce the same range.
   maxRunRevision: 1000000,
-  // One project's stored AI proposals. A proposal record is small by
-  // construction -- identities, bounded citations, bounded rationale and one
-  // bounded action -- and the cap keeps a project record bounded whatever an
-  // agent does. An agent that has filled it is told so rather than silently
-  // dropping its oldest statement.
+  // One proposal, as it is STORED. The bound that was missing: the free-form
+  // structure a proposal carries was spent against a node, depth and string
+  // budget, and none of those is a byte budget. 4000 nodes times a 4000-char
+  // string is 15 MB inside every declared limit, and an adversarial pass
+  // stored 7 MB through the public surface without exceeding a single one of
+  // them -- while the record's own comment claimed it was "small by
+  // construction". A proposal record is small because this number says so and
+  // the service measures it, which is the only way that sentence can be true.
+  //
+  // 128 KiB is the MCP transport's own body cap (`MAX_BODY_BYTES`), so a
+  // proposal that fits one surface fits the other rather than HTTP admitting
+  // what MCP cannot carry. It holds a full 500-decision set with reasons and
+  // evidence several times over.
+  maxProposalBytes: 128 * 1024,
+  // One project's OPEN AI proposals -- submitted or accepted. Counting only
+  // the open ones is what makes the refusal's remedy true: resolving or
+  // withdrawing one frees a slot, exactly as it says. Counting every proposal
+  // ever made, as this did, made that sentence a no-op and the cap terminal.
   maxProposalsPerProject: 64,
+  // And the lifetime total a project retains, resolved records included. A
+  // resolved proposal is an audit record and is never evicted -- an agent that
+  // has filled the project is told so rather than silently losing its oldest
+  // statement -- so the total needs its own ceiling, and the refusal for it
+  // promises no remedy because there is none but a new project.
+  maxProposalsRetainedPerProject: 128,
   // A rationale is prose for a human reviewer. 2048 is the inline-text bound
   // every MCP string field is held to, and `tests/mcp-studio.test.mjs` asserts
   // it: no tool is a way to push bulk data into a model's context or into this
