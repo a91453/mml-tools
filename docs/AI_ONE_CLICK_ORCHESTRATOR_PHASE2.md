@@ -367,7 +367,13 @@ back and believes it was honoured.
 An **adaptation** plan id is bound to the candidate and the profile, both of
 which the proposal carries, so an agent *can* state it in advance. It is still
 derived rather than taken, and a stated id the inputs no longer produce is
-refused rather than overridden.
+refused rather than overridden. It carries **no** `plan_accepted_by`, and the
+absence is the point: the pair exists on the reduction action because the id is
+not checkable without the reviewer, and here it is. The adaptation action
+accepted the field anyway — validated, stored, echoed back, never read — which
+is the same un-checkable stated field this protocol removed from `resolve`, one
+class further in, and a reviewer's name written by the machine onto a record a
+human reads as an acceptance.
 
 ### Crossing the lock
 

@@ -442,7 +442,7 @@ export const STUDIO_MCP_TOOLS = [
         kind: { type: 'string', enum: [...PROPOSAL_KIND_NAMES], description: 'proposal class。必須是該 request 允許的其中之一，否則回報 NOT_AGENT_SETTLABLE。' },
         proposed_by: { type: 'string', minLength: 1, maxLength: 120, description: '提案者識別字串。呼叫端自填的文字，不是通過驗證的身分，也不是接受者。' },
         rationale: { type: 'string', minLength: 1, maxLength: LIMITS.maxProposalRationaleLength, description: '給人類審查者看的理由。這裡是散文該待的地方，不會被當成引用。' },
-        action: structuredPayload('依 kind 而定的封閉欄位：arrangement_decision→decisions；final_reduction→decisions／instrument_profile／expected_plan_id／plan_accepted_by；mobile_adaptation→profile／expected_plan_id／plan_accepted_by；source_selection→asset_ids／meter_text；candidate_selection→candidate_id；evidence_needed→完全不帶 action。未列欄位一律拒絕。'),
+        action: structuredPayload('依 kind 而定的封閉欄位：arrangement_decision→decisions；final_reduction→decisions／instrument_profile／expected_plan_id／plan_accepted_by；mobile_adaptation→profile／expected_plan_id；source_selection→asset_ids／meter_text；candidate_selection→candidate_id；evidence_needed→完全不帶 action。未列欄位一律拒絕。'),
         cites: structuredPayload('event_ids／source_ids／evidence_refs（每筆 kind、id、truth_class，選填 note）。全部對本專案解析，解析不到就是偽造。'),
         unresolved_conflicts: structuredPayload('尚未解決的來源分歧：summary、event_ids、source_ids、truth_classes。記錄而不裁決——MASTER_RULES.md §0 說兩個權威衝突時不要猜。'),
         missing_evidence: { type: 'array', maxItems: LIMITS.maxProposalConflicts, items: { type: 'string', maxLength: LIMITS.maxProposalNoteLength }, description: '還缺什麼證據才能決定。非空即代表本提案不足以進入操作。' },

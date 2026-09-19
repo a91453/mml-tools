@@ -27,6 +27,10 @@ import {
 } from '../backend/application/proposal-contracts.mjs';
 import { RUN_REVIEW_REQUEST } from '../backend/application/run-contracts.mjs';
 import { ID_PREFIX, isProposalId, isRunId } from '../backend/application/contracts.mjs';
+import { createStudioApplication } from '../backend/application/index.mjs';
+import { RUN_REVIEWER, projectWithSymbolicAsset, runDecisionsFor } from './fixtures/run-fixtures.mjs';
+
+const OWNER = 'owner:proposal-contracts';
 
 // ─── A. the request key is derived, not positional ──────────────────────────
 
@@ -132,6 +136,56 @@ test('every proposal class states its downstream operation and its citation requ
   for (const kind of PROPOSAL_KIND_NAMES.filter(name => name !== PROPOSAL_KIND.EVIDENCE_NEEDED)) {
     assert.equal(typeof PROPOSAL_KIND_OPERATION[kind], 'string', `${kind} reaches an existing operation`);
   }
+});
+
+test('no proposal action carries a field the service never reads', async () => {
+  // `resolve` used to accept an `idempotency_key` it never read, and this
+  // protocol removed it in as many words: a stated field that binds nothing is
+  // one an agent reads back and believes was honoured. The same field survived
+  // one class further in.
+  //
+  // `plan_accepted_by` earns its place on a REDUCTION action, because a
+  // reduction plan id is bound to its decision set AND its reviewer, so the
+  // stated id is only checkable against a plan derived under the reviewer it
+  // was derived under. An ADAPTATION plan id is bound to the candidate and the
+  // profile, which is exactly why an agent can state it in advance -- and why
+  // no reviewer is needed to check it. The adaptation action accepted the
+  // field, validated it, stored it and echoed it back, and nothing ever read
+  // it: a reviewer's name, written by the machine, on a record a human reads.
+  assert.deepEqual([...PROPOSAL_ACTION_KEYS[PROPOSAL_KIND.MOBILE_ADAPTATION]], ['profile', 'expected_plan_id']);
+  assert.ok(PROPOSAL_ACTION_KEYS[PROPOSAL_KIND.FINAL_REDUCTION].includes('plan_accepted_by'),
+    'the reduction action still needs it, because there it is what makes the stated id checkable');
+
+  const app = createStudioApplication({});
+  const fixture = await projectWithSymbolicAsset(app, OWNER);
+  const started = await app.startRun(OWNER, fixture.projectId, {
+    asset_ids: [fixture.assetId],
+    decisions: runDecisionsFor(fixture.project, { acceptedBy: RUN_REVIEWER }),
+    accepted_by: RUN_REVIEWER,
+  });
+  const targets = await app.proposalTargets(OWNER, fixture.projectId, started.run.run_id);
+  const target = targets.targets[0];
+  assert.ok(target, 'the run is making at least one request');
+
+  await assert.rejects(
+    app.proposeDecision(OWNER, fixture.projectId, {
+      run_id: started.run.run_id,
+      request_key: target.request_key,
+      kind: PROPOSAL_KIND.MOBILE_ADAPTATION,
+      proposed_by: 'some-external-agent',
+      rationale: 'Lower Chord5 for the target register.',
+      action: {
+        profile: { schema: 'mml-studio/mobile-adaptation-profile@1', id: 'x', reason: 'r', evidence: ['e'], roles: {} },
+        plan_accepted_by: 'a-reviewer-the-agent-named',
+      },
+    }),
+    error => {
+      assert.equal(error.code, 'INVALID_REQUEST');
+      assert.equal(error.details.refusal, 'UNKNOWN_FIELD');
+      assert.ok(!error.details.accepted.includes('plan_accepted_by'));
+      return true;
+    },
+  );
 });
 
 test('every declared evidence reference kind can actually be resolved', async () => {

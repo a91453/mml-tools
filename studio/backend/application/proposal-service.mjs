@@ -505,10 +505,12 @@ export function createProposalService({ canonical, projects, store, operations, 
     }
 
     if (kind === PROPOSAL_KIND.MOBILE_ADAPTATION) {
+      // No reviewer here, and none is missing: an adaptation plan id is bound
+      // to the candidate and the profile, so the derived id is checkable
+      // against the stated one on its own. See `PROPOSAL_ACTION_KEYS`.
       return {
         profile: rebuildJson(requirePlainObject(source.profile, `${label}.profile`), `${label}.profile`, budget),
         expected_plan_id: source.expected_plan_id === undefined || source.expected_plan_id === null ? null : requireString(source.expected_plan_id, `${label}.expected_plan_id`, { max: 200 }),
-        plan_accepted_by: source.plan_accepted_by === undefined || source.plan_accepted_by === null ? null : requireString(source.plan_accepted_by, `${label}.plan_accepted_by`, { max: 120 }),
       };
     }
 

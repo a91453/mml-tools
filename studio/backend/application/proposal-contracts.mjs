@@ -521,7 +521,16 @@ export const CONFLICT_KEYS = freeze(['summary', 'event_ids', 'source_ids', 'trut
 export const PROPOSAL_ACTION_KEYS = freeze({
   [PROPOSAL_KIND.ARRANGEMENT_DECISION]: freeze(['decisions']),
   [PROPOSAL_KIND.FINAL_REDUCTION]: freeze(['decisions', 'instrument_profile', 'expected_plan_id', 'plan_accepted_by']),
-  [PROPOSAL_KIND.MOBILE_ADAPTATION]: freeze(['profile', 'expected_plan_id', 'plan_accepted_by']),
+  // No `plan_accepted_by`, and the absence is the same one `RESOLVE_INPUT_KEYS`
+  // states for `idempotency_key`. A REDUCTION plan id is bound to its decision
+  // set AND its reviewer, so a stated id is only checkable against a plan
+  // derived under the reviewer it was derived under, and the pair is required
+  // together. An ADAPTATION plan id is bound to the candidate and the profile --
+  // which is precisely why an agent can state it in advance, and precisely why
+  // no reviewer is needed to check it. The field was accepted, validated,
+  // stored and echoed back here, and nothing ever read it: a reviewer's name,
+  // written by the machine, on a record a human reads as an acceptance.
+  [PROPOSAL_KIND.MOBILE_ADAPTATION]: freeze(['profile', 'expected_plan_id']),
   [PROPOSAL_KIND.SOURCE_SELECTION]: freeze(['asset_ids', 'meter_text']),
   [PROPOSAL_KIND.CANDIDATE_SELECTION]: freeze(['candidate_id']),
   [PROPOSAL_KIND.EVIDENCE_NEEDED]: freeze([]),
