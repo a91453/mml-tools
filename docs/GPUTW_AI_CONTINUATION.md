@@ -158,13 +158,16 @@ curl -fsS -X PATCH "$API/instances/$ID/ports" -A "$UA" \
 而 Codex CLI 原生吃 OpenAI 相容端點。在 `~/.codex/config.toml`：
 
 ```toml
+# 頂層選擇鍵必須放在任何表頭之前。TOML 的表一旦開始，要到下一個表頭才結束，
+# 空行不會結束它 —— 寫在 [model_providers.gputw] 之後會被解析成該表的欄位，
+# 頂層就沒有任何選擇鍵，provider 根本不會被選用。
+model_provider = "gputw"
+model = "local-coder"
+
 [model_providers.gputw]
 name = "GPUtw self-hosted vLLM"
 base_url = "https://8080-<instance-id>.gputw.ai/v1"
 env_key = "GPUTW_VLLM_API_KEY"
-
-model_provider = "gputw"
-model = "local-coder"
 ```
 
 ### Claude Code

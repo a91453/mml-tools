@@ -6,7 +6,7 @@ import assert from 'node:assert/strict';
 import { mkdtempSync, mkdirSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { QUESTIONS, ROUTES, buildCase, casesFromDataDir, buildPayload, summarize, estimateCostUsd, main }
+import { QUESTIONS, ROUTES, buildCase, casesFromDataDir, buildPayload, summarize, estimateCostUsd, assertUsableAnswers, main }
   from '../scripts/jev-routing-eval.mjs';
 
 const run = (overrides = {}) => ({
@@ -190,4 +190,44 @@ test('main refuses to go live without a key in the environment', async () => {
   delete process.env.TYPESAFE_API_KEY;
   try { await assert.rejects(main(['--cases', file, '--live']), /TYPESAFE_API_KEY/); }
   finally { if (saved !== undefined) process.env.TYPESAFE_API_KEY = saved; }
+});
+
+test('a 2xx without a usable route is a failure, not a silent drop', () => {
+  // Credits are already spent by the time these come back; they must be visible.
+  assert.throws(() => assertUsableAnswers({}), /without an answers object/);
+  assert.throws(() => assertUsableAnswers({ answers: {} }), /without a route choice/);
+  assert.throws(() => assertUsableAnswers({ answers: { route: {} } }), /without a route choice/);
+  assert.throws(() => assertUsableAnswers({ answers: { route: { choice: 'deep_revew' } } }), /unknown route/);
+  const good = { answers: { route: { choice: 'deep_review', confidence: 0.8 } } };
+  assert.equal(assertUsableAnswers(good), good);
+});
+
+test('assertUsableAnswers keeps the paid-for body in the failure details', () => {
+  try {
+    assertUsableAnswers({ answers: { route: { choice: 'nope' } } });
+    assert.fail('should have thrown');
+  } catch (error) {
+    assert.equal(error.details.answers.route.choice, 'nope');
+    assert.deepEqual(error.details.expected, [...ROUTES]);
+  }
+});
+
+test('main refuses an expected-route label that is not a route', async () => {
+  const directory = mkdtempSync(join(tmpdir(), 'jev-eval-label-'));
+  const file = join(directory, 'cases.json');
+  // A label embedded in --cases must be checked too, not only --labels.
+  writeFileSync(file, JSON.stringify([{ id: 'a', state: { run: {} }, label: 'deep_revew' }]));
+  await assert.rejects(main(['--cases', file]), /is not a route/);
+
+  const labels = join(directory, 'labels.json');
+  writeFileSync(file, JSON.stringify([{ id: 'a', state: { run: {} } }]));
+  writeFileSync(labels, JSON.stringify({ a: 'humanreview' }));
+  await assert.rejects(main(['--cases', file, '--labels', labels]), /is not a route/);
+});
+
+test('main accepts a label that is a real route', async () => {
+  const directory = mkdtempSync(join(tmpdir(), 'jev-eval-label-ok-'));
+  const file = join(directory, 'cases.json');
+  writeFileSync(file, JSON.stringify([{ id: 'a', state: { run: {} }, label: 'deep_review' }]));
+  assert.equal(await main(['--cases', file]), 0);
 });

@@ -208,6 +208,26 @@ const callJev = async (payload, { baseURL, apiKey, signal }) => {
   catch { refuse('Jev returned a body that is not JSON.', { body: text.slice(0, 2000) }); }
 };
 
+/**
+ * A 2xx is not yet a usable answer.
+ *
+ * A schema change, a truncated body or a custom TYPESAFE_BASE_URL can answer
+ * `{}` or `{"answers":{}}`. Recording that as a success would drop the case
+ * from the evaluation silently — after its credits were already spent — and
+ * leave the run exiting zero. The raw body is kept in the failure so the
+ * answer that was paid for is still inspectable.
+ */
+export const assertUsableAnswers = response => {
+  const answers = response?.answers;
+  if (!answers || typeof answers !== 'object') refuse('Jev answered without an answers object.', { response });
+  const route = answers.route;
+  if (!route || typeof route.choice !== 'string') refuse('Jev answered without a route choice.', { answers });
+  if (!ROUTES.includes(route.choice)) {
+    refuse(`Jev answered with an unknown route ${JSON.stringify(route.choice)}.`, { answers, expected: [...ROUTES] });
+  }
+  return response;
+};
+
 // ── reporting ───────────────────────────────────────────────────────────────
 
 export const estimateCostUsd = inputTokens => (inputTokens / 1e6) * INPUT_USD_PER_MTOK;
@@ -310,6 +330,11 @@ export async function main(argv = process.argv.slice(2)) {
     if (!entry || typeof entry !== 'object') refuse(`Case ${index} is not an object.`);
     if (typeof entry.id !== 'string' || !entry.id) refuse(`Case ${index} has no id.`);
     if (!entry.state || typeof entry.state !== 'object') refuse(`Case ${entry.id} has no state object to evaluate.`);
+    // A mistyped expected route would open a separation bucket that can never
+    // agree, reporting invented discrimination. Catch it before anything is spent.
+    if (entry.label !== undefined && entry.label !== null && !ROUTES.includes(entry.label)) {
+      refuse(`Case ${entry.id} is labeled ${JSON.stringify(entry.label)}, which is not a route. Expected one of: ${ROUTES.join(', ')}.`);
+    }
   });
 
   const live = values.live === true;
@@ -328,7 +353,7 @@ export async function main(argv = process.argv.slice(2)) {
     // One failed case must not discard the cases already paid for: record the
     // failure and carry on, so --out still holds every answer bought so far.
     try {
-      const response = await callJev(payload, { baseURL, apiKey });
+      const response = assertUsableAnswers(await callJev(payload, { baseURL, apiKey }));
       results.push({
         id: entry.id, label: entry.label ?? null, state_chars: stateChars,
         model: response.model ?? null, answers: response.answers ?? null, usage: response.usage ?? null,
