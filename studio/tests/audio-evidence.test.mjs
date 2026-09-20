@@ -62,6 +62,21 @@ test('audio report must target the exact Canonical project', () => {
   assert.throws(() => validateAudioAlignmentReport(bad, project()), /does not match/);
 });
 
+test('alignment search method survives evidence attachment without changing source notes', () => {
+  const original = project();
+  const input = report();
+  input.alignment.method = {
+    name: 'tempo-normalized-subsequence-dtw@2', analysis_step_seconds: .05,
+    steps: [[1, 1], [1, 2], [2, 1]], search_speed_ratio_bounds: [.5, 2],
+  };
+  const attached = attachAudioAlignmentEvidence(original, input);
+  assert.deepEqual(attached.events, original.events);
+  assert.deepEqual(attached.sources.at(-1).metadata.alignmentMethod, input.alignment.method);
+  assert.deepEqual(attached.metadata.audioAlignmentEvidence[0].alignmentMethod, input.alignment.method);
+  input.alignment.method.steps[0][0] = 100;
+  assert.equal(attached.metadata.audioAlignmentEvidence[0].alignmentMethod.steps[0][0], 1);
+});
+
 test('audio report cannot claim permission to mutate symbolic truth', () => {
   const bad = report({ evidence_policy: { changes_symbolic_truth: true } });
   assert.throws(() => validateAudioAlignmentReport(bad, project()), /forbid symbolic mutation/);

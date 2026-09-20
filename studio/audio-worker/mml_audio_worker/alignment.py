@@ -19,6 +19,7 @@ MAX_AUDIO_BYTES = 512 * 1024 * 1024
 DEFAULT_SAMPLE_RATE = 22050
 DEFAULT_HOP_LENGTH = 512
 DEFAULT_SCORE_FRAMES_PER_BEAT = 8
+MAX_ALIGNMENT_CELLS = 25_000_000
 
 
 def _fraction(value: Any) -> Fraction:
@@ -99,7 +100,12 @@ def align_feature_sequences(
     score_chroma: np.ndarray,
     audio_chroma: np.ndarray,
 ) -> dict[str, Any]:
-    """Align two normalized chroma sequences with DTW and expose diagnostics."""
+    """Align equal-time-resolution features with strictly advancing subsequence DTW.
+
+    Both axes advance at every step. A skipped frame is interpolated, never
+    clamped onto its neighbour. The score is covered in full; audio can contain
+    an introduction/outro. These search constraints are not musical verdicts.
+    """
     score = _normalize_columns(score_chroma)
     audio = _normalize_columns(audio_chroma)
     if score.shape[0] != 12 or audio.shape[0] != 12:
@@ -107,7 +113,26 @@ def align_feature_sequences(
     if score.shape[1] < 2 or audio.shape[1] < 2:
         raise ValueError("score and audio chroma require at least two frames")
 
-    _, path = librosa.sequence.dtw(X=score, Y=audio, metric="cosine", backtrack=True)
+    if score.shape[1] * audio.shape[1] > MAX_ALIGNMENT_CELLS:
+        raise ValueError("alignment feature matrix exceeds the cell budget")
+    # Keep score/audio axes explicit. librosa 1.0.0's built-in subsequence
+    # backtracking flips returned columns for tall C even when C was supplied
+    # without transposition. Public dtw_backtracking preserves these axes.
+    cost = np.maximum(0.0, 1.0 - score.T @ audio)
+    allowed_steps = np.array([[1, 1], [1, 2], [2, 1]])
+    accumulated, steps = librosa.sequence.dtw(
+        C=cost, subseq=True, backtrack=False, return_steps=True,
+        step_sizes_sigma=allowed_steps,
+        # Charge each step per score frame consumed; otherwise skipping score
+        # frames is artificially cheaper and biases the path toward compression.
+        weights_mul=np.array([1.0, 1.0, 2.0]),
+    )
+    if not np.any(np.isfinite(accumulated[-1])):
+        raise ValueError("No valid full-score path within the alignment speed bounds")
+    path = librosa.sequence.dtw_backtracking(
+        steps, step_sizes_sigma=allowed_steps, subseq=True,
+        start=int(np.argmin(accumulated[-1])),
+    )
     path = np.asarray(path[::-1], dtype=np.int64)
     if path.ndim != 2 or path.shape[1] != 2 or not len(path):
         raise RuntimeError("DTW returned an invalid path")
@@ -134,7 +159,10 @@ def align_feature_sequences(
     missing = np.flatnonzero(np.isnan(mapped_audio_frame))
     if len(missing):
         mapped_audio_frame[missing] = np.interp(missing, known, mapped_audio_frame[known])
-    mapped_audio_frame = np.maximum.accumulate(mapped_audio_frame)
+    if score_indices[0] != 0 or score_indices[-1] != score.shape[1] - 1:
+        raise RuntimeError("DTW did not cover the full symbolic timeline")
+    if np.any(np.diff(mapped_audio_frame) <= 0):
+        raise RuntimeError("DTW produced a non-advancing time map")
 
     score_coverage = len(np.unique(score_indices)) / score.shape[1]
     audio_coverage = len(np.unique(audio_indices)) / audio.shape[1]
@@ -150,10 +178,74 @@ def align_feature_sequences(
             "p10_chroma_similarity": p10_similarity,
             "score_frame_coverage": float(score_coverage),
             "audio_frame_coverage": float(audio_coverage),
+            "mapped_score_span_coverage": 1.0,
+            "mapped_audio_span_coverage": float((audio_indices[-1] - audio_indices[0] + 1) / audio.shape[1]),
             "confidence": confidence,
             "notice": "Confidence is an alignment diagnostic, not proof of exact note identity or musical correctness.",
         },
     }
+
+
+def _score_seconds(project: dict[str, Any], beats: np.ndarray) -> np.ndarray:
+    """Integrate the source tempo map, including changes between feature frames."""
+    events = sorted(project.get("tempoEvents", []), key=lambda e: _fraction(e["beat"]))
+    if not events or _fraction(events[0]["beat"]) != 0:
+        raise ValueError("alignment requires an explicit source tempo at beat zero")
+    tempo_beats, tempo_seconds, bpms = [], [], []
+    seconds = 0.0
+    for event in events:
+        beat, bpm = float(_fraction(event["beat"])), float(event["bpm"])
+        if not math.isfinite(beat) or beat < 0 or not math.isfinite(bpm) or bpm <= 0:
+            raise ValueError("tempo beats must be non-negative and BPM positive/finite")
+        if tempo_beats:
+            if beat == tempo_beats[-1]:
+                if bpm != bpms[-1]:
+                    raise ValueError("conflicting tempos at the same beat")
+                continue
+            seconds += (beat - tempo_beats[-1]) * 60 / bpms[-1]
+        tempo_beats.append(beat)
+        tempo_seconds.append(seconds)
+        bpms.append(bpm)
+    index = np.searchsorted(tempo_beats, beats, side="right") - 1
+    return np.asarray(tempo_seconds)[index] + (beats - np.asarray(tempo_beats)[index]) * 60 / np.asarray(bpms)[index]
+
+
+def _align_timed_features(score, beats, audio, audio_times, project):
+    score_seconds = _score_seconds(project, beats)
+    # Use a common physical sampling interval so slope limits describe relative
+    # playback speed rather than the unrelated beat/STFT feature frame rates.
+    # For long recordings, coarsen both grids together within the memory budget.
+    step = max(float(np.min(np.diff(audio_times))), min(.05, float(np.min(np.diff(score_seconds)))))
+    while True:
+        score_count = int(math.ceil(score_seconds[-1] / step)) + 1
+        effective_step = score_seconds[-1] / (score_count - 1)
+        audio_count = int(math.floor((audio_times[-1] - audio_times[0]) / effective_step)) + 1
+        if score_count * audio_count <= MAX_ALIGNMENT_CELLS:
+            break
+        if score_count == 2:
+            raise ValueError("audio/score duration ratio exceeds the alignment cell budget")
+        step *= 1.1
+    if min(score_count, audio_count) < 2:
+        raise ValueError("audio/score timeline is too short for constrained alignment")
+    # Include the exact score endpoint, without extrapolating the recording.
+    score_grid = np.linspace(0, score_seconds[-1], score_count)
+    step = effective_step
+    audio_grid = audio_times[0] + np.arange(audio_count) * step
+    resampled_score = np.array([np.interp(score_grid, score_seconds, row) for row in score])
+    resampled_audio = np.array([np.interp(audio_grid, audio_times, row) for row in audio])
+    aligned = align_feature_sequences(resampled_score, resampled_audio)
+    mapped_seconds = np.interp(aligned["mapped_audio_frame"], np.arange(len(audio_grid)), audio_grid)
+    aligned["mapped_audio_frame"] = np.interp(
+        np.interp(score_seconds, score_grid, mapped_seconds), audio_times, np.arange(len(audio_times)),
+    )
+    aligned["method"] = {
+        "name": "tempo-normalized-subsequence-dtw@2", "analysis_step_seconds": step,
+        "steps": [[1, 1], [1, 2], [2, 1]], "step_cost_weights": [1, 1, 2],
+        "tempo_source": "symbolic.tempoEvents", "audio_prefix_suffix_allowed": True,
+        "search_speed_ratio_bounds": [.5, 2.0],
+        "notice": "Slope limits constrain the search, not musical acceptance. Inspect ambiguous repeats and section boundaries.",
+    }
+    return aligned
 
 
 def _sha256(path: Path) -> str:
@@ -287,6 +379,7 @@ def align_audio_to_project(
     if hop_length < 64 or hop_length > 8192:
         raise ValueError("hop_length must be from 64 to 8192")
 
+    source_ids = tuple(source_ids) if source_ids is not None else None
     score_chroma, beat_positions = build_symbolic_chroma(
         project,
         frames_per_beat=score_frames_per_beat,
@@ -314,7 +407,7 @@ def align_audio_to_project(
             hop_length=hop_length,
         ) + trim_start_seconds
 
-    aligned = align_feature_sequences(score_chroma, audio_chroma)
+    aligned = _align_timed_features(score_chroma, beat_positions, audio_chroma, audio_times, project)
     points = _control_points(
         beat_positions,
         aligned["mapped_audio_frame"],
@@ -347,6 +440,7 @@ def align_audio_to_project(
             "end_beat": round(float(beat_positions[-1]), 9),
         },
         "alignment": {
+            "method": aligned["method"],
             "control_points": points,
             "metrics": aligned["metrics"],
             "tempo_drift": tempo_summary,

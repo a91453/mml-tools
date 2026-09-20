@@ -111,6 +111,13 @@ P0 仍保持未完成，不能以 UI／synthetic 測試成功聲稱真實歌曲�
 本機可直接開啟 `.studio-agent/kaiju-piano-review-final/review.html`，原始M4A與頁面放同一目錄。
 Python12項測試及desktop/iPhone原音播放、定點停止、下載人工紀錄均通過。
 
+後續依使用者優先修bug的要求，已修正預設audio worker的時間壓縮機制：
+來源tempo正規化＋兩軸嚴格前進的subsequence DTW，真實M4A的collapsed intervals
+從75降至0，曲尾從172.571s移至226.941s；未寫死8.5秒。
+Python18項、Node音訊／pipeline／finalize43項通過。新report仍有低confidence／直接frame
+coverage警告，originalAudio維持PENDING，原store未變。詳見
+[修正證據](evidence/kaiju-final-mobile-2026-09-21/dtw-fix-verification.json)。
+
 ## 程式與瀏覽器驗證
 
 - 相關 Node regressions：40 PASS / 0 FAIL，包含 audit 的 blocker、真實 emitter/readback、

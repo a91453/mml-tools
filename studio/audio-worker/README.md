@@ -6,6 +6,7 @@ This worker is the first original-audio evidence layer for Mabinogi Mobile MML S
 
 - user-provided M4A / FLAC / WAV / other FFmpeg-readable audio;
 - a Canonical Project JSON containing the symbolic baseline to align against;
+- an explicit, finite, positive tempo at beat zero (later tempo changes are supported);
 - optional source IDs to restrict symbolic alignment to the trusted baseline source.
 
 ## Pipeline
@@ -20,8 +21,9 @@ Canonical note events
   -> exact beat positions
   -> symbolic chroma timeline
 
-symbolic chroma + audio chroma
-  -> DTW
+symbolic chroma + source tempo map + audio chroma
+  -> common physical time grid
+  -> strictly advancing subsequence DTW
   -> beat <-> audio-seconds control points
   -> local BPM / Tempo-drift diagnostics
   -> alignment confidence diagnostics
@@ -43,6 +45,32 @@ The alignment report does **not** by itself prove:
 - that a candidate MML is musically better.
 
 The alignment report never mutates symbolic source events.
+
+## Alignment method v2
+
+`tempo-normalized-subsequence-dtw@2` integrates the source tempo map and samples
+both feature streams on the same physical time grid. It permits steps (1,1),
+(1,2), (2,1), with costs weighted by score frames consumed. Every step advances
+both axes; skipped feature frames are interpolated with positive elapsed time.
+The complete score must fit a path, while the recording may have an unmatched
+intro/outro. There is no song-specific offset or use of the diagnostic's 8.5s
+hypothesis in this implementation.
+
+The local search speed range is 0.5–2 times the source timing. It is an algorithm
+constraint, not a Canonical tempo threshold or acceptance verdict. A recording
+outside it, missing tempo, or conflicting simultaneous tempos fails explicitly;
+the worker does not fall back to a degenerate map. For long inputs, both grids
+are coarsened together to stay within 25 million cost cells. The actual interval
+is disclosed in `alignment.method.analysis_step_seconds` (normally at most 50ms
+unless the audio hop size or memory budget requires coarser sampling).
+
+`score_frame_coverage` and `audio_frame_coverage` still count direct DTW path
+visits and can be below 1 because strict steps skip frames. They remain conservative
+inputs to confidence and backend warnings. New `mapped_*_span_coverage` metrics
+describe the time span, including interpolation; they do not replace existing
+gate metrics. Chroma confidence, local tempo drift, ambiguous repeats and listening
+review remain separate. The backend retains `alignment.method` with attached
+evidence so the algorithm and search bounds remain traceable.
 
 ## CLI
 
@@ -70,8 +98,8 @@ Dependencies are pinned in `requirements.txt`; CI contains a synthetic M4A end-t
 
 Global DTW can align repeated material to the wrong section and compress beat
 intervals. Full frame coverage and a high chroma score do not establish a usable
-time map. The backend flags collapsed intervals; the original algorithm is
-unchanged by the following diagnostic.
+time map. The backend still flags collapsed intervals in existing reports.
+The independent diagnostic below is separate from the corrected default worker.
 
 For a constant-tempo source, create an independent tempo-preserving hypothesis:
 
