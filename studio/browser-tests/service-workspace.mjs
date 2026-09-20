@@ -12,6 +12,7 @@ import { execFileSync } from 'node:child_process';
 import { createServer as createHttpsServer, request as httpsRequest } from 'node:https';
 import { createApplication, createHttpServer, SERVICE_OWNER } from '../../railway/server.mjs';
 import { createRemoteAgentClient } from '../../scripts/studio-agent-remote.mjs';
+import { exerciseProductionWorkspace } from './production-workflow.mjs';
 import { callAgentTool } from '../../scripts/studio-agent.mjs';
 import { sixSourceVoices } from '../tests/fixtures/midi-fixtures.mjs';
 import { projectWithSymbolicAsset, runDecisionsFor, FIXTURE_CONFIRMATIONS } from '../tests/fixtures/run-fixtures.mjs';
@@ -136,6 +137,12 @@ for (const profile of [
     const result = { profile: profile.name, project_id, run_id, state: status.run.state, same_mcp_run: true,
       uncertain_start_replayed_same_run: true, proposal_visible: true, final_artifact_id: status.run.final_artifact_id,
       synthetic_fixture_review_and_download: fixtureReviewDownload };
+    // Execute the live acceptance scenario against the disposable local service.
+    // This verifies the driver on all profiles; it is not production evidence.
+    result.production_driver_regression = await exerciseProductionWorkspace({
+      page, origin, token: () => token, source, sourceName, fetchImpl: trustedFetch,
+    });
+    assert.deepEqual(errors, []);
     results.push(result); console.log(JSON.stringify(result));
     await page.reload(); await page.locator('#login').waitFor({ state: 'visible' });
     assert.equal(await page.locator('#workspace').isVisible(), false);

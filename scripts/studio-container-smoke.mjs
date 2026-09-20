@@ -19,10 +19,10 @@ const sha256 = bytes => createHash('sha256').update(bytes).digest('hex');
 
 // Dependency injection tests the assertions, not Docker or the real service.
 // A PASS from those tests must never be described as an image smoke PASS.
-export async function verifyService({ baseURL, expectedOrigin, expectedAssets, fetchImpl = fetch }) {
+export async function verifyService({ baseURL, expectedOrigin, expectedAssets, fetchImpl = fetch, timeoutMs = 10000 }) {
   const checked = [];
   const request = (path, method = 'GET') => fetchImpl(baseURL + path, {
-    method, redirect: 'manual', signal: AbortSignal.timeout(10000),
+    method, redirect: 'manual', signal: AbortSignal.timeout(timeoutMs),
   });
   const health = await request('/healthz');
   assert.equal(health.status, 200, 'health HTTP status');
