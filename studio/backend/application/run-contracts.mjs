@@ -46,7 +46,7 @@ export const RUN_REPORT_ARTIFACT_TYPE = 'run_report';
  */
 export const RUN_EXECUTION_MODE = 'bounded-synchronous-advancement';
 
-export const RUN_EXECUTION_NOTICE = 'A run advances only inside the startRun/resumeRun call that was made. When the call returns, nothing is executing: no background queue, no worker pool, no timer and no automatic restart exist in this build. A run in awaiting_review, blocked or interrupted stays there until an explicit resumeRun call is made with new input, decisions or evidence.';
+export const RUN_EXECUTION_NOTICE = 'A run advances only inside the startRun/resumeRun call that was made. The core run engine has no background queue, no worker pool, no timer and no automatic restart. A separately enabled and explicitly authorized external agent driver may make subsequent calls; inspect that driver status separately. A run in awaiting_review, blocked or interrupted stays there until an explicit resumeRun call is made with new input, decisions or evidence.';
 
 /**
  * Run lifecycle states. Implementation vocabulary, deliberately not the

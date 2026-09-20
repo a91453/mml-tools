@@ -1,0 +1,14 @@
+{
+  "scope": "Local implementation validation; not musical acceptance or production deployment",
+  "node_suite": {
+    "pass": 1831,
+    "fail": 0,
+    "wall_seconds": 94.917,
+    "bootstrap_attempts": 204,
+    "shared_refs_untouched": true,
+    "ok": true
+  },
+  "studio_web_build": "PASS",
+  "initial_failure": "Deployment watch-pattern regression found two new server modules absent from railway/service-settings.json; added both patterns and reran full suite successfully.",
+  "later_ui_change": "Moved checkbox style into CSP-permitted stylesheet and clarified dispatch copy; browser regression rerun separately."
+}

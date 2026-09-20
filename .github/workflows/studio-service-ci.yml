@@ -29,7 +29,7 @@ jobs:
       - run: npx playwright install --with-deps chromium webkit
       - run: npm run build:studio-web
       - name: Test shared browser and MCP workspace on all three profiles
-        run: node studio/browser-tests/service-workspace.mjs --out "$RUNNER_TEMP/service-browser"
+        run: node studio/browser-tests/service-workspace.mjs --agent --out "$RUNNER_TEMP/service-browser"
       # Never upload the whole output directory: it contains a disposable TLS
       # private key and test stores. Only explicit evidence files may leave CI.
       - uses: actions/upload-artifact@v4

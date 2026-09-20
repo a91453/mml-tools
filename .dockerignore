@@ -17,6 +17,8 @@ server/*
 !server/report-page.mjs
 !server/studio-web.mjs
 !server/api.mjs
+!server/studio-agent-driver.mjs
+!server/studio-agent-codex.mjs
 !railway/
 railway/*
 !railway/Dockerfile

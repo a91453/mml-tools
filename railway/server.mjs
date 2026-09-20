@@ -6,6 +6,9 @@ import { handleMcp, SERVICE_VERSION } from '../server/mcp.mjs';
 import { createApiRouter } from '../server/api.mjs';
 import { studioWebResponse } from '../server/studio-web.mjs';
 import { createStudioApplication } from '../studio/backend/application/index.mjs';
+import { createAgentDriver } from '../server/studio-agent-driver.mjs';
+import { createCodexDecider } from '../server/studio-agent-codex.mjs';
+import { join } from 'node:path';
 import { scrubBuildCredentialVariables } from '../studio/backend/bootstrap/index.mjs';
 
 // Railway provides a service variable to the build AND to the running
@@ -131,11 +134,29 @@ export function createApplication(options) {
     // Production passes nothing.
     loadEngines: options.studioLoadEngines,
   });
-  const api = createApiRouter({ application: studio, ownerOf: () => SERVICE_OWNER, challenge: auth.unauthorized().headers.get('www-authenticate') });
+  const agent = createAgentDriver({ application: studio, decide: options.agentDecide ?? (options.agentCodexExecutable
+    ? createCodexDecider({ executable: options.agentCodexExecutable, model: options.agentModel }) : null),
+    directory: options.studioDataDirectory ? join(options.studioDataDirectory, 'agent-dispatch') : null });
+  // Host-level cost/privacy statements must include the optional model runner;
+  // the underlying provider-independent music engine still calls no model.
+  const exposedStudio = Object.freeze({ ...studio, async capabilities() {
+    const base = await studio.capabilities();
+    return { ...base, external_agent: { enabled: agent.enabled, execution: 'explicitly-authorized-bounded-continuation',
+      automatic_restart: false, native_tool_results_accepted: false, max_concurrent_runs: 2 },
+      ...(agent.enabled ? {
+        cost: { ...base.cost, additional_recurring_cost: 'OPERATOR_CONFIGURED', external_paid_services: 'OPERATOR_CONFIGURED',
+          notice: 'The optional external agent uses the configured Codex account or provider quota. Core musical operations do not require a model.' },
+        privacy: { ...base.privacy, uploaded_assets_leave_this_service: true, raw_asset_bytes_sent: false, derived_symbolic_data_sent: true,
+          calls_external_analysis_services: true, notice: 'The enabled agent sends run metadata, derived symbolic events, cited evidence and reports to its configured model. Raw audio/MIDI bytes are not sent.' },
+      } : {}),
+    };
+  } });
+  const api = createApiRouter({ application: exposedStudio, ownerOf: () => SERVICE_OWNER, challenge: auth.unauthorized().headers.get('www-authenticate'), agentDriver: agent });
   return {
-    close: auth.close,
+    close() { agent.close(); auth.close(); },
     origin: auth.issuer,
-    studio,
+    studio: exposedStudio,
+    agent,
     async fetch(request) {
       const url = new URL(request.url);
       if (url.origin !== auth.issuer) return new Response('Unexpected server origin', { status: 400 });
@@ -148,7 +169,7 @@ export function createApplication(options) {
         // Only locally issued, audience-bound OAuth access tokens authorize this
         // standalone service. Sites identity headers have no authority here.
         if (!auth.authenticated(request)) return auth.unauthorized();
-        return handleMcp(request, { application: studio, owner: SERVICE_OWNER, allowedOrigins: auth.allowedOrigins });
+        return handleMcp(request, { application: exposedStudio, owner: SERVICE_OWNER, allowedOrigins: auth.allowedOrigins });
       }
       // The Application HTTP surface, behind the same OAuth check. The router
       // is told whether the request is authenticated rather than deciding it:
@@ -238,6 +259,8 @@ if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) 
     // only claimed when the operator declares the mount is persistent.
     studioDataDirectory: process.env.MML_STUDIO_DATA_DIR ?? null,
     studioDurability: process.env.MML_STUDIO_DURABILITY ?? 'unknown',
+    agentCodexExecutable: process.env.MML_AGENT_CODEX ?? null,
+    agentModel: process.env.MML_AGENT_MODEL ?? null,
     allowedRedirectHosts: parseRedirectHosts(process.env),
     allowLoopbackRedirects: parseLoopbackSetting(process.env),
   });

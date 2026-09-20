@@ -14,6 +14,8 @@
       "/server/mcp-studio.mjs",
       "/server/report-page.mjs",
       "/server/studio-web.mjs",
+      "/server/studio-agent-driver.mjs",
+      "/server/studio-agent-codex.mjs",
       "/studio/web/service/**",
       "/server/api.mjs",
       "/studio/backend/**",
