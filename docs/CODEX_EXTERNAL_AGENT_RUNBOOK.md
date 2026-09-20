@@ -12,8 +12,11 @@ MCP schema checker 與 `runStudioTool` dispatcher，再由 Application Service
 Final artifact。沒有 HTTP listener、模型 SDK、queue、新資料庫或部署。
 
 CLI 預設使用本機 store；加上 `--service-url` 可連既有遠端 HTTP／MCP，見下節。
-它不讀取 Studio PWA 的 IndexedDB。PWA 目前直接呼叫 Web Worker 引擎，沒有使用
-Application Service。不要把本機 run 誤認成網站既有歌曲。
+它不讀取 Studio PWA 的 IndexedDB。既有本機工作區仍直接呼叫 Web Worker 引擎。
+新增的「服務專案 · AI / MCP」入口導向服務的 `/studio/`，透過既有 OAuth 與
+Application HTTP API，與同一 owner 的 MCP 共用 project／run。操作與驗證見
+[服務工作區操作指引](STUDIO_SERVICE_WORKSPACE.md)。本機專案不會自動搬移，
+也不要把 CLI 的獨立本機 store 誤認成遠端服務專案。
 
 必須指定獨立 `--data-dir`。`store/` 使用既有 JSON record／blob store；
 `receipts/` 保留每次呼叫的時間、actor、參數與結果（不內嵌上傳 bytes）。

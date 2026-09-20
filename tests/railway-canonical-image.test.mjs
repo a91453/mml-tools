@@ -112,6 +112,22 @@ const probeLines = output => Object.fromEntries(
 
 // ─── the production condition, end to end ───────────────────────────────────
 
+test('the allowlisted image can import the server and serve its browser workspace assets', t => {
+  const image = imageWithoutGitMetadata(t);
+  // The Canonical probe imports the service, not the HTTP/MCP entrypoint. A
+  // missing transport dependency can therefore pass that probe but fail boot.
+  const result = runIn(image, process.execPath, ['--input-type=module', '-e', `
+    const { createApplication } = await import('./railway/server.mjs');
+    const app = createApplication({ origin: 'https://image.example', ownerPassword: 'SYNTHETIC_IMAGE_PASSWORD_01234567890123456789', database: ':memory:' });
+    try { for (const path of ['/studio/', '/studio/app.mjs', '/studio/client.mjs', '/studio/style.css']) {
+      const response = await app.fetch(new Request('https://image.example' + path));
+      if (response.status !== 200) throw Error('Missing workspace asset: ' + path);
+    } process.stdout.write('SERVER_IMPORT_OK'); } finally { app.close(); }
+  `]);
+  assert.equal(result.status, 0, result.stdout + result.stderr);
+  assert.match(result.stdout, /SERVER_IMPORT_OK/);
+});
+
 test('the image build reaches CANONICAL_LOADED from a source tree that carries no .git', t => {
   const image = imageWithoutGitMetadata(t);
   const published = publishedSource(t);

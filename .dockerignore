@@ -14,6 +14,8 @@ dist/*
 server/*
 !server/mcp.mjs
 !server/mcp-studio.mjs
+!server/report-page.mjs
+!server/studio-web.mjs
 !server/api.mjs
 !railway/
 railway/*
@@ -23,11 +25,19 @@ railway/*
 !railway/canonical-probe.sh
 
 # The Canonical-aware Studio backend the Application Service orchestrates.
-# Tests, fixtures, the browser app and the audio worker stay out: the service
-# imports none of them.
+# Tests, fixtures, the local browser engine and the audio worker stay out.
+# Only the four HTTP service workspace assets below join the backend image.
 !studio/
 studio/*
 !studio/backend/
+!studio/web/
+studio/web/*
+!studio/web/service/
+studio/web/service/*
+!studio/web/service/index.html
+!studio/web/service/style.css
+!studio/web/service/client.mjs
+!studio/web/service/app.mjs
 
 # The build-time step that makes the published history available. Railway's
 # GitHub source snapshot carries no `.git`, so the image builds the object store

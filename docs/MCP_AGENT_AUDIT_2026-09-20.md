@@ -101,12 +101,14 @@ direct／HTTP／MCP fixture parity test 驗證；不可宣稱真實 MML 已生�
 
 ## 仍需接通／判斷的部分
 
-1. PWA 現在直接走 Web Worker，未與 Application Service 共用 project／run；
-   網站按鈕、來源上傳與 agent continuation 還沒有同一條工作流。
+1. 既有本機 PWA 仍走 Web Worker；後續已加入獨立 `/studio/` 服務工作區，
+   真實 MIDI 在三種瀏覽器完成 OAuth、上傳、啟動並由同 owner MCP 讀回同一 run。
+   提案回讀、人工複製 agent 接續資訊已接通；自動喚起／持續執行外部 agent 尚未實作。
+   詳見[服務工作區驗證](STUDIO_SERVICE_WORKSPACE.md)。沒有部署正式站。
 2. MCP 本身不收 binary；host 需把附件交給既有 authenticated HTTP upload。
    舊 Sites worker 只暴露三個 technical tools，完整 Studio 在獨立服務入口。
    後續 `65b90d6` 已把 HTTP upload 與 MCP 接進同一 CLI 的遠端模式；
-   [優先級與真實驗證](AI_AGENT_PRIORITY_BACKLOG.md)另記，PWA 尚未接入。
+   [優先級與真實驗證](AI_AGENT_PRIORITY_BACKLOG.md)另記；新增服務畫面亦使用此 HTTP upload。
 3. 沒給 Mobile profile 時 run 會跳過 adaptation，而 Gate 8 request 只接受
    evidence_needed；不能藉此自行放寬 proposal policy 來補 profile。
 4. 真實歌曲的 orphan NoteOff、角色來源證據、可靠錄音對齊與聽驗仍待處理。

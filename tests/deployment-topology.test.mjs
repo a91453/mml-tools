@@ -110,7 +110,9 @@ test('the Permanent Studio release mechanism is not built by the Agent backend i
   // `ops/` carries the release tooling, pinned artifacts and trust bundle. None
   // of it belongs in the agent image, and the allowlist must not admit it.
   assert.ok(!/^!ops\//m.test(dockerignore), 'the agent image must not ship the release tooling');
-  assert.ok(!/^!studio\/web\//m.test(dockerignore), 'the agent image does not serve the PWA');
+  assert.ok(!/^!studio\/web\/(app|worker|storage)\.mjs/m.test(dockerignore), 'the agent image must not ship the local PWA engine or IndexedDB workspace');
+  assert.match(dockerignore, /^studio\/web\/\*$/m, 'web files remain excluded except the explicit service workspace');
+  assert.match(dockerignore, /^!studio\/web\/service\/index\.html$/m, 'the service workspace is explicitly admitted');
 });
 
 // ─── Studio Web does not use the Application Service ────────────────────────
