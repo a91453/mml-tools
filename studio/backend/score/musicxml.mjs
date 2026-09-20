@@ -122,9 +122,21 @@ function detectTitle(rootChildren, fallback) {
 
 function parseMeter(timeNode, context) {
   const timeChildren = payload(timeNode);
-  const beats = childText(timeChildren, 'beats');
-  const beatType = childText(timeChildren, 'beat-type');
-  if (beats === null || beatType === null) return null;
+  // A time element can contain several beats/beat-type pairs (e.g. 2/4 +
+  // 3/8). This IR supports one simple signature, not a partial first pair.
+  // Keep the source values visible and incomplete instead of inventing 2/4.
+  const beatsValues = childrenNamed(timeChildren, 'beats').map(node => textNode(payload(node)));
+  const beatTypes = childrenNamed(timeChildren, 'beat-type').map(node => textNode(payload(node)));
+  if (hasNamed(timeChildren, 'senza-misura')) {
+    context.unsupported.push({ code: 'UNMETERED_TIME', location: context.location });
+    return null;
+  }
+  if (beatsValues.length !== 1 || beatTypes.length !== 1) {
+    context.unsupported.push({ code: 'COMPLEX_METER', location: context.location, beats: beatsValues, beatTypes });
+    return null;
+  }
+  const [beats] = beatsValues;
+  const [beatType] = beatTypes;
   if (!/^\d+$/.test(beats) || !/^\d+$/.test(beatType)) {
     context.unsupported.push({ code: 'COMPLEX_METER', location: context.location, beats, beatType });
     return null;
@@ -132,11 +144,17 @@ function parseMeter(timeNode, context) {
   return { numerator: Number(beats), denominator: Number(beatType) };
 }
 
-function parseMetronome(directionChildren) {
-  const directionType = firstNamed(directionChildren, 'direction-type');
-  if (!directionType) return null;
-  const metronome = firstNamed(payload(directionType), 'metronome');
-  if (!metronome) return null;
+function parseMetronome(directionChildren, context) {
+  // Words/dynamics often precede a metronome in the same direction. Inspect
+  // every direction-type; a first-child lookup silently loses real Tempo.
+  const metronomes = childrenNamed(directionChildren, 'direction-type')
+    .flatMap(node => childrenNamed(payload(node), 'metronome'));
+  if (!metronomes.length) return null;
+  if (metronomes.length > 1) {
+    context.unsupported.push({ code: 'MULTIPLE_METRONOME_MARKS', location: context.location });
+    return null;
+  }
+  const [metronome] = metronomes;
   const metaChildren = payload(metronome);
   const unit = childText(metaChildren, 'beat-unit');
   const perMinute = decimalText(metaChildren, 'per-minute', 'metronome per-minute');
@@ -297,7 +315,7 @@ export function ingestMusicXML(xml, options = {}) {
           const soundTempoRaw = sound ? attr(sound, 'tempo') : null;
           let bpm = soundTempoRaw !== null ? Number(soundTempoRaw) : null;
           if (bpm !== null && (!Number.isFinite(bpm) || bpm <= 0)) throw Error(`invalid sound tempo at ${partId} measure ${measureNumber}`);
-          if (bpm === null) bpm = parseMetronome(directionChildren);
+          if (bpm === null) bpm = parseMetronome(directionChildren, context);
           if (bpm !== null) {
             tempoEvents.push(createCanonicalTempoEvent({
               id: `${sourceId}:tempo:${partId}:${measureIndex + 1}:${sequence}`,

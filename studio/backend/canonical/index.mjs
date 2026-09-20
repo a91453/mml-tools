@@ -166,7 +166,7 @@ export function createArbitrationDecision({
   id = nonEmpty(id, 'decision.id');
   eventIds = uniqueStrings(eventIds, 'decision.eventIds', { allowEmpty: false });
   action = nonEmpty(action, 'decision.action');
-  if (!['pending', 'accepted', 'rejected'].includes(status)) throw Error('decision.status must be pending, accepted, or rejected');
+  if (!['pending', 'accepted', 'rejected'].includes(status)) throw Error(`decision.status must be pending, accepted, or rejected`);
   reason = nonEmpty(reason, 'decision.reason');
   evidence = uniqueStrings(evidence, 'decision.evidence');
   return Object.freeze({ id, eventIds, action, status, reason, evidence, metadata: jsonObject(metadata, 'decision.metadata') });
@@ -220,11 +220,11 @@ export function createCanonicalProject({
     schema: 'mabinogi-mobile-mml-studio/canonical-project@2',
     id,
     title,
-    sources: [...sources],
-    events: [...events],
-    tempoEvents: [...tempoEvents],
-    meterEvents: [...meterEvents],
-    decisions: [...decisions],
+    sources: Object.freeze([...sources]),
+    events: Object.freeze([...events]),
+    tempoEvents: Object.freeze([...tempoEvents]),
+    meterEvents: Object.freeze([...meterEvents]),
+    decisions: Object.freeze([...decisions]),
     metadata: jsonObject(metadata, 'project.metadata'),
   });
 }
