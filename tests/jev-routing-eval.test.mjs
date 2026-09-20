@@ -1,0 +1,136 @@
+// Pure-function tests for the offline Jev routing evaluation harness.
+// No network call is made here, and none may be added: the harness is only
+// allowed to reach TypeSafe under an explicit --live flag.
+import test from 'node:test';
+import assert from 'node:assert/strict';
+import { mkdtempSync, mkdirSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+import { QUESTIONS, buildCase, casesFromDataDir, buildPayload, summarize, estimateCostUsd }
+  from '../scripts/jev-routing-eval.mjs';
+
+const run = (overrides = {}) => ({
+  run_id: 'run-1', revision: 3, state: 'awaiting_review',
+  pending_step: { step: 'apply_decisions' }, candidate_id: 'cand-1', final_artifact_id: null,
+  blockers: [{ code: 'AWAITING_ACCEPTED_DECISIONS' }],
+  readiness_blockers: ['AWAITING_REVIEW_EVIDENCE'],
+  warnings: [{ code: 'LOW_CONFIDENCE_ROLE' }],
+  steps: [{ step: 'intake' }, { step: 'suggest' }],
+  gates: { technical_ok: true, source_ok: false },
+  review_requests: [{ code: 'ARRANGEMENT_DECISIONS_REQUIRED', lane_count: 11 }],
+  ...overrides,
+});
+
+test('question set keeps each primitive matched to what its answer means', () => {
+  assert.equal(QUESTIONS.route.type, 'choice');
+  // A no-match outcome must exist: the model cannot pick a path that was omitted.
+  assert.ok(Object.hasOwn(QUESTIONS.route.criteria, 'human_review'));
+  assert.equal(Object.keys(QUESTIONS.route.criteria).length, 4);
+  // Degree belongs to a score; a noul near 0.5 would mean "equally likely", not "half".
+  assert.equal(QUESTIONS.evidence_gap.type, 'score');
+  assert.ok(QUESTIONS.evidence_gap.criteria.length >= 2);
+  assert.equal(QUESTIONS.human_judgment_required.type, 'noul');
+  // Question keys are not sent to the model, so every instruction must stand alone.
+  for (const question of Object.values(QUESTIONS)) {
+    assert.ok(question.instructions.length > 80, 'instructions must carry their full meaning');
+  }
+});
+
+test('buildCase summarizes a halted run without carrying the whole record', () => {
+  const record = run();
+  const built = buildCase(record, record.review_requests[0], { source: 'r.json' });
+  assert.equal(built.id, 'run-1:3:ARRANGEMENT_DECISIONS_REQUIRED');
+  assert.equal(built.state.run.pending_step, 'apply_decisions');
+  assert.equal(built.state.run.has_candidate, true);
+  assert.equal(built.state.run.has_final_artifact, false);
+  assert.deepEqual(built.state.blockers, ['AWAITING_ACCEPTED_DECISIONS']);
+  assert.deepEqual(built.state.readiness_blockers, ['AWAITING_REVIEW_EVIDENCE']);
+  assert.deepEqual(built.state.warnings, ['LOW_CONFIDENCE_ROLE']);
+  assert.equal(built.state.counts.steps, 2);
+  assert.equal(built.state.review_request.code, 'ARRANGEMENT_DECISIONS_REQUIRED');
+  // Identifiers that carry no judgment signal stay out of the billed state.
+  assert.equal(built.state.run.candidate_id, undefined);
+  assert.ok(!('artifact_ids' in built.state));
+});
+
+test('buildCase tolerates a sparse run record', () => {
+  const built = buildCase({ run_id: 'r', revision: 0 }, null);
+  assert.equal(built.id, 'r:0:request');
+  assert.deepEqual(built.state.blockers, []);
+  assert.equal(built.state.counts.review_requests, 0);
+  assert.equal(built.state.review_request, null);
+});
+
+test('casesFromDataDir reads receipts, skips the irrelevant and dedupes per revision', () => {
+  const directory = mkdtempSync(join(tmpdir(), 'jev-eval-'));
+  const receipts = join(directory, 'receipts');
+  mkdirSync(receipts);
+  const write = (name, body) => writeFileSync(join(receipts, name), JSON.stringify(body));
+  // A run is re-read many times; the same revision and code is one case.
+  write('1.json', { result: { run: run() } });
+  write('2.json', { result: { run: run() } });
+  // No review request: not a case.
+  write('3.json', { result: { run: run({ review_requests: [] }) } });
+  // Not a run status result at all.
+  write('4.json', { result: { artifact: { type: 'final_mml' } } });
+  // A later revision of the same run is a distinct case.
+  write('5.json', { result: { run: run({ revision: 4 }) } });
+  // Unparseable receipts are skipped rather than failing the sweep.
+  writeFileSync(join(receipts, '6.json'), '{ not json');
+
+  const cases = casesFromDataDir(directory);
+  assert.equal(cases.length, 2);
+  assert.deepEqual(cases.map(entry => entry.id).sort(), [
+    'run-1:3:ARRANGEMENT_DECISIONS_REQUIRED',
+    'run-1:4:ARRANGEMENT_DECISIONS_REQUIRED',
+  ]);
+});
+
+test('casesFromDataDir refuses a directory that is not an agent workspace', () => {
+  const directory = mkdtempSync(join(tmpdir(), 'jev-eval-empty-'));
+  assert.throws(() => casesFromDataDir(directory), /No receipts directory/);
+});
+
+test('buildPayload asks every question over one state in a single request', () => {
+  const record = run();
+  const payload = buildPayload(buildCase(record, record.review_requests[0]), 'jev-latest');
+  assert.equal(payload.model, 'jev-latest');
+  assert.deepEqual(Object.keys(payload.questions), ['route', 'evidence_gap', 'human_judgment_required']);
+  assert.equal(payload.state.review_request.code, 'ARRANGEMENT_DECISIONS_REQUIRED');
+});
+
+test('summarize reports raw distributions and applies no threshold', () => {
+  const answered = (id, choice, confidence, label) => ({
+    id, label: label ?? null,
+    answers: { route: { type: 'choice', choice, confidence, probabilities: {} } },
+    usage: { input_tokens: 1000, output_tokens: 0 },
+  });
+  const summary = summarize([
+    answered('a', 'deep_review', 0.91, 'deep_review'),
+    answered('b', 'human_review', 0.72, 'deep_review'),
+    answered('c', 'needs_source', 0.44, 'needs_source'),
+    { id: 'd', label: null, answers: null },
+  ]);
+  assert.equal(summary.cases, 4);
+  assert.equal(summary.answered, 3);
+  assert.equal(summary.routes.deep_review, 1);
+  assert.equal(summary.routes.continue_automatically, 0);
+  assert.deepEqual(summary.confidence_bands, { high: 1, medium: 1, low: 1 });
+  assert.equal(summary.input_tokens, 3000);
+  assert.ok(Math.abs(summary.estimated_cost_usd - estimateCostUsd(3000)) < 1e-12);
+  // Separation is the point of the harness: agreement per label, not an overall score.
+  assert.equal(summary.separation.deep_review.count, 2);
+  assert.equal(summary.separation.deep_review.agreement, 0.5);
+  assert.equal(summary.separation.needs_source.agreement, 1);
+  assert.match(summary.notice, /No threshold is applied/);
+});
+
+test('summarize omits the separation report when nothing is labeled', () => {
+  const summary = summarize([{ id: 'a', label: null, answers: { route: { choice: 'deep_review', confidence: 0.9 } } }]);
+  assert.equal(summary.separation, null);
+});
+
+test('cost estimate follows the published input price', () => {
+  assert.ok(Math.abs(estimateCostUsd(1e6) - 0.042) < 1e-12);
+  assert.equal(estimateCostUsd(0), 0);
+});
