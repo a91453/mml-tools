@@ -122,7 +122,8 @@ for (const profile of [
       await page.locator('#projects').selectOption(fixture.projectId);
       await page.waitForFunction(() => document.querySelector('#run-state').textContent === 'completed' && document.querySelector('#workspace').getAttribute('aria-busy') === 'false');
       await page.locator('#review').click();
-      await page.locator('#review-summary summary').waitFor();
+      await page.locator('#review-summary').getByText('候選審查：Gates 與阻塞', { exact: true }).waitFor();
+      await page.locator('#review-summary').getByText('來源／上一版本差異與已記錄的候選審查', { exact: true }).waitFor();
       const reportDownload = page.waitForEvent('download'); await page.locator('#save-review').click();
       const reportFile = await reportDownload;
       const downloadedReview = JSON.parse(await readFile(await reportFile.path(), 'utf8'));

@@ -12,6 +12,7 @@
 | ENV-001 | 完整 Node suite／環境依賴 | 首輪1813 PASS／5 FAIL；既有 Sites build 在本機找不到 `zip`。GnuWin32 zip 另有 Node stdout pipe 相容性問題。 | **本機解決**。驗證官方 SHA 後使用本機 MSYS2 zip＋既有 Git runtime，僅改 subprocess PATH；完整1818 PASS／0 FAIL。不是歌曲或新 profile 程式缺陷。 |
 | KAIJU-005 | DTW修正回歸／librosa相容性 | librosa1.0.0在手動提供高矩形cost matrix且subseq=True時，仍交換回傳path兩欄；較快演奏因此觸發audio index out of range。 | **FIXED**。使用公開dtw_backtracking指定終點與step，保留score/audio座標；較短錄音與速度邊界回歸通過。未修改依賴套件。 |
 | KAIJU-006 | 音訊來源追溯／Iterable重用 | `source_ids`傳generator時，渲染先消耗它，產出report時source_ids變空。 | **FIXED**。入口將Iterable保存為tuple；M4A end-to-end改用generator並核對report仍保留來源ID。 |
+| KAIJU-007 | PR #47 service-browser CI／測試selector | 新增lineage摘要後，synthetic下載分支的`#review-summary summary`匹配2個元素，Playwright strict mode拒絕；真實MIDI模式會跳過這個分支。 | **FIXED／本機三種browser通過，PR CI重新檢查**。分別等待Gate摘要與lineage摘要的完整文字；保留原review下載及Final MML比對。首次CI失敗：[job](https://github.com/a91453/mml-tools/actions/runs/35538722789/job/106152356364)。 |
 
 來源修正證據：[orphan-repair.json](evidence/kaiju-final-mobile-2026-09-21/orphan-repair.json)。
 DTW 實際重跑摘要：[dtw-reproduction.json](evidence/kaiju-final-mobile-2026-09-21/dtw-reproduction.json)。
@@ -123,3 +124,13 @@ Node audio＋application pipeline＋finalize **43 PASS／0 FAIL**。
 搜尋速度比0.5–2只是本演算法的限制，不是Canonical驗收閾值；缺少初始tempo、
 同拍衝突tempo或超出可行範圍會明確失敗。新版source／角色／聽驗仍須人工證據。
 現有constant-tempo diagnostic和審查頁仍可作獨立對照，原報告不被覆寫。
+
+## PR #47 合併前驗證
+
+`7bc85ac`完整Node suite：**1819 PASS／0 FAIL**，95.401秒；202次bootstrap、
+單一published identity／rules snapshot，shared refs未改。Studio Web build 62 assets。
+GitHub CI首次發現KAIJU-007 selector失敗，已修正；不是忽略失敗直接合併。
+修正後重新執行不帶`--midi`的完整service-workspace測試，desktop Chromium、
+iPhone WebKit、iPad WebKit三種profile均完成review／MML下載與Mobile reviewer流程。
+結果見 [PR重測](evidence/kaiju-final-mobile-2026-09-21/pr47-browser-retest.json)。
+先前browser通過紀錄不能替代這個最新selector修正後的驗證。

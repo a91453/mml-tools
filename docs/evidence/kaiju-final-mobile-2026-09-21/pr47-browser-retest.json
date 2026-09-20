@@ -1,0 +1,140 @@
+{
+  "source": "synthetic regression fixture",
+  "source_sha256": "5990ff4746fe92016ee2d6080c34b0ab6c1b533f017396ff4214f1ebcf7a1e08",
+  "source_bytes": 341,
+  "scope": "Browser OAuth and shared HTTP/MCP project/run; not song, listening or game acceptance",
+  "results": [
+    {
+      "profile": "desktop-chromium",
+      "project_id": "prj_5dc83421bc01a6c72e8f97fe523bfc11",
+      "run_id": "run_80757c5b2d028d1c18db30ac78e3c70d",
+      "state": "awaiting_review",
+      "same_mcp_run": true,
+      "uncertain_start_replayed_same_run": true,
+      "proposal_visible": true,
+      "final_artifact_id": null,
+      "synthetic_fixture_review_and_download": true,
+      "mobile_reviewer_regression": {
+        "synthetic": true,
+        "profile_input_preview_apply": true,
+        "same_run": true,
+        "stale_preview_and_review_refused": true,
+        "lost_apply_response_readback": true,
+        "explicit_candidate_review": true,
+        "changed_candidate_reopens_gate8": true,
+        "final_round_trip": "PASS",
+        "in_game": "PENDING"
+      },
+      "production_driver_regression": {
+        "status": "PASS",
+        "profile": "current-browser",
+        "project_id": "prj_07bb5e530c1839a6cd0b87ae0673affd",
+        "run_id": "run_7b17b1118ceb677b4504b36f1b88e0b4",
+        "source_kind": "third_party_midi",
+        "source_sha256": "5990ff4746fe92016ee2d6080c34b0ab6c1b533f017396ff4214f1ebcf7a1e08",
+        "source_bytes": 341,
+        "checked": [
+          "new-isolated-project",
+          "browser-upload-and-run-awaiting-review",
+          "same-browser-and-mcp-run-and-revision",
+          "mcp-evidence-needed-proposal-created",
+          "proposal-visible-handoff-preserved-final-blocked",
+          "reload-requires-login-remote-run-remains"
+        ],
+        "project_title": "E2E acceptance 1a742a82-dc2c-48c6-ad31-d50fec9667f3",
+        "pending_step": null,
+        "revision": 6,
+        "halt_reason": "AWAITING_ACCEPTED_DECISIONS",
+        "proposal_id": "pro_1642f5dcc08ab5744e55bcd14519dbd9"
+      }
+    },
+    {
+      "profile": "iphone-webkit",
+      "project_id": "prj_efd52445b67ede2a4df822ce8ebd61c2",
+      "run_id": "run_a2ec8e26fe22df9ef62bfdc73fc65468",
+      "state": "awaiting_review",
+      "same_mcp_run": true,
+      "uncertain_start_replayed_same_run": true,
+      "proposal_visible": true,
+      "final_artifact_id": null,
+      "synthetic_fixture_review_and_download": true,
+      "mobile_reviewer_regression": {
+        "synthetic": true,
+        "profile_input_preview_apply": true,
+        "same_run": true,
+        "stale_preview_and_review_refused": true,
+        "lost_apply_response_readback": true,
+        "explicit_candidate_review": true,
+        "changed_candidate_reopens_gate8": true,
+        "final_round_trip": "PASS",
+        "in_game": "PENDING"
+      },
+      "production_driver_regression": {
+        "status": "PASS",
+        "profile": "current-browser",
+        "project_id": "prj_957047284aba8c84b8861e02bfd1b190",
+        "run_id": "run_194dee27c1c2a6819e775994ac618829",
+        "source_kind": "third_party_midi",
+        "source_sha256": "5990ff4746fe92016ee2d6080c34b0ab6c1b533f017396ff4214f1ebcf7a1e08",
+        "source_bytes": 341,
+        "checked": [
+          "new-isolated-project",
+          "browser-upload-and-run-awaiting-review",
+          "same-browser-and-mcp-run-and-revision",
+          "mcp-evidence-needed-proposal-created",
+          "proposal-visible-handoff-preserved-final-blocked",
+          "reload-requires-login-remote-run-remains"
+        ],
+        "project_title": "E2E acceptance 6369da5a-7df5-4534-8811-44bf5b0809e6",
+        "pending_step": null,
+        "revision": 6,
+        "halt_reason": "AWAITING_ACCEPTED_DECISIONS",
+        "proposal_id": "pro_90b6d82f9a5c8b834307036878d2d34e"
+      }
+    },
+    {
+      "profile": "ipad-webkit",
+      "project_id": "prj_43fdc02d9a50d041cb2e7b504a3be296",
+      "run_id": "run_2bcd6f23daa1f7f6648fedcad8d8bfb2",
+      "state": "awaiting_review",
+      "same_mcp_run": true,
+      "uncertain_start_replayed_same_run": true,
+      "proposal_visible": true,
+      "final_artifact_id": null,
+      "synthetic_fixture_review_and_download": true,
+      "mobile_reviewer_regression": {
+        "synthetic": true,
+        "profile_input_preview_apply": true,
+        "same_run": true,
+        "stale_preview_and_review_refused": true,
+        "lost_apply_response_readback": true,
+        "explicit_candidate_review": true,
+        "changed_candidate_reopens_gate8": true,
+        "final_round_trip": "PASS",
+        "in_game": "PENDING"
+      },
+      "production_driver_regression": {
+        "status": "PASS",
+        "profile": "current-browser",
+        "project_id": "prj_adcad23248dd9fa2829d1cf25bfd74cb",
+        "run_id": "run_3cd68c1609de651088fa4a444cb7d590",
+        "source_kind": "third_party_midi",
+        "source_sha256": "5990ff4746fe92016ee2d6080c34b0ab6c1b533f017396ff4214f1ebcf7a1e08",
+        "source_bytes": 341,
+        "checked": [
+          "new-isolated-project",
+          "browser-upload-and-run-awaiting-review",
+          "same-browser-and-mcp-run-and-revision",
+          "mcp-evidence-needed-proposal-created",
+          "proposal-visible-handoff-preserved-final-blocked",
+          "reload-requires-login-remote-run-remains"
+        ],
+        "project_title": "E2E acceptance 4b573cef-3e87-43d5-9cb9-fbbb3e703ff7",
+        "pending_step": null,
+        "revision": 6,
+        "halt_reason": "AWAITING_ACCEPTED_DECISIONS",
+        "proposal_id": "pro_ffd24a1fc294eeaac2a65acd2f758ba8"
+      }
+    }
+  ]
+}
