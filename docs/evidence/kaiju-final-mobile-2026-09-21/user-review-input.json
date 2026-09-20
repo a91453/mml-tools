@@ -1,0 +1,38 @@
+{
+  "schema": "mml-studio/song-review-input@1",
+  "project_id": "prj_d4048044eb6d84453c81191102d72830",
+  "run_id": "run_d24f9dfe1f1a2bdafe0474727b4f496b",
+  "target_version": {
+    "status": "USER_SELECTED",
+    "provided_by": "user",
+    "user_statement": "1 m4a為準",
+    "asset_id": "ast_6a227cb940566e71be6f0ce51b45e665",
+    "filename": "2-怪獣の花唄-Vaundy-MUSIC-VIDEO.m4a",
+    "sha256": "35a05318c127248d9a391201847ee586e82df87b4755cdeb1ec33e4ceb98d061",
+    "meaning": "Use the supplied recording as the song/version and audible arrangement reference; the piano MIDI remains supporting symbolic material."
+  },
+  "mobile_input": {
+    "status": "INTENT_RECORDED_AWAITING_CANDIDATE_TEST",
+    "user_statement": "鋼琴 單人可以演奏多人音色更豐富",
+    "target_instrument": "piano",
+    "performance_setup": {
+      "solo": "Must be independently playable and musically complete",
+      "ensemble": "Additional players enrich timbre; solo must not depend on them"
+    },
+    "profile": null,
+    "gate8_confirmation": null,
+    "notice": "Instrument and performance intent are provided. Keep numeric adaptation undecided until a candidate-specific test; intent is not a reviewed no-adaptation conclusion."
+  },
+  "remaining_evidence": [
+    "Recording offset and effective range / reliable beat-to-audio alignment",
+    "Source-supported Lead and role decisions for the target recording",
+    "Candidate-specific adaptation/no-adaptation review, player readback and regression"
+  ],
+  "continuation_request": {
+    "user_statement": "繼續執行 如果有哪個步驟有bug紀錄起來 額度如果剩下10%就記得push到github的分支",
+    "bug_log": "docs/KAIJU_FINAL_BUG_LOG_2026-09-21.md",
+    "checkpoint_branch": "codex/kaiju-final-mobile-review",
+    "push_trigger": "Either five-hour or weekly account window has at most 10 percent remaining during active work"
+  },
+  "notice": "Conversation input record only. It does not write a confirmation, change the stored run, certify source completeness, or pass any acceptance gate."
+}

@@ -20,6 +20,32 @@ sessionStorage，交換時清除。重新整理整個網頁後需再登入。畫
 review requests、讀取 proposal 詳情、複製外部 agent 接續資訊、重算並下載
 候選 review，以及下載有效 completed run 綁定的 Final MML。接受 proposal
 仍由已授權的 agent／既有 reviewer 入口依 policy 執行；本頁沒有代填 confirmations。
+9/21 新增明確的 Mobile profile／Gate 8 reviewer 表單；只有使用者填入並提交的
+候選審查會送往既有 reviewer API，操作與證據見下節。
+
+## Mobile profile 與 Gate 8 reviewer 操作
+
+1. 選擇已完成角色與六軌分配、尚未結案的 run。畫面顯示審查候選與 revision。
+2. 填寫 profile 名稱、目標樂器／測試情境、理由、證據及接受者名稱；在需要的
+   角色填入音域或音量。初值全部空白，省略的欄位維持候選原值。
+3. 按「預覽 Mobile 適配」，展開事件變化、衝突與 blockers。PASS 只表示可執行。
+   修改任何 profile 欄位或接受者，必須重新預覽。
+4. 按「接受預覽並接續此任務」。呼叫既有 `resumeRun.mobile_adaptation`，攜帶
+   profile、plan id、接受者、observed run revision 與 idempotency key，仍是同一 run。
+5. 按「重新計算候選審查」，查看 gates、來源／上一版本差異與已記錄的審查。
+   可下載完整 report。再填 Gate 8 審查者、結論、理由及證據，按「記錄 Gate 8
+   審查並接續」。結論沒有預選；無需額外調整的判斷也必須提供依據。
+6. 查看更新的 run gates。此操作只提供 `mobile_adaptation_reviewed`；其他 gate
+   不會被 UI 一起確認。新候選會使舊 Gate 8 review 失效，必須重算並重新審查。
+
+預覽／review 都綁定 project、run、candidate 與 revision。提交前讀回最新 run，
+後端再以 `expected_run_revision` 防止競爭寫入。來源過期、未完成 G12、有未確定
+step 或已產生結案報告的 run 不開放這些提交。網路結果不明時先清除可提交的本機
+預覽，要求重新讀取；不會自動重送相對音量調整。profile 草稿不跨登入持久化。
+
+這是既有 reviewer 流程的 UI，不增加 agent proposal 的 gate 權限；不能把任意
+Gate 8 request 改成 `MOBILE_ADAPTATION_BLOCKED` 來接受 profile proposal。
+完整驗證與真實歌曲現況見 [9/21 紀錄](KAIJU_FINAL_MOBILE_REVIEW_2026-09-21.md)。
 
 ## 重複操作
 

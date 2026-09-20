@@ -1,0 +1,99 @@
+{
+  "schema": "mml-studio/stored-final-audit@1",
+  "audited_at": "2026-09-20T17:21:47.045Z",
+  "canonical": {
+    "status": "CANONICAL_LOADED",
+    "canonical_version": "2026-09-13-v1",
+    "canonical_status": "PUBLISHED",
+    "manifest_version": "2026-09-13-v1-manifest1",
+    "rules_snapshot_sha": "0a172900a01fdf39c2e9e84cf176961320b779ea",
+    "manifest_commit": "5e7666b850a37f1c85ee2dd8cd0f4fac037a9e14",
+    "published_main_head": "ba9b8b31f82b4537866470c52c8539db1de963e9",
+    "repository_head": "4dd1cac449708a42c2c712ed080097746bf62124",
+    "pr_head": null,
+    "checkout_identity": "git-checkout",
+    "build_source_head": null,
+    "published_source": null,
+    "checkout_notice": "canonical_version, canonical_status, manifest_version, rules_snapshot_sha, manifest_commit, published_main_head and repository_head are resolved from Git by the process answering. checkout_identity says how repository_head was established: git-checkout is an ordinary checkout, materialized-published-main means the source tree carried no Git metadata and HEAD was set to the captured published main head, so the two are equal by construction. build_source_head and published_source are recorded by the build that produced this image and are not verified here.",
+    "entry_point": "docs/CANONICAL_MANIFEST.md",
+    "authority_notice": "Executable contracts, schemas, this interface, its transports and its tests are implementers and verifiers. They cannot define or amend Canonical rules in reverse."
+  },
+  "status": "FINAL_NOT_VERIFIED",
+  "scope": "Existing evidence only, copied store; no review decisions added. A Final artifact is not listening or in-game acceptance.",
+  "project_id": "prj_d4048044eb6d84453c81191102d72830",
+  "run_id": "run_d24f9dfe1f1a2bdafe0474727b4f496b",
+  "revision": 12,
+  "state": "awaiting_review",
+  "halt": {
+    "reason": "AWAITING_ACCEPTED_REDUCTION_DECISIONS",
+    "step": "final_reduction",
+    "at": "2026-09-19T16:53:52.879Z"
+  },
+  "candidate_id": "g11d:rev:2286584725fdce51365c260ffad93ac0918195817932b6ce7aff688c47bcd03c",
+  "run_staleness": [],
+  "source_store_unchanged": true,
+  "source_store_file_count": 6,
+  "source_store_inventory_sha256": "0cfdf56412454e5665e5635fd22deeb80008562f0912d75b14fd5563867331ab",
+  "assets": [
+    {
+      "asset_id": "ast_7d249fe5676954dd204b236b50399333",
+      "filename": "Kaiju_no_Hanauta__Vaundy_Piano.mid",
+      "kind": "third_party_midi",
+      "sha256": "58619209f743416fa2150471b079cc14796e92911000793fce98384603c18487",
+      "bytes": 11506,
+      "parsed_notes": 1545,
+      "complete": false,
+      "unsupported": [
+        {
+          "code": "ORPHAN_NOTE_OFF",
+          "trackIndex": 0,
+          "channel": 1,
+          "noteNumber": 62,
+          "tick": 258240,
+          "sourceEventIds": [
+            "track:0/event:1719"
+          ]
+        }
+      ]
+    },
+    {
+      "asset_id": "ast_6a227cb940566e71be6f0ce51b45e665",
+      "filename": "2-怪獣の花唄-Vaundy-MUSIC-VIDEO.m4a",
+      "kind": "original_audio",
+      "sha256": "35a05318c127248d9a391201847ee586e82df87b4755cdeb1ec33e4ceb98d061",
+      "bytes": 3766598
+    }
+  ],
+  "baseline_event_count": 1545,
+  "unassigned_baseline_events": 1545,
+  "gates": {
+    "technical": "NOT_RUN",
+    "source": "PENDING",
+    "audio": "PENDING",
+    "player_readback": "NOT_RUN",
+    "mobile_adaptation": "PENDING",
+    "regression": "PENDING",
+    "in_game": "PENDING",
+    "notice": "Gate axes are independent. A technical PASS certifies serialization and readback under this implementation only: it never establishes source completeness, audio alignment, player readback, Mobile adaptation, regression review or in-game acceptance. No operation result, emitter result, parser result, transport result or model call can set in_game."
+  },
+  "readiness_blockers": [
+    "source",
+    "microTiming",
+    "core3Completeness",
+    "originalAudio",
+    "playerReadback",
+    "mobileAdaptation",
+    "regression"
+  ],
+  "finalization_operation": "blocked",
+  "finalization_code": "FINALIZATION_BLOCKED",
+  "final_artifact_id": null,
+  "mml_written": false,
+  "report_sha256": {
+    "source-diagnostics.json": "5c6adc84e0ceb9bedc6e0e6ca853808bdd7809027175d8c53365f2e0f707d41c",
+    "baseline-events.json": "b32cf1959175903aca662a681da15b45557be04eb6a5b3992662e9cd06d833bd",
+    "reduction.json": "ff2bfcc15db065f174582338d9d2f13fd8a5d791cd9dcd414657f5932c3fe738",
+    "review.json": "76fa6623cd4cfaeb15c488a15ebd788d051ce3062c1b33edb7c140c13fa4ecae",
+    "finalize.json": "790a33533214d02a34e9657a353a9ca21187fb51065019fb2a7da021d9df6a01"
+  }
+}

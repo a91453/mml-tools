@@ -2,6 +2,8 @@ import { createServiceClient } from './client.mjs';
 const $ = selector => document.querySelector(selector);
 const client = createServiceClient();
 let projectId = '', current = null, lastReview = null, busy = false;
+let mobilePreview = null, reviewBinding = null;
+const mobileRoles = ['Melody', 'Chord1', 'Chord2', 'Chord3', 'Chord4', 'Chord5'];
 const selectionKey = 'mml-service-selection';
 const attemptKey = id => `mml-service-start:${id}`;
 const text = (selector, value) => { $(selector).textContent = value; };
@@ -32,11 +34,48 @@ function controls() {
   $('#handoff').disabled = busy || !current?.run;
   $('#download-final').disabled = busy || current?.run?.state !== 'completed' || !current.run.final_artifact_id || Boolean(current.staleness?.length);
   $('#retry-start').hidden = !saved(attemptKey(projectId))?.asset_id;
+  const mobileReady = mobileAvailable();
+  $('#mobile-preview').disabled = busy || !mobileReady;
+  $('#mobile-apply').disabled = busy || !mobileReady || mobilePreview?.plan.status !== 'PASS';
+  $('#gate8-submit').disabled = busy || !mobileReady || !reviewBinding;
 }
+function mobileAvailable() {
+  const run = current?.run;
+  return Boolean(run?.candidate_id && run.state !== 'completed' && !run.report_artifact_id && !run.pending_step
+    && !current.staleness?.length && run.steps.some(step => step.step === 'final_reduction' && ['completed', 'skipped'].includes(step.status)));
+}
+const binding = () => ({ projectId, runId: current.run.run_id, revision: current.run.revision, candidateId: current.run.candidate_id });
+async function requireCurrent(expected) {
+  if (projectId !== expected.projectId || current?.run?.run_id !== expected.runId) throw Error('專案或任務已切換，請重新讀取');
+  const latest = await client.request(endpoint(`/runs/${expected.runId}`));
+  if (latest.staleness?.length || latest.run.revision !== expected.revision || latest.run.candidate_id !== expected.candidateId) {
+    renderRun(latest); throw Error('候選、來源或任務 revision 已變動，請重新預覽／審查');
+  }
+}
+const evidenceLines = selector => $(selector).value.split(/\r?\n/).map(value => value.trim()).filter(Boolean);
+function readMobileProfile() {
+  const roles = {};
+  for (const role of mobileRoles) {
+    const value = field => $(`#mobile-${role}-${field}`).value.trim();
+    const integer = field => {
+      const raw = value(field);
+      if (!/^-?\d+$/.test(raw) || !Number.isSafeInteger(Number(raw))) throw Error(`${role} 的數值必須是整數`);
+      return Number(raw);
+    };
+    const rule = {};
+    if (value('low') || value('high')) rule.pitchRange = [integer('low'), integer('high')];
+    if (value('default')) rule.defaultVolume = integer('default');
+    if (value('delta')) rule.volumeDelta = integer('delta');
+    if (Object.keys(rule).length) roles[role] = rule;
+  }
+  return { schema: 'mml-studio/mobile-adaptation-profile@1', id: $('#mobile-profile-id').value.trim(),
+    reason: $('#mobile-reason').value.trim(), evidence: evidenceLines('#mobile-evidence'), roles };
+}
+function clearMobilePreview() { mobilePreview = null; $('#mobile-plan').replaceChildren(); controls(); }
 async function act(fn) {
   if (busy) return;
   busy = true; $('#workspace').setAttribute('aria-busy', 'true');
-  const states = [...document.querySelectorAll('button, input, select')].map(element => [element, element.disabled]);
+  const states = [...document.querySelectorAll('button, input, select, textarea')].map(element => [element, element.disabled]);
   for (const [element] of states) element.disabled = true;
   message('');
   try { await fn(); } catch (error) { message(error.message); if (error.authentication) authView(); }
@@ -50,8 +89,11 @@ function detail(parent, title, value, className = '') {
 }
 function renderRun(result) {
   current = result; lastReview = null; $('#review-summary').replaceChildren(); $('#save-review').hidden = true;
+  mobilePreview = null; reviewBinding = null; $('#mobile-plan').replaceChildren();
+  $('#mobile-review-form').reset();
   $('#handoff-text').hidden = true;
   const run = result?.run;
+  text('#mobile-context', run?.candidate_id ? `審查候選：${run.candidate_id} · revision ${run.revision}${mobileAvailable() ? '' : '；請先完成角色／六軌分配，或讀取尚未結案的有效任務。'}` : '尚無可適配候選。');
   text('#run-state', run?.state ?? '尚未啟動');
   text('#run-identity', run ? `${run.run_id} · revision ${run.revision}` : '');
   text('#halt', run ? `${run.halt?.reason ?? '流程已回傳'}${result.staleness?.length ? '；輸入已變動，不能沿用舊結果。' : ''}` : '選擇來源後啟動任務。');
@@ -78,6 +120,7 @@ async function loadRun(id) {
   if (!proposals.proposals?.length) text('#proposals', '目前沒有提案。');
 }
 async function loadProject(id, runId = null) {
+  if (projectId !== id) $('#mobile-profile-form').reset();
   projectId = id; renderRun(null); text('#project-identity', id || '尚無服務專案');
   if (!id) { fillSelect('#runs', [], '', '尚無 run'); fillSelect('#existing-source', [], '', '尚無來源'); controls(); return; }
   const [project, runs] = await Promise.all([client.request(endpoint('')), client.request(endpoint('/runs'))]);
@@ -125,15 +168,66 @@ $('#retry-start').onclick = () => act(async () => { const attempt = saved(attemp
 $('#start-existing').onclick = () => act(() => startAttempt({ asset_id: $('#existing-source').value, idempotency_key: crypto.randomUUID() }));
 $('#upload-audio').onclick = () => act(async () => { await client.upload(projectId, $('#audio').files[0], 'original_audio'); await loadProject(projectId, current?.run?.run_id); message('已加入原曲音訊；對齊與聽驗仍需另行執行。'); });
 $('#review').onclick = () => act(async () => {
+  const observed = binding(); reviewBinding = null;
   const runId = current.run.run_id, candidate = current.run.candidate_id;
   const result = await client.request(endpoint('/review'), { body: { candidate_id: candidate } });
   const latest = await client.request(endpoint(`/runs/${runId}`));
-  if (latest.run.candidate_id !== candidate || latest.staleness?.length) { renderRun(latest); throw Error('候選或來源已改變，請讀取目前任務後重新審查'); }
-  lastReview = result; $('#review-summary').replaceChildren();
+  if (latest.run.revision !== observed.revision || latest.run.candidate_id !== candidate || latest.staleness?.length) { renderRun(latest); throw Error('候選或來源已改變，請讀取目前任務後重新審查'); }
+  lastReview = result; reviewBinding = observed; $('#review-summary').replaceChildren();
   detail($('#review-summary'), '候選審查：Gates 與阻塞', { candidate_id: candidate, gates: result.review.gates, blockers: result.review.blockers });
+  detail($('#review-summary'), '來源／上一版本差異與已記錄的候選審查', { lineage: result.review.lineage, confirmations: result.review.confirmations, stale_confirmations: result.review.stale_confirmations });
   $('#save-review').hidden = false; message('已重新計算審查；沒有新增人工確認。');
 });
 $('#save-review').onclick = () => { if (lastReview) download('candidate-review.json', JSON.stringify(lastReview, null, 2)); };
+for (const role of mobileRoles) {
+  const fieldset = document.createElement('fieldset'), legend = document.createElement('legend');
+  legend.textContent = role; fieldset.append(legend);
+  for (const [field, labelText, min, max] of [['low', '最低音高', 0, 107], ['high', '最高音高', 0, 107], ['default', '未決音量的設定值', 0, 15], ['delta', '音量增減', -15, 15]]) {
+    const label = document.createElement('label'), input = document.createElement('input');
+    label.textContent = labelText; input.id = `mobile-${role}-${field}`; input.type = 'number'; input.step = '1'; input.min = min; input.max = max;
+    label.append(input); fieldset.append(label);
+  }
+  $('#mobile-roles').append(fieldset);
+}
+$('#mobile-profile-form').oninput = clearMobilePreview;
+$('#mobile-profile-form').onsubmit = event => { event.preventDefault(); act(async () => {
+  if (!mobileAvailable()) throw Error('請先完成角色與六軌分配');
+  const observed = binding(), profile = readMobileProfile(), acceptedBy = $('#mobile-reviewer').value.trim();
+  if (!acceptedBy) throw Error('請填入接受者名稱');
+  clearMobilePreview(); await requireCurrent(observed);
+  const result = await client.request(endpoint('/mobile-adaptation/plan'), { body: { candidate_id: observed.candidateId, profile } });
+  await requireCurrent(observed);
+  mobilePreview = { binding: observed, profile, acceptedBy, plan: result.adaptation.plan };
+  detail($('#mobile-plan'), `Mobile 預覽：${mobilePreview.plan.status}`, result.adaptation.plan);
+  message(mobilePreview.plan.status === 'PASS' ? '預覽可執行；請檢查事件變化後接受。Gate 8 仍需另行審查。' : '預覽有阻塞，請依報告修正資料或補充證據。');
+}); };
+$('#mobile-apply').onclick = () => act(async () => {
+  const preview = mobilePreview;
+  if (!mobileAvailable() || preview?.plan.status !== 'PASS' || JSON.stringify(readMobileProfile()) !== JSON.stringify(preview.profile)
+    || $('#mobile-reviewer').value.trim() !== preview.acceptedBy) { clearMobilePreview(); throw Error('請先重新預覽目前的 profile'); }
+  await requireCurrent(preview.binding);
+  // Resume uses the existing reviewer path, keeping the adaptation on this run.
+  // Invalidate the local acceptance before sending: an uncertain response must
+  // be inspected, not retried as a second relative adaptation.
+  clearMobilePreview(); reviewBinding = null;
+  await client.request(endpoint(`/runs/${preview.binding.runId}/resume`), { body: {
+    expected_run_revision: preview.binding.revision, idempotency_key: crypto.randomUUID(),
+    mobile_adaptation: { profile: preview.profile, expected_plan_id: preview.plan.id, accepted_by: preview.acceptedBy },
+  } });
+  await loadRun(preview.binding.runId); message('已接續任務。請核對 Mobile 階段結果，並重新計算候選審查。');
+});
+$('#mobile-review-form').onsubmit = event => { event.preventDefault(); act(async () => {
+  const observed = reviewBinding, outcome = $('#gate8-outcome').value;
+  const reviewer = $('#gate8-reviewer').value.trim(), reason = $('#gate8-reason').value.trim(), evidence = evidenceLines('#gate8-evidence');
+  if (!mobileAvailable() || !observed || !lastReview) throw Error('請先重新計算目前候選審查');
+  if (!reviewer || !reason || !evidence.length || !['true', 'false'].includes(outcome)) throw Error('請完整填入審查者、結論、理由與依據');
+  await requireCurrent(observed); reviewBinding = null;
+  await client.request(endpoint(`/runs/${observed.runId}/resume`), { body: {
+    expected_run_revision: observed.revision, idempotency_key: crypto.randomUUID(),
+    confirmations: { mobile_adaptation_reviewed: { candidate_id: observed.candidateId, value: outcome === 'true', reason: `審查者 ${reviewer}：${reason}`, evidence } },
+  } });
+  await loadRun(observed.runId); message('已記錄此候選的 Gate 8 審查並重新執行任務；請查看各 gate 與剩餘阻塞。');
+}); };
 $('#handoff').onclick = () => act(async () => {
   await loadRun(current.run.run_id);
   const latest = current;

@@ -13,6 +13,7 @@ import { createServer as createHttpsServer, request as httpsRequest } from 'node
 import { createApplication, createHttpServer, SERVICE_OWNER } from '../../railway/server.mjs';
 import { createRemoteAgentClient } from '../../scripts/studio-agent-remote.mjs';
 import { exerciseProductionWorkspace } from './production-workflow.mjs';
+import { exerciseMobileReview } from './service-mobile-review.mjs';
 import { callAgentTool } from '../../scripts/studio-agent.mjs';
 import { sixSourceVoices } from '../tests/fixtures/midi-fixtures.mjs';
 import { projectWithSymbolicAsset, runDecisionsFor, FIXTURE_CONFIRMATIONS } from '../tests/fixtures/run-fixtures.mjs';
@@ -121,7 +122,8 @@ for (const profile of [
       await page.locator('#projects').selectOption(fixture.projectId);
       await page.waitForFunction(() => document.querySelector('#run-state').textContent === 'completed' && document.querySelector('#workspace').getAttribute('aria-busy') === 'false');
       await page.locator('#review').click();
-      await page.locator('#review-summary summary').waitFor();
+      await page.locator('#review-summary').getByText('候選審查：Gates 與阻塞', { exact: true }).waitFor();
+      await page.locator('#review-summary').getByText('來源／上一版本差異與已記錄的候選審查', { exact: true }).waitFor();
       const reportDownload = page.waitForEvent('download'); await page.locator('#save-review').click();
       const reportFile = await reportDownload;
       const downloadedReview = JSON.parse(await readFile(await reportFile.path(), 'utf8'));
@@ -137,6 +139,7 @@ for (const profile of [
     const result = { profile: profile.name, project_id, run_id, state: status.run.state, same_mcp_run: true,
       uncertain_start_replayed_same_run: true, proposal_visible: true, final_artifact_id: status.run.final_artifact_id,
       synthetic_fixture_review_and_download: fixtureReviewDownload };
+    result.mobile_reviewer_regression = await exerciseMobileReview({ page, app: app.studio, owner: SERVICE_OWNER, out: join(out, profile.name) });
     // Execute the live acceptance scenario against the disposable local service.
     // This verifies the driver on all profiles; it is not production evidence.
     result.production_driver_regression = await exerciseProductionWorkspace({

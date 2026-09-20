@@ -1,0 +1,67 @@
+{
+  "tested_base_head": "ba9b8b31f82b4537866470c52c8539db1de963e9",
+  "scope": "Local implementation regressions; no real-song or in-game PASS",
+  "full_suite": {
+    "command": "node --test --test-reporter=tap --test-concurrency=4 tests/*.test.mjs studio/tests/*.test.mjs",
+    "exit_code": 0,
+    "pass": 1818,
+    "fail": 0,
+    "wall_seconds": 90.322,
+    "bootstrap_attempts": 202,
+    "shared_refs_untouched": true,
+    "published_identities": [
+      "ba9b8b31f82b4537866470c52c8539db1de963e9"
+    ],
+    "rules_snapshots": [
+      "0a172900a01fdf39c2e9e84cf176961320b779ea"
+    ]
+  },
+  "focused": {
+    "pass": 40,
+    "fail": 0
+  },
+  "browser": {
+    "synthetic": [
+      "desktop-chromium",
+      "iphone-webkit",
+      "ipad-webkit"
+    ],
+    "real_midi": [
+      "desktop-chromium",
+      "iphone-webkit",
+      "ipad-webkit"
+    ],
+    "song_final_completed": false
+  },
+  "studio_web_build": {
+    "status": "PASS",
+    "asset_count": 62
+  },
+  "initial_full_suite": {
+    "pass": 1813,
+    "fail": 5,
+    "reason": "zip executable missing for existing Sites build tests"
+  },
+  "local_zip": {
+    "source": "https://packages.msys2.org/packages/zip",
+    "archive_sha256": "874e20bf625fbe577949444faf30ab9a725dbd4886ec9bff26459152da7f831c",
+    "directory": ".studio-agent/msys-zip",
+    "system_path_changed": false
+  },
+  "reproduction": {
+    "path_prefixes": [
+      ".studio-agent/msys-zip/usr/bin",
+      "C:/Users/11407/AppData/Local/Programs/Git/usr/bin"
+    ],
+    "suite": "node scripts/bootstrap-stress.mjs --runs=1 --keep-logs -- node --test --test-reporter=tap --test-concurrency=4 tests/*.test.mjs studio/tests/*.test.mjs",
+    "browser": "node studio/browser-tests/service-workspace.mjs --midi .studio-agent/real-song/source/Kaiju_no_Hanauta__Vaundy_Piano.mid --out .studio-agent/mobile-review-next",
+    "build": "node scripts/build-studio-web.mjs"
+  },
+  "after_full_suite": {
+    "change": "Tighten output-directory containment for dot-prefixed child directory names",
+    "audit_regressions": {
+      "pass": 3,
+      "fail": 0
+    }
+  }
+}
