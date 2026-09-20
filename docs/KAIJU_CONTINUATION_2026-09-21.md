@@ -41,6 +41,35 @@ node scripts/studio-source-review.mjs --data-dir .studio-agent/kaiju-continuatio
 仍需可核對的分段 Lead／伴奏／Bass 判斷，才可接受角色並進入G12。
 使用者已回答沒有額外角色樂譜或已確認的分段角色說明。G12、Mobile、候選review、Final及技術回讀尚未完成。
 
+## 待修問題：使用者 MIDI 的候選輸出被正式驗收擋住
+
+使用者追問「為什麼不能用我提供的 MIDI」。澄清：提供的 MIDI 已成功入庫，
+修正版保留1,545音符，並可拆為7條聲部；檔案本身可以作為編曲依據。
+先前把正式驗收阻塞描述成必須另找樂譜，混淆了候選製作與正式驗收。
+不能要求使用者先購買或另找樂譜，才允許依其指定 MIDI 製作候選。
+
+根因是目前 role-less MIDI 首次指派 Melody 也會觸發 Lead promotion；
+`studio/backend/application/proposal-service.mjs` 明確拒絕 proposal 自填
+`leadEvidence`。現有 agent 正確遵守這項限制，但來源編排到可試聽候選的路徑
+尚未打通。這是產品流程缺口，不代表使用者 MIDI 無效。
+
+下次優先修正及驗收：
+
+1. 先檢查既有 candidate/render/export API，確認可重用的預覽路徑及實際阻塞位置，
+   避免另造一套音樂引擎或直接繞過 Final gate。
+2. 以使用者指定 MIDI 作編曲依據，提供明確標示未完成音樂審查的六軌候選 MML
+   與試聽；不把第三方 MIDI 改標成官方來源。M4A 仍保留為已指定的錄音參考。
+3. 保留原 baseline，記錄每個來源事件的保留、分配、移動、重複及容量不足情形。
+   7聲部縮為6軌不得靜默刪音；音樂角色推斷必須明示為推斷。
+4. 對候選執行語法、軌數、時間與事件對照回讀；技術PASS與角色／聽驗／Mobile／
+   實機接受分開顯示。待審候選不得冒充 Final，也不得自填 reviewer evidence。
+5. 用本曲實際走完候選製作及回讀，再接既有 review/finalize；若需更動正式規則，
+   明確呈現規則差異，不把候選輸出需求當作已授權降低正式驗收標準。
+
+本次僅保存問題與接續計畫，以上候選路徑尚未實作。PR保留Draft、不merge、不部署。
+程式checkpoint `126f19b` 的 Studio CI、Studio service CI、OSS Export CI 均已通過；
+本節為後續文件變更，不能把該次CI結果標成此文件commit的新執行結果。
+
 ## 網頁接續與驗證
 
 本分支已完成可選的網頁自動 agent：明確勾選後啟動／審查提交會接續同一 run；
