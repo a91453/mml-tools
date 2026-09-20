@@ -51,9 +51,10 @@ try {
   report.browser_mcp = { ...evidence, profile: values.profile };
   // The external test client is not evidence of ChatGPT connector behavior.
   report.service_transport_status = 'PASS';
-} catch {
+} catch (error) {
   report.status = 'FAIL';
-  report[phase] = { ...report[phase], status: 'FAIL', reason: 'ACCEPTANCE_STEP_FAILED',
+  report[phase] = { ...report[phase], status: 'FAIL', reason:
+    error.code === 'CANONICAL_NOT_LOADED' ? 'CANONICAL_NOT_LOADED' : 'ACCEPTANCE_STEP_FAILED',
     recovery: 'Inspect the saved project/run before retrying. No write was automatically retried.' };
 } finally {
   bearer = undefined; await browser?.close(); await save();

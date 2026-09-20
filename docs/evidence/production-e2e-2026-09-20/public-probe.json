@@ -1,0 +1,92 @@
+{
+  "schema_version": 1,
+  "status": "PENDING",
+  "service_origin": "https://mml-tools-production.up.railway.app",
+  "scope": "Production service transport; not song quality or in-game acceptance",
+  "public_probe": {
+    "status": "PASS",
+    "observed_at": "2026-09-20T08:39:42.757Z",
+    "service_origin": "https://mml-tools-production.up.railway.app",
+    "expected": {
+      "canonical_version": "2026-09-13-v1",
+      "canonical_status": "PUBLISHED",
+      "manifest_version": "2026-09-13-v1-manifest1",
+      "rules_snapshot_sha": "0a172900a01fdf39c2e9e84cf176961320b779ea",
+      "manifest_commit": "5e7666b850a37f1c85ee2dd8cd0f4fac037a9e14",
+      "published_main_head": "bbb8534245c78041573fd93af88c8fc7fd3e89bd"
+    },
+    "checked": [
+      "health",
+      "published-provenance",
+      "all-workspace-assets-byte-identical",
+      "asset-headers-and-methods",
+      "fixed-asset-routes",
+      "oauth-origin-binding",
+      "unauthenticated-api-and-mcp-denied"
+    ],
+    "canonical": {
+      "status": "CANONICAL_LOADED",
+      "canonical_version": "2026-09-13-v1",
+      "canonical_status": "PUBLISHED",
+      "manifest_version": "2026-09-13-v1-manifest1",
+      "rules_snapshot_sha": "0a172900a01fdf39c2e9e84cf176961320b779ea",
+      "manifest_commit": "5e7666b850a37f1c85ee2dd8cd0f4fac037a9e14",
+      "published_main_head": "bbb8534245c78041573fd93af88c8fc7fd3e89bd",
+      "repository_head": "bbb8534245c78041573fd93af88c8fc7fd3e89bd",
+      "pr_head": null,
+      "checkout_identity": "materialized-published-main",
+      "build_source_head": "bbb8534245c78041573fd93af88c8fc7fd3e89bd",
+      "published_source": "https://github.com/a91453/mml-tools.git",
+      "checkout_notice": "canonical_version, canonical_status, manifest_version, rules_snapshot_sha, manifest_commit, published_main_head and repository_head are resolved from Git by the process answering. checkout_identity says how repository_head was established: git-checkout is an ordinary checkout, materialized-published-main means the source tree carried no Git metadata and HEAD was set to the captured published main head, so the two are equal by construction. build_source_head and published_source are recorded by the build that produced this image and are not verified here.",
+      "entry_point": "docs/CANONICAL_MANIFEST.md",
+      "authority_notice": "Executable contracts, schemas, this interface, its transports and its tests are implementers and verifiers. They cannot define or amend Canonical rules in reverse."
+    },
+    "assets": [
+      {
+        "path": "/studio/",
+        "bytes": 4319,
+        "sha256": "657d9f155a9f816cb99825dadfe10ba0065a91fa7cf3a9d728140ed888f9d001"
+      },
+      {
+        "path": "/studio/app.mjs",
+        "bytes": 12462,
+        "sha256": "1106982094748a1245ad668f2dc21e81bcacca83df05fde2ecb849be3173d912"
+      },
+      {
+        "path": "/studio/client.mjs",
+        "bytes": 5218,
+        "sha256": "9d56e5c26383b6f8c6248c52b9f40c167c4b2a7731ad80947c4a39cbc7832734"
+      },
+      {
+        "path": "/studio/style.css",
+        "bytes": 2386,
+        "sha256": "1e52ccbb39abe729b47bbce25f31f3d986726270bfdec85611907d17939b4c5a"
+      }
+    ],
+    "provenance_evidence": "HTTPS service self-report plus source asset hashes; not independent Railway control-plane evidence"
+  },
+  "browser_mcp": {
+    "status": "NOT_RUN"
+  },
+  "chatgpt_connector": {
+    "status": "NOT_RUN"
+  },
+  "real_song": {
+    "status": "NOT_RUN"
+  },
+  "in_game": {
+    "status": "NOT_RUN"
+  },
+  "verification_context": {
+    "probe_implementation_commit": "612a01e672fe849635befe96dc2499cf137a9b93",
+    "source_acquisition": "Authenticated GitHub connector at exact bbb8534245c78041573fd93af88c8fc7fd3e89bd; Manifest and four workspace files verified against Git blob SHA before probe. All six Canonical documents loaded from the Manifest snapshot. No authenticated git clone was available in this Work session.",
+    "transport": "Real HTTPS through environment proxy; no mocked responses",
+    "authenticated_production_mutations": false,
+    "limitations": [
+      "Browser controller unavailable in this Work session",
+      "No production OAuth session available",
+      "Railway control-plane and live watch patterns not inspected",
+      "CLI Git-history loader hardened after this public probe; covered separately by regression tests"
+    ]
+  }
+}

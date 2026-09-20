@@ -1,0 +1,98 @@
+{
+  "status": "PENDING",
+  "scope": "Read-only connected-app and Railway control-plane observations; no production writes",
+  "checked_at": "2026-09-20T08:42:03.123Z",
+  "connector": {
+    "capabilities_call": "PASS",
+    "project_list_call": "PASS",
+    "project_count": 0,
+    "canonical": {
+      "status": "CANONICAL_LOADED",
+      "canonical_version": "2026-09-13-v1",
+      "canonical_status": "PUBLISHED",
+      "manifest_version": "2026-09-13-v1-manifest1",
+      "rules_snapshot_sha": "0a172900a01fdf39c2e9e84cf176961320b779ea",
+      "manifest_commit": "5e7666b850a37f1c85ee2dd8cd0f4fac037a9e14",
+      "published_main_head": "bbb8534245c78041573fd93af88c8fc7fd3e89bd",
+      "repository_head": "bbb8534245c78041573fd93af88c8fc7fd3e89bd",
+      "pr_head": null,
+      "checkout_identity": "materialized-published-main",
+      "build_source_head": "bbb8534245c78041573fd93af88c8fc7fd3e89bd",
+      "published_source": "https://github.com/a91453/mml-tools.git",
+      "checkout_notice": "canonical_version, canonical_status, manifest_version, rules_snapshot_sha, manifest_commit, published_main_head and repository_head are resolved from Git by the process answering. checkout_identity says how repository_head was established: git-checkout is an ordinary checkout, materialized-published-main means the source tree carried no Git metadata and HEAD was set to the captured published main head, so the two are equal by construction. build_source_head and published_source are recorded by the build that produced this image and are not verified here.",
+      "entry_point": "docs/CANONICAL_MANIFEST.md",
+      "authority_notice": "Executable contracts, schemas, this interface, its transports and its tests are implementers and verifiers. They cannot define or amend Canonical rules in reverse."
+    },
+    "advertised_runs": true,
+    "advertised_proposals": true,
+    "exposed_tools": [
+      "mml_overlap_details",
+      "mml_service_info",
+      "mml_validate",
+      "studio_arrangement_suggest",
+      "studio_artifact_get",
+      "studio_audio_alignment",
+      "studio_baseline_events",
+      "studio_candidate_review",
+      "studio_capabilities",
+      "studio_core3_change_approve",
+      "studio_decisions_apply",
+      "studio_finalize",
+      "studio_job_status",
+      "studio_lead_evidence_review",
+      "studio_project_create",
+      "studio_project_get",
+      "studio_sources_analyze"
+    ],
+    "required_tools_not_exposed": [
+      "studio_run_plan",
+      "studio_run_start",
+      "studio_run_status",
+      "studio_run_resume",
+      "studio_proposal_targets",
+      "studio_proposal_submit",
+      "studio_proposal_status",
+      "studio_proposal_resolve"
+    ],
+    "same_browser_run_verified": false,
+    "notice": "Capability calls used the existing authenticated connector. A browser OAuth session/token was not available to the local driver. Missing tools concern this conversation's callable connector surface; server discovery has not been refreshed."
+  },
+  "railway": {
+    "deployment_id": "8f375cb5-4640-4b4c-a15f-662d66cae6e6",
+    "status": "SUCCESS",
+    "commit": "bbb8534245c78041573fd93af88c8fc7fd3e89bd",
+    "branch": "main",
+    "source": {
+      "repo": "a91453/mml-tools",
+      "branch": "main",
+      "checkSuites": true
+    },
+    "watch_patterns": [
+      "/dist/core.js",
+      "/server/mcp.mjs",
+      "/server/mcp-studio.mjs",
+      "/server/api.mjs",
+      "/studio/backend/**",
+      "/railway/auth.mjs",
+      "/railway/server.mjs",
+      "/railway/canonical-probe.sh",
+      "/railway/Dockerfile",
+      "/scripts/materialize-canonical.mjs",
+      "/.dockerignore",
+      "/package.json",
+      "/docs/CANONICAL_MANIFEST.md"
+    ],
+    "missing_watch_patterns": [
+      "/server/report-page.mjs",
+      "/server/studio-web.mjs",
+      "/studio/web/service/**"
+    ],
+    "volume_mounts": {
+      "e90e0f81-854e-467c-9ab0-5be246118708": {
+        "mountPath": "/data"
+      }
+    },
+    "settings_changed": false,
+    "deploy_triggered": false
+  }
+}

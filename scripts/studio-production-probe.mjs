@@ -1,6 +1,7 @@
 // Production transport evidence only. Never a song or in-game acceptance gate.
 import assert from 'node:assert/strict';
-import { readFile, mkdir, writeFile } from 'node:fs/promises';
+import { mkdir, writeFile } from 'node:fs/promises';
+import { execFileSync } from 'node:child_process';
 import { dirname, resolve } from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { parseArgs } from 'node:util';
@@ -45,11 +46,29 @@ export async function probeProduction({ origin, expected, expectedAssets, fetchI
     ...result, provenance_evidence: 'HTTPS service self-report plus source asset hashes; not independent Railway control-plane evidence' };
 }
 
-export async function loadProbeInputs({ main, manifestCommit }) {
-  const manifest = await readFile(new URL('../docs/CANONICAL_MANIFEST.md', import.meta.url), 'utf8');
-  return { expected: expectedIdentity(manifest, main, manifestCommit),
-    expectedAssets: new Map(await Promise.all(WORKSPACE_ASSETS.map(async ([, file]) =>
-      [file, await readFile(new URL('../studio/web/service/' + file, import.meta.url))]))) };
+export async function loadProbeInputs({ main, manifestCommit, gitImpl = args => execFileSync('git', args,
+  { cwd: new URL('../', import.meta.url), stdio: ['ignore', 'pipe', 'pipe'], timeout: 30000, maxBuffer: 8 * 1024 * 1024 }) }) {
+  try {
+    assert.match(main ?? '', /^[0-9a-f]{40}$/);
+    assert.match(manifestCommit ?? '', /^[0-9a-f]{40}$/);
+    // The operator fetches origin/main first. A working-tree or PR Manifest is
+    // never an authority, and missing history has no current-HEAD fallback.
+    gitImpl(['merge-base', '--is-ancestor', main, 'refs/remotes/origin/main']);
+    const show = (sha, path) => gitImpl(['show', `${sha}:${path}`]);
+    const manifest = show(main, 'docs/CANONICAL_MANIFEST.md').toString('utf8');
+    const expected = expectedIdentity(manifest, main, manifestCommit);
+    assert.equal(gitImpl(['cat-file', '-t', expected.rules_snapshot_sha]).toString('utf8').trim(), 'commit');
+    assert.equal(gitImpl(['log', '-1', '--format=%H', main, '--', 'docs/CANONICAL_MANIFEST.md']).toString('utf8').trim(), manifestCommit);
+    for (const file of ['MASTER_RULES', 'SOURCE_POLICY', 'MOBILE_SYNTAX', 'ACCEPTANCE_CRITERIA', 'PENDING', 'OFFICIAL_EVIDENCE']) {
+      const source = show(expected.rules_snapshot_sha, `docs/${file}.md`).toString('utf8');
+      assert.ok(source.split(/\r?\n/).includes('Version: ' + expected.canonical_version));
+      assert.ok(source.split(/\r?\n/).includes('Status: ' + (file === 'OFFICIAL_EVIDENCE' ? 'CANONICAL SUPPORTING EVIDENCE' : 'PUBLISHED CANONICAL')));
+    }
+    return { expected, expectedAssets: new Map(WORKSPACE_ASSETS.map(([, file]) =>
+      [file, show(main, 'studio/web/service/' + file)])) };
+  } catch {
+    throw Object.assign(new Error('CANONICAL_NOT_LOADED'), { code: 'CANONICAL_NOT_LOADED' });
+  }
 }
 
 export function acceptanceReport(origin) {
@@ -73,9 +92,10 @@ if (process.argv[1] && import.meta.url === pathToFileURL(resolve(process.argv[1]
   try {
     const inputs = await loadProbeInputs({ main: values['expected-main'], manifestCommit: values['manifest-commit'] });
     report.public_probe = await probeProduction({ origin: values.origin, ...inputs });
-  } catch {
+  } catch (error) {
     // Never copy response bodies, URLs with secrets, or arbitrary errors to evidence.
-    report.status = 'FAIL'; report.public_probe = { status: 'FAIL', reason: 'PUBLIC_PROBE_FAILED' };
+    report.status = 'FAIL'; report.public_probe = { status: 'FAIL', reason:
+      error.code === 'CANONICAL_NOT_LOADED' ? 'CANONICAL_NOT_LOADED' : 'PUBLIC_PROBE_FAILED' };
   }
   await saveReport(values.out, report);
   console.log(JSON.stringify({ status: report.status, public_probe: report.public_probe.status,
