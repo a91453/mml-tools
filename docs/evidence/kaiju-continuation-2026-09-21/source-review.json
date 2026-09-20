@@ -4,6 +4,8 @@
   "revision": 6,
   "baseline_id": "bas:315eb13d5b82f81a3a20d72986514bb2ee4bc3e70304199f693037b8fb4d7c0d",
   "source_sha256": "5819c9c5e7b5f357c0523b16d69eda16dd84d5a2ad60a167802e904b02c23782",
+  "audio_asset_id": "ast_1a5c22fe0239c52312cf93d35acdb34b",
+  "audio_sha256": "35a05318c127248d9a391201847ee586e82df87b4755cdeb1ec33e4ceb98d061",
   "note_count": 1545,
   "lanes": [
     {
@@ -36,6 +38,6 @@
     }
   ],
   "sections": 18,
-  "output": "C:\\Users\\11407\\mml-tool\\.studio-agent\\kaiju-continuation\\review",
+  "output": ".studio-agent/kaiju-continuation/review-next",
   "status": "REVIEW_REQUIRED"
 }

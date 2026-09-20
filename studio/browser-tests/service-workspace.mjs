@@ -18,7 +18,7 @@ import { callAgentTool } from '../../scripts/studio-agent.mjs';
 import { sixSourceVoices } from '../tests/fixtures/midi-fixtures.mjs';
 import { projectWithSymbolicAsset, runDecisionsFor, FIXTURE_CONFIRMATIONS } from '../tests/fixtures/run-fixtures.mjs';
 
-const { values } = parseArgs({ options: { midi: { type: 'string' }, out: { type: 'string' }, desktop: { type: 'boolean' } } });
+const { values } = parseArgs({ options: { midi: { type: 'string' }, out: { type: 'string' }, desktop: { type: 'boolean' }, agent: { type: 'boolean' } } });
 const out = resolve(values.out ?? '.studio-agent/service-browser-' + Date.now()); await mkdir(out, { recursive: true });
 // WebKit correctly refuses the Secure login cookie over plain loopback HTTP.
 // Use a disposable test certificate, with trust scoped to this browser/context
@@ -41,7 +41,12 @@ for (const profile of [
   const server = createHttpsServer({ key, cert }, handler);
   server.listen(0, '127.0.0.1'); await once(server, 'listening'); origin = `https://127.0.0.1:${server.address().port}`;
   const password = 'SYNTHETIC_BROWSER_OWNER_PASSWORD_01234567890123456789';
+  const agentCalls = new Map();
   app = createApplication({ origin, ownerPassword: password, database: ':memory:',
+    agentDecide: values.agent ? async context => {
+      agentCalls.set(context.run_id, (agentCalls.get(context.run_id) ?? 0) + 1);
+      return { tool: null, arguments_json: '{}', reason: 'SYNTHETIC runner: reviewer evidence required; no song verdict.' };
+    } : null,
     studioDataDirectory: join(out, profile.name, 'store'), studioDurability: 'persistent' });
   try {
     browser = await profile.engine.launch();
@@ -61,6 +66,12 @@ for (const profile of [
     await page.getByRole('button', { name: '建立服務專案', exact: true }).click();
     await page.waitForFunction(() => document.querySelector('#project-identity').textContent.startsWith('prj_') && document.querySelector('#workspace').getAttribute('aria-busy') === 'false');
     const project_id = await page.locator('#project-identity').textContent();
+    if (values.agent) await page.locator('#agent-auto').check();
+    let lostAgent = false;
+    if (values.agent) await page.route('**/runs/*/agent', async route => {
+      if (!lostAgent && route.request().method() === 'POST') { lostAgent = true; await route.fetch(); await route.abort(); }
+      else await route.continue();
+    });
     await page.locator('#midi').setInputFiles({ name: sourceName, mimeType: 'audio/midi', buffer: source });
     let lost = false;
     await page.route('**/api/v1/projects/*/runs', async route => {
@@ -103,6 +114,18 @@ for (const profile of [
     assert.ok((await page.locator('#handoff-text').inputValue()).includes(run_id));
     assert.ok((await page.locator('#proposals').textContent()).includes(proposal.proposal.proposal_id), 'handoff refresh must preserve the proposal list');
     assert.equal(await page.locator('#download-final').isEnabled(), false);
+    if (values.agent) {
+      await page.waitForFunction(() => document.querySelector('#agent-status').textContent.includes('waiting_review'));
+      const task = (await app.agent.status(SERVICE_OWNER, project_id, run_id)).task;
+      assert.equal(task.run_id, run_id); assert.equal(task.state, 'waiting_review');
+      await page.locator('#agent-start').click();
+      await page.waitForFunction(() => document.querySelector('#agent-status').textContent.includes('waiting_review') && document.querySelector('#workspace').getAttribute('aria-busy') === 'false');
+      assert.equal(lostAgent, true); assert.equal(agentCalls.get(run_id), 1, 'uncertain dispatch retries the same key, without another inference');
+      await page.locator('#agent-start').click();
+      await page.waitForFunction(() => document.querySelector('#agent-status').textContent.includes('waiting_review') && document.querySelector('#workspace').getAttribute('aria-busy') === 'false');
+      assert.equal(agentCalls.get(run_id), 2, 'explicit subsequent continuation runs again on the same run');
+      await page.locator('#agent-workflow').screenshot({ path: join(out, profile.name + '-agent.png') });
+    }
     assert.equal(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth), true);
     const storage = await page.evaluate(() => JSON.stringify({ ...sessionStorage, local: { ...localStorage } }));
     assert.ok(!storage.includes(token), 'bearer must not persist in browser storage');
@@ -137,6 +160,7 @@ for (const profile of [
     }
     assert.deepEqual(errors, []);
     const result = { profile: profile.name, project_id, run_id, state: status.run.state, same_mcp_run: true,
+      agent_dispatch_regression: Boolean(values.agent),
       uncertain_start_replayed_same_run: true, proposal_visible: true, final_artifact_id: status.run.final_artifact_id,
       synthetic_fixture_review_and_download: fixtureReviewDownload };
     result.mobile_reviewer_regression = await exerciseMobileReview({ page, app: app.studio, owner: SERVICE_OWNER, out: join(out, profile.name) });

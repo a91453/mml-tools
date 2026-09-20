@@ -28,7 +28,7 @@ confirmations，沒有把試聽頁的功能測試當成人耳音樂判斷。
 node scripts/studio-source-review.mjs --data-dir .studio-agent/kaiju-continuation --project-id prj_7ea81c9704d668ba58e05a7e269e47ce --run-id run_e0baf5f128de315b3a4556e546e16889 --out .studio-agent/kaiju-continuation/review-next
 ```
 
-輸出目錄必須不存在。實際產物：`.studio-agent/kaiju-continuation/review/index.html`。
+輸出目錄必須不存在。實際產物：`.studio-agent/kaiju-continuation/review-next/index.html`。
 原音、完整事件、store 均留本機；Git 僅保存程式與[摘要](evidence/kaiju-continuation-2026-09-21/source-review.json)。
 本次 UI 驗證：Chromium 1280px／390px、18段／7聲部、尾段播放停止、下載筆記 binding、
 無 JS 錯誤／橫向溢出；原音 metadata 時長232.849705秒。
@@ -39,4 +39,22 @@ node scripts/studio-source-review.mjs --data-dir .studio-agent/kaiju-continuatio
 首次把未分配音符指定為 Melody 就是 Lead promotion。現有 Phase 2 不允許 agent
 自填 Lead reviewer evidence；Source Policy 也不允許以音高最高推斷其角色。
 仍需可核對的分段 Lead／伴奏／Bass 判斷，才可接受角色並進入G12。
-G12、Mobile、候選review、Final及技術回讀尚未完成。網頁agent自動化仍在本分支續作。
+使用者已回答沒有額外角色樂譜或已確認的分段角色說明。G12、Mobile、候選review、Final及技術回讀尚未完成。
+
+## 網頁接續與驗證
+
+本分支已完成可選的網頁自動 agent：明確勾選後啟動／審查提交會接續同一 run；
+包含有限步數、停止、重複請求回讀、程序重啟停止、未知操作結果人工核對。
+正式站未部署，模型預設關閉。設定及限制見 [操作說明](STUDIO_AGENT_CONTINUATION.md)。
+
+[真實 Codex 紀錄](evidence/kaiju-continuation-2026-09-21/live-agent.json)：2次推論、
+1次唯讀 suggestion 呼叫，因缺少正向角色證據而 waiting_review；run保持revision6、
+沒有新提案或Final。此結果驗證 agent 能讀到實際阻塞，並未完成歌曲。
+
+完整回歸1,831 PASS／0 FAIL（94.917秒、204次bootstrap、shared refs不變）。
+首次回歸發現部署watch patterns漏列新增runner模組，補齊後全套通過。
+另視覺檢查發現checkbox inline style受CSP阻擋，改放既有stylesheet後重跑瀏覽器。
+桌面Chromium、iPhone/iPad WebKit全數驗證自動dispatch及啟動回應遺失後同run回讀。
+瀏覽器使用合成來源和模型替身；其中Final回讀PASS不是本曲的Final回讀。
+Studio Web build通過；[驗證摘要](evidence/kaiju-continuation-2026-09-21/validation.json)及
+[瀏覽器紀錄](evidence/kaiju-continuation-2026-09-21/agent-browser.json)可公開，完整歌曲事件、原音、TLS key與auth仍留本機。

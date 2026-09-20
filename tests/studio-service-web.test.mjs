@@ -50,3 +50,16 @@ test('browser OAuth rejects mismatched callback state/issuer before exchanging a
     assert.equal(calls, 0); assert.equal(client.authenticated(), false); assert.equal(data.size, 0);
   }
 });
+
+test('enabled agent discovery discloses model use and derived source data transfer', async t => {
+  const app = createApplication({ origin, ownerPassword: 'SYNTHETIC_OWNER_PASSWORD_01234567890123456789', database: ':memory:',
+    agentDecide: async () => ({ tool: null, arguments_json: '{}', reason: 'fixture wait' }) });
+  t.after(() => app.close());
+  const caps = await app.studio.capabilities();
+  assert.equal(caps.external_agent.enabled, true);
+  assert.equal(caps.external_agent.automatic_restart, false);
+  assert.equal(caps.privacy.derived_symbolic_data_sent, true);
+  assert.equal(caps.privacy.raw_asset_bytes_sent, false);
+  assert.notEqual(caps.cost.additional_recurring_cost, 'NONE');
+  assert.equal(caps.runs.background_execution, false, 'core run and external agent remain separate');
+});

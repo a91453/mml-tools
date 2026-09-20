@@ -3,6 +3,7 @@ const $ = selector => document.querySelector(selector);
 const client = createServiceClient();
 let projectId = '', current = null, lastReview = null, busy = false;
 let mobilePreview = null, reviewBinding = null;
+let agentEnabled = false, agentTask = null, agentTimer = null;
 const mobileRoles = ['Melody', 'Chord1', 'Chord2', 'Chord3', 'Chord4', 'Chord5'];
 const selectionKey = 'mml-service-selection';
 const attemptKey = id => `mml-service-start:${id}`;
@@ -27,6 +28,9 @@ function authView() {
   text('#connection-status', signedIn ? '已登入；專案與外部 agent 使用同一個服務。' : '請登入服務以開啟專案。');
 }
 function controls() {
+  $('#agent-auto').disabled = busy || !agentEnabled;
+  $('#agent-start').disabled = busy || !agentEnabled || !current?.run || current.run.state === 'completed' || agentTask?.state === 'running';
+  $('#agent-stop').disabled = busy || !current?.run || agentTask?.state !== 'running';
   $('#start').disabled = busy || !projectId;
   $('#start-existing').disabled = busy || !projectId || !$('#existing-source').value;
   $('#upload-audio').disabled = busy || !projectId;
@@ -88,6 +92,7 @@ function detail(parent, title, value, className = '') {
   node.append(summary, pre); parent.append(node);
 }
 function renderRun(result) {
+  if (!result) { clearTimeout(agentTimer); agentTask = null; $('#agent-recovery').hidden = true; text('#agent-status', '選擇歌曲任務後查看 agent 狀態。'); }
   current = result; lastReview = null; $('#review-summary').replaceChildren(); $('#save-review').hidden = true;
   mobilePreview = null; reviewBinding = null; $('#mobile-plan').replaceChildren();
   $('#mobile-review-form').reset();
@@ -104,6 +109,7 @@ function renderRun(result) {
   controls();
 }
 async function loadRun(id) {
+  clearTimeout(agentTimer); agentTask = null;
   if (!id) { renderRun(null); return; }
   const result = await client.request(endpoint(`/runs/${id}`)); renderRun(result);
   save(selectionKey, { project_id: projectId, run_id: id });
@@ -118,7 +124,54 @@ async function loadRun(id) {
     $('#proposals').append(button);
   }
   if (!proposals.proposals?.length) text('#proposals', '目前沒有提案。');
+  await loadAgent(projectId, id);
 }
+async function loadAgent(observedProject, observedRun) {
+  const result = await client.request(`/api/v1/projects/${observedProject}/runs/${observedRun}/agent`);
+  if (projectId !== observedProject || current?.run?.run_id !== observedRun) return;
+  agentTask = result.task;
+  $('#agent-recovery').hidden = !agentTask?.pending_action;
+  text('#agent-pending', agentTask?.pending_action ? JSON.stringify(agentTask.pending_action, null, 2) : '');
+  text('#agent-status', !result.enabled ? '此服務尚未啟用自動 agent。可使用外部接續資訊。'
+    : agentTask ? `${agentTask.state} · ${agentTask.reason} · 已執行 ${agentTask.steps} 步` : '可啟動自動 agent；缺少來源或審查依據時會停下。');
+  controls();
+  clearTimeout(agentTimer);
+  if (agentTask?.state === 'running') agentTimer = setTimeout(() => {
+    if (!client.authenticated() || projectId !== observedProject || current?.run?.run_id !== observedRun) return;
+    loadAgent(observedProject, observedRun).catch(error => { text('#agent-status', error.message); });
+  }, 2000);
+}
+async function startAgent() {
+  const id = current?.run?.run_id, observedProject = projectId;
+  if (!id) return;
+  const latest = await client.request(endpoint(`/runs/${id}`));
+  if (projectId !== observedProject || current?.run?.run_id !== id) throw Error('任務已切換');
+  const key = `mml-agent-start:${observedProject}:${id}`;
+  const prior = saved(key);
+  // Keep the exact request across an uncertain response; never mint a new job by retrying blindly.
+  const request = prior ?? { expected_run_revision: latest.run.revision, idempotency_key: crypto.randomUUID(), authorization: 'reversible-proposals' };
+  save(key, request);
+  try { await client.request(endpoint(`/runs/${id}/agent`), { body: request }); }
+  catch (error) { if (!error.uncertain) sessionStorage.removeItem(key); throw error; }
+  sessionStorage.removeItem(key);
+  await loadAgent(observedProject, id);
+  message('Agent 已啟動；可在下方查看停止原因。完成後重新讀取任務以查看候選與輸出。');
+}
+$('#agent-start').onclick = () => act(startAgent);
+$('#agent-stop').onclick = () => act(async () => {
+  await client.request(endpoint(`/runs/${current.run.run_id}/agent/stop`), { body: {} });
+  await loadAgent(projectId, current.run.run_id);
+});
+$('#agent-reconcile').onclick = () => act(async () => {
+  const id = current?.run?.run_id, pending = agentTask?.pending_action;
+  if (!id || !pending) throw Error('沒有待核對的 agent 操作');
+  const latest = await client.request(endpoint(`/runs/${id}`));
+  await client.request(endpoint(`/runs/${id}/agent/reconcile`), { body: {
+    pending_action_fingerprint: pending.fingerprint, expected_run_revision: latest.run.revision,
+    inspected: true, reason: $('#agent-recovery-reason').value.trim(),
+  } });
+  $('#agent-recovery-reason').value = ''; await loadRun(id);
+});
 async function loadProject(id, runId = null) {
   if (projectId !== id) $('#mobile-profile-form').reset();
   projectId = id; renderRun(null); text('#project-identity', id || '尚無服務專案');
@@ -131,6 +184,7 @@ async function loadProject(id, runId = null) {
   await loadRun($('#runs').value); controls();
 }
 async function loadProjects(preferred) {
+  agentEnabled = (await client.request('/api/v1/agent')).enabled;
   const result = await client.request('/api/v1/projects');
   fillSelect('#projects', result.projects.map(project => [project.project_id, project.title]), preferred ?? saved(selectionKey)?.project_id, '尚無專案');
   await loadProject($('#projects').value);
@@ -141,9 +195,10 @@ async function startAttempt(attempt) {
   sessionStorage.removeItem(attemptKey(projectId));
   await loadProject(projectId, result.run.run_id);
   message('任務已啟動。請查看停下原因，並把接續資訊交給外部 agent。');
+  if ($('#agent-auto').checked && agentEnabled) await startAgent();
 }
 $('#login').onclick = () => act(async () => { location.assign(await client.loginURL()); });
-$('#logout').onclick = () => act(async () => { try { await client.logout(); } finally { renderRun(null); authView(); } });
+$('#logout').onclick = () => act(async () => { clearTimeout(agentTimer); try { await client.logout(); } finally { renderRun(null); authView(); } });
 $('#open-service').onsubmit = event => { event.preventDefault(); act(async () => {
   const url = new URL(new FormData(event.target).get('origin'));
   if ((url.protocol !== 'https:' && !(url.protocol === 'http:' && ['127.0.0.1', '[::1]'].includes(url.hostname))) || url.username || url.password || url.pathname !== '/' || url.search || url.hash) throw Error('請填入 HTTPS 服務來源網址，不含路徑或憑證');
@@ -215,6 +270,7 @@ $('#mobile-apply').onclick = () => act(async () => {
     mobile_adaptation: { profile: preview.profile, expected_plan_id: preview.plan.id, accepted_by: preview.acceptedBy },
   } });
   await loadRun(preview.binding.runId); message('已接續任務。請核對 Mobile 階段結果，並重新計算候選審查。');
+  if ($('#agent-auto').checked && agentEnabled && current.run.state !== 'completed') await startAgent();
 });
 $('#mobile-review-form').onsubmit = event => { event.preventDefault(); act(async () => {
   const observed = reviewBinding, outcome = $('#gate8-outcome').value;
@@ -227,6 +283,7 @@ $('#mobile-review-form').onsubmit = event => { event.preventDefault(); act(async
     confirmations: { mobile_adaptation_reviewed: { candidate_id: observed.candidateId, value: outcome === 'true', reason: `審查者 ${reviewer}：${reason}`, evidence } },
   } });
   await loadRun(observed.runId); message('已記錄此候選的 Gate 8 審查並重新執行任務；請查看各 gate 與剩餘阻塞。');
+  if ($('#agent-auto').checked && agentEnabled && current.run.state !== 'completed') await startAgent();
 }); };
 $('#handoff').onclick = () => act(async () => {
   await loadRun(current.run.run_id);

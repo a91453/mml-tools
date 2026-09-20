@@ -67,7 +67,9 @@ Gate 8 request 改成 `MOBILE_ADAPTATION_BLOCKED` 來接受 profile proposal。
    staleness、revision、artifact_id、artifact type 與 candidate 綁定；過期結果拒絕匯出。
 
 原曲音訊可保存到專案，但上傳不等於完成 audio alignment 或聽驗。
-本頁不會自行喚起模型，也不會在分頁關閉後替外部 agent 背景工作。
+預設使用手動外部 agent 交接；本分支另提供需主機設定、使用者明確啟動的
+[自動 agent 接續](STUDIO_AGENT_CONTINUATION.md)，可在分頁關閉後由服务程序完成
+本次有限步數執行。服務重啟不會自動重跑。
 
 ## 修復的部署打包缺陷
 

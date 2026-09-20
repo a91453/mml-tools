@@ -65,11 +65,13 @@ export async function createSourceReview({ application, owner, projectId, runId,
   if (events.length !== fragment.events.length || new Set(events.map(e => e.event_id)).size !== events.length) throw Error('Lane packet is not lossless');
   const fresh = await application.getRun(owner, projectId, runId);
   if (fresh.run.revision !== status.run.revision || fresh.staleness?.length) throw Error('Run changed while reading');
+  const audio = project.assets.find(a => a.kind === 'original_audio');
+  if (audio && !/\.m4a$/i.test(audio.filename)) throw Error('This packet currently supports M4A reference audio only');
   const packet = { schema: 'mml-studio/source-review-packet@1', status: 'REVIEW_REQUIRED',
-    binding: { project_id: projectId, run_id: runId, revision: status.run.revision, baseline_id: suggestion.baseline_id, source_sha256: midi.sha256 },
+    binding: { project_id: projectId, run_id: runId, revision: status.run.revision, baseline_id: suggestion.baseline_id, source_sha256: midi.sha256,
+      audio_asset_id: audio?.asset_id ?? null, audio_sha256: audio?.sha256 ?? null },
     tempo: fragment.tempoEvents, sections: sectionRanges(events), lanes, note_count: events.length };
   await mkdir(outputDirectory); // never overwrite an earlier review
-  const audio = project.assets.find(a => a.kind === 'original_audio');
   if (audio) await writeFile(join(outputDirectory, 'reference.m4a'), application.readAssetBytes(owner, projectId, audio.asset_id).bytes);
   await writeFile(join(outputDirectory, 'packet.json'), JSON.stringify(packet));
   await writeFile(join(outputDirectory, 'index.html'), renderSourceReview(packet));

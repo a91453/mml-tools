@@ -209,8 +209,26 @@ async function readUpload(request) {
  * Service's: the service takes a subject string and isolates records by it,
  * whatever the deployment's identity model happens to be.
  */
-export function createApiRouter({ application, ownerOf, challenge = null }) {
+export function createApiRouter({ application, ownerOf, challenge = null, agentDriver = null }) {
   const routes = [
+    ['GET', /^\/agent$/, async () => json({ enabled: Boolean(agentDriver?.enabled) })],
+    ['GET', /^\/projects\/([^/]+)\/runs\/([^/]+)\/agent$/, async (m, _r, owner) => {
+      if (agentDriver) return json(await agentDriver.status(owner, m[1], m[2]));
+      await application.getRun(owner, m[1], m[2]);
+      return json({ enabled: false, task: null });
+    }],
+    ['POST', /^\/projects\/([^/]+)\/runs\/([^/]+)\/agent$/, async (m, request, owner) => {
+      if (!agentDriver) throw new StudioApplicationError(ERROR_CODES.INVALID_REQUEST, 'No agent runner configured');
+      return json(await agentDriver.start(owner, m[1], m[2], await readJson(request)), 202);
+    }],
+    ['POST', /^\/projects\/([^/]+)\/runs\/([^/]+)\/agent\/stop$/, async (m, _r, owner) => {
+      if (!agentDriver) throw new StudioApplicationError(ERROR_CODES.INVALID_REQUEST, 'No agent runner configured');
+      return json(await agentDriver.stop(owner, m[1], m[2]));
+    }],
+    ['POST', /^\/projects\/([^/]+)\/runs\/([^/]+)\/agent\/reconcile$/, async (m, request, owner) => {
+      if (!agentDriver) throw new StudioApplicationError(ERROR_CODES.INVALID_REQUEST, 'No agent runner configured');
+      return json(await agentDriver.reconcile(owner, m[1], m[2], await readJson(request)));
+    }],
     ['GET', /^\/capabilities$/, async () => json(await application.capabilities())],
 
     ['GET', /^\/projects$/, async (_m, request, owner) => json(await application.listProjects(owner))],
