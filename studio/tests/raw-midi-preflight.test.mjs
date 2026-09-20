@@ -18,12 +18,12 @@ import * as fixtures from './fixtures/midi-fixtures.mjs';
 //         the G11-D residual hardening: the gate now binds the identity itself
 //         (see the last test below); the reachability proofs are kept as they
 //         were, because they still hold.
-//   P2-B  createCanonicalProject freezes the project object but not the arrays
-//         it contains, so a later caller could mutate Canonical material after
-//         construction.
+//   P2-B  createCanonicalProject previously left its collection arrays mutable.
+//         PR #46 freezes fresh copies of all five arrays. Deeply frozen input
+//         and Worker-copy regressions below remain as stronger boundary checks.
 //
-// Both stay unreachable through the Raw MIDI path, for the reasons each test
-// below states and proves.
+// Both constructor/gate fixes and the independent Raw MIDI boundaries are
+// retained; nested metadata is not claimed deeply immutable by the constructor.
 
 const ingest = (bytes, options = {}) => midiFragmentToProject(ingestMIDI(bytes, { sourceId: 'preflight', label: 'preflight.mid', ...options }));
 
@@ -41,10 +41,10 @@ function deepFreeze(value, seen = new WeakSet()) {
 
 test('P2-B: the whole Raw MIDI pipeline runs against a deeply frozen Canonical project', () => {
   const project = ingest(fixtures.sixSourceVoices());
-  // The mutability itself is real and is what keeps the finding open; the
-  // integration's obligation is not to depend on it.
+  // PR #46 protects collection containers at construction. The deeper
+  // integration check below must still prove no stage mutates nested data.
   assert.equal(Object.isFrozen(project), true);
-  assert.equal(Object.isFrozen(project.events), false, 'P2-B still describes the current constructor');
+  assert.equal(Object.isFrozen(project.events), true, 'P2-B collection mutation is closed at construction');
 
   const frozen = deepFreeze(structuredClone({ ...project }));
   const decompositions = splitProjectSourceVoices(frozen);
