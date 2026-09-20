@@ -18,6 +18,7 @@ import { parseArgs } from 'node:util';
 const ENDPOINT = '/v1/systemone';
 const DEFAULT_BASE_URL = 'https://api.typesafe.ai';
 const DEFAULT_MODEL = 'jev-latest';
+const DEFAULT_TIMEOUT_MS = 30000;
 // Published input price at the time of writing; output is unmetered. Verify
 // against the current TypeSafe pricing page before quoting a real budget.
 const INPUT_USD_PER_MTOK = 0.042;
@@ -37,8 +38,12 @@ const HELP = `Offline Jev routing evaluation for halted Studio runs (agent layer
                    run is a dry run: payloads are built and printed, nothing is
                    sent, and no key is read.
   --limit N        Evaluate at most N cases.
-  --out FILE       Write the full result JSON, including every raw answer.
+  --out FILE       Write the full result JSON, including every raw answer. In a
+                   live run it is rewritten after every case, so an interrupted
+                   run still holds the answers already paid for.
   --model NAME     Model override (default ${DEFAULT_MODEL}).
+  --timeout MS     Per-request timeout (default ${DEFAULT_TIMEOUT_MS}). A run must not
+                   hang forever on an endpoint that never answers.
 
 Environment: TYPESAFE_API_KEY (required for --live), TYPESAFE_BASE_URL (optional).
 `;
@@ -190,7 +195,7 @@ export const casesFromDataDir = directory => {
 
 export const buildPayload = (entry, model) => ({ model, state: entry.state, questions: QUESTIONS });
 
-const callJev = async (payload, { baseURL, apiKey, signal }) => {
+const callJev = async (payload, { baseURL, apiKey, timeoutMs }) => {
   const response = await fetch(`${baseURL.replace(/\/+$/, '')}${ENDPOINT}`, {
     method: 'POST',
     headers: {
@@ -200,7 +205,7 @@ const callJev = async (payload, { baseURL, apiKey, signal }) => {
       'User-Agent': 'mml-tools-jev-eval/1',
     },
     body: JSON.stringify(payload),
-    signal,
+    signal: AbortSignal.timeout(timeoutMs),
   });
   const text = await response.text();
   if (!response.ok) refuse(`Jev returned HTTP ${response.status}`, { status: response.status, body: text.slice(0, 2000) });
@@ -243,13 +248,24 @@ export const summarize = results => {
   const bands = { high: 0, medium: 0, low: 0 };
   let confidenceSum = 0;
   let inputTokens = 0;
+  let missingUsage = 0;
+  let gapSum = 0;
+  let gapCount = 0;
+  let humanSum = 0;
+  let humanCount = 0;
   for (const entry of answered) {
     const route = entry.answers.route;
     if (route && Object.hasOwn(routes, route.choice)) routes[route.choice] += 1;
     const confidence = route?.confidence ?? 0;
     confidenceSum += confidence;
     bands[confidence >= 0.85 ? 'high' : confidence >= 0.6 ? 'medium' : 'low'] += 1;
-    inputTokens += entry.usage?.input_tokens ?? 0;
+    if (Number.isFinite(entry.usage?.input_tokens)) inputTokens += entry.usage.input_tokens;
+    else missingUsage += 1;
+    // Both of these are asked and billed on every case, so both are reported.
+    const gap = entry.answers.evidence_gap;
+    if (Number.isFinite(gap?.score)) { gapSum += gap.score; gapCount += 1; }
+    const human = entry.answers.human_judgment_required;
+    if (Number.isFinite(human?.noul)) { humanSum += human.noul; humanCount += 1; }
   }
   const separation = {};
   for (const entry of answered) {
@@ -273,8 +289,14 @@ export const summarize = results => {
     routes,
     confidence_bands: bands,
     mean_route_confidence: answered.length ? confidenceSum / answered.length : 0,
+    mean_evidence_gap: gapCount ? gapSum / gapCount : null,
+    evidence_gap_answers: gapCount,
+    mean_human_judgment_required: humanCount ? humanSum / humanCount : null,
+    human_judgment_answers: humanCount,
     input_tokens: inputTokens,
     estimated_cost_usd: estimateCostUsd(inputTokens),
+    // A billed run that reports no usage is understating its cost, not costing nothing.
+    answers_without_usage: missingUsage,
     separation: Object.keys(separation).length ? separation : null,
     notice:
       'Raw Jev answers. No threshold is applied and no Canonical verdict is implied. '
@@ -289,7 +311,15 @@ const formatSummary = summary => {
   lines.push('routes:  ' + ROUTES.map(route => `${route}=${summary.routes[route]}`).join('  '));
   lines.push(`confidence: high=${summary.confidence_bands.high} medium=${summary.confidence_bands.medium} low=${summary.confidence_bands.low}`
     + `  mean=${summary.mean_route_confidence.toFixed(3)}`);
-  lines.push(`input tokens: ${summary.input_tokens}  estimated cost: $${summary.estimated_cost_usd.toFixed(6)}`);
+  const mean = (value, count) => (count ? value.toFixed(3) : 'n/a');
+  lines.push(`evidence_gap: mean=${mean(summary.mean_evidence_gap, summary.evidence_gap_answers)}`
+    + ` (n=${summary.evidence_gap_answers})`
+    + `  human_judgment_required: mean=${mean(summary.mean_human_judgment_required, summary.human_judgment_answers)}`
+    + ` (n=${summary.human_judgment_answers})`);
+  lines.push(`input tokens: ${summary.input_tokens}  estimated cost: $${summary.estimated_cost_usd.toFixed(6)}`
+    + (summary.answers_without_usage
+      ? `  (${summary.answers_without_usage} answers reported no usage; the real cost is higher)`
+      : ''));
   if (summary.separation) {
     lines.push('separation by label:');
     for (const [label, bucket] of Object.entries(summary.separation)) {
@@ -306,7 +336,8 @@ export async function main(argv = process.argv.slice(2)) {
   const { values } = parseArgs({ args: argv, options: {
     'data-dir': { type: 'string' }, cases: { type: 'string' }, labels: { type: 'string' },
     out: { type: 'string' }, model: { type: 'string', default: DEFAULT_MODEL },
-    limit: { type: 'string' }, live: { type: 'boolean' }, help: { type: 'boolean' },
+    limit: { type: 'string' }, timeout: { type: 'string' },
+    live: { type: 'boolean' }, help: { type: 'boolean' },
   } });
   if (values.help || (!values['data-dir'] && !values.cases)) { process.stdout.write(HELP); return 0; }
 
@@ -341,8 +372,24 @@ export async function main(argv = process.argv.slice(2)) {
   const baseURL = process.env.TYPESAFE_BASE_URL ?? DEFAULT_BASE_URL;
   const apiKey = process.env.TYPESAFE_API_KEY;
   if (live && !apiKey) refuse('--live needs TYPESAFE_API_KEY in the environment. The key is never read from a file or an argument.');
+  const timeoutMs = values.timeout === undefined ? DEFAULT_TIMEOUT_MS : Number(values.timeout);
+  if (!Number.isInteger(timeoutMs) || timeoutMs < 1) refuse(`--timeout must be a positive integer in milliseconds, not ${JSON.stringify(values.timeout)}.`);
 
   const results = [];
+  const outPath = values.out ? resolve(values.out) : null;
+  const write = () => writeFileSync(
+    outPath,
+    JSON.stringify({ mode: live ? 'live' : 'dry-run', summary: summarize(results), results }, null, 2) + '\n',
+    'utf8',
+  );
+  // Prove the destination is writable before a single credit is spent. Finding
+  // out at the end that the directory does not exist would discard every
+  // already-billed answer.
+  if (outPath) {
+    try { write(); }
+    catch (error) { refuse(`Cannot write --out ${outPath}: ${error.message}`); }
+  }
+
   for (const entry of cases) {
     const payload = buildPayload(entry, values.model);
     const stateChars = JSON.stringify(payload.state).length;
@@ -353,7 +400,7 @@ export async function main(argv = process.argv.slice(2)) {
     // One failed case must not discard the cases already paid for: record the
     // failure and carry on, so --out still holds every answer bought so far.
     try {
-      const response = assertUsableAnswers(await callJev(payload, { baseURL, apiKey }));
+      const response = assertUsableAnswers(await callJev(payload, { baseURL, apiKey, timeoutMs }));
       results.push({
         id: entry.id, label: entry.label ?? null, state_chars: stateChars,
         model: response.model ?? null, answers: response.answers ?? null, usage: response.usage ?? null,
@@ -365,6 +412,8 @@ export async function main(argv = process.argv.slice(2)) {
       });
       process.stderr.write(`case ${entry.id} failed: ${error.message}\n`);
     }
+    // Persist after every paid case so an interrupted run keeps what it bought.
+    if (outPath) write();
   }
 
   const summary = summarize(results);
@@ -377,16 +426,18 @@ export async function main(argv = process.argv.slice(2)) {
   } else {
     process.stdout.write(formatSummary(summary) + '\n');
   }
-  if (values.out) writeFileSync(resolve(values.out), JSON.stringify({ summary, results }, null, 2) + '\n', 'utf8');
+  if (outPath) write();
   // Non-zero when some cases failed, so a caller notices; the answers already
   // bought are still in --out.
   return summary.failed ? 1 : 0;
 }
 
 if (process.argv[1] && import.meta.url === `file://${process.argv[1]}`) {
-  main().then(code => process.exit(code)).catch(error => {
+  // process.exitCode, not process.exit: the repo's other scripts do the same, and
+  // exiting outright can truncate piped stdout before it is flushed.
+  main().then(code => { process.exitCode = code; }).catch(error => {
     process.stderr.write(`${error.refusal ? 'REFUSED' : 'ERROR'}: ${error.message}\n`
       + (error.details ? JSON.stringify(error.details, null, 2) + '\n' : ''));
-    process.exit(1);
+    process.exitCode = 1;
   });
 }

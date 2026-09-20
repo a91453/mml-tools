@@ -3,7 +3,7 @@
 // allowed to reach TypeSafe under an explicit --live flag.
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtempSync, mkdirSync, writeFileSync } from 'node:fs';
+import { mkdtempSync, mkdirSync, writeFileSync, readFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { QUESTIONS, ROUTES, buildCase, casesFromDataDir, buildPayload, summarize, estimateCostUsd, assertUsableAnswers, main }
@@ -230,4 +230,68 @@ test('main accepts a label that is a real route', async () => {
   const file = join(directory, 'cases.json');
   writeFileSync(file, JSON.stringify([{ id: 'a', state: { run: {} }, label: 'deep_review' }]));
   assert.equal(await main(['--cases', file]), 0);
+});
+
+test('summarize reports the two questions that are billed alongside route', () => {
+  // Every case pays for all three answers, so all three must appear in the report.
+  const summary = summarize([
+    { id: 'a', answers: {
+      route: { choice: 'deep_review', confidence: 0.9 },
+      evidence_gap: { score: 2 }, human_judgment_required: { noul: 0.8 },
+    }, usage: { input_tokens: 100 } },
+    { id: 'b', answers: {
+      route: { choice: 'needs_source', confidence: 0.7 },
+      evidence_gap: { score: 3 }, human_judgment_required: { noul: 0.2 },
+    }, usage: { input_tokens: 100 } },
+  ]);
+  assert.equal(summary.mean_evidence_gap, 2.5);
+  assert.equal(summary.evidence_gap_answers, 2);
+  assert.ok(Math.abs(summary.mean_human_judgment_required - 0.5) < 1e-12);
+  assert.equal(summary.human_judgment_answers, 2);
+});
+
+test('summarize leaves the extra means null rather than inventing zero', () => {
+  const summary = summarize([{ id: 'a', answers: { route: { choice: 'deep_review', confidence: 0.9 } } }]);
+  assert.equal(summary.mean_evidence_gap, null);
+  assert.equal(summary.evidence_gap_answers, 0);
+  assert.equal(summary.mean_human_judgment_required, null);
+});
+
+test('summarize counts answers that reported no usage instead of costing nothing', () => {
+  const summary = summarize([
+    { id: 'a', answers: { route: { choice: 'deep_review', confidence: 0.9 } }, usage: { input_tokens: 500 } },
+    { id: 'b', answers: { route: { choice: 'deep_review', confidence: 0.9 } }, usage: null },
+    { id: 'c', answers: { route: { choice: 'deep_review', confidence: 0.9 } } },
+  ]);
+  assert.equal(summary.input_tokens, 500);
+  assert.equal(summary.answers_without_usage, 2);
+});
+
+test('main proves --out is writable before anything is spent', async () => {
+  const directory = mkdtempSync(join(tmpdir(), 'jev-eval-out-'));
+  const file = join(directory, 'cases.json');
+  writeFileSync(file, JSON.stringify([{ id: 'a', state: { run: {} } }]));
+  // A directory that does not exist must be refused up front, not after the loop.
+  await assert.rejects(
+    main(['--cases', file, '--out', join(directory, 'missing', 'out.json')]),
+    /Cannot write --out/,
+  );
+});
+
+test('main refuses a timeout that is not a positive integer', async () => {
+  const directory = mkdtempSync(join(tmpdir(), 'jev-eval-timeout-'));
+  const file = join(directory, 'cases.json');
+  writeFileSync(file, JSON.stringify([{ id: 'a', state: { run: {} } }]));
+  await assert.rejects(main(['--cases', file, '--timeout', 'soon']), /--timeout must be a positive integer/);
+  await assert.rejects(main(['--cases', file, '--timeout', '0']), /--timeout must be a positive integer/);
+});
+
+test('the written result marks whether it came from a dry run', async () => {
+  const directory = mkdtempSync(join(tmpdir(), 'jev-eval-mode-'));
+  const cases = join(directory, 'cases.json');
+  const out = join(directory, 'out.json');
+  writeFileSync(cases, JSON.stringify([{ id: 'a', state: { run: {} } }]));
+  assert.equal(await main(['--cases', cases, '--out', out]), 0);
+  // Without the marker, a dry run's zero cost reads as a real measured cost.
+  assert.equal(JSON.parse(readFileSync(out, 'utf8')).mode, 'dry-run');
 });

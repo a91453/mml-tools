@@ -70,7 +70,7 @@ API=https://api.gputw.ai/api
 UA=mml-tools/0.2
 KEY=$GPUTW_API_KEY
 
-# 1) 看目錄，挑 VRAM 夠的型號
+# 1) 看目錄，挑 VRAM 夠的型號（/gpus/active 是公開端點，不需要 Authorization）
 curl -fsS "$API/gpus/active" -A "$UA" | jq '.data[] | {id, name, vramGb, hourlyPrice, availableGpus}'
 
 # 2) 取該型號目前可租的機器
@@ -170,6 +170,13 @@ base_url = "https://8080-<instance-id>.gputw.ai/v1"
 env_key = "GPUTW_VLLM_API_KEY"
 ```
 
+`env_key` 指的是**環境變數名稱**，不是金鑰本身。要把 Step 2 的 `--api-key` 設的
+同一個值匯出成它，否則 vLLM 會回 401：
+
+```bash
+export GPUTW_VLLM_API_KEY='<與 Step 2 --api-key 相同的值>'
+```
+
 ### Claude Code
 
 Claude Code 走 **Anthropic Messages API**，不是 OpenAI 格式，所以需要一層相容端點：
@@ -212,6 +219,13 @@ HTTP 與 MCP 只是 adapter，不夾帶任何模型 SDK），所以換模型不�
 
 1. 需要保留的輸出已在 `/vault`（`/workspace` 會隨刪除消失），專案產出已 commit。
 2. `POST /instances/stop`（保留可重啟）或 `POST /instances/delete`（完全移除）。
+   兩者的執行個體 id 都放在 **body**，不在路徑上：
+
+   ```bash
+   curl -fsS -X POST "$API/instances/stop" -A "$UA" \
+     -H "Authorization: Bearer $KEY" -H "Content-Type: application/json" \
+     -d "{\"instanceId\":\"$ID\"}"
+   ```
 3. `GET /instances` 確認沒有殘留的 `RUNNING` 機器。
 4. 用完的臨時 API key 在控制台撤銷。
 
