@@ -52,6 +52,8 @@ Permanent Studio Web 的釘選發布與驗證機制記錄於 [ops/permanent/](op
 
 介面契約、資產與工作生命週期、Canonical provenance、成本模型、安全邊界與已知限制見 [docs/STUDIO_AGENT_INTERFACE.md](docs/STUDIO_AGENT_INTERFACE.md)（實作筆記，非規則權威）。
 
+模型額度用完時，改用自架模型（GPUtw.ai 租用 GPU＋vLLM OpenAI 相容端點）驅動同一套 CLI／MCP 的做法見 [docs/GPUTW_AI_CONTINUATION.md](docs/GPUTW_AI_CONTINUATION.md)（實作筆記，非規則權威）。換模型不改變 `npm test` 與各項驗收界線。
+
 Sites 版本依賴 Sites 的私人存取閘道。Worker 僅在閘道提供可信身分標頭後接受 MCP 呼叫；不可將 Worker 直接放到會接受任意身分標頭的公開主機。Railway 版本則使用 `railway/server.mjs` 與自己的 OAuth，不信任 Sites 身分標頭。兩者的正式 MCP URL 與 OAuth resource 不可混用；本機路由測試不能證明使用者 OAuth 連接已完成。
 
 傳輸支援 2025-03-26、2025-06-18、2025-11-25 協定版本的此服務所需子集：initialize、ping、tools/list、tools/call、初始化與取消通知。不宣告資源、提示詞、工作排程、通知串流或工作階段能力。GET /mcp 回應 405 是預期行為；需 POST 才能進行協定測試。
