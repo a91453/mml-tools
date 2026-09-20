@@ -8,8 +8,8 @@
   "status": "online-user-oauth-connection-pending",
   "githubSource": "a91453/mml-tools",
   "githubBranch": "main",
-  "lastObservedDeploymentCommit": "3995020905807f4bfaeb095baf3b9de7ffdfa423",
-  "lastObservedDeploymentId": "e07e4c39-80db-4768-94bb-e85576377f63",
+  "lastObservedDeploymentCommit": "bbb8534245c78041573fd93af88c8fc7fd3e89bd",
+  "lastObservedDeploymentId": "8f375cb5-4640-4b4c-a15f-662d66cae6e6",
   "lastObservedDeploymentStatus": "SUCCESS",
   "sourceConnected": true,
   "publicOrigin": "https://mml-tools-production.up.railway.app",
@@ -67,12 +67,24 @@
     "browserCspBlockIsInference": true
   },
   "pending": "Callback CSP/303/recovery fix is deployed; HTTPS policy, recovery page and predeployment client persistence checks passed. Complete the owner's actual ChatGPT return, token exchange and authorized tools. HTTP 303 was verified with synthetic local consent, not by submitting the owner's password in production. Pending variable changes remain untouched.",
-  "lastObservedDeploymentAt": "2026-09-17T15:09:31.997Z",
+  "lastObservedDeploymentAt": "2026-09-20T08:05:43.898Z",
   "auditObservation": {
     "observedAt": "2026-09-17",
     "method": "Railway API (read-only): deployment list, service logs and metrics. No production mutation was made.",
     "deployedCommitIsPublishedMain": true,
     "liveHttpsProbesFromAudit": "NOT_RUN — the audit sandbox egress policy refused the production origin, so the publicHealthcheck, loginPolicyVerification and callbackPolicyVerification blocks above remain the historical observations they were recorded as.",
     "note": "chatgptConnectionVerified and authorizedProductionToolCallVerified stay false: neither was verified by this audit."
+  },
+  "watchPatternsObservation": {
+    "observedAt": "2026-09-20T10:22:00.000Z",
+    "method": "Railway API: production service config readback after targeted watchPatterns update; deployment list read-only.",
+    "matchesRepositoryReference": true,
+    "added": [
+      "/server/report-page.mjs",
+      "/server/studio-web.mjs",
+      "/studio/web/service/**"
+    ],
+    "redeployTriggeredByThisFix": false,
+    "note": "Only watchPatterns changed in the Railway production service setting. The live list now matches railway/service-settings.json; no build/start/healthcheck/volume/variable setting was changed."
   }
 }
