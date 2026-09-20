@@ -83,17 +83,23 @@ MIDI 與完整事件 payload 只保存在忽略的本機輸出目錄。
 
 ## 還需要的歌曲事實與審查
 
-1. 確定 Final 目標為已提供的鋼琴 MIDI 完整編曲，或 M4A 原版全樂隊。
+1. **目標版本已由使用者確認：以已提供的 M4A 為準。** 鋼琴 MIDI 作為 supporting
+   symbolic material；不能因為 MIDI 能解析，就認為已完整重現該錄音。此回答只解決
+   目標版本選擇，錄音 offset／有效範圍與其他 gates 仍需各自驗證。
 2. 可核對的 Lead／角色來源證據與段落說明；1,545 個 unassigned events 不能
    由「最高音就是旋律」自動當成 accepted Lead。之後才可完成 G12 與 Core3。
 3. 實際 Mobile 目標樂器、音域／音量測試或確認無需調整的依據。P1 現在有可用入口，
    但這首歌尚未收到這些輸入，也未實際執行有依據的 adaptation。
-4. 若保留 MV 為驗收音訊，需可靠 beat↔recording 對齊與角色／聽驗。
+4. M4A 已確定為目標錄音，需可靠 beat↔recording 對齊與角色／聽驗。
    舊 DTW 的異常結果沒有被附加成 PASS。Final 所需 player/readback 與 regression
    也須在正確候選產生後完成；實機接受另行記錄。
 
-本輪已集中詢問前述目標版本與實際證據。沒有新的回答時，P0 保持未完成，
-不能以 UI／synthetic 測試成功聲稱真實歌曲驗收完成。
+使用者另問「要怎麼提供還是直接無調整」。已將需要的第一步縮為「遊戲內樂器名稱
+＋單人／合奏」，不要求先自行量音域或編寫 profile JSON。可先保留未適配候選，等
+有具體候選可試奏後，再以文字或測試紀錄回答可聽性／音量／音域問題；「先不調整」
+不等於已驗證「無需調整」，也不直接寫入 Gate 8 PASS。
+完整使用者輸入見 [user-review-input.json](evidence/kaiju-final-mobile-2026-09-21/user-review-input.json)。
+P0 仍保持未完成，不能以 UI／synthetic 測試成功聲稱真實歌曲驗收完成。
 
 ## 程式與瀏覽器驗證
 

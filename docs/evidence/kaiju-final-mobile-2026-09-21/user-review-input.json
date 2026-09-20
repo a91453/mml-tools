@@ -1,0 +1,30 @@
+{
+  "schema": "mml-studio/song-review-input@1",
+  "project_id": "prj_d4048044eb6d84453c81191102d72830",
+  "run_id": "run_d24f9dfe1f1a2bdafe0474727b4f496b",
+  "target_version": {
+    "status": "USER_SELECTED",
+    "provided_by": "user",
+    "user_statement": "1 m4a為準",
+    "asset_id": "ast_6a227cb940566e71be6f0ce51b45e665",
+    "filename": "2-怪獣の花唄-Vaundy-MUSIC-VIDEO.m4a",
+    "sha256": "35a05318c127248d9a391201847ee586e82df87b4755cdeb1ec33e4ceb98d061",
+    "meaning": "Use the supplied recording as the song/version and audible arrangement reference; the piano MIDI remains supporting symbolic material."
+  },
+  "mobile_input": {
+    "status": "AWAITING_INSTRUMENT_AND_PERFORMANCE_SETUP",
+    "user_statement": "2.要怎麼提供還是直接無調整",
+    "target_instrument": null,
+    "performance_setup": null,
+    "profile": null,
+    "gate8_confirmation": null,
+    "notice": "The user asked how to provide evidence or whether no adjustment is appropriate. This is not a reviewed no-adaptation conclusion."
+  },
+  "remaining_evidence": [
+    "Recording offset and effective range / reliable beat-to-audio alignment",
+    "Source-supported Lead and role decisions for the target recording",
+    "Target Mobile instrument and solo/ensemble setup",
+    "Candidate-specific adaptation/no-adaptation review, player readback and regression"
+  ],
+  "notice": "Conversation input record only. It does not write a confirmation, change the stored run, certify source completeness, or pass any acceptance gate."
+}
