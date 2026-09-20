@@ -50,7 +50,11 @@ function memoryBackend() {
     readRecord: id => (records.has(id) ? structuredClone(records.get(id)) : null),
     writeRecord: (id, value) => { records.set(id, structuredClone(value)); },
     deleteRecord: id => { records.delete(id); },
-    readBlob: key => blobs.get(blobName(key)) ?? null,
+    readBlob: key => {
+      const bytes = blobs.get(blobName(key));
+      return bytes ? Uint8Array.from(bytes) : null;
+    },
+    blobSize: key => blobs.get(blobName(key))?.byteLength ?? 0,
     writeBlob: (key, bytes) => { blobs.set(blobName(key), Uint8Array.from(bytes)); },
     deleteBlob: key => { blobs.delete(blobName(key)); },
     usedBytes: () => [...blobs.values()].reduce((total, bytes) => total + bytes.byteLength, 0),
@@ -101,6 +105,13 @@ function filesystemBackend(directory, { durability, notice }) {
       try { return new Uint8Array(readFileSync(blobPath(key))); }
       catch { return null; }
     },
+    blobSize(key) {
+      try { return statSync(blobPath(key)).size; }
+      catch (error) {
+        if (error.code === 'ENOENT') return 0;
+        throw error;
+      }
+    },
     writeBlob(key, bytes) {
       writeAtomic(blobPath(key), Buffer.from(bytes));
     },
@@ -141,8 +152,11 @@ export function createStore({ directory = null, durability = 'unknown', maxBytes
     notice: backend.notice,
   });
 
-  const requireCapacity = byteLength => {
-    if (backend.usedBytes() + byteLength > maxBytes) {
+  const requireCapacity = (key, byteLength) => {
+    // Re-analyzing a baseline and updating review/audio evidence replace an
+    // existing key. Charge the resulting store size, not old + new bytes.
+    const resultingBytes = backend.usedBytes() - backend.blobSize(key) + byteLength;
+    if (resultingBytes > maxBytes) {
       fail(ERROR_CODES.STORAGE_FULL, 'The configured Studio asset store is full; remove a project before uploading more.', { max_bytes: maxBytes });
     }
   };
@@ -175,7 +189,7 @@ export function createStore({ directory = null, durability = 'unknown', maxBytes
     },
 
     putBytes(key, bytes) {
-      requireCapacity(bytes.byteLength);
+      requireCapacity(key, bytes.byteLength);
       backend.writeBlob(key, bytes);
     },
 
@@ -189,7 +203,7 @@ export function createStore({ directory = null, durability = 'unknown', maxBytes
 
     putJson(key, value) {
       const bytes = new TextEncoder().encode(JSON.stringify(value));
-      requireCapacity(bytes.byteLength);
+      requireCapacity(key, bytes.byteLength);
       backend.writeBlob(key, bytes);
       return bytes.byteLength;
     },
