@@ -1,0 +1,90 @@
+name: Studio service CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: studio-service-ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  service-browser:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - run: npm install --ignore-scripts --package-lock=false
+      - run: npx playwright install --with-deps chromium webkit
+      - run: npm run build:studio-web
+      - name: Test shared browser and MCP workspace on all three profiles
+        run: node studio/browser-tests/service-workspace.mjs --out "$RUNNER_TEMP/service-browser"
+      # Never upload the whole output directory: it contains a disposable TLS
+      # private key and test stores. Only explicit evidence files may leave CI.
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: studio-service-browser-evidence
+          if-no-files-found: warn
+          retention-days: 7
+          path: |
+            ${{ runner.temp }}/service-browser/*.png
+            ${{ runner.temp }}/service-browser/verification.json
+
+  container-smoke:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    env:
+      SMOKE_IMAGE: mml-studio-ci:${{ github.sha }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: Archive the exact tested checkout without Git metadata
+        run: |
+          mkdir -p "$RUNNER_TEMP/studio-image-context"
+          git archive --format=tar HEAD | tar -x -C "$RUNNER_TEMP/studio-image-context"
+          test ! -e "$RUNNER_TEMP/studio-image-context/.git"
+      - name: Build the real Railway image from a source snapshot
+        env:
+          DOCKER_BUILDKIT: '1'
+          # Short-lived read-only job token. Existing Dockerfile confines ARG
+          # to its first stage. No images or build caches are pushed/exported.
+          MML_CANONICAL_SOURCE_TOKEN: ${{ github.token }}
+        run: |
+          docker build --file "$RUNNER_TEMP/studio-image-context/railway/Dockerfile" \
+            --build-arg MML_CANONICAL_SOURCE_TOKEN \
+            --build-arg RAILWAY_GIT_COMMIT_SHA="$GITHUB_SHA" \
+            --tag "$SMOKE_IMAGE" "$RUNNER_TEMP/studio-image-context"
+      - name: Start image and verify runtime, Canonical, OAuth and exact workspace assets
+        env:
+          # Actual PR source identity is separate from GITHUB_SHA (merge test).
+          MML_CI_PR_HEAD: ${{ github.event.pull_request.head.sha }}
+        run: node scripts/studio-container-smoke.mjs --image "$SMOKE_IMAGE" --out "$RUNNER_TEMP/container-smoke.json"
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: studio-container-smoke-evidence
+          if-no-files-found: warn
+          retention-days: 7
+          path: ${{ runner.temp }}/container-smoke.json
+      - name: Remove local image and credential-bearing intermediate build cache
+        if: always()
+        run: |
+          docker image rm --force "$SMOKE_IMAGE" || true
+          docker builder prune --all --force

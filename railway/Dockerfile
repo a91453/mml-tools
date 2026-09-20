@@ -1,5 +1,6 @@
 # Agent Control Plane image: Railway project `mml-tools-allen`, service
-# `mml-tools`. Serves OAuth, MCP `/mcp` and the Application API `/api/v1/*`.
+# `mml-tools`. Serves OAuth, MCP `/mcp`, the Application API `/api/v1/*`
+# and its service project workspace `/studio/`.
 #
 # This is NOT the Permanent Studio Web deployment. That plane
 # (`mml-tools-studio-permanent` / `studio-web-permanent`) serves a pinned,

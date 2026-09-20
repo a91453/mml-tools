@@ -1,0 +1,30 @@
+{
+  "code_commit": "65b90d6",
+  "actor": "agent:codex",
+  "transport": "Actual loopback HTTP with isolated service OAuth consent, PKCE exchange and bearer authentication; not production deployment",
+  "local_directory": ".studio-agent/remote-real-IbmvqA",
+  "project_id": "prj_d94622c285a2460e1f1172e07c4fbe11",
+  "run_id": "run_8cc181dd2ea5ae63a055411280d390d0",
+  "run_state": "awaiting_review",
+  "halt": "AWAITING_ACCEPTED_DECISIONS",
+  "steps": [
+    {
+      "step": "intake",
+      "status": "completed"
+    },
+    {
+      "step": "suggest",
+      "status": "completed"
+    },
+    {
+      "step": "apply_decisions",
+      "status": "awaiting_input"
+    }
+  ],
+  "source_bytes": 11506,
+  "source_sha256": "58619209f743416fa2150471b079cc14796e92911000793fce98384603c18487",
+  "report_bytes": 794287,
+  "report_matches_application_service": true,
+  "repeated_start_same_run": true,
+  "final_artifact_id": null
+}

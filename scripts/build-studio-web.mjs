@@ -44,6 +44,7 @@ async function copyModules(directory) {
 }
 await copyModules('studio/backend');
 await copyModules('studio/web');
+for (const name of ['index.html', 'style.css']) await put(`studio/web/service/${name}`, await readFile(resolve(root, 'studio/web/service', name)));
 await put('dist/core.js', await readFile(resolve(root, 'dist/core.js')));
 // Preserve all engine modules. Only replace the environment-specific Git loader.
 // Dynamic Git provenance (repository_head / published_main_head / pr_head and

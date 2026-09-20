@@ -1,6 +1,6 @@
 # Agent Control Plane — MML OAuth, MCP and Application API service
 
-Railway project `mml-tools-allen`, service `mml-tools`. This deployment serves OAuth, the MCP endpoint at `/mcp`, and the Application HTTP API at `/api/v1/*`. It does not trust Sites identity headers. The original Sites workbench remains a separate browser application with its own Sites access policy.
+Railway project `mml-tools-allen`, service `mml-tools`. This service implements OAuth, the MCP endpoint at `/mcp`, the Application HTTP API at `/api/v1/*`, and the service project workspace at `/studio/`. The workspace addition has been tested locally, not deployed in this change. It does not trust Sites identity headers. The original Sites workbench remains a separate browser application with its own Sites access policy.
 
 ## This is not the Studio Web deployment
 
@@ -10,13 +10,13 @@ There are two Railway planes, and this README describes only the second:
 | --- | --- | --- |
 | Railway project | `mml-tools-studio-permanent` | `mml-tools-allen` |
 | Service | `studio-web-permanent` | `mml-tools` |
-| Serves | the Studio PWA | OAuth, `/mcp`, `/api/v1/*` |
+| Serves | the Studio PWA | OAuth, `/mcp`, `/api/v1/*`, service workspace `/studio/` |
 | Release model | pinned artifact + trust bundle, SHA256-verified, atomically published to a durable cache | container image built from this repository |
 | Volume | `/studio-cache` — verified runtime-release bytes | `/data` — project, asset, artifact and job records |
 
 `/studio-cache` and `/data` are never interchangeable. `/studio-cache` holds release bytes for the Web plane and never user song data; `/data` holds this service's working storage and is never the Web plane's release cache. The private `studio-release-artifacts` bucket belongs to the release mechanism and is **not** this service's upload store.
 
-The Permanent Studio Web deployment, its pinned artifact, its trust bundle and its verification mechanism are documented in [ops/permanent/](../ops/permanent/MIGRATION_RESULT.md) and are not changed, replaced or bypassed by anything here. Studio Web does not call the Application Service; it reaches the same `studio/backend/**` engines directly in the browser. Migrating it is possible later and is follow-up work.
+The Permanent Studio Web deployment, its pinned artifact, its trust bundle and its verification mechanism are documented in [ops/permanent/](../ops/permanent/MIGRATION_RESULT.md) and are not changed, replaced or bypassed by anything here. The existing local workspace reaches the `studio/backend/**` engines directly in the browser. The new service workspace uses the Application API and shares projects with MCP under the same OAuth owner. It does not migrate IndexedDB songs or change the Permanent Studio release mechanism. Its source entry link is included in future PWA builds; neither live plane is deployed by this change. See [service workspace instructions](../docs/STUDIO_SERVICE_WORKSPACE.md).
 
 ## Required deployment settings
 
@@ -27,7 +27,7 @@ The Permanent Studio Web deployment, its pinned artifact, its trust bundle and i
 - `MML_AUTH_DB`: `/data/mml-auth.sqlite`.
 - `MML_STUDIO_DATA_DIR`: `/data/studio` for the Studio Agent Interface's project, asset and artifact records. Unset, those records stay in memory and the capability endpoint reports `asset_storage.durability: "ephemeral"`.
 - `MML_STUDIO_DURABILITY`: `persistent` only when `/data` really is a mounted volume. Nothing in the service detects a real mount, so durability is reported from this declaration rather than assumed.
-- `MML_OAUTH_REDIRECT_HOSTS` (optional): comma-separated bare hostnames whose exact HTTPS callbacks may register. Unset, the default is `chatgpt.com,chat.openai.com,claude.ai,claude.com`. A value that is not a bare hostname list refuses to start.
+- `MML_OAUTH_REDIRECT_HOSTS` (optional): comma-separated bare hostnames whose exact HTTPS callbacks may register. Unset, the default is `chatgpt.com,chat.openai.com,claude.ai,claude.com`. A value that is not a bare hostname list refuses to start. The service workspace additionally admits only the exact callback `${MML_PUBLIC_ORIGIN}/studio/`; this does not admit arbitrary callbacks on the service host.
 - `MML_OAUTH_LOOPBACK_REDIRECTS` (optional): `false` to refuse RFC 8252 loopback callbacks from native clients. Unset or `true`, they are accepted.
 - `PORT`: Railway's supplied port, or 3000.
 - Healthcheck: `/healthz`.

@@ -81,7 +81,7 @@ async function storeDigest(directory) {
 
 const withDirectory = async body => {
   const directory = await mkdtemp(join(tmpdir(), 'mml-run-transport-'));
-  try { return await body(directory); } finally { await rm(directory, { recursive: true, force: true }); }
+  try { return await body(directory); } finally { await rm(directory, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 }); }
 };
 
 // ─── parity ─────────────────────────────────────────────────────────────────
@@ -453,9 +453,10 @@ const declaredKeys = (name, ...transportOnly) => Object.keys(runTool(name).input
   .filter(key => !transportOnly.includes(key)).sort();
 
 test('each run operation accepts exactly one set of fields, on both transports', async () => {
-  // What MCP declares and what the service accepts are the same set, per
-  // operation — so neither surface can drift without this failing.
-  assert.deepEqual(declaredKeys('studio_run_plan', 'project_id'), [...PLAN_INPUT_KEYS].sort());
+  // Business fields are the same set per operation. report_page is a read-only
+  // MCP response view, like project_id it is consumed by the transport itself.
+  assert.deepEqual(declaredKeys('studio_run_plan', 'project_id', 'report_page'), [...PLAN_INPUT_KEYS].sort());
+  assert.equal(runTool('studio_run_plan').inputSchema.properties.report_page.type, 'object');
   assert.deepEqual(declaredKeys('studio_run_start', 'project_id'), [...START_INPUT_KEYS].sort());
   assert.deepEqual(declaredKeys('studio_run_resume', 'project_id', 'run_id'), [...RESUME_INPUT_KEYS].sort());
 

@@ -1,0 +1,41 @@
+{
+  "source": "synthetic regression fixture",
+  "source_sha256": "5990ff4746fe92016ee2d6080c34b0ab6c1b533f017396ff4214f1ebcf7a1e08",
+  "source_bytes": 341,
+  "scope": "Browser OAuth and shared HTTP/MCP project/run; not song, listening or game acceptance",
+  "results": [
+    {
+      "profile": "desktop-chromium",
+      "project_id": "prj_1721a272a71fec4648cbd2d757d2657b",
+      "run_id": "run_f23d798522e12a0bafc57890fdefa85c",
+      "state": "awaiting_review",
+      "same_mcp_run": true,
+      "uncertain_start_replayed_same_run": true,
+      "proposal_visible": true,
+      "final_artifact_id": null,
+      "synthetic_fixture_review_and_download": true
+    },
+    {
+      "profile": "iphone-webkit",
+      "project_id": "prj_91ff18aec4ee20cf003f1fec1ae299f2",
+      "run_id": "run_e427b3a47a85749768ff157cb0adc828",
+      "state": "awaiting_review",
+      "same_mcp_run": true,
+      "uncertain_start_replayed_same_run": true,
+      "proposal_visible": true,
+      "final_artifact_id": null,
+      "synthetic_fixture_review_and_download": true
+    },
+    {
+      "profile": "ipad-webkit",
+      "project_id": "prj_f023eee6b36aa8903fbf11110b752b8a",
+      "run_id": "run_9bf8f20ea27be5f48717e4280d30f680",
+      "state": "awaiting_review",
+      "same_mcp_run": true,
+      "uncertain_start_replayed_same_run": true,
+      "proposal_visible": true,
+      "final_artifact_id": null,
+      "synthetic_fixture_review_and_download": true
+    }
+  ]
+}

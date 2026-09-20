@@ -138,6 +138,45 @@ test('submitting and resolving reach the same service from either door', async (
   assert.equal(mcpResolved.proposal.resolution.accepted_by, RUN_REVIEWER);
 });
 
+test('real MCP accepts a conflict array and preserves the service evidence refusal', async () => {
+  const { application, http, rpc } = setup();
+  const context = await prepared(application);
+  const project_id = context.fixture.projectId;
+  const unresolved_conflicts = [{ summary: 'Synthetic score and recording roles disagree.', truth_classes: ['symbolic', 'audio'] }];
+  const body = { ...submitBody(context), unresolved_conflicts };
+  const before = (await application.getRun(OWNER, project_id, context.run.run_id)).run;
+  const viaHttp = await http('POST', `/projects/${project_id}/proposals`, body);
+  assert.equal(viaHttp.status, 201);
+  const viaMcp = await rpc('studio_proposal_submit', { project_id, ...body });
+  assert.equal(viaMcp.error, undefined, JSON.stringify(viaMcp.error));
+  assert.equal(viaMcp.result.isError, false);
+  const proposal = viaMcp.result.structuredContent.proposal;
+  assert.deepEqual(proposal.unresolved_conflicts, viaHttp.body.proposal.unresolved_conflicts);
+  assert.equal(proposal.agent_review.verdict, 'REQUIRES_MORE_EVIDENCE');
+  const resolved = await rpc('studio_proposal_resolve', {
+    project_id, proposal_id: proposal.proposal_id, resolution: 'accept', accepted_by: AGENT,
+  });
+  assert.equal(resolved.result.isError, true);
+  assert.equal(resolved.result.structuredContent.error.code, 'PROPOSAL_REFUSED');
+  assert.deepEqual((await application.getRun(OWNER, project_id, context.run.run_id)).run, before);
+
+  const empty = await rpc('studio_proposal_submit', { project_id, ...submitBody(context), unresolved_conflicts: [] });
+  assert.equal(empty.error, undefined);
+  assert.deepEqual(empty.result.structuredContent.proposal.unresolved_conflicts, []);
+});
+
+test('MCP refuses malformed conflicts before they can be mistaken for an omitted conflict list', async () => {
+  const { application, rpc } = setup();
+  const context = await prepared(application);
+  const project_id = context.fixture.projectId;
+  for (const unresolved_conflicts of [{ summary: 'not an array' }, ['not an object'], Array.from({ length: 33 }, () => ({ summary: 'too many' }))]) {
+    const result = await rpc('studio_proposal_submit', { project_id, ...submitBody(context), unresolved_conflicts });
+    assert.equal(result.error?.code, -32602);
+    assert.equal(result.result, undefined);
+  }
+  assert.equal((await application.listProposals(OWNER, project_id)).proposals.length, 0);
+});
+
 test('a refusal is the same refusal on both surfaces', async () => {
   const { application, http, mcp, rpc } = setup();
   const context = await prepared(application);

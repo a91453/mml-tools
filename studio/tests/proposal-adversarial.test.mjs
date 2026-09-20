@@ -27,7 +27,7 @@ const proposable = project => runDecisionsFor(project, {}).map(({ acceptedBy, no
 
 const withDirectory = async body => {
   const directory = await mkdtemp(join(tmpdir(), 'mml-proposal-adversarial-'));
-  try { return await body(directory); } finally { await rm(directory, { recursive: true, force: true }); }
+  try { return await body(directory); } finally { await rm(directory, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 }); }
 };
 
 async function prepared(app, owner = OWNER) {

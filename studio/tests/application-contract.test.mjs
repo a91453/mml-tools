@@ -173,7 +173,7 @@ test('an unconfigured store reports ephemeral durability rather than implying pe
     const declared = await app({ dataDirectory: directory, durability: 'persistent' }).capabilities();
     assert.equal(declared.asset_storage.durability, 'persistent');
   } finally {
-    await rm(directory, { recursive: true, force: true });
+    await rm(directory, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 });
   }
 });
 
@@ -460,7 +460,7 @@ test('a filesystem store survives a new service over the same directory', async 
     assert.equal(reopened.project.assets[0].asset_id, asset.asset_id);
     assert.deepEqual([...second.readAssetBytes(OWNER, project.project_id, asset.asset_id).bytes], [...bytesOf('MML@t120o4c1,,,,,;')]);
   } finally {
-    await rm(directory, { recursive: true, force: true });
+    await rm(directory, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 });
   }
 });
 

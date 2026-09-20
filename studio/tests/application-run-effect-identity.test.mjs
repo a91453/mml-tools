@@ -50,7 +50,8 @@ const stepOf = (plan, step) => plan.planned_steps.find(entry => entry.step === s
 
 const withDirectory = async body => {
   const directory = await mkdtemp(join(tmpdir(), 'mml-run-effect-'));
-  try { return await body(directory); } finally { await rm(directory, { recursive: true, force: true }); }
+  // Windows can briefly retain a file handle after the final atomic write.
+  try { return await body(directory); } finally { await rm(directory, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 }); }
 };
 
 /** A service over the same records that stops before one step's effect. */

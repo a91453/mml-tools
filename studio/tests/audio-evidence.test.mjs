@@ -2,6 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { createSource, createCanonicalNoteEvent, createCanonicalProject } from '../backend/canonical/index.mjs';
 import { AUDIO_ALIGNMENT_SCHEMA, validateAudioAlignmentReport, attachAudioAlignmentEvidence } from '../backend/audio/index.mjs';
+import { evaluateProjectReadiness } from '../backend/final/readiness.mjs';
 
 function project() {
   const source = createSource({ id: 'official', label: 'Official', kind: 'official-musicxml', authority: 'primary-symbolic' });
@@ -82,4 +83,28 @@ test('weak alignment remains explicit evidence with warnings instead of becoming
   assert.ok(validation.warnings.includes('LOW_ALIGNMENT_CONFIDENCE'));
   assert.ok(validation.warnings.includes('LOW_SCORE_FRAME_COVERAGE'));
   assert.ok(validation.warnings.includes('LOW_AUDIO_FRAME_COVERAGE'));
+});
+
+test('collapsed beat intervals stay diagnostic evidence and cannot pass the original-audio gate', () => {
+  const collapsed = report();
+  collapsed.alignment.control_points[2].seconds = collapsed.alignment.control_points[1].seconds;
+  const original = project();
+  const pointsBefore = structuredClone(collapsed.alignment.control_points);
+  const validation = validateAudioAlignmentReport(collapsed, original);
+  assert.equal(validation.valid, true, 'retain the report for inspection rather than erase it');
+  assert.ok(validation.warnings.includes('COLLAPSED_ALIGNMENT_INTERVAL'));
+  const attached = attachAudioAlignmentEvidence(original, collapsed);
+  assert.deepEqual(attached.events, original.events);
+  assert.deepEqual(attached.metadata.audioAlignmentEvidence[0].controlPoints, pointsBefore);
+  assert.deepEqual(collapsed.alignment.control_points, pointsBefore);
+  const gate = evaluateProjectReadiness({ project: attached }).gates.originalAudio;
+  assert.equal(gate.status, 'PENDING');
+  assert.ok(gate.blockers.includes('AUDIO_ALIGNMENT_REVIEW_REQUIRED'));
+  assert.ok(gate.warnings.includes('COLLAPSED_ALIGNMENT_INTERVAL'));
+});
+
+test('positive elapsed time is not rejected by an invented tempo-drift threshold', () => {
+  const variable = report();
+  variable.alignment.control_points[2].seconds = 8;
+  assert.deepEqual(validateAudioAlignmentReport(variable, project()).warnings, []);
 });

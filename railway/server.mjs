@@ -4,6 +4,7 @@ import { pathToFileURL } from 'node:url';
 import { createAuth } from './auth.mjs';
 import { handleMcp, SERVICE_VERSION } from '../server/mcp.mjs';
 import { createApiRouter } from '../server/api.mjs';
+import { studioWebResponse } from '../server/studio-web.mjs';
 import { createStudioApplication } from '../studio/backend/application/index.mjs';
 import { scrubBuildCredentialVariables } from '../studio/backend/bootstrap/index.mjs';
 
@@ -138,6 +139,8 @@ export function createApplication(options) {
     async fetch(request) {
       const url = new URL(request.url);
       if (url.origin !== auth.issuer) return new Response('Unexpected server origin', { status: 400 });
+      const workspace = await studioWebResponse(request);
+      if (workspace) return workspace;
       if (url.pathname === '/healthz' && request.method === 'GET') return Response.json({ status: 'ok', service: 'mml-tools', version: SERVICE_VERSION }, { headers: { 'cache-control': 'no-store' } });
       const oauthResponse = await auth.route(request);
       if (oauthResponse) return oauthResponse;

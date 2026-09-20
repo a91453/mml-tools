@@ -1,0 +1,41 @@
+{
+  "source": "user-provided real MIDI",
+  "source_sha256": "58619209f743416fa2150471b079cc14796e92911000793fce98384603c18487",
+  "source_bytes": 11506,
+  "scope": "Browser OAuth and shared HTTP/MCP project/run; not song, listening or game acceptance",
+  "results": [
+    {
+      "profile": "desktop-chromium",
+      "project_id": "prj_99bf4ec0f1f9123064d9f49a75018367",
+      "run_id": "run_0f297a53aaa7c6dda49eabb34af46971",
+      "state": "awaiting_review",
+      "same_mcp_run": true,
+      "uncertain_start_replayed_same_run": true,
+      "proposal_visible": true,
+      "final_artifact_id": null,
+      "synthetic_fixture_review_and_download": false
+    },
+    {
+      "profile": "iphone-webkit",
+      "project_id": "prj_3260bcfdd2724e61a12cb3145a7fa03b",
+      "run_id": "run_e1a1544609e14b9d1023db924aaa387c",
+      "state": "awaiting_review",
+      "same_mcp_run": true,
+      "uncertain_start_replayed_same_run": true,
+      "proposal_visible": true,
+      "final_artifact_id": null,
+      "synthetic_fixture_review_and_download": false
+    },
+    {
+      "profile": "ipad-webkit",
+      "project_id": "prj_06398c02cbdffcfb7a60712912a71ce1",
+      "run_id": "run_cd7f20ffdd41daab53535cd0982ff7f5",
+      "state": "awaiting_review",
+      "same_mcp_run": true,
+      "uncertain_start_replayed_same_run": true,
+      "proposal_visible": true,
+      "final_artifact_id": null,
+      "synthetic_fixture_review_and_download": false
+    }
+  ]
+}

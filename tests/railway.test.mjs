@@ -215,7 +215,7 @@ test('database restart retains client and token state; password rotation revokes
     app = createApplication({ ...options, database, ownerPassword: password + '_rotated' });
     assert.equal((await app.fetch(mcpRequest(grant.access_token))).status, 401);
     await authorizedCode(r => app.fetch(r), grant.client.client_id, password + '_rotated');
-  } finally { app?.close(); await rm(directory, { recursive: true, force: true }); }
+  } finally { app?.close(); await rm(directory, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 }); }
 });
 test('oversized auth input and repeated login requests are bounded', async t => {
   const send = setup(t);

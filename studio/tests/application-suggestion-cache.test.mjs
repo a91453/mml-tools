@@ -56,6 +56,6 @@ test('a suggestion cached under one rules snapshot is recomputed under another',
     assert.equal(two.bindings.canonicalRulesSnapshotSha, otherSnapshot);
     assert.equal(recomputed, 2, 'a different rules snapshot must not be answered from the old cache');
   } finally {
-    await rm(directory, { recursive: true, force: true });
+    await rm(directory, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 });
   }
 });

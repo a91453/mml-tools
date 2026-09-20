@@ -48,7 +48,7 @@ async function uploaded(service, project, title) {
 
 async function withDirectory(work) {
   const directory = await mkdtemp(join(tmpdir(), 'mml-finalize-'));
-  try { return await work(directory); } finally { await rm(directory, { recursive: true, force: true }); }
+  try { return await work(directory); } finally { await rm(directory, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 }); }
 }
 
 test('a piece that ends on a partial bar is finalized only with the source-confirmed final_partial, which is carried on the artifact', async () => {

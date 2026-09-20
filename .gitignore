@@ -13,3 +13,4 @@ __pycache__/
 .oss-export/
 .canonical-bootstrap.json
 package-lock.json
+.studio-agent/
