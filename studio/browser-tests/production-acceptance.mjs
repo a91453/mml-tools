@@ -3,7 +3,7 @@
 import { readFile, mkdir, writeFile, open } from 'node:fs/promises';
 import { resolve, basename, join } from 'node:path';
 import { parseArgs } from 'node:util';
-import { acceptanceReport, loadProbeInputs, probeProduction, serviceOrigin } from '../../scripts/studio-production-probe.mjs';
+import { acceptanceReport, describeFailure, loadProbeInputs, probeProduction, serviceOrigin } from '../../scripts/studio-production-probe.mjs';
 import { sixSourceVoices } from '../tests/fixtures/midi-fixtures.mjs';
 import { exerciseProductionWorkspace } from './production-workflow.mjs';
 
@@ -52,6 +52,8 @@ try {
   // The external test client is not evidence of ChatGPT connector behavior.
   report.service_transport_status = 'PASS';
 } catch (error) {
+  // Evidence keeps a fixed reason; the failing check itself goes to stderr only.
+  console.error(describeFailure(error));
   report.status = 'FAIL';
   report[phase] = { ...report[phase], status: 'FAIL', reason:
     error.code === 'CANONICAL_NOT_LOADED' ? 'CANONICAL_NOT_LOADED' : 'ACCEPTANCE_STEP_FAILED',
