@@ -88,18 +88,28 @@ MIDI 與完整事件 payload 只保存在忽略的本機輸出目錄。
    目標版本選擇，錄音 offset／有效範圍與其他 gates 仍需各自驗證。
 2. 可核對的 Lead／角色來源證據與段落說明；1,545 個 unassigned events 不能
    由「最高音就是旋律」自動當成 accepted Lead。之後才可完成 G12 與 Core3。
-3. 實際 Mobile 目標樂器、音域／音量測試或確認無需調整的依據。P1 現在有可用入口，
-   但這首歌尚未收到這些輸入，也未實際執行有依據的 adaptation。
+3. **Mobile 目標已確認：鋼琴，單人可完整演奏，多人增加音色。** P1 已有可用入口，
+   實際候選音域／音量測試或確認無需調整的依據仍待補，尚未執行有依據的 adaptation。
 4. M4A 已確定為目標錄音，需可靠 beat↔recording 對齊與角色／聽驗。
    舊 DTW 的異常結果沒有被附加成 PASS。Final 所需 player/readback 與 regression
    也須在正確候選產生後完成；實機接受另行記錄。
 
-使用者另問「要怎麼提供還是直接無調整」。已將需要的第一步縮為「遊戲內樂器名稱
-＋單人／合奏」，不要求先自行量音域或編寫 profile JSON。可先保留未適配候選，等
+使用者另問「要怎麼提供還是直接無調整」，之後已提供鋼琴＋單人／多人目標，
+不用再詢問相同設定，也不要求先自行量音域或編寫 profile JSON。可先保留未適配候選，等
 有具體候選可試奏後，再以文字或測試紀錄回答可聽性／音量／音域問題；「先不調整」
 不等於已驗證「無需調整」，也不直接寫入 Gate 8 PASS。
 完整使用者輸入見 [user-review-input.json](evidence/kaiju-final-mobile-2026-09-21/user-review-input.json)。
 P0 仍保持未完成，不能以 UI／synthetic 測試成功聲稱真實歌曲驗收完成。
+
+## 鋼琴目標接續：對齊診斷與可播放審查頁
+
+新增獨立診斷CLI與原音分段review HTML，提供18個區段（含最後約2拍）。
+目前最佳全曲假設為原調、150 BPM、8.5秒offset；重複段落與曲尾仍有局部歧義。
+舊DTW用目前程式重跑，確認仍有75個collapsed intervals，未改成accepted evidence。
+診斷、已修復的曲尾遺漏／手機排版，以及所有問題狀態見
+[bug與接續紀錄](KAIJU_FINAL_BUG_LOG_2026-09-21.md)。
+本機可直接開啟 `.studio-agent/kaiju-piano-review-final/review.html`，原始M4A與頁面放同一目錄。
+Python12項測試及desktop/iPhone原音播放、定點停止、下載人工紀錄均通過。
 
 ## 程式與瀏覽器驗證
 
