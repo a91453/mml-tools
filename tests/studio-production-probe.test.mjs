@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import { mkdtemp, readFile, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { acceptanceReport, expectedIdentity, loadProbeInputs, probeProduction, saveReport, serviceOrigin, verifyIdentity } from '../scripts/studio-production-probe.mjs';
+import { acceptanceReport, describeFailure, expectedIdentity, loadProbeInputs, probeProduction, saveReport, serviceOrigin, verifyIdentity } from '../scripts/studio-production-probe.mjs';
 import { WORKSPACE_ASSETS } from '../scripts/studio-container-smoke.mjs';
 
 const main = '1'.repeat(40), manifestCommit = '2'.repeat(40), snapshot = '3'.repeat(40);
@@ -96,4 +96,24 @@ test('loader reads Published main assets and exact snapshot sources, with no wor
       if (args[0] === failAt) throw Error('history unavailable'); return gitImpl(args);
     } }), { code: 'CANONICAL_NOT_LOADED' });
   }
+});
+
+test('CANONICAL_NOT_LOADED keeps its fixed code but carries the real cause', async () => {
+  // Without the cause, a loader defect and a missing origin/main fetch look identical.
+  const rejected = await loadProbeInputs({ main, manifestCommit, gitImpl: args => {
+    if (args[0] === 'merge-base') throw Error('fatal: Not a valid commit name');
+    return Buffer.alloc(0);
+  } }).then(() => assert.fail('should reject'), error => error);
+  assert.equal(rejected.code, 'CANONICAL_NOT_LOADED');
+  assert.equal(rejected.message, 'CANONICAL_NOT_LOADED');
+  assert.match(rejected.cause?.message ?? '', /Not a valid commit name/);
+});
+
+test('describeFailure names the failed check for stderr, with the cause when there is one', () => {
+  assert.equal(describeFailure(Object.assign(new Error('deployment identity: rules_snapshot_sha'), { code: 'ERR_ASSERTION' })),
+    'acceptance failed: deployment identity: rules_snapshot_sha');
+  assert.equal(describeFailure(new Error('CANONICAL_NOT_LOADED', { cause: new Error('history unavailable') })),
+    'acceptance failed: CANONICAL_NOT_LOADED (cause: history unavailable)');
+  // Evidence never receives this text; the fixed reason strings are unchanged.
+  assert.equal(acceptanceReport(origin).public_probe.status, 'NOT_RUN');
 });

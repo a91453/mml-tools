@@ -66,9 +66,18 @@ export async function loadProbeInputs({ main, manifestCommit, gitImpl = args => 
     }
     return { expected, expectedAssets: new Map(WORKSPACE_ASSETS.map(([, file]) =>
       [file, show(main, 'studio/web/service/' + file)])) };
-  } catch {
-    throw Object.assign(new Error('CANONICAL_NOT_LOADED'), { code: 'CANONICAL_NOT_LOADED' });
+  } catch (error) {
+    // The code stays fixed so callers fail closed the same way, but the cause
+    // travels with it: a loader bug and an operator who forgot to fetch
+    // origin/main must not be indistinguishable.
+    throw Object.assign(new Error('CANONICAL_NOT_LOADED', { cause: error }), { code: 'CANONICAL_NOT_LOADED' });
   }
+}
+
+/** One stderr line naming the failed check and, for CANONICAL_NOT_LOADED, why. Never written to evidence. */
+export function describeFailure(error) {
+  const cause = error?.cause?.message ? ` (cause: ${error.cause.message})` : '';
+  return `acceptance failed: ${error?.message ?? String(error)}${cause}`;
 }
 
 export function acceptanceReport(origin) {
@@ -94,6 +103,8 @@ if (process.argv[1] && import.meta.url === pathToFileURL(resolve(process.argv[1]
     report.public_probe = await probeProduction({ origin: values.origin, ...inputs });
   } catch (error) {
     // Never copy response bodies, URLs with secrets, or arbitrary errors to evidence.
+    // The operator still has to learn which check failed: that goes to stderr only.
+    console.error(describeFailure(error));
     report.status = 'FAIL'; report.public_probe = { status: 'FAIL', reason:
       error.code === 'CANONICAL_NOT_LOADED' ? 'CANONICAL_NOT_LOADED' : 'PUBLIC_PROBE_FAILED' };
   }
