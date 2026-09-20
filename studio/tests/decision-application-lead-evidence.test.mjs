@@ -7,7 +7,7 @@ import {
   LEAD_EVIDENCE_PROVENANCE_PAIR_AMBIGUOUS,
   DECISION_REJECTION,
 } from '../backend/arrangement/decision-application.mjs';
-import { leadDemotionReportsFromApplication, reviewAppliedCandidate } from '../backend/arrangement/decision-review.mjs';
+import { leadDemotionReportsFromApplication, leadPromotionReportsFromApplication, reviewAppliedCandidate } from '../backend/arrangement/decision-review.mjs';
 import { suggestRoleCandidates } from '../backend/arrangement/role-candidates.mjs';
 import {
   roleDeclaredBaseline,
@@ -243,6 +243,36 @@ test('an event stating no source-event identity cannot carry Lead evidence', () 
 });
 
 // ─── F / G. promotion and duplication ───────────────────────────────────────
+
+test('a role-less multi-event Melody assignment may materialize a review-pending candidate without Lead evidence', () => {
+  const result = apply([promote('preview-roleless', ['tex-1', 'tex-2'])]);
+  assert.equal(result.status, 'PASS');
+  assert.ok(result.candidate, 'a reversible candidate is available for audition/review');
+  assert.equal(result.candidate.events.find(event => event.id === 'tex-1').role, 'Melody');
+  assert.equal(result.candidate.events.find(event => event.id === 'tex-2').role, 'Melody');
+  assert.equal(result.applied[0].leadEvidence, null);
+
+  const diagnostic = result.diagnostics.find(item => item.code === 'ROLELESS_LEAD_ASSIGNMENT_REVIEW_PENDING');
+  assert.ok(diagnostic, 'the application must state that Lead review is still missing');
+  assert.deepEqual([...diagnostic.eventIds], ['tex-1', 'tex-2']);
+  assert.equal(diagnostic.blocker, 'LEAD_PROMOTION_EVIDENCE_MISSING');
+
+  const reports = leadPromotionReportsFromApplication(result, baseline);
+  assert.equal(reports.length, 2);
+  assert.deepEqual(reports.map(report => report.eventId).sort(), ['tex-1', 'tex-2']);
+  assert.ok(reports.every(report => report.status === 'PENDING'), 'candidate materialization must not manufacture a Lead PASS');
+});
+
+test('a role move into Melody still requires positive Lead evidence before a candidate exists', () => {
+  const result = apply([{
+    ...promote('preview-move-still-blocked', ['harm-1']),
+    type: 'MOVE_ROLE',
+    fromRole: 'Chord1',
+  }]);
+  assert.equal(result.status, 'PENDING');
+  assert.equal(result.candidate, null);
+  assert.deepEqual(blockersOf(result, DECISION_REJECTION.LEAD_PROMOTION_EVIDENCE_REQUIRED), ['LEAD_PROMOTION_EVIDENCE_MISSING']);
+});
 
 test('F: promoting event A into Melody with event B\'s evidence is refused', () => {
   for (const [id, eventId] of [['f1', 'tex-1'], ['f2', 'harm-1']]) {

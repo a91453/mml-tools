@@ -25,8 +25,15 @@
 //   * §4  Melody is the Lead role. A decision that demotes a source-supported
 //         Lead runs the existing Lead Demotion Gate here and fails closed to
 //         PENDING when the evidence chain is incomplete; "the user pressed
-//         Apply" is never positive evidence. Promotion into Melody needs
-//         positive role evidence for the same reason.
+//         Apply" is never positive evidence. Reviewed promotion into Melody
+//         still needs positive role evidence.
+//   * Candidate-flow boundary: an initial ASSIGN_ROLE from role-less source
+//         material into Melody may be materialized without Lead evidence only
+//         as an explicitly review-pending candidate. That hypothesis certifies
+//         no gate, carries a machine-readable pending diagnostic, and must be
+//         re-graded by the downstream Lead review before Final. MOVE_ROLE,
+//         duplication into Melody, and Lead demotion keep the existing hard
+//         interlocks.
 //   * §2  a G11-C suggestion is evidence, never acceptance. There is no code
 //         path in this module by which a suggested role, a candidate status, a
 //         confidence, a pitch ranking or a source authority becomes an accepted
@@ -679,6 +686,14 @@ function leadPromotionBlockers(decision, event) {
   return [...new Set(blockers)];
 }
 
+function isProvisionalRolelessLeadAssignment(decision, item) {
+  return item.kind === 'promotion'
+    && decision.type === ACCEPTED_DECISION_TYPES.ASSIGN_ROLE
+    && decision.toRole === LEAD_ROLE
+    && (item.event.role ?? null) === null
+    && decision.leadEvidence === null;
+}
+
 // ─── derived event identity ─────────────────────────────────────────────────
 
 // A duplicate is derived candidate material, not a second source event. It keeps
@@ -1014,21 +1029,40 @@ export function applyAcceptedArrangement({
     //
     // This is containment, not a verdict: supporting it needs an eventId -> Lead
     // evidence contract, which is a later phase.
-    if (leadAffecting.length && targetIds.length !== 1) {
+    const provisionalRolelessPromotion = leadAffecting.length > 0
+      && leadAffecting.every(item => isProvisionalRolelessLeadAssignment(decision, item));
+    if (leadAffecting.length && targetIds.length !== 1 && !provisionalRolelessPromotion) {
       reject(decision.id, DECISION_REJECTION.LEAD_EVIDENCE_MULTI_EVENT_SCOPE_UNSUPPORTED, {
         targetEventIds: Object.freeze([...targetIds]),
         leadAffectingEventIds: Object.freeze(leadAffecting.map(item => item.eventId)),
         kinds: Object.freeze([...new Set(leadAffecting.map(item => item.kind))].sort(cmpStr)),
-        notice: 'A Lead-affecting accepted decision must resolve to exactly one note event: one leadEvidence record cannot cite several different source events. Re-issue it as one decision per Lead event. A lane naming several Lead events is the same case -- a lane id does not bind evidence to the events inside it.',
+        notice: 'A Lead-affecting accepted decision with one embedded leadEvidence record must resolve to exactly one note event: one citation cannot describe several different source events. Initial role-less ASSIGN_ROLE -> Melody decisions with no leadEvidence are the only exception: they may materialize a review-pending candidate, then each event is reviewed separately downstream.',
       });
       continue;
     }
 
+    const provisionalLeadEventIds = [];
     for (const item of leadAffecting) {
       const blockers = item.kind === 'demotion'
         ? leadDemotionBlockers(decision, item.event, item.destination)
         : leadPromotionBlockers(decision, item.event);
-      if (blockers.length) leadBlockers.push({ kind: item.kind, eventId: item.eventId, destination: item.destination, blockers });
+      if (blockers.length) {
+        if (isProvisionalRolelessLeadAssignment(decision, item)
+          && blockers.length === 1
+          && blockers[0] === 'LEAD_PROMOTION_EVIDENCE_MISSING') {
+          provisionalLeadEventIds.push(item.eventId);
+        } else {
+          leadBlockers.push({ kind: item.kind, eventId: item.eventId, destination: item.destination, blockers });
+        }
+      }
+    }
+    if (provisionalLeadEventIds.length) {
+      note('ROLELESS_LEAD_ASSIGNMENT_REVIEW_PENDING', {
+        decisionId: decision.id,
+        eventIds: Object.freeze([...provisionalLeadEventIds].sort(cmpStr)),
+        blocker: 'LEAD_PROMOTION_EVIDENCE_MISSING',
+        notice: 'Initial role-less material was assigned to Melody only to materialize a reversible review candidate. The assignment is not Lead evidence, certifies no gate, and downstream Lead review/finalization remain PENDING until candidate-bound reviewer evidence is supplied.',
+      });
     }
 
     if (leadBlockers.length) {
@@ -1675,6 +1709,7 @@ export const DECISION_APPLICATION_STATUS = Object.freeze({
   deterministicDerivedEventIdentity: true,
   leadDemotionGateEnforced: true,
   leadPromotionEvidenceRequired: true,
+  rolelessLeadAssignmentCanMaterializePendingCandidate: true,
   leadEvidenceBoundToTargetEvent: true,
   leadEvidenceSourceEventIdMembershipRequired: true,
   leadEvidenceMultiSourcePairingFailsClosed: true,
