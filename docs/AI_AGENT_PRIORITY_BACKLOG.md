@@ -5,9 +5,9 @@ Status: IMPLEMENTATION NOTES。不改 Canonical 或 Phase 2 接受政策。
 | 優先級 | 工作 | 狀態／驗收條件 |
 | --- | --- | --- |
 | P0 | 附件上傳與同一個遠端 project/run 的外部 agent 操作 | `65b90d6` 已加入既有 CLI 的遠端 HTTP/MCP 模式；同一 OAuth owner、agent policy、分頁雜湊檢查與恢復規則。需營運者提供既有服務 origin/token 才能操作該部署。 |
-| P0，與程式並行 | 真實歌曲版本、orphan NoteOff、Lead／角色來源證據、有效音訊對齊 | 等來源與使用者判斷；不能以程式改 PASS。原歌曲 run 保持 revision 12、awaiting_review，完整本機 store 未改。 |
+| P0，與程式並行 | 《怪獸之歌》真實歌曲 Final | 9/21 已從最新 main 重跑完整 store 副本的來源診斷、G12、review、finalize，仍 `FINALIZATION_BLOCKED`。已準備 orphan NoteOff 的可追溯修正候選並證明 1,545 音符及其他解碼事件不變，尚未替換來源。版本、Lead／角色、音訊與實際 Mobile 證據仍待補；原 run revision 12 與完整 store 未變。見 [本輪驗收](KAIJU_FINAL_MOBILE_REVIEW_2026-09-21.md)。 |
 | P1 | PWA 接 Application Service | 已加入 `/studio/` 服務工作區及 PWA 入口連結：OAuth、來源上傳、run/status、proposal 回讀、review、Final 下載。真實 MIDI 在 desktop Chromium、iPhone／iPad WebKit 全部完成 UI 啟動並由同 owner MCP 讀到同一 run；既有本機專案保留。程式與本機驗證完成，未部署正式站。 |
-| P1 | Mobile profile 的必要輸入路徑 | 現有 Phase 1 無 profile 時跳過 adaptation；Gate 8 request 的 Phase 2 policy 只允許 evidence_needed。先由既有 reviewer 路徑補實際 profile／證據；若要新增 agent 可處理的「缺 profile」request，需明確審查流程／政策變更，不能把 Gate 8 request 偽裝成 adaptation refusal。 |
+| P1 | Mobile profile 的必要輸入路徑 | 9/21 已接入 `/studio/` 既有 reviewer 路徑：逐角色實際 profile → 預覽 → 接受並 resume 同一 run → 新候選 Gate 8 review。無預填音域／音量；檢查 candidate、revision、staleness 與 evidence。三種 browser profile 驗證通過。Phase 2 policy 不變；真實歌曲尚缺實際輸入，正式站尚未部署此改動。 |
 | P2 | 外部 agent dispatch／continuation | 已提供 UI 複製真實 service origin、project_id、run_id、revision 的接續資訊，與提案回到畫面的路徑。自動喚起／續跑外部 agent 尚未實作；現況需手動交接。仍以 request_key、idempotency 與既有 proposal policy 前進。 |
 | P2 | 完整歌曲輸出與驗收 | 真實 source→decisions→G12→Mobile→review→finalize→MML，再驗證技術與事件回讀；音樂品質、聽驗、實機接受分開記錄。尚未完成。 |
 | P3 | 大型唯讀報告效能 | 分頁已可完整回讀，但每頁重算。先使用 path 讀必要區段；若量測證明需要，再評估既有 store 上可失效的報告快照，不先建背景佇列／新資料庫。 |
