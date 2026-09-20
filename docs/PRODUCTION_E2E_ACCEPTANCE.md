@@ -126,4 +126,25 @@ CI 使用獨立 local store 與既有 synthetic OAuth fixture；不用正式 cre
 本機檔案取回多出換行造成的 hash mismatch 已分別重測／核對原始 Git bytes；
 它們不作為正式站缺陷結論。
 
-本分支不修改 runtime UI、Canonical、接受政策或部署設定；未 merge／deploy。
+## 交接複驗（[handoff-recheck.json](evidence/production-e2e-2026-09-20/handoff-recheck.json)）
+
+在已認證的本機 checkout 上重新確認：Published main `bbb8534`、Manifest commit
+`5e7666b`、rules snapshot `0a17290`，六份文件 headers 全數相符，CANONICAL_LOADED。
+PR head `b59f514` 的 8 個 CI job 全部 success；本機另跑 focused 測試 21 assertions
+PASS 與 `git diff --check`。完整 Node 套件、三種 browser profile 與 Docker smoke
+沿用同一 head 的 CI，未在本機重跑。
+
+本輪**未**重跑公開 probe：此工作環境的 egress 政策對
+`mml-tools-production.up.railway.app` 回 403，CONNECT 遭拒。沒有執行任何探測，也
+沒有為了讓檢查通過而放寬預期值。改以 Railway control plane 獨立確認部署仍是
+`8f375cb5-4640-4b4c-a15f-662d66cae6e6`、SUCCESS、source commit `bbb8534`、branch
+main、wait-for-CI 開啟、`/data` 掛載，與先前紀錄一致且期間沒有重新部署，因此
+[public-probe.json](evidence/production-e2e-2026-09-20/public-probe.json) 的 PASS
+仍對應現行部署。live watch patterns 仍缺三個 path，未變更任何線上設定。
+
+正式網頁 browser/MCP、ChatGPT connector、真實歌曲 Final 與 IN_GAME_ACCEPTED
+本輪維持 NOT_RUN。
+
+本分支不修改 runtime UI、Canonical、接受政策或部署設定。本 PR 只動
+`docs/`、`scripts/`、`studio/browser-tests/`、`tests/`，都不在線上 watch patterns
+內，因此合併本身預期不會觸發正式站重新部署。

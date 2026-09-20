@@ -1,0 +1,92 @@
+{
+  "status": "PENDING",
+  "scope": "Handoff re-verification of this PR before merge; read-only. No production writes, no settings changes",
+  "checked_at": "2026-09-20T09:00:04Z",
+  "identities": {
+    "published_main_head": "bbb8534245c78041573fd93af88c8fc7fd3e89bd",
+    "manifest_commit": "5e7666b850a37f1c85ee2dd8cd0f4fac037a9e14",
+    "rules_snapshot_sha": "0a172900a01fdf39c2e9e84cf176961320b779ea",
+    "canonical_version": "2026-09-13-v1",
+    "canonical_status": "PUBLISHED",
+    "manifest_version": "2026-09-13-v1-manifest1",
+    "pr_head": "b59f514abdbe7f4711b6f1fb8fa2ea9bae4d1846"
+  },
+  "canonical_loading": {
+    "status": "CANONICAL_LOADED",
+    "manifest_source": "docs/CANONICAL_MANIFEST.md read from the Published main history in an authenticated local checkout",
+    "snapshot_documents_verified": 6,
+    "headers_verified": true,
+    "notice": "Rules snapshot commit and all indexed paths exist in its tree. No working-tree or PR fallback was used."
+  },
+  "local_verification": {
+    "node_version": "v22.22.2",
+    "focused_tests": "PASS",
+    "focused_test_files": [
+      "tests/studio-production-probe.test.mjs",
+      "tests/studio-container-smoke.test.mjs"
+    ],
+    "focused_assertions": 21,
+    "whitespace_check": "PASS",
+    "full_node_suite": "NOT_RUN",
+    "browser_profiles": "NOT_RUN",
+    "docker_image_smoke": "NOT_RUN",
+    "notice": "Full Node, three browser profiles and Docker smoke were reused from the successful CI on this exact head, not re-run locally."
+  },
+  "ci": {
+    "head": "b59f514abdbe7f4711b6f1fb8fa2ea9bae4d1846",
+    "check_runs": 8,
+    "conclusion": "success",
+    "names": [
+      "symbolic",
+      "studio-web",
+      "audio-worker",
+      "service-browser",
+      "container-smoke",
+      "export-node",
+      "export-browser",
+      "export-audio-worker"
+    ]
+  },
+  "public_probe": {
+    "status": "NOT_RUN",
+    "reason": "This session's egress policy denies CONNECT to mml-tools-production.up.railway.app; the proxy answered 403. No probe was executed and no expected value was relaxed to compensate.",
+    "prior_evidence": "evidence/production-e2e-2026-09-20/public-probe.json (PASS at 2026-09-20T08:39:42Z)",
+    "prior_evidence_still_current": true,
+    "currency_basis": "The Railway control plane reports the same deployment 8f375cb5-4640-4b4c-a15f-662d66cae6e6 created 2026-09-20T08:05:43Z still SUCCESS at bbb8534, so no redeploy occurred between the recorded probe and this check."
+  },
+  "railway": {
+    "project": "mml-tools-allen",
+    "environment": "production",
+    "service": "mml-tools",
+    "domain": "mml-tools-production.up.railway.app",
+    "domain_target_port": 3000,
+    "deployment_id": "8f375cb5-4640-4b4c-a15f-662d66cae6e6",
+    "deployment_status": "SUCCESS",
+    "commit": "bbb8534245c78041573fd93af88c8fc7fd3e89bd",
+    "branch": "main",
+    "check_suites_gate": true,
+    "volume_mount_path": "/data",
+    "missing_watch_patterns": [
+      "/server/report-page.mjs",
+      "/server/studio-web.mjs",
+      "/studio/web/service/**"
+    ],
+    "settings_changed": false,
+    "notice": "Independently re-confirmed unchanged from connector-and-deployment.json. This PR changes only docs/, scripts/, studio/browser-tests/ and tests/, none of which match the live watch patterns, so merging it is not expected to trigger a deployment."
+  },
+  "browser_mcp": {
+    "status": "NOT_RUN",
+    "reason": "No interactive desktop browser login environment and no reachable production origin in this session."
+  },
+  "chatgpt_connector": {
+    "status": "NOT_RUN",
+    "reason": "No ChatGPT MML Studio connector tools are callable from this session. The eight studio_run_* / studio_proposal_* tools recorded as missing earlier were not re-checked."
+  },
+  "real_song": {
+    "status": "NOT_RUN"
+  },
+  "in_game": {
+    "status": "NOT_RUN"
+  },
+  "conclusion": "Acceptance tooling and its recorded evidence are consistent with the Published Canonical release and with the live deployment. Full production browser/MCP, ChatGPT connector, real-song Final and IN_GAME_ACCEPTED remain unproven."
+}
