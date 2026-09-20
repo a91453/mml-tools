@@ -21,7 +21,6 @@ const DEFAULT_MODEL = 'jev-latest';
 // Published input price at the time of writing; output is unmetered. Verify
 // against the current TypeSafe pricing page before quoting a real budget.
 const INPUT_USD_PER_MTOK = 0.042;
-const ROUTES = ['continue_automatically', 'deep_review', 'needs_source', 'human_review'];
 
 const HELP = `Offline Jev routing evaluation for halted Studio runs (agent layer only)
 
@@ -114,6 +113,9 @@ export const QUESTIONS = Object.freeze({
   },
 });
 
+/** The routes the summary tallies, taken from the question so the two cannot drift apart. */
+export const ROUTES = Object.freeze(Object.keys(QUESTIONS.route.criteria));
+
 // ── case construction ───────────────────────────────────────────────────────
 
 /**
@@ -126,8 +128,11 @@ export const QUESTIONS = Object.freeze({
 export const buildCase = (run, request, meta = {}) => {
   const list = value => (Array.isArray(value) ? value : []);
   const codesOf = entries => list(entries).map(entry => (typeof entry === 'string' ? entry : entry?.code)).filter(Boolean);
+  // The index is part of the identity: one run may raise the same code twice with
+  // different payloads, and those are two cases, not a duplicate.
+  const index = meta.index ?? 0;
   return {
-    id: `${run.run_id ?? 'run'}:${run.revision ?? 0}:${request?.code ?? 'request'}`,
+    id: `${run.run_id ?? 'run'}:${run.revision ?? 0}:${index}:${request?.code ?? 'request'}`,
     source: meta.source ?? null,
     state: {
       run: {
@@ -170,8 +175,8 @@ export const casesFromDataDir = directory => {
     catch { continue; }
     const run = receipt?.result?.run;
     if (!run || !Array.isArray(run.review_requests) || !run.review_requests.length) continue;
-    for (const request of run.review_requests) {
-      const built = buildCase(run, request, { source: name });
+    for (const [index, request] of run.review_requests.entries()) {
+      const built = buildCase(run, request, { source: name, index });
       // A run is re-read many times; keep one case per run revision and code.
       if (seen.has(built.id)) continue;
       seen.add(built.id);
@@ -244,6 +249,7 @@ export const summarize = results => {
   return {
     cases: results.length,
     answered: answered.length,
+    failed: results.filter(entry => entry.error).length,
     routes,
     confidence_bands: bands,
     mean_route_confidence: answered.length ? confidenceSum / answered.length : 0,
@@ -256,10 +262,10 @@ export const summarize = results => {
   };
 };
 
-const formatSummary = (summary, live) => {
+const formatSummary = summary => {
   const lines = [];
-  lines.push(`${live ? 'Live' : 'Dry run'}: ${summary.answered}/${summary.cases} cases answered`);
-  if (!live) return lines.join('\n');
+  lines.push(`Live: ${summary.answered}/${summary.cases} cases answered`
+    + (summary.failed ? `, ${summary.failed} failed` : ''));
   lines.push('routes:  ' + ROUTES.map(route => `${route}=${summary.routes[route]}`).join('  '));
   lines.push(`confidence: high=${summary.confidence_bands.high} medium=${summary.confidence_bands.medium} low=${summary.confidence_bands.low}`
     + `  mean=${summary.mean_route_confidence.toFixed(3)}`);
@@ -292,8 +298,19 @@ export async function main(argv = process.argv.slice(2)) {
     const labels = JSON.parse(readFileSync(resolve(values.labels), 'utf8'));
     cases = cases.map(entry => (Object.hasOwn(labels, entry.id) ? { ...entry, label: labels[entry.id] } : entry));
   }
-  if (values.limit) cases = cases.slice(0, Number.parseInt(values.limit, 10));
+  if (values.limit !== undefined) {
+    const limit = Number(values.limit);
+    if (!Number.isInteger(limit) || limit < 1) refuse(`--limit must be a positive integer, not ${JSON.stringify(values.limit)}.`);
+    cases = cases.slice(0, limit);
+  }
   if (!cases.length) refuse('No cases found. A case needs a run with at least one review request.');
+  // Check every case before spending anything: a malformed --cases file should
+  // name the offending entry, not fail mid-run with a type error.
+  cases.forEach((entry, index) => {
+    if (!entry || typeof entry !== 'object') refuse(`Case ${index} is not an object.`);
+    if (typeof entry.id !== 'string' || !entry.id) refuse(`Case ${index} has no id.`);
+    if (!entry.state || typeof entry.state !== 'object') refuse(`Case ${entry.id} has no state object to evaluate.`);
+  });
 
   const live = values.live === true;
   const baseURL = process.env.TYPESAFE_BASE_URL ?? DEFAULT_BASE_URL;
@@ -308,11 +325,21 @@ export async function main(argv = process.argv.slice(2)) {
       results.push({ id: entry.id, label: entry.label ?? null, state_chars: stateChars, payload, answers: null });
       continue;
     }
-    const response = await callJev(payload, { baseURL, apiKey });
-    results.push({
-      id: entry.id, label: entry.label ?? null, state_chars: stateChars,
-      model: response.model ?? null, answers: response.answers ?? null, usage: response.usage ?? null,
-    });
+    // One failed case must not discard the cases already paid for: record the
+    // failure and carry on, so --out still holds every answer bought so far.
+    try {
+      const response = await callJev(payload, { baseURL, apiKey });
+      results.push({
+        id: entry.id, label: entry.label ?? null, state_chars: stateChars,
+        model: response.model ?? null, answers: response.answers ?? null, usage: response.usage ?? null,
+      });
+    } catch (error) {
+      results.push({
+        id: entry.id, label: entry.label ?? null, state_chars: stateChars, answers: null,
+        error: { message: error.message, details: error.details ?? null },
+      });
+      process.stderr.write(`case ${entry.id} failed: ${error.message}\n`);
+    }
   }
 
   const summary = summarize(results);
@@ -323,10 +350,12 @@ export async function main(argv = process.argv.slice(2)) {
       + `Review the payloads, then re-run with --live to spend Jev credits.\n`
       + (values.out ? '' : 'Pass --out FILE to inspect the exact payloads.\n'));
   } else {
-    process.stdout.write(formatSummary(summary, live) + '\n');
+    process.stdout.write(formatSummary(summary) + '\n');
   }
   if (values.out) writeFileSync(resolve(values.out), JSON.stringify({ summary, results }, null, 2) + '\n', 'utf8');
-  return 0;
+  // Non-zero when some cases failed, so a caller notices; the answers already
+  // bought are still in --out.
+  return summary.failed ? 1 : 0;
 }
 
 if (process.argv[1] && import.meta.url === `file://${process.argv[1]}`) {

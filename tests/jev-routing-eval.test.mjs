@@ -6,7 +6,7 @@ import assert from 'node:assert/strict';
 import { mkdtempSync, mkdirSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { QUESTIONS, buildCase, casesFromDataDir, buildPayload, summarize, estimateCostUsd }
+import { QUESTIONS, ROUTES, buildCase, casesFromDataDir, buildPayload, summarize, estimateCostUsd, main }
   from '../scripts/jev-routing-eval.mjs';
 
 const run = (overrides = {}) => ({
@@ -39,7 +39,7 @@ test('question set keeps each primitive matched to what its answer means', () =>
 test('buildCase summarizes a halted run without carrying the whole record', () => {
   const record = run();
   const built = buildCase(record, record.review_requests[0], { source: 'r.json' });
-  assert.equal(built.id, 'run-1:3:ARRANGEMENT_DECISIONS_REQUIRED');
+  assert.equal(built.id, 'run-1:3:0:ARRANGEMENT_DECISIONS_REQUIRED');
   assert.equal(built.state.run.pending_step, 'apply_decisions');
   assert.equal(built.state.run.has_candidate, true);
   assert.equal(built.state.run.has_final_artifact, false);
@@ -55,7 +55,7 @@ test('buildCase summarizes a halted run without carrying the whole record', () =
 
 test('buildCase tolerates a sparse run record', () => {
   const built = buildCase({ run_id: 'r', revision: 0 }, null);
-  assert.equal(built.id, 'r:0:request');
+  assert.equal(built.id, 'r:0:0:request');
   assert.deepEqual(built.state.blockers, []);
   assert.equal(built.state.counts.review_requests, 0);
   assert.equal(built.state.review_request, null);
@@ -81,8 +81,8 @@ test('casesFromDataDir reads receipts, skips the irrelevant and dedupes per revi
   const cases = casesFromDataDir(directory);
   assert.equal(cases.length, 2);
   assert.deepEqual(cases.map(entry => entry.id).sort(), [
-    'run-1:3:ARRANGEMENT_DECISIONS_REQUIRED',
-    'run-1:4:ARRANGEMENT_DECISIONS_REQUIRED',
+    'run-1:3:0:ARRANGEMENT_DECISIONS_REQUIRED',
+    'run-1:4:0:ARRANGEMENT_DECISIONS_REQUIRED',
   ]);
 });
 
@@ -133,4 +133,61 @@ test('summarize omits the separation report when nothing is labeled', () => {
 test('cost estimate follows the published input price', () => {
   assert.ok(Math.abs(estimateCostUsd(1e6) - 0.042) < 1e-12);
   assert.equal(estimateCostUsd(0), 0);
+});
+
+test('the summary tallies exactly the routes the question offers', () => {
+  // Editing one without the other would silently drop cases from the report.
+  assert.deepEqual([...ROUTES], Object.keys(QUESTIONS.route.criteria));
+});
+
+test('one run raising the same code twice yields two cases, not a duplicate', () => {
+  const directory = mkdtempSync(join(tmpdir(), 'jev-eval-dup-'));
+  mkdirSync(join(directory, 'receipts'));
+  const record = run({ review_requests: [
+    { code: 'EVIDENCE_NEEDED', lane: 'bass' },
+    { code: 'EVIDENCE_NEEDED', lane: 'melody' },
+  ] });
+  writeFileSync(join(directory, 'receipts', '1.json'), JSON.stringify({ result: { run: record } }));
+  // Re-reading the same run must still collapse to the same two cases.
+  writeFileSync(join(directory, 'receipts', '2.json'), JSON.stringify({ result: { run: record } }));
+
+  const cases = casesFromDataDir(directory);
+  assert.equal(cases.length, 2);
+  assert.deepEqual(cases.map(entry => entry.state.review_request.lane), ['bass', 'melody']);
+});
+
+test('summarize counts failed cases so a partial live run is visible', () => {
+  const summary = summarize([
+    { id: 'a', answers: { route: { choice: 'deep_review', confidence: 0.9 } }, usage: { input_tokens: 10 } },
+    { id: 'b', answers: null, error: { message: 'HTTP 429' } },
+  ]);
+  assert.equal(summary.cases, 2);
+  assert.equal(summary.answered, 1);
+  assert.equal(summary.failed, 1);
+  assert.equal(summary.input_tokens, 10);
+});
+
+test('main names a malformed case instead of failing with a type error', async () => {
+  const directory = mkdtempSync(join(tmpdir(), 'jev-eval-cases-'));
+  const file = join(directory, 'cases.json');
+  writeFileSync(file, JSON.stringify([{ id: 'no-state' }]));
+  await assert.rejects(main(['--cases', file]), /Case no-state has no state object/);
+});
+
+test('main refuses a limit that is not a positive integer', async () => {
+  const directory = mkdtempSync(join(tmpdir(), 'jev-eval-limit-'));
+  const file = join(directory, 'cases.json');
+  writeFileSync(file, JSON.stringify([{ id: 'a', state: { run: {} } }]));
+  await assert.rejects(main(['--cases', file, '--limit', 'abc']), /--limit must be a positive integer/);
+  await assert.rejects(main(['--cases', file, '--limit', '0']), /--limit must be a positive integer/);
+});
+
+test('main refuses to go live without a key in the environment', async () => {
+  const directory = mkdtempSync(join(tmpdir(), 'jev-eval-key-'));
+  const file = join(directory, 'cases.json');
+  writeFileSync(file, JSON.stringify([{ id: 'a', state: { run: {} } }]));
+  const saved = process.env.TYPESAFE_API_KEY;
+  delete process.env.TYPESAFE_API_KEY;
+  try { await assert.rejects(main(['--cases', file, '--live']), /TYPESAFE_API_KEY/); }
+  finally { if (saved !== undefined) process.env.TYPESAFE_API_KEY = saved; }
 });
