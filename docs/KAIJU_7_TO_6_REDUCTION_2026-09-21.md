@@ -73,8 +73,13 @@ PR #50 的自動 code review 另外抓出兩個會影響真實歌曲審查可靠
    overflow lane 把 cache、plan 或 MCP/HTTP JSON 放大成乘法／平方級。
 4. **candidate identity 與 raw provenance 不再混名。** diagnostic 不再把
    `event.id` 放進名為 `sourceEventIds` 的欄位；輸出只保留
-   `candidateEventCount` 與由真正 `event.sourceEventIds` 計算的
-   `sourceEventCount`。需要精確 identity 時回到既有 provenance ledger。
+   `candidateEventCount` 與來源限定的 `sourceEventCount`。raw
+   `sourceEventId` 是 source-local，因此計數以「完整 source-id set + raw id」
+   為 scope；多來源時不做陣列索引配對。需要精確 identity 時回到既有
+   provenance ledger。
+5. **decisionful G12 preview 看 proposed candidate。** 若本 plan 已把一顆 overflow
+   redistributing／duplicating 到某角色，剩餘 overflow 的 7→6 診斷會把新佔用區間
+   算進去，不再拿 pre-decision parent 誤報為 lossless gap。
 
 這些都是 verifier / transport / storage hardening，不新增 Canonical 規則，也不讓
 diagnostic 自動變成 role decision、OMIT 或任何 Gate PASS。
