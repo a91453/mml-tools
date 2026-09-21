@@ -167,11 +167,13 @@ duration, volume or role; it cannot set a gate; and it cannot turn `OVERFLOW`
 into `KEEP`, `REDISTRIBUTE` or `OMIT`. An actual redistribution still needs
 the ordinary event-level reviewed decision below.
 
-Normal Application/run transport intentionally sends a bounded summary rather
-than the full per-event diagnostic. That projection is never silently partial:
-it carries the original lane total, the number actually returned, and an
-explicit `truncated` flag. Reviewers that need the omitted lane details must
-read the full plan instead of treating a bounded response as complete.
+The merge diagnostic is lane-level by construction: it stores counts and
+role-level aggregate measurements, not per-event collision-id arrays. Exact
+candidate/raw provenance remains in the ordinary G12 event accounting ledger
+(`plan.items`) and the Source-Faithful baseline. Application/run transport then
+bounds the **lane list** again: it carries the original lane total, the number
+actually returned, and an explicit `truncated` flag. A bounded response must
+never be interpreted as the complete lane set when that flag is true.
 
 ## Decisions
 
