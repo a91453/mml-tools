@@ -2356,7 +2356,8 @@ export function suggestRoleCandidates(project, options = {}) {
       const target = report.targets[0] ?? null;
       return Object.freeze({
         laneId,
-        sourceEventIds: report.sourceEventIds,
+        candidateEventCount: report.candidateEventCount,
+        sourceEventCount: report.sourceEventCount,
         target,
       });
     });
@@ -2392,7 +2393,8 @@ export function suggestRoleCandidates(project, options = {}) {
       });
       return Object.freeze({
         laneId: lane.id,
-        sourceEventIds: report.sourceEventIds,
+        candidateEventCount: report.candidateEventCount,
+        sourceEventCount: report.sourceEventCount,
         targets: report.targets,
         authority: report.authority,
         certifiesGates: report.certifiesGates,
