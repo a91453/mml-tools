@@ -39,6 +39,20 @@ test('same-pitch coverage is visible but never converted into automatic omission
   assert.equal(report.permitsAutomaticOmission, false);
 });
 
+test('a covering unison does not hide a simultaneous different-pitch collision', () => {
+  const source = [note('overflow-1', null, 60, '1', '2')];
+  const candidate = [
+    ...source,
+    note('cover', 'Chord4', 60, '0', '3'),
+    note('other-pitch', 'Chord4', 64, '3/2', '5/2'),
+  ];
+  const report = analyzeLegacyMergeLane({ sourceEvents: source, candidateEvents: candidate });
+  const chord4 = target(report, 'Chord4');
+  assert.equal(chord4.unisonCoveredCount, 1);
+  assert.equal(chord4.wouldRequireTrimOrDropCount, 1);
+  assert.equal(chord4.requiresReviewerDecision, true);
+});
+
 test('exact rational overlap is detected without float epsilon', () => {
   const source = [note('overflow-1', null, 64, '1/3', '2/3')];
   const candidate = [
