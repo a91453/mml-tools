@@ -116,21 +116,23 @@ test('a preferred role hypothesis only breaks ties and remains suggestion-only',
   assert.deepEqual(report.certifiesGates, []);
 });
 
-test('lane diagnostics separate candidate counts from raw source provenance without persisting ids', () => {
+test('lane diagnostics separate candidate counts from source-qualified raw provenance without persisting ids', () => {
   const source = [
     note('candidate-a', null, 67, '0', '1', {
       sourceIds: ['asset:a'],
-      sourceEventIds: ['raw:a1', 'raw:a2'],
+      sourceEventIds: ['track:0/event:1'],
     }),
     note('candidate-b', null, 69, '1', '2', {
-      sourceIds: ['asset:a', 'asset:b'],
-      sourceEventIds: ['raw:b1'],
+      sourceIds: ['asset:b'],
+      sourceEventIds: ['track:0/event:1'],
     }),
   ];
   const report = analyzeLegacyMergeLane({ sourceEvents: source, candidateEvents: source });
   assert.equal(report.candidateEventCount, 2);
-  assert.equal(report.sourceEventCount, 3);
+  assert.equal(report.sourceEventCount, 2,
+    'the same source-local raw id from two imported assets is two provenance identities');
   assert.equal(report.sourceCount, 2);
+  assert.ok(report.targets.every(entry => entry.sourceEventCount === 2));
   assert.equal(report.candidateEventIds, undefined);
   assert.equal(report.sourceEventIds, undefined);
   assert.ok(report.targets.every(entry => entry.eventDiagnostics === undefined));
