@@ -103,6 +103,7 @@ test('resuming with explicit decisions, plan and profile drives one run through 
   // The ledger's own accounting, projected: three events are not retained.
   assert.equal(reductionRequest.detail.accounting.total, 18);
   assert.equal(reductionRequest.detail.accounting.retained, 15);
+  assert.deepEqual(reductionRequest.detail.legacy_merge_diagnostics, []);
   assert.equal(reductionRequest.detail.outcomes.PENDING, 3);
   assert.equal(reductionRequest.event_id_total, 3);
   // The analysis plan is named as an analysis plan, and the request says in so
