@@ -158,9 +158,7 @@ test('overflow material stays in the ledger and in the candidate rather than bei
   assert.deepEqual(plan.accounting.overflowEventIds, ['overflow-1', 'overflow-2', 'overflow-3']);
   for (const item of plan.items.filter(entry => entry.outcome === REDUCTION_OUTCOMES.OVERFLOW)) {
     assert.equal(item.reasonCode, REDUCTION_REASON_CODES.SIX_ROLE_CAPACITY_EXCEEDED);
-    assert.ok(item.suggestions.length, 'overflow should expose non-authoritative merge diagnostics');
-    assert.ok(item.suggestions.every(suggestion => suggestion.authority === 'SUGGESTION_ONLY'));
-    assert.ok(item.suggestions.every(suggestion => suggestion.wouldRequireTrimOrDropCount >= 0));
+    assert.deepEqual(item.suggestions, [], 'overflow diagnostics stay lane-level instead of duplicating six targets on every source event');
   }
   const diagnosed = [...new Set(plan.legacyMergeDiagnostics.flatMap(entry => entry.sourceEventIds))].sort();
   assert.deepEqual(diagnosed, ['overflow-1', 'overflow-2', 'overflow-3']);
