@@ -143,7 +143,9 @@ test('a suggestion proposes roles and accepts nothing', async () => {
     assert.ok(group.laneTotal >= group.laneReturned);
   }
   for (const overflow of suggestion.merge_diagnostics.overflowLanes) {
-    assert.equal(overflow.sourceEventIds, undefined, 'transport projection carries a count, not every source event id');
+    assert.equal(overflow.sourceEventIds, undefined, 'transport projection carries counts, not per-event provenance arrays');
+    assert.equal(overflow.candidateEventIds, undefined);
+    assert.ok(Number.isInteger(overflow.candidateEventCount));
     assert.ok(Number.isInteger(overflow.sourceEventCount));
   }
 
