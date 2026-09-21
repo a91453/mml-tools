@@ -1,6 +1,27 @@
 name: Railway production audit
 
 on:
+  push:
+    branches: [main]
+    paths:
+      - 'dist/core.js'
+      - 'server/mcp.mjs'
+      - 'server/mcp-studio.mjs'
+      - 'server/report-page.mjs'
+      - 'server/studio-web.mjs'
+      - 'server/studio-agent-driver.mjs'
+      - 'server/studio-agent-codex.mjs'
+      - 'studio/web/service/**'
+      - 'server/api.mjs'
+      - 'studio/backend/**'
+      - 'railway/auth.mjs'
+      - 'railway/server.mjs'
+      - 'railway/canonical-probe.sh'
+      - 'railway/Dockerfile'
+      - 'scripts/materialize-canonical.mjs'
+      - '.dockerignore'
+      - 'package.json'
+      - 'docs/CANONICAL_MANIFEST.md'
   workflow_dispatch:
     inputs:
       expected_sha:
@@ -18,7 +39,7 @@ permissions:
 
 concurrency:
   group: railway-production-audit
-  cancel-in-progress: false
+  cancel-in-progress: true
 
 jobs:
   audit:
@@ -34,21 +55,36 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: '22'
-      - name: Require least-privilege Railway project token
+      - name: Check least-privilege Railway project token
+        id: auth
         shell: bash
+        env:
+          EVENT_NAME: ${{ github.event_name }}
         run: |
-          if [ -z "$RAILWAY_PROJECT_TOKEN" ]; then
+          if [ -n "$RAILWAY_PROJECT_TOKEN" ]; then
+            echo "configured=true" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          echo "configured=false" >> "$GITHUB_OUTPUT"
+          if [ "$EVENT_NAME" = "workflow_dispatch" ]; then
             echo "::error::Missing GitHub Actions secret RAILWAY_PROJECT_TOKEN. Use a Railway project token scoped to mml-tools-allen / production; do not use an account token."
             exit 1
           fi
+          echo "::warning::RAILWAY_PROJECT_TOKEN is not configured yet; automatic production audit is skipped until the least-privilege project token is added."
       - name: Resolve Published main and Manifest identities
+        if: steps.auth.outputs.configured == 'true'
         id: identity
         shell: bash
         env:
+          EVENT_NAME: ${{ github.event_name }}
+          PUSH_SHA: ${{ github.sha }}
           REQUESTED_SHA: ${{ inputs.expected_sha }}
         run: |
           git fetch origin main --force
           expected_sha="$REQUESTED_SHA"
+          if [ -z "$expected_sha" ] && [ "$EVENT_NAME" = "push" ]; then
+            expected_sha="$PUSH_SHA"
+          fi
           if [ -z "$expected_sha" ]; then
             expected_sha="$(git rev-parse refs/remotes/origin/main)"
           fi
@@ -68,6 +104,7 @@ jobs:
           echo "expected_sha=$expected_sha" >> "$GITHUB_OUTPUT"
           echo "manifest_commit=$manifest_commit" >> "$GITHUB_OUTPUT"
       - name: Verify Railway deployment, desired config, and public provenance
+        if: steps.auth.outputs.configured == 'true'
         shell: bash
         env:
           EXPECTED_SHA: ${{ steps.identity.outputs.expected_sha }}
@@ -82,9 +119,9 @@ jobs:
             --out "$RUNNER_TEMP/railway-audit/report.json"
       - name: Upload bounded audit evidence
         uses: actions/upload-artifact@v4
-        if: always()
+        if: ${{ always() && steps.auth.outputs.configured == 'true' }}
         with:
-          name: railway-production-audit
+          name: railway-production-audit-${{ steps.identity.outputs.expected_sha }}
           if-no-files-found: warn
           retention-days: 14
           path: ${{ runner.temp }}/railway-audit/report.json
