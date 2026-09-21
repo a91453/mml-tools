@@ -57,7 +57,7 @@ function inspectEvent(source, targetEvents) {
     coveringEventIds: Object.freeze(covering.map(event => event.id).sort(cmpStr)),
     continuityDistance: continuityDistance(source, targetEvents),
     // Historical merge modes would trim or drop here. This analyzer never does.
-    wouldRequireTrimOrDrop: !losslessGap && !unisonCovered,
+    wouldRequireTrimOrDrop: collisions.some(target => !covers(target, source)),
   });
 }
 
