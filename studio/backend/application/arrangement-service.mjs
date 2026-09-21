@@ -50,16 +50,23 @@ const summarizeMergeDiagnostics = diagnostics => {
     overflowLaneTotal: overflowLanes.length,
     overflowLaneReturned: boundedOverflowLanes.length,
     overflowLanesTruncated: boundedOverflowLanes.length < overflowLanes.length,
-    pendingRoleGroups: Object.freeze(boundedPendingRoleGroups.map(group => Object.freeze({
+    pendingRoleGroups: Object.freeze(boundedPendingRoleGroups.map(group => {
+      const laneIds = [...(group.laneIds ?? [])];
+      const boundedLaneIds = laneIds.slice(0, LIMITS.maxReviewRequestEventIds);
+      return Object.freeze({
       role: group.role ?? null,
-      laneIds: Object.freeze([...(group.laneIds ?? [])].slice(0, LIMITS.maxReviewRequestEventIds)),
+      laneTotal: laneIds.length,
+      laneReturned: boundedLaneIds.length,
+      laneIdsTruncated: boundedLaneIds.length < laneIds.length,
+      laneIds: Object.freeze(boundedLaneIds),
       status: group.status ?? null,
       fullyLosslessTogether: group.fullyLosslessTogether === true,
       unisonReviewCount: group.unisonReviewCount ?? 0,
       collisionEventCount: group.collisionEventCount ?? 0,
       leadReviewRequired: group.leadReviewRequired === true,
       authority: group.authority ?? null,
-    }))),
+    });
+    })),
     overflowLanes: Object.freeze(boundedOverflowLanes
       .map(entry => Object.freeze({
         laneId: entry.laneId ?? null,
