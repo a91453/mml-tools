@@ -203,6 +203,42 @@ const summarizeLegacyMergeDiagnostics = diagnostics => Object.freeze((diagnostic
     }))),
   })));
 
+const summarizeArrangementMergeDiagnostics = diagnostics => {
+  if (!diagnostics || typeof diagnostics !== 'object') return null;
+  return Object.freeze({
+    authority: diagnostics.authority ?? null,
+    pending_role_groups: Object.freeze((diagnostics.pendingRoleGroups ?? [])
+      .slice(0, 6)
+      .map(group => Object.freeze({
+        role: group.role ?? null,
+        lane_ids: Object.freeze([...(group.laneIds ?? [])].slice(0, LIMITS.maxReviewRequestEventIds)),
+        status: group.status ?? null,
+        fully_lossless_together: group.fullyLosslessTogether === true,
+        unison_review_count: group.unisonReviewCount ?? 0,
+        collision_event_count: group.collisionEventCount ?? 0,
+        lead_review_required: group.leadReviewRequired === true,
+        authority: group.authority ?? null,
+      }))),
+    overflow_lanes: Object.freeze((diagnostics.overflowLanes ?? [])
+      .slice(0, LIMITS.maxReviewRequestEventIds)
+      .map(entry => Object.freeze({
+        lane_id: entry.laneId ?? null,
+        source_event_count: (entry.sourceEventIds ?? []).length,
+        authority: entry.authority ?? null,
+        targets: Object.freeze((entry.targets ?? []).slice(0, 6).map(target => Object.freeze({
+          role: target.role ?? null,
+          lossless_gap_count: target.losslessGapCount ?? 0,
+          unison_covered_count: target.unisonCoveredCount ?? 0,
+          would_require_trim_or_drop_count: target.wouldRequireTrimOrDropCount ?? 0,
+          fully_lossless: target.fullyLossless === true,
+          lead_review_required: target.leadReviewRequired === true,
+          authority: target.authority ?? null,
+        }))),
+      }))),
+    certifies_gates: Object.freeze([]),
+  });
+};
+
 /** A gate entry, carried through with its own fields and its lists bounded. */
 function boundedGate(entry) {
   if (!entry || typeof entry !== 'object') return null;
@@ -1454,6 +1490,7 @@ export function createRunService({ canonical, projects, store, operations, seria
       detail: suggested === null ? null : {
         lane_count: suggested.lane_count ?? null,
         pending_lane_count: suggested.pending_lane_count ?? null,
+        merge_diagnostics: suggested.merge_diagnostics ?? null,
         roleless_melody_candidate_boundary: 'ASSIGN_ROLE_ONLY_REVIEW_PENDING',
       },
     });
@@ -1653,6 +1690,7 @@ export function createRunService({ canonical, projects, store, operations, seria
             detail: {
               lane_count: suggestion.lane_count,
               pending_lane_count: suggestion.pending?.count ?? null,
+              merge_diagnostics: summarizeArrangementMergeDiagnostics(suggestion.merge_diagnostics),
               bindings: suggestion.bindings,
               notice: 'A suggestion, not an acceptance. PENDING stays PENDING.',
             },
