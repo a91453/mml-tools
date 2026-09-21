@@ -54,6 +54,28 @@ or touch G12 interoperability. `ROLE_CANDIDATE_STATUS` states each of these as `
 Heuristic evidence is not authority. `PENDING` is a valid, preferred outcome.
 The six-role limit is a capacity fact and never authorises silent deletion.
 
+### Historical lane-merge diagnostics
+
+G11-C may attach `mergeDiagnostics` to help a reviewer inspect a role-less
+7→6 hypothesis before accepting any decision. This is adapted from a
+user-provided historical frontend that compared track merges by dropped/trimmed
+counts, but the destructive action is not carried over.
+
+Two cases are measured:
+
+- competing `PENDING` lanes for the same proposed role are checked as a group;
+  time-disjoint material may be reported as
+  `LOSSLESS_SHARED_ROLE_CANDIDATE`, while overlap remains
+  `COLLISION_REVIEW` or `UNISON_DEDUP_REVIEW`;
+- lanes outside six-role capacity are compared against all six currently
+  occupied roles for exact gap fit, same-pitch coverage and collision pressure.
+
+Every result is `authority: SUGGESTION_ONLY`. It does not resolve a role,
+does not merge/delete/shorten any event, does not turn heuristic Lead evidence
+into positive Lead evidence, and certifies no gate. A role-less Melody
+assignment that later materializes a candidate remains subject to the separate
+Lead review boundary described in G11-D.
+
 ## 3. Canonical rules this stage is built around
 
 - **§0 / §4 authority and Lead policy.** Melody is the Lead role, not
