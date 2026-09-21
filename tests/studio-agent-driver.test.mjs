@@ -135,21 +135,26 @@ test('agent materializes a role-less Melody review candidate without manufacturi
     if (turn === 3) {
       const target = c.targets.targets.find(entry => entry.admissible_kinds.includes('arrangement_decision'));
       assert.ok(target);
-      assert.equal(target.detail.roleless_melody_candidate_boundary, 'ASSIGN_ROLE_ONLY_REVIEW_PENDING');
+      const request = c.run.run.review_requests.find(entry => entry.code === 'ARRANGEMENT_DECISIONS_REQUIRED');
+      assert.equal(request.detail.roleless_melody_candidate_boundary, 'ASSIGN_ROLE_ONLY_REVIEW_PENDING');
       return { tool: 'studio_arrangement_suggest', arguments_json: JSON.stringify({ project_id: c.project_id }), reason: 'Read role-less lanes before proposing' };
     }
     if (turn === 4) {
-      lanes = c.previous.suggestion.lanes;
-      assert.ok(lanes.length >= 6, 'fixture exposes at least six role-less lanes');
+      const suggestion = c.previous.suggestion;
+      lanes = [...new Set([
+        ...Object.values(suggestion.roles).flatMap(entry => entry.lane_ids ?? []),
+        ...(suggestion.pending?.lanes ?? []).map(entry => entry.lane_id),
+      ].filter(Boolean))].sort();
+      assert.ok(lanes.length >= 6, 'the public suggestion projection exposes at least six role-less lane ids');
       return { tool: 'studio_baseline_events', arguments_json: JSON.stringify({ project_id: c.project_id, limit: 1 }), reason: 'Read one real baseline event for proposal citation' };
     }
     if (turn === 5) {
       const target = c.targets.targets.find(entry => entry.admissible_kinds.includes('arrangement_decision'));
       const roles = ['Melody', 'Chord1', 'Chord2', 'Chord3', 'Chord4', 'Chord5'];
-      const decisions = lanes.map((lane, index) => ({
+      const decisions = lanes.map((laneId, index) => ({
         id: `roleless-preview:${index}`,
         type: 'ASSIGN_ROLE',
-        target: { laneId: lane.id },
+        target: { laneId },
         toRole: roles[Math.min(index, roles.length - 1)],
         reason: 'Synthetic fixture role assignment used only to test candidate materialization.',
         evidence: ['fixture:roleless-preview-regression'],
