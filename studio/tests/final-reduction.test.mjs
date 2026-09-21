@@ -160,8 +160,11 @@ test('overflow material stays in the ledger and in the candidate rather than bei
     assert.equal(item.reasonCode, REDUCTION_REASON_CODES.SIX_ROLE_CAPACITY_EXCEEDED);
     assert.deepEqual(item.suggestions, [], 'overflow diagnostics stay lane-level instead of duplicating six targets on every source event');
   }
-  const diagnosed = [...new Set(plan.legacyMergeDiagnostics.flatMap(entry => entry.sourceEventIds))].sort();
-  assert.deepEqual(diagnosed, ['overflow-1', 'overflow-2', 'overflow-3']);
+  const diagnosedCandidateCount = plan.legacyMergeDiagnostics.reduce((sum, entry) => sum + entry.candidateEventCount, 0);
+  const diagnosedSourceCount = plan.legacyMergeDiagnostics.reduce((sum, entry) => sum + entry.sourceEventCount, 0);
+  assert.equal(diagnosedCandidateCount, 3);
+  assert.equal(diagnosedSourceCount, 3);
+  assert.ok(plan.legacyMergeDiagnostics.every(entry => entry.sourceEventIds === undefined));
   assert.ok(plan.legacyMergeDiagnostics.every(entry => entry.authority === 'SUGGESTION_ONLY'));
   assert.ok(plan.warnings.some(warning => warning.code === REDUCTION_WARNINGS.OVERFLOW_RETAINED));
   // Accepting the overflow records the review; it still removes nothing.
