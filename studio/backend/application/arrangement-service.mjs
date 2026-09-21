@@ -38,9 +38,19 @@ const CALLER_DECISION_KEYS = new Set(['id', 'type', 'target', 'fromRole', 'toRol
 
 const summarizeMergeDiagnostics = diagnostics => {
   if (!diagnostics || typeof diagnostics !== 'object') return null;
+  const pendingRoleGroups = diagnostics.pendingRoleGroups ?? [];
+  const overflowLanes = diagnostics.overflowLanes ?? [];
+  const boundedPendingRoleGroups = pendingRoleGroups.slice(0, 6);
+  const boundedOverflowLanes = overflowLanes.slice(0, LIMITS.maxReviewRequestEventIds);
   return Object.freeze({
     authority: diagnostics.authority ?? null,
-    pendingRoleGroups: Object.freeze((diagnostics.pendingRoleGroups ?? []).slice(0, 6).map(group => Object.freeze({
+    pendingRoleGroupTotal: pendingRoleGroups.length,
+    pendingRoleGroupReturned: boundedPendingRoleGroups.length,
+    pendingRoleGroupsTruncated: boundedPendingRoleGroups.length < pendingRoleGroups.length,
+    overflowLaneTotal: overflowLanes.length,
+    overflowLaneReturned: boundedOverflowLanes.length,
+    overflowLanesTruncated: boundedOverflowLanes.length < overflowLanes.length,
+    pendingRoleGroups: Object.freeze(boundedPendingRoleGroups.map(group => Object.freeze({
       role: group.role ?? null,
       laneIds: Object.freeze([...(group.laneIds ?? [])].slice(0, LIMITS.maxReviewRequestEventIds)),
       status: group.status ?? null,
@@ -50,8 +60,7 @@ const summarizeMergeDiagnostics = diagnostics => {
       leadReviewRequired: group.leadReviewRequired === true,
       authority: group.authority ?? null,
     }))),
-    overflowLanes: Object.freeze((diagnostics.overflowLanes ?? [])
-      .slice(0, LIMITS.maxReviewRequestEventIds)
+    overflowLanes: Object.freeze(boundedOverflowLanes
       .map(entry => Object.freeze({
         laneId: entry.laneId ?? null,
         sourceEventCount: (entry.sourceEventIds ?? []).length,
