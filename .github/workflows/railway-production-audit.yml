@@ -103,6 +103,7 @@ jobs:
           echo "expected_sha=$expected_sha" >> "$GITHUB_OUTPUT"
           echo "manifest_commit=$manifest_commit" >> "$GITHUB_OUTPUT"
       - name: Verify Railway deployment, desired config, and public provenance
+        id: verify
         if: steps.auth.outputs.configured == 'true'
         shell: bash
         env:
@@ -116,6 +117,21 @@ jobs:
             --manifest-commit "$MANIFEST_COMMIT" \
             --wait-seconds "${WAIT_SECONDS:-900}" \
             --out "$RUNNER_TEMP/railway-audit/report.json"
+      - name: Collect diagnostics if the matched deployment failed
+        if: ${{ failure() && steps.auth.outputs.configured == 'true' }}
+        shell: bash
+        run: |
+          report="$RUNNER_TEMP/railway-audit/report.json"
+          if [ ! -f "$report" ]; then
+            exit 0
+          fi
+          deployment_id="$(node -e "const r=require(process.argv[1]); if (['FAILED','CRASHED'].includes(r.control_plane?.deployment?.status)) process.stdout.write(r.control_plane.deployment.id ?? '')" "$report")"
+          if [ -z "$deployment_id" ]; then
+            exit 0
+          fi
+          node scripts/railway-deployment-diagnostics.mjs \
+            --deployment "$deployment_id" \
+            --out "$RUNNER_TEMP/railway-audit/diagnostics.json"
       - name: Upload bounded audit evidence
         uses: actions/upload-artifact@v4
         if: ${{ always() && steps.auth.outputs.configured == 'true' }}
@@ -123,4 +139,4 @@ jobs:
           name: railway-production-audit-${{ steps.identity.outputs.expected_sha }}
           if-no-files-found: warn
           retention-days: 14
-          path: ${{ runner.temp }}/railway-audit/report.json
+          path: ${{ runner.temp }}/railway-audit/*.json
