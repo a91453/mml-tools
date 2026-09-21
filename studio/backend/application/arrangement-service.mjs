@@ -70,7 +70,8 @@ const summarizeMergeDiagnostics = diagnostics => {
     overflowLanes: Object.freeze(boundedOverflowLanes
       .map(entry => Object.freeze({
         laneId: entry.laneId ?? null,
-        sourceEventCount: (entry.sourceEventIds ?? []).length,
+        candidateEventCount: entry.candidateEventCount ?? 0,
+        sourceEventCount: entry.sourceEventCount ?? 0,
         authority: entry.authority ?? null,
         targets: Object.freeze((entry.targets ?? []).slice(0, 6).map(target => Object.freeze({
           role: target.role ?? null,
