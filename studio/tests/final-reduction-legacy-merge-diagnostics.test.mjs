@@ -140,6 +140,23 @@ test('lane diagnostics separate candidate counts from source-qualified raw prove
   assert.ok(!JSON.stringify(report).includes('coveringEventIds'));
 });
 
+test('source-event counts are source-set-qualified without inventing array-index pairs', () => {
+  const raw = 'track:0/event:1';
+  const source = [
+    note('candidate-a', null, 60, '0', '1', { sourceIds: ['asset:a'], sourceEventIds: [raw] }),
+    note('candidate-b', null, 62, '1', '2', { sourceIds: ['asset:b'], sourceEventIds: [raw] }),
+    note('candidate-ab-1', null, 64, '2', '3', { sourceIds: ['asset:a', 'asset:b'], sourceEventIds: [raw] }),
+    // Same ambiguous source set in the opposite array order is the same
+    // set-scoped provenance identity, not a fourth source event.
+    note('candidate-ab-2', null, 65, '3', '4', { sourceIds: ['asset:b', 'asset:a'], sourceEventIds: [raw] }),
+  ];
+  const report = analyzeLegacyMergeLane({ sourceEvents: source, candidateEvents: source });
+  assert.equal(report.candidateEventCount, 4);
+  assert.equal(report.sourceCount, 2);
+  assert.equal(report.sourceEventCount, 3,
+    'the same source-local raw id from A, B, and the ambiguous {A,B} source set must not collapse together');
+});
+
 test('dense collisions stay compact instead of serializing event-by-event cross products', () => {
   const source = Array.from({ length: 64 }, (_, index) =>
     note(`source-${index}`, null, 60 + (index % 4), '0', '4'));
