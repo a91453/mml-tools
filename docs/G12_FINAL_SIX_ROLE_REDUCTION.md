@@ -170,7 +170,12 @@ the ordinary event-level reviewed decision below.
 The merge diagnostic is lane-level by construction: it stores counts and
 role-level aggregate measurements, not per-event collision-id arrays. Exact
 candidate/raw provenance remains in the ordinary G12 event accounting ledger
-(`plan.items`) and the Source-Faithful baseline. Application/run transport then
+(`plan.items`) and the Source-Faithful baseline. In a decisionful preview, the
+remaining overflow is measured against the successfully derived **proposed
+candidate**, including role moves and duplicates from the decision set being
+previewed; falling back to the parent candidate is allowed only when derivation
+did not succeed. This keeps the diagnostic about the delivery the reviewer is
+actually considering, not stale pre-decision occupancy. Application/run transport then
 bounds the **lane list** again: it carries the original lane total, the number
 actually returned, and an explicit `truncated` flag. A bounded response must
 never be interpreted as the complete lane set when that flag is true.
