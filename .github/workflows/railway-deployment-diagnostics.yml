@@ -1,0 +1,46 @@
+name: Railway failed deployment diagnostics
+
+on:
+  workflow_dispatch:
+    inputs:
+      deployment_id:
+        description: FAILED or CRASHED deployment UUID from mml-tools-allen / production
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+jobs:
+  diagnostics:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    env:
+      RAILWAY_PROJECT_TOKEN: ${{ secrets.RAILWAY_PROJECT_TOKEN }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: Require least-privilege Railway project token
+        run: |
+          if [ -z "$RAILWAY_PROJECT_TOKEN" ]; then
+            echo "::error::Missing RAILWAY_PROJECT_TOKEN. Use a Railway project token scoped to mml-tools-allen / production."
+            exit 1
+          fi
+      - name: Collect sanitized bounded build/runtime diagnostics
+        env:
+          DEPLOYMENT_ID: ${{ inputs.deployment_id }}
+        run: |
+          mkdir -p "$RUNNER_TEMP/railway-diagnostics"
+          node scripts/railway-deployment-diagnostics.mjs \
+            --deployment "$DEPLOYMENT_ID" \
+            --out "$RUNNER_TEMP/railway-diagnostics/report.json"
+      - name: Upload diagnostics
+        uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: railway-failed-deployment-${{ inputs.deployment_id }}
+          if-no-files-found: warn
+          retention-days: 7
+          path: ${{ runner.temp }}/railway-diagnostics/report.json

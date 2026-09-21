@@ -8,15 +8,15 @@
   "status": "online-user-oauth-connection-pending",
   "githubSource": "a91453/mml-tools",
   "githubBranch": "main",
-  "lastObservedDeploymentCommit": "bbb8534245c78041573fd93af88c8fc7fd3e89bd",
-  "lastObservedDeploymentId": "8f375cb5-4640-4b4c-a15f-662d66cae6e6",
+  "lastObservedDeploymentCommit": "5edd2414dbe73c892857fe375084af099fc0e05e",
+  "lastObservedDeploymentId": "446fec19-4cb9-4381-aff5-f4c76671599f",
   "lastObservedDeploymentStatus": "SUCCESS",
   "sourceConnected": true,
   "publicOrigin": "https://mml-tools-production.up.railway.app",
   "authVariablesConfigured": true,
   "volumeStaged": false,
   "volumeId": "e90e0f81-854e-467c-9ab0-5be246118708",
-  "volumeSizeMB": 500,
+  "volumeSizeMB": 5000,
   "attemptedVolumeId": "640a4b53-1cab-4698-909c-0e2081259157",
   "volumeMountPath": "/data",
   "volumeConfigured": true,
@@ -67,7 +67,7 @@
     "browserCspBlockIsInference": true
   },
   "pending": "Callback CSP/303/recovery fix is deployed; HTTPS policy, recovery page and predeployment client persistence checks passed. Complete the owner's actual ChatGPT return, token exchange and authorized tools. HTTP 303 was verified with synthetic local consent, not by submitting the owner's password in production. Pending variable changes remain untouched.",
-  "lastObservedDeploymentAt": "2026-09-20T08:05:43.898Z",
+  "lastObservedDeploymentAt": "2026-09-21T04:42:59.350Z",
   "auditObservation": {
     "observedAt": "2026-09-17",
     "method": "Railway API (read-only): deployment list, service logs and metrics. No production mutation was made.",
@@ -86,5 +86,25 @@
     ],
     "redeployTriggeredByThisFix": false,
     "note": "Only watchPatterns changed in the Railway production service setting. The live list now matches railway/service-settings.json; no build/start/healthcheck/volume/variable setting was changed."
+  },
+  "railwayAgentMigrationObservation": {
+    "observedAt": "2026-09-21",
+    "method": "Railway direct service API/readback; Railway Agent was not used.",
+    "repositoryDesiredWatchPatterns": 18,
+    "liveWatchPatternsBefore": 16,
+    "missingBefore": [
+      "/server/studio-agent-driver.mjs",
+      "/server/studio-agent-codex.mjs"
+    ],
+    "liveWatchPatternsAfter": 18,
+    "matchesRepositoryReferenceAfter": true,
+    "redeployTriggeredByThisFix": false,
+    "deploymentUnchanged": {
+      "id": "446fec19-4cb9-4381-aff5-f4c76671599f",
+      "commit": "5edd2414dbe73c892857fe375084af099fc0e05e",
+      "status": "SUCCESS"
+    },
+    "volumeSizeMBReadback": 5000,
+    "note": "This observation records direct deterministic control-plane work intended to replace routine Railway Agent use. It makes no song, OAuth E2E, or in-game acceptance claim."
   }
 }

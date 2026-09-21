@@ -14,7 +14,59 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  classify:
+    runs-on: ubuntu-latest
+    outputs:
+      run_heavy: ${{ steps.paths.outputs.run_heavy }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Classify Railway-only changes
+        id: paths
+        shell: bash
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          PR_BASE: ${{ github.event.pull_request.base.sha }}
+          PR_HEAD: ${{ github.event.pull_request.head.sha }}
+          PUSH_BASE: ${{ github.event.before }}
+          PUSH_HEAD: ${{ github.sha }}
+        run: |
+          if [ "$EVENT_NAME" = "workflow_dispatch" ]; then
+            echo "run_heavy=true" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          if [ "$EVENT_NAME" = "pull_request" ]; then
+            base="$PR_BASE"
+            head="$PR_HEAD"
+          else
+            base="$PUSH_BASE"
+            head="$PUSH_HEAD"
+          fi
+          if [ -z "$base" ] || [ -z "$head" ] || [ "$base" = "0000000000000000000000000000000000000000" ]; then
+            echo "run_heavy=true" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          changed="$(git diff --name-only "$base" "$head")"
+          if [ -z "$changed" ]; then
+            echo "run_heavy=true" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          run_heavy=false
+          while IFS= read -r path; do
+            case "$path" in
+              scripts/railway-production-audit.mjs|scripts/railway-production-config-apply.mjs|scripts/railway-deployment-diagnostics.mjs|tests/railway-production-audit.test.mjs|tests/railway-production-config-apply.test.mjs|tests/railway-deployment-diagnostics.test.mjs|.github/workflows/railway-production-audit.yml|.github/workflows/railway-production-config-apply.yml|.github/workflows/railway-deployment-diagnostics.yml|.github/workflows/railway-ops-ci.yml|railway/service-settings.json|railway/deployment-target.json|docs/RAILWAY_AGENT_MIGRATION_AUDIT_2026-09-21.md)
+                ;;
+              *)
+                run_heavy=true
+                break
+                ;;
+            esac
+          done <<< "$changed"
+          echo "run_heavy=$run_heavy" >> "$GITHUB_OUTPUT"
   service-browser:
+    needs: classify
+    if: needs.classify.outputs.run_heavy == 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 20
     steps:
@@ -43,6 +95,8 @@ jobs:
             ${{ runner.temp }}/service-browser/verification.json
 
   container-smoke:
+    needs: classify
+    if: needs.classify.outputs.run_heavy == 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 20
     env:

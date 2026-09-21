@@ -1,0 +1,109 @@
+name: Railway production audit
+
+on:
+  workflow_dispatch:
+    inputs:
+      expected_sha:
+        description: Full main commit SHA to verify; blank uses current origin/main
+        required: false
+        type: string
+      wait_seconds:
+        description: Maximum seconds to wait for the matching Railway deployment
+        required: false
+        default: '900'
+        type: string
+
+permissions:
+  contents: read
+
+concurrency:
+  group: railway-production-audit
+  cancel-in-progress: true
+
+jobs:
+  audit:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    env:
+      RAILWAY_PROJECT_TOKEN: ${{ secrets.RAILWAY_PROJECT_TOKEN }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: Require least-privilege Railway project token
+        id: auth
+        shell: bash
+        run: |
+          if [ -z "$RAILWAY_PROJECT_TOKEN" ]; then
+            echo "::error::Missing GitHub Actions secret RAILWAY_PROJECT_TOKEN. Use a Railway project token scoped to mml-tools-allen / production; do not use an account token."
+            exit 1
+          fi
+          echo "configured=true" >> "$GITHUB_OUTPUT"
+      - name: Resolve Published main and Manifest identities
+        if: steps.auth.outputs.configured == 'true'
+        id: identity
+        shell: bash
+        env:
+          REQUESTED_SHA: ${{ inputs.expected_sha }}
+        run: |
+          git fetch origin main:refs/remotes/origin/main --force
+          expected_sha="$REQUESTED_SHA"
+          if [ -z "$expected_sha" ]; then
+            expected_sha="$(git rev-parse refs/remotes/origin/main)"
+          fi
+          case "$expected_sha" in
+            *[!0-9a-f]*|'') echo "::error::expected_sha must be a full lowercase Git SHA"; exit 1 ;;
+          esac
+          if [ "${#expected_sha}" -ne 40 ]; then
+            echo "::error::expected_sha must contain 40 hex characters"
+            exit 1
+          fi
+          git merge-base --is-ancestor "$expected_sha" refs/remotes/origin/main
+          manifest_commit="$(git log -1 --format=%H "$expected_sha" -- docs/CANONICAL_MANIFEST.md)"
+          if [ "${#manifest_commit}" -ne 40 ]; then
+            echo "::error::Could not resolve Published Manifest commit"
+            exit 1
+          fi
+          echo "expected_sha=$expected_sha" >> "$GITHUB_OUTPUT"
+          echo "manifest_commit=$manifest_commit" >> "$GITHUB_OUTPUT"
+      - name: Verify Railway deployment, desired config, and public provenance
+        id: verify
+        if: steps.auth.outputs.configured == 'true'
+        shell: bash
+        env:
+          EXPECTED_SHA: ${{ steps.identity.outputs.expected_sha }}
+          MANIFEST_COMMIT: ${{ steps.identity.outputs.manifest_commit }}
+          WAIT_SECONDS: ${{ inputs.wait_seconds }}
+        run: |
+          mkdir -p "$RUNNER_TEMP/railway-audit"
+          node scripts/railway-production-audit.mjs \
+            --expected-sha "$EXPECTED_SHA" \
+            --manifest-commit "$MANIFEST_COMMIT" \
+            --wait-seconds "${WAIT_SECONDS:-900}" \
+            --out "$RUNNER_TEMP/railway-audit/report.json"
+      - name: Collect diagnostics if the matched deployment failed
+        if: ${{ failure() && steps.auth.outputs.configured == 'true' }}
+        shell: bash
+        run: |
+          report="$RUNNER_TEMP/railway-audit/report.json"
+          if [ ! -f "$report" ]; then
+            exit 0
+          fi
+          deployment_id="$(node -e "const r=require(process.argv[1]); if (['FAILED','CRASHED'].includes(r.control_plane?.deployment?.status)) process.stdout.write(r.control_plane.deployment.id ?? '')" "$report")"
+          if [ -z "$deployment_id" ]; then
+            exit 0
+          fi
+          node scripts/railway-deployment-diagnostics.mjs \
+            --deployment "$deployment_id" \
+            --out "$RUNNER_TEMP/railway-audit/diagnostics.json"
+      - name: Upload bounded audit evidence
+        uses: actions/upload-artifact@v4
+        if: ${{ always() && steps.auth.outputs.configured == 'true' }}
+        with:
+          name: railway-production-audit-${{ steps.identity.outputs.expected_sha }}
+          if-no-files-found: warn
+          retention-days: 14
+          path: ${{ runner.temp }}/railway-audit/*.json
