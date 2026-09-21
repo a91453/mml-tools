@@ -59,6 +59,7 @@ import {
   applyAcceptedArrangement,
 } from '../arrangement/decision-application.mjs';
 import { applicationIntegrity, baselineOriginResolver } from '../arrangement/decision-review.mjs';
+import { analyzeLegacyMergeLane } from './legacy-merge-diagnostics.mjs';
 
 export const FINAL_REDUCTION_STAGE = 'FINAL_SIX_ROLE_REDUCTION_V1';
 export const REDUCTION_PLAN_SCHEMA = 'mml-studio/final-six-role-reduction-plan@1';
@@ -549,15 +550,19 @@ function roleAnalysisOf(project) {
     // does not publish would leave this index silently empty, which is a
     // suggestion list that quietly never suggests anything.
     const roleByEventId = new Map();
+    const laneIdByEventId = new Map();
     for (const lane of suggestion.lanes ?? []) {
       const role = lane.candidateRole ?? null;
-      if (!role || !SIX_ROLES.includes(role)) continue;
-      for (const eventId of lane.eventIds ?? []) roleByEventId.set(eventId, role);
+      for (const eventId of lane.eventIds ?? []) {
+        if (string(lane.id)) laneIdByEventId.set(eventId, lane.id);
+        if (role && SIX_ROLES.includes(role)) roleByEventId.set(eventId, role);
+      }
     }
     return {
       ok: true,
       error: null,
       roleByEventId,
+      laneIdByEventId,
       core3: suggestion.core3 ?? null,
       full6: suggestion.full6 ?? null,
       coverage: suggestion.coverage ?? null,
@@ -566,7 +571,7 @@ function roleAnalysisOf(project) {
       diagnostics: suggestion.diagnostics ?? [],
     };
   } catch (error) {
-    return { ok: false, error: error.message, roleByEventId: new Map(), core3: null, full6: null, coverage: null, unsupportedSourceMaterial: [], pending: [], diagnostics: [] };
+    return { ok: false, error: error.message, roleByEventId: new Map(), laneIdByEventId: new Map(), core3: null, full6: null, coverage: null, unsupportedSourceMaterial: [], pending: [], diagnostics: [] };
   }
 }
 
@@ -937,7 +942,13 @@ export function planFinalReduction({
         }),
         suggestions: outcome === REDUCTION_OUTCOMES.PENDING && reasonCode === REDUCTION_REASON_CODES.ROLE_DECISION_REQUIRED
           ? suggestionsFor(event, capacityAfter, analysis)
-          : Object.freeze([]),
+          : outcome === REDUCTION_OUTCOMES.OVERFLOW && reasonCode === REDUCTION_REASON_CODES.SIX_ROLE_CAPACITY_EXCEEDED
+            ? analyzeLegacyMergeLane({
+                sourceEvents: [event],
+                candidateEvents: candidate.events,
+                preferredRole: analysis?.roleByEventId?.get(event.id) ?? null,
+              }).targets
+            : Object.freeze([]),
         percussion,
       });
     });
@@ -1052,6 +1063,46 @@ export function planFinalReduction({
     }
   }
 
+  // ── historical 7->6 merge diagnostics (suggestion-only) ──
+  //
+  // The user's historical frontend compared several destructive merge modes by
+  // how many notes they dropped or trimmed. The useful part is preserved here
+  // without the destructive action: overflow events are grouped by their G11-C
+  // lane and each occupied role is measured for exact gap fit, same-pitch cover
+  // and collision pressure. Nothing below changes an event or resolves OVERFLOW.
+  const overflowByLane = new Map();
+  for (const item of items) {
+    for (const manifestation of item.manifestations ?? []) {
+      if (manifestation.outcome !== REDUCTION_OUTCOMES.OVERFLOW
+        || manifestation.reasonCode !== REDUCTION_REASON_CODES.SIX_ROLE_CAPACITY_EXCEEDED) continue;
+      const event = candidateById.get(manifestation.candidateEventId);
+      if (!event) continue;
+      const laneId = analysis?.laneIdByEventId?.get(event.id) ?? `event:${event.id}`;
+      if (!overflowByLane.has(laneId)) overflowByLane.set(laneId, []);
+      overflowByLane.get(laneId).push(event);
+    }
+  }
+  const legacyMergeDiagnostics = Object.freeze([...overflowByLane.entries()]
+    .sort((a, b) => cmpStr(a[0], b[0]))
+    .map(([laneId, sourceEvents]) => {
+      const preferredRoles = uniqueSorted(sourceEvents.map(event => analysis?.roleByEventId?.get(event.id)).filter(role => SIX_ROLES.includes(role)));
+      const preferredRole = preferredRoles.length === 1 ? preferredRoles[0] : null;
+      const report = analyzeLegacyMergeLane({
+        sourceEvents,
+        candidateEvents: candidate.events,
+        preferredRole,
+      });
+      return Object.freeze({
+        laneId,
+        preferredRole,
+        sourceEventIds: report.sourceEventIds,
+        targets: report.targets,
+        authority: report.authority,
+        certifiesGates: report.certifiesGates,
+        notice: report.notice,
+      });
+    }));
+
   // ── Core3, harmony, budget: before and after ──
   const core3Before = safeCore3(candidate);
   const core3After = safeCore3(proposed);
@@ -1151,6 +1202,7 @@ export function planFinalReduction({
       omittedEventIds: byBucket('omitted'),
     }),
     roleCapacity: capacity,
+    legacyMergeDiagnostics,
     characterBudget: Object.freeze({
       before: Object.freeze({ status: budgetBefore.status, limit: budgetBefore.limit, perRole: Object.freeze(budgetBefore.perRole), overBudget: Object.freeze(budgetBefore.overBudget) }),
       after: Object.freeze({ status: budgetAfter.status, limit: budgetAfter.limit, perRole: Object.freeze(budgetAfter.perRole), overBudget: Object.freeze(budgetAfter.overBudget) }),
@@ -1379,6 +1431,9 @@ export const FINAL_REDUCTION_STATUS = Object.freeze({
   drumFaceMapping: false,
   instrumentAssignment: false,
   timbreAwareReduction: false,
+  historicalMergeDiagnostics: true,
+  historicalMergeDiagnosticsAuthority: 'SUGGESTION_ONLY',
+  historicalMergeDiagnosticsCanDropOrTrim: false,
   instrumentProfileInfluencesOutcomes: false,
   certifiesGates: Object.freeze([]),
   notice: 'G12 resolves role and six-role capacity only. Register, volume and audibility adaptation remain Gate 8 / Mobile Adaptation; Final canonicalization and syntax compression remain downstream.',
