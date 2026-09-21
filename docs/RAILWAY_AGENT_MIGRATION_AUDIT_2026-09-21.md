@@ -37,7 +37,7 @@ Keeping these runtime resources does **not** require routine Railway Agent usage
 | `mml-tools-studio-permanent / studio-durable-isolated` | Separate isolated migration-validation service, one `/studio-cache` volume; ops documentation records the production migration as passed | Preserve evidence first, then remove/disable the isolated service and its dedicated cache if no rollback procedure still requires it |
 | `charismatic-reverence / mml-tools` | Created 2026-09-21, no domain, no variables, no volume, no start command, latest deployments failed while following `main` | Treat as likely temporary/accidental; confirm no intended consumer, then delete the project |
 
-No resource was deleted or reconfigured during this audit.
+No resource was deleted. During the implementation checkpoint below, only the production service watchPatterns were changed, through the deterministic Railway service API and without a redeploy.
 
 ## Implementation checkpoint on this branch
 
