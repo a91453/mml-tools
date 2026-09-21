@@ -13,9 +13,11 @@
 //
 // A suggestion is not an acceptance. This layer will not convert one into the
 // other, will not resolve a `PENDING` on a caller's behalf, and will not invent
-// evidence for any Lead move. Demotion, promotion and duplication into Melody
-// all remain subject to the shared Lead-role grader. An agent that wants a
-// decision applied has to state the decision and its evidence.
+// evidence for any Lead move. Demotion, existing-role promotion and
+// duplication into Melody remain subject to the shared Lead-role evidence
+// interlock. Initial role-less ASSIGN_ROLE -> Melody may only materialize a
+// review-pending candidate; downstream Lead readiness still uses the shared
+// grader and remains PENDING without candidate-bound reviewer evidence.
 //
 // The acceptance bindings are computed here, from the baseline and lane
 // decomposition that are loaded right now, and a caller may not supply them.
