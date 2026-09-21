@@ -128,6 +128,10 @@ test('a suggestion proposes roles and accepts nothing', async () => {
   for (const lane of suggestion.pending.lanes) assert.ok(lane.blockers.length, 'a pending lane must say what blocks it');
   assert.equal(suggestion.merge_diagnostics.authority, 'SUGGESTION_ONLY');
   assert.deepEqual(suggestion.merge_diagnostics.certifiesGates, []);
+  assert.equal(suggestion.merge_diagnostics.pendingRoleGroupReturned, suggestion.merge_diagnostics.pendingRoleGroups.length);
+  assert.equal(suggestion.merge_diagnostics.pendingRoleGroupsTruncated, false);
+  assert.equal(suggestion.merge_diagnostics.overflowLaneReturned, suggestion.merge_diagnostics.overflowLanes.length);
+  assert.equal(suggestion.merge_diagnostics.overflowLanesTruncated, false);
   for (const group of suggestion.merge_diagnostics.pendingRoleGroups) {
     assert.equal(group.laneReports, undefined, 'transport projection must not carry per-event merge detail');
   }
