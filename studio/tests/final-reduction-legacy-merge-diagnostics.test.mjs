@@ -6,7 +6,16 @@ import {
   LEGACY_MERGE_DIAGNOSTIC_STATUS,
 } from '../backend/arrangement/merge-diagnostics.mjs';
 
-const note = (id, role, pitch, start, end) => ({ kind: 'note', id, role, pitch, start, end });
+const note = (id, role, pitch, start, end, extra = {}) => ({
+  kind: 'note',
+  id,
+  role,
+  pitch,
+  start,
+  end,
+  sourceIds: extra.sourceIds ?? ['fixture-source'],
+  sourceEventIds: extra.sourceEventIds ?? [`raw:${id}`],
+});
 const target = (report, role) => report.targets.find(entry => entry.role === role);
 
 test('legacy merge diagnostics keep an exact gap as a lossless reviewer candidate', () => {
@@ -50,7 +59,7 @@ test('adjacent same-pitch targets jointly cover one source interval', () => {
   const chord4 = target(report, 'Chord4');
   assert.equal(chord4.unisonCoveredCount, 1);
   assert.equal(chord4.wouldRequireTrimOrDropCount, 0);
-  assert.deepEqual(chord4.eventDiagnostics[0].coveringEventIds, ['cover-a', 'cover-b']);
+  assert.equal(chord4.eventDiagnostics, undefined, 'per-event collision detail is never persisted in the lane diagnostic');
 });
 
 test('a gap inside adjacent-looking same-pitch targets is not full coverage', () => {
@@ -64,7 +73,7 @@ test('a gap inside adjacent-looking same-pitch targets is not full coverage', ()
   const chord4 = target(report, 'Chord4');
   assert.equal(chord4.unisonCoveredCount, 0);
   assert.equal(chord4.wouldRequireTrimOrDropCount, 1);
-  assert.deepEqual(chord4.eventDiagnostics[0].coveringEventIds, []);
+  assert.equal(chord4.eventDiagnostics, undefined);
 });
 
 test('a covering unison does not hide a simultaneous different-pitch collision', () => {
@@ -105,6 +114,41 @@ test('a preferred role hypothesis only breaks ties and remains suggestion-only',
   assert.equal(report.targets[0].preferredByRoleAnalysis, true);
   assert.ok(report.targets.every(entry => entry.authority === 'SUGGESTION_ONLY'));
   assert.deepEqual(report.certifiesGates, []);
+});
+
+test('lane diagnostics separate candidate counts from raw source provenance without persisting ids', () => {
+  const source = [
+    note('candidate-a', null, 67, '0', '1', {
+      sourceIds: ['asset:a'],
+      sourceEventIds: ['raw:a1', 'raw:a2'],
+    }),
+    note('candidate-b', null, 69, '1', '2', {
+      sourceIds: ['asset:a', 'asset:b'],
+      sourceEventIds: ['raw:b1'],
+    }),
+  ];
+  const report = analyzeLegacyMergeLane({ sourceEvents: source, candidateEvents: source });
+  assert.equal(report.candidateEventCount, 2);
+  assert.equal(report.sourceEventCount, 3);
+  assert.equal(report.sourceCount, 2);
+  assert.equal(report.candidateEventIds, undefined);
+  assert.equal(report.sourceEventIds, undefined);
+  assert.ok(report.targets.every(entry => entry.eventDiagnostics === undefined));
+  assert.ok(!JSON.stringify(report).includes('collisionEventIds'));
+  assert.ok(!JSON.stringify(report).includes('coveringEventIds'));
+});
+
+test('dense collisions stay compact instead of serializing event-by-event cross products', () => {
+  const source = Array.from({ length: 64 }, (_, index) =>
+    note(`source-${index}`, null, 60 + (index % 4), '0', '4'));
+  const targetEvents = Array.from({ length: 64 }, (_, index) =>
+    note(`target-${index}`, 'Chord4', 72 + (index % 4), '0', '4'));
+  const report = analyzeLegacyMergeLane({ sourceEvents: source, candidateEvents: [...source, ...targetEvents] });
+  const chord4 = target(report, 'Chord4');
+  assert.equal(chord4.candidateEventCount, 64);
+  assert.equal(chord4.wouldRequireTrimOrDropCount, 64);
+  assert.equal(chord4.eventDiagnostics, undefined);
+  assert.ok(JSON.stringify(report).length < 10000, 'serialized lane-level diagnostic stays bounded by roles, not collision pairs');
 });
 
 test('diagnostics never mutate source or candidate arrays', () => {
