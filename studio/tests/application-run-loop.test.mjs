@@ -98,6 +98,10 @@ test('resuming with explicit decisions, plan and profile drives one run through 
   assert.equal(started.run.state, RUN_STATE.AWAITING_REVIEW);
   assert.equal(started.run.halt.reason, 'AWAITING_ACCEPTED_REDUCTION_DECISIONS');
 
+  const arrangementReceipt = started.run.steps.find(entry => entry.step === RUN_STEP.SUGGEST);
+  assert.equal(arrangementReceipt.detail.merge_diagnostics.authority, 'SUGGESTION_ONLY');
+  assert.deepEqual(arrangementReceipt.detail.merge_diagnostics.certifies_gates, []);
+
   const reductionRequest = requestFor(started.run, 'REDUCTION_DECISIONS_REQUIRED');
   assert.ok(reductionRequest, JSON.stringify(started.run.review_requests));
   // The ledger's own accounting, projected: three events are not retained.
