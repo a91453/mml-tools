@@ -56,6 +56,22 @@ plan-level 依 G11-C lane identity 聚合，並把 bounded 摘要帶進
 `REDUCTION_DECISIONS_REQUIRED` review request。所有結果均為
 `authority: SUGGESTION_ONLY`，不改 outcome、不 certifies gate。
 
+## PR review hardening
+
+PR #50 的自動 code review 另外抓出兩個會影響真實歌曲審查可靠度的邊界，已在本分支修正：
+
+1. **相鄰同音覆蓋以區間聯集判斷。** 若來源音為 `0..2`，目標角色以同音
+   `0..1` + `1..2` 完整覆蓋，現在會正確列為 unison dedup review；不要求
+   任一單顆目標音獨自覆蓋整段。只要中間有真實拍長空隙，或同時撞到不同音，
+   仍保持 collision review。
+2. **所有 bounded merge diagnostics 明示完整性。** Application/run transport
+   不會為避免大型 payload 而靜默截斷：回傳原始 total、實際 returned 與
+   truncated flag；pending-role group 內的 lane ids 亦同。完整逐事件資料仍留在
+   backend plan/suggestion，而不是灌進一般 MCP/run response。
+
+這兩項都是 verifier / transport hardening，不新增 Canonical 規則，也不讓
+diagnostic 自動變成 role decision、OMIT 或任何 Gate PASS。
+
 ## 真實歌曲已知輸入
 
 上一輪已逐事件驗證的修正版 Piano MIDI：
