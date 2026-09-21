@@ -59,7 +59,7 @@ import {
   applyAcceptedArrangement,
 } from '../arrangement/decision-application.mjs';
 import { applicationIntegrity, baselineOriginResolver } from '../arrangement/decision-review.mjs';
-import { analyzeLegacyMergeLane } from './legacy-merge-diagnostics.mjs';
+import { analyzeLegacyMergeLane } from '../arrangement/merge-diagnostics.mjs';
 
 export const FINAL_REDUCTION_STAGE = 'FINAL_SIX_ROLE_REDUCTION_V1';
 export const REDUCTION_PLAN_SCHEMA = 'mml-studio/final-six-role-reduction-plan@1';
