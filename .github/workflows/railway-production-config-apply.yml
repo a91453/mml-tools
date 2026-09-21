@@ -1,0 +1,68 @@
+name: Railway production config apply
+
+on:
+  workflow_dispatch:
+    inputs:
+      confirmation:
+        description: Type APPLY_REPOSITORY_DESIRED_STATE exactly
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+concurrency:
+  group: railway-production-config-apply
+  cancel-in-progress: false
+
+jobs:
+  apply:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    environment: production
+    env:
+      RAILWAY_PROJECT_TOKEN: ${{ secrets.RAILWAY_PROJECT_TOKEN }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: Require main and explicit confirmation
+        shell: bash
+        env:
+          CONFIRMATION: ${{ inputs.confirmation }}
+        run: |
+          if [ "$GITHUB_REF" != "refs/heads/main" ]; then
+            echo "::error::Production config apply may run only from main."
+            exit 1
+          fi
+          if [ "$CONFIRMATION" != "APPLY_REPOSITORY_DESIRED_STATE" ]; then
+            echo "::error::Confirmation mismatch."
+            exit 1
+          fi
+          if [ -z "$RAILWAY_PROJECT_TOKEN" ]; then
+            echo "::error::Missing RAILWAY_PROJECT_TOKEN. Use a Railway project token scoped to mml-tools-allen / production."
+            exit 1
+          fi
+          git fetch origin main --force
+          test "$(git rev-parse HEAD)" = "$(git rev-parse refs/remotes/origin/main)"
+      - name: Verify Published Canonical bootstrap identity
+        run: node scripts/bootstrap-canonical.mjs --summary
+      - name: Apply bounded repository desired state
+        shell: bash
+        run: |
+          mkdir -p "$RUNNER_TEMP/railway-config-apply"
+          node scripts/railway-production-config-apply.mjs \
+            --confirm APPLY_REPOSITORY_DESIRED_STATE \
+            --out "$RUNNER_TEMP/railway-config-apply/receipt.json"
+      - name: Upload bounded apply receipt
+        uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: railway-production-config-apply-${{ github.sha }}
+          if-no-files-found: warn
+          retention-days: 30
+          path: ${{ runner.temp }}/railway-config-apply/receipt.json
