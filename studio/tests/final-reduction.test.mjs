@@ -158,7 +158,13 @@ test('overflow material stays in the ledger and in the candidate rather than bei
   assert.deepEqual(plan.accounting.overflowEventIds, ['overflow-1', 'overflow-2', 'overflow-3']);
   for (const item of plan.items.filter(entry => entry.outcome === REDUCTION_OUTCOMES.OVERFLOW)) {
     assert.equal(item.reasonCode, REDUCTION_REASON_CODES.SIX_ROLE_CAPACITY_EXCEEDED);
+    assert.ok(item.suggestions.length, 'overflow should expose non-authoritative merge diagnostics');
+    assert.ok(item.suggestions.every(suggestion => suggestion.authority === 'SUGGESTION_ONLY'));
+    assert.ok(item.suggestions.every(suggestion => suggestion.wouldRequireTrimOrDropCount >= 0));
   }
+  const diagnosed = [...new Set(plan.legacyMergeDiagnostics.flatMap(entry => entry.sourceEventIds))].sort();
+  assert.deepEqual(diagnosed, ['overflow-1', 'overflow-2', 'overflow-3']);
+  assert.ok(plan.legacyMergeDiagnostics.every(entry => entry.authority === 'SUGGESTION_ONLY'));
   assert.ok(plan.warnings.some(warning => warning.code === REDUCTION_WARNINGS.OVERFLOW_RETAINED));
   // Accepting the overflow records the review; it still removes nothing.
   const accept = reductionDecision({ id: 'accept-overflow', action: 'ACCEPT_OVERFLOW', eventIds: ['overflow-1', 'overflow-2', 'overflow-3'], evidence: [], reason: 'The reviewer accepts that this lane stays outside the six roles for this delivery.' });
