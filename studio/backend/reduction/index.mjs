@@ -1083,7 +1083,11 @@ export function planFinalReduction({
       const preferredRole = preferredRoles.length === 1 ? preferredRoles[0] : null;
       const report = analyzeLegacyMergeLane({
         sourceEvents,
-        candidateEvents: candidate.events,
+        // A decisionful plan previews the candidate *after* accepted moves /
+        // duplications. Remaining overflow must be measured against that exact
+        // proposed delivery, otherwise a role newly occupied by this plan can
+        // still be misreported as a lossless destination.
+        candidateEvents: derivation?.status === 'PASS' ? proposed.events : candidate.events,
         preferredRole,
       });
       return Object.freeze({
