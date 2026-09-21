@@ -86,13 +86,19 @@ const summarizeMergeDiagnostics = diagnostics => {
   });
 };
 
+// Cache identity is implementation identity, not Canonical identity. A new
+// suggestion field or arbitration implementation must not silently reuse a
+// durable suggestion blob written by an older service merely because the
+// baseline and Published Canonical snapshot are unchanged.
+export const ARRANGEMENT_SUGGESTION_CACHE_EPOCH = 'g11c-role-candidate-v2-merge-diagnostics';
+
 export function createArrangementService({ canonical, projects, intake, store }) {
-  // Keyed by the baseline AND the Published Canonical rules snapshot the
-  // engines were loaded under: a suggestion is derived under one release, and
-  // an image rebuilt under another must recompute rather than answer from a
-  // cache whose lanes were arbitrated by different rules while its bindings
-  // claim the new snapshot.
-  const suggestionKey = (projectId, baselineId, rulesSnapshotSha) => `suggestion:${projectId}:${baselineId}:${rulesSnapshotSha}`;
+  // Keyed by the implementation epoch, baseline AND Published Canonical rules
+  // snapshot. The epoch intentionally changes when the cached G11-C output
+  // shape/semantics change; otherwise a durable pre-upgrade cache could hide
+  // newly implemented review diagnostics on the exact song we need to rerun.
+  const suggestionKey = (projectId, baselineId, rulesSnapshotSha) =>
+    `suggestion:${ARRANGEMENT_SUGGESTION_CACHE_EPOCH}:${projectId}:${baselineId}:${rulesSnapshotSha}`;
   // The whole G11-D application result is stored, not just the candidate it
   // produced. `reviewAppliedCandidate` re-establishes the revision identity,
   // the candidate digest and the baseline snapshot from it on every read, so a
