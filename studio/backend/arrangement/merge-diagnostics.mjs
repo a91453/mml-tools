@@ -25,9 +25,33 @@ const cmpStr = (a, b) => (a < b ? -1 : a > b ? 1 : 0);
 const notes = events => (events ?? []).filter(event => event?.kind === 'note');
 const byTime = (a, b) => f(a.start).cmp(b.start) || f(a.end).cmp(b.end) || Number(a.pitch) - Number(b.pitch) || cmpStr(String(a.id), String(b.id));
 const overlaps = (left, right) => f(left.start).cmp(right.end) < 0 && f(right.start).cmp(left.end) < 0;
-const covers = (target, source) => Number(target.pitch) === Number(source.pitch)
-  && f(target.start).cmp(source.start) <= 0
-  && f(target.end).cmp(source.end) >= 0;
+const maxF = (a, b) => (f(a).cmp(b) >= 0 ? f(a) : f(b));
+const minF = (a, b) => (f(a).cmp(b) <= 0 ? f(a) : f(b));
+
+function samePitchCoverage(source, targets) {
+  const spans = targets
+    .filter(target => Number(target.pitch) === Number(source.pitch) && overlaps(source, target))
+    .map(target => Object.freeze({
+      id: target.id,
+      start: maxF(source.start, target.start),
+      end: minF(source.end, target.end),
+    }))
+    .filter(span => span.end.cmp(span.start) > 0)
+    .sort((left, right) => left.start.cmp(right.start) || left.end.cmp(right.end) || cmpStr(String(left.id), String(right.id)));
+
+  let cursor = f(source.start);
+  for (const span of spans) {
+    if (span.start.cmp(cursor) > 0) return Object.freeze({ covered: false, eventIds: Object.freeze([]) });
+    if (span.end.cmp(cursor) > 0) cursor = span.end;
+    if (cursor.cmp(source.end) >= 0) {
+      return Object.freeze({
+        covered: true,
+        eventIds: Object.freeze(spans.map(item => item.id).sort(cmpStr)),
+      });
+    }
+  }
+  return Object.freeze({ covered: false, eventIds: Object.freeze([]) });
+}
 
 function continuityDistance(source, targetEvents) {
   const ordered = [...targetEvents].sort(byTime);
@@ -45,19 +69,23 @@ function continuityDistance(source, targetEvents) {
 
 function inspectEvent(source, targetEvents) {
   const collisions = targetEvents.filter(target => overlaps(source, target));
-  const covering = collisions.filter(target => covers(target, source));
+  const coverage = samePitchCoverage(source, collisions);
   const losslessGap = collisions.length === 0;
-  const unisonCovered = covering.length > 0;
+  const unisonCovered = coverage.covered;
+  const differentPitchCollision = collisions.some(target => Number(target.pitch) !== Number(source.pitch));
   return Object.freeze({
     eventId: source.id,
     losslessGap,
     unisonCovered,
     collisionCount: collisions.length,
     collisionEventIds: Object.freeze(collisions.map(event => event.id).sort(cmpStr)),
-    coveringEventIds: Object.freeze(covering.map(event => event.id).sort(cmpStr)),
+    coveringEventIds: coverage.eventIds,
     continuityDistance: continuityDistance(source, targetEvents),
-    // Historical merge modes would trim or drop here. This analyzer never does.
-    wouldRequireTrimOrDrop: collisions.some(target => !covers(target, source)),
+    // A union of adjacent/overlapping same-pitch notes can cover the source
+    // without one target note doing so alone. That is a dedup review, not a
+    // destructive collision. Any uncovered or different-pitch collision stays
+    // unsafe and is never hidden by the same-pitch material.
+    wouldRequireTrimOrDrop: !losslessGap && (!unisonCovered || differentPitchCollision),
   });
 }
 
@@ -97,11 +125,12 @@ export function analyzeLegacyMergeLane({
   preferredRole = null,
 } = {}) {
   const source = notes(sourceEvents).slice().sort(byTime);
+  const sourceIds = new Set(source.map(event => event.id));
   const candidate = notes(candidateEvents);
   const normalizedRoles = [...new Set((roles ?? DEFAULT_ROLES).filter(role => DEFAULT_ROLES.includes(role)))];
 
   const targets = normalizedRoles.map(role => {
-    const targetEvents = candidate.filter(event => event.role === role && !source.some(item => item.id === event.id));
+    const targetEvents = candidate.filter(event => event.role === role && !sourceIds.has(event.id));
     const eventDiagnostics = source.map(event => inspectEvent(event, targetEvents));
     const distances = eventDiagnostics.map(item => item.continuityDistance).filter(Number.isFinite);
     const losslessGapCount = eventDiagnostics.filter(item => item.losslessGap).length;
