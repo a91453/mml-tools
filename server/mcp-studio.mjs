@@ -68,7 +68,8 @@ const runDecisions = { type: 'array', minItems: 1, maxItems: LIMITS.maxDecisions
 const runAcceptedBy = { type: 'string', minLength: 1, maxLength: 120, description: '審查者識別字串。這是呼叫端填寫的文字，會與實際通過驗證的 owner 身分分開記錄，本身不構成任何人已審查的證據。' };
 
 const RUN_REDUCTION_DESCRIPTION = '明確接受的 G12 收斂：decisions（至少一筆）、expected_plan_id（來自唯讀 plan）、accepted_by，以及選填且僅供診斷的 instrument_profile。'
-  + '省略時 run 只會產生唯讀 plan：若 ledger 顯示每個來源事件都已保留且沒有 blocker，就跳過且不產生 no-op 版本；否則停在 REDUCTION_DECISIONS_REQUIRED，附上 plan.id、未保留事件與原始 warning。OVERFLOW／PENDING 一律保留，字數不足不是刪音理由。';
+  + '省略時 run 只會產生唯讀 plan：若 ledger 顯示每個來源事件都已保留且沒有 blocker，就跳過且不產生 no-op 版本；否則停在 REDUCTION_DECISIONS_REQUIRED，附上 plan.id、未保留事件與原始 warning。OVERFLOW／PENDING 一律保留，字數不足不是刪音理由。'
+  + '六角色已滿的 OVERFLOW 會另外附上 suggestion-only 的 7→6 merge 診斷：逐 lane／角色列出可無損塞入、完整同音覆蓋與會需要截短／丟音的事件數；這些數字不會自行產生 REDISTRIBUTE／OMIT，也不構成任何 Gate PASS。';
 const RUN_ADAPTATION_DESCRIPTION = '明確接受的 Mobile 適配：profile（schema=mml-studio/mobile-adaptation-profile@1，需真實提供且附 reason／evidence）、expected_plan_id、accepted_by。'
   + '省略時完全不做適配、不產生版本——但「沒做變更」不等於 Gate 8 通過，Gate 8 審查仍然必須另外提供。本服務不自造樂器音域或音量。';
 const RUN_FINALIZE_DESCRIPTION = 'finalize 選項：technical_timing_repair（明確 opt-in，預設 false，沒有自動模式）、pickup、final_partial（來源確認的弱起拍與末小節拍長，不會自行推測）。';
