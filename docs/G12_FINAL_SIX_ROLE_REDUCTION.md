@@ -167,6 +167,12 @@ duration, volume or role; it cannot set a gate; and it cannot turn `OVERFLOW`
 into `KEEP`, `REDISTRIBUTE` or `OMIT`. An actual redistribution still needs
 the ordinary event-level reviewed decision below.
 
+Normal Application/run transport intentionally sends a bounded summary rather
+than the full per-event diagnostic. That projection is never silently partial:
+it carries the original lane total, the number actually returned, and an
+explicit `truncated` flag. Reviewers that need the omitted lane details must
+read the full plan instead of treating a bounded response as complete.
+
 ## Decisions
 
 A reduction decision names **events**, never a lane: the invariant is
