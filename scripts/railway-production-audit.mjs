@@ -280,6 +280,12 @@ export async function runProductionAudit({
     });
     report.status = report.public_probe.status === 'PASS' ? 'PASS' : 'FAIL';
   } catch (error) {
+    if (report.control_plane.status === 'PASS') {
+      report.public_probe = {
+        status: 'FAIL',
+        reason: error?.code === 'CANONICAL_NOT_LOADED' ? 'CANONICAL_NOT_LOADED' : 'PUBLIC_PROBE_FAILED',
+      };
+    }
     report.failure = {
       code: error?.code ?? 'AUDIT_FAILED',
       message: safeMessage(error).slice(0, 500),
