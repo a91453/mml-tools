@@ -1,27 +1,6 @@
 name: Railway production audit
 
 on:
-  push:
-    branches: [main]
-    paths:
-      - 'dist/core.js'
-      - 'server/mcp.mjs'
-      - 'server/mcp-studio.mjs'
-      - 'server/report-page.mjs'
-      - 'server/studio-web.mjs'
-      - 'server/studio-agent-driver.mjs'
-      - 'server/studio-agent-codex.mjs'
-      - 'studio/web/service/**'
-      - 'server/api.mjs'
-      - 'studio/backend/**'
-      - 'railway/auth.mjs'
-      - 'railway/server.mjs'
-      - 'railway/canonical-probe.sh'
-      - 'railway/Dockerfile'
-      - 'scripts/materialize-canonical.mjs'
-      - '.dockerignore'
-      - 'package.json'
-      - 'docs/CANONICAL_MANIFEST.md'
   workflow_dispatch:
     inputs:
       expected_sha:
@@ -54,36 +33,24 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: '22'
-      - name: Check least-privilege Railway project token
+      - name: Require least-privilege Railway project token
         id: auth
         shell: bash
-        env:
-          EVENT_NAME: ${{ github.event_name }}
         run: |
-          if [ -n "$RAILWAY_PROJECT_TOKEN" ]; then
-            echo "configured=true" >> "$GITHUB_OUTPUT"
-            exit 0
-          fi
-          echo "configured=false" >> "$GITHUB_OUTPUT"
-          if [ "$EVENT_NAME" = "workflow_dispatch" ]; then
+          if [ -z "$RAILWAY_PROJECT_TOKEN" ]; then
             echo "::error::Missing GitHub Actions secret RAILWAY_PROJECT_TOKEN. Use a Railway project token scoped to mml-tools-allen / production; do not use an account token."
             exit 1
           fi
-          echo "::warning::RAILWAY_PROJECT_TOKEN is not configured yet; automatic production audit is skipped until the least-privilege project token is added."
+          echo "configured=true" >> "$GITHUB_OUTPUT"
       - name: Resolve Published main and Manifest identities
         if: steps.auth.outputs.configured == 'true'
         id: identity
         shell: bash
         env:
-          EVENT_NAME: ${{ github.event_name }}
-          PUSH_SHA: ${{ github.sha }}
           REQUESTED_SHA: ${{ inputs.expected_sha }}
         run: |
           git fetch origin main:refs/remotes/origin/main --force
           expected_sha="$REQUESTED_SHA"
-          if [ -z "$expected_sha" ] && [ "$EVENT_NAME" = "push" ]; then
-            expected_sha="$PUSH_SHA"
-          fi
           if [ -z "$expected_sha" ]; then
             expected_sha="$(git rev-parse refs/remotes/origin/main)"
           fi
