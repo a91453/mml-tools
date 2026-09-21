@@ -74,7 +74,7 @@ Every result is `authority: SUGGESTION_ONLY`. It does not resolve a role,
 does not merge/delete/shorten any event, does not turn heuristic Lead evidence
 into positive Lead evidence, and certifies no gate. A role-less Melody
 assignment that later materializes a candidate remains subject to the separate
-Lead review boundary described in G11-D.
+candidate-bound Lead review boundary in the accepted-decision application stage.
 
 ## 3. Canonical rules this stage is built around
 
@@ -109,6 +109,7 @@ Lead review boundary described in G11-D.
 | `lanes` | One candidate lane per (source voice, G11-B lane), with `chainIds`, `eventIds`, `sourceIds`, `sourceEventIds`, `declaredSourceRoles`, exact `metrics`, `soundingIntervals`, `continuity`, `roleSupport`, `evidence`, and the original G11-B `spans`. |
 | `ledger` | One entry per (source event, decision). Carries `sourceRole`, `candidateRole`, `proposedRole`, `decision`, `reason`, `evidenceIds`, `competingLaneIds`, `uncertainty`, `selected`, `duplicate`, `provisional`, and the **restated source pitch/onset/end** so the ledger itself proves nothing was mutated. |
 | `unassigned` | Lanes not selected into this six-role proposal, with reason, competing role, added functions, `essential`, `provisional: true`, evidence ids, and every event id. |
+| `mergeDiagnostics` | Read-only, `SUGGESTION_ONLY` lane-sharing diagnostics for competing proposed-role groups and six-role overflow. It reports exact gap fit / unison coverage / collision pressure, mutates nothing, resolves no `PENDING`, and certifies no gate. |
 | `pending` | Lanes whose role decision is open, with blockers, competing lanes, evidence ids, event ids, and (for a refused Lead demotion) the gate that must decide it. |
 | `unsupportedSourceMaterial` | Percussion / unsupported source notes, retained with full timing and `status: 'PENDING'`. |
 | `declaredDuplications` | Caller-declared candidate duplications with their reason and evidence. |
