@@ -184,29 +184,42 @@ const summarizeAccounting = accounting => Object.freeze({
   manifestation_count: accounting.manifestationCount ?? null,
 });
 
-const summarizeLegacyMergeDiagnostics = diagnostics => Object.freeze((diagnostics ?? [])
-  .slice(0, LIMITS.maxReviewRequestEventIds)
-  .map(entry => Object.freeze({
-    lane_id: entry.laneId ?? null,
-    preferred_role: entry.preferredRole ?? null,
-    source_event_count: (entry.sourceEventIds ?? []).length,
-    authority: entry.authority ?? null,
-    targets: Object.freeze((entry.targets ?? []).slice(0, 6).map(target => Object.freeze({
-      role: target.role ?? null,
-      lossless_gap_count: target.losslessGapCount ?? 0,
-      unison_covered_count: target.unisonCoveredCount ?? 0,
-      would_require_trim_or_drop_count: target.wouldRequireTrimOrDropCount ?? 0,
-      fully_lossless: target.fullyLossless === true,
-      lead_review_required: target.leadReviewRequired === true,
-      preferred_by_role_analysis: target.preferredByRoleAnalysis === true,
-      authority: target.authority ?? null,
+const summarizeLegacyMergeDiagnostics = diagnostics => {
+  const all = diagnostics ?? [];
+  const lanes = all.slice(0, LIMITS.maxReviewRequestEventIds);
+  return Object.freeze({
+    lane_total: all.length,
+    lane_returned: lanes.length,
+    truncated: lanes.length < all.length,
+    lanes: Object.freeze(lanes.map(entry => Object.freeze({
+      lane_id: entry.laneId ?? null,
+      preferred_role: entry.preferredRole ?? null,
+      source_event_count: (entry.sourceEventIds ?? []).length,
+      authority: entry.authority ?? null,
+      targets: Object.freeze((entry.targets ?? []).slice(0, 6).map(target => Object.freeze({
+        role: target.role ?? null,
+        lossless_gap_count: target.losslessGapCount ?? 0,
+        unison_covered_count: target.unisonCoveredCount ?? 0,
+        would_require_trim_or_drop_count: target.wouldRequireTrimOrDropCount ?? 0,
+        fully_lossless: target.fullyLossless === true,
+        lead_review_required: target.leadReviewRequired === true,
+        preferred_by_role_analysis: target.preferredByRoleAnalysis === true,
+        authority: target.authority ?? null,
+      }))),
     }))),
-  })));
+  });
+};
 
 const summarizeArrangementMergeDiagnostics = diagnostics => {
   if (!diagnostics || typeof diagnostics !== 'object') return null;
   return Object.freeze({
     authority: diagnostics.authority ?? null,
+    pending_role_group_total: diagnostics.pendingRoleGroupTotal ?? (diagnostics.pendingRoleGroups ?? []).length,
+    pending_role_group_returned: diagnostics.pendingRoleGroupReturned ?? (diagnostics.pendingRoleGroups ?? []).length,
+    pending_role_groups_truncated: diagnostics.pendingRoleGroupsTruncated === true,
+    overflow_lane_total: diagnostics.overflowLaneTotal ?? (diagnostics.overflowLanes ?? []).length,
+    overflow_lane_returned: diagnostics.overflowLaneReturned ?? (diagnostics.overflowLanes ?? []).length,
+    overflow_lanes_truncated: diagnostics.overflowLanesTruncated === true,
     pending_role_groups: Object.freeze((diagnostics.pendingRoleGroups ?? [])
       .slice(0, 6)
       .map(group => Object.freeze({
