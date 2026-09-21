@@ -68,6 +68,7 @@ test('desired production config is derived from repository references and sorts 
 test('config comparison is order-insensitive and detects missing/extra watch patterns exactly', () => {
   const expected = desired();
   assert.deepEqual(compareServiceInstance(expected, live()), []);
+  assert.deepEqual(compareServiceInstance(expected, live({ rootDirectory: null, numReplicas: null })), []);
   const drift = compareServiceInstance(expected, live({
     watchPatterns: ['/server/mcp.mjs', '/server/obsolete.mjs'],
   }));
