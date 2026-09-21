@@ -356,6 +356,13 @@ test('fixture 6: two overlapping Lead candidates stay PENDING instead of one bei
   const pendingDiagnostic = diagnostic(candidate, 'COMPETING_LEAD_CANDIDATES');
   assert.ok(pendingDiagnostic);
   assert.equal(pendingDiagnostic.deleted, false);
+  const leadMerge = candidate.mergeDiagnostics.pendingRoleGroups.find(group => group.role === 'Melody');
+  assert.ok(leadMerge, 'competing role-less Lead lanes get a merge diagnostic');
+  assert.equal(leadMerge.authority, 'SUGGESTION_ONLY');
+  assert.equal(leadMerge.status, 'COLLISION_REVIEW', 'overlapping Lead hypotheses are not silently coalesced');
+  assert.equal(leadMerge.fullyLosslessTogether, false);
+  assert.ok(leadMerge.collisionEventCount > 0);
+  assert.equal(leadMerge.leadReviewRequired, true);
 
   // Neither candidate lost an event, and both keep their evidence.
   const pendingLaneIds = candidate.pending.map(item => item.laneId).sort();
@@ -415,10 +422,51 @@ test('fixture 7: lanes beyond six-role capacity overflow explicitly instead of d
     assert.equal(entry.provisional, true);
     assert.ok(entry.sourcePitch !== null, 'an omitted event keeps its original identity in the ledger');
   }
+  assert.equal(candidate.mergeDiagnostics.authority, 'SUGGESTION_ONLY');
+  assert.equal(candidate.mergeDiagnostics.overflowLanes.length, candidate.unassigned.length);
+  for (const lane of candidate.mergeDiagnostics.overflowLanes) {
+    assert.ok(lane.targets.length === 6);
+    assert.ok(lane.targets.every(target => target.authority === 'SUGGESTION_ONLY'));
+  }
   // Six-role capacity never authorises deletion.
   assert.equal(candidate.coverage.sourceEventCount,
     candidate.coverage.assignedEventCount + candidate.coverage.pendingEventCount
     + candidate.coverage.unassignedEventCount + candidate.coverage.unsupportedEventCount);
+});
+
+test('fixture 7b: an overflow lane gets an exact lossless shared-role candidate when it fits a real gap', () => {
+  const events = [
+    note('lead', 72, '0', '2', 'track:10/channel:10'),
+    note('harmony', 60, '0', '2', 'track:11/channel:11'),
+    note('bass', 48, '0', '2', 'track:12/channel:12'),
+    note('e1', 64, '0', '2', 'track:13/channel:13'),
+    note('e2', 67, '0', '2', 'track:14/channel:14'),
+    // Chord5 ends exactly where the seventh lane begins.
+    note('e3', 69, '0', '1', 'track:15/channel:15'),
+    note('seventh', 74, '1', '2', 'track:16/channel:16'),
+  ];
+  const roleOverrides = {
+    'lane:track:10/channel:10#0': 'Melody',
+    'lane:track:11/channel:11#0': 'Chord1',
+    'lane:track:12/channel:12#0': 'Chord2',
+    'lane:track:13/channel:13#0': 'Chord3',
+    'lane:track:14/channel:14#0': 'Chord4',
+    'lane:track:15/channel:15#0': 'Chord5',
+  };
+  const candidate = run(events, { roleOverrides });
+  assertOrderIndependent(events, { roleOverrides });
+
+  const overflow = candidate.mergeDiagnostics.overflowLanes.find(entry => entry.laneId === 'lane:track:16/channel:16#0');
+  assert.ok(overflow, 'the seventh lane must stay visible in merge diagnostics');
+  assert.equal(overflow.authority, 'SUGGESTION_ONLY');
+  const chord5 = overflow.targets.find(target => target.role === 'Chord5');
+  assert.ok(chord5);
+  assert.equal(chord5.fullyLossless, true);
+  assert.equal(chord5.losslessGapCount, 1);
+  assert.equal(chord5.unisonCoveredCount, 0);
+  assert.equal(chord5.wouldRequireTrimOrDropCount, 0);
+  assert.equal(candidate.unassigned.find(item => item.laneId === overflow.laneId)?.reason, 'SIX_ROLE_CAPACITY_EXCEEDED',
+    'diagnosis must not silently turn overflow into an accepted assignment');
 });
 
 // ─── 8. simultaneous same-pitch source events ───────────────────────────────

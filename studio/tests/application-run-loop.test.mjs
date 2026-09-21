@@ -22,6 +22,8 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 
 import { createStudioApplication, RUN_STATE, RUN_STEP, RUN_STEP_STATUS } from '../backend/application/index.mjs';
+import { summarizeLegacyMergeDiagnostics } from '../backend/application/run-service.mjs';
+import { LIMITS } from '../backend/application/contracts.mjs';
 import { baselineWithUnassignedRole, FIXTURE_SOURCE_ID } from './fixtures/g12-fixtures.mjs';
 import { FIXTURE_CONFIRMATIONS, RUN_REVIEWER, mobileProfile, projectWithSymbolicAsset, runDecisionsFor, sixRoleBaseline } from './fixtures/run-fixtures.mjs';
 
@@ -29,6 +31,25 @@ const OWNER = 'owner:run-loop';
 
 const statusOf = (run, step) => run.steps.find(entry => entry.step === step)?.status ?? null;
 const requestFor = (run, code) => run.review_requests.find(entry => entry.code === code) ?? null;
+
+test('bounded reduction merge diagnostics disclose omitted lanes instead of looking complete', () => {
+  const total = LIMITS.maxReviewRequestEventIds + 3;
+  const diagnostics = Array.from({ length: total }, (_, index) => ({
+    laneId: `lane:${index}`,
+    candidateEventCount: index + 1,
+    sourceEventCount: index + 2,
+    authority: 'SUGGESTION_ONLY',
+    targets: [],
+  }));
+  const summary = summarizeLegacyMergeDiagnostics(diagnostics);
+  assert.equal(summary.lane_total, total);
+  assert.equal(summary.lane_returned, LIMITS.maxReviewRequestEventIds);
+  assert.equal(summary.truncated, true);
+  assert.equal(summary.lanes.length, LIMITS.maxReviewRequestEventIds);
+  assert.equal(summary.lanes.at(-1).lane_id, `lane:${LIMITS.maxReviewRequestEventIds - 1}`);
+  assert.equal(summary.lanes[0].candidate_event_count, 1);
+  assert.equal(summary.lanes[0].source_event_count, 2);
+});
 
 // ─── A. selected symbolic assets → awaiting review, with nothing invented ───
 
@@ -98,11 +119,21 @@ test('resuming with explicit decisions, plan and profile drives one run through 
   assert.equal(started.run.state, RUN_STATE.AWAITING_REVIEW);
   assert.equal(started.run.halt.reason, 'AWAITING_ACCEPTED_REDUCTION_DECISIONS');
 
+  const arrangementReceipt = started.run.steps.find(entry => entry.step === RUN_STEP.SUGGEST);
+  assert.equal(arrangementReceipt.detail.merge_diagnostics.authority, 'SUGGESTION_ONLY');
+  assert.deepEqual(arrangementReceipt.detail.merge_diagnostics.certifies_gates, []);
+
   const reductionRequest = requestFor(started.run, 'REDUCTION_DECISIONS_REQUIRED');
   assert.ok(reductionRequest, JSON.stringify(started.run.review_requests));
   // The ledger's own accounting, projected: three events are not retained.
   assert.equal(reductionRequest.detail.accounting.total, 18);
   assert.equal(reductionRequest.detail.accounting.retained, 15);
+  assert.deepEqual(reductionRequest.detail.legacy_merge_diagnostics, {
+    lane_total: 0,
+    lane_returned: 0,
+    truncated: false,
+    lanes: [],
+  });
   assert.equal(reductionRequest.detail.outcomes.PENDING, 3);
   assert.equal(reductionRequest.event_id_total, 3);
   // The analysis plan is named as an analysis plan, and the request says in so

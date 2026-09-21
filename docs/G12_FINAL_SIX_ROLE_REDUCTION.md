@@ -143,6 +143,43 @@ Both retain the material; they differ in what is blocking.
   or merging with something already delivered, which is a further musical
   decision. It is reported and retained, not auto-placed and not dropped.
 
+### Historical frontend merge diagnostics
+
+For `OVERFLOW`, the implementation may additionally attach a read-only
+`legacyMergeDiagnostics` report. This adapts the useful measurement idea from a
+user-provided historical frontend that compared track-merge strategies by
+dropped/trimmed note counts, but deliberately does **not** carry over its
+destructive action.
+
+The diagnostic groups unresolved material by the G11-C source lane when that
+identity is available and inspects each of the six target roles:
+
+- `losslessGapCount`: source events whose exact interval fits without colliding;
+- `unisonCoveredCount`: same-pitch material already audibly covered for the full
+  interval — still an omission/dedup review question, never automatic removal;
+- `wouldRequireTrimOrDropCount`: events the historical merge style would need
+  to shorten or discard. G12 leaves these unresolved instead;
+- exact-rational timing and nearby-pitch continuity are used only to make the
+  diagnostic deterministic.
+
+Every entry is `authority: SUGGESTION_ONLY`. It changes no pitch, onset,
+duration, volume or role; it cannot set a gate; and it cannot turn `OVERFLOW`
+into `KEEP`, `REDISTRIBUTE` or `OMIT`. An actual redistribution still needs
+the ordinary event-level reviewed decision below.
+
+The merge diagnostic is lane-level by construction: it stores counts and
+role-level aggregate measurements, not per-event collision-id arrays. Exact
+candidate/raw provenance remains in the ordinary G12 event accounting ledger
+(`plan.items`) and the Source-Faithful baseline. In a decisionful preview, the
+remaining overflow is measured against the successfully derived **proposed
+candidate**, including role moves and duplicates from the decision set being
+previewed; falling back to the parent candidate is allowed only when derivation
+did not succeed. This keeps the diagnostic about the delivery the reviewer is
+actually considering, not stale pre-decision occupancy. Application/run transport then
+bounds the **lane list** again: it carries the original lane total, the number
+actually returned, and an explicit `truncated` flag. A bounded response must
+never be interpreted as the complete lane set when that flag is true.
+
 ## Decisions
 
 A reduction decision names **events**, never a lane: the invariant is

@@ -54,6 +54,36 @@ or touch G12 interoperability. `ROLE_CANDIDATE_STATUS` states each of these as `
 Heuristic evidence is not authority. `PENDING` is a valid, preferred outcome.
 The six-role limit is a capacity fact and never authorises silent deletion.
 
+### Historical lane-merge diagnostics
+
+G11-C may attach `mergeDiagnostics` to help a reviewer inspect a role-less
+7→6 hypothesis before accepting any decision. This is adapted from a
+user-provided historical frontend that compared track merges by dropped/trimmed
+counts, but the destructive action is not carried over.
+
+Two cases are measured:
+
+- competing `PENDING` lanes for the same proposed role are checked as a group;
+  time-disjoint material may be reported as
+  `LOSSLESS_SHARED_ROLE_CANDIDATE`, while overlap remains
+  `COLLISION_REVIEW` or `UNISON_DEDUP_REVIEW`;
+- lanes outside six-role capacity are compared against all six currently
+  occupied roles for exact gap fit, same-pitch coverage and collision pressure.
+
+Every result is `authority: SUGGESTION_ONLY`. It does not resolve a role,
+does not merge/delete/shorten any event, does not turn heuristic Lead evidence
+into positive Lead evidence, and certifies no gate. The merge diagnostic itself
+stores only lane-level counts and role-level aggregate measurements; it does
+**not** persist per-event collision/candidate id arrays. Exact candidate-event
+and raw source-event identities remain in the ordinary `lanes` / `ledger`
+provenance that the diagnostic's `laneId` points back to. `sourceEventCount`
+is diagnostic cardinality only: each source-local raw id is qualified by the
+event's complete, sorted source-id set. For the ordinary single-source case this
+is exactly `sourceId + sourceEventId`; for multi-source events it remains a
+set-scoped identity and never invents an array-position source/event pair. A role-less Melody
+assignment that later materializes a candidate remains subject to the separate
+candidate-bound Lead review boundary in the accepted-decision application stage.
+
 ## 3. Canonical rules this stage is built around
 
 - **§0 / §4 authority and Lead policy.** Melody is the Lead role, not
@@ -87,6 +117,7 @@ The six-role limit is a capacity fact and never authorises silent deletion.
 | `lanes` | One candidate lane per (source voice, G11-B lane), with `chainIds`, `eventIds`, `sourceIds`, `sourceEventIds`, `declaredSourceRoles`, exact `metrics`, `soundingIntervals`, `continuity`, `roleSupport`, `evidence`, and the original G11-B `spans`. |
 | `ledger` | One entry per (source event, decision). Carries `sourceRole`, `candidateRole`, `proposedRole`, `decision`, `reason`, `evidenceIds`, `competingLaneIds`, `uncertainty`, `selected`, `duplicate`, `provisional`, and the **restated source pitch/onset/end** so the ledger itself proves nothing was mutated. |
 | `unassigned` | Lanes not selected into this six-role proposal, with reason, competing role, added functions, `essential`, `provisional: true`, evidence ids, and every event id. |
+| `mergeDiagnostics` | Read-only, `SUGGESTION_ONLY` lane-sharing diagnostics for competing proposed-role groups and six-role overflow. It reports exact gap fit / unison coverage / collision pressure, mutates nothing, resolves no `PENDING`, and certifies no gate. |
 | `pending` | Lanes whose role decision is open, with blockers, competing lanes, evidence ids, event ids, and (for a refused Lead demotion) the gate that must decide it. |
 | `unsupportedSourceMaterial` | Percussion / unsupported source notes, retained with full timing and `status: 'PENDING'`. |
 | `declaredDuplications` | Caller-declared candidate duplications with their reason and evidence. |

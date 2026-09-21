@@ -30,6 +30,7 @@
 
 import { f, ROLES } from '../mml/index.mjs';
 import { splitProjectSourceVoices } from './voice-split.mjs';
+import { analyzeLegacyMergeLane } from './merge-diagnostics.mjs';
 
 // ─── exact-rational helpers ─────────────────────────────────────────────────
 
@@ -2310,6 +2311,109 @@ export function suggestRoleCandidates(project, options = {}) {
     || cmpStr(a.decision, b.decision));
   unassigned.sort((a, b) => cmpStr(a.laneId, b.laneId));
 
+  // ── historical 7→6 merge diagnostics (read-only) ──
+  //
+  // The user's historical frontend compared destructive track-merge modes by
+  // dropped/trimmed counts. G11-C keeps only the useful question: can two
+  // role-less candidate lanes actually share one Mobile role without changing
+  // any source event? The answer is evidence for review, never a role decision.
+  //
+  // Pending candidates for the same role are compared against one another.
+  // This is particularly useful for interleaved Lead hand-offs: a genuinely
+  // time-disjoint pair can be shown as a lossless shared-role candidate, while
+  // overlapping notes remain a collision/unison review rather than one lane
+  // being silently discarded. Overflow lanes are separately compared against
+  // the six roles already occupied by the current suggestion.
+  const assignedRoleByEventId = new Map();
+  for (const lane of lanes) {
+    const role = assignment.get(lane.id) ?? null;
+    if (!role) continue;
+    for (const eventId of lane.eventIds) assignedRoleByEventId.set(eventId, role);
+  }
+  const projectedAssignedEvents = notes.map(note => Object.freeze({
+    ...note,
+    role: assignedRoleByEventId.get(note.id) ?? null,
+  }));
+
+  const pendingRoleGroups = Object.freeze(SIX_ROLES.map(role => {
+    const group = pendingLanes.filter(item => item.proposedRole === role);
+    if (group.length < 2) return null;
+    const groupLaneIds = group.map(item => item.laneId).sort(cmpStr);
+    const groupEventIds = new Set(groupLaneIds.flatMap(laneId => laneById.get(laneId)?.eventIds ?? []));
+    const groupProjectedEvents = notes.map(note => Object.freeze({
+      ...note,
+      role: groupEventIds.has(note.id) ? role : (assignedRoleByEventId.get(note.id) ?? null),
+    }));
+    const laneReports = groupLaneIds.map(laneId => {
+      const lane = laneById.get(laneId);
+      const sourceEvents = (lane?.eventIds ?? []).map(eventId => noteById.get(eventId)).filter(Boolean);
+      const report = analyzeLegacyMergeLane({
+        sourceEvents,
+        candidateEvents: groupProjectedEvents,
+        roles: [role],
+        preferredRole: role,
+      });
+      const target = report.targets[0] ?? null;
+      return Object.freeze({
+        laneId,
+        candidateEventCount: report.candidateEventCount,
+        sourceEventCount: report.sourceEventCount,
+        target,
+      });
+    });
+    const targets = laneReports.map(entry => entry.target).filter(Boolean);
+    const collisionEventCount = targets.reduce((sum, target) => sum + target.wouldRequireTrimOrDropCount, 0);
+    const unisonReviewCount = targets.reduce((sum, target) => sum + target.unisonCoveredCount, 0);
+    const fullyLosslessTogether = targets.length === laneReports.length && targets.every(target => target.fullyLossless);
+    const status = collisionEventCount > 0 ? 'COLLISION_REVIEW'
+      : unisonReviewCount > 0 ? 'UNISON_DEDUP_REVIEW'
+        : fullyLosslessTogether ? 'LOSSLESS_SHARED_ROLE_CANDIDATE' : 'REVIEW';
+    return Object.freeze({
+      role,
+      laneIds: Object.freeze(groupLaneIds),
+      status,
+      fullyLosslessTogether,
+      unisonReviewCount,
+      collisionEventCount,
+      leadReviewRequired: role === 'Melody',
+      laneReports: Object.freeze(laneReports),
+      authority: 'SUGGESTION_ONLY',
+      notice: 'Competing lanes were measured for sharing one role without changing source events. This does not resolve the role evidence conflict or accept any lane.',
+    });
+  }).filter(Boolean));
+
+  const overflowMergeDiagnostics = Object.freeze(classification.overflow
+    .map(entry => entry.lane)
+    .sort((a, b) => cmpStr(a.id, b.id))
+    .map(lane => {
+      const sourceEvents = lane.eventIds.map(eventId => noteById.get(eventId)).filter(Boolean);
+      const report = analyzeLegacyMergeLane({
+        sourceEvents,
+        candidateEvents: projectedAssignedEvents,
+      });
+      return Object.freeze({
+        laneId: lane.id,
+        candidateEventCount: report.candidateEventCount,
+        sourceEventCount: report.sourceEventCount,
+        targets: report.targets,
+        authority: report.authority,
+        certifiesGates: report.certifiesGates,
+        notice: report.notice,
+      });
+    }));
+
+  const mergeDiagnostics = Object.freeze({
+    authority: 'SUGGESTION_ONLY',
+    pendingRoleGroups,
+    overflowLanes: overflowMergeDiagnostics,
+    mutatesCandidate: false,
+    resolvesPending: false,
+    permitsAutomaticOmission: false,
+    permitsAutomaticTruncation: false,
+    certifiesGates: Object.freeze([]),
+    notice: 'Historical merge heuristics are exposed only as review diagnostics. G11-C still makes no accepted lane merge or role decision.',
+  });
+
   // ── roles view ──
   const roles = {};
   for (const role of SIX_ROLES) {
@@ -2685,6 +2789,7 @@ export function suggestRoleCandidates(project, options = {}) {
     core3,
     full6,
     reducedRoleDiagnostics: reducedRoleDiagnostics(core3),
+    mergeDiagnostics,
     diagnostics: Object.freeze(diagnostics),
     coverage,
     thresholds: ROLE_CANDIDATE_THRESHOLDS,
@@ -2708,6 +2813,10 @@ export const ROLE_CANDIDATE_STATUS = Object.freeze({
   structuredRoleEvidence: true,
   pendingAllowed: true,
   explicitOverflowRetained: true,
+  historicalMergeDiagnostics: true,
+  historicalMergeDiagnosticsAuthority: 'SUGGESTION_ONLY',
+  historicalMergeDiagnosticsCanResolvePending: false,
+  historicalMergeDiagnosticsCanDropOrTrim: false,
   core3EvaluatedIndependently: true,
   full6EvaluatedIndependently: true,
   crossRoleReviewSignals: true,

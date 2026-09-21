@@ -443,6 +443,7 @@ function finalReductionSection() {
       ${detail('Core3（收斂前後）', plan.core3)}
       ${detail('和聲與重疊（收斂前後、新產生者）', { harmony: plan.harmony, overlapRisks: plan.overlapRisks })}
       ${detail('角色容量與字數壓力', { roleCapacity: plan.roleCapacity, characterBudget: plan.characterBudget })}
+      ${detail('7→6 無損合併診斷（只供審查）', plan.legacyMergeDiagnostics ?? [])}
       ${detail('完整事件 ledger', plan.items)}
       <p class="note">${badge(plan.status)} 只代表<strong>這份收斂計畫可以安全套用</strong>。它不是 Gate 3／4／5／8／9 通過，也不是 <code>VALIDATED</code>。套用後所有受影響的 Gate 都會重新開啟。</p>` : '<p class="empty">尚未預覽。載入來源基準與候選後即可產生收斂計畫。</p>'}
     <details><summary>記錄一筆收斂決策</summary>

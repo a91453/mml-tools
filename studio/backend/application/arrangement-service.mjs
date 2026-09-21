@@ -36,13 +36,72 @@ const now = () => new Date().toISOString();
 // purpose: see the header. `id` is optional and generated when omitted.
 const CALLER_DECISION_KEYS = new Set(['id', 'type', 'target', 'fromRole', 'toRole', 'toRoles', 'reason', 'evidence', 'section', 'leadEvidence', 'metadata', 'acceptedBy', 'note']);
 
+const summarizeMergeDiagnostics = diagnostics => {
+  if (!diagnostics || typeof diagnostics !== 'object') return null;
+  const pendingRoleGroups = diagnostics.pendingRoleGroups ?? [];
+  const overflowLanes = diagnostics.overflowLanes ?? [];
+  const boundedPendingRoleGroups = pendingRoleGroups.slice(0, 6);
+  const boundedOverflowLanes = overflowLanes.slice(0, LIMITS.maxReviewRequestEventIds);
+  return Object.freeze({
+    authority: diagnostics.authority ?? null,
+    pendingRoleGroupTotal: pendingRoleGroups.length,
+    pendingRoleGroupReturned: boundedPendingRoleGroups.length,
+    pendingRoleGroupsTruncated: boundedPendingRoleGroups.length < pendingRoleGroups.length,
+    overflowLaneTotal: overflowLanes.length,
+    overflowLaneReturned: boundedOverflowLanes.length,
+    overflowLanesTruncated: boundedOverflowLanes.length < overflowLanes.length,
+    pendingRoleGroups: Object.freeze(boundedPendingRoleGroups.map(group => {
+      const laneIds = [...(group.laneIds ?? [])];
+      const boundedLaneIds = laneIds.slice(0, LIMITS.maxReviewRequestEventIds);
+      return Object.freeze({
+      role: group.role ?? null,
+      laneTotal: laneIds.length,
+      laneReturned: boundedLaneIds.length,
+      laneIdsTruncated: boundedLaneIds.length < laneIds.length,
+      laneIds: Object.freeze(boundedLaneIds),
+      status: group.status ?? null,
+      fullyLosslessTogether: group.fullyLosslessTogether === true,
+      unisonReviewCount: group.unisonReviewCount ?? 0,
+      collisionEventCount: group.collisionEventCount ?? 0,
+      leadReviewRequired: group.leadReviewRequired === true,
+      authority: group.authority ?? null,
+    });
+    })),
+    overflowLanes: Object.freeze(boundedOverflowLanes
+      .map(entry => Object.freeze({
+        laneId: entry.laneId ?? null,
+        candidateEventCount: entry.candidateEventCount ?? 0,
+        sourceEventCount: entry.sourceEventCount ?? 0,
+        authority: entry.authority ?? null,
+        targets: Object.freeze((entry.targets ?? []).slice(0, 6).map(target => Object.freeze({
+          role: target.role ?? null,
+          losslessGapCount: target.losslessGapCount ?? 0,
+          unisonCoveredCount: target.unisonCoveredCount ?? 0,
+          wouldRequireTrimOrDropCount: target.wouldRequireTrimOrDropCount ?? 0,
+          fullyLossless: target.fullyLossless === true,
+          leadReviewRequired: target.leadReviewRequired === true,
+          authority: target.authority ?? null,
+        }))),
+      }))),
+    certifiesGates: Object.freeze([]),
+  });
+};
+
+// Cache identity is implementation identity, not Canonical identity. A new
+// suggestion field or arbitration implementation must not silently reuse a
+// durable suggestion blob written by an older service merely because the
+// baseline and Published Canonical snapshot are unchanged.
+export const ARRANGEMENT_SUGGESTION_CACHE_EPOCH = 'g11c-role-candidate-v2-merge-diagnostics';
+
 export function createArrangementService({ canonical, projects, intake, store }) {
-  // Keyed by the baseline AND the Published Canonical rules snapshot the
-  // engines were loaded under: a suggestion is derived under one release, and
-  // an image rebuilt under another must recompute rather than answer from a
-  // cache whose lanes were arbitrated by different rules while its bindings
-  // claim the new snapshot.
-  const suggestionKey = (projectId, baselineId, rulesSnapshotSha) => `suggestion:${projectId}:${baselineId}:${rulesSnapshotSha}`;
+  // Keyed by the implementation epoch, baseline AND Published Canonical rules
+  // snapshot. The epoch intentionally changes when the cached G11-C output
+  // shape/semantics change; otherwise a durable pre-upgrade cache could hide
+  // newly implemented review diagnostics on the exact song we need to rerun.
+  const suggestionKey = (projectId, baselineId, rulesSnapshotSha) =>
+    `suggestion:${ARRANGEMENT_SUGGESTION_CACHE_EPOCH}:${projectId}:${baselineId}:${rulesSnapshotSha}`;
+  const legacySuggestionKey = (projectId, baselineId, rulesSnapshotSha) =>
+    `suggestion:${projectId}:${baselineId}:${rulesSnapshotSha}`;
   // The whole G11-D application result is stored, not just the candidate it
   // produced. `reviewAppliedCandidate` re-establishes the revision identity,
   // the candidate digest and the baseline snapshot from it on every read, so a
@@ -60,6 +119,16 @@ export function createArrangementService({ canonical, projects, intake, store })
 
     const decompositions = engines.arrangement.splitProjectSourceVoices(project);
     const suggestion = engines.arrangement.suggestRoleCandidates(project, { decompositions });
+
+    // A cache is reconstructible, not evidence. Once the new suggestion has
+    // been derived successfully, discard the pre-epoch blob before writing the
+    // replacement so a large stale cache cannot make an otherwise valid
+    // deployment upgrade fail its store quota.
+    store.deleteBytes(legacySuggestionKey(
+      record.project_id,
+      baseline.baseline_id,
+      engines.emitterContract.canonicalIdentity().rules_snapshot_sha,
+    ));
     store.putJson(key, suggestion);
     return { engines, record, baseline, project, suggestion, decompositions };
   };
@@ -265,6 +334,7 @@ export function createArrangementService({ canonical, projects, intake, store })
         core3: suggestion.core3 ?? null,
         full6: suggestion.full6 ?? null,
         unassigned: suggestion.unassigned ?? null,
+        merge_diagnostics: summarizeMergeDiagnostics(suggestion.mergeDiagnostics),
         unsupported_source_material: suggestion.unsupportedSourceMaterial ?? null,
         diagnostics: suggestion.diagnostics ?? [],
         bindings: {

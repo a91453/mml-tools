@@ -158,7 +158,14 @@ test('overflow material stays in the ledger and in the candidate rather than bei
   assert.deepEqual(plan.accounting.overflowEventIds, ['overflow-1', 'overflow-2', 'overflow-3']);
   for (const item of plan.items.filter(entry => entry.outcome === REDUCTION_OUTCOMES.OVERFLOW)) {
     assert.equal(item.reasonCode, REDUCTION_REASON_CODES.SIX_ROLE_CAPACITY_EXCEEDED);
+    assert.deepEqual(item.suggestions, [], 'overflow diagnostics stay lane-level instead of duplicating six targets on every source event');
   }
+  const diagnosedCandidateCount = plan.legacyMergeDiagnostics.reduce((sum, entry) => sum + entry.candidateEventCount, 0);
+  const diagnosedSourceCount = plan.legacyMergeDiagnostics.reduce((sum, entry) => sum + entry.sourceEventCount, 0);
+  assert.equal(diagnosedCandidateCount, 3);
+  assert.equal(diagnosedSourceCount, 3);
+  assert.ok(plan.legacyMergeDiagnostics.every(entry => entry.sourceEventIds === undefined));
+  assert.ok(plan.legacyMergeDiagnostics.every(entry => entry.authority === 'SUGGESTION_ONLY'));
   assert.ok(plan.warnings.some(warning => warning.code === REDUCTION_WARNINGS.OVERFLOW_RETAINED));
   // Accepting the overflow records the review; it still removes nothing.
   const accept = reductionDecision({ id: 'accept-overflow', action: 'ACCEPT_OVERFLOW', eventIds: ['overflow-1', 'overflow-2', 'overflow-3'], evidence: [], reason: 'The reviewer accepts that this lane stays outside the six roles for this delivery.' });
@@ -168,6 +175,87 @@ test('overflow material stays in the ledger and in the candidate rather than bei
   assert.equal(delivered.length, 3);
   assert.deepEqual(delivered.map(event => event.role), [null, null, null]);
   assert.equal(result.accounting.overflow, 3);
+});
+
+test('decisionful overflow diagnostics compare remaining overflow against the proposed candidate', () => {
+  const source = baselineWithOverflowLane();
+  const baseline = createCanonicalProject({
+    ...source,
+    events: source.events
+      .filter(event => event.id !== 'chord5-1')
+      .map(event => event.id === 'overflow-2'
+        ? createCanonicalNoteEvent({ ...event, start: '0', end: '1' })
+        : event),
+  });
+
+  const chord5Risk = plan => plan.legacyMergeDiagnostics.reduce((sum, entry) => {
+    const target = entry.targets.find(item => item.role === 'Chord5');
+    return sum + (target?.wouldRequireTrimOrDropCount ?? 0);
+  }, 0);
+
+  const before = planFinalReduction({ baseline, acceptedBy: 'test-reviewer' });
+  const decision = reductionDecision({
+    id: 'place-overflow-1-in-chord5-gap',
+    action: 'REDISTRIBUTE',
+    eventIds: ['overflow-1'],
+    toRole: 'Chord5',
+    reason: 'The first overflow event fits the source-supported Chord5 gap without changing pitch, onset or duration.',
+  });
+  const after = planFinalReduction({ baseline, decisions: [decision], acceptedBy: 'test-reviewer' });
+
+  assert.equal(after.items.find(item => item.baselineEventId === 'overflow-1').outcome, REDUCTION_OUTCOMES.REDISTRIBUTE);
+  assert.equal(after.items.find(item => item.baselineEventId === 'overflow-2').outcome, REDUCTION_OUTCOMES.OVERFLOW);
+  assert.ok(chord5Risk(after) > chord5Risk(before),
+    'remaining overflow must see the interval newly occupied by this plan rather than the pre-decision candidate');
+});
+
+test('decisionful overflow diagnostics compare against the proposed candidate, not the stale parent', () => {
+  const source = sixRoleBaseline();
+  const extra = [
+    createCanonicalNoteEvent({
+      id: 'overflow-moved',
+      pitch: 52,
+      start: '4',
+      end: '5',
+      sourceIds: [FIXTURE_SOURCE_ID],
+      sourceEventIds: [`${FIXTURE_SOURCE_ID}#overflow-moved`],
+      role: null,
+      voice: 'overflow-a',
+      volume: null,
+    }),
+    createCanonicalNoteEvent({
+      id: 'overflow-remaining',
+      pitch: 54,
+      start: '4',
+      end: '5',
+      sourceIds: [FIXTURE_SOURCE_ID],
+      sourceEventIds: [`${FIXTURE_SOURCE_ID}#overflow-remaining`],
+      role: null,
+      voice: 'overflow-b',
+      volume: null,
+    }),
+  ];
+  const baseline = createCanonicalProject({ ...source, events: [...source.events, ...extra] });
+  const move = reductionDecision({
+    id: 'move-first-overflow',
+    action: 'REDISTRIBUTE',
+    eventIds: ['overflow-moved'],
+    toRole: 'Chord5',
+    reason: 'The reviewer places the first late overflow event into Chord5; the second remains overflow for comparison.',
+  });
+  const plan = planFinalReduction({ baseline, decisions: [move], acceptedBy: 'test-reviewer' });
+
+  const remaining = plan.items.find(item => item.baselineEventId === 'overflow-remaining');
+  assert.equal(remaining.outcome, REDUCTION_OUTCOMES.OVERFLOW);
+  const diagnostic = plan.legacyMergeDiagnostics.find(entry =>
+    entry.candidateEventCount === 1
+    && entry.targets.some(target => target.role === 'Chord5' && target.wouldRequireTrimOrDropCount === 1));
+  assert.ok(diagnostic,
+    'the remaining overflow must see the newly redistributed 4..5 Chord5 event in the proposed candidate');
+  const chord5 = diagnostic.targets.find(target => target.role === 'Chord5');
+  assert.equal(chord5.fullyLossless, false);
+  assert.equal(chord5.losslessGapCount, 0);
+  assert.equal(chord5.wouldRequireTrimOrDropCount, 1);
 });
 
 test('unresolved role material stays PENDING with suggestions that decide nothing', () => {
