@@ -184,6 +184,25 @@ const summarizeAccounting = accounting => Object.freeze({
   manifestation_count: accounting.manifestationCount ?? null,
 });
 
+const summarizeLegacyMergeDiagnostics = diagnostics => Object.freeze((diagnostics ?? [])
+  .slice(0, LIMITS.maxReviewRequestEventIds)
+  .map(entry => Object.freeze({
+    lane_id: entry.laneId ?? null,
+    preferred_role: entry.preferredRole ?? null,
+    source_event_count: (entry.sourceEventIds ?? []).length,
+    authority: entry.authority ?? null,
+    targets: Object.freeze((entry.targets ?? []).slice(0, 6).map(target => Object.freeze({
+      role: target.role ?? null,
+      lossless_gap_count: target.losslessGapCount ?? 0,
+      unison_covered_count: target.unisonCoveredCount ?? 0,
+      would_require_trim_or_drop_count: target.wouldRequireTrimOrDropCount ?? 0,
+      fully_lossless: target.fullyLossless === true,
+      lead_review_required: target.leadReviewRequired === true,
+      preferred_by_role_analysis: target.preferredByRoleAnalysis === true,
+      authority: target.authority ?? null,
+    }))),
+  })));
+
 /** A gate entry, carried through with its own fields and its lists bounded. */
 function boundedGate(entry) {
   if (!entry || typeof entry !== 'object') return null;
@@ -1462,6 +1481,7 @@ export function createRunService({ canonical, projects, store, operations, seria
         analysis_plan_decision_count: (plan.decisions ?? []).length,
         plan_accepted_by: plan.acceptedBy ?? null,
         accounting: summarizeAccounting(plan.accounting ?? {}),
+        legacy_merge_diagnostics: summarizeLegacyMergeDiagnostics(plan.legacyMergeDiagnostics ?? []),
         outcomes: undecided.reduce((counts, item) => ({ ...counts, [item.outcome]: (counts[item.outcome] ?? 0) + 1 }), {}),
         reason_codes: [...new Set(undecided.map(item => item.reasonCode).filter(Boolean))].slice(0, LIMITS.maxReviewRequestEventIds),
         certifies_gates: plan.certifiesGates ?? [],
