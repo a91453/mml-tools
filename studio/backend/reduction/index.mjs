@@ -1089,7 +1089,8 @@ export function planFinalReduction({
       return Object.freeze({
         laneId,
         preferredRole,
-        sourceEventIds: report.sourceEventIds,
+        candidateEventCount: report.candidateEventCount,
+        sourceEventCount: report.sourceEventCount,
         targets: report.targets,
         authority: report.authority,
         certifiesGates: report.certifiesGates,
