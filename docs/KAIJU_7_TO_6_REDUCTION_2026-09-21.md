@@ -66,10 +66,17 @@ PR #50 的自動 code review 另外抓出兩個會影響真實歌曲審查可靠
    仍保持 collision review。
 2. **所有 bounded merge diagnostics 明示完整性。** Application/run transport
    不會為避免大型 payload 而靜默截斷：回傳原始 total、實際 returned 與
-   truncated flag；pending-role group 內的 lane ids 亦同。完整逐事件資料仍留在
-   backend plan/suggestion，而不是灌進一般 MCP/run response。
+   truncated flag；pending-role group 內的 lane ids 亦同。
+3. **merge diagnostic 不保存逐事件 collision cross-product。** 六個目標角色只保存
+   lane-level counts 與 aggregate measurements；真正 candidate event / raw
+   source-event identity 繼續由既有 lane／event ledger 保存。這避免真實歌曲的大型
+   overflow lane 把 cache、plan 或 MCP/HTTP JSON 放大成乘法／平方級。
+4. **candidate identity 與 raw provenance 不再混名。** diagnostic 不再把
+   `event.id` 放進名為 `sourceEventIds` 的欄位；輸出只保留
+   `candidateEventCount` 與由真正 `event.sourceEventIds` 計算的
+   `sourceEventCount`。需要精確 identity 時回到既有 provenance ledger。
 
-這兩項都是 verifier / transport hardening，不新增 Canonical 規則，也不讓
+這些都是 verifier / transport / storage hardening，不新增 Canonical 規則，也不讓
 diagnostic 自動變成 role decision、OMIT 或任何 Gate PASS。
 
 ## 真實歌曲已知輸入
