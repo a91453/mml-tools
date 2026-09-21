@@ -99,6 +99,8 @@ export function createArrangementService({ canonical, projects, intake, store })
   // newly implemented review diagnostics on the exact song we need to rerun.
   const suggestionKey = (projectId, baselineId, rulesSnapshotSha) =>
     `suggestion:${ARRANGEMENT_SUGGESTION_CACHE_EPOCH}:${projectId}:${baselineId}:${rulesSnapshotSha}`;
+  const legacySuggestionKey = (projectId, baselineId, rulesSnapshotSha) =>
+    `suggestion:${projectId}:${baselineId}:${rulesSnapshotSha}`;
   // The whole G11-D application result is stored, not just the candidate it
   // produced. `reviewAppliedCandidate` re-establishes the revision identity,
   // the candidate digest and the baseline snapshot from it on every read, so a
@@ -116,6 +118,16 @@ export function createArrangementService({ canonical, projects, intake, store })
 
     const decompositions = engines.arrangement.splitProjectSourceVoices(project);
     const suggestion = engines.arrangement.suggestRoleCandidates(project, { decompositions });
+
+    // A cache is reconstructible, not evidence. Once the new suggestion has
+    // been derived successfully, discard the pre-epoch blob before writing the
+    // replacement so a large stale cache cannot make an otherwise valid
+    // deployment upgrade fail its store quota.
+    store.deleteBytes(legacySuggestionKey(
+      record.project_id,
+      baseline.baseline_id,
+      engines.emitterContract.canonicalIdentity().rules_snapshot_sha,
+    ));
     store.putJson(key, suggestion);
     return { engines, record, baseline, project, suggestion, decompositions };
   };
