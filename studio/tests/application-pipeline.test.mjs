@@ -126,6 +126,15 @@ test('a suggestion proposes roles and accepts nothing', async () => {
   assert.ok(suggestion.pending.count > 0, 'this fixture has competing harmony candidates');
   assert.match(suggestion.pending.notice, /PENDING is a state, not a default/);
   for (const lane of suggestion.pending.lanes) assert.ok(lane.blockers.length, 'a pending lane must say what blocks it');
+  assert.equal(suggestion.merge_diagnostics.authority, 'SUGGESTION_ONLY');
+  assert.deepEqual(suggestion.merge_diagnostics.certifiesGates, []);
+  for (const group of suggestion.merge_diagnostics.pendingRoleGroups) {
+    assert.equal(group.laneReports, undefined, 'transport projection must not carry per-event merge detail');
+  }
+  for (const overflow of suggestion.merge_diagnostics.overflowLanes) {
+    assert.equal(overflow.sourceEventIds, undefined, 'transport projection carries a count, not every source event id');
+    assert.ok(Number.isInteger(overflow.sourceEventCount));
+  }
 
   // Nothing was written: a suggestion mints no candidate.
   assert.deepEqual((await service.getProject(OWNER, project.project_id)).project.candidates, []);
