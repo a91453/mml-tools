@@ -134,6 +134,9 @@ test('a suggestion proposes roles and accepts nothing', async () => {
   assert.equal(suggestion.merge_diagnostics.overflowLanesTruncated, false);
   for (const group of suggestion.merge_diagnostics.pendingRoleGroups) {
     assert.equal(group.laneReports, undefined, 'transport projection must not carry per-event merge detail');
+    assert.equal(group.laneReturned, group.laneIds.length);
+    assert.equal(group.laneIdsTruncated, false);
+    assert.ok(group.laneTotal >= group.laneReturned);
   }
   for (const overflow of suggestion.merge_diagnostics.overflowLanes) {
     assert.equal(overflow.sourceEventIds, undefined, 'transport projection carries a count, not every source event id');
