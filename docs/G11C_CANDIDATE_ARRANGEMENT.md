@@ -76,7 +76,11 @@ into positive Lead evidence, and certifies no gate. The merge diagnostic itself
 stores only lane-level counts and role-level aggregate measurements; it does
 **not** persist per-event collision/candidate id arrays. Exact candidate-event
 and raw source-event identities remain in the ordinary `lanes` / `ledger`
-provenance that the diagnostic's `laneId` points back to. A role-less Melody
+provenance that the diagnostic's `laneId` points back to. `sourceEventCount`
+is diagnostic cardinality only: each source-local raw id is qualified by the
+event's complete, sorted source-id set. For the ordinary single-source case this
+is exactly `sourceId + sourceEventId`; for multi-source events it remains a
+set-scoped identity and never invents an array-position source/event pair. A role-less Melody
 assignment that later materializes a candidate remains subject to the separate
 candidate-bound Lead review boundary in the accepted-decision application stage.
 
