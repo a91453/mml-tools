@@ -409,11 +409,14 @@ upload assets (HTTP)  →  studio_sources_analyze   →  Source-Faithful Baselin
 
 A suggestion is not an acceptance. This layer will not convert one into the
 other, will not resolve a `PENDING` on a caller's behalf, and will not invent
-evidence for a Lead move. Any move out of Melody, into Melody, or duplicate into
-Melody is re-graded through the shared Lead-role evidence boundary: exact source
-identity, section role, usable score/audio role evidence, continuity after the
-move, Core3 integrity, and an explicit positive reason for the destination role.
-Conflicting source-role evidence remains `PENDING`.
+evidence for a Lead move. Existing-role moves out of/into Melody and duplication
+into Melody are re-graded through the shared Lead-role evidence boundary: exact
+source identity, section role, usable score/audio role evidence, continuity
+after the move, Core3 integrity, and an explicit positive reason for the
+destination role. A role-less source lane may be initially assigned to Melody
+without `leadEvidence` only to materialize a reversible review candidate; the
+result records a pending diagnostic and the Lead-promotion readiness gate remains
+`PENDING`. Conflicting source-role evidence remains `PENDING`.
 
 The acceptance bindings — baseline digest, source identity digest, lane
 decomposition digest, Canonical rules snapshot, reviewed revision — are computed
@@ -460,13 +463,17 @@ absent Lead into existence.
 
 ### Lead promotion and demotion readiness
 
-`studio_decisions_apply` may apply a Lead move only when the accepted decision
-already carries a complete `leadEvidence` chain. That application PASS is not
-itself a readiness PASS. Role moves into Melody are keyed by the candidate event
-id; a justified duplicate into Melody is keyed by its derived Melody event id
-while retaining the source/origin event id for evidence audit. This is what lets
-the Source-Faithful baseline diff enumerate `other-track-to-T1` promotions
-without allowing a derived id to become source evidence.
+`studio_decisions_apply` normally applies a Lead move only when the accepted
+decision already carries a complete `leadEvidence` chain. The narrow
+candidate-flow exception is the first assignment of role-less source material
+to Melody: it may create a review-pending candidate without that chain, but the
+Lead-promotion readiness report stays `PENDING` and blocks Final. In either
+case an application PASS is not itself a readiness PASS. Role moves into Melody
+are keyed by the candidate event id; a justified duplicate into Melody is keyed
+by its derived Melody event id while retaining the source/origin event id for
+evidence audit. This is what lets the Source-Faithful baseline diff enumerate
+`other-track-to-T1` promotions without allowing a derived id to become source
+evidence.
 
 **Evidence is recovered across the whole revision lineage, and re-graded.**
 Readiness derives what needs evidence from the candidate-versus-baseline diff,

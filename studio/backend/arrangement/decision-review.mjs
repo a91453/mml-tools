@@ -577,7 +577,13 @@ export function leadPromotionReportsFromLineage({ applications, baseline, candid
   const reports = [];
   for (const record of records.values()) {
     const { entry, item, promotedEventId, multiEvent, step } = record;
-    if (multiEvent) {
+    // A provisional initial role-less assignment deliberately embeds no Lead
+    // evidence. It may cover a whole lane because there is no single citation
+    // being reused across those events; each promoted event is reported and can
+    // later receive its own candidate-bound fresh review. A multi-event entry
+    // that does embed one evidence record stays unsupported: one citation cannot
+    // bind several source events.
+    if (multiEvent && entry.leadEvidence !== null && entry.leadEvidence !== undefined) {
       reports.push(pendingReport(promotedEventId, LEAD_ROLE, [DECISION_REJECTION.LEAD_EVIDENCE_MULTI_EVENT_SCOPE_UNSUPPORTED]));
       continue;
     }

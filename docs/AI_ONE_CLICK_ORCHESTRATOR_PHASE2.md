@@ -342,12 +342,16 @@ accepted proposal and moved **both** Gate 3 axes to `PASS`, with every other
 guard in this protocol working as designed.
 
 So a proposed decision carrying `leadEvidence` is refused
-(`REVIEWER_EVIDENCE_RECORD_SUPPLIED`). The move itself stays proposable — an
-agent can still say "this belongs in Melody, and here is why" — and without a
-citation the engine holds it `PENDING`, which is the honest state and exactly
-what `SOURCE_POLICY.md` §4 requires of incomplete Lead evidence. A reviewer
-supplies the citation through `applyDecisions` or `reviewLeadEvidence`, the
-paths that already exist and already bind it to a named reviewer.
+(`REVIEWER_EVIDENCE_RECORD_SUPPLIED`). The role decision itself stays
+proposable, but the application distinguishes two cases. An existing-role
+`MOVE_ROLE -> Melody` (and Lead demotion/duplication into Melody) still stops at
+the existing Lead interlock when reviewer evidence is missing. An initial
+role-less `ASSIGN_ROLE -> Melody` may instead materialize a reversible
+review-pending candidate with
+`ROLELESS_LEAD_ASSIGNMENT_REVIEW_PENDING`. That is deliberately **not** a
+Gate 3 PASS: the candidate's Lead-promotion readiness remains `PENDING` until a
+reviewer supplies the citation through `applyDecisions` or
+`reviewLeadEvidence`.
 
 ### The reviewer is supplied by the acceptance, and only by the acceptance
 

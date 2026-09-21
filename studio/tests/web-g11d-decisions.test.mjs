@@ -21,6 +21,7 @@ import {
   deriveAcceptedArrangement,
 } from '../web/arrangement-decisions.mjs';
 import { createAcceptedDecision } from '../backend/arrangement/decision-application.mjs';
+import { leadPromotionReportsFromApplication } from '../backend/arrangement/decision-review.mjs';
 import * as fixtures from './fixtures/midi-fixtures.mjs';
 
 // The minimum Web integration for G11-D, and the ways it must fail closed.
@@ -171,7 +172,7 @@ test('clearing accepted decisions leaves the source and the suggestion untouched
 
 // ─── tampering ──────────────────────────────────────────────────────────────
 
-test('a stored decision edited after it was accepted is refused, not replayed', () => {
+test('an edited stored decision is refused unless it is self-consistent, and a rewritten Lead hypothesis stays review-pending', () => {
   const context = fixtureWorkspace();
   const workspace = recordAcceptedDecision(context.workspace, decisionFor(context));
 
@@ -185,29 +186,36 @@ test('a stored decision edited after it was accepted is refused, not replayed', 
   assert.equal(applied.application, null);
   assert.deepEqual(applied.invalidRecords.map(item => item.reason), ['DECISION_RECORD_DIGEST_MISMATCH']);
 
-  // Recomputing the digest beside it does not buy authority either. This
-  // decision targets a whole lane, so a forged promotion into Melody is refused
-  // by the one-event containment before the promotion interlock is even reached:
-  // one leadEvidence record cannot cite every source event in a lane.
+  // Recomputing the digest can make a local record self-consistent, but it
+  // still cannot manufacture reviewer evidence. The Web integrity contract
+  // explicitly does not authenticate authorship, so the new candidate-flow
+  // boundary permits this role-less lane to materialize only as a reversible
+  // review candidate. Every promoted event must remain PENDING in Lead review.
   const resigned = persist(workspace);
   resigned.acceptedDecisions[0].decision.toRole = 'Melody';
   resigned.acceptedDecisions[0].recordDigest = acceptedDecisionRecordDigest(resigned.acceptedDecisions[0]);
   const resignedApplied = analyzeWorkspace(resigned).rawMidi[0].acceptedArrangement;
-  assert.equal(resignedApplied.status, 'UNSUPPORTED');
-  assert.equal(resignedApplied.application.candidate, null);
-  assert.ok(resignedApplied.application.rejected.some(item => item.code === 'LEAD_EVIDENCE_MULTI_EVENT_SCOPE_UNSUPPORTED'));
+  assert.equal(resignedApplied.status, 'PASS');
+  assert.ok(resignedApplied.application.candidate);
+  assert.ok(resignedApplied.application.diagnostics.some(item => item.code === 'ROLELESS_LEAD_ASSIGNMENT_REVIEW_PENDING'));
+  const resignedLead = leadPromotionReportsFromApplication(resignedApplied.application, context.project);
+  assert.ok(resignedLead.length > 1);
+  assert.ok(resignedLead.every(report => report.status === 'PENDING'));
 
-  // Narrowed to a single event, the same forgery reaches the promotion
-  // interlock and is refused there instead: no Lead evidence was ever accepted.
+  // Narrowing the same self-consistent rewrite to one source event has the same
+  // boundary: a candidate can exist for audition, but the Lead gate is still
+  // unanswered and no PASS is inferred from the stored acceptance record.
   const single = persist(workspace);
   const laneEventIds = [...context.suggestion.lanes[0].eventIds];
   single.acceptedDecisions[0].decision.target = { laneId: null, eventIds: [laneEventIds[0]] };
   single.acceptedDecisions[0].decision.toRole = 'Melody';
   single.acceptedDecisions[0].recordDigest = acceptedDecisionRecordDigest(single.acceptedDecisions[0]);
   const singleApplied = analyzeWorkspace(single).rawMidi[0].acceptedArrangement;
-  assert.equal(singleApplied.status, 'PENDING');
-  assert.equal(singleApplied.application.candidate, null);
-  assert.ok(singleApplied.application.rejected.some(item => item.code === 'LEAD_PROMOTION_EVIDENCE_REQUIRED'));
+  assert.equal(singleApplied.status, 'PASS');
+  assert.ok(singleApplied.application.candidate);
+  const singleLead = leadPromotionReportsFromApplication(singleApplied.application, context.project);
+  assert.equal(singleLead.length, 1);
+  assert.equal(singleLead[0].status, 'PENDING');
 
   // An entirely invented decision type cannot be smuggled in either.
   const invented = persist(workspace);

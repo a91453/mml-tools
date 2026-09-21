@@ -130,8 +130,8 @@ downstream        the gates that must still be re-run
   toRoles,     // DUPLICATE_WITH_JUSTIFICATION
   section,     // optional exact-rational { start, end } window
   reason,      // required, positive
-  evidence,    // citation references; required for duplication and Lead promotion
-  leadEvidence,// required when the decision leaves or enters Melody
+  evidence,    // citation references; required for duplication and role justification
+  leadEvidence,// required for Lead demotion / existing-role promotion; see provisional exception below
   acceptance: {
     state: 'ACCEPTED',          // exact string; nothing else is acceptance
     acceptedBy,                 // who accepted it
@@ -286,11 +286,19 @@ An accepted decision does not disable a gate.
 * Leaving Melody (a MOVE out of Melody, or an OMIT of a Melody event) runs the
   existing `evaluateLeadDemotion()` gate unchanged. Missing or incomplete
   evidence yields `PENDING` for the whole set, never a quiet demotion.
-* Entering Melody requires the mirror obligation: a resolved section role and a
+* Entering Melody from an already assigned role, or duplicating assigned material
+  into Melody, keeps the mirror obligation: a resolved section role and a
   positive, cited score-lead or audio-foreground classification. This is an
   evidence-presence interlock; it decides nothing about what the lead *is*.
-* Both sides first require the evidence to be **in scope for the event being
-  moved** — see below.
+* One implementation-only candidate-flow exception exists for role-less source
+  material: the first `ASSIGN_ROLE -> Melody` may omit `leadEvidence` so a
+  reversible audition/review candidate can exist. The application records
+  `ROLELESS_LEAD_ASSIGNMENT_REVIEW_PENDING`; downstream Lead-promotion
+  readiness remains `PENDING`, and Final still requires candidate-bound reviewer
+  evidence. This exception materializes a hypothesis; it is not positive Lead
+  evidence and certifies no gate.
+* Every path that does carry Lead evidence first requires it to be **in scope for
+  the event being moved** — see below.
 * G11-D never reports Core3 as complete. `certifiesCore3Complete` is `false`,
   and Core3 is decided after application by two independent modules:
   `arbitration/core3.mjs` `evaluateCore3Continuity()`, which audits source

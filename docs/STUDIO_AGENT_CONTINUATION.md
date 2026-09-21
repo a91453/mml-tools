@@ -35,6 +35,9 @@ node railway/server.mjs
    接續且 run 未完成，會對同一 run 再次啟動 agent。
 5. 「停止 agent」中止模型推論並防止後續操作；已開始的 Studio 操作可能已完成，
    仍需讀回狀態。需要來源角色、Lead/Core3 或人工/實機證據時，agent 停止並說明缺項。
+6. role-less MIDI 的第一次 `ASSIGN_ROLE -> Melody` 可在不自填 `leadEvidence` 的情況下
+   產生明確標示 review-pending 的可逆候選，讓後續六軌／試聽／review 能繼續；這不是
+   Lead PASS。已有角色的 `MOVE_ROLE`、Lead demotion、Gate 3 與 Final 仍維持原門檻。
 
 啟動回應遺失時，同一分頁保存的 request key 會重用；重試回讀原任務，不開第二個
 agent 或歌曲 run。關閉分頁不會中止服務程序中的執行。服務重啟則顯示 interrupted，
@@ -58,8 +61,9 @@ submitted proposal。拒絕 confirmations、reconcile、直接套用決策、假
 
 ## 驗證與限制
 
-- 9項 driver 測試包含重複啟動、owner/run 隔離、停止、程序恢復、HTTP/revision、
-  步數上限、真實 Application Service 提案/接受、推論期间狀態變動、未知結果核對。
+- 10項 driver 測試包含重複啟動、owner/run 隔離、停止、程序恢復、HTTP/revision、
+  步數上限、真實 Application Service 提案/接受、role-less Melody 候選端到端、
+  推論期间狀態變動、未知結果核對。
 - 桌面 Chromium、iPhone/iPad WebKit 驗證網頁自動 dispatch、狀態回讀及故意遺失
   首次啟動回應後沿用原任務。模型替身只回報等待審查，CI 不呼叫付費模型。
 - 真正 Codex CLI 在《怪獸之歌》修正版 run 執行2次推論，讀取 suggestion 後停在

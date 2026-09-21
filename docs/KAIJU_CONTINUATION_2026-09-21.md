@@ -48,12 +48,15 @@ node scripts/studio-source-review.mjs --data-dir .studio-agent/kaiju-continuatio
 先前把正式驗收阻塞描述成必須另找樂譜，混淆了候選製作與正式驗收。
 不能要求使用者先購買或另找樂譜，才允許依其指定 MIDI 製作候選。
 
-根因是目前 role-less MIDI 首次指派 Melody 也會觸發 Lead promotion；
-`studio/backend/application/proposal-service.mjs` 明確拒絕 proposal 自填
-`leadEvidence`。現有 agent 正確遵守這項限制，但來源編排到可試聽候選的路徑
-尚未打通。這是產品流程缺口，不代表使用者 MIDI 無效。
+根因是 role-less MIDI 首次指派 Melody 會進入 Lead promotion 檢查；
+`studio/backend/application/proposal-service.mjs` 也正確拒絕 proposal 自填
+`leadEvidence`。PR #49 將候選製作與 Gate 3 驗收拆開：只有「role-less
+ASSIGN_ROLE -> Melody、且沒有 leadEvidence」可先產生明確標記 review-pending
+的可逆候選；MOVE_ROLE、Lead demotion、重複到 Melody 及正式 Final gate 都不放寬。
+run receipt 會保留 `ROLELESS_LEAD_ASSIGNMENT_REVIEW_PENDING`，後續 Lead review
+仍須 candidate-bound reviewer evidence。
 
-下次優先修正及驗收：
+接下來優先執行及驗收：
 
 1. 先檢查既有 candidate/render/export API，確認可重用的預覽路徑及實際阻塞位置，
    避免另造一套音樂引擎或直接繞過 Final gate。
@@ -66,9 +69,9 @@ node scripts/studio-source-review.mjs --data-dir .studio-agent/kaiju-continuatio
 5. 用本曲實際走完候選製作及回讀，再接既有 review/finalize；若需更動正式規則，
    明確呈現規則差異，不把候選輸出需求當作已授權降低正式驗收標準。
 
-本次僅保存問題與接續計畫，以上候選路徑尚未實作。PR保留Draft、不merge、不部署。
-程式checkpoint `126f19b` 的 Studio CI、Studio service CI、OSS Export CI 均已通過；
-本節為後續文件變更，不能把該次CI結果標成此文件commit的新執行結果。
+候選路徑的程式缺口已在 PR #49 實作並以合成 role-less MIDI 做回歸；
+這仍不是《怪獸之歌》的六軌候選或 Final。真實歌曲仍需實際跑完 7→6、技術回讀、
+Mobile 與 reviewer 流程後再更新本紀錄。
 
 ## 網頁接續與驗證
 

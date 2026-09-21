@@ -10,6 +10,7 @@ import {
   CONFLICT_CODES,
 } from '../backend/arrangement/decision-application.mjs';
 import { suggestRoleCandidates } from '../backend/arrangement/role-candidates.mjs';
+import { leadPromotionReportsFromApplication } from '../backend/arrangement/decision-review.mjs';
 import {
   roleDeclaredBaseline,
   acceptanceFor,
@@ -475,10 +476,15 @@ test('omitting a Melody event is a Lead demotion too', () => {
 
 test('promoting material into Melody needs positive, section-resolved lead evidence', () => {
   const bare = apply([assign('p1', ['tex-1'], 'Melody')]);
-  assert.equal(bare.status, 'PENDING');
-  const rejection = bare.rejected.find(item => item.code === DECISION_REJECTION.LEAD_PROMOTION_EVIDENCE_REQUIRED);
-  assert.deepEqual([...rejection.events[0].blockers].sort(), ['LEAD_PROMOTION_EVIDENCE_MISSING']);
-  refusesEverything(bare);
+  assert.equal(bare.status, 'PASS');
+  assert.ok(bare.candidate, 'role-less material may be materialized for review');
+  const diagnostic = bare.diagnostics.find(item => item.code === 'ROLELESS_LEAD_ASSIGNMENT_REVIEW_PENDING');
+  assert.ok(diagnostic);
+  assert.deepEqual([...diagnostic.eventIds], ['tex-1']);
+  const reports = leadPromotionReportsFromApplication(bare, baseline);
+  assert.equal(reports.length, 1);
+  assert.equal(reports[0].eventId, 'tex-1');
+  assert.equal(reports[0].status, 'PENDING', 'candidate construction is not positive Lead evidence');
 
   const noSection = apply([assign('p2', ['tex-1'], 'Melody', {
     leadEvidence: {
