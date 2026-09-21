@@ -177,6 +177,38 @@ test('overflow material stays in the ledger and in the candidate rather than bei
   assert.equal(result.accounting.overflow, 3);
 });
 
+test('decisionful overflow diagnostics compare remaining overflow against the proposed candidate', () => {
+  const source = baselineWithOverflowLane();
+  const baseline = createCanonicalProject({
+    ...source,
+    events: source.events
+      .filter(event => event.id !== 'chord5-1')
+      .map(event => event.id === 'overflow-2'
+        ? createCanonicalNoteEvent({ ...event, start: '0', end: '1' })
+        : event),
+  });
+
+  const chord5Risk = plan => plan.legacyMergeDiagnostics.reduce((sum, entry) => {
+    const target = entry.targets.find(item => item.role === 'Chord5');
+    return sum + (target?.wouldRequireTrimOrDropCount ?? 0);
+  }, 0);
+
+  const before = planFinalReduction({ baseline, acceptedBy: 'test-reviewer' });
+  const decision = reductionDecision({
+    id: 'place-overflow-1-in-chord5-gap',
+    action: 'REDISTRIBUTE',
+    eventIds: ['overflow-1'],
+    toRole: 'Chord5',
+    reason: 'The first overflow event fits the source-supported Chord5 gap without changing pitch, onset or duration.',
+  });
+  const after = planFinalReduction({ baseline, decisions: [decision], acceptedBy: 'test-reviewer' });
+
+  assert.equal(after.items.find(item => item.baselineEventId === 'overflow-1').outcome, REDUCTION_OUTCOMES.REDISTRIBUTE);
+  assert.equal(after.items.find(item => item.baselineEventId === 'overflow-2').outcome, REDUCTION_OUTCOMES.OVERFLOW);
+  assert.ok(chord5Risk(after) > chord5Risk(before),
+    'remaining overflow must see the interval newly occupied by this plan rather than the pre-decision candidate');
+});
+
 test('unresolved role material stays PENDING with suggestions that decide nothing', () => {
   const baseline = baselineWithUnassignedRole();
   const plan = planFinalReduction({ baseline, acceptedBy: 'test-reviewer' });
