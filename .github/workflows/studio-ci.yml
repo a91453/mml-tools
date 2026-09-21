@@ -3,21 +3,7 @@ name: Studio CI
 on:
   push:
     branches: [studio-v1, studio-web-v1, main]
-    paths-ignore:
-      - 'scripts/railway-*.mjs'
-      - 'tests/railway-*.test.mjs'
-      - '.github/workflows/railway-*.yml'
-      - 'railway/service-settings.json'
-      - 'railway/deployment-target.json'
-      - 'docs/RAILWAY_AGENT_MIGRATION_AUDIT_2026-09-21.md'
   pull_request:
-    paths-ignore:
-      - 'scripts/railway-*.mjs'
-      - 'tests/railway-*.test.mjs'
-      - '.github/workflows/railway-*.yml'
-      - 'railway/service-settings.json'
-      - 'railway/deployment-target.json'
-      - 'docs/RAILWAY_AGENT_MIGRATION_AUDIT_2026-09-21.md'
   workflow_dispatch:
 
 concurrency:
@@ -28,7 +14,59 @@ permissions:
   contents: read
 
 jobs:
+  classify:
+    runs-on: ubuntu-latest
+    outputs:
+      run_heavy: ${{ steps.paths.outputs.run_heavy }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Classify Railway-only changes
+        id: paths
+        shell: bash
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          PR_BASE: ${{ github.event.pull_request.base.sha }}
+          PR_HEAD: ${{ github.event.pull_request.head.sha }}
+          PUSH_BASE: ${{ github.event.before }}
+          PUSH_HEAD: ${{ github.sha }}
+        run: |
+          if [ "$EVENT_NAME" = "workflow_dispatch" ]; then
+            echo "run_heavy=true" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          if [ "$EVENT_NAME" = "pull_request" ]; then
+            base="$PR_BASE"
+            head="$PR_HEAD"
+          else
+            base="$PUSH_BASE"
+            head="$PUSH_HEAD"
+          fi
+          if [ -z "$base" ] || [ -z "$head" ] || [ "$base" = "0000000000000000000000000000000000000000" ]; then
+            echo "run_heavy=true" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          changed="$(git diff --name-only "$base" "$head")"
+          if [ -z "$changed" ]; then
+            echo "run_heavy=true" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          run_heavy=false
+          while IFS= read -r path; do
+            case "$path" in
+              scripts/railway-*.mjs|tests/railway-*.test.mjs|.github/workflows/railway-*.yml|railway/service-settings.json|railway/deployment-target.json|docs/RAILWAY_AGENT_MIGRATION_AUDIT_2026-09-21.md)
+                ;;
+              *)
+                run_heavy=true
+                break
+                ;;
+            esac
+          done <<< "$changed"
+          echo "run_heavy=$run_heavy" >> "$GITHUB_OUTPUT"
   symbolic:
+    needs: classify
+    if: needs.classify.outputs.run_heavy == 'true'
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
@@ -58,6 +96,8 @@ jobs:
         run: npm run build
 
   audio-worker:
+    needs: classify
+    if: needs.classify.outputs.run_heavy == 'true'
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
@@ -82,6 +122,8 @@ jobs:
         run: python -m unittest discover -s tests -v
 
   studio-web:
+    needs: classify
+    if: needs.classify.outputs.run_heavy == 'true'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
