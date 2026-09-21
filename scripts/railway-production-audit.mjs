@@ -78,6 +78,11 @@ export function compareServiceInstance(expected, actual, availableFields = null)
       drift.push({ field, expected: expectedValue, actual: 'UNAVAILABLE_IN_RAILWAY_SCHEMA' });
       return;
     }
+    // Railway may serialize defaults as null even when their effective value is
+    // the repository default. Normalize only defaults whose equivalence is
+    // explicit in our desired settings.
+    if (field === 'rootDirectory' && expectedValue === '.' && (actualValue === null || actualValue === '')) actualValue = '.';
+    if (field === 'numReplicas' && expectedValue === 1 && actualValue === null) actualValue = 1;
     if (actualValue !== expectedValue) drift.push({ field, expected: expectedValue, actual: actualValue ?? null });
   };
   for (const field of ['startCommand', 'healthcheckPath', 'healthcheckTimeout', 'restartPolicyType',
