@@ -356,6 +356,13 @@ test('fixture 6: two overlapping Lead candidates stay PENDING instead of one bei
   const pendingDiagnostic = diagnostic(candidate, 'COMPETING_LEAD_CANDIDATES');
   assert.ok(pendingDiagnostic);
   assert.equal(pendingDiagnostic.deleted, false);
+  const leadMerge = candidate.mergeDiagnostics.pendingRoleGroups.find(group => group.role === 'Melody');
+  assert.ok(leadMerge, 'competing role-less Lead lanes get a merge diagnostic');
+  assert.equal(leadMerge.authority, 'SUGGESTION_ONLY');
+  assert.equal(leadMerge.status, 'COLLISION_REVIEW', 'overlapping Lead hypotheses are not silently coalesced');
+  assert.equal(leadMerge.fullyLosslessTogether, false);
+  assert.ok(leadMerge.collisionEventCount > 0);
+  assert.equal(leadMerge.leadReviewRequired, true);
 
   // Neither candidate lost an event, and both keep their evidence.
   const pendingLaneIds = candidate.pending.map(item => item.laneId).sort();
@@ -414,6 +421,12 @@ test('fixture 7: lanes beyond six-role capacity overflow explicitly instead of d
     assert.equal(entry.selected, false);
     assert.equal(entry.provisional, true);
     assert.ok(entry.sourcePitch !== null, 'an omitted event keeps its original identity in the ledger');
+  }
+  assert.equal(candidate.mergeDiagnostics.authority, 'SUGGESTION_ONLY');
+  assert.equal(candidate.mergeDiagnostics.overflowLanes.length, candidate.unassigned.length);
+  for (const lane of candidate.mergeDiagnostics.overflowLanes) {
+    assert.ok(lane.targets.length === 6);
+    assert.ok(lane.targets.every(target => target.authority === 'SUGGESTION_ONLY'));
   }
   // Six-role capacity never authorises deletion.
   assert.equal(candidate.coverage.sourceEventCount,
