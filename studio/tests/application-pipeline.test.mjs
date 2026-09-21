@@ -7,7 +7,7 @@
 
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
@@ -183,12 +183,15 @@ test('a durable pre-upgrade suggestion cache cannot hide newly implemented G11-C
       unsupportedSourceMaterial: [],
       diagnostics: [],
     };
-    writeFileSync(join(directory, 'blobs', `${blobName(legacyKey)}.bin`), JSON.stringify(stale));
+    const legacyPath = join(directory, 'blobs', `${blobName(legacyKey)}.bin`);
+    writeFileSync(legacyPath, JSON.stringify(stale));
+    assert.equal(existsSync(legacyPath), true);
 
     const { suggestion } = await service.suggestArrangement(OWNER, project.project_id);
     assert.ok(suggestion.lane_count > 0, 'the stale legacy cache must not replace a freshly derived suggestion');
     assert.equal(suggestion.merge_diagnostics.authority, 'SUGGESTION_ONLY');
     assert.deepEqual(suggestion.merge_diagnostics.certifiesGates, []);
+    assert.equal(existsSync(legacyPath), false, 'successful rebuild retires the reconstructible pre-epoch cache');
   } finally {
     rmSync(directory, { recursive: true, force: true });
   }
