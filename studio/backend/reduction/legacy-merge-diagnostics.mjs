@@ -110,6 +110,7 @@ export function analyzeLegacyMergeLane({
     return Object.freeze({
       role,
       core3: CORE3.has(role),
+      leadReviewRequired: role === 'Melody',
       preferredByRoleAnalysis: preferredRole === role,
       sourceEventCount: source.length,
       targetEventCount: targetEvents.length,
