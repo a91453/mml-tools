@@ -36,7 +36,8 @@ test('bounded reduction merge diagnostics disclose omitted lanes instead of look
   const total = LIMITS.maxReviewRequestEventIds + 3;
   const diagnostics = Array.from({ length: total }, (_, index) => ({
     laneId: `lane:${index}`,
-    sourceEventIds: [`event:${index}`],
+    candidateEventCount: index + 1,
+    sourceEventCount: index + 2,
     authority: 'SUGGESTION_ONLY',
     targets: [],
   }));
@@ -46,6 +47,8 @@ test('bounded reduction merge diagnostics disclose omitted lanes instead of look
   assert.equal(summary.truncated, true);
   assert.equal(summary.lanes.length, LIMITS.maxReviewRequestEventIds);
   assert.equal(summary.lanes.at(-1).lane_id, `lane:${LIMITS.maxReviewRequestEventIds - 1}`);
+  assert.equal(summary.lanes[0].candidate_event_count, 1);
+  assert.equal(summary.lanes[0].source_event_count, 2);
 });
 
 // ─── A. selected symbolic assets → awaiting review, with nothing invented ───
