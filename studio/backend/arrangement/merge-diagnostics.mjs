@@ -61,6 +61,26 @@ function continuityDistance(source, targetEvents) {
   return distances.length ? Math.min(...distances) : null;
 }
 
+const sourceScopeKey = event => {
+  // Canonical IR intentionally stores sourceIds[] and sourceEventIds[] as
+  // independent arrays; do not pair them by position. For counting only, scope
+  // each raw source-local id by the *whole source set* carried by that event.
+  // Single-source events therefore become sourceId + rawId (the common case),
+  // while ambiguous multi-source provenance stays a set-scoped identity rather
+  // than an invented source/event pair.
+  const ids = [...new Set(event?.sourceIds ?? [])].sort(cmpStr);
+  return ids.length ? ids.join('\u001f') : '<source-unknown>';
+};
+
+const sourceEventIdentityCount = events => {
+  const identities = new Set();
+  for (const event of events ?? []) {
+    const scope = sourceScopeKey(event);
+    for (const rawId of event?.sourceEventIds ?? []) identities.add(`${scope}\u001e${rawId}`);
+  }
+  return identities.size;
+};
+
 function inspectEvent(source, targetEvents) {
   const collisions = targetEvents.filter(target => overlaps(source, target));
   const losslessGap = collisions.length === 0;
@@ -118,7 +138,7 @@ export function analyzeLegacyMergeLane({
   const candidate = notes(candidateEvents);
   const normalizedRoles = [...new Set((roles ?? DEFAULT_ROLES).filter(role => DEFAULT_ROLES.includes(role)))];
 
-  const rawSourceEventIds = new Set(source.flatMap(event => event.sourceEventIds ?? []));
+  const sourceEventCount = sourceEventIdentityCount(source);
   const rawSourceIds = new Set(source.flatMap(event => event.sourceIds ?? []));
 
   const targets = normalizedRoles.map(role => {
@@ -143,7 +163,7 @@ export function analyzeLegacyMergeLane({
       leadReviewRequired: role === 'Melody',
       preferredByRoleAnalysis: preferredRole === role,
       candidateEventCount: source.length,
-      sourceEventCount: rawSourceEventIds.size,
+      sourceEventCount,
       targetEventCount: targetEvents.length,
       losslessGapCount,
       unisonCoveredCount,
@@ -159,7 +179,7 @@ export function analyzeLegacyMergeLane({
     schema: LEGACY_MERGE_DIAGNOSTIC_SCHEMA,
     authority: 'SUGGESTION_ONLY',
     candidateEventCount: source.length,
-    sourceEventCount: rawSourceEventIds.size,
+    sourceEventCount,
     sourceCount: rawSourceIds.size,
     preferredRole: DEFAULT_ROLES.includes(preferredRole) ? preferredRole : null,
     targets: Object.freeze(targets),
