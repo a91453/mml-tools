@@ -3,6 +3,7 @@
 // It verifies control-plane state against repository desired settings, then runs
 // the existing public production provenance probe against the same expected main.
 import assert from 'node:assert/strict';
+import { execFileSync } from 'node:child_process';
 import { mkdir, readFile, writeFile } from 'node:fs/promises';
 import { dirname, resolve } from 'node:path';
 import { pathToFileURL } from 'node:url';
@@ -15,6 +16,42 @@ export const TERMINAL_DEPLOYMENT_STATES = new Set(['SUCCESS', 'FAILED', 'CRASHED
 
 const safeMessage = error => error instanceof Error ? error.message : String(error);
 const sortStrings = values => [...values].sort((a, b) => a.localeCompare(b));
+const defaultGitImpl = args => execFileSync('git', args, {
+  cwd: new URL('../', import.meta.url),
+  stdio: ['ignore', 'pipe', 'pipe'],
+  timeout: 30000,
+  maxBuffer: 8 * 1024 * 1024,
+});
+
+export function watchPatternMatchesPath(pattern, path) {
+  assert.ok(typeof pattern === 'string' && pattern.startsWith('/'), 'absolute Railway watch pattern required');
+  assert.ok(typeof path === 'string' && path.length > 0 && !path.includes('\n'), 'repository-relative path required');
+  const normalized = pattern.slice(1);
+  if (normalized.endsWith('/**')) {
+    const prefix = normalized.slice(0, -3);
+    return path === prefix || path.startsWith(prefix + '/');
+  }
+  assert.ok(!normalized.includes('*'), 'unsupported Railway watch glob in production audit');
+  return path === normalized;
+}
+
+export function watchedChangedPaths(paths, watchPatterns) {
+  return [...new Set(paths)].filter(path => watchPatterns.some(pattern => watchPatternMatchesPath(pattern, path))).sort();
+}
+
+export function changedPathsBetween({ fromSha, toSha, gitImpl = defaultGitImpl }) {
+  assert.match(fromSha ?? '', /^[0-9a-f]{40}$/, 'full deployed SHA required');
+  assert.match(toSha ?? '', /^[0-9a-f]{40}$/, 'full target SHA required');
+  gitImpl(['merge-base', '--is-ancestor', fromSha, toSha]);
+  return gitImpl(['diff', '--name-only', fromSha, toSha, '--']).toString('utf8').split(/\r?\n/).filter(Boolean);
+}
+
+export function manifestCommitAt(sha, gitImpl = defaultGitImpl) {
+  assert.match(sha ?? '', /^[0-9a-f]{40}$/, 'full SHA required for Manifest lookup');
+  const commit = gitImpl(['log', '-1', '--format=%H', sha, '--', 'docs/CANONICAL_MANIFEST.md']).toString('utf8').trim();
+  assert.match(commit, /^[0-9a-f]{40}$/, 'Manifest commit lookup failed');
+  return commit;
+}
 
 export async function railwayGraphQL({ token, query, variables = {}, fetchImpl = fetch }) {
   assert.ok(typeof token === 'string' && token.length >= 8, 'RAILWAY_PROJECT_TOKEN is required');
@@ -155,7 +192,7 @@ export async function readProductionState({ token, expected, fetchImpl = fetch }
       projectToken { projectId environmentId }
       serviceInstance(serviceId: $serviceId, environmentId: $environmentId) {
         ${fields}
-        latestDeployment { id status createdAt }
+        latestDeployment { id status createdAt meta }
       }
       deployments(input: $input, first: 20) {
         edges {
@@ -176,6 +213,54 @@ export async function readProductionState({ token, expected, fetchImpl = fetch }
 export function findExpectedDeployment(deployments, expectedSha) {
   assert.match(expectedSha ?? '', /^[0-9a-f]{40}$/, 'full expected deployment SHA required');
   return deployments.find(deployment => deployment?.meta?.commitHash === expectedSha) ?? null;
+}
+
+export function resolveDeploymentBinding({ expected, expectedSha, state, targetDeployment, changedPaths = [] }) {
+  if (!targetDeployment) return {
+    activeDeployment: null,
+    effectiveSha: expectedSha,
+    reason: 'DEPLOYMENT_NOT_FOUND',
+    skippedChanges: [],
+    watchedSkippedChanges: [],
+  };
+  if (targetDeployment.status === 'SUCCESS') {
+    const active = state?.instance?.latestDeployment;
+    const activeMatches = active?.id === targetDeployment.id && active?.status === 'SUCCESS';
+    return {
+      activeDeployment: targetDeployment,
+      effectiveSha: expectedSha,
+      reason: activeMatches ? null : 'ACTIVE_DEPLOYMENT_MISMATCH',
+      skippedChanges: [],
+      watchedSkippedChanges: [],
+    };
+  }
+  if (targetDeployment.status !== 'SKIPPED') return {
+    activeDeployment: targetDeployment,
+    effectiveSha: expectedSha,
+    reason: 'DEPLOYMENT_' + targetDeployment.status,
+    skippedChanges: [],
+    watchedSkippedChanges: [],
+  };
+  const active = state?.instance?.latestDeployment;
+  const activeSha = active?.meta?.commitHash;
+  const activeBranch = active?.meta?.branch;
+  if (active?.status !== 'SUCCESS' || !/^[0-9a-f]{40}$/.test(activeSha ?? '') || activeBranch !== expected.source.branch) {
+    return {
+      activeDeployment: active ?? null,
+      effectiveSha: activeSha ?? expectedSha,
+      reason: 'NO_ACTIVE_SUCCESS_DEPLOYMENT',
+      skippedChanges: changedPaths,
+      watchedSkippedChanges: [],
+    };
+  }
+  const watched = watchedChangedPaths(changedPaths, expected.config.watchPatterns);
+  return {
+    activeDeployment: active,
+    effectiveSha: activeSha,
+    reason: watched.length ? 'SKIPPED_WATCHED_CHANGES' : null,
+    skippedChanges: [...new Set(changedPaths)].sort(),
+    watchedSkippedChanges: watched,
+  };
 }
 
 export async function waitForExpectedDeployment({
@@ -201,7 +286,10 @@ export async function waitForExpectedDeployment({
   } while (true);
 }
 
-export function buildControlPlaneResult({ expected, expectedSha, state, deployment, reason }) {
+export function buildControlPlaneResult({
+  expected, expectedSha, effectiveSha = expectedSha, state, deployment, requestedDeployment = deployment,
+  reason, skippedChanges = [], watchedSkippedChanges = [],
+}) {
   const drift = state?.instance
     ? compareServiceInstance(expected, state.instance, state.availableFields)
     : (state?.missingSchemaFields ?? []).map(field => ({
@@ -216,20 +304,28 @@ export function buildControlPlaneResult({ expected, expectedSha, state, deployme
       actual: state.tokenScope,
     });
   }
-  const deploymentOk = deployment?.status === 'SUCCESS' && deployment?.meta?.commitHash === expectedSha
+  const deploymentOk = deployment?.status === 'SUCCESS' && deployment?.meta?.commitHash === effectiveSha
     && deployment?.meta?.branch === expected.source.branch;
+  const requestedOk = requestedDeployment?.status === 'SKIPPED'
+    ? effectiveSha !== expectedSha && watchedSkippedChanges.length === 0
+    : requestedDeployment?.id === deployment?.id && effectiveSha === expectedSha;
+  const summarizeDeployment = item => item ? {
+    id: item.id,
+    status: item.status,
+    created_at: item.createdAt,
+    commit_sha: item.meta?.commitHash ?? null,
+    branch: item.meta?.branch ?? null,
+    reason: item.meta?.reason ?? null,
+  } : null;
   return {
-    status: !reason && deploymentOk && drift.length === 0 ? 'PASS' : 'FAIL',
+    status: !reason && deploymentOk && requestedOk && drift.length === 0 ? 'PASS' : 'FAIL',
     expected_sha: expectedSha,
-    deployment: deployment ? {
-      id: deployment.id,
-      status: deployment.status,
-      created_at: deployment.createdAt,
-      commit_sha: deployment.meta?.commitHash ?? null,
-      branch: deployment.meta?.branch ?? null,
-      reason: deployment.meta?.reason ?? null,
-    } : null,
-    failure_reason: reason ?? (!deploymentOk ? 'DEPLOYMENT_MISMATCH' : drift.length ? 'CONFIG_DRIFT' : null),
+    effective_deployed_sha: effectiveSha,
+    deployment: summarizeDeployment(deployment),
+    requested_deployment: summarizeDeployment(requestedDeployment),
+    skipped_change_paths: skippedChanges,
+    watched_skipped_change_paths: watchedSkippedChanges,
+    failure_reason: reason ?? (!deploymentOk || !requestedOk ? 'DEPLOYMENT_MISMATCH' : drift.length ? 'CONFIG_DRIFT' : null),
     config_drift: drift,
   };
 }
@@ -270,9 +366,44 @@ export async function runProductionAudit({
     const waited = await waitForExpectedDeployment({
       token, expected, expectedSha, fetchImpl, waitSeconds, pollSeconds,
     });
-    report.control_plane = buildControlPlaneResult({ expected, expectedSha, ...waited });
+    let changedPaths = [];
+    if (!waited.reason && waited.deployment?.status === 'SKIPPED') {
+      const activeSha = waited.state?.instance?.latestDeployment?.meta?.commitHash;
+      if (/^[0-9a-f]{40}$/.test(activeSha ?? '')) {
+        changedPaths = changedPathsBetween({ fromSha: activeSha, toSha: expectedSha });
+      }
+    }
+    const binding = waited.reason ? {
+      activeDeployment: waited.deployment,
+      effectiveSha: expectedSha,
+      reason: waited.reason,
+      skippedChanges: [],
+      watchedSkippedChanges: [],
+    } : resolveDeploymentBinding({
+      expected,
+      expectedSha,
+      state: waited.state,
+      targetDeployment: waited.deployment,
+      changedPaths,
+    });
+    report.control_plane = buildControlPlaneResult({
+      expected,
+      expectedSha,
+      state: waited.state,
+      deployment: binding.activeDeployment,
+      requestedDeployment: waited.deployment,
+      effectiveSha: binding.effectiveSha,
+      reason: binding.reason,
+      skippedChanges: binding.skippedChanges,
+      watchedSkippedChanges: binding.watchedSkippedChanges,
+    });
     if (report.control_plane.status !== 'PASS') return report;
-    const probeInputs = await loadProbeInputs({ main: expectedSha, manifestCommit });
+    const effectiveManifestCommit = binding.effectiveSha === expectedSha
+      ? manifestCommit
+      : manifestCommitAt(binding.effectiveSha);
+    report.expected.effective_deployed_sha = binding.effectiveSha;
+    report.expected.effective_manifest_commit = effectiveManifestCommit;
+    const probeInputs = await loadProbeInputs({ main: binding.effectiveSha, manifestCommit: effectiveManifestCommit });
     report.public_probe = await probeProduction({
       origin: expected.publicOrigin,
       ...probeInputs,
