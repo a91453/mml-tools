@@ -137,7 +137,7 @@ export const STUDIO_MCP_TOOLS = [
   {
     name: 'studio_arrangement_suggest',
     title: '六角色候選建議',
-    description: '在 Source-Faithful Baseline 上執行既有聲部拆解與角色候選建議。這是建議，不是接受：PENDING 仍是 PENDING，本工具不會替你決定保留、移除或搬移。',
+    description: '在 Source-Faithful Baseline 上執行既有聲部拆解與角色候選建議。這是建議，不是接受：PENDING 仍是 PENDING，本工具不會替你決定保留、移除或搬移。當 role-less lanes 競爭同一角色或超過六角色容量時，回報 suggestion-only 的 7→6 merge diagnostics（無損空檔、完整同音覆蓋、碰撞／會需要截短丟音）；診斷不會自行合併、刪音、接受角色或通過任何 Gate。',
     inputSchema: {
       type: 'object',
       properties: { project_id: projectId, refresh: { type: 'boolean' } },
