@@ -36,6 +36,40 @@ const now = () => new Date().toISOString();
 // purpose: see the header. `id` is optional and generated when omitted.
 const CALLER_DECISION_KEYS = new Set(['id', 'type', 'target', 'fromRole', 'toRole', 'toRoles', 'reason', 'evidence', 'section', 'leadEvidence', 'metadata', 'acceptedBy', 'note']);
 
+const summarizeMergeDiagnostics = diagnostics => {
+  if (!diagnostics || typeof diagnostics !== 'object') return null;
+  return Object.freeze({
+    authority: diagnostics.authority ?? null,
+    pendingRoleGroups: Object.freeze((diagnostics.pendingRoleGroups ?? []).slice(0, 6).map(group => Object.freeze({
+      role: group.role ?? null,
+      laneIds: Object.freeze([...(group.laneIds ?? [])].slice(0, LIMITS.maxReviewRequestEventIds)),
+      status: group.status ?? null,
+      fullyLosslessTogether: group.fullyLosslessTogether === true,
+      unisonReviewCount: group.unisonReviewCount ?? 0,
+      collisionEventCount: group.collisionEventCount ?? 0,
+      leadReviewRequired: group.leadReviewRequired === true,
+      authority: group.authority ?? null,
+    }))),
+    overflowLanes: Object.freeze((diagnostics.overflowLanes ?? [])
+      .slice(0, LIMITS.maxReviewRequestEventIds)
+      .map(entry => Object.freeze({
+        laneId: entry.laneId ?? null,
+        sourceEventCount: (entry.sourceEventIds ?? []).length,
+        authority: entry.authority ?? null,
+        targets: Object.freeze((entry.targets ?? []).slice(0, 6).map(target => Object.freeze({
+          role: target.role ?? null,
+          losslessGapCount: target.losslessGapCount ?? 0,
+          unisonCoveredCount: target.unisonCoveredCount ?? 0,
+          wouldRequireTrimOrDropCount: target.wouldRequireTrimOrDropCount ?? 0,
+          fullyLossless: target.fullyLossless === true,
+          leadReviewRequired: target.leadReviewRequired === true,
+          authority: target.authority ?? null,
+        }))),
+      }))),
+    certifiesGates: Object.freeze([]),
+  });
+};
+
 export function createArrangementService({ canonical, projects, intake, store }) {
   // Keyed by the baseline AND the Published Canonical rules snapshot the
   // engines were loaded under: a suggestion is derived under one release, and
@@ -265,7 +299,7 @@ export function createArrangementService({ canonical, projects, intake, store })
         core3: suggestion.core3 ?? null,
         full6: suggestion.full6 ?? null,
         unassigned: suggestion.unassigned ?? null,
-        merge_diagnostics: suggestion.mergeDiagnostics ?? null,
+        merge_diagnostics: summarizeMergeDiagnostics(suggestion.mergeDiagnostics),
         unsupported_source_material: suggestion.unsupportedSourceMaterial ?? null,
         diagnostics: suggestion.diagnostics ?? [],
         bindings: {
