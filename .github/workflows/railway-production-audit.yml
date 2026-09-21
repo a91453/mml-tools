@@ -51,7 +51,6 @@ jobs:
       - uses: actions/checkout@v4
         with:
           fetch-depth: 0
-          persist-credentials: false
       - uses: actions/setup-node@v4
         with:
           node-version: '22'
@@ -80,7 +79,7 @@ jobs:
           PUSH_SHA: ${{ github.sha }}
           REQUESTED_SHA: ${{ inputs.expected_sha }}
         run: |
-          git fetch origin main --force
+          git fetch origin main:refs/remotes/origin/main --force
           expected_sha="$REQUESTED_SHA"
           if [ -z "$expected_sha" ] && [ "$EVENT_NAME" = "push" ]; then
             expected_sha="$PUSH_SHA"
