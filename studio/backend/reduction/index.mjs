@@ -942,13 +942,7 @@ export function planFinalReduction({
         }),
         suggestions: outcome === REDUCTION_OUTCOMES.PENDING && reasonCode === REDUCTION_REASON_CODES.ROLE_DECISION_REQUIRED
           ? suggestionsFor(event, capacityAfter, analysis)
-          : outcome === REDUCTION_OUTCOMES.OVERFLOW && reasonCode === REDUCTION_REASON_CODES.SIX_ROLE_CAPACITY_EXCEEDED
-            ? analyzeLegacyMergeLane({
-                sourceEvents: [event],
-                candidateEvents: candidate.events,
-                preferredRole: analysis?.roleByEventId?.get(event.id) ?? null,
-              }).targets
-            : Object.freeze([]),
+          : Object.freeze([]),
         percussion,
       });
     });
