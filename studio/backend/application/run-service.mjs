@@ -184,7 +184,7 @@ const summarizeAccounting = accounting => Object.freeze({
   manifestation_count: accounting.manifestationCount ?? null,
 });
 
-const summarizeLegacyMergeDiagnostics = diagnostics => {
+export const summarizeLegacyMergeDiagnostics = diagnostics => {
   const all = diagnostics ?? [];
   const lanes = all.slice(0, LIMITS.maxReviewRequestEventIds);
   return Object.freeze({
@@ -210,7 +210,7 @@ const summarizeLegacyMergeDiagnostics = diagnostics => {
   });
 };
 
-const summarizeArrangementMergeDiagnostics = diagnostics => {
+export const summarizeArrangementMergeDiagnostics = diagnostics => {
   if (!diagnostics || typeof diagnostics !== 'object') return null;
   return Object.freeze({
     authority: diagnostics.authority ?? null,
