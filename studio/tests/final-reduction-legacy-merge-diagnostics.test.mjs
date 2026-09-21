@@ -39,6 +39,34 @@ test('same-pitch coverage is visible but never converted into automatic omission
   assert.equal(report.permitsAutomaticOmission, false);
 });
 
+test('adjacent same-pitch targets jointly cover one source interval', () => {
+  const source = [note('overflow-1', null, 60, '0', '2')];
+  const candidate = [
+    ...source,
+    note('cover-a', 'Chord4', 60, '0', '1'),
+    note('cover-b', 'Chord4', 60, '1', '2'),
+  ];
+  const report = analyzeLegacyMergeLane({ sourceEvents: source, candidateEvents: candidate });
+  const chord4 = target(report, 'Chord4');
+  assert.equal(chord4.unisonCoveredCount, 1);
+  assert.equal(chord4.wouldRequireTrimOrDropCount, 0);
+  assert.deepEqual(chord4.eventDiagnostics[0].coveringEventIds, ['cover-a', 'cover-b']);
+});
+
+test('a gap inside adjacent-looking same-pitch targets is not full coverage', () => {
+  const source = [note('overflow-1', null, 60, '0', '2')];
+  const candidate = [
+    ...source,
+    note('cover-a', 'Chord4', 60, '0', '3/4'),
+    note('cover-b', 'Chord4', 60, '1', '2'),
+  ];
+  const report = analyzeLegacyMergeLane({ sourceEvents: source, candidateEvents: candidate });
+  const chord4 = target(report, 'Chord4');
+  assert.equal(chord4.unisonCoveredCount, 0);
+  assert.equal(chord4.wouldRequireTrimOrDropCount, 1);
+  assert.deepEqual(chord4.eventDiagnostics[0].coveringEventIds, []);
+});
+
 test('a covering unison does not hide a simultaneous different-pitch collision', () => {
   const source = [note('overflow-1', null, 60, '1', '2')];
   const candidate = [
