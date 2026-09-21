@@ -265,6 +265,7 @@ export function createArrangementService({ canonical, projects, intake, store })
         core3: suggestion.core3 ?? null,
         full6: suggestion.full6 ?? null,
         unassigned: suggestion.unassigned ?? null,
+        merge_diagnostics: suggestion.mergeDiagnostics ?? null,
         unsupported_source_material: suggestion.unsupportedSourceMaterial ?? null,
         diagnostics: suggestion.diagnostics ?? [],
         bindings: {
