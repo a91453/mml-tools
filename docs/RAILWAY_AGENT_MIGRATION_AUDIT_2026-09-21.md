@@ -37,6 +37,23 @@ Keeping these runtime resources does **not** require routine Railway Agent usage
 
 No resource was deleted or reconfigured during this audit.
 
+## Implementation checkpoint on this branch
+
+Completed without Railway Agent:
+
+- added `scripts/railway-production-audit.mjs`, a read-only Railway GraphQL + public HTTPS provenance verifier;
+- added `.github/workflows/railway-production-audit.yml`, which can run manually and automatically after production-deployable `main` path changes;
+- added `scripts/railway-production-config-apply.mjs` and a manual `production` environment workflow that can apply only an explicit allowlist of repository-desired ServiceInstance settings;
+- the write workflow cannot mutate variables/secrets, domains, volumes, source repo/branch, regions/replica scaling, or trigger a deployment;
+- added regression tests for token/error redaction, read-only GraphQL behavior, exact-SHA deployment binding, watch-pattern drift, effective-default normalization and the config-apply allowlist;
+- directly repaired the live production watch-pattern drift through the deterministic Railway service API: `/server/studio-agent-driver.mjs` and `/server/studio-agent-codex.mjs` are now present; no Railway Agent and no redeploy were used;
+- readback confirmed the existing successful deployment remained `5edd2414dbe73c892857fe375084af099fc0e05e`;
+- corrected the repository's stale volume observation from 500 MB to the current Railway control-plane readback of 5000 MB. No volume resize was performed.
+
+One external setup item remains before the new Actions can query/mutate Railway themselves: add a GitHub Actions secret named `RAILWAY_PROJECT_TOKEN` containing a **Railway project token scoped only to `mml-tools-allen / production`**. Do not use an account token. Automatic push audits deliberately warn-and-skip until the token exists; an explicitly dispatched audit/apply fails closed when it is absent.
+
+The apply workflow references the GitHub Environment `production`. Configure required reviewers on that Environment if approval-gated production writes are desired. The script-side confirmation and mutation allowlist remain enforced independently of Environment protection.
+
 ## Railway Agent work that should move completely
 
 | Current class of work | Replacement | Railway Agent needed afterward? |
