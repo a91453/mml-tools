@@ -28,29 +28,23 @@ const overlaps = (left, right) => f(left.start).cmp(right.end) < 0 && f(right.st
 const maxF = (a, b) => (f(a).cmp(b) >= 0 ? f(a) : f(b));
 const minF = (a, b) => (f(a).cmp(b) <= 0 ? f(a) : f(b));
 
-function samePitchCoverage(source, targets) {
+function samePitchCovered(source, targets) {
   const spans = targets
     .filter(target => Number(target.pitch) === Number(source.pitch) && overlaps(source, target))
     .map(target => Object.freeze({
-      id: target.id,
       start: maxF(source.start, target.start),
       end: minF(source.end, target.end),
     }))
     .filter(span => span.end.cmp(span.start) > 0)
-    .sort((left, right) => left.start.cmp(right.start) || left.end.cmp(right.end) || cmpStr(String(left.id), String(right.id)));
+    .sort((left, right) => left.start.cmp(right.start) || left.end.cmp(right.end));
 
   let cursor = f(source.start);
   for (const span of spans) {
-    if (span.start.cmp(cursor) > 0) return Object.freeze({ covered: false, eventIds: Object.freeze([]) });
+    if (span.start.cmp(cursor) > 0) return false;
     if (span.end.cmp(cursor) > 0) cursor = span.end;
-    if (cursor.cmp(source.end) >= 0) {
-      return Object.freeze({
-        covered: true,
-        eventIds: Object.freeze(spans.map(item => item.id).sort(cmpStr)),
-      });
-    }
+    if (cursor.cmp(source.end) >= 0) return true;
   }
-  return Object.freeze({ covered: false, eventIds: Object.freeze([]) });
+  return false;
 }
 
 function continuityDistance(source, targetEvents) {
@@ -69,17 +63,12 @@ function continuityDistance(source, targetEvents) {
 
 function inspectEvent(source, targetEvents) {
   const collisions = targetEvents.filter(target => overlaps(source, target));
-  const coverage = samePitchCoverage(source, collisions);
   const losslessGap = collisions.length === 0;
-  const unisonCovered = coverage.covered;
+  const unisonCovered = samePitchCovered(source, collisions);
   const differentPitchCollision = collisions.some(target => Number(target.pitch) !== Number(source.pitch));
   return Object.freeze({
-    eventId: source.id,
     losslessGap,
     unisonCovered,
-    collisionCount: collisions.length,
-    collisionEventIds: Object.freeze(collisions.map(event => event.id).sort(cmpStr)),
-    coveringEventIds: coverage.eventIds,
     continuityDistance: continuityDistance(source, targetEvents),
     // A union of adjacent/overlapping same-pitch notes can cover the source
     // without one target note doing so alone. That is a dedup review, not a
@@ -129,27 +118,39 @@ export function analyzeLegacyMergeLane({
   const candidate = notes(candidateEvents);
   const normalizedRoles = [...new Set((roles ?? DEFAULT_ROLES).filter(role => DEFAULT_ROLES.includes(role)))];
 
+  const rawSourceEventIds = new Set(source.flatMap(event => event.sourceEventIds ?? []));
+  const rawSourceIds = new Set(source.flatMap(event => event.sourceIds ?? []));
+
   const targets = normalizedRoles.map(role => {
     const targetEvents = candidate.filter(event => event.role === role && !sourceIds.has(event.id));
-    const eventDiagnostics = source.map(event => inspectEvent(event, targetEvents));
-    const distances = eventDiagnostics.map(item => item.continuityDistance).filter(Number.isFinite);
-    const losslessGapCount = eventDiagnostics.filter(item => item.losslessGap).length;
-    const unisonCoveredCount = eventDiagnostics.filter(item => item.unisonCovered).length;
-    const wouldRequireTrimOrDropCount = eventDiagnostics.filter(item => item.wouldRequireTrimOrDrop).length;
+    let losslessGapCount = 0;
+    let unisonCoveredCount = 0;
+    let wouldRequireTrimOrDropCount = 0;
+    let minimumContinuityDistance = null;
+    for (const event of source) {
+      const inspected = inspectEvent(event, targetEvents);
+      if (inspected.losslessGap) losslessGapCount += 1;
+      if (inspected.unisonCovered) unisonCoveredCount += 1;
+      if (inspected.wouldRequireTrimOrDrop) wouldRequireTrimOrDropCount += 1;
+      if (Number.isFinite(inspected.continuityDistance)
+        && (minimumContinuityDistance === null || inspected.continuityDistance < minimumContinuityDistance)) {
+        minimumContinuityDistance = inspected.continuityDistance;
+      }
+    }
     return Object.freeze({
       role,
       core3: CORE3.has(role),
       leadReviewRequired: role === 'Melody',
       preferredByRoleAnalysis: preferredRole === role,
-      sourceEventCount: source.length,
+      candidateEventCount: source.length,
+      sourceEventCount: rawSourceEventIds.size,
       targetEventCount: targetEvents.length,
       losslessGapCount,
       unisonCoveredCount,
       wouldRequireTrimOrDropCount,
       fullyLossless: source.length > 0 && losslessGapCount === source.length,
       requiresReviewerDecision: unisonCoveredCount > 0 || wouldRequireTrimOrDropCount > 0,
-      continuityDistance: distances.length ? Math.min(...distances) : null,
-      eventDiagnostics: Object.freeze(eventDiagnostics),
+      continuityDistance: minimumContinuityDistance,
       authority: 'SUGGESTION_ONLY',
     });
   }).sort((a, b) => compareRank(a, b, preferredRole));
@@ -157,14 +158,16 @@ export function analyzeLegacyMergeLane({
   return Object.freeze({
     schema: LEGACY_MERGE_DIAGNOSTIC_SCHEMA,
     authority: 'SUGGESTION_ONLY',
-    sourceEventIds: Object.freeze(source.map(event => event.id)),
+    candidateEventCount: source.length,
+    sourceEventCount: rawSourceEventIds.size,
+    sourceCount: rawSourceIds.size,
     preferredRole: DEFAULT_ROLES.includes(preferredRole) ? preferredRole : null,
     targets: Object.freeze(targets),
     certifiesGates: Object.freeze([]),
     mutatesCandidate: false,
     permitsAutomaticOmission: false,
     permitsAutomaticTruncation: false,
-    notice: 'Historical frontend merge heuristics were adapted as read-only diagnostics. A lossless gap is a candidate for reviewer redistribution; same-pitch coverage still needs an explicit evidence-backed decision; collisions remain unresolved rather than being trimmed or dropped.',
+    notice: 'Historical frontend merge heuristics were adapted as read-only lane-level diagnostics. Per-event collision ids are intentionally not persisted here; exact candidate/raw provenance remains in the lane and event ledgers. A lossless gap is a candidate for reviewer redistribution; same-pitch coverage still needs an explicit evidence-backed decision; collisions remain unresolved rather than being trimmed or dropped.',
   });
 }
 
