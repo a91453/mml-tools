@@ -44,15 +44,16 @@ No resource was deleted. During the implementation checkpoint below, only the pr
 Completed without Railway Agent:
 
 - added `scripts/railway-production-audit.mjs`, a read-only Railway GraphQL + public HTTPS provenance verifier;
-- added `.github/workflows/railway-production-audit.yml`, which can run manually and automatically after production-deployable `main` path changes;
+- added `.github/workflows/railway-production-audit.yml` as an explicit post-deploy/manual audit; it is intentionally **not** a `main push` check because production Railway has Wait for CI enabled and a check that waits for Railway would create a deployment cycle;
 - added `scripts/railway-production-config-apply.mjs` and a manual `production` environment workflow that can apply only an explicit allowlist of repository-desired ServiceInstance settings;
 - the write workflow cannot mutate variables/secrets, domains, volumes, source repo/branch, regions/replica scaling, or trigger a deployment;
 - added regression tests for token/error redaction, read-only GraphQL behavior, exact-SHA deployment binding, watch-pattern drift, effective-default normalization and the config-apply allowlist;
+- added sanitized, bounded FAILED/CRASHED deployment diagnostics for build/runtime logs, with no HTTP request logs or variable reads; the audit attaches them only when the matched deployment actually failed;
 - directly repaired the live production watch-pattern drift through the deterministic Railway service API: `/server/studio-agent-driver.mjs` and `/server/studio-agent-codex.mjs` are now present; no Railway Agent and no redeploy were used;
 - readback confirmed the existing successful deployment remained `5edd2414dbe73c892857fe375084af099fc0e05e`;
 - corrected the repository's stale volume observation from 500 MB to the current Railway control-plane readback of 5000 MB. No volume resize was performed.
 
-One external setup item remains before the new Actions can query/mutate Railway themselves: add a GitHub Actions secret named `RAILWAY_PROJECT_TOKEN` containing a **Railway project token scoped only to `mml-tools-allen / production`**. Do not use an account token. Automatic push audits deliberately warn-and-skip until the token exists; an explicitly dispatched audit/apply fails closed when it is absent.
+One external setup item remains before the new Actions can query/mutate Railway themselves: add a GitHub Actions secret named `RAILWAY_PROJECT_TOKEN` containing a **Railway project token scoped only to `mml-tools-allen / production`**. Do not use an account token. The explicitly dispatched audit/apply/diagnostics workflows fail closed when it is absent.
 
 The apply workflow references the GitHub Environment `production`. Configure required reviewers on that Environment if approval-gated production writes are desired. The script-side confirmation and mutation allowlist remain enforced independently of Environment protection.
 
@@ -103,8 +104,9 @@ Claude Code
   -> PR
   -> existing GitHub Actions CI
   -> merge to main
-  -> Railway native source deployment (or a small explicit deploy Action)
-  -> GitHub Action waits/polls deterministic deployment status
+  -> existing GitHub Actions CI
+  -> Railway Wait-for-CI releases the native source deployment
+  -> explicit post-deploy audit (or a future deployment-complete webhook trigger)
   -> health + provenance + config-drift probes
   -> evidence artifact / PR or commit status
 
@@ -148,11 +150,11 @@ Even outside included minutes, a few minutes of Linux runner time per deployment
 
 ## Implementation order
 
-1. Add read-only Railway inventory/config/deployment/probe scripts.
-2. Add an Actions drift/probe workflow with no write permission to Railway.
-3. Add protected manual deployment/config-apply workflow only for desired-state changes.
-4. Add deterministic log collection for failed deployments.
-5. Move failure analysis to Claude Code / normal PRs.
+1. **DONE on PR #51:** add read-only Railway inventory/config/deployment/probe scripts.
+2. **DONE on PR #51:** add an explicit post-deploy Actions drift/probe workflow; deliberately avoid a `main push` trigger because Railway Wait for CI would otherwise wait on a workflow that is itself waiting on Railway.
+3. **DONE on PR #51:** add protected manual config-apply workflow only for bounded desired-state changes; it never deploys.
+4. **DONE on PR #51:** add deterministic sanitized log collection for FAILED/CRASHED deployments.
+5. After merge/token setup, use the collected evidence for Claude Code / normal PR failure analysis; no Railway Agent is required for the normal path.
 6. After an observation period, set Railway Agent hard limit low and keep it as emergency fallback.
 7. Separately confirm and retire `studio-durable-isolated` and `charismatic-reverence` if they are no longer needed.
 
