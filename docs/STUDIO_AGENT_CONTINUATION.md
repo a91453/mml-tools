@@ -35,6 +35,9 @@ node railway/server.mjs
    接續且 run 未完成，會對同一 run 再次啟動 agent。
 5. 「停止 agent」中止模型推論並防止後續操作；已開始的 Studio 操作可能已完成，
    仍需讀回狀態。需要來源角色、Lead/Core3 或人工/實機證據時，agent 停止並說明缺項。
+6. role-less MIDI 的第一次 `ASSIGN_ROLE -> Melody` 可在不自填 `leadEvidence` 的情況下
+   產生明確標示 review-pending 的可逆候選，讓後續六軌／試聽／review 能繼續；這不是
+   Lead PASS。已有角色的 `MOVE_ROLE`、Lead demotion、Gate 3 與 Final 仍維持原門檻。
 
 啟動回應遺失時，同一分頁保存的 request key 會重用；重試回讀原任務，不開第二個
 agent 或歌曲 run。關閉分頁不會中止服務程序中的執行。服務重啟則顯示 interrupted，

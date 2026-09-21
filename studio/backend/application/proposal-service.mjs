@@ -469,12 +469,16 @@ export function createProposalService({ canonical, projects, store, operations, 
           // the evidence for its own proposal, which is precisely what
           // NEVER_AGENT_SETTLABLE says a proposal never does.
           //
-          // The move itself stays proposable. Without evidence the engine holds
-          // it PENDING, which is the honest state, and a reviewer supplies the
-          // citation through `applyDecisions` or `reviewLeadEvidence` -- the
-          // paths that already exist and already bind it to a named reviewer.
+          // The role decision itself stays proposable. Without reviewer
+          // Lead evidence, an existing-role MOVE_ROLE into Melody still stops
+          // at the Lead interlock. The one candidate-flow exception is an
+          // initial ASSIGN_ROLE from role-less source material into Melody:
+          // it may materialize a reversible review-pending candidate, but that
+          // is not Lead evidence and cannot satisfy Gate 3. A reviewer supplies
+          // the citation later through `applyDecisions` or
+          // `reviewLeadEvidence`, both candidate-bound paths.
           if (key === 'leadEvidence') {
-            fail(ERROR_CODES.INVALID_REQUEST, `${label}.decisions[${index}].leadEvidence must not be supplied by a proposal. A Lead evidence citation is a candidate-bound reviewer record: the shared Lead grader can check that it binds to a real baseline source identity, but not that anybody read the source, so an agent-authored one would move Gate 3 on the strength of its own assertion. Propose the move without it -- it stays PENDING, which is the honest state -- and let a reviewer supply the citation through applyDecisions or reviewLeadEvidence.`, { refusal: PROPOSAL_REFUSAL.REVIEWER_EVIDENCE_RECORD_SUPPLIED });
+            fail(ERROR_CODES.INVALID_REQUEST, `${label}.decisions[${index}].leadEvidence must not be supplied by a proposal. A Lead evidence citation is a candidate-bound reviewer record: the shared Lead grader can check that it binds to a real baseline source identity, but not that anybody read the source, so an agent-authored one would move Gate 3 on the strength of its own assertion. Propose the role decision without leadEvidence. An existing-role Lead move remains blocked by the Lead interlock; an initial role-less ASSIGN_ROLE -> Melody may only materialize a review-pending candidate. In both cases a reviewer must supply the citation through applyDecisions or reviewLeadEvidence before Gate 3 can PASS.`, { refusal: PROPOSAL_REFUSAL.REVIEWER_EVIDENCE_RECORD_SUPPLIED });
           }
         }
         return rebuildJson(entry, `${label}.decisions[${index}]`, budget);

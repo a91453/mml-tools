@@ -1427,12 +1427,16 @@ export function createRunService({ canonical, projects, store, operations, seria
       reportReference: 'suggestArrangement.pending',
       baselineId: run.baseline_id,
       missing: [
-        'An explicitly accepted arrangement decision set (KEEP / ASSIGN_ROLE / MOVE_ROLE / OMIT_FROM_SIX / DUPLICATE_WITH_JUSTIFICATION), each with a reason, evidence and the accepting reviewer. A move into or out of Melody additionally needs a complete leadEvidence record citing the baseline source identity. This run resolves no PENDING lane on a caller\'s behalf.',
+        'An explicitly accepted arrangement decision set (KEEP / ASSIGN_ROLE / MOVE_ROLE / OMIT_FROM_SIX / DUPLICATE_WITH_JUSTIFICATION), each with a reason, evidence and the accepting reviewer. MOVE_ROLE into or out of Melody still needs a complete leadEvidence record citing the baseline source identity. For role-less source material only, an initial ASSIGN_ROLE -> Melody may omit leadEvidence solely to materialize a reversible review-pending candidate; that assignment is not Lead evidence and Gate 3 remains PENDING until candidate-bound reviewer evidence is supplied. This run resolves no PENDING lane on a caller\'s behalf.',
         'Alternatively, name an existing candidate with target_candidate_id when starting, or adopt_candidate_id when resuming. A candidate is never selected for being the newest, so a project that already holds candidates does not make this step satisfied.',
       ],
       availableOperations: ['suggestArrangement', 'listBaselineEvents', 'applyDecisions', 'startRun.target_candidate_id'],
       invalidatedBy: ['baseline', 'canonical', 'decisions'],
-      detail: suggested === null ? null : { lane_count: suggested.lane_count ?? null, pending_lane_count: suggested.pending_lane_count ?? null },
+      detail: suggested === null ? null : {
+        lane_count: suggested.lane_count ?? null,
+        pending_lane_count: suggested.pending_lane_count ?? null,
+        roleless_melody_candidate_boundary: 'ASSIGN_ROLE_ONLY_REVIEW_PENDING',
+      },
     });
   };
 
@@ -1707,6 +1711,8 @@ export function createRunService({ canonical, projects, store, operations, seria
             detail: {
               revision_index: decisions.revision_index,
               decision_count: decisions.decision_count,
+              diagnostic_codes: [...new Set((decisions.diagnostics ?? []).map(item => item.code).filter(Boolean))].sort(),
+              review_pending: (decisions.diagnostics ?? []).some(item => item.code === 'ROLELESS_LEAD_ASSIGNMENT_REVIEW_PENDING'),
               notice: 'An application PASS certifies no acceptance gate. Every gate the decisions touched is re-opened for the new candidate.',
             },
           }),
