@@ -45,8 +45,8 @@
   },
   "volume": {
     "mountPath": "/data",
-    "sizeMB": 500,
-    "sizeNote": "500 MB as observed on the mounted volume (railway/deployment-target.json volumeSizeMB); an earlier copy of this file said 512."
+    "sizeMB": 5000,
+    "sizeNote": "5000 MB as read back from the Railway production control plane on 2026-09-21. This file is documentation-only; changing it does not resize the live volume."
   },
   "port": 3000,
   "requiredVariables_addedByCanonicalBootstrap": [
