@@ -4,7 +4,7 @@ import {
   analyzeLegacyMergeLane,
   LEGACY_MERGE_DIAGNOSTIC_SCHEMA,
   LEGACY_MERGE_DIAGNOSTIC_STATUS,
-} from '../backend/reduction/legacy-merge-diagnostics.mjs';
+} from '../backend/arrangement/merge-diagnostics.mjs';
 
 const note = (id, role, pitch, start, end) => ({ kind: 'note', id, role, pitch, start, end });
 const target = (report, role) => report.targets.find(entry => entry.role === role);
