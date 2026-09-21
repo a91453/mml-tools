@@ -7,8 +7,12 @@
 
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 
 import { ERROR_CODES, createStudioApplication } from '../backend/application/index.mjs';
+import { blobName } from '../backend/application/store.mjs';
 import { sixSourceVoices } from './fixtures/midi-fixtures.mjs';
 import {
   applyKeepOnlyCandidate,
@@ -151,6 +155,43 @@ test('a suggestion proposes roles and accepts nothing', async () => {
   assert.match(suggestion.bindings.baselineContentDigest, /^[0-9a-f]{64}$/);
   assert.match(suggestion.bindings.canonicalRulesSnapshotSha, /^[0-9a-f]{40}$/);
   assert.equal(suggestion.bindings.reviewedRevisionId, null);
+});
+
+test('a durable pre-upgrade suggestion cache cannot hide newly implemented G11-C diagnostics', async () => {
+  const directory = mkdtempSync(join(tmpdir(), 'mml-tools-suggestion-cache-'));
+  try {
+    const service = app({ dataDirectory: directory, durability: 'persistent' });
+    const project = (await service.createProject(OWNER, { title: 'Suggestion cache epoch' })).project;
+    await service.uploadAsset(OWNER, project.project_id, {
+      kind: 'official_midi', filename: 'official.mid', mediaType: 'audio/midi', bytes: sixSourceVoices(),
+    });
+    const { baseline } = await service.analyzeSources(OWNER, project.project_id);
+    const capabilities = await service.capabilities();
+
+    // This is the exact key used before the merge-diagnostics implementation
+    // versioned the cache. A durable deployment may still have such a blob.
+    const legacyKey = `suggestion:${project.project_id}:${baseline.baseline_id}:${capabilities.canonical.rules_snapshot_sha}`;
+    const stale = {
+      schema: 'mabinogi-mobile-mml-studio/role-candidate-arrangement@1',
+      lanes: [],
+      roles: {},
+      pending: [],
+      coverage: null,
+      core3: null,
+      full6: null,
+      unassigned: [],
+      unsupportedSourceMaterial: [],
+      diagnostics: [],
+    };
+    writeFileSync(join(directory, 'blobs', `${blobName(legacyKey)}.bin`), JSON.stringify(stale));
+
+    const { suggestion } = await service.suggestArrangement(OWNER, project.project_id);
+    assert.ok(suggestion.lane_count > 0, 'the stale legacy cache must not replace a freshly derived suggestion');
+    assert.equal(suggestion.merge_diagnostics.authority, 'SUGGESTION_ONLY');
+    assert.deepEqual(suggestion.merge_diagnostics.certifiesGates, []);
+  } finally {
+    rmSync(directory, { recursive: true, force: true });
+  }
 });
 
 // ─── decisions ──────────────────────────────────────────────────────────────
