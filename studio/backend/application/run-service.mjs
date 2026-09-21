@@ -194,7 +194,8 @@ export const summarizeLegacyMergeDiagnostics = diagnostics => {
     lanes: Object.freeze(lanes.map(entry => Object.freeze({
       lane_id: entry.laneId ?? null,
       preferred_role: entry.preferredRole ?? null,
-      source_event_count: (entry.sourceEventIds ?? []).length,
+      candidate_event_count: entry.candidateEventCount ?? 0,
+      source_event_count: entry.sourceEventCount ?? 0,
       authority: entry.authority ?? null,
       targets: Object.freeze((entry.targets ?? []).slice(0, 6).map(target => Object.freeze({
         role: target.role ?? null,
@@ -239,7 +240,8 @@ export const summarizeArrangementMergeDiagnostics = diagnostics => {
       .slice(0, LIMITS.maxReviewRequestEventIds)
       .map(entry => Object.freeze({
         lane_id: entry.laneId ?? null,
-        source_event_count: entry.sourceEventCount ?? (entry.sourceEventIds ?? []).length,
+        candidate_event_count: entry.candidateEventCount ?? 0,
+        source_event_count: entry.sourceEventCount ?? 0,
         authority: entry.authority ?? null,
         targets: Object.freeze((entry.targets ?? []).slice(0, 6).map(target => Object.freeze({
           role: target.role ?? null,
