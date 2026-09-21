@@ -72,7 +72,11 @@ Two cases are measured:
 
 Every result is `authority: SUGGESTION_ONLY`. It does not resolve a role,
 does not merge/delete/shorten any event, does not turn heuristic Lead evidence
-into positive Lead evidence, and certifies no gate. A role-less Melody
+into positive Lead evidence, and certifies no gate. The merge diagnostic itself
+stores only lane-level counts and role-level aggregate measurements; it does
+**not** persist per-event collision/candidate id arrays. Exact candidate-event
+and raw source-event identities remain in the ordinary `lanes` / `ledger`
+provenance that the diagnostic's `laneId` points back to. A role-less Melody
 assignment that later materializes a candidate remains subject to the separate
 candidate-bound Lead review boundary in the accepted-decision application stage.
 
