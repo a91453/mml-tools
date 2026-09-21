@@ -224,6 +224,9 @@ export const summarizeArrangementMergeDiagnostics = diagnostics => {
       .slice(0, 6)
       .map(group => Object.freeze({
         role: group.role ?? null,
+        lane_total: group.laneTotal ?? (group.laneIds ?? []).length,
+        lane_returned: group.laneReturned ?? Math.min((group.laneIds ?? []).length, LIMITS.maxReviewRequestEventIds),
+        lane_ids_truncated: group.laneIdsTruncated === true,
         lane_ids: Object.freeze([...(group.laneIds ?? [])].slice(0, LIMITS.maxReviewRequestEventIds)),
         status: group.status ?? null,
         fully_lossless_together: group.fullyLosslessTogether === true,
