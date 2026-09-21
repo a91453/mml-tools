@@ -209,6 +209,55 @@ test('decisionful overflow diagnostics compare remaining overflow against the pr
     'remaining overflow must see the interval newly occupied by this plan rather than the pre-decision candidate');
 });
 
+test('decisionful overflow diagnostics compare against the proposed candidate, not the stale parent', () => {
+  const source = sixRoleBaseline();
+  const extra = [
+    createCanonicalNoteEvent({
+      id: 'overflow-moved',
+      pitch: 52,
+      start: '4',
+      end: '5',
+      sourceIds: [FIXTURE_SOURCE_ID],
+      sourceEventIds: [`${FIXTURE_SOURCE_ID}#overflow-moved`],
+      role: null,
+      voice: 'overflow-a',
+      volume: null,
+    }),
+    createCanonicalNoteEvent({
+      id: 'overflow-remaining',
+      pitch: 54,
+      start: '4',
+      end: '5',
+      sourceIds: [FIXTURE_SOURCE_ID],
+      sourceEventIds: [`${FIXTURE_SOURCE_ID}#overflow-remaining`],
+      role: null,
+      voice: 'overflow-b',
+      volume: null,
+    }),
+  ];
+  const baseline = createCanonicalProject({ ...source, events: [...source.events, ...extra] });
+  const move = reductionDecision({
+    id: 'move-first-overflow',
+    action: 'REDISTRIBUTE',
+    eventIds: ['overflow-moved'],
+    toRole: 'Chord5',
+    reason: 'The reviewer places the first late overflow event into Chord5; the second remains overflow for comparison.',
+  });
+  const plan = planFinalReduction({ baseline, decisions: [move], acceptedBy: 'test-reviewer' });
+
+  const remaining = plan.items.find(item => item.baselineEventId === 'overflow-remaining');
+  assert.equal(remaining.outcome, REDUCTION_OUTCOMES.OVERFLOW);
+  const diagnostic = plan.legacyMergeDiagnostics.find(entry =>
+    entry.candidateEventCount === 1
+    && entry.targets.some(target => target.role === 'Chord5' && target.wouldRequireTrimOrDropCount === 1));
+  assert.ok(diagnostic,
+    'the remaining overflow must see the newly redistributed 4..5 Chord5 event in the proposed candidate');
+  const chord5 = diagnostic.targets.find(target => target.role === 'Chord5');
+  assert.equal(chord5.fullyLossless, false);
+  assert.equal(chord5.losslessGapCount, 0);
+  assert.equal(chord5.wouldRequireTrimOrDropCount, 1);
+});
+
 test('unresolved role material stays PENDING with suggestions that decide nothing', () => {
   const baseline = baselineWithUnassignedRole();
   const plan = planFinalReduction({ baseline, acceptedBy: 'test-reviewer' });
