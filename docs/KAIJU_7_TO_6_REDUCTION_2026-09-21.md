@@ -32,8 +32,18 @@ Status: **IMPLEMENTATION READY / REAL SONG RERUN REQUIRES PERSISTENT SONG ASSETS
 
 ## 新的 7→6 診斷
 
-`studio/backend/reduction/legacy-merge-diagnostics.mjs` 對第七 lane／OVERFLOW
-逐目標角色回報：
+共用診斷核心位於 `studio/backend/arrangement/merge-diagnostics.mjs`，同時供
+G11-C role-less candidate 與 G12 overflow review 使用。
+
+G11-C 先處理真正發生在 candidate 前的問題：
+
+- 同一 proposed role 的 competing PENDING lanes 彼此比較；
+- 若完全時間互斥，回報 `LOSSLESS_SHARED_ROLE_CANDIDATE`；
+- 完整同音重疊維持 `UNISON_DEDUP_REVIEW`；
+- 不同音碰撞維持 `COLLISION_REVIEW`；
+- Melody group 另外標示 `leadReviewRequired`，不把無損 packing 當成 Lead 證據。
+
+G12 再對仍然落在第七 lane／OVERFLOW 的素材逐目標角色回報：
 
 - `losslessGapCount`: 原事件時值可原封不動塞入該角色；
 - `unisonCoveredCount`: 同音且完整覆蓋；只代表可審查的 dedup 候選，不能自動 OMIT；
@@ -79,10 +89,11 @@ MIDI、M4A bytes 或完整 1,545-event payload。
 
 ```
 來源決策
-→ role-less provisional assignment
-→ G12 7→6 merge diagnostics
+→ G11-C role-less 7→6 merge diagnostics
+→ reviewer 接受 provisional ASSIGN_ROLE / KEEP（Melody 仍 review-pending）
+→ G11-D six-role review-pending candidate
+→ G12 remaining overflow merge diagnostics
 → reviewer 接受 event-level REDISTRIBUTE / KEEP / OVERFLOW
-→ six-role review-pending candidate
 → technical readback
 → candidate review (Lead / Core3 / Full6 / regression)
 → Mobile adaptation review
