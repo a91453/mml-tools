@@ -38,9 +38,21 @@ If the requested operation cannot be completed without Railway Agent, STOP that 
 
 ## Production runtime fail-closed
 
-The production Railway entrypoint refuses to start if `NODE_ENV=production` is combined with either `MML_AGENT_CODEX` or `MML_AGENT_MODEL`. This prevents a future Dashboard variable edit from silently enabling the optional external Codex continuation path in the production Studio service.
+Railway Agent remains prohibited in production. The production entrypoint also continues to refuse `MML_AGENT_CODEX`: production does not spawn Codex CLI or another model executable, so a Dashboard variable cannot turn the Railway container into an unbounded child-process agent host.
 
-Development/test code may still exercise the bounded external-agent implementation explicitly, but the deployed production entrypoint cannot enable it through environment configuration.
+Production Studio continuation is **disabled by default**. The only server-side model path the entrypoint accepts is the dedicated, non-Railway provider:
+
+- `MML_AGENT_PROVIDER=openai-responses`;
+- an explicit `MML_AGENT_MODEL`;
+- a runtime `OPENAI_API_KEY`.
+
+That path sends a single text request to the OpenAI Responses API with `store:false`, no provider-native tools, and a strict JSON Schema for exactly one Studio action. The existing Studio agent driver then independently validates project/run/candidate identity, MCP schema, the allowlist and the Phase 2 proposal/review policy before any action can execute. A provider response is never treated as a native tool result, reviewer confirmation, gate PASS or in-game evidence.
+
+Cost control is enforced in code, not by prompt text. Production has one concurrent agent run and hard ceilings of 8 model decisions per dispatch, 12 provider calls per song run, 24 provider calls per UTC day, 393216 input bytes per call, 1200 output tokens per call and 60000 ms per call. Defaults are lower (6 / 10 / 16 / 262144 / 900 / 60000), and environment variables may lower or select values only within those ceilings. The daily counter and per-run call count live in the persistent agent-dispatch store, so a service restart does not reset them. A failed provider request is not retried automatically.
+
+This production provider is **not** Railway Agent and does not weaken any Railway-Agent prohibition above. Railway Agent's account-level hard usage limit should remain `$0`. OpenAI API usage is a separate operator-configured cost surface; the repository bounds request count and request size, but it does not claim a fixed dollar ceiling because that depends on the selected model's current pricing.
+
+Development/test code may still exercise the local `MML_AGENT_CODEX` path explicitly. That local path is not accepted by the production entrypoint.
 
 ## Billing enforcement boundary
 
