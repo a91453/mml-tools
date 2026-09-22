@@ -732,3 +732,21 @@ test('no emitter diagnostic message claims a duration is unrepresentable', () =>
     }
   }
 });
+
+test('a long silence between two notes is written exactly as consecutive rests; a long sustain still is not', () => {
+  // An enrichment role that plays one note, rests for 96 beats and plays again.
+  // The rest has no attack and no tie, so the tie-segment cap on a sustain search
+  // is no reason to refuse it: whole-note rests plus an exact remainder express
+  // it exactly. The 100-beat *note* above keeps failing closed under the same cap.
+  const result = emit([note({ start: 0, end: 1 }), note({ start: 97, end: 98 })]);
+  assert.equal(result.status, 'PASS', JSON.stringify(result.diagnostics.map(item => item.code)));
+  const track = readTrack(result);
+  assert.deepEqual(track.events.map(event => [event.start, event.end]), [['0', '1'], ['97', '98']], 'two attacks, the silence between them exact');
+  assert.equal(melody(result).mml.includes('&'), false, 'no tie is introduced');
+  // A half-beat remainder (179/2 beats of silence) stays exact too.
+  const odd = emit([note({ start: 0, end: 1 }), note({ start: '181/2', end: '183/2' })]);
+  assert.equal(odd.status, 'PASS');
+  assert.equal(f(readTrack(odd).events[1].start).cmp(new F(181, 2)), 0);
+  const sustain = emit([note({ start: 0, end: 100 })]);
+  assert.equal(sustain.status, 'FAIL', 'a sustain is still bounded by the tie-segment cap');
+});

@@ -2257,6 +2257,8 @@ export function createRunService({ canonical, projects, store, operations, seria
               // than an earlier candidate's MML.
               artifact_id: result.artifact_id,
               candidate_id: result.candidate_id ?? candidateId,
+              song_state: delivered ? (result.song_state ?? null) : null,
+              mml_sha256: delivered ? (result.mml_sha256 ?? null) : null,
             },
           }),
           runChanges: {
@@ -2326,6 +2328,10 @@ export function createRunService({ canonical, projects, store, operations, seria
           machine_delivery: run.machine_delivery ?? null,
           warnings: [...(run.warnings ?? [])],
           emit_status: finalizeReceipt?.detail?.emit_status ?? null,
+          // The song state the delivered Final was filed under, read from the
+          // finalize receipt; null when no Final was delivered.
+          song_state: finalizeReceipt?.detail?.song_state ?? null,
+          final_mml_sha256: finalizeReceipt?.detail?.mml_sha256 ?? null,
           canonical: { ...run.canonical },
           implementation: { ...run.implementation },
           separation_notice: RUN_SEPARATION_NOTICE,

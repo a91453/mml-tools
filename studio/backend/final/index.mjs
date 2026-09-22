@@ -31,7 +31,7 @@ export {
 
 // Per-song readiness. Remains the readiness authority; the emitter never
 // substitutes for it.
-export { evaluateProjectReadiness } from './readiness.mjs';
+export { evaluateProjectReadiness, SONG_STATE } from './readiness.mjs';
 export {
   evaluateMachineDelivery,
   machineDeliveryAuthority,

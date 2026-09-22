@@ -42,6 +42,7 @@ import {
   PLAN_FAILURE,
   buildTokenLattice,
   planDuration,
+  planRestDuration,
   createPlanState,
   defaultLengthSwitchCost,
   plainDuration,
@@ -344,9 +345,15 @@ function serializeItems(role, items, lattice, facts, options) {
   const segmentCostsFor = item => (item.kind === 'rest'
     ? [REST_SEGMENT_COST]
     : [...new Set(spellingsFor.get(item.pitch).map(spelling => spelling.text.length + 1))]);
+  // Rests go through `planRestDuration`: a silence has no attack and no tie, so a
+  // long one may be written as consecutive whole-note rests plus an exact
+  // remainder. Notes keep the ordinary tie-bounded search.
   const planFor = (item, candidate, perSegmentCost) => {
-    const key = `${item.duration.toString()}|${candidate}|${perSegmentCost}`;
-    if (!plans.has(key)) plans.set(key, planDuration(item.duration, candidate, lattice, planState, perSegmentCost));
+    const key = `${item.kind === 'rest' ? 'rest' : 'note'}|${item.duration.toString()}|${candidate}|${perSegmentCost}`;
+    if (!plans.has(key)) {
+      const planner = item.kind === 'rest' ? planRestDuration : planDuration;
+      plans.set(key, planner(item.duration, candidate, lattice, planState, perSegmentCost));
+    }
     return plans.get(key);
   };
 
@@ -934,6 +941,11 @@ function buildResult(status, combinedMml, roles, diagnostics, microGap, roundTri
       rejectedIntervalKeys: microGap?.rejectedIntervalKeys ?? Object.freeze([]),
       blockedIntervalKeys: microGap?.blockedIntervalKeys ?? Object.freeze([]),
       policyConformant: microGap?.policy?.conformant ?? null,
+      blockers: microGap?.blockers ?? Object.freeze([]),
+      // Layer B / C counts: releases Final cannot express, and recorded
+      // evidence-backed release representations that re-verified (or did not).
+      releaseTiming: microGap?.releaseTiming ?? null,
+      releaseRepresentationRecords: microGap?.releaseRepresentationRecords ?? null,
       // Which candidate the three lists above describe. After a successful
       // repair this is the repaired project, never the input.
       gradedProjectId: repair?.applied === true ? repair.result?.repairedProjectId ?? null : null,

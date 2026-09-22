@@ -149,6 +149,9 @@ export function createFinalService({ canonical, projects, review, store }) {
         ...identity,
         artifact_id: null,
         mml: null,
+        mml_sha256: null,
+        // Refused before emission: whatever else is true, nothing was validated.
+        song_state: extra?.readiness?.songState ?? 'CANDIDATE',
         emit_status: null,
         technical_timing_repair: { requested: technicalTimingRepair, applied: false },
         final_bar: barInputs,
@@ -319,6 +322,7 @@ export function createFinalService({ canonical, projects, review, store }) {
         ? { run: false, reason: passed ? 'the candidate declares no meter events, so the emitted MML could not be re-validated' : 'nothing was emitted' }
         : { run: true, ok: mmlValidation.ok, error_count: mmlValidation.errors.length };
 
+      const provenance = await canonical.provenance();
       const artifact = {
         schema: FINAL_ARTIFACT_SCHEMA,
         type: 'final_mml',
@@ -326,6 +330,24 @@ export function createFinalService({ canonical, projects, review, store }) {
         created_at: now(),
         emit_status: emitStatus,
         mml: delivered ? emitted.combinedMml : null,
+        // The identity of the exact paste-ready string, for readback binding and
+        // for whoever pastes it later.
+        mml_sha256: delivered ? emittedDigest : null,
+        // ACCEPTANCE_CRITERIA song state, computed by readiness from the gates.
+        // A delivered Final is VALIDATED by construction: delivery requires every
+        // required non-game gate PASS/N-A under the loaded Published Canonical.
+        song_state: finalReadiness.songState,
+        delivery: {
+          delivered,
+          song_state: finalReadiness.songState,
+          validated_under: { canonical_version: provenance.canonical_version ?? null, rules_snapshot_sha: provenance.rules_snapshot_sha ?? null },
+          // Evidence that comes after delivery. It never blocks delivery and is
+          // never supplied by this service.
+          post_delivery_evidence: [
+            { axis: 'listening_feedback', status: 'NOT_YET_PROVIDED', blocks_delivery: false, supplied_by: 'the user, after listening to the delivered MML' },
+            { axis: 'in_game', status: 'PENDING', blocks_delivery: false, supplied_by: 'the user or a controlled target-client test only' },
+          ],
+        },
         roles: emitted.roles,
         character_counts: emitted.characterCounts,
         micro_gap: emitted.microGap,
@@ -348,9 +370,9 @@ export function createFinalService({ canonical, projects, review, store }) {
         remaining_pending_gates: Object.entries(emitGates)
           .filter(([name, status]) => name !== 'notice' && status !== 'PASS' && status !== 'N/A')
           .map(([name]) => name),
-        canonical: await canonical.provenance(),
+        canonical: provenance,
         emitter_notice: emitted.notice,
-        acceptance_notice: 'A Final artifact is an implementation result. Producing it does not make the song VALIDATED and never implies IN_GAME_ACCEPTED.',
+        acceptance_notice: 'A Final artifact is filed only for a candidate whose required non-game gates all passed under the loaded Published Canonical, which is what song_state VALIDATED records; the artifact itself certifies no gate. It never implies IN_GAME_ACCEPTED: listening feedback and in-game acceptance are later evidence that only the user or a controlled target-client test supplies.',
       };
 
       // No artifact is filed unless the Final was actually delivered. A stored
@@ -369,6 +391,8 @@ export function createFinalService({ canonical, projects, review, store }) {
         ...identity,
         artifact_id: artifactId,
         mml: artifact.mml,
+        mml_sha256: artifact.mml_sha256,
+        song_state: finalReadiness.songState,
         emit_status: emitStatus,
         technical_timing_repair: repairReport,
         final_bar: artifact.final_bar,

@@ -273,9 +273,21 @@ export function buildCapabilities({ canonical, storage, jobs, transports = [] })
       version: 1,
       profile_schema: 'mml-studio/mobile-adaptation-profile@1',
       operations: freeze(['planMobileAdaptation', 'applyMobileAdaptation']),
-      supported: freeze(['uniform-role-octave-shift', 'relative-volume-offset', 'explicit-default-volume']),
-      notice: 'Requires a cited target profile and a candidate with assigned roles. Preview before apply; stale plans are refused. Atomic, reversible derived revision, with fresh review. Does not certify Gate 8, infer audibility, map MIDI velocity or reduce to six roles: six-role reduction is the separate final_six_role_reduction stage, which runs before this one.',
-      refuses: freeze(['pitch or volume change on an event a Lead evidence record still binds, including one only the revision lineage records; a Melody assigned from a role-less Source-Faithful Baseline is such an event, so Melody is not adaptable on a Raw MIDI project in v1']),
+      supported: freeze(['uniform-role-octave-shift', 'relative-volume-offset', 'explicit-default-volume', 'evidence-gated-release-representation']),
+      notice: 'Register and volume adaptation require a cited target profile and a candidate with assigned roles. Release representation needs no profile: a note release no admitted Final token can express moves to an adjacent 1/64 grid point only under a decision whose evidence a human reviewer attests from an independent primary source; the source release stays on the baseline and on the event record. Preview before apply; stale plans are refused. Atomic, reversible derived revision, with fresh review. Does not certify Gate 8, infer audibility, map MIDI velocity or reduce to six roles: six-role reduction is the separate final_six_role_reduction stage, which runs before this one.',
+      release_representation: freeze({
+        record_schema: 'mml-studio/release-representation-record@1',
+        decision_schema: 'mml-studio/release-representation-decision@1',
+        representations: freeze(['EXTEND_TO_NEXT_GRID', 'TRUNCATE_TO_PREVIOUS_GRID']),
+        admissible_evidence: freeze(['primary-symbolic (independent official score/MIDI asset, human-attested)', 'primary-audio (original recording, human-attested, audio_basis listening)']),
+        recorded_not_counted: freeze(['agent or tool attestation', 'third-party score/MIDI/MML', 'source encoding pattern', 'audio metrics', 'tool output', 'accepted-prior (no record to bind in this build)']),
+        profile_required: false,
+      }),
+      refuses: freeze([
+        'pitch or volume change on an event a Lead evidence record still binds, including one only the revision lineage records; a Melody assigned from a role-less Source-Faithful Baseline is such an event, so Melody is not adaptable on a Raw MIDI project in v1 (release representation is not a pitch or volume change and is allowed on such events)',
+        'moving an onset, adding a tie, merging a repeated attack, removing a rest, or moving a release that Final can already express',
+        'moving a release whose sub-grid timing a keep decision claims is musically meaningful (Final UNSUPPORTED instead)',
+      ]),
     }),
 
     final_six_role_reduction: freeze({

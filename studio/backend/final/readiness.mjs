@@ -5,6 +5,14 @@ import { evaluateMachineDelivery } from './delivery-evaluator.mjs';
 
 const PASS_LIKE = new Set(['PASS', 'N/A']);
 
+// The song-level states ACCEPTANCE_CRITERIA names. They are read out of the gates
+// below; nothing sets one directly.
+export const SONG_STATE = Object.freeze({
+  CANDIDATE: 'CANDIDATE',
+  VALIDATED: 'VALIDATED',
+  IN_GAME_ACCEPTED: 'IN_GAME_ACCEPTED',
+});
+
 function normalizeStatus(value, fallback = 'PENDING') {
   if (typeof value === 'string') return value;
   if (value && typeof value.status === 'string') return value.status;
@@ -512,10 +520,16 @@ export function evaluateProjectReadiness({
   const candidateReady = preGameBlocking.length === 0;
   const finalAccepted = candidateReady && gates.inGameAcceptance.status === 'PASS';
   const machineDelivery = evaluateMachineDelivery(gates, { canonical: EFFECTIVE_RULESET.canonical });
+  // ACCEPTANCE_CRITERIA "Final state vocabulary", stated rather than left for a
+  // caller to reassemble from two booleans: VALIDATED is every required
+  // non-game gate PASS/N-A; IN_GAME_ACCEPTED additionally needs the in-game gate,
+  // which only the user or a controlled target-client test records.
+  const songState = finalAccepted ? SONG_STATE.IN_GAME_ACCEPTED : candidateReady ? SONG_STATE.VALIDATED : SONG_STATE.CANDIDATE;
 
   return Object.freeze({
     candidateReady,
     finalAccepted,
+    songState,
     machineDeliveryReady: machineDelivery.ready,
     automatedLifecycle: machineDelivery.lifecycle,
     machineDelivery,

@@ -335,6 +335,48 @@ export function planDuration(duration, defaultLength, lattice, state, perSegment
   };
 }
 
+/**
+ * Exact decomposition of a *rest* of `duration`.
+ *
+ * A rest carries no attack and is written as consecutive `r` tokens with no tie
+ * between them, so the tie-segment cap that bounds a note's sustain search is a
+ * search bound here, not a musical one: a long silence in an enrichment role
+ * (tens of beats) fails it although repeated whole-note rests express it
+ * exactly. When — and only when — the ordinary search reports
+ * `search-policy-limit`, the silence is written as whole-note rests followed by
+ * the ordinary exact plan for a remainder of at least one and less than two
+ * whole notes. The sum is still exact (`planExactDuration` recomputes it), no
+ * duration is approximated, a budget exhaustion is never retried, and notes are
+ * never planned this way.
+ */
+export function planRestDuration(duration, defaultLength, lattice, state, perSegmentCost = 0) {
+  const direct = planDuration(duration, defaultLength, lattice, state, perSegmentCost);
+  if (direct.ok || direct.reason !== PLAN_FAILURE.SEARCH_POLICY_LIMIT) return direct;
+  const whole = lattice.tokens.find(token => token.dots === 0 && token.denominator === 1);
+  if (!whole) return direct;
+  const target = f(duration);
+  const wholeBeats = whole.duration;
+  // Whole-note chunks leave a remainder in [one whole note, two whole notes).
+  const units = target.div(wholeBeats);
+  const floorUnits = units.n / units.d;
+  const chunks = floorUnits - 1n;
+  if (chunks < 1n) return direct;
+  const remainder = target.sub(new F(chunks, 1n).mul(wholeBeats));
+  const tail = planDuration(remainder, defaultLength, lattice, state, perSegmentCost);
+  if (!tail.ok) return direct;
+  const spelled = spellDuration(wholeBeats, defaultLength, lattice);
+  if (!spelled) return direct;
+  const chunk = { suffix: spelled.suffix, cost: spelled.cost, denominator: whole.denominator, dots: 0, lengthClass: whole.lengthClass, onGrid: whole.onGrid };
+  const count = Number(chunks);
+  const plan = {
+    segments: [...Array.from({ length: count }, () => ({ ...chunk })), ...tail.plan.segments],
+    cost: count * (chunk.cost + perSegmentCost) + tail.plan.cost,
+    restChunks: count,
+  };
+  if (planExactDuration(plan).cmp(target) !== 0) return direct;
+  return { ok: true, reason: null, plan };
+}
+
 export function createPlanState({ budget, maxTieSegments, maxOffGridSegments = MAX_OFF_GRID_SEGMENTS }) {
   return {
     budget,
