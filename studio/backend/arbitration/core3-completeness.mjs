@@ -125,9 +125,16 @@ export const CORE3_COMPLETENESS_BLOCKERS = Object.freeze({
 export function evaluateCore3Completeness({ candidate, decompositions = null, reviewed = false } = {}) {
   if (!candidate?.events) throw Error('Core3 completeness requires a candidate Canonical project');
 
+  // Gate 4 grades the candidate's ACCEPTED arrangement. When a decision gave one
+  // source voice different roles in different sections, a source-voice lane
+  // would carry several declared roles and read as competing evidence, so the
+  // evaluator would grade an arrangement nobody accepted (e.g. Chord1 "absent"
+  // while the candidate holds Chord1 material). Role-consistent lanes keep each
+  // event in exactly one lane with its own role; voices with a single role, and
+  // role-less projects, decompose exactly as before.
   let core3;
   try {
-    core3 = suggestRoleCandidates(candidate, decompositions ? { decompositions } : {}).core3;
+    core3 = suggestRoleCandidates(candidate, decompositions ? { decompositions } : { roleConsistentLanes: true }).core3;
   } catch (error) {
     // An arrangement the role evaluator cannot read is not a complete one. It
     // fails closed and says why, rather than taking the caller down or passing.

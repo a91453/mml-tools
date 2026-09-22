@@ -638,3 +638,94 @@ test('an absent Lead stays FAIL however much review evidence is recorded', async
   assert.ok(after.blockers.includes('core3Completeness'));
   assert.ok((await service.finalize(OWNER, projectId, { candidateId })).blockers.includes('core3Completeness'));
 });
+
+// ─── one source voice, several accepted roles ───────────────────────────────
+//
+// An accepted G11-D decision may give one source voice different roles in
+// different sections: a piano right hand that is Melody in the verse and Chord1
+// in the interlude. The candidate's own arrangement is what Gate 4 grades.
+// Decomposed by source voice alone, that right-hand lane carries two declared
+// roles and reads as competing evidence, and the evaluator graded an
+// arrangement nobody accepted -- Chord1 "absent" and Core3 empty while the
+// candidate held Chord1 and Melody material (observed on a real 1,545-note
+// piano MIDI whose 298 accepted section decisions assigned 1,419 events to
+// Core3 and were graded as `core3EventCount: 0`).
+
+const voiced = ({ id, pitch, start, end, role, voice }) => createCanonicalNoteEvent({
+  id, pitch, start: String(start), end: String(end), role, voice, volume: 8, sourceIds: ['official'], sourceEventIds: [`official#${id}`],
+});
+
+// Right hand, two concurrent lines. The Lead passes from the upper line
+// (beats 0-4) to the lower line (beats 4-8), and the accepted Chord1 answer goes
+// the other way, so each right-hand lane carries both Melody and Chord1 -- the
+// shape of a piano-MIDI section decision. Left hand: bass.
+const SHARED_VOICE_CORE3 = [
+  voiced({ id: 'u1', pitch: 76, start: 0, end: 2, role: 'Melody', voice: 'piano-rh' }),
+  voiced({ id: 'u2', pitch: 77, start: 2, end: 4, role: 'Melody', voice: 'piano-rh' }),
+  voiced({ id: 'u3', pitch: 72, start: 4, end: 6, role: 'Chord1', voice: 'piano-rh' }),
+  voiced({ id: 'u4', pitch: 71, start: 6, end: 8, role: 'Chord1', voice: 'piano-rh' }),
+  voiced({ id: 'l1', pitch: 64, start: 0, end: 2, role: 'Chord1', voice: 'piano-rh' }),
+  voiced({ id: 'l2', pitch: 65, start: 2, end: 4, role: 'Chord1', voice: 'piano-rh' }),
+  voiced({ id: 'l3', pitch: 67, start: 4, end: 6, role: 'Melody', voice: 'piano-rh' }),
+  voiced({ id: 'l4', pitch: 69, start: 6, end: 8, role: 'Melody', voice: 'piano-rh' }),
+  voiced({ id: 'b1', pitch: 48, start: 0, end: 4, role: 'Chord2', voice: 'piano-lh' }),
+  voiced({ id: 'b2', pitch: 43, start: 4, end: 8, role: 'Chord2', voice: 'piano-lh' }),
+];
+
+test('a source voice with several accepted roles is graded as the accepted arrangement', async () => {
+  const { splitProjectSourceVoices } = await import('../backend/arrangement/voice-split.mjs');
+  const candidate = project('fixture:candidate', SHARED_VOICE_CORE3);
+
+  // The fixture really exercises the defect: by source voice alone the
+  // right-hand lanes mix Melody and Chord1 and the accepted Core3 is not seen.
+  const voiceOnly = evaluateCore3Completeness({ candidate, decompositions: splitProjectSourceVoices(candidate) });
+  assert.notEqual(voiceOnly.status, 'PASS');
+  assert.ok(voiceOnly.conflicts.some(conflict => conflict.code === 'COMPETING_LEAD_CANDIDATES'));
+  assert.ok(voiceOnly.sourceCoverage.core3EventCount < SHARED_VOICE_CORE3.length, 'voice-only lanes lose the accepted Core3');
+
+  const report = evaluateCore3Completeness({ candidate });
+  assert.equal(report.evaluation, 'COMPLETE');
+  assert.equal(report.status, 'PASS', 'the accepted Melody + Chord1 + Chord2 is complete');
+  assert.deepEqual([...report.absentFunctions], []);
+  assert.deepEqual([...report.conflicts], [], 'no role competes with itself');
+  assert.equal(report.sourceCoverage.core3EventCount, SHARED_VOICE_CORE3.length,
+    'every accepted Core3 event is in the graded Core3');
+});
+
+test('role-consistent lanes still raise essential material left in enrichment', () => {
+  // The same right hand, but its beat 4-8 line was accepted as Chord3 while the
+  // vocal and the bass rest: Core3 falls silent where the source sounds. The
+  // fix must not hide that -- it is exactly what Gate 4 exists to catch.
+  const events = [
+    voiced({ id: 'r1', pitch: 72, start: 0, end: 2, role: 'Melody', voice: 'piano-rh' }),
+    voiced({ id: 'r2', pitch: 74, start: 2, end: 4, role: 'Melody', voice: 'piano-rh' }),
+    voiced({ id: 'r3', pitch: 76, start: 4, end: 6, role: 'Chord3', voice: 'piano-rh' }),
+    voiced({ id: 'r4', pitch: 77, start: 6, end: 7, role: 'Melody', voice: 'piano-rh' }),
+    voiced({ id: 'h1', pitch: 64, start: 0, end: 4, role: 'Chord1', voice: 'piano-mid' }),
+    voiced({ id: 'h2', pitch: 65, start: 6, end: 7, role: 'Chord1', voice: 'piano-mid' }),
+    voiced({ id: 'b1', pitch: 48, start: 0, end: 4, role: 'Chord2', voice: 'piano-lh' }),
+    voiced({ id: 'b2', pitch: 43, start: 6, end: 7, role: 'Chord2', voice: 'piano-lh' }),
+  ];
+  const report = evaluateCore3Completeness({ candidate: project('fixture:candidate', events) });
+  assert.equal(report.status, 'PENDING');
+  assert.deepEqual([...report.blockers], [CORE3_COMPLETENESS_BLOCKERS.ENRICHMENT_DEPENDENCE_UNRESOLVED]);
+  assert.equal(report.provenEssentialMisplaced, true);
+  assert.deepEqual([...report.essentialEventIdsOutsideCore3], ['r3']);
+});
+
+test('voices with a single role, and role-less projects, decompose exactly as before', async () => {
+  const { splitProjectSourceVoices, splitProjectRoleConsistentVoices } = await import('../backend/arrangement/voice-split.mjs');
+  const roleless = MELODY_ONLY.map(event => ({ ...event, role: null }));
+  for (const [label, events] of Object.entries({ 'one role per voice': FULL_CORE3, 'role-less baseline': roleless })) {
+    const candidate = { ...project('fixture:candidate', FULL_CORE3), events };
+    assert.deepEqual(splitProjectRoleConsistentVoices(candidate), splitProjectSourceVoices(candidate), label);
+  }
+  // A mixed voice is split by role and nothing else: every event survives in
+  // exactly one lane, with its own role.
+  const mixed = project('fixture:candidate', SHARED_VOICE_CORE3);
+  const lanes = splitProjectRoleConsistentVoices(mixed).flatMap(decomposition => decomposition.lanes);
+  const placed = lanes.flatMap(lane => lane.notes.map(span => span.eventId));
+  assert.deepEqual([...new Set(placed)].sort(), SHARED_VOICE_CORE3.map(event => event.id).sort());
+  const roleOf = new Map(SHARED_VOICE_CORE3.map(event => [event.id, event.role]));
+  for (const lane of lanes) assert.equal(new Set(lane.notes.map(span => roleOf.get(span.eventId))).size, 1);
+});

@@ -670,6 +670,43 @@ export function splitProjectSourceVoices(project, options = {}) {
     .map(([voice, events]) => splitCanonicalVoice(events, { ...options, sourceVoice: voice })));
 }
 
+// The same source-voice decomposition, for a candidate whose roles are already
+// assigned. An accepted decision may give one source voice different roles in
+// different sections (a piano right hand that is Melody in the verse and Chord1
+// in an interlude). Decomposed by source voice alone, such a lane carries two
+// declared roles, reads as competing evidence, and the candidate's own accepted
+// arrangement is never seen by a role-level evaluator. Here a voice is split
+// further by assigned role ONLY when its events carry more than one role; a
+// voice with a single role (or none) decomposes exactly as
+// `splitProjectSourceVoices`, lane ids included. Nothing is reassigned, merged,
+// quantized or deleted: every event stays in exactly one lane with its own role.
+export const ROLE_CONSISTENT_VOICE_SEPARATOR = '|role:';
+
+export function splitProjectRoleConsistentVoices(project, options = {}) {
+  if (!project || !Array.isArray(project.events)) throw Error('project.events must be an array');
+  const voices = new Map();
+  for (const event of project.events) {
+    if (event?.kind !== 'note') continue;
+    const voice = event.voice ?? 'voice:null';
+    if (!voices.has(voice)) voices.set(voice, []);
+    voices.get(voice).push(event);
+  }
+  const groups = [];
+  for (const [voice, events] of voices) {
+    const roles = new Set(events.map(event => event.role ?? null));
+    if (roles.size <= 1) {
+      groups.push([voice, events]);
+      continue;
+    }
+    for (const role of roles) {
+      groups.push([`${voice}${ROLE_CONSISTENT_VOICE_SEPARATOR}${role ?? 'unassigned'}`, events.filter(event => (event.role ?? null) === role)]);
+    }
+  }
+  return Object.freeze(groups
+    .sort(([a], [b]) => cmpId(a, b))
+    .map(([voice, events]) => splitCanonicalVoice(events, { ...options, sourceVoice: voice })));
+}
+
 export const VOICE_SPLIT_STATUS = Object.freeze({
   sourceEventCoverage: 'lossless',
   exactCanonicalTiming: true,
