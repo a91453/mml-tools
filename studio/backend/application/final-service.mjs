@@ -30,6 +30,7 @@
 import { ERROR_CODES, GATE_STATUS, OPERATION_STATUS, fail, requireString } from './contracts.mjs';
 import { sha256Of } from './store.mjs';
 import { gatesFrom } from './review-service.mjs';
+import { migrateMachineDeliveryState } from './machine-delivery-migration.mjs';
 
 const now = () => new Date().toISOString();
 const encoder = new TextEncoder();
@@ -408,7 +409,11 @@ export function createFinalService({ canonical, projects, review, store }) {
       }
       for (const record of projects.list(owner)) {
         const body = store.getJson(artifactKey(record.project_id, artifactId));
-        if (body) return Object.freeze(body);
+        if (body) {
+          if (body.type !== 'final_mml') return Object.freeze(body);
+          const migrated = migrateMachineDeliveryState(body, { canonical: body.canonical ?? null });
+          return Object.freeze(migrated.record);
+        }
       }
       return fail(ERROR_CODES.ARTIFACT_NOT_FOUND, 'Unknown artifact', { artifact_id: artifactId });
     },
