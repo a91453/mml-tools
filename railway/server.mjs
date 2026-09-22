@@ -117,6 +117,19 @@ export function parsePublicOrigin(env = process.env) {
   return `https://${domain}`;
 }
 
+export function productionAgentConfiguration(env = process.env) {
+  const production = env.NODE_ENV === 'production';
+  const executable = env.MML_AGENT_CODEX ?? null;
+  const model = env.MML_AGENT_MODEL ?? null;
+  if (production && (executable || model)) {
+    throw Error('External model runner is prohibited in production; remove MML_AGENT_CODEX and MML_AGENT_MODEL');
+  }
+  return {
+    agentCodexExecutable: production ? null : executable,
+    agentModel: production ? null : model,
+  };
+}
+
 export function createApplication(options) {
   const auth = createAuth({ ...options, allowedRedirectHosts: options.allowedRedirectHosts ?? [...DEFAULT_REDIRECT_HOSTS] });
   // Constructing the service performs no Canonical load and touches no engine:
@@ -259,8 +272,7 @@ if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) 
     // only claimed when the operator declares the mount is persistent.
     studioDataDirectory: process.env.MML_STUDIO_DATA_DIR ?? null,
     studioDurability: process.env.MML_STUDIO_DURABILITY ?? 'unknown',
-    agentCodexExecutable: process.env.MML_AGENT_CODEX ?? null,
-    agentModel: process.env.MML_AGENT_MODEL ?? null,
+    ...productionAgentConfiguration(process.env),
     allowedRedirectHosts: parseRedirectHosts(process.env),
     allowLoopbackRedirects: parseLoopbackSetting(process.env),
   });

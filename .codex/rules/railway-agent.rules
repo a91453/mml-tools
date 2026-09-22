@@ -1,0 +1,53 @@
+# Railway Agent is disabled for this repository.
+# Codex loads repo-local rules when the project .codex layer is trusted.
+
+prefix_rule(
+    pattern = ["railway", "agent"],
+    decision = "forbidden",
+    justification = "Railway Agent is prohibited for mml-tools. Use deterministic Railway API/CLI operations, GitHub Actions, or owner Dashboard steps instead.",
+    match = [
+        "railway agent",
+        "railway agent -p status",
+        "railway agent --list",
+    ],
+    not_match = [
+        "railway status",
+        "railway logs",
+        "railway usage",
+    ],
+)
+
+prefix_rule(
+    pattern = ["npx", "railway", "agent"],
+    decision = "forbidden",
+    justification = "Do not invoke Railway Agent through npx. Use deterministic Railway operations instead.",
+    match = [
+        "npx railway agent",
+        "npx railway agent -p status",
+    ],
+    not_match = [
+        "npx railway status",
+    ],
+)
+
+
+# GitHub Copilot is also prohibited as a delegated/secondary agent.
+prefix_rule(
+    pattern = ["gh", "copilot"],
+    decision = "forbidden",
+    justification = "Do not delegate mml-tools work to GitHub Copilot. Keep work in the primary agent and deterministic tools.",
+    match = [
+        "gh copilot explain status",
+        "gh copilot suggest command",
+    ],
+)
+
+prefix_rule(
+    pattern = ["copilot"],
+    decision = "forbidden",
+    justification = "GitHub Copilot CLI is prohibited as a secondary agent for mml-tools.",
+    match = [
+        "copilot",
+        "copilot -p status",
+    ],
+)

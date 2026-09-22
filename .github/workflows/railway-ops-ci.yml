@@ -4,6 +4,13 @@ on:
   push:
     branches: [main]
     paths:
+      - 'AGENTS.md'
+      - 'CLAUDE.md'
+      - '.claude/settings.json'
+      - '.codex/rules/railway-agent.rules'
+      - '.github/copilot-instructions.md'
+      - 'docs/RAILWAY_AGENT_POLICY.md'
+      - 'tests/railway-agent-policy.test.mjs'
       - 'scripts/railway-production-audit.mjs'
       - 'scripts/railway-production-config-apply.mjs'
       - 'scripts/railway-deployment-diagnostics.mjs'
@@ -19,6 +26,13 @@ on:
       - 'docs/RAILWAY_AGENT_MIGRATION_AUDIT_2026-09-21.md'
   pull_request:
     paths:
+      - 'AGENTS.md'
+      - 'CLAUDE.md'
+      - '.claude/settings.json'
+      - '.codex/rules/railway-agent.rules'
+      - '.github/copilot-instructions.md'
+      - 'docs/RAILWAY_AGENT_POLICY.md'
+      - 'tests/railway-agent-policy.test.mjs'
       - 'scripts/railway-production-audit.mjs'
       - 'scripts/railway-production-config-apply.mjs'
       - 'scripts/railway-deployment-diagnostics.mjs'
@@ -55,7 +69,8 @@ jobs:
           node --test \
             tests/railway-production-audit.test.mjs \
             tests/railway-production-config-apply.test.mjs \
-            tests/railway-deployment-diagnostics.test.mjs
+            tests/railway-deployment-diagnostics.test.mjs \
+            tests/railway-agent-policy.test.mjs
       - name: Validate Railway JSON references
         run: |
           node -e "JSON.parse(require('node:fs').readFileSync('railway/service-settings.json','utf8')); JSON.parse(require('node:fs').readFileSync('railway/deployment-target.json','utf8'))"

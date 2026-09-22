@@ -5,7 +5,7 @@ import { mkdtemp, readFile, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { once } from 'node:events';
-import { createApplication, createHttpServer } from '../railway/server.mjs';
+import { createApplication, createHttpServer, productionAgentConfiguration } from '../railway/server.mjs';
 
 const origin = 'https://mml.example';
 const password = 'SYNTHETIC_TEST_PASSWORD_ONLY_01234567890123456789';
@@ -396,4 +396,28 @@ test('the deployment image still runs the Canonical build gate', async () => {
 
   assert.match(dockerfile, /canonical-probe\.sh/, 'the build must prove the bootstrap outcome');
   assert.match(probe, /exit 1/, 'the probe must be able to fail the build');
+});
+
+
+test('production runtime refuses external agent environment variables', () => {
+  assert.deepEqual(productionAgentConfiguration({ NODE_ENV: 'production' }), {
+    agentCodexExecutable: null,
+    agentModel: null,
+  });
+  assert.throws(
+    () => productionAgentConfiguration({ NODE_ENV: 'production', MML_AGENT_CODEX: '/usr/local/bin/codex' }),
+    /prohibited in production/,
+  );
+  assert.throws(
+    () => productionAgentConfiguration({ NODE_ENV: 'production', MML_AGENT_MODEL: 'example-model' }),
+    /prohibited in production/,
+  );
+  assert.deepEqual(productionAgentConfiguration({
+    NODE_ENV: 'development',
+    MML_AGENT_CODEX: '/usr/local/bin/codex',
+    MML_AGENT_MODEL: 'example-model',
+  }), {
+    agentCodexExecutable: '/usr/local/bin/codex',
+    agentModel: 'example-model',
+  });
 });
