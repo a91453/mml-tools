@@ -22,8 +22,11 @@ jobs:
       - uses: actions/checkout@v4
         with:
           fetch-depth: 0
-      - name: Enforce Railway Agent prohibition
-        run: node --test tests/railway-agent-policy.test.mjs
+      - name: Enforce repository CI guard policies
+        run: |
+          node --test \
+            tests/railway-agent-policy.test.mjs \
+            tests/ci-artifact-upload-policy.test.mjs
       - name: Classify Railway-only changes
         id: paths
         shell: bash
