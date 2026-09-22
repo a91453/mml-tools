@@ -32,6 +32,13 @@ test('cross-agent Railway Agent policy entry points are present', () => {
   assert.match(agents, /Claude Code/i);
 });
 
+test('Codex forbids Railway Agent CLI dispatch', () => {
+  const rules = read('.codex/rules/railway-agent.rules');
+  assert.match(rules, /pattern\s*=\s*\["railway",\s*"agent"\]/);
+  assert.match(rules, /pattern\s*=\s*\["npx",\s*"railway",\s*"agent"\]/);
+  assert.equal((rules.match(/decision\s*=\s*"forbidden"/g) ?? []).length, 2);
+});
+
 test('Claude Code denies Railway Agent MCP and CLI surfaces', () => {
   const settings = JSON.parse(read('.claude/settings.json'));
   const deny = settings?.permissions?.deny;
