@@ -18,6 +18,19 @@ This audit separates three concerns that were previously easy to conflate:
 
 The migration target is Railway **Agent work**, not necessarily Railway **runtime hosting**.
 
+## Retirement verification checkpoint — 2026-09-22
+
+Before deleting any migration-only Railway resource, the durable Studio rollback path was re-verified against `ops/permanent/README.md`, `ops/permanent/MIGRATION_RESULT.md`, and the live Railway inventory.
+
+- Production rollback targets `studio-web-permanent` service `311e2f06-bad4-415c-b020-d52e1a6bf064`, historical deployment `f9a9bd99-4809-4a3b-8612-07b96c196d4a`, and production volume `fba8d8a3-0c88-4f9b-b2a4-54a772217388`.
+- The historical cache used for rollback is retained on the production `/studio-cache` volume; rollback does not reference the isolated service or isolated volume.
+- `studio-release-artifacts` bucket `e3ff79a7-f493-4436-894d-b166dfb97ab9` is the durable recovery source and is explicitly independent of both production and isolated volumes.
+- The operations runbook states that no isolated/temporary service URL is a permanent runtime source.
+- Therefore `studio-durable-isolated` service `2343a428-d442-4c3d-99cc-a3c2d690578d` and its dedicated volume `a75fd368-2dcc-4e4f-8637-f242d3c2738d` are not required for production rollback or durable recovery.
+- `charismatic-reverence` project `181279f2-d244-4ced-9a74-2474b923ab58` has no domains, variables, or volumes, shows zero CPU/RAM usage over the last 24 hours, and its only service continues to fail deployments from `main`; no repository reference identifies it as an intended runtime.
+
+This checkpoint authorizes only the migration-resource retirement described above. It does **not** authorize deletion of `studio-web-permanent`, its production volume, the durable release bucket, Git history/assets, or historical rollback evidence.
+
 ## Observed live Railway inventory
 
 ### Keep under the current architecture
