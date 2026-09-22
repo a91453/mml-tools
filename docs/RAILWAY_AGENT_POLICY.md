@@ -36,6 +36,12 @@ Use deterministic mechanisms instead:
 
 If the requested operation cannot be completed without Railway Agent, STOP that part of the operation and hand it to the owner with the exact Dashboard steps. Do not ask Railway Agent how to do it.
 
+## Production runtime fail-closed
+
+The production Railway entrypoint refuses to start if `NODE_ENV=production` is combined with either `MML_AGENT_CODEX` or `MML_AGENT_MODEL`. This prevents a future Dashboard variable edit from silently enabling the optional external Codex continuation path in the production Studio service.
+
+Development/test code may still exercise the bounded external-agent implementation explicitly, but the deployed production entrypoint cannot enable it through environment configuration.
+
 ## Billing enforcement boundary
 
 Repository instructions can constrain agents that load this repository, but they cannot technically prevent an external ChatGPT connector, browser session, or other client from invoking Railway Agent if that client ignores repository instructions.
