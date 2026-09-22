@@ -35,12 +35,43 @@ export function checkDispatchAction(action, context) {
   return args;
 }
 
-export function createAgentDriver({ application, decide = null, directory = null, maxSteps = 12 }) {
+export function createAgentDriver({ application, decide = null, directory = null, maxSteps = 12,
+  maxCallsPerRun = 24, maxCallsPerDay = 96, maxConcurrentRuns = 2, now = () => new Date() }) {
   if (!Number.isInteger(maxSteps) || maxSteps < 1 || maxSteps > 30) throw Error('Invalid agent step limit');
+  if (!Number.isInteger(maxCallsPerRun) || maxCallsPerRun < 1 || maxCallsPerRun > 100) throw Error('Invalid per-run inference limit');
+  if (!Number.isInteger(maxCallsPerDay) || maxCallsPerDay < 1 || maxCallsPerDay > 1000) throw Error('Invalid daily inference limit');
+  if (!Number.isInteger(maxConcurrentRuns) || maxConcurrentRuns < 1 || maxConcurrentRuns > 8) throw Error('Invalid agent concurrency limit');
+  if (typeof now !== 'function') throw Error('Invalid agent clock');
   const store = createStore({ directory, durability: directory ? 'persistent' : 'ephemeral', maxBytes: 16 * 1024 * 1024 });
   const active = new Map();
+  const limits = Object.freeze({ max_steps_per_dispatch: maxSteps, max_calls_per_run: maxCallsPerRun,
+    max_calls_per_day: maxCallsPerDay, max_concurrent_runs: maxConcurrentRuns });
+  const budgetKey = 'agent:inference-budget:v1';
   const keyOf = (owner, projectId, runId) => `agent:${fingerprint([owner, projectId, runId])}`;
-  const write = (key, task) => { task.updated_at = new Date().toISOString(); store.putJson(key, task); };
+  const write = (key, task) => { task.updated_at = now().toISOString(); store.putJson(key, task); };
+  const claimInference = (key, task) => {
+    if ((task.inference_calls ?? 0) >= maxCallsPerRun) {
+      task.state = 'budget_exhausted';
+      task.reason = `Stopped at the ${maxCallsPerRun}-call per-run inference budget. Inspect progress before explicitly continuing another way.`;
+      write(key, task);
+      return false;
+    }
+    const day = now().toISOString().slice(0, 10);
+    let daily = store.getJson(budgetKey);
+    if (!daily || daily.day !== day || !Number.isSafeInteger(daily.calls) || daily.calls < 0) daily = { day, calls: 0 };
+    if (daily.calls >= maxCallsPerDay) {
+      task.state = 'budget_exhausted';
+      task.reason = `Stopped at the ${maxCallsPerDay}-call daily host inference budget. No paid request was made for this step.`;
+      write(key, task);
+      return false;
+    }
+    daily.calls += 1;
+    store.putJson(budgetKey, daily);
+    task.inference_calls = (task.inference_calls ?? 0) + 1;
+    task.daily_budget = { day, calls: daily.calls, limit: maxCallsPerDay };
+    write(key, task);
+    return true;
+  };
   const get = key => {
     const task = store.getJson(key);
     if (task?.state === 'running' && !active.has(key)) return { ...task, state: 'interrupted', reason: 'Agent host stopped. Read the run and proposals before explicitly restarting.' };
@@ -64,6 +95,7 @@ export function createAgentDriver({ application, decide = null, directory = null
           actor: AGENT_ACTOR, run: status, targets, tools: AGENT_TOOLS,
           rules: rules.PUBLISHED_CANONICAL?.documents ?? null,
           authorized_proposal_ids: task.proposal_ids, previous: lastResult };
+        if (!claimInference(key, task)) return;
         const action = await decide(context, { signal });
         if (signal.aborted) { task.state = 'stopped'; return; }
         const args = checkDispatchAction(action, context);
@@ -100,6 +132,7 @@ export function createAgentDriver({ application, decide = null, directory = null
   }
   return {
     enabled: Boolean(decide),
+    limits,
     async status(owner, projectId, runId) {
       await application.getRun(owner, projectId, runId); // authorization before task lookup
       return { enabled: Boolean(decide), actor: AGENT_ACTOR, task: get(keyOf(owner, projectId, runId)) };
@@ -116,12 +149,13 @@ export function createAgentDriver({ application, decide = null, directory = null
         return { enabled: true, task: old, replayed: true };
       }
       if (active.has(key)) return { enabled: true, task: old, replayed: true };
-      if (active.size >= 2) invalid('Agent host is busy; at most two runs may execute concurrently');
+      if (active.size >= maxConcurrentRuns) invalid(`Agent host is busy; at most ${maxConcurrentRuns} run(s) may execute concurrently`);
       if (old?.pending_action) invalid('An action result is uncertain; inspect and reconcile it before another dispatch');
       if (status.run.revision !== input.expected_run_revision || status.staleness?.length || status.run.pending_step || status.run.needs_reconciliation) invalid('Read the current run before dispatching');
       const task = { state: 'running', idempotency_key: input.idempotency_key, authorized_revision: input.expected_run_revision,
         authorization: input.authorization, observed_revision: status.run.revision, project_id: projectId, run_id: runId,
-        actor: AGENT_ACTOR, proposal_ids: old?.proposal_ids ?? [], steps: 0, pending_action: null, reason: 'Agent started' };
+        actor: AGENT_ACTOR, proposal_ids: old?.proposal_ids ?? [], steps: 0, inference_calls: old?.inference_calls ?? 0,
+        pending_action: null, reason: 'Agent started' };
       const abort = new AbortController(); active.set(key, { abort }); write(key, task);
       const promise = drive(owner, projectId, runId, key, task, abort.signal).catch(() => { active.delete(key); });
       active.get(key).promise = promise;
@@ -141,7 +175,7 @@ export function createAgentDriver({ application, decide = null, directory = null
           || input.inspected !== true || typeof input.reason !== 'string' || input.reason.trim().length < 10 || input.reason.length > 1000) invalid('Record the inspected run/proposal outcome before clearing the agent interruption');
       if (active.has(key) || !task?.pending_action || task.pending_action.fingerprint !== input.pending_action_fingerprint
           || current.run.revision !== input.expected_run_revision || current.run.pending_step || current.run.needs_reconciliation || current.staleness?.length) invalid('Interruption or run changed; inspect the current records');
-      task.reconciliation = { owner, at: new Date().toISOString(), action: task.pending_action, reason: input.reason.trim(), run_revision: current.run.revision };
+      task.reconciliation = { owner, at: now().toISOString(), action: task.pending_action, reason: input.reason.trim(), run_revision: current.run.revision };
       task.pending_action = null; task.state = 'stopped'; task.reason = 'Operator inspected the uncertain action. Explicit dispatch may now continue.';
       write(key, task); return { enabled: Boolean(decide), task };
     },
