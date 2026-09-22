@@ -29,3 +29,25 @@ prefix_rule(
         "npx railway status",
     ],
 )
+
+
+# GitHub Copilot is also prohibited as a delegated/secondary agent.
+prefix_rule(
+    pattern = ["gh", "copilot"],
+    decision = "forbidden",
+    justification = "Do not delegate mml-tools work to GitHub Copilot. Keep work in the primary agent and deterministic tools.",
+    match = [
+        "gh copilot explain status",
+        "gh copilot suggest command",
+    ],
+)
+
+prefix_rule(
+    pattern = ["copilot"],
+    decision = "forbidden",
+    justification = "GitHub Copilot CLI is prohibited as a secondary agent for mml-tools.",
+    match = [
+        "copilot",
+        "copilot -p status",
+    ],
+)
