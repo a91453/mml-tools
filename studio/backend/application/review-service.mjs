@@ -120,7 +120,7 @@ export function createReviewService(dependencies) {
       return Object.freeze({
         evidence: Object.freeze(evidence), replayed: result.replayed,
         report_sha256: result.entry.report_sha256,
-        notice: 'An explicit evidence revision is not a gate result. Original reports and warnings remain in review.audio.history. Review/finalize recompute from the selected report; no symbolic event, confirmation, Lead review or in-game result was authored.',
+        notice: 'An explicit evidence revision is not a gate result and establishes no exact pitch truth. Original reports and warnings remain in review.audio.history. Review/finalize recompute from the selected report; no symbolic event, confirmation, Lead review or in-game result was authored.',
       });
     },
     async review(owner, projectId, input = {}) {
