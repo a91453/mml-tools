@@ -99,24 +99,33 @@ function describeBoundaries(candidate) {
   return sorted(boundaries);
 }
 
-export async function auditMicroTiming({ workDir, eventPaths, decisionsPath }) {
+/**
+ * Rebuild a candidate from service read exports in an isolated throwaway store.
+ * Shared by the micro-timing audit and the Lead review queue.
+ */
+export async function reconstructFromExports({ workDir, eventPaths, decisionsPath, owner = OWNER }) {
   if (existsSync(workDir)) throw Error(`${workDir} already exists; use a new isolated directory.`);
   mkdirSync(workDir, { recursive: true });
   const events = loadBaselineEvents(eventPaths);
   const proposalFile = readJson(decisionsPath);
   const proposal = proposalFile.proposal ?? proposalFile;
   const app = createStudioApplication({ dataDirectory: join(workDir, 'store'), durability: 'persistent' });
-  const { project } = await app.createProject(OWNER, { title: 'isolated micro-timing audit' });
+  const { project } = await app.createProject(owner, { title: 'isolated reconstruction from read exports' });
   const exported = canonicalProjectFromExport(events);
-  const upload = await app.uploadAsset(OWNER, project.project_id, { kind: 'canonical_project', filename: 'baseline.json', bytes: Buffer.from(JSON.stringify(exported)), mediaType: 'application/json' });
-  await app.analyzeSources(OWNER, project.project_id, { assetIds: [(upload.asset ?? upload).asset_id], meterText: '' });
-  await app.suggestArrangement(OWNER, project.project_id, {});
-  const applied = await app.applyDecisions(OWNER, project.project_id, { decisions: proposal.action.decisions, acceptedBy: proposal.resolution?.accepted_by ?? null });
+  const upload = await app.uploadAsset(owner, project.project_id, { kind: 'canonical_project', filename: 'baseline.json', bytes: Buffer.from(JSON.stringify(exported)), mediaType: 'application/json' });
+  await app.analyzeSources(owner, project.project_id, { assetIds: [(upload.asset ?? upload).asset_id], meterText: '' });
+  await app.suggestArrangement(owner, project.project_id, {});
+  const applied = await app.applyDecisions(owner, project.project_id, { decisions: proposal.action.decisions, acceptedBy: proposal.resolution?.accepted_by ?? null });
   const candidateId = applied.decisions?.candidate_id;
   if (!candidateId) throw Error('decision application produced no candidate');
   const store = createStore({ directory: join(workDir, 'store'), durability: 'persistent' });
   const candidate = store.getJson(`application:${project.project_id}:${candidateId}`).candidate;
-  const review = await app.reviewCandidate(OWNER, project.project_id, { candidateId });
+  return { app, owner, projectId: project.project_id, candidateId, candidate, store, events, proposal };
+}
+
+export async function auditMicroTiming({ workDir, eventPaths, decisionsPath }) {
+  const { app, projectId, candidateId, candidate, events, proposal } = await reconstructFromExports({ workDir, eventPaths, decisionsPath });
+  const review = await app.reviewCandidate(OWNER, projectId, { candidateId });
   const gate = review.review.readiness.gates.microTiming;
   const gateText = JSON.stringify(gate);
   const unknownText = JSON.stringify(gate.unknownIntervals);

@@ -1,0 +1,27 @@
+{
+  "schema": "kaiju-final-remediation-lead-authority@1",
+  "notice": "Grading of the 174 production Lead evidence reviews on a byte-faithful local reproduction, main vs this branch. Counts only; no reviewer verdict, no gate result, no Studio write.",
+  "inputs": {
+    "lead_evidence_reviews_value_sha256": "2646aab8136316c8af8ea41f78c8da6240155af8fd04d2f5dccb2105cac6ba23",
+    "lead_evidence_reviews_utf16_units": 325017,
+    "stored_reviews": 174,
+    "production_candidate_review_report_sha256": "278a0442ac710c93ce3a3791386a4f980f0eaa944378b704e30f84da0021c43d",
+    "local_lead_context_digest_equals_production": true
+  },
+  "main_ae15e5f": { "lead_promotion": { "PASS": 174, "PENDING": 395 }, "matches_production_figures": true },
+  "branch_after_checkpoint_B": {
+    "lead_promotion": { "PASS": 0, "PENDING": 569 },
+    "stored_reviews_retained": 174,
+    "counted_as_reviewer_evidence": 0,
+    "by_authority": { "UNATTESTED_LEGACY_NOT_REVIEWER_EVIDENCE": 174 }
+  },
+  "classification_of_569_lead_decisions": {
+    "sufficiently-source-supported": 0,
+    "human-confirmed": 0,
+    "weak-machine-evidence": 150,
+    "f0-or-pitch-class-only": 3,
+    "audio-locator-only": 0,
+    "contradictory-evidence": 21,
+    "unresolved-missing-evidence": 395
+  }
+}

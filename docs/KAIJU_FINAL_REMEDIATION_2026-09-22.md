@@ -133,3 +133,81 @@ suites: 450/450 pass unchanged.
 | Axis | Before | After checkpoint A |
 | --- | --- | --- |
 | microTiming (Published v1) | PENDING, 1,282 UNKNOWN, cause undocumented | **PENDING** (unchanged, correct); cause proven; scope corrected to 1,544 off-grid releases; Canonical decision required and drafted as an unpublished candidate |
+
+## 2. Checkpoint B — Lead evidence
+
+### B1. Audit of every Lead decision
+
+Inputs: the 174 stored Lead reviews exported from production
+(`review.lead_evidence_reviews`, 325,017 units, value SHA-256 `2646aab8…a6ba23`,
+matching the service) and the 569 Melody events of the reproduced candidate.
+Classes are kept separate — no confidence score
+([lead-review-queue.json](evidence/kaiju-final-remediation-2026-09-22/lead-review-queue.json),
+`scripts/studio-lead-review-queue.mjs`):
+
+| Class | Lead decisions | Basis |
+| --- | --- | --- |
+| sufficiently source-supported | **0** | no primary symbolic source is bound to any event; the only symbolic source is class-C third-party MIDI |
+| human-confirmed | **0** | no stored review carries any reviewer attestation; all 174 were written 14:57–16:13 UTC by the previous agent session |
+| weak machine evidence | **150** | "harmonic CQT salience … at candidate MIDI n pitch class" — no reproducible method; not a role measurement |
+| F0 / pitch-class-only | **3** | the song opening: predominant pitch one octave below the event, same pitch class (voice-vs-piano octave); plus a third-party Yamaha arrangement note ("no intro, begins with vocal") that is not a project source |
+| audio locator only | **0** | — |
+| contradictory evidence | **21** | the review's **own** measured pitch (predominant/pYIN) lies two or three octaves below the event (MIDI 40–57, bass/low register) while claiming the event is the foreground |
+| unresolved / missing evidence | **395** | no review at all |
+
+All 174 records also self-assert `sectionRole: vocal-active`, `core3: PASS`
+(a record field, not a Gate 4 result) and — in 171 — state that the purchased
+score/MIDI bytes were **not inspected**. Every Melody event is the highest
+sounding pitch at its onset; that is a symbolic observation from a third-party
+MIDI, and "highest note ⇒ Vocal/Lead" is a forbidden shortcut (`MASTER_RULES §4`).
+
+### B2. False authority removed (representation + derivation)
+
+Before: a stored review carried no statement of who made it or how its audio
+classification was established, so these agent-authored F0/CQT reviews were graded
+exactly like human listening and produced **174 PASS**. Fix (`f020b95c`):
+
+- `reviewLeadEvidence` requires `attestation { reviewer, reviewer_kind:
+  human|agent|tool, audio_basis: listening|machine-metric|not-used }`, validated
+  against the audio evidence; the authenticated owner is stored beside it.
+- Only `human` reviews reach the shared Lead grader (review **and** finalize);
+  agent/tool and unattested historical reviews stay on record unchanged and are
+  reported `countedAsReviewerEvidence: false` with a per-class summary.
+- The grader never counts a `machine-metric` audio classification as positive
+  role evidence (SOURCE_POLICY §6); it can still raise a conflict.
+
+Proof on the real data: the byte-faithful reproduction with the 174 exported
+reviews seeded (Lead context digest identical to production) grades
+**PASS 174 / PENDING 395 on main's code** — exactly production — and
+**PASS 0 / PENDING 569 on this branch**; all 174 records remain, reported as
+`UNATTESTED_LEGACY_NOT_REVIEWER_EVIDENCE`. No record was deleted or rewritten;
+no Studio write was made.
+
+Remaining representation gap (documented, not changed here): a Lead citation
+embedded in `applyDecisions.leadEvidence` still carries only `acceptedBy` text.
+The attestation is caller-declared text; it makes a false "human" claim explicit
+and attributable, it does not prove a human listened.
+
+### B3. Human review surface
+
+`lead-review-queue.json` (public form: no raw citation text, no absolute pitches;
+full form reproducible from the exports) gives, for all 569 events: stable event
+and source-event identity, lane, onset beat, current role (Melody) and proposed
+role (none), the accepted decision and section that assigned it, the symbolic
+observation, the stored review's authority, audio citation kind and
+measured-minus-event interval, the class and why automation cannot decide it,
+and the allowed dispositions: **KEEP_LEAD** (positive evidence), **DEMOTE with
+positive evidence**, **MOVE**, or **PENDING**. Entry points: 113 `sections` (one per
+accepted Melody decision, class mix shown, every event id listed) and 329
+contiguous same-class `windows`. No accepted previous version exists, so there is
+no accepted-version Lead evidence to show.
+
+### B4. Canonical behaviour unchanged
+
+"Not proven Vocal" is still not demotion evidence; conflicting/incomplete
+evidence keeps the Source-Faithful Lead in Melody as `PENDING`; demotion still
+requires positive evidence. Nothing here demotes, keeps or moves any event.
+
+| Axis | Before | After checkpoint B |
+| --- | --- | --- |
+| Gate 3 Lead promotion | PENDING — 174 PASS on agent F0/CQT reviews + 395 missing | **PENDING — 0 PASS / 569 PENDING**; 569 decisions classified; review queue ready for a human |
