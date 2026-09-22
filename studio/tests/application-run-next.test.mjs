@@ -35,6 +35,13 @@ test('next is byte-and-mtime read-only, repeatable, detached, and uses the exist
   try {
     const app = createStudioApplication({ dataDirectory: directory, durability: 'persistent' });
     const f = await fixture(app); const before = snapshots(directory);
+    const status = await app.getRun(OWNER, f.projectId, f.run.run_id);
+    assert.equal(status.run.machine_delivery.schema, 'mabinogi-mobile-mml-studio/machine-delivery@1');
+    assert.equal(status.run.machine_delivery.lifecycle, 'CANDIDATE');
+    assert.equal(status.run.machine_delivery.ready, false);
+    assert.equal(status.run.machine_delivery.complete_gate_map, false);
+    assert.ok(status.run.machine_delivery.blocking.some(entry => entry.blockers?.includes('MACHINE_DELIVERY_GATE_MAP_INCOMPLETE')));
+    assert.deepEqual(snapshots(directory), before, 'lazy run projection must not persist on a read');
     const first = await f.next();
     for (let i = 0; i < 5; i++) assert.deepEqual(await f.next(), first);
     assert.deepEqual(snapshots(directory), before);
@@ -48,6 +55,9 @@ test('next is byte-and-mtime read-only, repeatable, detached, and uses the exist
     assert.equal(first.connector_exposure, 'UNVERIFIED_BY_SERVER');
     assert.equal(first.gate_snapshot.recomputed, false);
     assert.equal(first.gate_snapshot.current_binding_verified, false);
+    assert.deepEqual(first.delivery_state, first.progress.machine_delivery);
+    assert.equal(first.delivery_state.lifecycle, 'CANDIDATE');
+    assert.equal(first.delivery_state.authoritative, false);
     first.review_requests[0].missing.push('client mutation');
     first.canonical.rules_snapshot_sha = 'forged';
     assert.deepEqual(snapshots(directory), before);
