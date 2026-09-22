@@ -4,7 +4,7 @@
 // the existing public production provenance probe against the same expected main.
 import assert from 'node:assert/strict';
 import { execFileSync } from 'node:child_process';
-import { mkdir, readFile, writeFile } from 'node:fs/promises';
+import { appendFile, mkdir, readFile, writeFile } from 'node:fs/promises';
 import { dirname, resolve } from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { parseArgs } from 'node:util';
@@ -13,6 +13,25 @@ import { loadProbeInputs, probeProduction } from './studio-production-probe.mjs'
 
 export const RAILWAY_GRAPHQL_ENDPOINT = 'https://backboard.railway.com/graphql/v2';
 export const TERMINAL_DEPLOYMENT_STATES = new Set(['SUCCESS', 'FAILED', 'CRASHED', 'REMOVED', 'SLEEPING', 'SKIPPED']);
+// Railway holds a deployment in these states before it builds: WAITING is the
+// "Wait for CI" hold (every GitHub Actions workflow on the commit must finish
+// first) and NEEDS_APPROVAL waits for a person. An audit that polls such a
+// deployment from a workflow on the same commit is itself one of the checks
+// Railway is waiting for, so the two wait on each other until the audit times
+// out -- and a failed or cancelled audit can then make Railway skip the
+// deployment. Observed on 2026-09-22 for main 37ddf414: the deployment stayed
+// WAITING for 14 minutes while a dispatched audit polled it.
+export const HELD_DEPLOYMENT_STATES = new Set(['WAITING', 'NEEDS_APPROVAL']);
+
+// Whether a workflow may start (or keep) waiting on this deployment. Only a
+// released deployment -- building, deploying or terminal -- is safe to audit.
+export function classifyAuditGate(deployment) {
+  if (!deployment) return { action: 'DEFER', reason: 'DEPLOYMENT_NOT_FOUND', status: null };
+  if (HELD_DEPLOYMENT_STATES.has(deployment.status)) {
+    return { action: 'DEFER', reason: 'DEPLOYMENT_HELD_BY_WAIT_FOR_CI', status: deployment.status };
+  }
+  return { action: 'AUDIT', reason: null, status: deployment.status };
+}
 
 const safeMessage = error => error instanceof Error ? error.message : String(error);
 const sortStrings = values => [...values].sort((a, b) => a.localeCompare(b));
@@ -281,9 +300,34 @@ export async function waitForExpectedDeployment({
     if (deployment && TERMINAL_DEPLOYMENT_STATES.has(deployment.status)) {
       return { state, deployment, reason: null };
     }
+    // Never poll a held deployment: this process may be the check it is held for.
+    if (deployment && HELD_DEPLOYMENT_STATES.has(deployment.status)) {
+      return { state, deployment, reason: 'DEPLOYMENT_HELD_BY_WAIT_FOR_CI' };
+    }
     if (Date.now() >= deadline) return { state, deployment, reason: 'DEPLOYMENT_TIMEOUT' };
     await delay(pollSeconds * 1000);
   } while (true);
+}
+
+// One read, no waiting: decides whether the audit job may run at all. Used by
+// the workflow's gate job so a premature dispatch finishes in seconds instead
+// of holding a check open on the commit Railway is waiting to release.
+export async function runAuditGate({ token, expectedSha, fetchImpl = fetch,
+  loadJson = async path => JSON.parse(await readFile(path, 'utf8')) }) {
+  assert.match(expectedSha ?? '', /^[0-9a-f]{40}$/, 'full expected deployment SHA required');
+  const [serviceSettings, deploymentTarget] = await Promise.all([
+    loadJson(resolve('railway/service-settings.json')),
+    loadJson(resolve('railway/deployment-target.json')),
+  ]);
+  const expected = expectedProductionConfig(serviceSettings, deploymentTarget);
+  const state = await readProductionState({ token, expected, fetchImpl });
+  if (state.missingSchemaFields.length) return { action: 'AUDIT', reason: 'SCHEMA_DRIFT', status: null, deployment_id: null };
+  const scope = state.tokenScope;
+  if (scope?.projectId !== expected.projectId || scope?.environmentId !== expected.environmentId) {
+    return { action: 'AUDIT', reason: 'TOKEN_SCOPE_MISMATCH', status: null, deployment_id: null };
+  }
+  const deployment = findExpectedDeployment(state.deployments, expectedSha);
+  return { ...classifyAuditGate(deployment), deployment_id: deployment?.id ?? null };
 }
 
 export function buildControlPlaneResult({
@@ -434,8 +478,24 @@ if (process.argv[1] && import.meta.url === pathToFileURL(resolve(process.argv[1]
     out: { type: 'string' },
     'wait-seconds': { type: 'string', default: '900' },
     'poll-seconds': { type: 'string', default: '15' },
+    gate: { type: 'boolean', default: false },
   } });
   const token = process.env.RAILWAY_PROJECT_TOKEN;
+  if (values.gate) {
+    // Schema drift and token-scope problems are left to the audit job, which
+    // reports them as failures; the gate only defers a held deployment.
+    // A gate that cannot read Railway defers rather than fails: on a held
+    // deployment a failed check makes Railway skip it, and deferring claims
+    // nothing was verified.
+    let gate;
+    try { gate = await runAuditGate({ token, expectedSha: values['expected-sha'] }); }
+    catch (error) { gate = { action: 'DEFER', reason: 'GATE_READ_FAILED', status: null, deployment_id: null, error: safeMessage(error).slice(0, 200) }; }
+    console.log(JSON.stringify(gate));
+    if (process.env.GITHUB_OUTPUT) {
+      await appendFile(process.env.GITHUB_OUTPUT, `released=${gate.action === 'AUDIT'}\ngate_reason=${gate.reason ?? ''}\ngate_status=${gate.status ?? ''}\n`);
+    }
+    process.exit(0);
+  }
   if (!values.out) throw Error('--out is required');
   const report = await runProductionAudit({
     token,
