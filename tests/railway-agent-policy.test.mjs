@@ -59,7 +59,8 @@ test('repository automation does not dispatch Railway Agent', () => {
     'package.json',
   ].filter((path) => {
     if (!existsSync(join(root, path))) return false;
-    return ['.yml', '.yaml', '.mjs', '.js', '.cjs', '.ts', '.sh', '.json'].includes(extname(path));
+    if (path === 'package.json') return true;
+    return ['.yml', '.yaml', '.mjs', '.js', '.cjs', '.ts', '.sh'].includes(extname(path));
   });
 
   const forbidden = [
