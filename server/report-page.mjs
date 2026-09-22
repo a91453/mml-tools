@@ -6,7 +6,7 @@ import { sha256Hex } from '../studio/backend/source/sha256.mjs';
 export const PAGED_REPORT_TOOLS = new Set([
   'studio_project_get', 'studio_baseline_events', 'studio_arrangement_suggest',
   'studio_final_reduction_plan', 'studio_mobile_adaptation_plan', 'studio_candidate_review',
-  'studio_run_plan', 'studio_run_status', 'studio_proposal_targets',
+  'studio_run_plan', 'studio_run_status', 'studio_run_next', 'studio_proposal_targets',
   'studio_proposal_status', 'studio_job_status', 'studio_artifact_get',
 ]);
 
