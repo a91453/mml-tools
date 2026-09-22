@@ -379,6 +379,17 @@ export function createApiRouter({ application, ownerOf, challenge = null, agentD
     ['POST', /^\/projects\/([^/]+)\/runs$/, async (m, request, owner) =>
       json(await application.startRun(owner, m[1], await readJson(request)), 201)],
     ['GET', /^\/projects\/([^/]+)\/runs$/, async (m, _r, owner) => json(await application.getRun(owner, m[1], null))],
+    ['GET', /^\/projects\/([^/]+)\/runs\/([^/]+)\/next$/, async (m, request, owner) => {
+      const query = new URL(request.url).searchParams;
+      const input = {};
+      for (const [key, value] of query) {
+        if (key !== 'expected_run_revision' || Object.hasOwn(input, key) || !/^[1-9][0-9]*$/.test(value)) {
+          throw new StudioApplicationError(ERROR_CODES.INVALID_REQUEST, 'Invalid run-next query');
+        }
+        input[key] = Number(value);
+      }
+      return json(await application.nextRun(owner, m[1], m[2], input));
+    }],
     ['GET', /^\/projects\/([^/]+)\/runs\/([^/]+)$/, async (m, _r, owner) => json(await application.getRun(owner, m[1], m[2]))],
     ['POST', /^\/projects\/([^/]+)\/runs\/([^/]+)\/resume$/, async (m, request, owner) =>
       json(await application.resumeRun(owner, m[1], m[2], await readJson(request)))],

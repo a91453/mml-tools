@@ -101,6 +101,7 @@ export function buildCapabilities({ canonical, storage, jobs, transports = [] })
       // capable of background execution, cancellation, audio transcription or
       // an in-game test.
       one_click_run_orchestration: true,
+      read_only_run_continuation: true,
       run_step_receipts: true,
       run_idempotency: true,
       run_optimistic_concurrency: true,
@@ -165,8 +166,13 @@ export function buildCapabilities({ canonical, storage, jobs, transports = [] })
       states: RUN_STATE_NAMES,
       steps: RUN_STEP_ORDER,
       step_operations: RUN_STEP_OPERATION,
-      operations: freeze(['planRun', 'startRun', 'getRun', 'resumeRun']),
-      read_only_operations: freeze(['planRun', 'getRun']),
+      operations: freeze(['planRun', 'startRun', 'getRun', 'nextRun', 'resumeRun']),
+      read_only_operations: freeze(['planRun', 'getRun', 'nextRun']),
+      continuation: freeze({
+        operation: 'nextRun', mcp_tool: 'studio_run_next', read_only: true,
+        connector_exposure: 'NOT_OBSERVABLE_FROM_SERVER',
+        notice: 'Conversation-hosted AI uses the existing proposal and explicit acceptance/resume operations. This snapshot never advances, accepts, reconciles or evaluates a gate. Check actual client tools and schemas separately; server capability is not client availability.',
+      }),
       background_execution: false,
       automatic_continuation: false,
       cancellation: false,

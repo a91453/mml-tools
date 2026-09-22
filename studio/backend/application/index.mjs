@@ -104,6 +104,7 @@ import { createReviewService } from './review-service.mjs';
 import { createFinalService } from './final-service.mjs';
 import { createTechnicalService } from './technical-service.mjs';
 import { createRunService } from './run-service.mjs';
+import { createRunNextService } from './run-next.mjs';
 import { createProposalService } from './proposal-service.mjs';
 
 export const APPLICATION_VERSION = '1.0.0';
@@ -353,6 +354,8 @@ export function createStudioApplication({
     serviceVersion,
   });
 
+  const continuation = createRunNextService({ runs, proposals, serialize: serialized });
+
   // Every significant result carries the Canonical provenance of the process
   // that produced it, with its five identities kept separate. A result that
   // reaches an agent without it cannot be read against the right rules snapshot.
@@ -550,6 +553,11 @@ export function createStudioApplication({
     /** Read-only run state, or this project's run list when no id is named. */
     async getRun(owner, projectId, runId = null) {
       return envelope({ operation: OPERATION_STATUS.SUCCEEDED, ...(await runs.get(owner, projectId, runId)) });
+    },
+
+    /** Read-only continuation snapshot. Never reviews, accepts or advances. */
+    async nextRun(owner, projectId, runId, input = {}) {
+      return envelope({ operation: OPERATION_STATUS.SUCCEEDED, ...(await continuation.next(owner, projectId, runId, input)) });
     },
 
     /** Re-check an existing run and advance it with new input. */
