@@ -63,6 +63,7 @@ import {
   leadReviewAuthorityOf,
   gradedLeadEvidenceOf,
 } from './lead-review-authority.mjs';
+import { audioReportHash } from './audio-report-history.mjs';
 
 const now = () => new Date().toISOString();
 
@@ -75,6 +76,7 @@ const CONFIRMATIONS = Object.freeze({
   regression_reviewed: 'readiness `regression` gate: the candidate was compared against the Source-Faithful Baseline and accepted previous version when present, with Lead/Core3/source drift and available historical regressions explicitly reviewed. Bound to the candidate.',
   core3_completeness_reviewed: 'readiness `core3Completeness` gate: the Core3 the evaluator could not certify complete was reviewed against Acceptance Gate 4 and found to stand up as a one-player arrangement for this source. It resolves the unresolved residue, which includes a missing Chord1/Chord2 function -- the evaluator cannot tell material the source never carried from material cleanup dropped, so only a reviewer can. It can never clear an absent Lead or a Core3 whose identity depends on Chord3-Chord5: those are deficiencies in the arrangement and the gate FAILs on them. Bound to the candidate.',
   original_audio_required: 'readiness `originalAudio` applicability. Setting it false states the song-specific workflow does not require original audio, and must say why. Bound to the baseline.',
+  original_audio_reviewed: 'readiness `originalAudio` gate: Acceptance Gate 7 review. The active beat<->recording alignment for the relevant sections and the role / prominence / sustain / articulation / recording-structure questions were reviewed against the recording; audio metrics were not used to overwrite symbolic identity. Bound to the candidate and to the active audio evidence revision it reviewed.',
 });
 
 // Which identity each confirmation is a statement about.
@@ -86,6 +88,7 @@ const CONFIRMATION_SCOPE = Object.freeze({
   regression_reviewed: 'candidate',
   core3_completeness_reviewed: 'candidate',
   original_audio_required: 'baseline',
+  original_audio_reviewed: 'candidate',
 });
 
 // Confirmations whose `true` is a reviewer's answer to a required gate, and the
@@ -95,6 +98,7 @@ const EVIDENCE_REQUIRED_ON_TRUE = Object.freeze({
   mobile_adaptation_reviewed: 'Gate 8',
   regression_reviewed: 'Gate 9',
   core3_completeness_reviewed: 'Gate 4 Core3 completeness',
+  original_audio_reviewed: 'Gate 7',
 });
 
 const PLAYER_READBACK_VALUES = Object.freeze(['PASS', 'NOT_RUN', 'N/A']);
@@ -105,6 +109,9 @@ export const STALE_CONFIRMATION = Object.freeze({
   BASELINE_CHANGED: 'BASELINE_CHANGED',
   CANDIDATE_MISMATCH: 'CANDIDATE_MISMATCH',
   UNBOUND: 'UNBOUND',
+  // A Gate 7 review is about one audio evidence revision; another one being
+  // active means the review is about evidence that is no longer selected.
+  AUDIO_EVIDENCE_REVISION_CHANGED: 'AUDIO_EVIDENCE_REVISION_CHANGED',
 });
 
 export function createReviewService({ canonical, projects, intake, arrangement, store }) {
@@ -143,6 +150,15 @@ export function createReviewService({ canonical, projects, intake, arrangement, 
 
   const confirmationsOf = record => record.confirmations ?? {};
 
+  // The identity of the audio evidence currently selected for a candidate:
+  // the report hash(es) of the active head(s) read from the store -- the same
+  // reports readiness grades -- never the `audio_evidence` index cache. Null when
+  // none is selected. Selection is evidence selection, not a verdict.
+  const activeAudioReportSha = (record, candidateId) => {
+    const active = audioReportsFor(record.project_id, candidateId);
+    return active.length ? active.map(audioReportHash).sort().join('+') : null;
+  };
+
   /**
    * The confirmations that actually apply to this baseline and candidate.
    *
@@ -160,6 +176,8 @@ export function createReviewService({ canonical, projects, intake, arrangement, 
       if (boundBaseline === null) reason = STALE_CONFIRMATION.UNBOUND;
       else if (boundBaseline !== baselineId) reason = STALE_CONFIRMATION.BASELINE_CHANGED;
       else if (CONFIRMATION_SCOPE[name] === 'candidate' && boundCandidate !== candidateId) reason = STALE_CONFIRMATION.CANDIDATE_MISMATCH;
+      else if (name === 'original_audio_reviewed' && entry?.value === true
+        && (entry.audio_report_sha256 ?? null) !== activeAudioReportSha(record, candidateId)) reason = STALE_CONFIRMATION.AUDIO_EVIDENCE_REVISION_CHANGED;
       if (reason) stale.push({ name, reason, bound_baseline_id: boundBaseline, bound_candidate_id: boundCandidate, at: entry?.at ?? null });
       else effective[name] = entry;
     }
@@ -349,7 +367,18 @@ export function createReviewService({ canonical, projects, intake, arrangement, 
           fail(ERROR_CODES.SOURCE_INCOMPLETE, 'The Source-Faithful Baseline reports incomplete inputs, so source completeness cannot be confirmed.', { incomplete_inputs: incomplete });
         }
       }
-      next[name] = { value: input.value, reason, evidence, at: now(), ...binding };
+      // A Gate 7 review is a statement about the audio evidence it reviewed.
+      // With none selected there is nothing to have reviewed, and the review is
+      // bound to the selected revision so a later selection makes it stale.
+      let audioBinding = {};
+      if (name === 'original_audio_reviewed' && input.value === true) {
+        const reviewedReport = activeAudioReportSha(record, boundCandidate);
+        if (!reviewedReport) {
+          fail(ERROR_CODES.INVALID_REQUEST, 'original_audio_reviewed needs active audio alignment evidence for this candidate: attach it first, then review it against the recording.', { candidate_id: boundCandidate });
+        }
+        audioBinding = { audio_report_sha256: reviewedReport };
+      }
+      next[name] = { value: input.value, reason, evidence, at: now(), ...binding, ...audioBinding };
     }
     projects.save({ ...record, confirmations: next });
     return Object.freeze({ confirmations: Object.freeze({ ...next }) });
@@ -698,6 +727,7 @@ export function createReviewService({ canonical, projects, intake, arrangement, 
         leadPromotionReports,
         versionDriftReviewed: recorded.version_drift_reviewed?.value === true,
         originalAudioRequired: recorded.original_audio_required?.value !== false,
+        originalAudioReviewed: recorded.original_audio_reviewed?.value === true,
         playerReadback: recorded.player_readback?.value ?? 'NOT_RUN',
         mobileAdaptation: recorded.mobile_adaptation_reviewed?.value === true ? 'PASS' : 'PENDING',
         regressionReviewed: recorded.regression_reviewed?.value === true,

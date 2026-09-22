@@ -202,7 +202,7 @@ export const READINESS_GATE_OPERATIONS = freeze({
   leadPromotion: freeze(['applyDecisions.leadEvidence', 'reviewLeadEvidence']),
   crossSourceHarmony: freeze(['applyDecisions', 'applyFinalReduction']),
   versionDrift: freeze(['recordConfirmations.version_drift_reviewed']),
-  originalAudio: freeze(['attachAudioAlignment', 'recordConfirmations.original_audio_required']),
+  originalAudio: freeze(['attachAudioAlignment', 'recordConfirmations.original_audio_reviewed', 'recordConfirmations.original_audio_required']),
   playerReadback: freeze(['recordConfirmations.player_readback']),
   mobileAdaptation: freeze(['applyMobileAdaptation', 'recordConfirmations.mobile_adaptation_reviewed']),
   regression: freeze(['recordConfirmations.regression_reviewed']),

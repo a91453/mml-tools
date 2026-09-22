@@ -231,7 +231,7 @@ export const NEVER_AGENT_SETTLABLE = freeze([
   'in_game acceptance, which only the user or a controlled target-client test records',
   'any Canonical acceptance gate verdict, including technical, source, audio, player_readback, mobile_adaptation and regression',
   'any readiness gate verdict, including source, core3, core3Completeness, leadDemotion, leadPromotion, playerReadback, mobileAdaptation and regression',
-  'a recorded confirmation of any kind, and in particular source_complete, player_readback, mobile_adaptation_reviewed (Gate 8), regression_reviewed (Gate 9) and core3_completeness_reviewed (Gate 4)',
+  'a recorded confirmation of any kind, and in particular source_complete, player_readback, mobile_adaptation_reviewed (Gate 8), regression_reviewed (Gate 9), core3_completeness_reviewed (Gate 4) and original_audio_reviewed (Gate 7)',
   'a Core3 source-change approval or a Lead evidence citation, both of which are candidate-bound reviewer records',
   'the acceptance binding a decision carries, which this service computes from what is loaded now',
   'the reconciliation of an interrupted step, which rests on a caller having actually inspected the stored record',

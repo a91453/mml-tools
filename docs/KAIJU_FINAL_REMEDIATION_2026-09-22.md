@@ -211,3 +211,58 @@ requires positive evidence. Nothing here demotes, keeps or moves any event.
 | Axis | Before | After checkpoint B |
 | --- | --- | --- |
 | Gate 3 Lead promotion | PENDING — 174 PASS on agent F0/CQT reviews + 395 missing | **PENDING — 0 PASS / 569 PENDING**; 569 decisions classified; review queue ready for a human |
+
+## 3. Checkpoint C — Audio Gate (Gate 7) implementation drift
+
+Three separate things, kept separate: the audio module is **implemented**
+(`studio_capabilities.audio_alignment: true`); an audio report **exists** for
+the Kaiju candidate (two revisions, active `342aea74…`, confidence 0.456);
+audio alignment for this candidate **does not pass**.
+
+### C1. Prose authority vs runtime
+
+| Surface | Published v1 (ACCEPTANCE_CRITERIA Gate 7, SOURCE_POLICY §1B/§6) | Runtime before | Drift? |
+| --- | --- | --- | --- |
+| readiness `originalAudio` (`final/readiness.mjs`) | alignment evidence for relevant sections **and** role/prominence/sustain/articulation/recording-structure questions reviewed; "a globally implemented audio module does not pass this gate for a song automatically" | `PASS` whenever warning-free alignment evidence was attached; no review required | **Yes — fixed** |
+| Studio Web (`studio/web/model.mjs`) | same | already required its own `audio` review (note + evidence, revision-bound) on top of the shared gate | parity reference |
+| Application Service / MCP / HTTP / run continuation / finalize | same | inherited the shared gate: an agent could pass Gate 7 by attaching a clean report | **Yes — fixed** (same code path) |
+| audio worker / `audio/index.mjs` | metrics are locators; audio must not mutate symbolic events or claim exact pitch | `changes_symbolic_truth:false` enforced; no pitch/role output; warnings on low confidence/coverage/collapsed intervals | no drift |
+| active report revision semantics (PR #60/61) | evidence selection is not a verdict; revisions immutable | readiness reads only each chain's active head from the store; revision refused once candidate-bound reviews exist | no drift |
+| Lead evidence citing audio metrics | a metric cannot alone prove role/Vocal/exact pitch/octave | an F0/CQT "foreground" citation was positive Lead evidence | fixed in checkpoint B |
+
+### C2. Fix
+
+- `audioGate(project, required, reviewed)`: missing evidence → `AUDIO_ALIGNMENT_EVIDENCE_MISSING`;
+  alignment warnings → `AUDIO_ALIGNMENT_REVIEW_REQUIRED` (a review never clears
+  them); warning-free but unreviewed → **`ORIGINAL_AUDIO_GATE7_REVIEW_REQUIRED`**;
+  `PASS` only with both. The new input defaults to `false` (fail closed).
+- New confirmation `original_audio_reviewed` (candidate-bound, `true` requires
+  ≥1 evidence reference, refused when the candidate has no active audio
+  evidence, bound to the hash of the active report head(s) read from the
+  store — not the `audio_evidence` index cache). A different active revision
+  makes it stale (`AUDIO_EVIDENCE_REVISION_CHANGED`).
+- Threaded through review, finalize, `reviewAppliedCandidate`, run-contract
+  available operations, capabilities, the proposal "never agent-settable" list
+  and the MCP confirmation description; Studio Web passes its existing `audio`
+  review into the shared gate.
+- PR #60/61 behaviour preserved: revisions stay immutable/auditable, active
+  selection stays evidence selection, stale bindings fail closed, no pitch claim.
+- Tests: `G7-1…5` and a readiness unit test; two deliberate mutations (review
+  requirement removed, revision binding ignored) both caught. Five existing
+  "fully reviewed" fixtures now state the Gate 7 review explicitly; two
+  service tests now assert the two-step behaviour instead of PASS-on-evidence.
+
+### C3. Kaiju
+
+`originalAudio`: **PENDING**. Active report `342aea7427781d37fe4c61d54aaabc4ed3062113b10a8ca1e51f62a7a85479da`
+(revision of `2816ea27…`, differing only in input filename) carries
+`LOW_ALIGNMENT_CONFIDENCE` (0.456 < 0.55) and `LOW_SCORE_FRAME_COVERAGE`; no Gate 7
+review exists. Official audio is part of the source set (`original_audio_required`
+is not set false), so the gate cannot be N/A. Needed: a better-aligned report
+revision for the relevant sections, then a human Gate 7 review bound to it. No
+anchor, listening or confirmation was invented.
+
+| Axis | Before | After checkpoint C |
+| --- | --- | --- |
+| Gate 7 derivation | PASS on warning-free evidence alone (service); Web required a review | evidence **and** candidate-bound, evidence-backed, revision-bound Gate 7 review, same on every surface |
+| Gate 7 Kaiju | PENDING (alignment warnings) | **PENDING** (alignment warnings; no Gate 7 review) |

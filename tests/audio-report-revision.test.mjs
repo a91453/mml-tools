@@ -50,9 +50,11 @@ test('a lower-quality revision reopens the existing audio gate; final still bloc
   const f = await fixture();
   const initial = revision(f.report, 'f'.repeat(64), .9).report;
   const first = await attach(f, initial);
-  assert.equal((await review(f)).gates.audio, 'PASS');
+  // Warning-free evidence, not yet reviewed (Gate 7 needs both).
+  assert.deepEqual((await review(f)).readiness.gates.originalAudio.blockers, ['ORIGINAL_AUDIO_GATE7_REVIEW_REQUIRED']);
   await attach(f, revision(f.report, first.report_sha256, .4));
   assert.equal((await review(f)).gates.audio, 'PENDING');
+  assert.deepEqual((await review(f)).readiness.gates.originalAudio.blockers, ['AUDIO_ALIGNMENT_REVIEW_REQUIRED']);
   const final = await f.app.finalize(OWNER, f.projectId, { candidateId: f.candidateId });
   assert.equal(final.operation, 'blocked');
   assert.equal((await f.app.getProject(OWNER, f.projectId)).project.artifacts.length, 0);

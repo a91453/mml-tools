@@ -424,8 +424,20 @@ test('attached audio evidence stays evidence and claims nothing about pitch', as
   assert.equal(attached.job.type, 'audio_alignment');
 
   const { review } = await service.reviewCandidate(OWNER, run.projectId, { candidateId: run.candidateId });
-  assert.equal(review.gates.audio, 'PASS');
+  // Gate 7 needs the evidence AND a review of role/prominence/sustain/articulation/structure.
+  assert.equal(review.gates.audio, 'PENDING');
+  assert.deepEqual(review.readiness.gates.originalAudio.blockers, ['ORIGINAL_AUDIO_GATE7_REVIEW_REQUIRED']);
   assert.deepEqual(review.audio.errors, []);
+  await assert.rejects(
+    () => service.recordConfirmations(OWNER, run.projectId, { original_audio_reviewed: { value: true, reason: 'Reviewed.', candidate_id: run.candidateId } }),
+    /requires at least one evidence reference/,
+  );
+  await service.recordConfirmations(OWNER, run.projectId, {
+    original_audio_reviewed: { value: true, reason: 'Role/prominence reviewed against the recording.', evidence: ['fixture:listening notes'], candidate_id: run.candidateId },
+  });
+  const reviewed = (await service.reviewCandidate(OWNER, run.projectId, { candidateId: run.candidateId })).review;
+  assert.equal(reviewed.gates.audio, 'PASS');
+  assert.equal(reviewed.confirmations.original_audio_reviewed.audio_report_sha256, attached.evidence.report_sha256);
 });
 
 test('a low-confidence alignment leaves the audio gate pending', async () => {

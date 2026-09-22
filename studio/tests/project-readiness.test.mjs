@@ -132,12 +132,32 @@ function readyInput(overrides = {}) {
     versionDriftReviewed: false,
     playerReadback: 'PASS',
     originalAudioRequired: true,
+    // Gate 7 is evidence AND a review; this fixture models a fully reviewed candidate.
+    originalAudioReviewed: true,
     mobileAdaptation: 'PASS',
     regressionReviewed: true,
     inGameAcceptance: 'PENDING',
     ...overrides,
   };
 }
+
+test('Gate 7: warning-free audio alignment evidence alone does not pass originalAudio; the review does', () => {
+  const unreviewed = evaluateProjectReadiness(readyInput({ originalAudioReviewed: false }));
+  assert.equal(unreviewed.gates.originalAudio.status, 'PENDING');
+  assert.deepEqual(unreviewed.gates.originalAudio.blockers, ['ORIGINAL_AUDIO_GATE7_REVIEW_REQUIRED']);
+  assert.equal(unreviewed.candidateReady, false);
+  const reviewed = evaluateProjectReadiness(readyInput());
+  assert.equal(reviewed.gates.originalAudio.status, 'PASS');
+  // A review never clears evidence that carries alignment warnings.
+  const warned = project();
+  const withWarning = { ...warned, metadata: { ...warned.metadata, audioAlignmentEvidence: warned.metadata.audioAlignmentEvidence.map(item => ({ ...item, warnings: ['LOW_ALIGNMENT_CONFIDENCE'] })) } };
+  const stillPending = evaluateProjectReadiness(readyInput({ project: withWarning }));
+  assert.equal(stillPending.gates.originalAudio.status, 'PENDING');
+  assert.deepEqual(stillPending.gates.originalAudio.blockers, ['AUDIO_ALIGNMENT_REVIEW_REQUIRED']);
+  // And the omitted input is fail-closed.
+  const { originalAudioReviewed: _omitted, ...rest } = readyInput();
+  assert.equal(evaluateProjectReadiness(rest).gates.originalAudio.status, 'PENDING');
+});
 
 test('candidate readiness can pass before in-game acceptance, but finalAccepted cannot', () => {
   const result = evaluateProjectReadiness(readyInput());
