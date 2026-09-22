@@ -394,3 +394,28 @@ mobileAdaptation, regression` — the same set production reports — with
 5. Human work queued: Lead (113 sections), Gate 4 residue, Gate 7 (after a better
    alignment revision), Gate 8 profile + review, Gate 9 review, Gate 2 confirmation.
 6. Player readback and in-game acceptance: not performed; cannot be automated.
+
+## 6. Checkpoints, PR and verification
+
+Branch `claude/kaiju-final-remediation-sbth4h` from `ae15e5fc11eea5486d5f6c7fe3b243f9549168c2`; PR #65 (draft, not merged).
+
+| Checkpoint | Commit |
+| --- | --- |
+| A microTiming | `f3e6890736c451b50c76f4fd917c002db6fc367c` |
+| B Lead (representation/derivation) | `f020b95ce3ea01f76db5fb0b38147be731f2df16` |
+| B Lead (audit/queue) | `26a93bbbcb10f1d49e4256b1ef57556ef50d1ee5` |
+| C Gate 7 | `29554d6887a08c041917e49a65de80df7d9037fa` |
+| D Gate 8/9/readback | `88aee20cc0008772918627a89cf043b9b75c1e54` |
+| E Final Gate matrix | `9821e49e9fa50915cde973addbf234ce214d37db` |
+
+The PR head is the commit that adds this section or a later CI-fix commit; read it
+from the PR, not from this file.
+
+Local verification on `9821e49`: `npm test` 1,977/1,977; Canonical bootstrap
+`CANONICAL_LOADED`; bootstrap stress ok; CI guard 6/6; Railway ops 34/34; Railway
+JSON ok; `npm run build`, `build:studio-web` ok; OSS export + audit ok (0
+violations); `git diff --check` clean; audio-worker (Python 3.12 + ffmpeg) 18/18;
+Studio Web browser desktop-Chromium PASS (51 checks); service workspace + MCP
+desktop-Chromium PASS. **NOT_RUN locally**: WebKit browser profiles (no WebKit
+binary in this environment) and the container smoke (Docker Hub rate limit on the
+base image) — both run in PR CI.
