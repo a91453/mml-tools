@@ -279,7 +279,7 @@ export const STUDIO_MCP_TOOLS = [
       properties: {
         project_id: projectId,
         candidate_id: candidateId,
-        review: structuredPayload('event_id（readiness 使用的事件 id；衍生複製請用候選中的衍生 id）、axis（promotion 或 demotion，兩者互不代替）、reason、至少一筆 evidence，以及 lead_evidence：精確 sourceIdentity、sectionRole、scoreEvidence／audioEvidence、continuity.checked、core3.checked/status 與正面的目的角色理由。sourceIdentity 請用 studio_baseline_events 取得，不可猜測；綁不到該 move 的 baseline 來源事件會被拒絕。'),
+        review: structuredPayload('event_id（readiness 使用的事件 id；衍生複製請用候選中的衍生 id）、axis（promotion 或 demotion，兩者互不代替）、reason、至少一筆 evidence，以及 lead_evidence：精確 sourceIdentity、sectionRole、scoreEvidence／audioEvidence、continuity.checked、core3.checked/status 與正面的目的角色理由。sourceIdentity 請用 studio_baseline_events 取得，不可猜測；綁不到該 move 的 baseline 來源事件會被拒絕。必填 attestation：{ reviewer（誰做的審查）, reviewer_kind: human|agent|tool, audio_basis: listening|machine-metric|not-used }。只有 human 的審查會被 Lead grader 採計；agent/tool 審查只留作稽核紀錄、不移動 gate。audio_basis 為 machine-metric（F0、CQT、chroma 等）時，該音訊分類不算正面角色證據（SOURCE_POLICY §6）。AI 代理不得把自己的判斷標成 human。'),
       },
       required: ['project_id', 'candidate_id', 'review'],
       additionalProperties: false,

@@ -185,7 +185,7 @@ export function createFinalService({ canonical, projects, review, store }) {
       // `review.context()` -- so a citation a reviewer re-supplied is graded
       // here by the same shared gate, and Finalize cannot be satisfied by a
       // path review does not see, or refuse one review accepts.
-      const leadReportInputs = { applications: ctx.applicationLineage, baseline: baselineProject, candidate: application.candidate, freshReviews: ctx.leadEvidenceReviews };
+      const leadReportInputs = { applications: ctx.applicationLineage, baseline: baselineProject, candidate: application.candidate, freshReviews: ctx.gradedLeadEvidenceReviews };
       const leadDemotionReports = engines.arrangement.leadDemotionReportsFromLineage(leadReportInputs);
       const leadPromotionReports = engines.arrangement.leadPromotionReportsFromLineage(leadReportInputs);
       const lineage = engines.compare.compareCandidateLineage({ sourceBaseline: baselineProject, acceptedPrevious: parent, candidate: project });

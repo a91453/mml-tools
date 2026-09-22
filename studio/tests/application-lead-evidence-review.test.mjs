@@ -31,6 +31,10 @@ import { canonicalProjectBytes, sixRoleBaseline } from './fixtures/application-f
 
 const OWNER = 'owner:alice';
 const SOURCE_ID = 'fixture:official-midi';
+// A review names who made it and how its audio classification was established.
+// These fixtures model a human reviewer who listened; the authority rules for
+// agent/tool and unattested reviews are pinned in lead-review-authority.test.mjs.
+const HUMAN_REVIEWER = Object.freeze({ reviewer: 'human:fixture-reviewer', reviewer_kind: 'human', audio_basis: 'listening' });
 
 /** A complete, correctly-scoped promotion citation for one baseline event. */
 const promotionEvidence = (eventId, over = {}) => ({
@@ -102,6 +106,7 @@ test('a promotion sent back to PENDING by a later Lead move is answerable by a f
   const recorded = await service.reviewLeadEvidence(OWNER, projectId, {
     candidateId,
     review: {
+      attestation: HUMAN_REVIEWER,
       event_id: 'chord3-1', axis: 'promotion',
       reason: 'Re-reviewed against the Lead picture as it now stands; the top line is unchanged.',
       evidence: ['fixture:score top line bar 1', 'fixture:audio 0:00'],
@@ -144,6 +149,7 @@ test('a demotion sent back to PENDING by a later Lead move is answerable the sam
   await service.reviewLeadEvidence(OWNER, projectId, {
     candidateId,
     review: {
+      attestation: HUMAN_REVIEWER,
       event_id: 'melody-1', axis: 'demotion',
       reason: 'Re-reviewed: still inner material against the Lead picture as it now stands.',
       evidence: ['fixture:score inner staff'],
@@ -171,6 +177,7 @@ test('a fresh review does not answer the next candidate once the Lead context ch
   await service.reviewLeadEvidence(OWNER, projectId, {
     candidateId: reviewed,
     review: {
+      attestation: HUMAN_REVIEWER,
       event_id: 'chord3-1', axis: 'promotion', reason: 'Re-reviewed against this candidate.',
       evidence: ['fixture:score top line'], lead_evidence: promotionEvidence('chord3-1'),
     },
@@ -194,6 +201,7 @@ test('a fresh review does not answer the next candidate once the Lead context ch
   await service.reviewLeadEvidence(OWNER, projectId, {
     candidateId: third.decisions.candidate_id,
     review: {
+      attestation: HUMAN_REVIEWER,
       event_id: 'chord3-1', axis: 'promotion', reason: 'Re-reviewed again, against the current Lead picture.',
       evidence: ['fixture:score top line'], lead_evidence: promotionEvidence('chord3-1'),
     },
@@ -212,6 +220,7 @@ test('a Lead evidence review is refused unless it binds to this move, this axis 
   });
   const candidateId = second.decisions.candidate_id;
   const base = {
+    attestation: HUMAN_REVIEWER,
     event_id: 'chord3-1', axis: 'promotion', reason: 'Re-reviewed.',
     evidence: ['fixture:score top line'], lead_evidence: promotionEvidence('chord3-1'),
   };
@@ -298,6 +307,7 @@ test('a duplicate promoted into Melody is re-reviewed under its derived id and g
     () => service.reviewLeadEvidence(OWNER, projectId, {
       candidateId,
       review: {
+        attestation: HUMAN_REVIEWER,
         event_id: derivedId, axis: 'promotion', reason: 'Re-reviewed.', evidence: ['fixture:score doubling'],
         lead_evidence: promotionEvidence('chord3-1', { sourceIdentity: { sourceId: SOURCE_ID, sourceEventId: `${SOURCE_ID}#${derivedId}` } }),
       },
@@ -312,6 +322,7 @@ test('a duplicate promoted into Melody is re-reviewed under its derived id and g
   const recorded = await service.reviewLeadEvidence(OWNER, projectId, {
     candidateId,
     review: {
+      attestation: HUMAN_REVIEWER,
       event_id: derivedId, axis: 'promotion',
       reason: 'Re-reviewed: the doubled line still reads as the lead against the current picture.',
       evidence: ['fixture:score doubling bar 1'], lead_evidence: promotionEvidence('chord3-1'),
@@ -388,6 +399,7 @@ test('finalize grades the re-reviewed evidence review grades, not a separate one
   await service.reviewLeadEvidence(OWNER, projectId, {
     candidateId,
     review: {
+      attestation: HUMAN_REVIEWER,
       event_id: 'chord3-1', axis: 'promotion', reason: 'Re-reviewed against this candidate.',
       evidence: ['fixture:score top line'], lead_evidence: promotionEvidence('chord3-1'),
     },
@@ -434,6 +446,7 @@ test('a demotion whose destination moved on again is still answerable', async ()
   await service.reviewLeadEvidence(OWNER, projectId, {
     candidateId,
     review: {
+      attestation: HUMAN_REVIEWER,
       event_id: 'melody-1', axis: 'demotion',
       reason: 'Re-reviewed: inner material, and enrichment is where it sits now.',
       evidence: ['fixture:score inner staff'],
@@ -458,6 +471,7 @@ test('a citation that turns out to be wrong can be retracted, and the gate retur
   });
   const candidateId = second.decisions.candidate_id;
   const base = {
+    attestation: HUMAN_REVIEWER,
     event_id: 'chord3-1', axis: 'promotion', reason: 'Re-reviewed against this candidate.',
     evidence: ['fixture:score top line'], lead_evidence: promotionEvidence('chord3-1'),
   };
@@ -477,6 +491,7 @@ test('a citation that turns out to be wrong can be retracted, and the gate retur
   const retracted = await service.reviewLeadEvidence(OWNER, projectId, {
     candidateId,
     review: {
+      attestation: HUMAN_REVIEWER,
       ...base,
       reason: 'Re-listened: the top line is doubled, and this is the inner half.',
       supersede_reason: 'The earlier citation read the wrong staff.',
