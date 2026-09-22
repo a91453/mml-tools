@@ -209,6 +209,6 @@ Even outside included minutes, a few minutes of Linux runner time per deployment
 3. **DONE on PR #51:** add protected manual config-apply workflow only for bounded desired-state changes; it never deploys.
 4. **DONE on PR #51:** add deterministic sanitized log collection for FAILED/CRASHED deployments.
 5. **DONE:** token setup and authenticated production audit passed; normal failure analysis can use collected evidence with Claude Code / normal PRs and does not require Railway Agent.
-6. **POLICY:** Railway Agent is prohibited for ChatGPT, Codex, Claude Code and other agents working on this repository. Keep the Railway Agent hard usage limit at $0 as the cross-client billing backstop.
+6. **POLICY / EXTERNAL REQUIRED:** Railway Agent is prohibited for ChatGPT, Codex, Claude Code and other agents working on this repository. Set the Railway workspace Agent hard usage limit to $0 as the cross-client billing backstop; the 2026-09-22 Usage screenshot still showed a $30 hard limit, so this account-level step is not claimed complete by the repository.
 7. **DONE:** rollback dependency was verified, then `studio-durable-isolated`, its isolated cache volume, `charismatic-reverence`, and the remaining preview environments were retired while production resources were preserved.
 
