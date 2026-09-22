@@ -1,5 +1,20 @@
 name: Railway production audit
 
+# Post-release audit. Railway production has "Wait for CI" enabled: a
+# deployment stays WAITING until every GitHub Actions workflow on its commit has
+# finished. A job that waits on that deployment from a workflow on the same
+# commit is therefore one of the checks Railway is waiting for, and the two
+# deadlock (observed 2026-09-22 on main 37ddf414). So:
+#   * this workflow never runs on push or pull_request;
+#   * it starts automatically only from Railway's own terminal deployment status
+#     for mml-tools-allen / production (in_progress is posted while the
+#     deployment is still WAITING, so it is ignored);
+#   * a manual dispatch first runs a non-waiting gate job, and the waiting audit
+#     job runs only once Railway has released the deployment. A held deployment
+#     is reported as DEFERRED (not verified), never polled.
+# Order: merge -> main CI -> Wait for CI releases -> BUILDING/DEPLOYING ->
+# this audit -> deployed SHA, config and public provenance verified.
+
 on:
   workflow_dispatch:
     inputs:
@@ -8,20 +23,92 @@ on:
         required: false
         type: string
       wait_seconds:
-        description: Maximum seconds to wait for the matching Railway deployment
+        description: Maximum seconds to wait for a released (building/deploying) Railway deployment to finish
         required: false
         default: '900'
         type: string
+  deployment_status:
 
 permissions:
   contents: read
 
 concurrency:
-  group: railway-production-audit
+  # Deployment events this workflow ignores (other environments, non-terminal
+  # states, the deploy workflow's own GitHub environment) get a unique group so
+  # they can never cancel a real audit.
+  group: railway-production-audit-${{ (github.event_name == 'workflow_dispatch' || (github.event.deployment.environment == 'mml-tools-allen / production' && github.event.deployment.creator.login == 'railway-app[bot]' && (github.event.deployment_status.state == 'success' || github.event.deployment_status.state == 'failure' || github.event.deployment_status.state == 'error'))) && 'production' || github.run_id }}
   cancel-in-progress: true
 
 jobs:
+  gate:
+    if: >-
+      github.event_name == 'workflow_dispatch'
+      || (github.event.deployment.environment == 'mml-tools-allen / production'
+        && github.event.deployment.creator.login == 'railway-app[bot]'
+        && (github.event.deployment_status.state == 'success'
+          || github.event.deployment_status.state == 'failure'
+          || github.event.deployment_status.state == 'error'))
+    runs-on: ubuntu-latest
+    # Never waits on Railway: one read, then exit.
+    timeout-minutes: 5
+    env:
+      RAILWAY_PROJECT_TOKEN: ${{ secrets.RAILWAY_PROJECT_TOKEN }}
+    outputs:
+      released: ${{ steps.gate.outputs.released }}
+      expected_sha: ${{ steps.sha.outputs.expected_sha }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: Require least-privilege Railway project token
+        shell: bash
+        run: |
+          if [ -z "$RAILWAY_PROJECT_TOKEN" ]; then
+            echo "::error::Missing GitHub Actions secret RAILWAY_PROJECT_TOKEN. Use a Railway project token scoped to mml-tools-allen / production; do not use an account token."
+            exit 1
+          fi
+      - name: Resolve the commit to audit
+        id: sha
+        shell: bash
+        env:
+          REQUESTED_SHA: ${{ inputs.expected_sha || github.event.deployment.sha }}
+        run: |
+          git fetch origin main:refs/remotes/origin/main --force
+          expected_sha="$REQUESTED_SHA"
+          if [ -z "$expected_sha" ]; then
+            expected_sha="$(git rev-parse refs/remotes/origin/main)"
+          fi
+          case "$expected_sha" in
+            *[!0-9a-f]*|'') echo "::error::expected_sha must be a full lowercase Git SHA"; exit 1 ;;
+          esac
+          if [ "${#expected_sha}" -ne 40 ]; then
+            echo "::error::expected_sha must contain 40 hex characters"
+            exit 1
+          fi
+          echo "expected_sha=$expected_sha" >> "$GITHUB_OUTPUT"
+      - name: Defer while Railway Wait for CI still holds the deployment
+        id: gate
+        shell: bash
+        env:
+          EXPECTED_SHA: ${{ steps.sha.outputs.expected_sha }}
+        run: |
+          node scripts/railway-production-audit.mjs --gate --expected-sha "$EXPECTED_SHA"
+          if grep -q '^released=false$' "$GITHUB_OUTPUT"; then
+            {
+              echo "### Railway production audit DEFERRED — not verified"
+              echo "The deployment for \`$EXPECTED_SHA\` has not been released by Railway (Wait for CI or approval hold)."
+              echo "Waiting here would hold a check on the same commit and deadlock the deployment, so the audit job is skipped."
+              echo "It starts automatically from Railway's terminal deployment status, or dispatch it again once the deployment is building."
+            } >> "$GITHUB_STEP_SUMMARY"
+            echo "::warning::Railway production audit deferred: deployment not yet released; nothing was verified."
+          fi
+
   audit:
+    needs: gate
+    if: needs.gate.outputs.released == 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 20
     env:
@@ -47,7 +134,7 @@ jobs:
         id: identity
         shell: bash
         env:
-          REQUESTED_SHA: ${{ inputs.expected_sha }}
+          REQUESTED_SHA: ${{ needs.gate.outputs.expected_sha }}
         run: |
           git fetch origin main:refs/remotes/origin/main --force
           expected_sha="$REQUESTED_SHA"
@@ -76,7 +163,7 @@ jobs:
         env:
           EXPECTED_SHA: ${{ steps.identity.outputs.expected_sha }}
           MANIFEST_COMMIT: ${{ steps.identity.outputs.manifest_commit }}
-          WAIT_SECONDS: ${{ inputs.wait_seconds }}
+          WAIT_SECONDS: ${{ inputs.wait_seconds || '900' }}
         run: |
           mkdir -p "$RUNNER_TEMP/railway-audit"
           node scripts/railway-production-audit.mjs \

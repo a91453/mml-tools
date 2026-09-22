@@ -2,12 +2,15 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import {
   buildControlPlaneResult,
+  classifyAuditGate,
   compareServiceInstance,
   expectedProductionConfig,
   findExpectedDeployment,
   railwayGraphQL,
   readProductionState,
   resolveDeploymentBinding,
+  runAuditGate,
+  waitForExpectedDeployment,
   watchedChangedPaths,
 } from '../scripts/railway-production-audit.mjs';
 
@@ -294,4 +297,83 @@ test('a SKIPPED main commit fails closed if any production watch path changed', 
   });
   assert.equal(binding.reason, 'SKIPPED_WATCHED_CHANGES');
   assert.deepEqual(binding.watchedSkippedChanges, ['server/mcp.mjs']);
+});
+
+// ─── Railway Wait for CI deadlock (observed 2026-09-22, main 37ddf414) ──────
+//
+// Railway held the deployment WAITING until every GitHub Actions workflow on
+// the commit finished, while a dispatched audit on that commit polled the
+// deployment for up to wait_seconds. Neither could finish first. These pin the
+// two halves of the fix: never poll a held deployment, and let a gate decide
+// before anything waits.
+
+function railwayFetch(expected, deploymentStatus) {
+  const calls = [];
+  const fetchImpl = async (_url, request) => {
+    const body = JSON.parse(request.body);
+    calls.push(body.query);
+    if (body.query.includes('__type')) {
+      return { ok: true, status: 200, async json() {
+        return { data: { __type: { fields: [
+          'startCommand', 'healthcheckPath', 'healthcheckTimeout', 'restartPolicyType',
+          'restartPolicyMaxRetries', 'numReplicas', 'rootDirectory', 'dockerfilePath',
+          'watchPatterns', 'latestDeployment',
+        ].map(name => ({ name })) } } };
+      } };
+    }
+    assert.doesNotMatch(body.query, /mutation\s/i);
+    const node = deploymentStatus === null ? [] : [{ node: {
+      id: 'dep-held', status: deploymentStatus, createdAt: '2026-09-22T17:21:30Z',
+      meta: { commitHash: SHA, branch: 'main', reason: 'deploy' },
+    } }];
+    return { ok: true, status: 200, async json() {
+      return { data: {
+        projectToken: { projectId: expected.projectId, environmentId: expected.environmentId },
+        serviceInstance: { ...live(), latestDeployment: null },
+        deployments: { edges: node },
+      } };
+    } };
+  };
+  return { fetchImpl, calls };
+}
+
+test('the audit gate defers held or missing deployments and audits released ones', () => {
+  assert.deepEqual(classifyAuditGate(null), { action: 'DEFER', reason: 'DEPLOYMENT_NOT_FOUND', status: null });
+  for (const status of ['WAITING', 'NEEDS_APPROVAL']) {
+    assert.equal(classifyAuditGate({ status }).action, 'DEFER', status);
+    assert.equal(classifyAuditGate({ status }).reason, 'DEPLOYMENT_HELD_BY_WAIT_FOR_CI', status);
+  }
+  for (const status of ['QUEUED', 'INITIALIZING', 'BUILDING', 'DEPLOYING', 'SUCCESS', 'FAILED', 'CRASHED', 'SKIPPED', 'REMOVED']) {
+    assert.equal(classifyAuditGate({ status }).action, 'AUDIT', status);
+  }
+});
+
+test('a WAITING deployment is never polled: the audit returns at once instead of holding the check', async () => {
+  const expected = desired();
+  const { fetchImpl, calls } = railwayFetch(expected, 'WAITING');
+  const started = Date.now();
+  // The pre-fix loop would poll here for the whole 900 s budget while Railway
+  // waited for this very workflow to finish.
+  const waited = await waitForExpectedDeployment({ token: 'project-token-secret', expected, expectedSha: SHA, fetchImpl, waitSeconds: 900, pollSeconds: 60 });
+  assert.ok(Date.now() - started < 5000, 'returned without sleeping');
+  assert.equal(waited.reason, 'DEPLOYMENT_HELD_BY_WAIT_FOR_CI');
+  assert.equal(waited.deployment.status, 'WAITING');
+  assert.equal(calls.length, 2, 'exactly one schema read and one state read');
+});
+
+test('the gate reads once and releases the audit only for a released deployment', async () => {
+  const expected = desired();
+  const loadJson = async path => (path.endsWith('service-settings.json')
+    ? { plane: 'agent-control-plane', source: { repo: 'a91453/mml-tools', branch: 'main', rootDirectory: '.' },
+      build: { dockerfilePath: 'railway/Dockerfile', watchPatterns: ['/server/mcp.mjs', '/server/studio-agent-driver.mjs', '/server/studio-agent-codex.mjs'] },
+      deploy: { startCommand: 'node railway/server.mjs', healthcheckPath: '/healthz', healthcheckTimeout: 60, restartPolicyType: 'ON_FAILURE', restartPolicyMaxRetries: 3, numReplicas: 1 } }
+    : { projectId: expected.projectId, environmentId: expected.environmentId, serviceId: expected.serviceId,
+      projectName: 'mml-tools-allen', serviceName: 'mml-tools', publicOrigin: expected.publicOrigin,
+      githubSource: 'a91453/mml-tools', githubBranch: 'main' });
+  for (const [status, action] of [['WAITING', 'DEFER'], [null, 'DEFER'], ['BUILDING', 'AUDIT'], ['DEPLOYING', 'AUDIT'], ['SUCCESS', 'AUDIT']]) {
+    const { fetchImpl, calls } = railwayFetch(expected, status);
+    const gate = await runAuditGate({ token: 'project-token-secret', expectedSha: SHA, fetchImpl, loadJson });
+    assert.equal(gate.action, action, String(status));
+    assert.equal(calls.length, 2, 'one read, no polling');
+  }
 });
