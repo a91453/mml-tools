@@ -1,0 +1,51 @@
+name: Railway production deploy
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: railway-production-deploy
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    environment: production
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: main
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: Verify exact current main checkout
+        run: |
+          git fetch origin main
+          test "$(git rev-parse HEAD)" = "$(git rev-parse refs/remotes/origin/main)"
+      - name: Request exact-main production deployment
+        env:
+          RAILWAY_PROJECT_TOKEN: ${{ secrets.RAILWAY_PROJECT_TOKEN }}
+        run: |
+          mkdir -p "$RUNNER_TEMP/railway-production-deploy"
+          node scripts/railway-production-deploy.mjs \
+            --confirm DEPLOY_CURRENT_MAIN_SHA \
+            --out "$RUNNER_TEMP/railway-production-deploy/receipt.json"
+      - name: Upload bounded deploy receipt
+        id: upload_deploy_receipt
+        uses: actions/upload-artifact@v4
+        continue-on-error: true
+        if: always()
+        with:
+          name: railway-production-deploy-${{ github.sha }}
+          path: ${{ runner.temp }}/railway-production-deploy/receipt.json
+          if-no-files-found: warn
+          retention-days: 14
+      - name: Warn if deploy receipt upload failed
+        if: ${{ always() && steps.upload_deploy_receipt.outcome == 'failure' }}
+        run: echo "::warning::Production deploy request ran, but optional receipt upload failed."

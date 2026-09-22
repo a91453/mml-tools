@@ -55,7 +55,7 @@ jobs:
           run_heavy=false
           while IFS= read -r path; do
             case "$path" in
-              AGENTS.md|CLAUDE.md|.claude/settings.json|.codex/rules/railway-agent.rules|.github/copilot-instructions.md|docs/RAILWAY_AGENT_POLICY.md|tests/railway-agent-policy.test.mjs|scripts/railway-production-audit.mjs|scripts/railway-production-config-apply.mjs|scripts/railway-deployment-diagnostics.mjs|tests/railway-production-audit.test.mjs|tests/railway-production-config-apply.test.mjs|tests/railway-deployment-diagnostics.test.mjs|.github/workflows/railway-production-audit.yml|.github/workflows/railway-production-config-apply.yml|.github/workflows/railway-deployment-diagnostics.yml|.github/workflows/railway-ops-ci.yml|railway/service-settings.json|railway/deployment-target.json|docs/RAILWAY_AGENT_MIGRATION_AUDIT_2026-09-21.md)
+              AGENTS.md|CLAUDE.md|.claude/settings.json|.codex/rules/railway-agent.rules|.github/copilot-instructions.md|docs/RAILWAY_AGENT_POLICY.md|tests/railway-agent-policy.test.mjs|scripts/railway-production-audit.mjs|scripts/railway-production-config-apply.mjs|scripts/railway-production-deploy.mjs|scripts/railway-deployment-diagnostics.mjs|tests/railway-production-audit.test.mjs|tests/railway-production-config-apply.test.mjs|tests/railway-production-deploy.test.mjs|tests/railway-deployment-diagnostics.test.mjs|.github/workflows/railway-production-audit.yml|.github/workflows/railway-production-config-apply.yml|.github/workflows/railway-production-deploy.yml|.github/workflows/railway-deployment-diagnostics.yml|.github/workflows/railway-ops-ci.yml|railway/service-settings.json|railway/deployment-target.json|docs/RAILWAY_AGENT_MIGRATION_AUDIT_2026-09-21.md)
                 ;;
               *)
                 run_heavy=true
@@ -84,7 +84,10 @@ jobs:
         run: node studio/browser-tests/service-workspace.mjs --agent --out "$RUNNER_TEMP/service-browser"
       # Never upload the whole output directory: it contains a disposable TLS
       # private key and test stores. Only explicit evidence files may leave CI.
-      - uses: actions/upload-artifact@v4
+      - name: Upload service-browser evidence
+        id: upload_service_browser_evidence
+        uses: actions/upload-artifact@v4
+        continue-on-error: true
         if: always()
         with:
           name: studio-service-browser-evidence
@@ -93,6 +96,9 @@ jobs:
           path: |
             ${{ runner.temp }}/service-browser/*.png
             ${{ runner.temp }}/service-browser/verification.json
+      - name: Warn if service-browser evidence upload failed
+        if: ${{ always() && steps.upload_service_browser_evidence.outcome == 'failure' }}
+        run: echo "::warning::Service-browser validation ran, but optional evidence upload failed; validation result remains authoritative."
 
   container-smoke:
     needs: classify
@@ -130,13 +136,19 @@ jobs:
           # Actual PR source identity is separate from GITHUB_SHA (merge test).
           MML_CI_PR_HEAD: ${{ github.event.pull_request.head.sha }}
         run: node scripts/studio-container-smoke.mjs --image "$SMOKE_IMAGE" --out "$RUNNER_TEMP/container-smoke.json"
-      - uses: actions/upload-artifact@v4
+      - name: Upload container-smoke evidence
+        id: upload_container_smoke_evidence
+        uses: actions/upload-artifact@v4
+        continue-on-error: true
         if: always()
         with:
           name: studio-container-smoke-evidence
           if-no-files-found: warn
           retention-days: 7
           path: ${{ runner.temp }}/container-smoke.json
+      - name: Warn if container-smoke evidence upload failed
+        if: ${{ always() && steps.upload_container_smoke_evidence.outcome == 'failure' }}
+        run: echo "::warning::Container smoke validation ran, but optional evidence upload failed; validation result remains authoritative."
       - name: Remove local image and credential-bearing intermediate build cache
         if: always()
         run: |

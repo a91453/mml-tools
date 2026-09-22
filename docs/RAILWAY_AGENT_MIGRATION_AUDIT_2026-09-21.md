@@ -212,3 +212,14 @@ Even outside included minutes, a few minutes of Linux runner time per deployment
 6. **POLICY / EXTERNAL REQUIRED:** Railway Agent is prohibited for ChatGPT, Codex, Claude Code and other agents working on this repository. Set the Railway workspace Agent hard usage limit to $0 as the cross-client billing backstop; the 2026-09-22 Usage screenshot still showed a $30 hard limit, so this account-level step is not claimed complete by the repository.
 7. **DONE:** rollback dependency was verified, then `studio-durable-isolated`, its isolated cache volume, `charismatic-reverence`, and the remaining preview environments were retired while production resources were preserved.
 
+
+
+## 2026-09-22 main deployment false-negative CI incident
+
+Merge commit `da44816fd417be11fa8a6b0eb472f1a55ceab0e7` produced a Railway deployment record that moved from `WAITING` to `SKIPPED`. The watch path was not the cause: `railway/server.mjs` changed and is included in the live/repository watch list.
+
+The blocking GitHub check was main-push `Studio service CI` run `35680274017`. Its real container smoke completed with `status: PASS`; the job failed afterwards because `actions/upload-artifact@v4` received an intermediary HTTP 403 while finalizing the optional evidence artifact. Railway Wait for CI therefore correctly skipped the deployment because one workflow conclusion was `failure`.
+
+Re-running only the failed job succeeded without code changes, confirming the production validation itself was healthy and the artifact failure was transient/external. Railway does not revive an already `SKIPPED` deployment after a check rerun, so a fresh watched main commit is still required to deploy the newer runtime.
+
+Mitigation: Studio CI evidence/static-build artifact uploads are non-blocking. Test/build/browser/container failures remain blocking; only failure to persist optional GitHub evidence is downgraded to a workflow warning. `tests/ci-artifact-upload-policy.test.mjs` prevents those Wait-for-CI workflows from reintroducing blocking artifact uploads.

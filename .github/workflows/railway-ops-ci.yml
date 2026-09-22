@@ -13,12 +13,15 @@ on:
       - 'tests/railway-agent-policy.test.mjs'
       - 'scripts/railway-production-audit.mjs'
       - 'scripts/railway-production-config-apply.mjs'
+      - 'scripts/railway-production-deploy.mjs'
       - 'scripts/railway-deployment-diagnostics.mjs'
       - 'tests/railway-production-audit.test.mjs'
       - 'tests/railway-production-config-apply.test.mjs'
+      - 'tests/railway-production-deploy.test.mjs'
       - 'tests/railway-deployment-diagnostics.test.mjs'
       - '.github/workflows/railway-production-audit.yml'
       - '.github/workflows/railway-production-config-apply.yml'
+      - '.github/workflows/railway-production-deploy.yml'
       - '.github/workflows/railway-deployment-diagnostics.yml'
       - '.github/workflows/railway-ops-ci.yml'
       - 'railway/service-settings.json'
@@ -35,12 +38,15 @@ on:
       - 'tests/railway-agent-policy.test.mjs'
       - 'scripts/railway-production-audit.mjs'
       - 'scripts/railway-production-config-apply.mjs'
+      - 'scripts/railway-production-deploy.mjs'
       - 'scripts/railway-deployment-diagnostics.mjs'
       - 'tests/railway-production-audit.test.mjs'
       - 'tests/railway-production-config-apply.test.mjs'
+      - 'tests/railway-production-deploy.test.mjs'
       - 'tests/railway-deployment-diagnostics.test.mjs'
       - '.github/workflows/railway-production-audit.yml'
       - '.github/workflows/railway-production-config-apply.yml'
+      - '.github/workflows/railway-production-deploy.yml'
       - '.github/workflows/railway-deployment-diagnostics.yml'
       - '.github/workflows/railway-ops-ci.yml'
       - 'railway/service-settings.json'
@@ -69,6 +75,7 @@ jobs:
           node --test \
             tests/railway-production-audit.test.mjs \
             tests/railway-production-config-apply.test.mjs \
+            tests/railway-production-deploy.test.mjs \
             tests/railway-deployment-diagnostics.test.mjs \
             tests/railway-agent-policy.test.mjs
       - name: Validate Railway JSON references
