@@ -34,8 +34,12 @@ export {
 export { evaluateProjectReadiness } from './readiness.mjs';
 export {
   evaluateMachineDelivery,
+  machineDeliveryAuthority,
   DELIVERY_CLASS,
   MACHINE_DELIVERY_SCHEMA,
+  MACHINE_DELIVERY_PROJECTION_VERSION,
+  MACHINE_DELIVERY_GATE_NAMES,
+  MACHINE_DELIVERY_GATE_MAP_INCOMPLETE,
   AUTOMATED_VALIDATED,
 } from './delivery-evaluator.mjs';
 
