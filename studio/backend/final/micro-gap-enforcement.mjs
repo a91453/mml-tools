@@ -62,6 +62,11 @@ import {
   MICRO_TIMING_CLASSIFICATIONS,
   analyzeProjectMicroTiming,
 } from '../canonical/micro-timing.mjs';
+import {
+  analyzeReleaseTiming,
+  summarizeReleaseTiming,
+  verifyReleaseRepresentation,
+} from '../canonical/release-timing.mjs';
 
 export const MICRO_GAP_ENFORCEMENT = Object.freeze({
   PRESERVE: 'preserve-source-supported',
@@ -86,6 +91,23 @@ export const MICRO_GAP_BLOCKERS = Object.freeze({
   // (canonical/release-regrid-candidate.mjs). Its timing may look clean, but no
   // Published rule authorised the change, so it can never reach PASS here.
   UNPUBLISHED_CANONICAL_CANDIDATE: 'MICRO_GAP_UNPUBLISHED_CANONICAL_CANDIDATE',
+  // A note release that no admitted Final token sequence can reach
+  // (canonical/release-timing.mjs). The interval analyzer above only sees
+  // sub-grid *intervals*; a release one source tick before the grid followed by
+  // a real rest, or at a role end, leaves no sub-grid interval and was invisible
+  // to this gate while the Final emitter still could not write it. Published v1
+  // needs an evidence-backed Mobile representation decision for each one.
+  //
+  // Only releases the interval analyzer cannot see raise it. A release followed by
+  // a sub-grid gap, or a sub-grid note, already surfaces as an interval above and
+  // keeps its three-way outcome there; whether a *preserved* source-supported
+  // interval can be written at all stays the separate technical gate's question,
+  // exactly as before. Unsupported onsets and rest boundaries are reported in
+  // `unsupportedBoundaries` for the same reason, without a blocker of their own.
+  RELEASE_NOT_FINAL_REPRESENTABLE: 'MICRO_TIMING_RELEASE_NOT_FINAL_REPRESENTABLE',
+  // A recorded release representation that does not re-verify from the project:
+  // a timing change without the evidence-backed decision it claims.
+  RELEASE_RECORD_INVALID: 'MICRO_TIMING_RELEASE_REPRESENTATION_RECORD_INVALID',
 });
 
 // Canonical IR beats are quarter notes, so a whole-note 1/N is 4/N IR beats.
@@ -185,6 +207,9 @@ function failedAnalysisReport(policy, error) {
     rejectedIntervalKeys: Object.freeze([]),
     blockedIntervalKeys: Object.freeze([]),
     finalRepresentable: null,
+    releaseTiming: null,
+    releaseRepresentationRecords: null,
+    unsupportedBoundaries: Object.freeze([]),
   });
 }
 
@@ -246,6 +271,21 @@ export function enforceMicroGaps(project, { mobileSyntax } = {}) {
 
   blockers.push(...policy.blockers);
 
+  // Release representability (Layer B) and recorded representations (Layer C).
+  // Appended after the analyzer and policy blockers, so a project whose releases
+  // Final can all express keeps its blocker list byte for byte.
+  let releaseAnalysis = null;
+  let releaseRecords = { recordCount: 0, violations: [] };
+  try {
+    releaseAnalysis = analyzeReleaseTiming({ candidate: project, baseline: project?.metadata?.sourceFaithfulBaseline?.snapshot ?? null });
+    releaseRecords = verifyReleaseRepresentation(project);
+  } catch (error) {
+    return failedAnalysisReport(policy, error);
+  }
+  if (releaseAnalysis.notVisibleToIntervalAnalyzerCount > 0) blockers.push(MICRO_GAP_BLOCKERS.RELEASE_NOT_FINAL_REPRESENTABLE);
+  const recordInvalid = releaseRecords.violations.length > 0;
+  if (recordInvalid) blockers.push(MICRO_GAP_BLOCKERS.RELEASE_RECORD_INVALID);
+
   // Appended last so an unmarked project's blocker list is unchanged byte for byte.
   if (carriesCanonicalCandidateMarker(project) && !isReleaseRegridCandidateActive(EFFECTIVE_RULESET.canonical?.canonical_version)) {
     blockers.push(MICRO_GAP_BLOCKERS.UNPUBLISHED_CANONICAL_CANDIDATE);
@@ -255,7 +295,7 @@ export function enforceMicroGaps(project, { mobileSyntax } = {}) {
   // and blockers stay visible rather than being hidden behind the FAIL. A
   // non-conformant contract can only ever demote PASS to PENDING; it can never
   // promote anything, and it never turns a FAIL into a pass.
-  const status = rejected.length || invariantViolated
+  const status = rejected.length || invariantViolated || recordInvalid
     ? 'FAIL'
     : blockers.length ? 'PENDING' : 'PASS';
 
@@ -288,6 +328,15 @@ export function enforceMicroGaps(project, { mobileSyntax } = {}) {
     rejectedIntervalKeys: Object.freeze(rejected.map(item => item.identityKey)),
     blockedIntervalKeys: Object.freeze(blocked.map(item => item.identityKey)),
     finalRepresentable: null,
+    // Layer B counts over every note release, and Layer C re-verification of
+    // every recorded release representation. The full per-event analysis is the
+    // Mobile adaptation plan's, not this report's.
+    releaseTiming: summarizeReleaseTiming(releaseAnalysis),
+    releaseRepresentationRecords: Object.freeze({
+      recordCount: releaseRecords.recordCount,
+      violations: Object.freeze([...releaseRecords.violations]),
+    }),
+    unsupportedBoundaries: releaseAnalysis.unsupportedBoundaries,
   });
 }
 

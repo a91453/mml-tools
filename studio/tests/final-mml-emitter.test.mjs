@@ -134,9 +134,17 @@ test('a duration one part in 10^20 off a token is not rounded to it', () => {
   const offBy = f('1').add(new F(1, 10n ** 20n));
   assert.equal(offBy.num(), 1, 'the two values must be indistinguishable as doubles');
   const drifted = emit([note({ start: 0, end: offBy.toString() })]);
-  assert.equal(drifted.status, 'FAIL');
+  // The release is now *proven* unreachable by any admitted Final token
+  // (canonical/release-timing.mjs: its whole-note denominator does not divide
+  // the lcm of the admitted lengths), so the shared micro-gap enforcement holds
+  // the candidate PENDING for an evidence-backed representation decision before
+  // the bounded duration search is ever asked. Either way nothing is rounded and
+  // nothing is written.
+  assert.notEqual(drifted.status, 'PASS');
   assert.equal(drifted.combinedMml, null);
-  assert.ok(codes(drifted).includes(EMIT_DIAGNOSTICS.DURATION_SEARCH_POLICY_LIMIT));
+  const pending = drifted.diagnostics.find(item => item.code === EMIT_DIAGNOSTICS.MICRO_GAP_BLOCKED_PENDING);
+  assert.ok(pending, 'the release is held for a representation decision');
+  assert.ok(pending.blockers.includes('MICRO_TIMING_RELEASE_NOT_FINAL_REPRESENTABLE'));
 });
 
 // ── 9–11. G10 consumption ──────────────────────────────────────────────────
