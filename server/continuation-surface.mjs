@@ -5,13 +5,29 @@ export const CONTINUATION_REQUIRED_TOOLS = Object.freeze([
   'studio_proposal_targets', 'studio_proposal_submit', 'studio_proposal_status', 'studio_proposal_resolve',
   'studio_artifact_get',
 ]);
-const schemaMaps = new Set(['properties', 'patternProperties', '$defs', 'definitions']);
-// Strip schema annotations, not actual input properties named title/description.
-const semantic = (value, propertyMap = false) => Array.isArray(value) ? value.map(item => semantic(item))
-  : value && typeof value === 'object' ? Object.fromEntries(Object.keys(value).sort()
-    .filter(key => propertyMap || !['title', 'description', '$comment'].includes(key))
-    .map(key => [key, key === 'required' && !propertyMap && Array.isArray(value[key])
-      ? [...value[key]].sort() : semantic(value[key], !propertyMap && schemaMaps.has(key))])) : value;
+const schemaMaps = new Set(['properties', 'patternProperties', '$defs', 'definitions', 'dependentSchemas']);
+const schemaLists = new Set(['allOf', 'anyOf', 'oneOf', 'prefixItems']);
+const schemaValues = new Set(['items', 'additionalItems', 'additionalProperties', 'unevaluatedProperties',
+  'unevaluatedItems', 'contains', 'propertyNames', 'not', 'if', 'then', 'else', 'contentSchema']);
+const annotations = new Set(['title', 'description', '$comment']);
+const isObject = value => value !== null && typeof value === 'object' && !Array.isArray(value);
+// Literal data (const/enum/default/unknown vocabulary) keeps every key. A
+// literal property named "description" is not a JSON Schema annotation.
+const ordered = value => Array.isArray(value) ? value.map(ordered)
+  : isObject(value) ? Object.fromEntries(Object.keys(value).sort().map(key => [key, ordered(value[key])])) : value;
+// Traverse only positions known to contain schemas. This is a conservative
+// structural comparison, not a claim to decide arbitrary schema equivalence.
+const semantic = value => !isObject(value) ? ordered(value)
+  : Object.fromEntries(Object.keys(value).sort().filter(key => !annotations.has(key)).map(key => {
+    const child = value[key];
+    if (schemaMaps.has(key) && isObject(child)) {
+      return [key, Object.fromEntries(Object.keys(child).sort().map(name => [name, semantic(child[name])]))];
+    }
+    if (schemaLists.has(key) && Array.isArray(child)) return [key, child.map(semantic)];
+    if (schemaValues.has(key)) return [key, Array.isArray(child) ? child.map(semantic) : semantic(child)];
+    if (key === 'required' && Array.isArray(child)) return [key, [...child].sort()];
+    return [key, ordered(child)];
+  }));
 const tools = value => {
   if (!Array.isArray(value) || value.some(tool => typeof tool !== 'string' && (!tool || typeof tool.name !== 'string'))) {
     throw new TypeError('Expected an observed tool array (names or tool definitions)');
