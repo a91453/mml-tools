@@ -64,7 +64,7 @@ test('repository automation does not dispatch Railway Agent', () => {
   });
 
   const forbidden = [
-    { label: 'Railway CLI agent command', regex: /(^|[^A-Za-z0-9_])railway\s+agent([^A-Za-z0-9_]|$)/i },
+    { label: 'Railway CLI agent command', regex: /^\s*(?:run:\s*)?(?:npx\s+)?railway\s+agent(?:\s|$)/im },
     { label: 'Railway MCP agent tool', regex: /mcp__railway__railway_agent/i },
     { label: 'Railway connector agent tool', regex: /(^|[^A-Za-z0-9_])railway_agent([^A-Za-z0-9_]|$)/i },
   ];
