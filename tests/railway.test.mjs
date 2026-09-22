@@ -5,7 +5,7 @@ import { mkdtemp, readFile, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { once } from 'node:events';
-import { createApplication, createHttpServer, productionAgentConfiguration } from '../railway/server.mjs';
+import { createApplication, createHttpServer, productionAgentConfiguration, PRODUCTION_AGENT_HARD_LIMITS } from '../railway/server.mjs';
 
 const origin = 'https://mml.example';
 const password = 'SYNTHETIC_TEST_PASSWORD_ONLY_01234567890123456789';
@@ -399,25 +399,106 @@ test('the deployment image still runs the Canonical build gate', async () => {
 });
 
 
-test('production runtime refuses external agent environment variables', () => {
+test('production agent continuation is opt-in, non-Railway and hard-budgeted', () => {
   assert.deepEqual(productionAgentConfiguration({ NODE_ENV: 'production' }), {
     agentCodexExecutable: null,
+    agentProvider: null,
+    agentApiKey: null,
     agentModel: null,
+    agentMaxSteps: 6,
+    agentMaxCallsPerRun: 10,
+    agentMaxCallsPerDay: 16,
+    agentMaxConcurrentRuns: 1,
+    agentMaxInputBytes: 262144,
+    agentMaxOutputTokens: 900,
+    agentTimeoutMs: 60000,
   });
   assert.throws(
     () => productionAgentConfiguration({ NODE_ENV: 'production', MML_AGENT_CODEX: '/usr/local/bin/codex' }),
-    /prohibited in production/,
+    /child-process runner is prohibited in production/,
   );
   assert.throws(
     () => productionAgentConfiguration({ NODE_ENV: 'production', MML_AGENT_MODEL: 'example-model' }),
-    /prohibited in production/,
+    /requires MML_AGENT_PROVIDER=openai-responses/,
   );
-  assert.deepEqual(productionAgentConfiguration({
+  assert.throws(
+    () => productionAgentConfiguration({ NODE_ENV: 'production', MML_AGENT_PROVIDER: 'railway-agent', MML_AGENT_MODEL: 'example-model' }),
+    /must be openai-responses/,
+  );
+  assert.throws(
+    () => productionAgentConfiguration({ NODE_ENV: 'production', MML_AGENT_PROVIDER: 'openai-responses', MML_AGENT_MODEL: 'example-model' }),
+    /OPENAI_API_KEY/,
+  );
+
+  const key = 'sk-test-012345678901234567890123456789';
+  const enabled = productionAgentConfiguration({
+    NODE_ENV: 'production',
+    MML_AGENT_PROVIDER: 'openai-responses',
+    MML_AGENT_MODEL: 'gpt-test-model',
+    OPENAI_API_KEY: key,
+    MML_AGENT_MAX_STEPS: '4',
+    MML_AGENT_MAX_CALLS_PER_RUN: '7',
+    MML_AGENT_MAX_CALLS_PER_DAY: '11',
+    MML_AGENT_MAX_INPUT_BYTES: '131072',
+    MML_AGENT_MAX_OUTPUT_TOKENS: '700',
+    MML_AGENT_TIMEOUT_MS: '45000',
+  });
+  assert.equal(enabled.agentCodexExecutable, null);
+  assert.equal(enabled.agentProvider, 'openai-responses');
+  assert.equal(enabled.agentApiKey, key);
+  assert.equal(enabled.agentModel, 'gpt-test-model');
+  assert.equal(enabled.agentMaxSteps, 4);
+  assert.equal(enabled.agentMaxCallsPerRun, 7);
+  assert.equal(enabled.agentMaxCallsPerDay, 11);
+  assert.equal(enabled.agentMaxConcurrentRuns, 1);
+  assert.equal(enabled.agentMaxInputBytes, 131072);
+  assert.equal(enabled.agentMaxOutputTokens, 700);
+  assert.equal(enabled.agentTimeoutMs, 45000);
+
+  assert.throws(() => productionAgentConfiguration({
+    NODE_ENV: 'production',
+    MML_AGENT_PROVIDER: 'openai-responses',
+    MML_AGENT_MODEL: 'gpt-test-model',
+    OPENAI_API_KEY: key,
+    MML_AGENT_MAX_CALLS_PER_DAY: String(PRODUCTION_AGENT_HARD_LIMITS.maxCallsPerDay + 1),
+  }), /MML_AGENT_MAX_CALLS_PER_DAY/);
+
+  const development = productionAgentConfiguration({
     NODE_ENV: 'development',
     MML_AGENT_CODEX: '/usr/local/bin/codex',
     MML_AGENT_MODEL: 'example-model',
-  }), {
-    agentCodexExecutable: '/usr/local/bin/codex',
-    agentModel: 'example-model',
   });
+  assert.equal(development.agentCodexExecutable, '/usr/local/bin/codex');
+  assert.equal(development.agentProvider, null);
+  assert.equal(development.agentApiKey, null);
+  assert.equal(development.agentModel, 'example-model');
+});
+
+test('enabled agent capabilities disclose provider, storage and hard runtime budgets without secrets', async t => {
+  const send = setup(t, {
+    agentDecide: async () => ({ tool: null, arguments_json: '{}', reason: 'test' }),
+    agentProvider: 'openai-responses',
+    agentMaxSteps: 3,
+    agentMaxCallsPerRun: 5,
+    agentMaxCallsPerDay: 9,
+    agentMaxConcurrentRuns: 1,
+    agentMaxInputBytes: 123456,
+    agentMaxOutputTokens: 654,
+    agentTimeoutMs: 43210,
+  });
+  const grant = await tokens(send);
+  const response = await send(req('/api/v1/capabilities', 'GET', undefined, { authorization: 'Bearer ' + grant.access_token }));
+  assert.equal(response.status, 200);
+  const capabilities = await response.json();
+  assert.equal(capabilities.external_agent.enabled, true);
+  assert.equal(capabilities.external_agent.provider, 'openai-responses');
+  assert.equal(capabilities.external_agent.automatic_provider_retry, false);
+  assert.equal(capabilities.external_agent.limits.max_calls_per_run, 5);
+  assert.equal(capabilities.external_agent.limits.max_calls_per_day, 9);
+  assert.equal(capabilities.external_agent.limits.max_input_bytes, 123456);
+  assert.equal(capabilities.external_agent.limits.max_output_tokens, 654);
+  assert.equal(capabilities.external_agent.limits.timeout_ms, 43210);
+  assert.equal(capabilities.cost.llm_api_dependency, 'OPENAI_RESPONSES_API');
+  assert.equal(capabilities.privacy.provider_response_storage, false);
+  assert.equal(JSON.stringify(capabilities).includes('sk-test-'), false);
 });
