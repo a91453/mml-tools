@@ -1,6 +1,6 @@
 # Source Policy
 
-Version: 2026-09-13-v1
+Version: 2026-09-22-v1
 Status: PUBLISHED CANONICAL
 
 This document defines what each source is allowed to prove. Sources are complementary, not interchangeable.
@@ -134,3 +134,26 @@ Before any full-song comparison, confirm recording version, start offset, effect
 External editors and converters produce candidates, not authority.
 
 A tool's parse/export/play success is not equivalent to source correctness or in-game acceptance.
+
+
+## 9. Provider-neutral model proposals and machine evidence
+
+A model's prose, hidden reasoning, confidence, provider identity, or subscription tier is not source evidence. ChatGPT, Claude, Codex, and other assistants are proposal authors only.
+
+Studio may derive machine-checkable facts from stored sources and artifacts when the derivation is deterministic and auditable, for example:
+- exact event identity and provenance;
+- baseline/candidate diffs;
+- role membership already present in an authoritative symbolic source;
+- continuity/coverage calculations;
+- character, syntax, tempo-map and timing facts;
+- whether a cited source/event actually exists and binds to the candidate.
+
+Those facts remain separate from claims that require listening, authored score-role interpretation, target-instrument audibility, or in-game behavior.
+
+When evidence is insufficient for a destructive role change or deletion, prefer a conservative Source-Faithful fallback and record the unresolved question as `PENDING`. A `PENDING` question does not by itself prohibit a machine-deliverable artifact when the fallback preserves traceability and the artifact remains technically valid. If no such fallback exists, fail closed.
+
+## 10. Human and in-game evidence after delivery
+
+Human listening and in-game tests may be attached after a machine-deliverable artifact is produced. They can trigger a new candidate/revision when they reveal an issue, but their absence is not evidence that the machine artifact is wrong.
+
+Human or in-game evidence remains mandatory only for a claim that specifically asserts what only that evidence can establish, such as `HUMAN_REVIEWED`, target-client behavior, or `IN_GAME_ACCEPTED`.

@@ -1,20 +1,32 @@
 # Acceptance Criteria
 
-Version: 2026-09-13-v1
+Version: 2026-09-22-v1
 Status: PUBLISHED CANONICAL
 
-A Mabinogi Mobile MML candidate becomes final only by passing layered gates. Passing one layer does not imply the next.
+A Mabinogi Mobile MML candidate becomes machine-deliverable when Studio can emit a paste-ready artifact that clears every machine-delivery blocker below. Gate statuses remain independent: a non-blocking musical/evidence question may stay `PENDING` and MUST be reported rather than rewritten as PASS.
+
+Human listening and target-client acceptance are post-delivery quality records. They can create a later revision, but they are not prerequisites for a machine-deliverable artifact.
+
+## Gate disposition model
+
+Every gate result carries one of these delivery effects in addition to its ordinary `PASS` / `FAIL` / `PENDING` / `UNSUPPORTED` / `N/A` status:
+
+- `BLOCKING`: no paste-ready Final artifact may be emitted.
+- `NON_BLOCKING_PENDING`: the question remains unresolved, but a conservative Source-Faithful and technically valid artifact may be emitted with the pending item recorded.
+- `POST_DELIVERY`: the check is evidence/quality history for an already machine-deliverable artifact.
+
+The same gate may be blocking or non-blocking depending on whether the unresolved fact is necessary to make a destructive choice. Studio must explain the disposition; it may not turn missing evidence into PASS.
 
 ## Gate 0 — Intake / version identity
 
 Required:
 - target song/version identified;
-- source recording version confirmed;
-- start offset and effective music range known;
+- source recording version confirmed when recordings are used;
+- start offset and effective music range known when required by the source;
 - source files inventoried;
 - current candidate and accepted previous version identified when available.
 
-Fail closed on silent version mixing.
+Silent version mixing is `BLOCKING`.
 
 ## Gate 1 — Technical syntax
 
@@ -25,106 +37,125 @@ Required:
 - `FINAL_CANONICAL_POLICY` enforced separately: forbidden fragile syntax, safe timing-grid rules, Nxx opt-in policy, synchronization-safe Tempo delivery policy;
 - no zero duration;
 - no shell/Markdown/label contamination in paste-ready output;
-- exact timing and note-on identity preserved.
+- exact timing and note-on identity preserved;
+- Final readback/round-trip agrees with the emitted artifact.
 
-A numeric value being inside an official editor range does not automatically make every shorthand form using that number a preferred/allowed Final Canonical form.
-
-Result: `TECHNICAL_PASS` only.
+Violations are `BLOCKING`. Result `TECHNICAL_PASS` says only that this gate passed.
 
 ## Gate 2 — Source completeness / traceability
 
-Required:
-- a Source-Faithful Baseline SHALL exist before role cleanup, reduction, or Mobile adaptation is accepted;
-- an equivalent source map is acceptable only if it is event-level and can enumerate Lead/T1 added, removed and moved events, other meaningful role moves, and pitch/onset/duration/prominence changes;
-- important Lead, harmony, bass, counter/texture and form events are attributable to sources;
+Required for machine delivery:
+- a Source-Faithful Baseline exists before role cleanup, reduction, or Mobile adaptation;
+- the baseline/equivalent source map is event-level and can enumerate Lead/T1 added, removed and moved events, other meaningful role moves, and pitch/onset/duration/prominence changes;
 - candidate diff against the baseline is available;
 - diff against the accepted previous version is available when one exists;
-- removals, additions, role moves and pitch/onset/duration/prominence edits are explainable.
+- every destructive or identity-changing transformation is traceable.
 
-Unsupported source constructs remain `PENDING/UNSUPPORTED`, not guessed.
+A missing/non-diffable baseline, broken source identity, or unexplained source-supported deletion/replacement is `BLOCKING`.
 
-A prose-only source inventory or non-diffable checklist does not satisfy this gate.
+A role classification that remains uncertain may be `NON_BLOCKING_PENDING` only when the artifact preserves the safer Source-Faithful material and no destructive decision depends on the unresolved classification.
 
 ## Gate 3 — Melody / Lead
 
-Required:
-- Lead continuity is recognizable and source-supported;
-- instrumental Lead windows are classified;
-- no `not proven Vocal -> demote` logic;
-- natural rests/breaths are preserved;
-- important hand-offs do not create false gaps;
-- any Lead demotion has the evidence chain required by `SOURCE_POLICY.md`.
+Studio evaluates what can be established from stored source identity, role evidence, continuity, diffs and accepted decisions. A model may propose a role; it does not author the gate verdict.
 
-Melody failure blocks Chord/Full6 promotion to final.
+Required:
+- no source-supported Lead is silently erased;
+- instrumental Lead windows and hand-offs are preserved when source-supported;
+- natural rests/breaths are preserved;
+- any actual Lead demotion/promotion is backed by the evidence chain required by `SOURCE_POLICY.md`, or reverted/preserved conservatively.
+
+If positive evidence for a destructive Lead move is missing, Studio must prefer the Source-Faithful Lead when that fallback is legal. The gate then remains `PENDING` / `NON_BLOCKING_PENDING`; it is not PASS.
+
+If the candidate has already destroyed or reassigned Lead material and cannot be safely reverted/preserved, the gate is `BLOCKING`.
 
 ## Gate 4 — Core3
 
-Required:
-- Melody + Chord1 + Chord2 form a musically complete one-player arrangement for a three-chord-capable instrument;
-- Lead + Core Harmony + essential Bass/inner support are present;
-- no severe unsupported register discontinuity or role pollution introduced by cleanup;
-- Core3 remains intelligible without Chord3–Chord5.
+Core3 remains the one-player three-chord target, but its review status is not allowed to hide a separate valid Full6 artifact.
 
-Coverage metrics are diagnostic, not optimization targets.
+Studio evaluates:
+- Lead + Core Harmony + essential Bass/inner support presence;
+- continuity and unsupported register/role changes;
+- whether Melody + Chord1 + Chord2 stand up independently.
 
-Reduced one-/two-role performance checks may be reported separately, but they do not redefine the Core3 gate.
+For a delivery explicitly targeting a three-role instrument, incomplete Core3 is `BLOCKING`.
+
+For a generic six-role machine-deliverable artifact, unresolved Core3 completeness may be `NON_BLOCKING_PENDING` when all source-supported material remains represented in Full6, the artifact is legal, and no source material was dropped merely to improve the Core3 metric.
 
 ## Gate 5 — Full6 / cross-source arbitration
 
 Required:
-- Chord3–Chord5 enrich rather than damage Core3;
-- same-pitch overlaps reviewed;
-- low/mid m2/M7 and cross-source m9 risks reviewed;
-- simultaneous 5/6-track attacks justified by source/music when retained;
-- every meaningful source conflict has an explicit keep/omit/move/octave/redistribute/PENDING decision.
+- Chord3–Chord5 enrich rather than silently replace Core3/source material;
+- same-pitch overlaps, low/mid m2/M7 and cross-source m9 risks are computed/reported;
+- simultaneous 5/6-track attacks are surfaced;
+- source conflicts are accounted for as keep/omit/move/octave/redistribute/PENDING.
+
+Review signals are not automatic deletion targets.
+
+An unresolved musical tension is `NON_BLOCKING_PENDING` when the safer action is to retain the traceable source-supported material and the output remains legal. Reduction that cannot fit the intended six roles without unexplained loss is `BLOCKING`.
 
 ## Gate 6 — Tempo / duration / preview
 
-When preview/verification assets are used:
-- playback order fully expanded;
-- independent Conductor used where applicable;
-- exact bars/ties from confirmed meter;
-- candidate follows the synchronization-safe delivery policy in `MOBILE_SYNTAX.md`;
-- Tempo Map agrees with the source/candidate decision;
-- duration sanity difference within project tolerance, with 2% used only as a warning threshold;
-- loaded player state/readback is actual, not assumed.
+Machine-delivery requirements:
+- playback order expanded where the source uses navigation;
+- exact meter/form and Tempo Map used by the candidate are known;
+- synchronization-safe delivery policy in `MOBILE_SYNTAX.md` is satisfied;
+- timing is representable under Final Canonical policy;
+- emitted MML round-trips without changing note-on identity or timing.
 
-`applied=true` or website playback does not pass this gate.
+These are `BLOCKING`.
+
+A separate player/listening readback is `POST_DELIVERY` unless that player is the only available evidence for a fact the candidate depends on. `applied=true` or website playback never creates a PASS by itself.
 
 ## Gate 7 — Original-audio evidence
 
-Required when official audio is part of the source set:
-- beat↔recording alignment evidence exists for relevant sections;
-- role/prominence/sustain/articulation/recording-structure questions are reviewed;
-- audio metrics do not overwrite symbolic event identity.
+When official audio is available, Studio may use stored alignment/analysis to locate role, prominence, sustain, articulation and structure questions. Audio metrics never overwrite symbolic event identity.
 
-A globally implemented audio module does not pass this gate for a song automatically.
+Missing or unreviewed original-audio evidence is `NON_BLOCKING_PENDING` when:
+- symbolic/source traceability is complete;
+- recording version identity is not in dispute; and
+- no destructive decision depends on an audio-only claim.
+
+It is `BLOCKING` when the recording version is unresolved or an otherwise unsupported destructive choice requires audio evidence and no conservative Source-Faithful fallback exists.
+
+Human listening of the delivered artifact is `POST_DELIVERY`.
 
 ## Gate 8 — Mobile adaptation
 
-Required:
-- adaptations are minimal and evidence-backed;
-- octave/register changes preserve role and musical identity;
-- role moves preserve/re-arbitrate prominence rather than blindly inheriting destination volume;
-- optimizations do not erase source-supported content;
-- Final syntax follows `MOBILE_SYNTAX.md`.
+Machine-delivery requirements:
+- official limits and Final syntax are satisfied;
+- global pitch/register representation is legal;
+- role moves/octave/register changes, when applied, remain traceable;
+- optimizations do not erase source-supported content.
+
+If no target-instrument profile is supplied and no instrument-specific transformation is needed, instrument-specific audibility/range review is `NON_BLOCKING_PENDING`; Studio must not invent a profile.
+
+If a target instrument/profile is explicitly part of the requested delivery and a known conflict exists, adaptation is `BLOCKING` until resolved.
 
 ## Gate 9 — Regression
 
-Required:
+Machine checks required:
 - compare candidate to the Source-Faithful Baseline;
 - compare candidate to the accepted previous version when available;
 - detect unintended Lead/Core3/source drift;
-- permanent historical regressions are checked when an executable/reproducible fixture exists;
-- no previous accepted strength is removed without stronger evidence.
+- account for removals and transformations;
+- run any available executable named regression fixtures.
 
-If a named regression such as Rashisa lead over-cleaning does not yet have an executable fixture in the repository, the report MUST state `FIXTURE_PENDING` and MUST NOT claim that named regression has passed.
+Unexplained destructive drift is `BLOCKING`.
 
-## Gate 10 — In-game acceptance
+Subjective A/B listening is `POST_DELIVERY`. If a named regression fixture does not exist, report `FIXTURE_PENDING`; do not claim it passed. Absence of that fixture alone does not block an otherwise machine-deliverable artifact.
 
-Only the user or controlled target-client test can set `IN_GAME_ACCEPTED`.
+## Gate 10 — Human / in-game post-delivery acceptance
 
-Record when possible:
+Neither human listening nor in-game acceptance is a machine-delivery gate.
+
+Optional human review may record:
+- exact artifact/candidate;
+- listening setup;
+- audible issue/section;
+- accepted/rejected notes.
+
+Only the user or controlled target-client test can set `IN_GAME_ACCEPTED`. Record when possible:
 - client/region/version/date;
 - instrument/role setup;
 - exact pasted MML;
@@ -132,18 +163,21 @@ Record when possible:
 - audible issue and section;
 - accepted/rejected outcome.
 
+A negative post-delivery result should create a new candidate/revision rather than retroactively falsify the audit trail of the artifact that was tested.
+
 ## Final state vocabulary
 
-Allowed final report states:
+Gate/report statuses:
 - `PASS`
 - `FAIL`
 - `PENDING`
 - `UNSUPPORTED`
 - `N/A`
 
-For the song as a whole, distinguish at least:
+Song lifecycle:
 - `CANDIDATE`
-- `VALIDATED` (all required non-game gates passed)
-- `IN_GAME_ACCEPTED` (user/controlled client accepted)
+- `AUTOMATED_VALIDATED` — every machine-delivery blocker cleared and a paste-ready artifact emitted; may include explicitly listed non-blocking PENDING items.
+- `HUMAN_REVIEWED` — optional human listening/review attached to the exact artifact/candidate.
+- `IN_GAME_ACCEPTED` — optional controlled target-client acceptance attached to the exact MML.
 
-Never infer `IN_GAME_ACCEPTED` from parser or player success.
+Never infer `HUMAN_REVIEWED` or `IN_GAME_ACCEPTED` from parser, model, player, or backend success.

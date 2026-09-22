@@ -1,6 +1,6 @@
 # Mabinogi Mobile MML — Canonical Master Rules
 
-Version: 2026-09-13-v1
+Version: 2026-09-22-v1
 Status: PUBLISHED CANONICAL
 
 This document is the human-readable authority for project policy. Executable contracts, parsers, validators, Studio code, legacy skills, community posts, websites, and historical outputs MUST NOT silently redefine it.
@@ -140,9 +140,9 @@ A newer version is not automatically better. Increasing drift from the source-fa
 
 If a change lacks stronger source or in-game evidence and degrades accepted lead/Core3/source fidelity, prefer rollback to the last accepted baseline followed by the smallest justified correction.
 
-## 11. Validation states
+## 11. Validation states and delivery lifecycle
 
-Keep these separate:
+Keep verification axes separate:
 - `TECHNICAL_PASS`
 - `SOURCE_PASS`
 - `PLAYER_READBACK_PASS`
@@ -150,9 +150,57 @@ Keep these separate:
 - `MOBILE_ADAPTATION_PASS`
 - `IN_GAME_ACCEPTED`
 
-No lower layer may impersonate a higher layer.
+No lower layer may impersonate a higher layer. An AI model, proposal, caller-supplied confirmation, or UI action MUST NOT author a Canonical PASS. Machine verdicts are computed by Studio from the Published Canonical rules and stored evidence.
 
-## 12. Canonical change control and regression claims
+The song lifecycle is separate from the gate vocabulary:
+- `CANDIDATE`: arrangement work is still in progress or a machine-delivery blocker remains.
+- `AUTOMATED_VALIDATED`: Studio produced a paste-ready MML artifact and every machine-delivery blocker is cleared. Non-blocking evidence or quality questions MAY remain `PENDING` and must be reported with the artifact.
+- `HUMAN_REVIEWED`: optional post-delivery listening/review has been recorded for the exact artifact or candidate.
+- `IN_GAME_ACCEPTED`: optional post-delivery controlled target-client acceptance has been recorded for the exact MML.
+
+`HUMAN_REVIEWED` and `IN_GAME_ACCEPTED` enrich the quality history; neither is a prerequisite for `AUTOMATED_VALIDATED`.
+
+## 12. Machine-deliverable Final versus post-delivery review
+
+Final delivery is fail-closed for defects that make the artifact illegal, untraceable, destructively unsupported, or materially ambiguous in a way that cannot be preserved conservatively. At minimum these remain machine-delivery blockers:
+- unresolved recording/source version mixing;
+- no diff-capable Source-Faithful Baseline or broken source/event identity;
+- unexplained deletion, replacement, role move, timing change, or prominence change of source-supported material when reverting/preserving it is still possible;
+- an unresolved reduction that cannot fit the intended delivery within six roles without silently dropping material;
+- official numeric-limit or character-limit violations;
+- Final-forbidden syntax, zero duration, unrepresentable timing, synchronization failure, or Final round-trip mismatch;
+- integrity/provenance failures that make the produced bytes or their candidate binding uncertain.
+
+A musical or evidentiary question MAY remain `PENDING` without blocking machine delivery only when Studio can prove all of the following:
+1. the unresolved question is reported, not converted to PASS/N/A;
+2. the output keeps the safer Source-Faithful material or otherwise applies a reversible evidence-backed transformation;
+3. no source-supported event is silently erased or reassigned to manufacture a clean metric;
+4. the resulting MML is technically legal, representable and round-trip stable;
+5. the unresolved question is not itself required to choose between incompatible source versions or destructive alternatives.
+
+Examples of normally post-delivery or non-blocking evidence include subjective listening preference, optional player listening, target-instrument audibility when no instrument-specific transformation was necessary, and in-game acceptance. Original-audio or human review becomes blocking only when the arrangement decision being made actually depends on that evidence and no conservative source-faithful fallback exists.
+
+## 13. Provider-neutral AI boundary
+
+ChatGPT, Claude, Codex, another MCP-capable assistant, or a local model may inspect state and propose actions. Model/provider identity does not change authority.
+
+The production Studio MUST NOT require a server-side model credential or provider-specific inference path in order to reach a machine-deliverable Final. A conversational AI may spend its own subscription/session quota while operating the same MCP contract.
+
+AI responsibilities:
+- understand the task and source context;
+- inspect Studio state;
+- propose source-bound arrangement decisions or reversible adaptations;
+- continue the run through explicit MCP/Application Service operations.
+
+Studio responsibilities:
+- load Published Canonical;
+- validate bindings, source traceability, diffs, syntax, limits, timing and regression;
+- calculate gate/disposition results;
+- emit the artifact and its unresolved-evidence ledger.
+
+AI MUST NOT claim `PASS`, `HUMAN_REVIEWED`, or `IN_GAME_ACCEPTED` on its own authority.
+
+## 14. Canonical change control and regression claims
 
 Changes to these docs require:
 1. explicit rationale;
@@ -164,4 +212,4 @@ Studio code implements Canonical rules; it does not define them.
 
 Historical named regressions such as Rashisa lead over-cleaning remain permanent evidence and SHOULD become reproducible fixtures when legally/source-permitted assets are available.
 
-Until a named regression fixture exists and is actually executed, a report MUST NOT claim that the named regression has passed. For Lead demotion scenarios without the required evidence, default to `FAIL` or `PENDING`, not silent cleanup.
+Until a named regression fixture exists and is actually executed, a report MUST NOT claim that the named regression has passed. For Lead demotion scenarios without the required evidence, preserve/revert to the Source-Faithful Lead when that is a safe legal fallback; otherwise report `FAIL` or blocking `PENDING`.

@@ -1,6 +1,6 @@
 # Mobile Syntax Policy
 
-Version: 2026-09-13-v1
+Version: 2026-09-22-v1
 Status: PUBLISHED CANONICAL
 
 This file separates documented game limits from project output policy.
@@ -140,3 +140,18 @@ Before user delivery:
 8. keep a reversible mapping from canonical output to source events/decisions.
 
 Technical syntax PASS does not certify musical correctness or in-game acceptance.
+
+
+## 12. Generic machine-deliverable output and target-instrument adaptation
+
+A paste-ready machine-deliverable MML does not require an invented instrument profile.
+
+When no target-instrument profile is supplied:
+- enforce the official global pitch/tempo/length/volume/role/character limits and all Final Canonical syntax rules;
+- preserve the Source-Faithful register and prominence unless a source-backed transformation is required;
+- do not infer instrument-specific audibility, range, octave displacement, or volume from model preference;
+- report target-instrument Mobile adaptation/listening as `PENDING` when it has not been tested.
+
+That `PENDING` is non-blocking when no instrument-specific transformation was necessary to make the MML legal and representable.
+
+When a target instrument/profile is explicitly part of the requested delivery, a known range/representation conflict is blocking until a valid adaptation is produced. A model may propose the adaptation; Studio validates its legality, traceability and diff.
