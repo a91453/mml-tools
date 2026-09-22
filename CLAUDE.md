@@ -2,9 +2,9 @@
 
 ## Mandatory Railway Agent prohibition
 
-Railway Agent is disabled for this repository.
+Railway Agent is disabled for this repository. GitHub Copilot is also prohibited as a delegated/secondary agent.
 
-Claude Code, Claude Desktop Code, Claude Agent SDK, subagents, routines, and MCP-connected Claude sessions MUST NOT invoke or delegate to Railway Agent through any surface, including:
+Claude Code, Claude Desktop Code, Claude Agent SDK, subagents, routines, and MCP-connected Claude sessions MUST NOT invoke or delegate to Railway Agent or GitHub Copilot through any surface. For Railway Agent this includes:
 
 - `railway agent`;
 - Railway Dashboard Agent;
