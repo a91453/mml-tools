@@ -25,9 +25,7 @@ jobs:
         with:
           node-version: '22'
       - name: Verify exact current main checkout
-        run: |
-          git fetch origin main
-          test "$(git rev-parse HEAD)" = "$(git rev-parse refs/remotes/origin/main)"
+        run: test "$(git rev-parse HEAD)" = "$(git rev-parse refs/remotes/origin/main)"
       - name: Request exact-main production deployment
         env:
           RAILWAY_PROJECT_TOKEN: ${{ secrets.RAILWAY_PROJECT_TOKEN }}

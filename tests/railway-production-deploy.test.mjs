@@ -1,5 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import { readFileSync } from 'node:fs';
 import {
   DEPLOY_CONFIRMATION,
   exactCurrentMainSha,
@@ -111,4 +112,15 @@ test('active success for exact main is a no-op', async () => {
   });
   assert.equal(result.status, 'NOOP');
   assert.equal(called, false);
+});
+
+
+test('workflow checkout remains exact-main without unauthenticated refetch', () => {
+  const workflow = readFileSync(new URL('../.github/workflows/railway-production-deploy.yml', import.meta.url), 'utf8');
+  assert.match(workflow, /ref:\s*main/);
+  assert.match(workflow, /fetch-depth:\s*0/);
+  assert.match(workflow, /persist-credentials:\s*false/);
+  assert.match(workflow, /git rev-parse HEAD/);
+  assert.match(workflow, /git rev-parse refs\/remotes\/origin\/main/);
+  assert.doesNotMatch(workflow, /git fetch origin main/);
 });
