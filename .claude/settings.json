@@ -1,0 +1,12 @@
+{
+  "permissions": {
+    "deny": [
+      "mcp__Railway__railway_agent",
+      "mcp__railway__railway_agent",
+      "Bash(railway agent)",
+      "Bash(railway agent *)",
+      "Bash(npx railway agent)",
+      "Bash(npx railway agent *)"
+    ]
+  }
+}
