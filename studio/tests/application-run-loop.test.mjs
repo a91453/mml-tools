@@ -295,7 +295,7 @@ test('a run can start from a prepared candidate without re-running intake or min
 
 // ─── D. applied is not reviewed ─────────────────────────────────────────────
 
-test('an applied Mobile adaptation remains pending evidence without blocking safe machine delivery', async () => {
+test('an applied Mobile adaptation leaves the run awaiting review, with the gates it touched re-opened', async () => {
   const app = createStudioApplication({});
   const fixture = await projectWithSymbolicAsset(app, OWNER);
   await app.analyzeSources(OWNER, fixture.projectId, { assetIds: [fixture.assetId] });
@@ -317,18 +317,21 @@ test('an applied Mobile adaptation remains pending evidence without blocking saf
   // The adaptation really applied.
   assert.equal(statusOf(run, RUN_STEP.MOBILE_ADAPTATION), RUN_STEP_STATUS.COMPLETED);
   assert.notEqual(run.candidate_id, prepared);
-  // Applying is still not reviewing, but Gate 8 belongs to the explicit
-  // non-blocking ledger and the generic Mobile artifact can be delivered.
-  assert.equal(run.state, RUN_STATE.COMPLETED);
+  // And the run is still waiting, because applying is not reviewing.
+  assert.equal(run.state, RUN_STATE.AWAITING_REVIEW);
+  assert.equal(run.halt.reason, 'AWAITING_REVIEW_EVIDENCE');
   assert.equal(run.gates.mobile_adaptation, 'PENDING');
-  assert.ok(run.final_artifact_id);
-  assert.equal(run.machine_delivery.lifecycle, 'AUTOMATED_VALIDATED');
-  assert.ok(run.machine_delivery.non_blocking_pending.some(entry => entry.gate === 'mobileAdaptation'));
+  assert.equal(run.final_artifact_id, null);
+  const gate8 = run.review_requests.find(entry => entry.gate === 'mobileAdaptation');
+  assert.ok(gate8, JSON.stringify(run.review_requests.map(entry => entry.gate)));
+  assert.deepEqual(gate8.blockers, ['MOBILE_ADAPTATION_REVIEW_REQUIRED']);
+  assert.ok(gate8.available_operations.includes('recordConfirmations.mobile_adaptation_reviewed'));
 
-  const artifact = (await app.getArtifact(OWNER, run.final_artifact_id)).artifact;
-  assert.equal(artifact.machine_delivery.lifecycle, 'AUTOMATED_VALIDATED');
-  assert.equal(artifact.machine_delivery.human_reviewed, false);
-  assert.equal(artifact.machine_delivery.in_game_accepted, false);
+  // Supplying exactly that review, for this candidate, lets the run finish.
+  const finished = await app.resumeRun(OWNER, fixture.projectId, run.run_id, { confirmations: FIXTURE_CONFIRMATIONS });
+  assert.equal(finished.run.state, RUN_STATE.COMPLETED, JSON.stringify(finished.run.blockers));
+  assert.equal(finished.run.gates.mobile_adaptation, 'PASS');
+  assert.equal(finished.run.gates.in_game, 'PENDING');
 });
 
 // ─── E. the fixture's declarations are not the service's defaults ───────────
