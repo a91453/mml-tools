@@ -356,7 +356,7 @@ const NON_WORKFLOW_INPUT_KEYS = new Set(['idempotency_key', 'expected_run_revisi
 
 const RUN_INPUT_KEYS = new Set([...PLAN_INPUT_KEYS, ...START_INPUT_KEYS, ...RESUME_INPUT_KEYS]);
 const REDUCTION_INPUT_KEYS = new Set(['decisions', 'expected_plan_id', 'accepted_by', 'instrument_profile']);
-const ADAPTATION_INPUT_KEYS = new Set(['profile', 'expected_plan_id', 'accepted_by']);
+const ADAPTATION_INPUT_KEYS = new Set(['profile', 'release_representation', 'expected_plan_id', 'accepted_by']);
 const FINALIZE_INPUT_KEYS = new Set(['technical_timing_repair', 'pickup', 'final_partial']);
 
 /**
@@ -411,9 +411,17 @@ function normalizeRunInput(input, { label = 'run input', allowed = RUN_INPUT_KEY
 
   const adaptation = source.mobile_adaptation === undefined || source.mobile_adaptation === null ? null : (() => {
     const value = closedObject(source.mobile_adaptation, 'mobile_adaptation', ADAPTATION_INPUT_KEYS);
-    requirePlainObject(value.profile, 'mobile_adaptation.profile');
+    // A target profile, release representation decisions, or both. Neither is
+    // invented here: an omitted profile stays omitted, and release decisions are
+    // graded for admissible evidence by the adaptation stage itself.
+    const hasProfile = value.profile !== undefined && value.profile !== null;
+    const hasRelease = value.release_representation !== undefined && value.release_representation !== null;
+    if (!hasProfile && !hasRelease) fail(ERROR_CODES.INVALID_REQUEST, 'mobile_adaptation requires a profile, release_representation, or both.');
+    if (hasProfile) requirePlainObject(value.profile, 'mobile_adaptation.profile');
+    if (hasRelease) requirePlainObject(value.release_representation, 'mobile_adaptation.release_representation');
     return {
-      profile: value.profile,
+      profile: hasProfile ? value.profile : null,
+      release_representation: hasRelease ? value.release_representation : null,
       expected_plan_id: requireString(value.expected_plan_id, 'mobile_adaptation.expected_plan_id', { max: 200 }),
       accepted_by: requireString(value.accepted_by, 'mobile_adaptation.accepted_by', { max: 120 }),
     };
@@ -1961,8 +1969,34 @@ export function createRunService({ canonical, projects, store, operations, seria
     return { run: applied.run, halted: false };
   }
 
+  // The read-only Layer A/B release analysis for the run's current candidate,
+  // reduced to what a caller needs to know to supply evidence. It writes nothing,
+  // accepts nothing and never halts the run: an unresolved release keeps the
+  // micro-timing gate PENDING at review, which is where the run stops.
+  async function releaseTimingSummary(owner, projectId, candidateId) {
+    if (!candidateId) return null;
+    try {
+      const planned = await operations.planMobileAdaptation(owner, projectId, { candidateId, releaseRepresentation: { decisions: [] } });
+      const plan = planned.adaptation?.plan;
+      const summary = plan?.releaseRepresentation?.summary ?? null;
+      if (!summary) return null;
+      return {
+        ...summary,
+        encodingObservations: undefined,
+        encoding_observations: (summary.encodingObservations ?? []).map(item => ({ source_id: item.sourceId, offsets_before_next_grid: item.offsetsBeforeNextGrid, uniform: item.uniform, evidence_class: item.evidenceClass, admissible_as_evidence: false })),
+        windows: (plan.releaseTiming?.windows ?? []).slice(0, LIMITS.maxReviewRequestEventIds).map(window => ({ window_id: window.windowId, role: window.role, start: window.start, end: window.end, count: window.count })),
+        decision_required: summary.decisionRequiredCount > 0,
+        admissible_evidence: ['primary-symbolic: an independent official score/MIDI asset, attested by a human reviewer', 'primary-audio: the original recording, attested by a human reviewer who listened (audio_basis: listening)'],
+        how_to_supply: 'resumeRun.mobile_adaptation.release_representation.decisions (preview first with planMobileAdaptation to obtain expected_plan_id); agent, tool, third-party, encoding-pattern and audio-metric evidence are recorded but never counted',
+      };
+    } catch {
+      return null;
+    }
+  }
+
   async function adaptationStep(owner, projectId, record, run, normalized) {
     if (!normalized.mobile_adaptation) {
+      const releaseTiming = await releaseTimingSummary(owner, projectId, run.candidate_id);
       return {
         run: bumpRun(owner, projectId, run, {
           steps: appendStep(run, stepReceipt({
@@ -1972,6 +2006,10 @@ export function createRunService({ canonical, projects, store, operations, seria
             detail: {
               reason: 'NO_MOBILE_PROFILE_SUPPLIED',
               notice: 'No adaptation was attempted and no revision was minted. This is not a Gate 8 result: the Mobile adaptation review stays a separate candidate-bound, evidence-backed statement, and a run that changed nothing still needs it. A Mobile profile must be supplied by a caller with its own reason and evidence; this run invents no instrument range and no volume.',
+              // Which Mobile decisions the missing profile blocks, and which it does not.
+              profile_required_for: ['register (pitchRange) adaptation per role', 'Mobile volume / prominence re-arbitration'],
+              profile_not_required_for: ['release representation of releases Final cannot express'],
+              release_timing: releaseTiming,
             },
           })),
         }),
@@ -1998,6 +2036,7 @@ export function createRunService({ canonical, projects, store, operations, seria
         const result = await operations.applyMobileAdaptation(owner, projectId, {
           candidateId: parent,
           profile: normalized.mobile_adaptation.profile,
+          releaseRepresentation: normalized.mobile_adaptation.release_representation,
           expectedPlanId: normalized.mobile_adaptation.expected_plan_id,
           acceptedBy: normalized.mobile_adaptation.accepted_by,
           inputFingerprint: fingerprint,
@@ -2017,6 +2056,7 @@ export function createRunService({ canonical, projects, store, operations, seria
             missing: [
               'The adaptation was refused by the adaptation stage. A refusal naming a Lead-bound event is the existing prohibition on re-pitching or re-voicing material a Lead evidence record still binds — including a Melody assigned from a role-less Source-Faithful Baseline. It is answered through the Lead evidence path, never by clearing the evidence, changing the baseline role, copying an older PASS or relaxing the profile.',
               'A stale plan id means the plan inputs moved — most often because the profile changed — so the plan must be re-previewed and re-accepted before it can be applied.',
+              'RELEASE_DECISION_EVIDENCE_NOT_ADMISSIBLE means no release representation decision carried evidence that counts: a human reviewer attesting an independent primary source (an official score, or the original recording by listening). Agent, tool, third-party, encoding-pattern and audio-metric evidence is recorded and never counted; the release stays at its source value and the micro-timing gate stays PENDING.',
             ],
             availableOperations: ['planMobileAdaptation', 'applyMobileAdaptation', 'reviewLeadEvidence', 'listBaselineEvents'],
             invalidatedBy: ['candidate', 'canonical', 'plan'],
@@ -2042,7 +2082,14 @@ export function createRunService({ canonical, projects, store, operations, seria
             status: RUN_STEP_STATUS.COMPLETED,
             inputFingerprint: fingerprint,
             resultReference: adaptation.candidate_id,
-            detail: { plan_id: adaptation.plan?.id ?? null, change_count: adaptation.plan?.changes?.length ?? null, gates_after_apply: result.review?.gates ?? null },
+            detail: {
+              plan_id: adaptation.plan?.id ?? null,
+              change_count: adaptation.plan?.changes?.length ?? null,
+              release_change_count: adaptation.plan?.releaseRepresentation?.changes?.length ?? 0,
+              release_pending_decisions: (adaptation.plan?.releaseRepresentation?.pending ?? []).map(item => ({ decision_id: item.decisionId, reasons: item.reasons })),
+              release_unresolved_targets: adaptation.plan?.releaseRepresentation?.unresolvedTargetCount ?? null,
+              gates_after_apply: result.review?.gates ?? null,
+            },
           }),
           runChanges: {
             candidate_id: adaptation.candidate_id,
@@ -3196,7 +3243,8 @@ export function createRunService({ canonical, projects, store, operations, seria
         needs: normalized.final_reduction ? [] : ['the run derives the read-only reduction plan and stops there unless explicitly accepted reduction decisions are supplied; a candidate whose every source event is already retained is skipped without minting a revision'],
       });
       add(RUN_STEP.MOBILE_ADAPTATION, normalized.mobile_adaptation ? RUN_STEP_STATUS.PLANNED : RUN_STEP_STATUS.SKIPPED, {
-        reason: normalized.mobile_adaptation ? null : 'No evidence-bound Mobile profile was supplied, so no adaptation is attempted. Changing nothing is not a Gate 8 PASS: the Gate 8 review stays required.',
+        reason: normalized.mobile_adaptation ? null : 'No evidence-bound Mobile profile or release representation decision was supplied, so no adaptation is attempted. Changing nothing is not a Gate 8 PASS: the Gate 8 review stays required.',
+        release_representation: normalized.mobile_adaptation?.release_representation ? 'supplied' : 'not-supplied',
       });
       add(RUN_STEP.REVIEW, RUN_STEP_STATUS.PLANNED, { records_confirmations: normalized.confirmations !== null });
       add(RUN_STEP.FINALIZE, RUN_STEP_STATUS.PLANNED, {

@@ -901,6 +901,30 @@ export function verifyReleaseRepresentation(project) {
 }
 
 /**
+ * The release the Lead / Core3 *context* is read at. An EXTEND representation
+ * only closes a sub-grid gap or shortens a rest of at least the safe grid by less
+ * than the grid: it creates no silence and removes no rest, so the Lead
+ * continuity picture a reviewer's claim was made about is unchanged at Final
+ * resolution, and the recorded source release is read instead. A TRUNCATE
+ * representation inserts silence and is read as the change it is. The record's
+ * agreement with the baseline is re-verified separately by the micro-timing gate
+ * (`verifyReleaseRepresentation`); this only requires it to be self-consistent.
+ */
+export function contextReleaseOf(event) {
+  const record = recordOf(event);
+  if (!record || record.representation !== REPRESENTATION.EXTEND_TO_NEXT_GRID) return event?.end;
+  try {
+    if (f(event.end).cmp(record.final?.end) !== 0) return event.end;
+    const delta = f(record.final.end).sub(record.source.end);
+    if (delta.cmp(0) <= 0 || delta.cmp(SAFE_GRID) >= 0) return event.end;
+    if (classifyPosition(record.source.end) !== POSITION_CLASS.NOT_FINAL_REPRESENTABLE) return event.end;
+    return String(record.source.end);
+  } catch {
+    return event.end;
+  }
+}
+
+/**
  * The event as the source states it: a verified release representation is
  * reversed, and nothing else is. Used where evidence is bound to a source event's
  * musical identity (Lead evidence), so that a recorded Mobile representation of

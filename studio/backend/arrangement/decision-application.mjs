@@ -61,6 +61,7 @@ import {
   createCanonicalRestEvent,
   createArbitrationDecision,
 } from '../canonical/index.mjs';
+import { contextReleaseOf } from '../canonical/release-timing.mjs';
 import { compareCanonicalVersions } from '../compare/version-drift.mjs';
 import {
   evaluateLeadDemotion,
@@ -371,7 +372,11 @@ export function leadContextDigestOf(project) {
       role: event.role,
       pitch: event.pitch,
       start: beatKey(event.start),
-      end: beatKey(event.end),
+      // A release a recorded EXTEND representation moved onto the Final grid is
+      // read at its source value: it created no silence and removed no rest, so
+      // the Lead picture is unchanged (canonical/release-timing.mjs). Events
+      // without such a record digest exactly as before.
+      end: beatKey(contextReleaseOf(event)),
       volume: event.volume ?? null,
     }))
     .sort((a, b) => cmpStr(a.id, b.id));

@@ -1,6 +1,14 @@
 // Mobile Adaptation v1 implements Gate 8 transformations, never its verdict.
 // A profile is a song/target-specific, cited input, NOT an instrument database
 // or a new Canonical rule. No pitch folding, clipping, deletion or role moves.
+//
+// Release representation is the one timing transformation this stage performs,
+// and it needs no profile: a note release no admitted Final token can express
+// (canonical/release-timing.mjs) is moved to an adjacent 1/64 grid point only
+// by an explicit decision whose evidence a human reviewer attests from an
+// independent primary source. The Source-Faithful release stays on the baseline
+// and on the event's record; onsets, pitches, roles and event identities never
+// move, and no tie, merge or deletion is ever introduced.
 import { createCanonicalProject, createCanonicalNoteEvent, createArbitrationDecision } from '../canonical/index.mjs';
 import { ROLES } from '../mml/index.mjs';
 import { EFFECTIVE_RULESET } from '../rules/index.mjs';
@@ -9,6 +17,14 @@ import { compareCanonicalVersions } from '../compare/version-drift.mjs';
 import { overlapRisks, overlapRiskKey, overlapPairBudgetExceeded, OVERLAP_PAIR_BUDGET } from '../arbitration/harmony.mjs';
 import { baselineIdentityOf, candidateDigestOf, contentDigest, createArrangementRevision } from '../arrangement/decision-application.mjs';
 import { applicationIntegrity, baselineOriginResolver } from '../arrangement/decision-review.mjs';
+import {
+  RELEASE_RECORD_KEY,
+  analyzeReleaseTiming,
+  buildEvidenceRegistry,
+  planReleaseRepresentation,
+  releaseRecordFor,
+  summarizeReleaseTiming,
+} from '../canonical/release-timing.mjs';
 
 export const MOBILE_ADAPTATION_SCHEMA = 'mml-studio/mobile-adaptation-profile@1';
 const syntax = EFFECTIVE_RULESET.mobileSyntax;
@@ -82,12 +98,18 @@ const mergedRoleRecord = (priorRoles, roles, events) => {
  * caller that can read the lineage supplies them; a plane without one (the local
  * Web workspace) has no lineage to lose and passes none.
  */
-export function planMobileAdaptation({ baseline, candidate = baseline, profile, leadBoundEventIds = [] }) {
-  const normalized = normalizeMobileProfile(profile);
+export function planMobileAdaptation({ baseline, candidate = baseline, profile = null, releaseRepresentation = null, evidenceSources = null, leadBoundEventIds = [] }) {
+  if ((profile === null || profile === undefined) && (releaseRepresentation === null || releaseRepresentation === undefined)) {
+    throw Error('Mobile adaptation requires a cited target profile, release representation decisions, or both');
+  }
+  // A missing profile is not an empty one: no register or volume rule is
+  // invented, and only the release representation below runs.
+  const normalized = profile === null || profile === undefined ? null : normalizeMobileProfile(profile);
   if (!baseline?.events || !candidate?.events) throw Error('Mobile adaptation requires a Source-Faithful Baseline and a Canonical candidate');
   const baselineIdentity = baselineIdentityOf(baseline);
   const inputDigest = candidateDigestOf(candidate);
-  const profileDigest = contentDigest(normalized);
+  const profileDigest = normalized ? contentDigest(normalized) : null;
+  const profileRoles = normalized?.roles ?? {};
   const blockers = [], warnings = [], changes = [], rolePlans = [];
   const leadBound = new Set(Array.isArray(leadBoundEventIds) ? leadBoundEventIds.filter(string) : []);
   // The transformation already in this candidate, recorded per role. Keying the
@@ -97,7 +119,7 @@ export function planMobileAdaptation({ baseline, candidate = baseline, profile, 
   const prior = candidate.metadata?.mobileAdaptation ?? null;
   const priorRoles = plain(prior?.appliedRoles) ? prior.appliedRoles : null;
   // Revisions minted before the per-role record keyed it on the whole profile.
-  const legacyApplied = !priorRoles && prior?.profileDigest === profileDigest;
+  const legacyApplied = Boolean(normalized) && !priorRoles && prior?.profileDigest === profileDigest;
   if (legacyApplied && prior.targetDigest !== targetDigest(candidate, normalized)) blockers.push({ code: 'MOBILE_PROFILE_CONTEXT_CHANGED' });
   const notes = sortedEvents(candidate.events.filter(event => event.kind === 'note'));
   const origins = new Map();
@@ -111,7 +133,7 @@ export function planMobileAdaptation({ baseline, candidate = baseline, profile, 
   }
   // Velocity is deliberately not interpreted as Mobile volume. A caller may
   // supply an evidence-backed default for undecided notes; it stays explicit.
-  for (const [role, rule] of Object.entries(normalized.roles)) {
+  for (const [role, rule] of Object.entries(profileRoles)) {
     const events = notes.filter(event => event.role === role);
     if (!events.length) { warnings.push({ code: 'EMPTY_ROLE_UNCHANGED', role }); continue; }
     const recorded = priorRoles?.[role] ?? null;
@@ -157,7 +179,31 @@ export function planMobileAdaptation({ baseline, candidate = baseline, profile, 
     const movedLead = origin && origin.role !== change.role && [origin.role, change.role].includes('Melody');
     if (movedLead || leadBound.has(change.eventId)) blockers.push({ code: 'LEAD_ROLE_ADAPTATION_REVIEW_UNSUPPORTED', eventId: change.eventId, fromRole: origin?.role ?? null, toRole: change.role, boundBy: movedLead ? 'baseline-role-move' : 'lead-evidence-lineage' });
   }
-  const proposed = { ...candidate, events: candidate.events.map(event => byId.has(event.id) ? { ...event, ...byId.get(event.id).after } : event) };
+  // Release representation (Layer C). Analysis and evidence grading live in
+  // canonical/release-timing.mjs; this stage only turns admissible decisions into
+  // candidate edits. A release change on a Lead-bound event is allowed: the Lead
+  // evidence binding re-reads the event through its recorded source release
+  // (`sourceIdentityOf`), so a represented release is not a different source
+  // event, while a pitch or volume change above still is.
+  const releaseAnalysis = analyzeReleaseTiming({ candidate, baseline });
+  const priorRelease = plain(prior?.releaseRepresentation) ? prior.releaseRepresentation : null;
+  const priorDecisionIds = new Set((Array.isArray(priorRelease?.decisions) ? priorRelease.decisions : []).map(decision => decision?.id).filter(string));
+  const registry = buildEvidenceRegistry(evidenceSources ?? { sources: candidate.sources ?? [] });
+  const releasePlan = planReleaseRepresentation({ analysis: releaseAnalysis, input: releaseRepresentation, registry });
+  for (const blocker of releasePlan.blockers) blockers.push({ ...blocker });
+  // A decision whose evidence does not count moves nothing and is never silent.
+  // Alongside decisions that do count it is a warning; on its own it is the
+  // reason nothing can be applied.
+  for (const item of releasePlan.pending) warnings.push({ code: 'RELEASE_DECISION_EVIDENCE_NOT_ADMISSIBLE', decisionId: item.decisionId, reasons: [...item.reasons] });
+  if (releasePlan.pending.length && !releasePlan.changes.length && !Object.keys(profileRoles).length) {
+    blockers.push({ code: 'RELEASE_DECISION_EVIDENCE_NOT_ADMISSIBLE', decisionIds: releasePlan.pending.map(item => item.decisionId), reasons: [...new Set(releasePlan.pending.flatMap(item => item.reasons))] });
+  }
+  for (const decision of releasePlan.decisions) if (priorDecisionIds.has(decision.id)) blockers.push({ code: 'RELEASE_DECISION_ID_ALREADY_APPLIED', decisionId: decision.id });
+  const releaseById = new Map(releasePlan.changes.map(change => [change.eventId, change]));
+  const proposed = { ...candidate, events: candidate.events.map(event => {
+    const edited = byId.has(event.id) ? { ...event, ...byId.get(event.id).after } : event;
+    return releaseById.has(event.id) ? { ...edited, end: releaseById.get(event.id).after.end } : edited;
+  }) };
   // A note this plan moves must land inside the Published Canonical range. A
   // note already outside it that this plan does not move is inherited, not
   // introduced: it stays a visible warning for the existing technical/Final
@@ -175,44 +221,100 @@ export function planMobileAdaptation({ baseline, candidate = baseline, profile, 
   const introduced = afterRisks.filter(risk => !existing.has(overlapRiskKey(risk)));
   for (const risk of introduced) blockers.push({ code: 'NEW_COLLISION_REQUIRES_REVIEW', ...risk });
   if (beforeRisks.length) warnings.push({ code: 'EXISTING_COLLISIONS_REQUIRE_REVIEW', count: beforeRisks.length });
-  const body = { schema: 'mml-studio/mobile-adaptation-plan@1', baselineIdentity, inputDigest, profileDigest, profile: normalized, canonicalIdentity: canonicalIdentity(), leadBoundEventIds: [...leadBound].sort(compareStrings), rolePlans, changes, blockers, warnings, collisions: { before: beforeRisks, after: afterRisks, introduced, scanLimited }, status: blockers.length ? 'PENDING' : 'PASS' };
-  return { ...body, id: `mobile:plan:${contentDigest(body)}`, certifiesGates: [], notice: 'An executable adaptation plan, not a Mobile acceptance verdict. Evidence references are caller-supplied, not independently authenticated.' };
+  const releaseBody = {
+    summary: summarizeReleaseTiming(releaseAnalysis),
+    analysisDigest: contentDigest(releaseAnalysis.targets),
+    decisions: releasePlan.decisions,
+    changes: releasePlan.changes,
+    pending: releasePlan.pending,
+    unresolvedTargetCount: releasePlan.unresolvedTargetCount,
+  };
+  const body = { schema: 'mml-studio/mobile-adaptation-plan@1', baselineIdentity, inputDigest, profileDigest, profile: normalized, canonicalIdentity: canonicalIdentity(), leadBoundEventIds: [...leadBound].sort(compareStrings), rolePlans, changes, releaseRepresentation: releaseBody, blockers, warnings, collisions: { before: beforeRisks, after: afterRisks, introduced, scanLimited }, status: blockers.length ? 'PENDING' : 'PASS' };
+  return {
+    ...body,
+    id: `mobile:plan:${contentDigest(body)}`,
+    // The full per-release analysis (Layer A/B) for a reviewer. It is derived
+    // from the candidate and is not part of the plan identity or of any stored
+    // revision; the summary and its digest are.
+    releaseTiming: releaseAnalysis,
+    // What still needs a target profile. Nothing here guesses one.
+    profileRequirement: normalized ? null : {
+      status: 'NOT_SUPPLIED',
+      requiredFor: ['register (pitchRange) adaptation per role', 'Mobile volume / prominence re-arbitration (defaultVolume, volumeDelta)'],
+      notice: 'No register or volume adaptation was attempted. A Mobile target profile must be supplied by a caller with its own reason and evidence; release representation does not depend on it.',
+    },
+    certifiesGates: [],
+    notice: 'An executable adaptation plan, not a Mobile acceptance verdict. Evidence references are caller-supplied, not independently authenticated; release representation evidence counts only as a human reviewer attestation of an independent primary source.',
+  };
 }
 
 /** Atomic application; recomputes the plan and refuses stale preview identities. */
-export function applyMobileAdaptation({ baseline, candidate = baseline, parent = null, profile, expectedPlanId, acceptedBy, leadBoundEventIds = [] }) {
+export function applyMobileAdaptation({ baseline, candidate = baseline, parent = null, profile = null, releaseRepresentation = null, evidenceSources = null, expectedPlanId, acceptedBy, leadBoundEventIds = [] }) {
   if (!string(acceptedBy) || acceptedBy.length > 120) throw Error('acceptedBy is required');
   if (!string(expectedPlanId)) throw Error('expectedPlanId from the preview is required');
   if (parent && (!applicationIntegrity(parent, baseline).ok || candidateDigestOf(candidate) !== parent.revision.candidateDigest)) throw Error('Mobile adaptation parent integrity mismatch');
   if (parent && parent.revision.canonicalIdentity?.rules_snapshot_sha !== canonicalIdentity().rules_snapshot_sha) throw Error('Mobile adaptation parent Canonical snapshot mismatch');
-  const plan = planMobileAdaptation({ baseline, candidate, profile, leadBoundEventIds });
+  const { releaseTiming: _analysis, ...plan } = planMobileAdaptation({ baseline, candidate, profile, releaseRepresentation, evidenceSources, leadBoundEventIds });
   if (plan.id !== expectedPlanId) return { applied: false, status: 'PENDING', candidate: null, revision: null, plan, blockers: [{ code: 'STALE_MOBILE_ADAPTATION_PLAN' }] };
-  if (plan.blockers.length || !plan.changes.length) return { applied: false, status: plan.status, candidate: null, revision: null, plan, blockers: plan.blockers, unchanged: !plan.blockers.length };
+  const releaseChanges = plan.releaseRepresentation.changes;
+  if (plan.blockers.length || (!plan.changes.length && !releaseChanges.length)) return { applied: false, status: plan.status, candidate: null, revision: null, plan, blockers: plan.blockers, unchanged: !plan.blockers.length };
   const changed = new Map(plan.changes.map(change => [change.eventId, change]));
+  const releaseChanged = new Map(releaseChanges.map(change => [change.eventId, change]));
+  const priorAdaptation = candidate.metadata?.mobileAdaptation ?? null;
+  const priorRelease = plain(priorAdaptation?.releaseRepresentation) ? priorAdaptation.releaseRepresentation : { decisions: [], changes: [] };
+  const appliedDecisionIds = new Set(releaseChanges.map(change => change.decisionId));
   const metadata = structuredClone(candidate.metadata ?? {});
   for (const key of ['sourceComplete', 'audioAlignmentEvidence', 'sourceFaithfulBaseline', 'g11d', 'incompleteInputs']) delete metadata[key];
   const snapshot = structuredClone(baseline);
   delete snapshot.metadata.sourceFaithfulBaseline;
   delete snapshot.metadata.g11d;
   const index = (parent?.revision.index ?? 0) + 1;
-  const outputEvents = candidate.events.map(event => changed.has(event.id) ? createCanonicalNoteEvent({ ...event, ...changed.get(event.id).after }) : structuredClone(event));
+  const outputEvents = candidate.events.map(event => {
+    if (!changed.has(event.id) && !releaseChanged.has(event.id)) return structuredClone(event);
+    const edited = changed.has(event.id) ? { ...event, ...changed.get(event.id).after } : { ...event };
+    if (!releaseChanged.has(event.id)) return createCanonicalNoteEvent(edited);
+    const release = releaseChanged.get(event.id);
+    return createCanonicalNoteEvent({ ...edited, end: release.after.end, metadata: { ...(event.metadata ?? {}), [RELEASE_RECORD_KEY]: releaseRecordFor(release) } });
+  });
+  // The profile a release-only adaptation leaves in force is the one already
+  // recorded; it is carried, never re-applied.
+  const effectiveProfile = plan.profile ?? priorAdaptation?.profile ?? null;
   const adapted = createCanonicalProject({ ...candidate, id: `${baseline.id}#mobile-r${index}`,
     events: outputEvents,
     // A changed context can invalidate even a pair whose notes did not move.
     // Re-open accepted arbitration rather than carry any verdict into the revision.
     decisions: candidate.decisions.map(decision => createArbitrationDecision({ ...decision, status: decision.status === 'accepted' ? 'pending' : decision.status })),
-    metadata: { ...metadata, sourceFaithfulBaseline: { snapshot }, mobileAdaptation: { planId: plan.id, profileDigest: plan.profileDigest, targetDigest: targetDigest({ events: outputEvents }, plan.profile),
-      appliedRoles: mergedRoleRecord(candidate.metadata?.mobileAdaptation?.appliedRoles, plan.profile.roles, outputEvents),
-      profile: plan.profile, inputDigest: plan.inputDigest, acceptedBy: acceptedBy.trim(), changes: plan.changes, certifiesGates: [] } },
+    metadata: { ...metadata, sourceFaithfulBaseline: { snapshot }, mobileAdaptation: { planId: plan.id, profileDigest: plan.profileDigest ?? priorAdaptation?.profileDigest ?? null,
+      targetDigest: effectiveProfile ? targetDigest({ events: outputEvents }, effectiveProfile) : null,
+      appliedRoles: mergedRoleRecord(priorAdaptation?.appliedRoles, plan.profile?.roles ?? {}, outputEvents),
+      profile: effectiveProfile, inputDigest: plan.inputDigest, acceptedBy: acceptedBy.trim(), changes: plan.changes,
+      // Every decision a recorded release representation names stays stored,
+      // across revisions, so the micro-timing gate can re-grade it from the
+      // project alone (canonical/release-timing.mjs#verifyReleaseRepresentation).
+      releaseRepresentation: {
+        decisions: [...(priorRelease.decisions ?? []), ...plan.releaseRepresentation.decisions.filter(decision => appliedDecisionIds.has(decision.id))],
+        changes: [...(priorRelease.changes ?? []), ...releaseChanges],
+      },
+      certifiesGates: [] } },
   });
   const revision = createArrangementRevision({ stage: 'MOBILE_ADAPTATION_V1', index, parentRevisionId: parent?.revision.id ?? null, baselineIdentity: plan.baselineIdentity, parentCandidateIdentity: parent ? baselineIdentityOf(candidate) : null, decisionSetDigest: contentDigest({ planId: plan.id, acceptedBy: acceptedBy.trim() }), canonicalIdentity: plan.canonicalIdentity, candidateDigest: candidateDigestOf(adapted) });
   const output = createCanonicalProject({ ...adapted, metadata: { ...adapted.metadata, g11d: { revision, certifiesGates: [] } } });
-  // Check invariants on the output, not just the intended edits.
+  // Check invariants on the output, not just the intended edits. A release moves
+  // only where a planned, admissible decision moved it, and only to the planned
+  // grid point; onset, identity, role and provenance never move.
   for (let i = 0; i < candidate.events.length; i++) {
     const before = candidate.events[i], after = output.events[i];
-    const { pitch: p1, volume: v1, ...original } = before, { pitch: p2, volume: v2, ...result } = after;
-    if (contentDigest(original) !== contentDigest(result)) throw Error('Mobile adaptation changed event identity, timing, role or provenance');
-    if (before.kind === 'note' && (p2 - p1) % 12 !== 0) throw Error('Mobile adaptation changed pitch class');
+    const release = releaseChanged.get(before.id);
+    const strip = ({ pitch, volume, end, metadata, ...rest }) => rest;
+    if (contentDigest(strip(before)) !== contentDigest(strip(after))) throw Error('Mobile adaptation changed event identity, onset, role or provenance');
+    if (release) {
+      if (String(after.end) !== release.after.end || String(before.end) !== release.before.end) throw Error('Mobile adaptation moved a release other than as planned');
+      const { [RELEASE_RECORD_KEY]: _record, ...restMetadata } = after.metadata ?? {};
+      if (contentDigest(restMetadata) !== contentDigest(before.metadata ?? {})) throw Error('Mobile adaptation changed event metadata beyond the release record');
+    } else if (String(before.end) !== String(after.end) || contentDigest(before.metadata ?? {}) !== contentDigest(after.metadata ?? {})) {
+      throw Error('Mobile adaptation changed event identity, timing, role or provenance');
+    }
+    if (before.kind === 'note' && (after.pitch - before.pitch) % 12 !== 0) throw Error('Mobile adaptation changed pitch class');
   }
-  return { schema: 'mml-studio/mobile-adaptation-application@1', stage: 'MOBILE_ADAPTATION_V1', status: 'PASS', applied: [], didApply: true, candidate: output, revision, plan, trace: plan.changes, rejected: [], conflicts: [], diagnostics: plan.warnings, diffFromBaseline: compareCanonicalVersions(baseline, output), diffFromParent: compareCanonicalVersions(candidate, output), certifiesGates: [], notice: 'Adaptation applied. Re-run review and Final validation; no acceptance gate is certified.' };
+  return { schema: 'mml-studio/mobile-adaptation-application@1', stage: 'MOBILE_ADAPTATION_V1', status: 'PASS', applied: [], didApply: true, candidate: output, revision, plan, trace: [...plan.changes, ...releaseChanges], rejected: [], conflicts: [], diagnostics: plan.warnings, diffFromBaseline: compareCanonicalVersions(baseline, output), diffFromParent: compareCanonicalVersions(candidate, output), certifiesGates: [], notice: 'Adaptation applied. Re-run review and Final validation; no acceptance gate is certified.' };
 }

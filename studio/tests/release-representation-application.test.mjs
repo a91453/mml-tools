@@ -1,0 +1,113 @@
+// Release representation through the Studio Application Service.
+//
+// Synthetic fixture (fixtures/release-fixtures.mjs) with the real 《怪獸之歌》
+// one-tick shape; it proves nothing about that song. What it pins is the path:
+// evidence decides, the source release survives, and nothing else about the
+// music moves.
+import test from 'node:test';
+import assert from 'node:assert/strict';
+
+import { createStudioApplication } from '../backend/application/index.mjs';
+import { f } from '../backend/mml/index.mjs';
+import { OWNER, TICK, ALL_RELEASE_EVENTS as ALL, candidateWithAudio, listeningDecision } from './fixtures/release-fixtures.mjs';
+
+test('RRA-1 the read-only plan reports every non-representable release and what still needs a profile', async () => {
+  const service = createStudioApplication();
+  const { projectId, candidateId } = await candidateWithAudio(service);
+  const { plan } = (await service.planMobileAdaptation(OWNER, projectId, { candidateId, releaseRepresentation: { decisions: [] } })).adaptation;
+  assert.equal(plan.status, 'PASS', 'executable, and changes nothing');
+  assert.deepEqual(plan.changes, []);
+  assert.deepEqual(plan.releaseRepresentation.changes, []);
+  assert.equal(plan.releaseTiming.targetCount, 8);
+  assert.deepEqual(plan.releaseTiming.targets.map(target => target.eventId).sort(), [...ALL].sort());
+  assert.ok(plan.releaseTiming.targets.every(target => target.recommended === 'EXTEND_TO_NEXT_GRID'));
+  assert.equal(plan.releaseTiming.targets.find(target => target.eventId === 'lead-2').analysis.nextIsSamePitchRepeatedAttack, true);
+  assert.equal(plan.profileRequirement.status, 'NOT_SUPPLIED');
+  const review = (await service.reviewCandidate(OWNER, projectId, { candidateId })).review;
+  assert.equal(review.readiness.gates.microTiming.status, 'PENDING');
+  assert.ok(review.readiness.gates.microTiming.blockers.includes('MICRO_TIMING_RELEASE_NOT_FINAL_REPRESENTABLE'), 'the release before a real rest and the role ends are no longer invisible');
+});
+
+test('RRA-2 an agent-attested or metric-only decision changes nothing and says why', async () => {
+  const service = createStudioApplication();
+  const { projectId, candidateId, audioAssetId } = await candidateWithAudio(service);
+  for (const decision of [listeningDecision(audioAssetId, ALL, { reviewerKind: 'agent' }), listeningDecision(audioAssetId, ALL, { audioBasis: 'machine-metric' })]) {
+    const releaseRepresentation = { decisions: [decision] };
+    const { plan } = (await service.planMobileAdaptation(OWNER, projectId, { candidateId, releaseRepresentation })).adaptation;
+    assert.equal(plan.status, 'PENDING');
+    assert.deepEqual(plan.blockers.map(item => item.code), ['RELEASE_DECISION_EVIDENCE_NOT_ADMISSIBLE']);
+    const applied = await service.applyMobileAdaptation(OWNER, projectId, { candidateId, releaseRepresentation, expectedPlanId: plan.id, acceptedBy: 'user:listener' });
+    assert.equal(applied.operation, 'blocked');
+    assert.equal(applied.adaptation.applied, false);
+  }
+  const record = await service.getProject(OWNER, projectId);
+  assert.equal(record.project.candidates.length, 1, 'no revision was minted');
+});
+
+test('RRA-3 a human listening decision represents the releases, keeps the source releases and every attack, and clears micro-timing', async () => {
+  const service = createStudioApplication();
+  const { projectId, candidateId, audioAssetId } = await candidateWithAudio(service);
+  const before = (await service.reviewCandidate(OWNER, projectId, { candidateId })).review;
+  assert.equal(before.readiness.gates.leadPromotion.status, 'PASS', 'the promotions carry complete evidence');
+
+  const releaseRepresentation = { decisions: [listeningDecision(audioAssetId, ALL)] };
+  const { plan } = (await service.planMobileAdaptation(OWNER, projectId, { candidateId, releaseRepresentation })).adaptation;
+  assert.equal(plan.status, 'PASS');
+  assert.equal(plan.releaseRepresentation.changes.length, 8);
+  assert.ok(plan.releaseRepresentation.changes.every(change => change.delta === '1/480' && change.representation === 'EXTEND_TO_NEXT_GRID'));
+  assert.equal(plan.releaseRepresentation.unresolvedTargetCount, 0);
+
+  const applied = await service.applyMobileAdaptation(OWNER, projectId, { candidateId, releaseRepresentation, expectedPlanId: plan.id, acceptedBy: 'user:listener' });
+  assert.equal(applied.operation, 'succeeded');
+  assert.equal(applied.adaptation.applied, true);
+  const adaptedId = applied.adaptation.candidate_id;
+  assert.notEqual(adaptedId, candidateId);
+
+  // Layer A survives in the baseline diff; Layer C is the candidate. Each change
+  // is one modified event, never a removal plus an unrelated addition.
+  const diff = applied.adaptation.diff_from_baseline;
+  assert.equal(diff.summary.noteAdded, 0);
+  assert.equal(diff.summary.noteRemoved, 0);
+  const ends = Object.fromEntries(diff.notes.modified.map(pair => [pair.before.id, [pair.before.end, pair.after.end, pair.after.id]]));
+  for (const id of ALL) {
+    assert.equal(ends[id][2], id, 'same event identity');
+    assert.equal(f(ends[id][0]).add(TICK).cmp(ends[id][1]), 0, `${id} moved by exactly one tick`);
+  }
+  const parentDiff = applied.adaptation.diff_from_parent;
+  assert.equal(parentDiff.summary.noteModified, 8);
+  assert.ok(parentDiff.notes.modified.every(pair => Object.keys(pair.changes).join() === 'end'), 'only releases changed');
+
+  const review = (await service.reviewCandidate(OWNER, projectId, { candidateId: adaptedId })).review;
+  assert.equal(review.readiness.gates.microTiming.status, 'PASS');
+  assert.equal(review.readiness.gates.microTiming.releaseRepresentationRecords.recordCount, 8);
+  // The Lead evidence recorded with the promotions still describes the
+  // represented events: neither EVENT_CHANGED nor CONTEXT_CHANGED.
+  assert.equal(review.readiness.gates.leadPromotion.status, 'PASS');
+  assert.ok(review.lead_promotion.every(report => report.status === 'PASS'));
+  // Gate 8 is not certified by any of this.
+  assert.equal(review.readiness.gates.mobileAdaptation.status, 'PENDING');
+});
+
+test('RRA-4 a stale plan id is refused and a decision id cannot be applied twice', async () => {
+  const service = createStudioApplication();
+  const { projectId, candidateId, audioAssetId } = await candidateWithAudio(service);
+  const first = { decisions: [listeningDecision(audioAssetId, ['lead-1', 'lead-2'])] };
+  const { plan } = (await service.planMobileAdaptation(OWNER, projectId, { candidateId, releaseRepresentation: first })).adaptation;
+  const stale = await service.applyMobileAdaptation(OWNER, projectId, { candidateId, releaseRepresentation: { decisions: [listeningDecision(audioAssetId, ['lead-1'])] }, expectedPlanId: plan.id, acceptedBy: 'user:listener' });
+  assert.equal(stale.adaptation.applied, false);
+  assert.deepEqual(stale.adaptation.blockers.map(item => item.code), ['STALE_MOBILE_ADAPTATION_PLAN']);
+  const applied = await service.applyMobileAdaptation(OWNER, projectId, { candidateId, releaseRepresentation: first, expectedPlanId: plan.id, acceptedBy: 'user:listener' });
+  const adaptedId = applied.adaptation.candidate_id;
+  // The rest of the song, under a new decision, on top of the first revision.
+  const rest = { decisions: [listeningDecision(audioAssetId, ALL.filter(id => !['lead-1', 'lead-2'].includes(id)), { id: 'rr:rest' })] };
+  const second = (await service.planMobileAdaptation(OWNER, projectId, { candidateId: adaptedId, releaseRepresentation: rest })).adaptation.plan;
+  assert.equal(second.releaseTiming.representedCount, 2);
+  assert.equal(second.releaseRepresentation.changes.length, 6);
+  const secondApplied = await service.applyMobileAdaptation(OWNER, projectId, { candidateId: adaptedId, releaseRepresentation: rest, expectedPlanId: second.id, acceptedBy: 'user:listener' });
+  const final = (await service.reviewCandidate(OWNER, projectId, { candidateId: secondApplied.adaptation.candidate_id })).review;
+  assert.equal(final.readiness.gates.microTiming.status, 'PASS');
+  assert.equal(final.readiness.gates.microTiming.releaseRepresentationRecords.recordCount, 8, 'the first revision\'s records still re-verify');
+  // Re-using the first decision id on the final candidate is refused.
+  const reuse = (await service.planMobileAdaptation(OWNER, projectId, { candidateId: secondApplied.adaptation.candidate_id, releaseRepresentation: first })).adaptation.plan;
+  assert.deepEqual([...new Set(reuse.blockers.map(item => item.code))].sort(), ['RELEASE_DECISION_ID_ALREADY_APPLIED', 'RELEASE_EVENT_IS_NOT_A_REPRESENTATION_TARGET']);
+});

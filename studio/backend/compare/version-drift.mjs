@@ -10,6 +10,7 @@ const restEvents = project => project.events.filter(event => event.kind === 'res
 const roleKey = event => event.role ?? 'UNASSIGNED';
 const structuralKey = event => `${roleKey(event)}|${event.start}|${event.pitch}|${event.end}`;
 const roleMoveKey = event => `${event.start}|${event.pitch}|${event.end}`;
+const onsetPitchKey = event => `${event.start}|${event.pitch}`;
 const sameOnsetKey = event => `${roleKey(event)}|${event.start}`;
 const samePitchOnsetKey = event => `${roleKey(event)}|${event.start}|${event.pitch}`;
 const restKey = event => `${roleKey(event)}|${event.start}|${event.end}`;
@@ -64,6 +65,12 @@ function alignNotes(beforeEvents, afterEvents) {
     { name: 'same-role-onset-pitch', beforeIndex: indexQueues(before, samePitchOnsetKey), key: samePitchOnsetKey },
     { name: 'same-role-onset', beforeIndex: indexQueues(before, sameOnsetKey), key: sameOnsetKey },
     { name: 'role-move', beforeIndex: indexQueues(before, roleMoveKey), key: roleMoveKey },
+    // Last, and only over what every pass above left unpaired: the same attack
+    // (onset and pitch) whose role and release both changed, e.g. a role-less
+    // source event assigned a role whose release a Mobile representation moved.
+    // Pairing it keeps the release change traceable as a modification of that
+    // event instead of hiding it inside an unrelated removal and addition.
+    { name: 'same-onset-pitch', beforeIndex: indexQueues(before, onsetPitchKey), key: onsetPitchKey },
   ];
 
   for (const pass of passes) {
