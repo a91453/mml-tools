@@ -1,6 +1,6 @@
 # Railway Agent migration audit — 2026-09-21
 
-Status: operational audit / migration plan. This document is not a Canonical rule source and changes no production service.
+Status: Railway Agent migration complete; migration-only resource retirement is staged and awaiting Railway dashboard 2FA. This document is not a Canonical rule source.
 
 ## Scope
 
@@ -8,7 +8,7 @@ Repository: `a91453/mml-tools`
 
 Working branch: `chore/railway-agent-migration-20260921`
 
-Pull request: #51 (ready for CI/review; not merged)
+Implementation PRs: #51 merged; #52 merged. First authenticated production audit run `35674909732` passed control-plane, config-drift, health and provenance checks on 2026-09-22.
 
 This audit separates three concerns that were previously easy to conflate:
 
@@ -30,6 +30,29 @@ Before deleting any migration-only Railway resource, the durable Studio rollback
 - `charismatic-reverence` project `181279f2-d244-4ced-9a74-2474b923ab58` has no domains, variables, or volumes, shows zero CPU/RAM usage over the last 24 hours, and its only service continues to fail deployments from `main`; no repository reference identifies it as an intended runtime.
 
 This checkpoint authorizes only the migration-resource retirement described above. It does **not** authorize deletion of `studio-web-permanent`, its production volume, the durable release bucket, Git history/assets, or historical rollback evidence.
+
+## Resource-retirement execution status — 2026-09-22
+
+The owner explicitly authorized deletion of the migration-only resources after rollback verification.
+
+### `charismatic-reverence`
+
+- Project: `181279f2-d244-4ced-9a74-2474b923ab58`
+- Only service: `mml-tools` / `a32be357-1f65-4675-821c-656fd14726a1`
+- Service removal is staged in production patch `4f137573-68a3-4486-b019-86e610ba814b`.
+- Railway requires interactive 2FA to Apply this destructive patch; API/MCP commit attempts were rejected by that gate.
+- Railway's available API/MCP surface cannot delete the now-unneeded project/environment itself. After the service-removal patch is applied, the empty project must be deleted from Railway project settings.
+
+### `studio-durable-isolated`
+
+- Service: `2343a428-d442-4c3d-99cc-a3c2d690578d`
+- Dedicated cache volume: `a75fd368-2dcc-4e4f-8637-f242d3c2738d`
+- Both removals are staged together in production patch `cf388d20-0041-4a3d-ac93-96677652ed98`.
+- Railway requires interactive 2FA to Apply this destructive patch; API/MCP commit attempts were rejected by that gate.
+- The staged patch contains exactly two resource changes: the isolated service and its dedicated volume.
+- `studio-web-permanent`, production volume `fba8d8a3-0c88-4f9b-b2a4-54a772217388`, durable bucket `e3ff79a7-f493-4436-894d-b166dfb97ab9`, and historical rollback deployments remain unchanged.
+
+This PR remains a cleanup record until the dashboard 2FA applies are completed and a post-delete readback confirms the protected resources are intact.
 
 ## Observed live Railway inventory
 
