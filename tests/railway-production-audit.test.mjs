@@ -7,6 +7,8 @@ import {
   findExpectedDeployment,
   railwayGraphQL,
   readProductionState,
+  resolveDeploymentBinding,
+  watchedChangedPaths,
 } from '../scripts/railway-production-audit.mjs';
 
 const SHA = 'a'.repeat(40);
@@ -135,7 +137,10 @@ test('readProductionState performs schema discovery and a read-only query', asyn
         return {
           data: {
             projectToken: { projectId: expected.projectId, environmentId: expected.environmentId },
-            serviceInstance: { ...live(), latestDeployment: { id: 'dep-1', status: 'SUCCESS', createdAt: '2026-09-21T00:00:00Z' } },
+            serviceInstance: { ...live(), latestDeployment: {
+              id: 'dep-1', status: 'SUCCESS', createdAt: '2026-09-21T00:00:00Z',
+              meta: { commitHash: SHA, branch: 'main', reason: 'deploy' },
+            } },
             deployments: { edges: [{ node: {
               id: 'dep-1', status: 'SUCCESS', createdAt: '2026-09-21T00:00:00Z',
               meta: { commitHash: SHA, branch: 'main', reason: 'deploy' },
@@ -196,4 +201,97 @@ test('deployment selection and final control-plane verdict bind the exact main S
   assert.equal(result.status, 'PASS');
   assert.equal(result.failure_reason, null);
   assert.equal(result.deployment.commit_sha, SHA);
+});
+
+
+test('watch pattern matching treats exact files and /** directories as production deploy triggers', () => {
+  const patterns = ['/server/mcp.mjs', '/studio/web/service/**'];
+  assert.deepEqual(watchedChangedPaths([
+    'docs/README.md',
+    'studio/web/service/app.mjs',
+    'server/mcp.mjs',
+    'studio/web/service/nested/asset.txt',
+  ], patterns), [
+    'server/mcp.mjs',
+    'studio/web/service/app.mjs',
+    'studio/web/service/nested/asset.txt',
+  ]);
+});
+
+test('a SKIPPED main commit may reuse the active successful deployment only when no watched path changed', () => {
+  const expected = desired();
+  const deployedSha = 'b'.repeat(40);
+  const target = {
+    id: 'skip-1',
+    status: 'SKIPPED',
+    createdAt: '2026-09-21T01:00:00Z',
+    meta: { commitHash: SHA, branch: 'main' },
+  };
+  const active = {
+    id: 'active-1',
+    status: 'SUCCESS',
+    createdAt: '2026-09-21T00:00:00Z',
+    meta: { commitHash: deployedSha, branch: 'main', reason: 'deploy' },
+  };
+  const state = {
+    instance: { ...live(), latestDeployment: active },
+  };
+  const binding = resolveDeploymentBinding({
+    expected,
+    expectedSha: SHA,
+    state,
+    targetDeployment: target,
+    changedPaths: ['docs/ops.md', 'scripts/railway-production-audit.mjs'],
+  });
+  assert.equal(binding.reason, null);
+  assert.equal(binding.activeDeployment.id, 'active-1');
+  assert.equal(binding.effectiveSha, deployedSha);
+  assert.deepEqual(binding.watchedSkippedChanges, []);
+
+  const result = buildControlPlaneResult({
+    expected,
+    expectedSha: SHA,
+    effectiveSha: binding.effectiveSha,
+    state: {
+      ...state,
+      availableFields: new Set([
+        'startCommand', 'healthcheckPath', 'healthcheckTimeout', 'restartPolicyType',
+        'restartPolicyMaxRetries', 'numReplicas', 'rootDirectory', 'dockerfilePath', 'watchPatterns',
+      ]),
+      tokenScope: { projectId: expected.projectId, environmentId: expected.environmentId },
+    },
+    deployment: binding.activeDeployment,
+    requestedDeployment: target,
+    reason: binding.reason,
+    skippedChanges: binding.skippedChanges,
+    watchedSkippedChanges: binding.watchedSkippedChanges,
+  });
+  assert.equal(result.status, 'PASS');
+  assert.equal(result.expected_sha, SHA);
+  assert.equal(result.effective_deployed_sha, deployedSha);
+  assert.equal(result.requested_deployment.status, 'SKIPPED');
+});
+
+test('a SKIPPED main commit fails closed if any production watch path changed', () => {
+  const expected = desired();
+  const deployedSha = 'b'.repeat(40);
+  const target = {
+    id: 'skip-1',
+    status: 'SKIPPED',
+    meta: { commitHash: SHA, branch: 'main' },
+  };
+  const active = {
+    id: 'active-1',
+    status: 'SUCCESS',
+    meta: { commitHash: deployedSha, branch: 'main', reason: 'deploy' },
+  };
+  const binding = resolveDeploymentBinding({
+    expected,
+    expectedSha: SHA,
+    state: { instance: { ...live(), latestDeployment: active } },
+    targetDeployment: target,
+    changedPaths: ['server/mcp.mjs', 'docs/ops.md'],
+  });
+  assert.equal(binding.reason, 'SKIPPED_WATCHED_CHANGES');
+  assert.deepEqual(binding.watchedSkippedChanges, ['server/mcp.mjs']);
 });
