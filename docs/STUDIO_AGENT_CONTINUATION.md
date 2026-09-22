@@ -5,23 +5,38 @@ Status: IMPLEMENTATION NOTES。預設關閉；本分支完成本機驗證，未�
 
 ## 啟用方式
 
-服務主機需已安裝並登入可用的 Codex CLI。設定 `MML_AGENT_CODEX` 為該主機的
-**絕對執行檔路徑**，再啟動既有 Railway/Node 服務；可選 `MML_AGENT_MODEL`。
-Windows 範例：
+### Production：OpenAI Responses，預設關閉
 
-```powershell
-$env:MML_AGENT_CODEX = 'C:\path\to\codex.exe'
-node railway/server.mjs
+正式服務**不使用 Railway Agent，也不執行 Codex CLI 子程序**。只有同時設定下列三項才會啟用：
+
+```text
+MML_AGENT_PROVIDER=openai-responses
+MML_AGENT_MODEL=<明確模型 ID>
+OPENAI_API_KEY=<Railway runtime secret>
 ```
 
-沿用既有 OAuth owner、origin、持久化目錄與服務設定；這兩個變數不代替登入或
-既有服務環境設定。設定必須指向實際執行檔，不是 shell command 或 `.cmd` wrapper。
-現有 Docker image 沒有內建 Codex CLI 或帳號憑證；僅合併程式不會啟用模型。
-請勿把 Codex auth、歌曲原音或服務 token 放進 Git / image。
+只設定 `MML_AGENT_MODEL` 不會啟用；production 若設定 `MML_AGENT_CODEX` 會直接拒絕啟動。模型只收到 run metadata、衍生符號事件、引用、必要報告與 Published Canonical 文件；不送原始 MIDI／音訊 bytes。Responses request 固定 `store:false`，不開 provider-native tools，也不做 provider retry。模型只回一個 JSON Schema 綁定的 Studio action；真正執行前仍會再經既有 project/run/candidate 身分、MCP schema、allowlist、Proposal Protocol 與 Agent Review Policy。
 
-已啟用的服務在 capabilities 明確揭露模型額度及資料傳送：agent 會收到 run、
-符號音符、引用、必要報告與規則；不傳原始音訊/MIDI bytes。不設定上述變數時
-維持既有手動交接，沒有模型執行。模型使用營運者所設定帳號的額度。
+production 預設成本界線：
+
+- 每次 dispatch 最多 6 次模型決策；
+- 同一歌曲 run 累積最多 10 次模型呼叫；
+- 整個服務每 UTC 日最多 16 次模型呼叫；
+- 同時最多 1 個 agent run；
+- 每次輸入最多 262144 bytes；
+- 每次輸出最多 900 tokens；
+- 每次 provider request 最多 60000 ms。
+
+程式硬上限分別是 8 / 12 / 24 / 1 / 393216 / 1200 / 60000。可用
+`MML_AGENT_MAX_STEPS`、`MML_AGENT_MAX_CALLS_PER_RUN`、
+`MML_AGENT_MAX_CALLS_PER_DAY`、`MML_AGENT_MAX_INPUT_BYTES`、
+`MML_AGENT_MAX_OUTPUT_TOKENS`、`MML_AGENT_TIMEOUT_MS` 調低或在硬上限內選值，不能藉環境變數突破上限。每日與每-run call counter 寫在持久化 agent-dispatch store，所以 restart 不會把額度洗掉。
+
+`OPENAI_API_KEY` 是另一個外部服務成本面；Railway Agent 的 hard usage limit 仍應維持 `$0`。Capabilities 會揭露 provider、call/input/output/timeout 上限與 `store:false`，但不揭露 API key。
+
+### Development：保留本機 Codex CLI 測試路徑
+
+開發／測試環境仍可設定 `MML_AGENT_CODEX` 為已安裝 Codex CLI 的絕對路徑，並可選 `MML_AGENT_MODEL`。這條路徑只供本機／測試；production 會拒絕它。不要把 Codex auth、OpenAI key、歌曲原音或服務 token 放進 Git / image。
 
 ## 網頁操作
 
@@ -41,8 +56,7 @@ node railway/server.mjs
 
 啟動回應遺失時，同一分頁保存的 request key 會重用；重試回讀原任務，不開第二個
 agent 或歌曲 run。關閉分頁不會中止服務程序中的執行。服務重啟則顯示 interrupted，
-**不自動重跑**。每次 dispatch 最多12步，每次推論最多120秒，單一服務程序最多
-同時2個 run；這不是跨 replica 排程器，啟用時應使用單一服務實例。
+**不自動重跑**。production 的實際 step/call/input/output/timeout 上限以 capabilities 回報為準，且程式硬上限如上；正式服務固定單一 concurrent agent run。這不是跨 replica 排程器，啟用時必須維持單一服務實例。
 
 ## 中斷及未知操作結果
 
@@ -61,9 +75,9 @@ submitted proposal。拒絕 confirmations、reconcile、直接套用決策、假
 
 ## 驗證與限制
 
-- 10項 driver 測試包含重複啟動、owner/run 隔離、停止、程序恢復、HTTP/revision、
-  步數上限、真實 Application Service 提案/接受、role-less Melody 候選端到端、
-  推論期间狀態變動、未知結果核對。
+- driver 測試涵蓋重複啟動、owner/run 隔離、停止、程序恢復、HTTP/revision、
+  step 上限、持久化 per-run / per-day provider-call budget、真實 Application Service 提案/接受、role-less Melody 候選端到端、
+  推論期間狀態變動與未知結果核對。Responses provider 另有 store:false、JSON Schema、input/output hard bound、失敗不重試測試。
 - 桌面 Chromium、iPhone/iPad WebKit 驗證網頁自動 dispatch、狀態回讀及故意遺失
   首次啟動回應後沿用原任務。模型替身只回報等待審查，CI 不呼叫付費模型。
 - 真正 Codex CLI 在《怪獸之歌》修正版 run 執行2次推論，讀取 suggestion 後停在
