@@ -19,6 +19,7 @@ on:
       - 'tests/railway-production-config-apply.test.mjs'
       - 'tests/railway-production-deploy.test.mjs'
       - 'tests/railway-deployment-diagnostics.test.mjs'
+      - 'tests/railway-audit-wait-for-ci-policy.test.mjs'
       - '.github/workflows/railway-production-audit.yml'
       - '.github/workflows/railway-production-config-apply.yml'
       - '.github/workflows/railway-production-deploy.yml'
@@ -44,6 +45,7 @@ on:
       - 'tests/railway-production-config-apply.test.mjs'
       - 'tests/railway-production-deploy.test.mjs'
       - 'tests/railway-deployment-diagnostics.test.mjs'
+      - 'tests/railway-audit-wait-for-ci-policy.test.mjs'
       - '.github/workflows/railway-production-audit.yml'
       - '.github/workflows/railway-production-config-apply.yml'
       - '.github/workflows/railway-production-deploy.yml'
@@ -77,6 +79,7 @@ jobs:
             tests/railway-production-config-apply.test.mjs \
             tests/railway-production-deploy.test.mjs \
             tests/railway-deployment-diagnostics.test.mjs \
+            tests/railway-audit-wait-for-ci-policy.test.mjs \
             tests/railway-agent-policy.test.mjs
       - name: Validate Railway JSON references
         run: |
