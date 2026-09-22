@@ -27,7 +27,6 @@ import { F, f, ROLES } from '../mml/index.mjs';
 import { EFFECTIVE_RULESET, studioFinalBlockers } from '../rules/index.mjs';
 import { enforceMicroGaps } from './micro-gap-enforcement.mjs';
 import { REPAIR_STATUS, repairTechnicalTiming } from './technical-timing-repair.mjs';
-import { evaluateMachineDelivery } from './delivery-evaluator.mjs';
 import {
   EMIT_STATUS,
   DIAGNOSTIC_SEVERITY,
@@ -712,8 +711,9 @@ function evaluateGates(project, options) {
   // grades the MML this emitter has not produced yet, so requiring it here would
   // be circular.
   if (options.readiness) {
-    const blocking = options.readiness.gates
-      ? evaluateMachineDelivery(options.readiness.gates, { preEmission: true }).blocking.map(entry => entry.gate)
+    const projected = options.readiness.machineDelivery;
+    const blocking = projected?.authoritative === true
+      ? projected.blocking.map(entry => entry.gate).filter(name => name !== 'technical')
       : (options.readiness.preGameBlocking ?? []).filter(name => name !== 'technical');
     if (blocking.length) {
       diagnostics.push(diagnostic(
