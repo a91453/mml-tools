@@ -138,12 +138,24 @@ jobs:
       - run: npx playwright install --with-deps chromium webkit
       - run: npm run build:studio-web
       - run: npm run test:studio-web
-      - uses: actions/upload-artifact@v4
+      - name: Upload Studio browser evidence
+        id: upload_studio_browser_evidence
+        uses: actions/upload-artifact@v4
+        continue-on-error: true
         if: always()
         with:
           name: studio-web-browser-results
           path: studio/browser-results/
-      - uses: actions/upload-artifact@v4
+      - name: Warn if Studio browser evidence upload failed
+        if: ${{ always() && steps.upload_studio_browser_evidence.outcome == 'failure' }}
+        run: echo "::warning::Studio browser validation ran, but optional evidence upload failed; validation result remains authoritative."
+      - name: Upload Studio static build
+        id: upload_studio_static_build
+        uses: actions/upload-artifact@v4
+        continue-on-error: true
         with:
           name: studio-web-v1-static-build
           path: studio/web-build/
+      - name: Warn if Studio static-build upload failed
+        if: ${{ always() && steps.upload_studio_static_build.outcome == 'failure' }}
+        run: echo "::warning::Studio build validation passed, but optional static-build artifact upload failed."
