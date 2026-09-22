@@ -6,7 +6,11 @@
       "Bash(railway agent)",
       "Bash(railway agent *)",
       "Bash(npx railway agent)",
-      "Bash(npx railway agent *)"
+      "Bash(npx railway agent *)",
+      "Bash(gh copilot)",
+      "Bash(gh copilot *)",
+      "Bash(copilot)",
+      "Bash(copilot *)"
     ]
   }
 }
