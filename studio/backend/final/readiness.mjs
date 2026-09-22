@@ -1,4 +1,4 @@
-import { studioFinalBlockers } from '../rules/index.mjs';
+import { EFFECTIVE_RULESET, studioFinalBlockers } from '../rules/index.mjs';
 import { compareCanonicalVersions } from '../compare/version-drift.mjs';
 import { enforceMicroGaps } from './micro-gap-enforcement.mjs';
 import { evaluateMachineDelivery } from './delivery-evaluator.mjs';
@@ -501,7 +501,7 @@ export function evaluateProjectReadiness({
   const preGameBlocking = preGameGateNames.filter(name => !PASS_LIKE.has(gates[name].status));
   const candidateReady = preGameBlocking.length === 0;
   const finalAccepted = candidateReady && gates.inGameAcceptance.status === 'PASS';
-  const machineDelivery = evaluateMachineDelivery(gates);
+  const machineDelivery = evaluateMachineDelivery(gates, { canonical: EFFECTIVE_RULESET.canonical });
 
   return Object.freeze({
     candidateReady,
