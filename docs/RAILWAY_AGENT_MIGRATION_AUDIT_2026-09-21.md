@@ -1,14 +1,16 @@
 # Railway Agent migration audit — 2026-09-21
 
-Status: operational audit / migration plan. This document is not a Canonical rule source and changes no production service.
+Status: Railway Agent migration and migration-only resource retirement complete. This document is not a Canonical rule source.
 
 ## Scope
 
 Repository: `a91453/mml-tools`
 
-Working branch: `chore/railway-agent-migration-20260921`
+Implementation branch: `chore/railway-agent-migration-20260921`
 
-Pull request: #51 (ready for CI/review; not merged)
+Final cleanup branch: `chore/retire-railway-migration-resources` / PR #53
+
+Implementation PRs: #51 merged; #52 merged. First authenticated production audit run `35674909732` passed control-plane, config-drift, health and provenance checks on 2026-09-22.
 
 This audit separates three concerns that were previously easy to conflate:
 
@@ -17,6 +19,44 @@ This audit separates three concerns that were previously easy to conflate:
 3. **Repository automation / coding agents** — GitHub Actions and Claude/Codex-style coding sessions that can operate from versioned scripts and PRs.
 
 The migration target is Railway **Agent work**, not necessarily Railway **runtime hosting**.
+
+## Retirement verification checkpoint — 2026-09-22
+
+Before deleting any migration-only Railway resource, the durable Studio rollback path was re-verified against `ops/permanent/README.md`, `ops/permanent/MIGRATION_RESULT.md`, and the live Railway inventory.
+
+- Production rollback targets `studio-web-permanent` service `311e2f06-bad4-415c-b020-d52e1a6bf064`, historical deployment `f9a9bd99-4809-4a3b-8612-07b96c196d4a`, and production volume `fba8d8a3-0c88-4f9b-b2a4-54a772217388`.
+- The historical cache used for rollback is retained on the production `/studio-cache` volume; rollback does not reference the isolated service or isolated volume.
+- `studio-release-artifacts` bucket `e3ff79a7-f493-4436-894d-b166dfb97ab9` is the durable recovery source and is explicitly independent of both production and isolated volumes.
+- The operations runbook states that no isolated/temporary service URL is a permanent runtime source.
+- Therefore `studio-durable-isolated` service `2343a428-d442-4c3d-99cc-a3c2d690578d` and its dedicated volume `a75fd368-2dcc-4e4f-8637-f242d3c2738d` are not required for production rollback or durable recovery.
+- `charismatic-reverence` project `181279f2-d244-4ced-9a74-2474b923ab58` has no domains, variables, or volumes, shows zero CPU/RAM usage over the last 24 hours, and its only service continues to fail deployments from `main`; no repository reference identifies it as an intended runtime.
+
+This checkpoint authorizes only the migration-resource retirement described above. It does **not** authorize deletion of `studio-web-permanent`, its production volume, the durable release bucket, Git history/assets, or historical rollback evidence.
+
+## Resource-retirement execution status — 2026-09-22
+
+The owner explicitly authorized deletion of the migration-only resources after rollback verification. Railway dashboard 2FA was used where the API/MCP destructive gate required interactive approval.
+
+### Completed cleanup
+
+- `charismatic-reverence` service was removed, then the empty project was deleted from Railway Project Settings. A direct lookup by project id `181279f2-d244-4ced-9a74-2474b923ab58` now returns `Project not found`. A workspace project-list response may remain eventually consistent briefly after deletion, but the project is no longer addressable.
+- `studio-durable-isolated` service `2343a428-d442-4c3d-99cc-a3c2d690578d` was deleted.
+- Its dedicated cache volume `a75fd368-2dcc-4e4f-8637-f242d3c2738d` was deleted.
+- `mml-tools-allen` preview environments `preview-base` and `mml-tools-pr-53` were deleted. Live project inventory now contains only the `production` environment.
+- The PR-environment enable/disable toggle is dashboard-only and is not readable through the connected Railway API; current live inventory verifies that no preview environment remains.
+
+### Protected production resources verified after cleanup
+
+- `mml-tools-allen / production / mml-tools` remains on successful deployment `446fec19-4cb9-4381-aff5-f4c76671599f`.
+- Production `/data` volume `e90e0f81-854e-467c-9ab0-5be246118708` remains mounted at 5000 MB.
+- Production domain `mml-tools-production.up.railway.app` remains attached.
+- `studio-web-permanent` service `311e2f06-bad4-415c-b020-d52e1a6bf064` remains on successful deployment `9ddaad2c-fc64-4822-a011-3924e3aae629`.
+- Permanent Studio production volume `fba8d8a3-0c88-4f9b-b2a4-54a772217388` remains mounted at `/studio-cache`.
+- Durable release bucket `e3ff79a7-f493-4436-894d-b166dfb97ab9` remains present.
+- Permanent Studio domain `studio-web-permanent-production.up.railway.app` remains attached.
+- No destructive cleanup touched the historical rollback evidence or production rollback path.
+
+The migration-resource retirement is therefore complete.
 
 ## Observed live Railway inventory
 
@@ -30,14 +70,16 @@ The migration target is Railway **Agent work**, not necessarily Railway **runtim
 
 Keeping these runtime resources does **not** require routine Railway Agent usage.
 
-### Candidates to retire
+### Retired migration-only resources
 
-| Resource | Observation | Recommendation |
-| --- | --- | --- |
-| `mml-tools-studio-permanent / studio-durable-isolated` | Separate isolated migration-validation service, one `/studio-cache` volume; ops documentation records the production migration as passed | Preserve evidence first, then remove/disable the isolated service and its dedicated cache if no rollback procedure still requires it |
-| `charismatic-reverence / mml-tools` | Created 2026-09-21, no domain, no variables, no volume, no start command, latest deployments failed while following `main` | Treat as likely temporary/accidental; confirm no intended consumer, then delete the project |
+| Resource | Final status |
+| --- | --- |
+| `mml-tools-studio-permanent / studio-durable-isolated` | Deleted after rollback verification; dedicated isolated cache volume deleted with it |
+| `charismatic-reverence` | Deleted after its only service was removed |
+| `mml-tools-allen / preview-base` | Deleted; production preserved |
+| `mml-tools-allen / mml-tools-pr-53` | Deleted; production preserved |
 
-No resource was deleted. During the implementation checkpoint below, only the production service watchPatterns were changed, through the deterministic Railway service API and without a redeploy.
+During the original implementation checkpoint, only production watchPatterns were changed through the deterministic Railway service API and no redeploy was triggered. The later cleanup removed only the explicitly authorized migration/preview resources listed above.
 
 ## Implementation checkpoint on this branch
 
@@ -53,7 +95,7 @@ Completed without Railway Agent:
 - readback confirmed the existing successful deployment remained `5edd2414dbe73c892857fe375084af099fc0e05e`;
 - corrected the repository's stale volume observation from 500 MB to the current Railway control-plane readback of 5000 MB. No volume resize was performed.
 
-One external setup item remains before the new Actions can query/mutate Railway themselves: add a GitHub Actions secret named `RAILWAY_PROJECT_TOKEN` containing a **Railway project token scoped only to `mml-tools-allen / production`**. Do not use an account token. The explicitly dispatched audit/apply/diagnostics workflows fail closed when it is absent.
+GitHub Actions secret `RAILWAY_PROJECT_TOKEN` is configured with the production-scoped Railway project token. Authenticated production audit run `35674909732` passed control-plane, public provenance/health probe, and config-drift verification with drift count 0.
 
 The apply workflow references the GitHub Environment `production`. Configure required reviewers on that Environment if approval-gated production writes are desired. The script-side confirmation and mutation allowlist remain enforced independently of Environment protection.
 
@@ -154,7 +196,7 @@ Even outside included minutes, a few minutes of Linux runner time per deployment
 2. **DONE on PR #51:** add an explicit post-deploy Actions drift/probe workflow; deliberately avoid a `main push` trigger because Railway Wait for CI would otherwise wait on a workflow that is itself waiting on Railway.
 3. **DONE on PR #51:** add protected manual config-apply workflow only for bounded desired-state changes; it never deploys.
 4. **DONE on PR #51:** add deterministic sanitized log collection for FAILED/CRASHED deployments.
-5. After merge/token setup, use the collected evidence for Claude Code / normal PR failure analysis; no Railway Agent is required for the normal path.
-6. After an observation period, set Railway Agent hard limit low and keep it as emergency fallback.
-7. Separately confirm and retire `studio-durable-isolated` and `charismatic-reverence` if they are no longer needed.
+5. **DONE:** token setup and authenticated production audit passed; normal failure analysis can use collected evidence with Claude Code / normal PRs and does not require Railway Agent.
+6. **OPTIONAL OPERATIONS POLICY:** keep Railway Agent as emergency-only and set a low hard limit after the desired observation period.
+7. **DONE:** rollback dependency was verified, then `studio-durable-isolated`, its isolated cache volume, `charismatic-reverence`, and the remaining preview environments were retired while production resources were preserved.
 
