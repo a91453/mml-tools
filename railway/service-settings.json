@@ -16,6 +16,7 @@
       "/server/studio-web.mjs",
       "/server/studio-agent-driver.mjs",
       "/server/studio-agent-codex.mjs",
+      "/server/studio-agent-openai.mjs",
       "/studio/web/service/**",
       "/server/api.mjs",
       "/studio/backend/**",
@@ -71,7 +72,16 @@
     "MML_STUDIO_DATA_DIR",
     "MML_STUDIO_DURABILITY",
     "MML_OAUTH_REDIRECT_HOSTS",
-    "MML_OAUTH_LOOPBACK_REDIRECTS"
+    "MML_OAUTH_LOOPBACK_REDIRECTS",
+    "MML_AGENT_PROVIDER",
+    "MML_AGENT_MODEL",
+    "OPENAI_API_KEY",
+    "MML_AGENT_MAX_STEPS",
+    "MML_AGENT_MAX_CALLS_PER_RUN",
+    "MML_AGENT_MAX_CALLS_PER_DAY",
+    "MML_AGENT_MAX_INPUT_BYTES",
+    "MML_AGENT_MAX_OUTPUT_TOKENS",
+    "MML_AGENT_TIMEOUT_MS"
   ],
   "plane": "agent-control-plane",
   "note": "Agent Control Plane only (project mml-tools-allen / service mml-tools). The Permanent Studio Web plane (mml-tools-studio-permanent / studio-web-permanent) is configured separately and is not described by this file.",
@@ -84,5 +94,35 @@
     "inherited": "Railway copies every non-sealed service variable into a PR environment, including MML_PUBLIC_ORIGIN, MML_OWNER_PASSWORD and MML_AUTH_DB. Override the origin with the environment own domain (or remove it and use the derivation) and give the environment its own owner password.",
     "notInherited": "Sealed variables are not copied, so MML_CANONICAL_SOURCE_TOKEN is absent and the image build fails closed at the Canonical gate. Provide the PR environment its own fine-grained Contents: Read token; never unseal or copy the production one.",
     "volumes": "Both environments mount /data. Per-environment volume isolation is Railway behaviour and must be confirmed in the dashboard, not assumed by this file."
+  },
+  "productionAgentContinuation": {
+    "default": "disabled",
+    "enabledProvider": "openai-responses",
+    "prohibited": [
+      "Railway Agent",
+      "railway agent",
+      "MML_AGENT_CODEX child-process runner in production"
+    ],
+    "activation": "Set MML_AGENT_PROVIDER=openai-responses, MML_AGENT_MODEL and sealed OPENAI_API_KEY. Budget variables may only lower or stay within code-enforced hard ceilings.",
+    "hardCeilings": {
+      "maxStepsPerDispatch": 8,
+      "maxCallsPerRun": 12,
+      "maxCallsPerDay": 24,
+      "maxConcurrentRuns": 1,
+      "maxInputBytesPerCall": 393216,
+      "maxOutputTokensPerCall": 1200,
+      "timeoutMsPerCall": 60000
+    },
+    "defaults": {
+      "maxStepsPerDispatch": 6,
+      "maxCallsPerRun": 10,
+      "maxCallsPerDay": 16,
+      "maxConcurrentRuns": 1,
+      "maxInputBytesPerCall": 262144,
+      "maxOutputTokensPerCall": 900,
+      "timeoutMsPerCall": 60000
+    },
+    "providerStorage": "Responses requests set store=false.",
+    "rawAssetBytesSent": false
   }
 }
