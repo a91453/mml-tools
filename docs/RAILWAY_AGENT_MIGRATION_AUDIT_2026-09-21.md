@@ -20,6 +20,17 @@ This audit separates three concerns that were previously easy to conflate:
 
 The migration target is Railway **Agent work**, not necessarily Railway **runtime hosting**.
 
+## Cross-agent prohibition
+
+Repository policy is now stricter than the original migration target: Railway runtime hosting remains, but Railway Agent itself is prohibited for repository work.
+
+The prohibition applies to ChatGPT, Codex, Claude Code, subagents, routines and other automation. Enforcement lives in `AGENTS.md`, `CLAUDE.md`, `.claude/settings.json`, `docs/RAILWAY_AGENT_POLICY.md`, and the CI regression `tests/railway-agent-policy.test.mjs`.
+
+Deterministic Railway API/CLI operations, repository scripts and GitHub Actions remain allowed. If a deterministic operation is unavailable or requires interactive 2FA, the owner performs the exact Dashboard action manually; agents must not fall back to Railway Agent.
+
+Because an external client can exist outside repository instruction loading, the Railway workspace Agent hard usage limit of `$0` is the final cross-client billing guard.
+
+
 ## Retirement verification checkpoint — 2026-09-22
 
 Before deleting any migration-only Railway resource, the durable Studio rollback path was re-verified against `ops/permanent/README.md`, `ops/permanent/MIGRATION_RESULT.md`, and the live Railway inventory.
@@ -158,7 +169,8 @@ Only on an exceptional failure:
   -> ordinary fix PR
 
 Railway Agent:
-  -> emergency/manual fallback only
+  -> PROHIBITED for this repository
+  -> no inspection, diagnosis, mutation, deployment, cleanup or recovery fallback
 ```
 
 The key design choice is to **keep Railway as a runtime platform while removing Railway Agent as the normal control plane**.
@@ -169,9 +181,9 @@ Railway documents Railway Agent as token-billed at the underlying Anthropic mode
 
 For this repository, essentially all recurring Railway-Agent activities identified above are replaceable. A reasonable target is:
 
-- **80–95% reduction in Railway Agent spend**;
-- routine monthly Railway Agent usage should approach **$0–$5**, with usage reserved for genuine emergency investigation;
-- if the current monthly Railway Agent line item is approximately **$30**, the corresponding rough saving is **$24–$29/month**.
+- target **100% elimination of Railway Agent spend** for repository work;
+- routine monthly Railway Agent usage attributable to this repository should be **$0**;
+- Railway Agent is not retained as an emergency fallback; unsupported operations are handed to the owner for explicit Dashboard execution.
 
 This estimate is intentionally not a billing claim. The Railway Usage page is the source for the measured current-period number.
 
@@ -197,6 +209,6 @@ Even outside included minutes, a few minutes of Linux runner time per deployment
 3. **DONE on PR #51:** add protected manual config-apply workflow only for bounded desired-state changes; it never deploys.
 4. **DONE on PR #51:** add deterministic sanitized log collection for FAILED/CRASHED deployments.
 5. **DONE:** token setup and authenticated production audit passed; normal failure analysis can use collected evidence with Claude Code / normal PRs and does not require Railway Agent.
-6. **OPTIONAL OPERATIONS POLICY:** keep Railway Agent as emergency-only and set a low hard limit after the desired observation period.
+6. **POLICY:** Railway Agent is prohibited for ChatGPT, Codex, Claude Code and other agents working on this repository. Keep the Railway Agent hard usage limit at $0 as the cross-client billing backstop.
 7. **DONE:** rollback dependency was verified, then `studio-durable-isolated`, its isolated cache volume, `charismatic-reverence`, and the remaining preview environments were retired while production resources were preserved.
 
