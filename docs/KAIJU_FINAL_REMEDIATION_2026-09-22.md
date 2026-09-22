@@ -266,3 +266,61 @@ anchor, listening or confirmation was invented.
 | --- | --- | --- |
 | Gate 7 derivation | PASS on warning-free evidence alone (service); Web required a review | evidence **and** candidate-bound, evidence-backed, revision-bound Gate 7 review, same on every surface |
 | Gate 7 Kaiju | PENDING (alignment warnings) | **PENDING** (alignment warnings; no Gate 7 review) |
+
+## 4. Checkpoint D — Mobile (Gate 8), Regression (Gate 9), player readback
+
+### D1. Gate 8 — Mobile adaptation: **PENDING**
+
+Facts on the reproduced candidate (machine-checked):
+
+| Check | Finding |
+| --- | --- |
+| Adaptation performed | none — run step `mobile_adaptation` skipped (`NO_MOBILE_PROFILE_SUPPLIED`); candidate = decision application only |
+| Minimal / source-supported Lead & Core3 preserved | trivially (no transformation): 0 pitch, onset, duration or volume edits vs the baseline; 1,545 role assignments only |
+| Octave / register changes | none; pitches 38–86, inside the official 0–107 |
+| Role polyphony | every role monophonic (0 overlapping onsets inside a role) |
+| Prominence / volume after role assignment | **not arbitrated**: every event's volume is undecided, so each role would fall back to the parser default (`VOLUME_NOT_DECIDED` notice ×5) — Gate 8's "re-arbitrate prominence rather than inheriting destination volume" is unanswered |
+| Final syntax per `MOBILE_SYNTAX.md` | **NOT_RUN** under Published v1 (emission blocked by micro-timing). Candidate-only hypothetical: Melody/Chord1/Chord2/Chord3 at 1,096/816/1,472/671 chars (≤ 2,400); Chord4 not serialisable (long-rest duration-search limit); no Nxx, no dotted fragile forms, no shell/label text are ever emitted by the emitter |
+| Tempo-map policy | **NOT_RUN** — no emitted candidate; the export used for reproduction carries no Tempo Map, so no claim is made |
+| Zero duration | none in the IR (every event has positive duration) |
+| Reversible mapping | yes (no transformation; lineage lists all 1,545 role moves) |
+| Studio v1 limit | a Melody assigned from a role-less baseline carries Lead-evidence lineage and cannot be re-pitched/re-volumed by `mobile_adaptation` v1 |
+
+Gate 8 needs a cited Mobile profile (instrument range, volume mapping) and a
+candidate-bound, evidence-backed human `mobile_adaptation_reviewed`. Nothing was
+deleted or re-registered to improve a metric.
+
+### D2. Gate 9 — Regression: **PENDING**
+
+- vs Source-Faithful Baseline (`bas:315eb13d…`): Lead added 569 (role-less → Melody,
+  all review-pending), Lead removed 0, Lead moved away 0; other role moves 976
+  (role-less → Chord1 209 / Chord2 641 / Chord3 119 / Chord4 7); pitch 0 / onset 0 /
+  duration 0 / volume 0 changes; Core3 = Melody 569 + Chord1 209 + Chord2 641; Full6
+  enrichment = Chord3 119 + Chord4 7, Chord5 empty.
+- vs accepted previous version: **N/A** — none exists (`parent_candidate_id` null; no
+  accepted Kaiju MML is in the repository or the project).
+- Executable historical fixtures: all run in the suite and pass
+  (`song-reference-packages` for `back-number-mabataki`, the Kaiju
+  machine-delivery acceptance scenario, Lead demotion/promotion regressions).
+- Named regressions without an executable fixture: **Rashisa / らしさ Lead
+  over-cleaning — `FIXTURE_PENDING`**; not claimed as passed. Its semantics are
+  preserved by the unchanged rule that a Lead demotion needs positive evidence,
+  now additionally protected against agent/metric evidence (checkpoint B).
+- `regression_reviewed` is unrecorded; Gate 9 needs a human, evidence-backed review.
+
+### D3. Player readback: **PENDING (NOT_RUN)**
+
+No Final artifact exists for Kaiju (`artifacts: []`; finalize is blocked upstream by
+micro-timing, Lead, Gate 4, Gate 7, Gate 8 and Gate 9), so there is no MML that any
+player could load and read back. Nothing was loaded; `applied=true`, website playback,
+parser success and the hypothetical emission above are not readback and are not
+reported as such. When an artifact exists, readback must bind the loaded MML by
+`mml_sha256` (`player_readback: PASS` supports that binding).
+
+Receipt: [gate8-gate9-readback.json](evidence/kaiju-final-remediation-2026-09-22/gate8-gate9-readback.json).
+
+| Axis | Before | After checkpoint D |
+| --- | --- | --- |
+| Gate 8 | PENDING (review required) | **PENDING**; volume/prominence shown to be un-arbitrated; syntax NOT_RUN under v1 |
+| Gate 9 | PENDING | **PENDING**; event-level baseline diff enumerated; previous-version diff N/A; Rashisa `FIXTURE_PENDING` |
+| Player readback | NOT_RUN | **PENDING (NOT_RUN)** — no artifact exists to load |
