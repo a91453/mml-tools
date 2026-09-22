@@ -104,7 +104,7 @@ test('with an Application Service the studio control surface is advertised', asy
     'studio_core3_change_approve', 'studio_lead_evidence_review',
     'studio_final_reduction_plan', 'studio_final_reduction_apply',
     'studio_finalize', 'studio_job_status', 'studio_artifact_get',
-    'studio_run_plan', 'studio_run_start', 'studio_run_status', 'studio_run_resume',
+    'studio_run_plan', 'studio_run_start', 'studio_run_status', 'studio_run_next', 'studio_run_resume',
     'studio_proposal_targets', 'studio_proposal_submit', 'studio_proposal_status', 'studio_proposal_resolve',
   ]) {
     assert.ok(names.includes(expected), `${expected} must be advertised`);
@@ -114,22 +114,23 @@ test('with an Application Service the studio control surface is advertised', asy
   for (const leaked of ['midi_file', 'role_candidates', 'readiness', 'technical_timing_repair', 'mml_emitter', 'micro_gap']) {
     assert.ok(!names.some(name => name.includes(leaked)), `${leaked} is an implementation detail and must not be a tool`);
   }
-  // Twenty-six studio tools beside the three base ones. The bound is about what
+  // Twenty-seven studio tools beside the three base ones. The bound is about what
   // a model can hold, not about hiding operations: a review axis with no tool is
   // not a smaller surface, it is an unreachable one, and the two Gate 4 axes,
   // the Lead evidence re-review and the reduction's read-only preview are each a
-  // separate question a reviewer answers. The four run tools are four rather
-  // than one because plan and status write nothing while start and resume do,
+  // separate question a reviewer answers. The run tools are separate rather
+  // than one because plan, status and next write nothing while start and resume do,
   // and collapsing a read-only plan into the operation that applies decisions is
   // how a preview becomes a mutation.
   //
-  // The four proposal tools are the latest addition and are four for the same
+  // The four proposal tools are separate for the same
   // reason. `targets` and `status` write nothing and answer different questions
   // -- what a RUN is waiting for, and what a stored PROPOSAL says -- while
   // `submit` and `resolve` are the two halves the whole protocol exists to keep
   // apart: merging them would make submitting a proposal into accepting it,
   // which is precisely the escalation the design refuses.
-  assert.ok(tools.length <= 29, 'the surface must stay small enough for a model to reason about');
+  // One additional read-only continuation projection; no new mutation engine.
+  assert.ok(tools.length <= 30, 'the surface must stay small enough for a model to reason about');
 });
 
 // Every Application Service operation a reviewer has to reach, and the tool that
