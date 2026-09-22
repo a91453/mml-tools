@@ -40,7 +40,7 @@ If the requested operation cannot be completed without Railway Agent, STOP that 
 
 Repository instructions can constrain agents that load this repository, but they cannot technically prevent an external ChatGPT connector, browser session, or other client from invoking Railway Agent if that client ignores repository instructions.
 
-Therefore the account/workspace billing backstop should be:
+Therefore the account/workspace billing backstop must be configured manually as:
 
 ```text
 Railway Agent hard usage limit = $0
