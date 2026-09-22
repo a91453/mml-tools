@@ -324,3 +324,73 @@ Receipt: [gate8-gate9-readback.json](evidence/kaiju-final-remediation-2026-09-22
 | Gate 8 | PENDING (review required) | **PENDING**; volume/prominence shown to be un-arbitrated; syntax NOT_RUN under v1 |
 | Gate 9 | PENDING | **PENDING**; event-level baseline diff enumerated; previous-version diff N/A; Rashisa `FIXTURE_PENDING` |
 | Player readback | NOT_RUN | **PENDING (NOT_RUN)** — no artifact exists to load |
+
+## 5. Checkpoint E — Final Gate matrix (Published Canonical 2026-09-13-v1)
+
+Candidate `g11d:rev:fc3c93547c09a668031005bbb67f96a88f109cc6e7f59a5cb0b2dbe5ddb75b63`
+on baseline `bas:315eb13d5b82f81a3a20d72986514bb2ee4bc3e70304199f693037b8fb4d7c0d`,
+run `run_faf465f75ad72e943adba4832f88f931` rev 16. Production review report
+`278a0442…` (build `37ddf414…`); this branch's derivation changes are evaluated on
+the byte-faithful local reproduction where stated. Evidence kinds: **M** machine-derived,
+**S** symbolic, **A** audio, **H** human, **P** player-readback, **G** in-game.
+
+| Gate | State | Exact evidence | Blocker(s) | Evidence kind / identity |
+| --- | --- | --- | --- | --- |
+| 0 Intake / version | **PENDING** | recording `35a05318…` (MV cut, "MUSIC VIDEO" filename), MIDI `5819c9c5…` third-party (also uploaded once as `official_midi` with identical bytes — a mislabel, not used by the baseline); no accepted previous version | recording version / start offset / effective range are not recorded as confirmed in the project (the audio report's beat0 8.44 s is an alignment output, not a confirmation) | M/S; project `prj_a808…` asset list |
+| 1 Technical syntax | **NOT_RUN** (would FAIL/PENDING) | Final emission is blocked before serialisation | micro-timing (A); independently Chord4 long rests exceed the exact duration search; Tempo Map not verifiable here | M; emitter at this branch |
+| 2 Source completeness / traceability | **PENDING** (service shows PASS) | Source-Faithful Baseline exists, 1,545 events, diffable; candidate diff available | service `source: PASS` rests on an **agent-written** `source_complete` confirmation with **0 evidence** (2026-09-22T15:36Z); needs a human confirmation | S/M; confirmation record |
+| 3 Melody / Lead | **PENDING** | 569 Melody events, all provisional (`Piano top-line continuity; provisional Lead only`) | 569 provisional Lead events: 0 source-supported, 0 human-confirmed, 150 weak machine, 3 pitch-class-only, 21 contradictory, 395 missing; 174 legacy agent reviews no longer counted | M/S; see §2 |
+| 4 Core3 | **PENDING** | continuity PASS; completeness `CORE3_ENRICHMENT_DEPENDENCE_UNRESOLVED` (PR #63 fix live) — 5 Chord3/4 events sounding only in 1-tick Chord1/2 gaps | resolves with the micro-timing decision or a human `core3_completeness_reviewed`; the candidate regrid (A) closes those 1-tick gaps | M/S |
+| 5 Full6 / cross-source | **PASS** (machine-derived) | `crossSourceHarmony` PASS, `unresolvedCount` 0; one symbolic source, so no cross-source conflict exists to arbitrate; Chord3–Chord4 do not damage Core3 (continuity PASS) | none recorded; no human Full6 review exists, and Gate 4's residue (row 4) is the only enrichment-dependence signal | M/S; readiness `crossSourceHarmony` |
+| 6 Tempo / duration / preview | **NOT_RUN** | no preview/player used; no emitted candidate | depends on Gate 1; Tempo Map agreement unverified | — |
+| 7 Original audio | **PENDING** | active report `342aea74…`, confidence 0.456 | `LOW_ALIGNMENT_CONFIDENCE`, `LOW_SCORE_FRAME_COVERAGE`; no Gate 7 review | A/M; audio job `job_97290b13…` |
+| 8 Mobile adaptation | **PENDING** | no adaptation applied; volumes undecided | needs cited profile + human review | M/S |
+| 9 Regression | **PENDING** | baseline diff: role assignments only; no accepted previous version | human review; Rashisa `FIXTURE_PENDING` | M/S |
+| 10 In-game | **PENDING** | none | only the user / a controlled target-client test | G (none) |
+
+Validation states: `TECHNICAL_PASS` — no; `SOURCE_PASS` — no; `PLAYER_READBACK_PASS` —
+no (not run); `AUDIO_ALIGNMENT_PASS` — no; `MOBILE_ADAPTATION_PASS` — no;
+`IN_GAME_ACCEPTED` — no (never set by any automation here).
+
+**Whole-song state: `CANDIDATE`.** Not `VALIDATED`: Gates 0, 2, 3, 4, 7, 8, 9 need
+human/primary evidence and Gate 1/6 cannot run until the micro-timing decision is
+published (or a primary score supplies the durations). The machine-delivery
+projection and the unpublished candidate do not change any of these states.
+
+Re-run on this branch (byte-faithful reproduction, production reviews and
+confirmation seeded): readiness blockers `technical, microTiming,
+core3Completeness, leadPromotion, originalAudio, playerReadback,
+mobileAdaptation, regression` — the same set production reports — with
+`leadPromotion` now 0 PASS / 569 PENDING and `candidateReady: false`.
+(`originalAudio` is taken from production: the audio report was not exported.)
+
+### Before / after blocker matrix
+
+| Gate / axis | Start (production, `ae15e5f`/`37ddf41`) | End (this branch) | What moves it |
+| --- | --- | --- | --- |
+| 0 Intake | not represented in the service readiness (Web only) | PENDING (documented gap) | recording version/offset/range confirmation; service-side Gate 0 is a follow-up |
+| 1 Technical | NOT_RUN | NOT_RUN | micro-timing decision + Chord4 long-rest serialisation |
+| 2 Source | PASS on an agent-written 0-evidence confirmation | PENDING in this report (service still PASS) | human `source_complete` with evidence |
+| microTiming | PENDING, 1,282 UNKNOWN, cause unknown | PENDING; cause proven (1,544 one-tick releases); unpublished candidate drafted | publish the candidate (or a primary score) |
+| 3 Lead | PENDING; 174 PASS on agent F0/CQT reviews | PENDING; **0 PASS**; 569 classified; human queue | human, attested Lead review per section |
+| 4 Core3 | PENDING (enrichment dependence) | PENDING; shown to be a one-tick-gap artifact (candidate-only diagnostic PASS) | micro-timing decision or human `core3_completeness_reviewed` |
+| 5 Full6 | PASS | PASS (machine-derived) | — |
+| 6 Tempo / preview | NOT_RUN | NOT_RUN | depends on Gate 1 |
+| 7 Audio | PENDING (warnings); derivation would PASS clean evidence unreviewed | PENDING; derivation requires a bound Gate 7 review | better alignment + human Gate 7 review |
+| 8 Mobile | PENDING | PENDING; volumes un-arbitrated | cited profile + human review |
+| 9 Regression | PENDING | PENDING; diff enumerated; Rashisa `FIXTURE_PENDING` | human review |
+| Player readback | NOT_RUN | PENDING (NOT_RUN) | an artifact, then real readback bound by `mml_sha256` |
+| 10 In-game | PENDING | PENDING | user / controlled client only |
+
+### Remaining PENDING / UNSUPPORTED / follow-ups
+
+1. **Canonical publication needed**: `CANDIDATE-2026-09-22-SUBGRID-RELEASE-OFFSET`
+   (or a primary score) before Gate 1 can run for Kaiju.
+2. Chord4 long rests (179/2 and 96 beats) exceed the exact duration search
+   (`DURATION_SEARCH_POLICY_LIMIT`) — an emitter capability limit, fail-closed.
+3. Service readiness has no Gate 0 (intake/version) gate; Studio Web does.
+4. Confirmations (e.g. `source_complete`) and `applyDecisions.leadEvidence` carry
+   no reviewer attestation; the Lead-review fix here does not extend to them.
+5. Human work queued: Lead (113 sections), Gate 4 residue, Gate 7 (after a better
+   alignment revision), Gate 8 profile + review, Gate 9 review, Gate 2 confirmation.
+6. Player readback and in-game acceptance: not performed; cannot be automated.
