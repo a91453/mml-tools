@@ -2,12 +2,13 @@
 
 ## Railway Agent is prohibited
 
-For this repository, **never invoke Railway Agent**.
+For this repository, **never invoke Railway Agent and never delegate work to GitHub Copilot**.
 
 This applies to Codex, ChatGPT, Claude Code, subagents, MCP clients, routines, and any other automated agent operating on the repository.
 
 Do not use or delegate to:
 
+- GitHub Copilot / Copilot CLI / Copilot cloud agent as a secondary agent;
 - `railway agent`;
 - Railway Dashboard Agent;
 - Railway MCP / connector `railway_agent` tools, including `mcp__Railway__railway_agent`;
