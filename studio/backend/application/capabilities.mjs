@@ -330,6 +330,7 @@ export function buildCapabilities({ canonical, storage, jobs, transports = [] })
       review_axes_settable_by_this_service: freeze([
         { axis: 'core3_source_continuity', gate: 'Gate 4 (source continuity)', readiness_gate: 'core3', operation: 'approveCore3SourceChange' },
         { axis: 'core3_completeness', gate: 'Gate 4 (musical completeness)', readiness_gate: 'core3Completeness', operation: 'recordConfirmations.core3_completeness_reviewed' },
+        { axis: 'original_audio_review', gate: 'Gate 7 (role / prominence / sustain / articulation / recording-structure review)', readiness_gate: 'originalAudio', operation: 'recordConfirmations.original_audio_reviewed' },
         { axis: 'lead_promotion', gate: 'Gate 3 (promotion into Melody)', readiness_gate: 'leadPromotion', operation: 'applyDecisions.leadEvidence / reviewLeadEvidence' },
         { axis: 'lead_demotion', gate: 'Gate 3 (demotion out of Melody)', readiness_gate: 'leadDemotion', operation: 'applyDecisions.leadEvidence / reviewLeadEvidence' },
       ]),
@@ -338,7 +339,7 @@ export function buildCapabilities({ canonical, storage, jobs, transports = [] })
       // in_game remains a standing prohibition for this service.
       not_implemented_in_this_build: freeze([]),
       never_settable_by_this_service: freeze(['in_game']),
-      notice: 'mobile_adaptation, regression and core3_completeness can reach PASS only from explicit candidate-bound evidence-backed Gate 8 / Gate 9 / Gate 4 reviews, each of which requires at least one evidence reference; parser/emitter/test success does not upgrade them. The Core3 source-continuity axis moves only through per-change evidence-backed approvals, and the Lead axes only through the shared Lead grader re-run over a cited evidence record — a Lead approval is never a Core3 approval and neither axis of Gate 4 answers the other. in_game is recorded only by the user or a controlled target-client test. No parser, emitter, transport, job or model call can set in_game, so it stays PENDING.',
+      notice: 'mobile_adaptation, regression, core3_completeness and audio can reach PASS only from explicit candidate-bound evidence-backed Gate 8 / Gate 9 / Gate 4 / Gate 7 reviews, each of which requires at least one evidence reference (audio additionally requires warning-free alignment evidence, and its review is bound to the active audio evidence revision); parser/emitter/test success does not upgrade them. The Core3 source-continuity axis moves only through per-change evidence-backed approvals, and the Lead axes only through the shared Lead grader re-run over a cited evidence record — a Lead approval is never a Core3 approval and neither axis of Gate 4 answers the other. in_game is recorded only by the user or a controlled target-client test. No parser, emitter, transport, job or model call can set in_game, so it stays PENDING.',
     }),
 
     audio: freeze({

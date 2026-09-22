@@ -57,6 +57,13 @@
 // a controlled target-client test, and this build records none.
 
 import { ERROR_CODES, GATE_STATUS, GATE_NOTICE, fail, isCandidateId, requireString } from './contracts.mjs';
+import {
+  LEAD_REVIEW_AUTHORITY,
+  validateLeadReviewAttestation,
+  leadReviewAuthorityOf,
+  gradedLeadEvidenceOf,
+} from './lead-review-authority.mjs';
+import { audioReportHash } from './audio-report-history.mjs';
 
 const now = () => new Date().toISOString();
 
@@ -69,6 +76,7 @@ const CONFIRMATIONS = Object.freeze({
   regression_reviewed: 'readiness `regression` gate: the candidate was compared against the Source-Faithful Baseline and accepted previous version when present, with Lead/Core3/source drift and available historical regressions explicitly reviewed. Bound to the candidate.',
   core3_completeness_reviewed: 'readiness `core3Completeness` gate: the Core3 the evaluator could not certify complete was reviewed against Acceptance Gate 4 and found to stand up as a one-player arrangement for this source. It resolves the unresolved residue, which includes a missing Chord1/Chord2 function -- the evaluator cannot tell material the source never carried from material cleanup dropped, so only a reviewer can. It can never clear an absent Lead or a Core3 whose identity depends on Chord3-Chord5: those are deficiencies in the arrangement and the gate FAILs on them. Bound to the candidate.',
   original_audio_required: 'readiness `originalAudio` applicability. Setting it false states the song-specific workflow does not require original audio, and must say why. Bound to the baseline.',
+  original_audio_reviewed: 'readiness `originalAudio` gate: Acceptance Gate 7 review. The active beat<->recording alignment for the relevant sections and the role / prominence / sustain / articulation / recording-structure questions were reviewed against the recording; audio metrics were not used to overwrite symbolic identity. Bound to the candidate and to the active audio evidence revision it reviewed.',
 });
 
 // Which identity each confirmation is a statement about.
@@ -80,6 +88,7 @@ const CONFIRMATION_SCOPE = Object.freeze({
   regression_reviewed: 'candidate',
   core3_completeness_reviewed: 'candidate',
   original_audio_required: 'baseline',
+  original_audio_reviewed: 'candidate',
 });
 
 // Confirmations whose `true` is a reviewer's answer to a required gate, and the
@@ -89,6 +98,7 @@ const EVIDENCE_REQUIRED_ON_TRUE = Object.freeze({
   mobile_adaptation_reviewed: 'Gate 8',
   regression_reviewed: 'Gate 9',
   core3_completeness_reviewed: 'Gate 4 Core3 completeness',
+  original_audio_reviewed: 'Gate 7',
 });
 
 const PLAYER_READBACK_VALUES = Object.freeze(['PASS', 'NOT_RUN', 'N/A']);
@@ -99,6 +109,9 @@ export const STALE_CONFIRMATION = Object.freeze({
   BASELINE_CHANGED: 'BASELINE_CHANGED',
   CANDIDATE_MISMATCH: 'CANDIDATE_MISMATCH',
   UNBOUND: 'UNBOUND',
+  // A Gate 7 review is about one audio evidence revision; another one being
+  // active means the review is about evidence that is no longer selected.
+  AUDIO_EVIDENCE_REVISION_CHANGED: 'AUDIO_EVIDENCE_REVISION_CHANGED',
 });
 
 export function createReviewService({ canonical, projects, intake, arrangement, store }) {
@@ -137,6 +150,15 @@ export function createReviewService({ canonical, projects, intake, arrangement, 
 
   const confirmationsOf = record => record.confirmations ?? {};
 
+  // The identity of the audio evidence currently selected for a candidate:
+  // the report hash(es) of the active head(s) read from the store -- the same
+  // reports readiness grades -- never the `audio_evidence` index cache. Null when
+  // none is selected. Selection is evidence selection, not a verdict.
+  const activeAudioReportSha = (record, candidateId) => {
+    const active = audioReportsFor(record.project_id, candidateId);
+    return active.length ? active.map(audioReportHash).sort().join('+') : null;
+  };
+
   /**
    * The confirmations that actually apply to this baseline and candidate.
    *
@@ -154,6 +176,8 @@ export function createReviewService({ canonical, projects, intake, arrangement, 
       if (boundBaseline === null) reason = STALE_CONFIRMATION.UNBOUND;
       else if (boundBaseline !== baselineId) reason = STALE_CONFIRMATION.BASELINE_CHANGED;
       else if (CONFIRMATION_SCOPE[name] === 'candidate' && boundCandidate !== candidateId) reason = STALE_CONFIRMATION.CANDIDATE_MISMATCH;
+      else if (name === 'original_audio_reviewed' && entry?.value === true
+        && (entry.audio_report_sha256 ?? null) !== activeAudioReportSha(record, candidateId)) reason = STALE_CONFIRMATION.AUDIO_EVIDENCE_REVISION_CHANGED;
       if (reason) stale.push({ name, reason, bound_baseline_id: boundBaseline, bound_candidate_id: boundCandidate, at: entry?.at ?? null });
       else effective[name] = entry;
     }
@@ -199,18 +223,34 @@ export function createReviewService({ canonical, projects, intake, arrangement, 
     const baselineId = record.baseline?.baseline_id ?? null;
     return (Array.isArray(stored) ? stored : [])
       .filter(entry => entry?.baseline_id === baselineId && entry?.candidate_id === candidateId)
-      .map(entry => ({
-        eventId: entry.event_id,
-        axis: entry.axis,
-        leadEvidence: entry.lead_evidence,
-        leadContextDigest: entry.lead_context_digest,
-        reason: entry.reason,
-        evidence: [...(entry.evidence ?? [])],
-        originEventId: entry.origin_event_id ?? null,
-        supersedeReason: entry.supersede_reason ?? null,
-        at: entry.at ?? null,
-      }));
+      .map(entry => {
+        const authority = leadReviewAuthorityOf(entry);
+        return {
+          eventId: entry.event_id,
+          axis: entry.axis,
+          leadEvidence: entry.lead_evidence,
+          leadContextDigest: entry.lead_context_digest,
+          reason: entry.reason,
+          evidence: [...(entry.evidence ?? [])],
+          originEventId: entry.origin_event_id ?? null,
+          supersedeReason: entry.supersede_reason ?? null,
+          at: entry.at ?? null,
+          attestation: entry.attestation ?? null,
+          authenticatedOwner: entry.authenticated_owner ?? null,
+          authority,
+          countedAsReviewerEvidence: authority === LEAD_REVIEW_AUTHORITY.HUMAN_ATTESTED,
+        };
+      });
   };
+
+  // The subset the shared Lead grader may consume: human-attested reviews only,
+  // with a machine-metric audio basis carried into the audio evidence so the
+  // grader never counts it as positive role evidence (SOURCE_POLICY §6). Every
+  // other stored review stays visible in `leadEvidenceReviewsFor` for the audit
+  // trail and is reported as not counted -- never deleted, never rewritten.
+  const gradedLeadEvidenceReviews = reviews => reviews
+    .filter(review => review.countedAsReviewerEvidence)
+    .map(review => ({ ...review, leadEvidence: gradedLeadEvidenceOf(review.leadEvidence, review.attestation) }));
 
   /** Everything review and finalize both need, assembled once. */
   const context = async (owner, projectId, candidateId) => {
@@ -237,7 +277,8 @@ export function createReviewService({ canonical, projects, intake, arrangement, 
     const candidateRulesSnapshot = application.revision?.canonicalIdentity?.rules_snapshot_sha ?? null;
     const loadedRulesSnapshot = engines.emitterContract.canonicalIdentity().rules_snapshot_sha;
 
-    return { engines, record, baseline, baselineProject, entry, application, applicationLineage: arrangement.loadCandidateLineage(record, candidateId), core3Approvals: core3ApprovalsFor(record, candidateId), leadEvidenceReviews: leadEvidenceReviewsFor(record, candidateId), confirmations, staleConfirmations: stale, audioReports, audioErrors, project, parent, candidateRulesSnapshot, loadedRulesSnapshot };
+    const leadEvidenceReviews = leadEvidenceReviewsFor(record, candidateId);
+    return { engines, record, baseline, baselineProject, entry, application, applicationLineage: arrangement.loadCandidateLineage(record, candidateId), core3Approvals: core3ApprovalsFor(record, candidateId), leadEvidenceReviews, gradedLeadEvidenceReviews: gradedLeadEvidenceReviews(leadEvidenceReviews), confirmations, staleConfirmations: stale, audioReports, audioErrors, project, parent, candidateRulesSnapshot, loadedRulesSnapshot };
   };
 
   /** Record an explicit confirmation. Each one needs a stated reason. */
@@ -326,7 +367,18 @@ export function createReviewService({ canonical, projects, intake, arrangement, 
           fail(ERROR_CODES.SOURCE_INCOMPLETE, 'The Source-Faithful Baseline reports incomplete inputs, so source completeness cannot be confirmed.', { incomplete_inputs: incomplete });
         }
       }
-      next[name] = { value: input.value, reason, evidence, at: now(), ...binding };
+      // A Gate 7 review is a statement about the audio evidence it reviewed.
+      // With none selected there is nothing to have reviewed, and the review is
+      // bound to the selected revision so a later selection makes it stale.
+      let audioBinding = {};
+      if (name === 'original_audio_reviewed' && input.value === true) {
+        const reviewedReport = activeAudioReportSha(record, boundCandidate);
+        if (!reviewedReport) {
+          fail(ERROR_CODES.INVALID_REQUEST, 'original_audio_reviewed needs active audio alignment evidence for this candidate: attach it first, then review it against the recording.', { candidate_id: boundCandidate });
+        }
+        audioBinding = { audio_report_sha256: reviewedReport };
+      }
+      next[name] = { value: input.value, reason, evidence, at: now(), ...binding, ...audioBinding };
     }
     projects.save({ ...record, confirmations: next });
     return Object.freeze({ confirmations: Object.freeze({ ...next }) });
@@ -478,6 +530,11 @@ export function createReviewService({ canonical, projects, intake, arrangement, 
       if (!leadEvidence || typeof leadEvidence !== 'object' || Array.isArray(leadEvidence)) {
         fail(ERROR_CODES.INVALID_REQUEST, 'review.lead_evidence must be the Lead evidence record the shared gate grades: sourceIdentity, sectionRole, scoreEvidence, audioEvidence, continuity, core3 and a positive destination reason.');
       }
+      const attested = validateLeadReviewAttestation(review.attestation, leadEvidence);
+      if (!attested.ok) fail(ERROR_CODES.INVALID_REQUEST, attested.error, { candidate_id: candidateId, event_id: eventId });
+      const attestation = attested.attestation;
+      const authority = leadReviewAuthorityOf({ attestation });
+      const counted = authority === LEAD_REVIEW_AUTHORITY.HUMAN_ATTESTED;
 
       // The Lead picture this review is an argument about. Recorded with the
       // review so a later candidate cannot silently inherit it.
@@ -487,7 +544,8 @@ export function createReviewService({ canonical, projects, intake, arrangement, 
 
       const stored = store.getJson(leadEvidenceReviewKey(record.project_id, candidateId));
       const existing = Array.isArray(stored) ? stored : [];
-      const others = leadEvidenceReviewsFor(record, candidateId).filter(entry => !(entry.eventId === eventId && entry.axis === axis));
+      const graded = gradedLeadEvidenceReviews(leadEvidenceReviewsFor(record, candidateId));
+      const others = graded.filter(entry => !(entry.eventId === eventId && entry.axis === axis));
       const reportsWith = freshReviews => {
         const inputs = { applications: ctx.applicationLineage, baseline: baselineProject, candidate: application.candidate, freshReviews };
         return axis === axes.PROMOTION
@@ -497,13 +555,13 @@ export function createReviewService({ canonical, projects, intake, arrangement, 
 
       // Something to answer. Computed with the reviews already stored, so a
       // question this caller has already answered is reported as answered.
-      const before = reportsWith(leadEvidenceReviewsFor(record, candidateId)).find(report => report.eventId === eventId);
+      const before = reportsWith(graded).find(report => report.eventId === eventId);
       if (!before) {
         fail(ERROR_CODES.INVALID_REQUEST, `This candidate reports no Lead ${axis} requiring evidence for that event.`, {
           candidate_id: candidateId,
           event_id: eventId,
           axis,
-          reviewable: reportsWith(leadEvidenceReviewsFor(record, candidateId)).filter(report => report.pass !== true).map(report => report.eventId),
+          reviewable: reportsWith(graded).filter(report => report.pass !== true).map(report => report.eventId),
         });
       }
       // An answered question is not re-opened by accident -- but it must be
@@ -538,10 +596,15 @@ export function createReviewService({ canonical, projects, intake, arrangement, 
         baseline_id: record.baseline?.baseline_id ?? null,
         candidate_id: candidateId,
         ...(supersedeReason ? { supersede_reason: supersedeReason } : {}),
+        attestation,
+        authenticated_owner: owner,
         at: now(),
       };
+      // The dry run always includes the submission, so the identity binding and
+      // the "is this waiting on evidence" check below apply to every review,
+      // counted or not. Whether it then moves the gate is decided by authority.
       const dryRun = reportsWith([...others, {
-        eventId, axis, leadEvidence, leadContextDigest, reason, evidence, originEventId: candidateEntry.origin_event_id, at: candidateEntry.at,
+        eventId, axis, leadEvidence: gradedLeadEvidenceOf(leadEvidence, attestation), leadContextDigest, reason, evidence, originEventId: candidateEntry.origin_event_id, at: candidateEntry.at,
       }]).find(report => report.eventId === eventId);
       const identityBlockers = (dryRun?.blockers ?? []).filter(blocker => engines.leadDemotion.LEAD_EVIDENCE_IDENTITY_BLOCKERS.includes(blocker));
       if (identityBlockers.length) {
@@ -589,8 +652,14 @@ export function createReviewService({ canonical, projects, intake, arrangement, 
       );
       return Object.freeze({
         review: Object.freeze({ ...candidateEntry, evidence: Object.freeze([...evidence]) }),
-        report: dryRun ?? null,
-        notice: 'A Lead evidence review re-supplies one citation for one already-applied Lead move on one candidate. It is graded by the shared Lead gate on every review and finalize, it carries no previous verdict forward, and it is not loaded for any other candidate.',
+        authority,
+        counted_as_reviewer_evidence: counted,
+        // An agent/tool review is recorded for the audit trail and moves nothing:
+        // the report is the gate as it stands without it.
+        report: counted ? dryRun ?? null : before ?? null,
+        notice: counted
+          ? 'A Lead evidence review re-supplies one citation for one already-applied Lead move on one candidate. It is graded by the shared Lead gate on every review and finalize, it carries no previous verdict forward, and it is not loaded for any other candidate.'
+          : 'Recorded for the audit trail only. An agent- or tool-attested Lead review is not reviewer evidence: the shared Lead grader does not consume it and the gate is unchanged. A human reviewer must supply their own attested review.',
       });
     },
 
@@ -650,7 +719,7 @@ export function createReviewService({ canonical, projects, intake, arrangement, 
       // relative to the Source-Faithful baseline, and its evidence record lives
       // on the revision that made it. Every recovered record is re-graded
       // against the current candidate, never carried forward as a stored PASS.
-      const leadReportInputs = { applications: ctx.applicationLineage, baseline: baselineProject, candidate: application.candidate, freshReviews: ctx.leadEvidenceReviews };
+      const leadReportInputs = { applications: ctx.applicationLineage, baseline: baselineProject, candidate: application.candidate, freshReviews: ctx.gradedLeadEvidenceReviews };
       const leadDemotionReports = engines.arrangement.leadDemotionReportsFromLineage(leadReportInputs);
       const leadPromotionReports = engines.arrangement.leadPromotionReportsFromLineage(leadReportInputs);
       const readinessInputs = {
@@ -658,6 +727,7 @@ export function createReviewService({ canonical, projects, intake, arrangement, 
         leadPromotionReports,
         versionDriftReviewed: recorded.version_drift_reviewed?.value === true,
         originalAudioRequired: recorded.original_audio_required?.value !== false,
+        originalAudioReviewed: recorded.original_audio_reviewed?.value === true,
         playerReadback: recorded.player_readback?.value ?? 'NOT_RUN',
         mobileAdaptation: recorded.mobile_adaptation_reviewed?.value === true ? 'PASS' : 'PENDING',
         regressionReviewed: recorded.regression_reviewed?.value === true,
@@ -709,6 +779,7 @@ export function createReviewService({ canonical, projects, intake, arrangement, 
         lead_demotion: leadDemotionReports,
         lead_promotion: leadPromotionReports,
         lead_evidence_reviews: ctx.leadEvidenceReviews,
+        lead_evidence_review_authority: leadReviewAuthoritySummary(ctx.leadEvidenceReviews),
         readiness,
         audio: {
           reports: ctx.audioReports.length,
@@ -754,6 +825,17 @@ function normalizeEvidence(evidence) {
  *               suite never silently upgrades it.
  *   in_game     `PENDING`, unconditionally and by construction.
  */
+export function leadReviewAuthoritySummary(reviews) {
+  const counts = {};
+  for (const review of reviews ?? []) counts[review.authority] = (counts[review.authority] ?? 0) + 1;
+  return Object.freeze({
+    total: (reviews ?? []).length,
+    counted_as_reviewer_evidence: (reviews ?? []).filter(review => review.countedAsReviewerEvidence).length,
+    by_authority: Object.freeze(counts),
+    notice: 'Only HUMAN_ATTESTED reviews reach the shared Lead grader. Unattested historical reviews and agent/tool reviews stay on record for audit and are not counted. An attestation is caller-declared text, recorded with the authenticated owner; it is not proof that a human listened.',
+  });
+}
+
 export function gatesFrom(readiness) {
   const status = name => readiness?.gates?.[name]?.status ?? GATE_STATUS.NOT_RUN;
   return Object.freeze({

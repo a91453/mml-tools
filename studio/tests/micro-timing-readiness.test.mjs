@@ -192,6 +192,7 @@ function readiness(project, overrides = {}) {
     versionDriftReviewed: false,
     playerReadback: 'PASS',
     originalAudioRequired: true,
+    originalAudioReviewed: true,
     mobileAdaptation: 'PASS',
     regressionReviewed: true,
     inGameAcceptance: 'PENDING',

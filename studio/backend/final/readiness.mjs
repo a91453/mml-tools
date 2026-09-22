@@ -15,13 +15,22 @@ function gate(status, details = {}) {
   return Object.freeze({ status, ...details });
 }
 
-function audioGate(project, required) {
+// ACCEPTANCE_CRITERIA Gate 7 asks two things when official audio is part of the
+// source set: beat<->recording alignment evidence exists for the relevant
+// sections, AND the role / prominence / sustain / articulation /
+// recording-structure questions have been reviewed. Warning-free alignment
+// evidence answers only the first; "a globally implemented audio module does not
+// pass this gate for a song automatically". The second is a candidate-bound,
+// evidence-backed Gate 7 review (`original_audio_reviewed`), exactly as Studio
+// Web already required its own `audio` review before this gate could pass.
+function audioGate(project, required, reviewed = false) {
   if (!required) return gate('N/A', { reason: 'Song-specific workflow explicitly marked original audio as not applicable.' });
   const evidence = project?.metadata?.audioAlignmentEvidence;
   if (!Array.isArray(evidence) || !evidence.length) return gate('PENDING', { blockers: ['AUDIO_ALIGNMENT_EVIDENCE_MISSING'] });
   const warnings = [...new Set(evidence.flatMap(item => Array.isArray(item.warnings) ? item.warnings : []))];
   if (warnings.length) return gate('PENDING', { blockers: ['AUDIO_ALIGNMENT_REVIEW_REQUIRED'], warnings });
-  return gate('PASS', { evidenceCount: evidence.length });
+  if (reviewed !== true) return gate('PENDING', { blockers: ['ORIGINAL_AUDIO_GATE7_REVIEW_REQUIRED'], evidenceCount: evidence.length });
+  return gate('PASS', { evidenceCount: evidence.length, reviewed: true });
 }
 
 function validBaselineSnapshot(snapshot) {
@@ -427,6 +436,7 @@ export function evaluateProjectReadiness({
   versionDriftReviewed = false,
   playerReadback = 'NOT_RUN',
   originalAudioRequired = true,
+  originalAudioReviewed = false,
   mobileAdaptation = 'PENDING',
   regressionReviewed = false,
   inGameAcceptance = 'PENDING',
@@ -470,7 +480,7 @@ export function evaluateProjectReadiness({
     leadPromotion,
     crossSourceHarmony: gate(normalizeStatus(harmonyReport, 'NOT_RUN'), { unresolvedCount: harmonyReport?.unresolvedCount ?? null }),
     versionDrift: versionGate(lineageReport, versionDriftReviewed),
-    originalAudio: audioGate(project, originalAudioRequired),
+    originalAudio: audioGate(project, originalAudioRequired, originalAudioReviewed),
     playerReadback: gate(normalizeStatus(playerReadback, 'NOT_RUN')),
     mobileAdaptation: mobileAdaptationGate(mobileAdaptation),
     regression: regressionGate(regressionReviewed),

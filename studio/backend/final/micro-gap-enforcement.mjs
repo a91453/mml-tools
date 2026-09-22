@@ -54,6 +54,10 @@
 import { F, f } from '../mml/index.mjs';
 import { EFFECTIVE_RULESET } from '../rules/index.mjs';
 import {
+  carriesCanonicalCandidateMarker,
+  isReleaseRegridCandidateActive,
+} from '../canonical/release-regrid-candidate.mjs';
+import {
   SAFE_GRID,
   MICRO_TIMING_CLASSIFICATIONS,
   analyzeProjectMicroTiming,
@@ -78,6 +82,10 @@ export const MICRO_GAP_BLOCKERS = Object.freeze({
   TECHNICAL_REJECTION_DISABLED: 'MICRO_GAP_POLICY_TECHNICAL_REJECTION_DISABLED',
   MEANINGFUL_REST_PRESERVATION_DISABLED: 'MICRO_GAP_POLICY_MEANINGFUL_REST_PRESERVATION_DISABLED',
   ENFORCEMENT_INVARIANT_VIOLATED: 'MICRO_GAP_ENFORCEMENT_INVARIANT_VIOLATED',
+  // The project was produced by an UNPUBLISHED Canonical candidate transform
+  // (canonical/release-regrid-candidate.mjs). Its timing may look clean, but no
+  // Published rule authorised the change, so it can never reach PASS here.
+  UNPUBLISHED_CANONICAL_CANDIDATE: 'MICRO_GAP_UNPUBLISHED_CANONICAL_CANDIDATE',
 });
 
 // Canonical IR beats are quarter notes, so a whole-note 1/N is 4/N IR beats.
@@ -237,6 +245,11 @@ export function enforceMicroGaps(project, { mobileSyntax } = {}) {
   if (invariantViolated) blockers.push(MICRO_GAP_BLOCKERS.ENFORCEMENT_INVARIANT_VIOLATED);
 
   blockers.push(...policy.blockers);
+
+  // Appended last so an unmarked project's blocker list is unchanged byte for byte.
+  if (carriesCanonicalCandidateMarker(project) && !isReleaseRegridCandidateActive(EFFECTIVE_RULESET.canonical?.canonical_version)) {
+    blockers.push(MICRO_GAP_BLOCKERS.UNPUBLISHED_CANONICAL_CANDIDATE);
+  }
 
   // A confirmed Final violation outranks uncertainty, but the uncertain counts
   // and blockers stay visible rather than being hidden behind the FAIL. A

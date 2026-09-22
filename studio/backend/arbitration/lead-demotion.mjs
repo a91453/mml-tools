@@ -11,6 +11,14 @@ const ROLE_CLASSES = Object.freeze(['lead', 'accompaniment', 'inner', 'counter',
 const AUDIO_CLASSES = Object.freeze(['foreground', 'background', 'mixed', 'unknown']);
 const AVAILABILITY = Object.freeze(['available', 'unavailable']);
 const SECTION_ROLES = Object.freeze(['vocal-active', 'vocal-rest', 'instrumental', 'intro', 'interlude', 'solo', 'outro', 'unknown']);
+// How an audio classification was established, when the caller says so.
+// SOURCE_POLICY §6: alignment/chroma/DTW/correlation/onset (and F0/CQT salience)
+// metrics are evidence locators, not identity labels, and cannot alone prove
+// Vocal identity, exact pitch, octave or role. A `machine-metric` audio
+// classification may still raise a conflict (it can locate a problem window) but
+// is never positive role evidence. Absent basis keeps the historical behaviour.
+export const AUDIO_EVIDENCE_BASES = Object.freeze(['listening', 'machine-metric']);
+export const AUDIO_METRIC_NOT_ROLE_EVIDENCE = 'AUDIO_METRIC_IS_A_LOCATOR_NOT_ROLE_EVIDENCE';
 
 function nonEmpty(value) {
   return typeof value === 'string' && Boolean(value.trim());
@@ -26,8 +34,15 @@ function normalizeEvidenceItem(item, kind) {
   const classification = item.classification ?? 'unknown';
   if (!allowed.includes(classification)) throw Error(`${kind}.classification is invalid`);
   if (classification !== 'unknown' && !nonEmpty(item.citation)) throw Error(`${kind} classified evidence requires a citation/source reference`);
+  if (kind === 'audio' && item.basis !== undefined && item.basis !== null) {
+    if (!AUDIO_EVIDENCE_BASES.includes(item.basis)) throw Error('audio.basis must be listening or machine-metric');
+    return Object.freeze({ availability, classification, citation: item.citation?.trim() ?? null, basis: item.basis });
+  }
   return Object.freeze({ availability, classification, citation: item.citation?.trim() ?? null });
 }
+
+// Available audio evidence that may count as *positive* role evidence.
+const audioIsPositiveEvidence = audio => audio.availability === 'available' && audio.basis !== 'machine-metric';
 
 
 // ─── Lead evidence identity binding ─────────────────────────────────────────
@@ -195,12 +210,14 @@ export function evaluateLeadDemotion({
   else if (core3.status !== 'PASS') blockers.push(core3.status === 'FAIL' ? 'CORE3_FAILED' : 'CORE3_UNRESOLVED');
 
   const scoreSupportsDemotion = score.availability === 'available' && ['accompaniment', 'inner', 'counter', 'duplicate'].includes(score.classification);
-  const audioSupportsDemotion = audio.availability === 'available' && audio.classification === 'background';
+  const audioSupportsDemotion = audioIsPositiveEvidence(audio) && audio.classification === 'background';
   const scoreSupportsLead = score.availability === 'available' && score.classification === 'lead';
+  // Any available audio classification can raise a conflict, including a metric.
   const audioSupportsLead = audio.availability === 'available' && audio.classification === 'foreground';
 
   if (!scoreSupportsDemotion && !audioSupportsDemotion) blockers.push('POSITIVE_ROLE_EVIDENCE_MISSING');
   if (scoreSupportsLead || audioSupportsLead) blockers.push('SOURCE_ROLE_EVIDENCE_CONFLICT');
+  if (audio.basis === 'machine-metric' && audio.classification !== 'unknown') warnings.push(AUDIO_METRIC_NOT_ROLE_EVIDENCE);
 
   if (score.availability === 'unavailable') warnings.push('SCORE_ROLE_EVIDENCE_UNAVAILABLE');
   if (audio.availability === 'unavailable') warnings.push('AUDIO_ROLE_EVIDENCE_UNAVAILABLE');
@@ -275,14 +292,17 @@ export function evaluateLeadPromotion({
   else if (core3.status !== 'PASS') blockers.push(core3.status === 'FAIL' ? 'CORE3_FAILED' : 'CORE3_UNRESOLVED');
 
   const scoreSupportsLead = score.availability === 'available' && score.classification === 'lead';
-  const audioSupportsLead = audio.availability === 'available' && audio.classification === 'foreground';
+  const audioSupportsLead = audioIsPositiveEvidence(audio) && audio.classification === 'foreground';
   const scoreSupportsNonLead = score.availability === 'available' && ['accompaniment', 'inner', 'counter', 'duplicate'].includes(score.classification);
-  const audioSupportsNonLead = audio.availability === 'available' && audio.classification === 'background';
+  // Any available audio classification can raise a conflict, including a metric.
+  const audioSuggestsLead = audio.availability === 'available' && audio.classification === 'foreground';
+  const audioSuggestsNonLead = audio.availability === 'available' && audio.classification === 'background';
 
   if (!scoreSupportsLead && !audioSupportsLead) blockers.push('POSITIVE_LEAD_EVIDENCE_MISSING');
-  if ((scoreSupportsLead && audioSupportsNonLead) || (audioSupportsLead && scoreSupportsNonLead)) {
+  if ((scoreSupportsLead && audioSuggestsNonLead) || (audioSuggestsLead && scoreSupportsNonLead)) {
     blockers.push('SOURCE_ROLE_EVIDENCE_CONFLICT');
   }
+  if (audio.basis === 'machine-metric' && audio.classification !== 'unknown') warnings.push(AUDIO_METRIC_NOT_ROLE_EVIDENCE);
 
   if (score.availability === 'unavailable') warnings.push('SCORE_ROLE_EVIDENCE_UNAVAILABLE');
   if (audio.availability === 'unavailable') warnings.push('AUDIO_ROLE_EVIDENCE_UNAVAILABLE');

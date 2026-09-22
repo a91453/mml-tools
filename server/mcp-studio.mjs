@@ -52,12 +52,12 @@ const structuredPayload = description => ({ type: 'object', additionalProperties
 import { LIMITS, PROPOSAL_KIND_NAMES, PROPOSAL_STATE_NAMES, RESOLUTION_NAMES } from '../studio/backend/application/index.mjs';
 import { PAGED_REPORT_TOOLS, REPORT_PAGE_SCHEMA, validateReportPage, readReportPage } from './report-page.mjs';
 
-const CONFIRMATIONS_DESCRIPTION = 'source_complete／version_drift_reviewed／player_readback／mobile_adaptation_reviewed／regression_reviewed／core3_completeness_reviewed／original_audio_required，每項需 reason。'
-  + 'mobile_adaptation_reviewed（Gate 8）、regression_reviewed（Gate 9）與 core3_completeness_reviewed（Gate 4 Core3 musical completeness）這三項，value=true 時另需至少一筆 evidence：只有理由字串的審查會被拒絕。'
+const CONFIRMATIONS_DESCRIPTION = 'source_complete／version_drift_reviewed／player_readback／mobile_adaptation_reviewed／regression_reviewed／core3_completeness_reviewed／original_audio_required／original_audio_reviewed，每項需 reason。'
+  + 'mobile_adaptation_reviewed（Gate 8）、regression_reviewed（Gate 9）、core3_completeness_reviewed（Gate 4 Core3 musical completeness）與 original_audio_reviewed（Gate 7：角色／突出度／延音／奏法／錄音結構已對照原曲審查）這四項，value=true 時另需至少一筆 evidence：只有理由字串的審查會被拒絕。original_audio_reviewed 需要候選已有 active 音訊對位證據，並綁定該證據 revision；對位證據沒有警告也不會自動通過 Gate 7。'
   + 'core3_completeness_reviewed 回答的是 Gate 4 的第二個問題（evaluator 無法證明完整的 Core3 是否仍站得住），它可以解決可審查的殘留（例如來源本來就沒有的 Chord1／Chord2 功能），但永遠無法消除缺席的 Lead，也無法消除身分依賴 Chord3–Chord5 的 Core3——那兩者 gate 直接 FAIL。'
   + 'Gate 4 的第一個問題（Core3 來源連續性）不在這裡：它由 studio_core3_change_approve 逐筆核准，兩者是不同 review axis，互不代替。'
   + 'player_readback 為 PASS、NOT_RUN 或 N/A（未使用預覽／驗證素材時，附理由）；PASS 可附 mml_sha256 綁定實際回讀的 MML。'
-  + 'source_complete 與 original_audio_required 綁定於 baseline，同一個 baseline 上的每個候選都持續有效；其餘五項綁定於本候選，換候選即失效並回報為 stale。'
+  + 'source_complete 與 original_audio_required 綁定於 baseline，同一個 baseline 上的每個候選都持續有效；其餘六項綁定於本候選，換候選即失效並回報為 stale。'
   + 'in_game 無法由此設定。';
 
 const runId = { type: 'string', minLength: 36, maxLength: 36, description: '本服務發出的 run_id（run_ 開頭）。run 身分是 workflow instance，不是 baseline、候選或 artifact 的身分。' };
@@ -279,7 +279,7 @@ export const STUDIO_MCP_TOOLS = [
       properties: {
         project_id: projectId,
         candidate_id: candidateId,
-        review: structuredPayload('event_id（readiness 使用的事件 id；衍生複製請用候選中的衍生 id）、axis（promotion 或 demotion，兩者互不代替）、reason、至少一筆 evidence，以及 lead_evidence：精確 sourceIdentity、sectionRole、scoreEvidence／audioEvidence、continuity.checked、core3.checked/status 與正面的目的角色理由。sourceIdentity 請用 studio_baseline_events 取得，不可猜測；綁不到該 move 的 baseline 來源事件會被拒絕。'),
+        review: structuredPayload('event_id（readiness 使用的事件 id；衍生複製請用候選中的衍生 id）、axis（promotion 或 demotion，兩者互不代替）、reason、至少一筆 evidence，以及 lead_evidence：精確 sourceIdentity、sectionRole、scoreEvidence／audioEvidence、continuity.checked、core3.checked/status 與正面的目的角色理由。sourceIdentity 請用 studio_baseline_events 取得，不可猜測；綁不到該 move 的 baseline 來源事件會被拒絕。必填 attestation：{ reviewer（誰做的審查）, reviewer_kind: human|agent|tool, audio_basis: listening|machine-metric|not-used }。只有 human 的審查會被 Lead grader 採計；agent/tool 審查只留作稽核紀錄、不移動 gate。audio_basis 為 machine-metric（F0、CQT、chroma 等）時，該音訊分類不算正面角色證據（SOURCE_POLICY §6）。AI 代理不得把自己的判斷標成 human。'),
       },
       required: ['project_id', 'candidate_id', 'review'],
       additionalProperties: false,
