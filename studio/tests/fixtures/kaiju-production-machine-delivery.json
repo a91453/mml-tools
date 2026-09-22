@@ -1,0 +1,15 @@
+{
+  "project_id": "prj_a808b53c7cafadaf4c6bf5f0fe4c370a",
+  "title": "怪獸之歌",
+  "captured_as": "acceptance-scenario-not-production-evidence",
+  "gates": {
+    "source": { "status": "PENDING", "blockers": ["SOURCE_COMPLETENESS_NOT_CONFIRMED"] },
+    "microTiming": { "status": "PENDING", "blockers": ["MICRO_TIMING_EVIDENCE_REQUIRED"] },
+    "core3Completeness": { "status": "PENDING", "blockers": ["CORE3_COMPLETENESS_UNRESOLVED"] },
+    "leadPromotion": { "status": "PENDING", "blockers": ["LEAD_PROMOTION_EVIDENCE_REQUIRED"] },
+    "originalAudio": { "status": "PENDING", "blockers": ["AUDIO_ALIGNMENT_EVIDENCE_MISSING"] },
+    "playerReadback": { "status": "NOT_RUN" },
+    "mobileAdaptation": { "status": "PENDING", "blockers": ["MOBILE_ADAPTATION_REVIEW_REQUIRED"] },
+    "regression": { "status": "PENDING", "blockers": ["REGRESSION_REVIEW_REQUIRED"] }
+  }
+}

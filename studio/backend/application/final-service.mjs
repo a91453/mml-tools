@@ -30,6 +30,7 @@
 import { ERROR_CODES, GATE_STATUS, OPERATION_STATUS, fail, requireString } from './contracts.mjs';
 import { sha256Of } from './store.mjs';
 import { gatesFrom } from './review-service.mjs';
+import { evaluateMachineDelivery } from '../final/delivery-evaluator.mjs';
 
 const now = () => new Date().toISOString();
 const encoder = new TextEncoder();
@@ -220,7 +221,7 @@ export function createFinalService({ canonical, projects, review, store }) {
       };
       const readiness = engines.final.evaluateProjectReadiness({ ...readinessInputs, mmlValidation: null });
 
-      const blocked = readiness.preGameBlocking.filter(name => !PRE_EMISSION_EXEMPT_GATES.includes(name));
+      const blocked = evaluateMachineDelivery(readiness.gates, { preEmission: true }).blocking.map(entry => entry.gate);
 
       if (blocked.length) {
         return refused(blocked, { gates: gatesFrom(readiness), readiness }, 'Nothing was emitted. Required Canonical gates are not satisfied, and the Final emitter was not run.');
@@ -301,7 +302,8 @@ export function createFinalService({ canonical, projects, review, store }) {
       // PASS that named a different MML digest falls back to NOT_RUN once the
       // emitted string is known — and a Final that readiness calls not ready
       // is not delivered whichever gate said so.
-      const gatesSatisfied = finalReadiness.preGameBlocking.length === 0;
+      const machineDelivery = evaluateMachineDelivery(finalReadiness.gates);
+      const gatesSatisfied = machineDelivery.ready;
       const delivered = passed && technicalSatisfied && gatesSatisfied;
 
       // Why the two are still reported separately below rather than reconciled:
@@ -333,8 +335,10 @@ export function createFinalService({ canonical, projects, review, store }) {
           pre_game_blocking: [...finalReadiness.preGameBlocking],
           gates: Object.fromEntries(Object.entries(finalReadiness.gates).map(([name, gate]) => [name, gate.status])),
           technical_validation: technicalValidation,
+          machine_delivery: machineDelivery,
         },
         gates: emitGates,
+        machine_delivery: machineDelivery,
         remaining_pending_gates: Object.entries(emitGates)
           .filter(([name, status]) => name !== 'notice' && status !== 'PASS' && status !== 'N/A')
           .map(([name]) => name),
@@ -369,11 +373,12 @@ export function createFinalService({ canonical, projects, review, store }) {
         character_counts: emitted.characterCounts,
         diagnostics: emitted.diagnostics,
         gates: artifact.gates,
+        machine_delivery: machineDelivery,
         // `technical` is exempt only *before* emission, where requiring it
         // would be circular. Past that point there is an emitted string the
         // parser has graded, so it is an ordinary blocking gate again and
         // filtering it out here would hide the one blocker that matters.
-        blockers: [...finalReadiness.preGameBlocking],
+        blockers: machineDelivery.blocking.map(entry => entry.gate),
         // Carried in the response, not only in the artifact, because a blocked
         // finalize files no artifact and the contradiction still has to be
         // readable from what the caller was handed.

@@ -1363,6 +1363,7 @@ export function createRunService({ canonical, projects, store, operations, seria
     review_requests: Object.freeze((run.review_requests ?? []).map(request => Object.freeze({ ...request }))),
     gates: run.gates ? Object.freeze({ ...run.gates }) : null,
     readiness_blockers: Object.freeze([...(run.readiness_blockers ?? [])]),
+    machine_delivery: run.machine_delivery ? Object.freeze(structuredClone(run.machine_delivery)) : null,
     pending_step: run.pending_step ? Object.freeze({ ...run.pending_step }) : null,
     needs_reconciliation: run.needs_reconciliation === true,
     canonical: Object.freeze({ ...run.canonical }),
@@ -1442,6 +1443,7 @@ export function createRunService({ canonical, projects, store, operations, seria
     review_requests: [],
     gates: null,
     readiness_blockers: [],
+    machine_delivery: null,
     pending_step: null,
     needs_reconciliation: false,
     // Two provenances, never merged. The Canonical identity selects the rules
@@ -2079,7 +2081,9 @@ export function createRunService({ canonical, projects, store, operations, seria
         // is the Final service's own `PRE_EMISSION_EXEMPT_GATES`, imported
         // rather than restated, so this can never become a second exemption
         // policy. Every other gate still blocks.
-        const remaining = blocking.filter(name => !PRE_EMISSION_EXEMPT_GATES.includes(name));
+        const remaining = (readiness?.machineDelivery?.blocking ?? [])
+          .map(entry => entry.gate)
+          .filter(name => !PRE_EMISSION_EXEMPT_GATES.includes(name));
         const requests = readinessRequests(readiness, {
           baselineId: run.baseline_id,
           candidateId,
@@ -2105,8 +2109,9 @@ export function createRunService({ canonical, projects, store, operations, seria
           }),
           runChanges: {
             gates: reviewed.gates,
-            readiness_blockers: [...blocking],
-            blockers: [...blocking],
+            readiness_blockers: [...remaining],
+            machine_delivery: readiness?.machineDelivery ?? null,
+            blockers: [...remaining],
             review_requests: requests,
           },
           halt: remaining.length ? { state: RUN_STATE.AWAITING_REVIEW, reason: RUN_HALT.AWAITING_REVIEW_EVIDENCE, requests } : null,
@@ -2195,6 +2200,7 @@ export function createRunService({ canonical, projects, store, operations, seria
           }),
           runChanges: {
             gates: result.gates ?? run.gates,
+            machine_delivery: result.machine_delivery ?? run.machine_delivery ?? null,
             readiness_blockers: [...(result.blockers ?? [])],
             blockers: [...(result.blockers ?? [])],
             review_requests: requests,
@@ -2256,6 +2262,7 @@ export function createRunService({ canonical, projects, store, operations, seria
           steps: (run.steps ?? []).map(entry => ({ step: entry.step, status: entry.status, operation: entry.operation, result_reference: entry.result_reference, at: entry.at })),
           gates: run.gates,
           readiness_blockers: [...(run.readiness_blockers ?? [])],
+          machine_delivery: run.machine_delivery ?? null,
           warnings: [...(run.warnings ?? [])],
           emit_status: finalizeReceipt?.detail?.emit_status ?? null,
           canonical: { ...run.canonical },
