@@ -1,6 +1,6 @@
 # Pending / In-Game Verification Register
 
-Version: 2026-09-13-v1
+Version: 2026-09-22-v1
 Status: PUBLISHED CANONICAL
 
 Items here MUST NOT be promoted to confirmed engine behavior without new evidence.
@@ -105,7 +105,7 @@ Needed evidence: representative target-client tests on relevant pitched/percussi
 
 Core3 is the canonical single-player three-chord target. When only one or two roles are actually performed, the expected degradation policy and validation gate are not yet fully formalized.
 
-Needed evidence: song-level A/B and a project decision on what minimum musical completeness is expected for one-role and two-role situations. Do not weaken the Core3 gate while this remains pending.
+Needed evidence: song-level A/B and a project decision on what minimum musical completeness is expected for one-role and two-role situations. This remains a performance-quality question. Do not weaken the Core3 requirement when the requested delivery explicitly targets a three-role instrument; generic six-role machine delivery follows ACCEPTANCE_CRITERIA.md and may report unresolved Core3 completeness without converting it to PASS.
 
 ## Resolved implementation drift — not pending rules
 

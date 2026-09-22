@@ -1,6 +1,6 @@
 # Official & Community Evidence Index
 
-Version: 2026-09-13-v1
+Version: 2026-09-22-v1
 Status: CANONICAL SUPPORTING EVIDENCE
 
 This file records evidence used by the published Canonical rules. It is not itself a rule override.
