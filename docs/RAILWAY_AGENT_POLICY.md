@@ -52,7 +52,7 @@ That hard limit is the cross-client enforcement boundary. It blocks Agent spend 
 
 ### Codex
 
-Root `AGENTS.md` carries this prohibition because Codex loads repository `AGENTS.md` instructions before work.
+Root `AGENTS.md` carries this prohibition because Codex loads repository `AGENTS.md` instructions before work. Repo-local `.codex/rules/railway-agent.rules` additionally marks direct `railway agent` and `npx railway agent` shell dispatch as `forbidden` when the project Codex configuration layer is trusted.
 
 ### Claude Code
 
