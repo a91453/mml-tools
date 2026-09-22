@@ -85,6 +85,34 @@ test('a piece that ends on a partial bar is finalized only with the source-confi
   assert.equal(artifact.mml, declared.mml);
 });
 
+test('legacy Final artifact reads add a lazy machine-delivery projection without mutating stored bytes', async () => withDirectory(async directory => {
+  const first = createStudioApplication({ dataDirectory: directory, durability: 'persistent' });
+  const run = await applyKeepOnlyCandidate(first, OWNER);
+  const delivered = await first.finalize(OWNER, run.projectId, { candidateId: run.candidateId, confirmations: CONFIRMATIONS });
+  assert.equal(delivered.operation, 'succeeded');
+  assert.ok(delivered.artifact_id);
+
+  const store = createStore({ directory });
+  const key = `artifact:${run.projectId}:${delivered.artifact_id}`;
+  const legacy = store.getJson(key);
+  assert.ok(legacy.machine_delivery, 'new artifacts carry the projection before the legacy simulation');
+  delete legacy.machine_delivery;
+  if (legacy.readiness_summary) delete legacy.readiness_summary.machine_delivery;
+  store.putJson(key, legacy);
+  const before = structuredClone(store.getJson(key));
+
+  const second = createStudioApplication({ dataDirectory: directory, durability: 'persistent' });
+  const { artifact } = await second.getArtifact(OWNER, delivered.artifact_id);
+  assert.equal(artifact.machine_delivery.schema, 'mabinogi-mobile-mml-studio/machine-delivery@1');
+  assert.equal(artifact.machine_delivery.complete_gate_map, true);
+  assert.equal(artifact.machine_delivery.projection_ready, true);
+  assert.equal(artifact.machine_delivery.authoritative, false);
+  assert.equal(artifact.machine_delivery.ready, false);
+  assert.equal(artifact.machine_delivery.lifecycle, 'CANDIDATE');
+
+  assert.deepEqual(store.getJson(key), before, 'artifact read migration is a pure projection and never rewrites storage');
+}));
+
 test('a stored candidate that no longer agrees with the baseline is not finalized', async () => withDirectory(async directory => {
   const first = createStudioApplication({ dataDirectory: directory, durability: 'persistent' });
   const run = await applyKeepOnlyCandidate(first, OWNER);

@@ -32,6 +32,16 @@ export {
 // Per-song readiness. Remains the readiness authority; the emitter never
 // substitutes for it.
 export { evaluateProjectReadiness } from './readiness.mjs';
+export {
+  evaluateMachineDelivery,
+  machineDeliveryAuthority,
+  DELIVERY_CLASS,
+  MACHINE_DELIVERY_SCHEMA,
+  MACHINE_DELIVERY_PROJECTION_VERSION,
+  MACHINE_DELIVERY_GATE_NAMES,
+  MACHINE_DELIVERY_GATE_MAP_INCOMPLETE,
+  AUTOMATED_VALIDATED,
+} from './delivery-evaluator.mjs';
 
 // Canonical-aware Final MML emitter.
 export { emitFinalMml } from './mml-emitter.mjs';

@@ -30,6 +30,7 @@
 import { ERROR_CODES, GATE_STATUS, OPERATION_STATUS, fail, requireString } from './contracts.mjs';
 import { sha256Of } from './store.mjs';
 import { gatesFrom } from './review-service.mjs';
+import { migrateMachineDeliveryState } from './machine-delivery-migration.mjs';
 
 const now = () => new Date().toISOString();
 const encoder = new TextEncoder();
@@ -220,7 +221,10 @@ export function createFinalService({ canonical, projects, review, store }) {
       };
       const readiness = engines.final.evaluateProjectReadiness({ ...readinessInputs, mmlValidation: null });
 
-      const blocked = readiness.preGameBlocking.filter(name => !PRE_EMISSION_EXEMPT_GATES.includes(name));
+      const machineProjection = readiness.machineDelivery;
+      const blocked = machineProjection?.authoritative === true
+        ? machineProjection.blocking.map(entry => entry.gate).filter(name => !PRE_EMISSION_EXEMPT_GATES.includes(name))
+        : readiness.preGameBlocking.filter(name => !PRE_EMISSION_EXEMPT_GATES.includes(name));
 
       if (blocked.length) {
         return refused(blocked, { gates: gatesFrom(readiness), readiness }, 'Nothing was emitted. Required Canonical gates are not satisfied, and the Final emitter was not run.');
@@ -301,7 +305,10 @@ export function createFinalService({ canonical, projects, review, store }) {
       // PASS that named a different MML digest falls back to NOT_RUN once the
       // emitted string is known — and a Final that readiness calls not ready
       // is not delivered whichever gate said so.
-      const gatesSatisfied = finalReadiness.preGameBlocking.length === 0;
+      const machineDelivery = finalReadiness.machineDelivery;
+      const gatesSatisfied = machineDelivery?.authoritative === true
+        ? machineDelivery.ready
+        : finalReadiness.preGameBlocking.length === 0;
       const delivered = passed && technicalSatisfied && gatesSatisfied;
 
       // Why the two are still reported separately below rather than reconciled:
@@ -333,8 +340,10 @@ export function createFinalService({ canonical, projects, review, store }) {
           pre_game_blocking: [...finalReadiness.preGameBlocking],
           gates: Object.fromEntries(Object.entries(finalReadiness.gates).map(([name, gate]) => [name, gate.status])),
           technical_validation: technicalValidation,
+          machine_delivery: machineDelivery,
         },
         gates: emitGates,
+        machine_delivery: machineDelivery,
         remaining_pending_gates: Object.entries(emitGates)
           .filter(([name, status]) => name !== 'notice' && status !== 'PASS' && status !== 'N/A')
           .map(([name]) => name),
@@ -369,11 +378,14 @@ export function createFinalService({ canonical, projects, review, store }) {
         character_counts: emitted.characterCounts,
         diagnostics: emitted.diagnostics,
         gates: artifact.gates,
+        machine_delivery: machineDelivery,
         // `technical` is exempt only *before* emission, where requiring it
         // would be circular. Past that point there is an emitted string the
         // parser has graded, so it is an ordinary blocking gate again and
         // filtering it out here would hide the one blocker that matters.
-        blockers: [...finalReadiness.preGameBlocking],
+        blockers: machineDelivery?.authoritative === true
+          ? machineDelivery.blocking.map(entry => entry.gate)
+          : [...finalReadiness.preGameBlocking],
         // Carried in the response, not only in the artifact, because a blocked
         // finalize files no artifact and the contradiction still has to be
         // readable from what the caller was handed.
@@ -397,7 +409,11 @@ export function createFinalService({ canonical, projects, review, store }) {
       }
       for (const record of projects.list(owner)) {
         const body = store.getJson(artifactKey(record.project_id, artifactId));
-        if (body) return Object.freeze(body);
+        if (body) {
+          if (body.type !== 'final_mml') return Object.freeze(body);
+          const migrated = migrateMachineDeliveryState(body, { canonical: body.canonical ?? null });
+          return Object.freeze(migrated.record);
+        }
       }
       return fail(ERROR_CODES.ARTIFACT_NOT_FOUND, 'Unknown artifact', { artifact_id: artifactId });
     },

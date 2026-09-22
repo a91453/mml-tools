@@ -1,6 +1,7 @@
-import { studioFinalBlockers } from '../rules/index.mjs';
+import { EFFECTIVE_RULESET, studioFinalBlockers } from '../rules/index.mjs';
 import { compareCanonicalVersions } from '../compare/version-drift.mjs';
 import { enforceMicroGaps } from './micro-gap-enforcement.mjs';
+import { evaluateMachineDelivery } from './delivery-evaluator.mjs';
 
 const PASS_LIKE = new Set(['PASS', 'N/A']);
 
@@ -500,10 +501,14 @@ export function evaluateProjectReadiness({
   const preGameBlocking = preGameGateNames.filter(name => !PASS_LIKE.has(gates[name].status));
   const candidateReady = preGameBlocking.length === 0;
   const finalAccepted = candidateReady && gates.inGameAcceptance.status === 'PASS';
+  const machineDelivery = evaluateMachineDelivery(gates, { canonical: EFFECTIVE_RULESET.canonical });
 
   return Object.freeze({
     candidateReady,
     finalAccepted,
+    machineDeliveryReady: machineDelivery.ready,
+    automatedLifecycle: machineDelivery.lifecycle,
+    machineDelivery,
     preGameBlocking: Object.freeze(preGameBlocking),
     gates,
     notice: 'Module availability never certifies a song. Candidate readiness requires source completeness plus a real Source-Faithful Baseline snapshot whose event-level diff is computed against the candidate, an independent Gate 4 result for Core3 musical completeness that a clean source-continuity audit never supplies, evidence-backed review of any Lead removals/demotions and Lead additions/promotions, a source-aware micro-timing result with no confirmed technical residue and no unresolved sub-grid interval, audio/arbitration/technical/player evidence, an explicit evidence-backed Mobile adaptation review, and an explicit evidence-backed regression review. Named historical regressions without reproducible fixtures remain FIXTURE_PENDING and are never claimed as passed. finalAccepted additionally requires in-game acceptance.',

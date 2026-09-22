@@ -94,6 +94,7 @@ export function createRunNextService({ runs, proposals, serialize }) {
             pending_step: run.pending_step, needs_reconciliation: run.needs_reconciliation,
             candidate_lineage: run.candidate_lineage,
             final_artifact_id: run.final_artifact_id, report_artifact_id: run.report_artifact_id,
+            machine_delivery: run.machine_delivery ?? null,
           },
           next_action: { kind, stopped_at_step: run.pending_step?.step ?? run.halt?.step ?? null },
           allowed_operations: operations,
@@ -116,6 +117,10 @@ export function createRunNextService({ runs, proposals, serialize }) {
             source: 'stored_run', recomputed: false, current_binding_verified: false,
             run_revision: run.revision, candidate_id: run.candidate_id, gates: run.gates,
             notice: 'Historical snapshot only, never a new PASS. An empty cheap staleness check does not revalidate the song. Use the existing backend review/final path.',
+          },
+          delivery_state: run.machine_delivery ?? {
+            lifecycle: 'CANDIDATE', ready: false, unresolved_evidence_ledger: [],
+            notice: 'Legacy run predates machine-delivery state; resume to recompute. No PASS is inferred.',
           },
           never_agent_settlable: targets.never_agent_settlable,
           authority_notice: run.authority_notice, separation_notice: run.separation_notice,

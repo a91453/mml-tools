@@ -71,6 +71,7 @@ import {
   requireString,
 } from './contracts.mjs';
 import { PRE_EMISSION_EXEMPT_GATES } from './final-service.mjs';
+import { migrateMachineDeliveryState } from './machine-delivery-migration.mjs';
 import { ID_PREFIX, newId, sha256Of } from './store.mjs';
 import { requestKeyOf } from './proposal-contracts.mjs';
 import {
@@ -540,8 +541,11 @@ function reviewRequest({
  * `known: false` says the run has no operation hint for that gate; it never
  * says the blocker may be skipped.
  */
-function readinessRequests(readiness, { baselineId, candidateId, step, exempt = [] }) {
-  const blocking = (readiness?.preGameBlocking ?? []).filter(name => !exempt.includes(name));
+function readinessRequests(readiness, {
+  baselineId, candidateId, step, exempt = [], blockingOverride = null,
+}) {
+  const sourceBlocking = blockingOverride ?? readiness?.preGameBlocking ?? [];
+  const blocking = sourceBlocking.filter(name => !exempt.includes(name));
   return blocking.slice(0, LIMITS.maxReviewRequestsPerRun).map(gate => {
     const entry = readiness?.gates?.[gate] ?? null;
     const known = Object.hasOwn(READINESS_GATE_OPERATIONS, gate);
@@ -1363,6 +1367,7 @@ export function createRunService({ canonical, projects, store, operations, seria
     review_requests: Object.freeze((run.review_requests ?? []).map(request => Object.freeze({ ...request }))),
     gates: run.gates ? Object.freeze({ ...run.gates }) : null,
     readiness_blockers: Object.freeze([...(run.readiness_blockers ?? [])]),
+    machine_delivery: run.machine_delivery ? Object.freeze(structuredClone(run.machine_delivery)) : null,
     pending_step: run.pending_step ? Object.freeze({ ...run.pending_step }) : null,
     needs_reconciliation: run.needs_reconciliation === true,
     canonical: Object.freeze({ ...run.canonical }),
@@ -1442,6 +1447,7 @@ export function createRunService({ canonical, projects, store, operations, seria
     review_requests: [],
     gates: null,
     readiness_blockers: [],
+    machine_delivery: null,
     pending_step: null,
     needs_reconciliation: false,
     // Two provenances, never merged. The Canonical identity selects the rules
@@ -2074,17 +2080,24 @@ export function createRunService({ canonical, projects, store, operations, seria
         const reviewed = result.review;
         const readiness = reviewed.readiness;
         const blocking = readiness?.preGameBlocking ?? [];
+        // Published v1 remains authoritative until a Published Canonical
+        // identity explicitly activates the machine-delivery schema. Before
+        // that publication the new result is an informational projection only.
+        const authoritativeBlocking = readiness?.machineDelivery?.authoritative === true
+          ? readiness.machineDelivery.blocking.map(entry => entry.gate)
+          : blocking;
         // `technical` is exempt only before emission, where requiring it would
         // be circular: no MML exists for the gate to grade. The exemption list
         // is the Final service's own `PRE_EMISSION_EXEMPT_GATES`, imported
         // rather than restated, so this can never become a second exemption
-        // policy. Every other gate still blocks.
-        const remaining = blocking.filter(name => !PRE_EMISSION_EXEMPT_GATES.includes(name));
+        // policy. Every other authoritative gate still blocks.
+        const remaining = authoritativeBlocking.filter(name => !PRE_EMISSION_EXEMPT_GATES.includes(name));
         const requests = readinessRequests(readiness, {
           baselineId: run.baseline_id,
           candidateId,
           step: RUN_STEP.FINALIZE,
           exempt: [...PRE_EMISSION_EXEMPT_GATES],
+          blockingOverride: authoritativeBlocking,
         });
         return {
           receipt: stepReceipt({
@@ -2092,7 +2105,7 @@ export function createRunService({ canonical, projects, store, operations, seria
             status: remaining.length ? RUN_STEP_STATUS.AWAITING_INPUT : RUN_STEP_STATUS.COMPLETED,
             inputFingerprint: fingerprint,
             resultReference: candidateId,
-            blockers: [...blocking],
+            blockers: [...authoritativeBlocking],
             detail: {
               gates: reviewed.gates,
               integrity_ok: reviewed.integrity?.ok ?? null,
@@ -2105,8 +2118,9 @@ export function createRunService({ canonical, projects, store, operations, seria
           }),
           runChanges: {
             gates: reviewed.gates,
-            readiness_blockers: [...blocking],
-            blockers: [...blocking],
+            readiness_blockers: [...authoritativeBlocking],
+            machine_delivery: readiness?.machineDelivery ?? null,
+            blockers: [...authoritativeBlocking],
             review_requests: requests,
           },
           halt: remaining.length ? { state: RUN_STATE.AWAITING_REVIEW, reason: RUN_HALT.AWAITING_REVIEW_EVIDENCE, requests } : null,
@@ -2171,7 +2185,12 @@ export function createRunService({ canonical, projects, store, operations, seria
               player_readback_binding: result.player_readback_binding ?? null,
             },
           }),
-          ...readinessRequests(result.readiness, { baselineId: run.baseline_id, candidateId, step: RUN_STEP.FINALIZE }),
+          ...readinessRequests(result.readiness, {
+            baselineId: run.baseline_id,
+            candidateId,
+            step: RUN_STEP.FINALIZE,
+            blockingOverride: result.blockers ?? null,
+          }),
         ];
         return {
           receipt: stepReceipt({
@@ -2195,6 +2214,7 @@ export function createRunService({ canonical, projects, store, operations, seria
           }),
           runChanges: {
             gates: result.gates ?? run.gates,
+            machine_delivery: result.machine_delivery ?? run.machine_delivery ?? null,
             readiness_blockers: [...(result.blockers ?? [])],
             blockers: [...(result.blockers ?? [])],
             review_requests: requests,
@@ -2256,6 +2276,7 @@ export function createRunService({ canonical, projects, store, operations, seria
           steps: (run.steps ?? []).map(entry => ({ step: entry.step, status: entry.status, operation: entry.operation, result_reference: entry.result_reference, at: entry.at })),
           gates: run.gates,
           readiness_blockers: [...(run.readiness_blockers ?? [])],
+          machine_delivery: run.machine_delivery ?? null,
           warnings: [...(run.warnings ?? [])],
           emit_status: finalizeReceipt?.detail?.emit_status ?? null,
           canonical: { ...run.canonical },
@@ -3356,9 +3377,12 @@ export function createRunService({ canonical, projects, store, operations, seria
       // what it reports on, and must not cost a full review.
       const provenance = await canonical.provenance();
       const staleness = stalenessOf(record, run, provenance.status === 'CANONICAL_LOADED' ? provenance : null);
+      // Legacy runs gain a pure read projection only. Stored gates/evidence are
+      // untouched, and incomplete legacy gate maps fail closed.
+      const projectedRun = migrateMachineDeliveryState(run, { canonical: run.canonical }).record;
       return Object.freeze({
         project_id: record.project_id,
-        run: runView(run),
+        run: runView(projectedRun),
         read_only: true,
         canonical: provenance,
         staleness: Object.freeze(staleness.map(entry => Object.freeze({ code: entry.code, detail: Object.freeze(entry.detail) }))),
