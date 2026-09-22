@@ -23,6 +23,7 @@ import { API_PREFIX, createApiRouter } from '../server/api.mjs';
 import { handleMcp } from '../server/mcp.mjs';
 import { STUDIO_MCP_TOOLS } from '../server/mcp-studio.mjs';
 import { LIMITS, PLAN_INPUT_KEYS, RESUME_INPUT_KEYS, START_INPUT_KEYS, createStudioApplication } from '../studio/backend/application/index.mjs';
+import { RUN_NEXT_INPUT_KEYS } from '../studio/backend/application/run-next.mjs';
 import { FIXTURE_CONFIRMATIONS, RUN_REVIEWER, projectWithSymbolicAsset, runDecisionsFor, sixRoleBaseline } from '../studio/tests/fixtures/run-fixtures.mjs';
 
 const ORIGIN = 'https://mml.example';
@@ -313,7 +314,7 @@ test('a caller cannot supply the bindings the service computes, or a candidate o
 
 test('the run tools are advertised with the same discipline as the rest of the surface', async () => {
   const runTools = STUDIO_MCP_TOOLS.filter(tool => tool.name.startsWith('studio_run_'));
-  assert.deepEqual(runTools.map(tool => tool.name), ['studio_run_plan', 'studio_run_start', 'studio_run_status', 'studio_run_resume']);
+  assert.deepEqual(runTools.map(tool => tool.name), ['studio_run_plan', 'studio_run_start', 'studio_run_status', 'studio_run_next', 'studio_run_resume']);
 
   for (const tool of runTools) {
     assert.equal(tool.inputSchema.additionalProperties, false, `${tool.name} must reject unknown properties`);
@@ -323,11 +324,15 @@ test('the run tools are advertised with the same discipline as the rest of the s
       assert.ok(schema.type !== 'string' || (schema.maxLength ?? 0) <= 2048, `${tool.name}.${name} allows too much inline text`);
     }
   }
-  // The two read-only tools are annotated read-only; the two that write are not.
-  assert.equal(runTools[0].annotations.readOnlyHint, true);
-  assert.equal(runTools[2].annotations.readOnlyHint, true);
-  assert.equal(runTools[1].annotations.readOnlyHint, false);
-  assert.equal(runTools[3].annotations.readOnlyHint, false);
+  // Check by name: adding a read must not change which existing tools write.
+  const byName = Object.fromEntries(runTools.map(tool => [tool.name, tool]));
+  for (const name of ['studio_run_plan', 'studio_run_status', 'studio_run_next']) {
+    assert.equal(byName[name].annotations.readOnlyHint, true, `${name} must stay read-only`);
+    assert.equal(byName[name].annotations.idempotentHint, true, `${name} must be safely repeatable`);
+  }
+  for (const name of ['studio_run_start', 'studio_run_resume']) {
+    assert.equal(byName[name].annotations.readOnlyHint, false, `${name} remains a write`);
+  }
   // The descriptions say the things an agent cannot otherwise learn.
   const text = runTools.map(tool => `${tool.description}${JSON.stringify(tool.inputSchema)}`).join('\n');
   for (const fact of ['idempotency_key', 'expected_run_revision', 'adopt_candidate_id', 'reconcile', 'IN_GAME_ACCEPTED', 'Gate 8']) {
@@ -343,8 +348,8 @@ test('capabilities gained a run without gaining a capability it does not have', 
   const { http } = transports();
   const caps = (await http('GET', '/capabilities')).body;
 
-  assert.deepEqual(caps.runs.operations, ['planRun', 'startRun', 'getRun', 'resumeRun']);
-  assert.deepEqual(caps.runs.read_only_operations, ['planRun', 'getRun']);
+  assert.deepEqual(caps.runs.operations, ['planRun', 'startRun', 'getRun', 'nextRun', 'resumeRun']);
+  assert.deepEqual(caps.runs.read_only_operations, ['planRun', 'getRun', 'nextRun']);
   assert.equal(caps.runs.execution_mode, 'bounded-synchronous-advancement');
   assert.match(caps.runs.execution_notice, /no background queue, no worker pool, no timer and no automatic restart/);
   for (const [name, expected] of [
@@ -352,10 +357,11 @@ test('capabilities gained a run without gaining a capability it does not have', 
     ['runs.cancellation', false], ['runs.cross_process_run_coordination', false],
   ]) assert.equal(caps.runs[name.split('.')[1]], expected, `${name} must be ${expected}`);
   for (const name of ['background_execution', 'job_cancellation']) assert.equal(caps.jobs[name], false, `jobs.${name} must stay false`);
-  for (const name of ['audio_to_midi', 'source_separation', 'vocal_isolation', 'exact_pitch_transcription_from_audio', 'in_game_test', 'automatic_run_continuation', 'cross_process_run_coordination']) {
+  for (const name of ['audio_to_midi', 'source_separation', 'vocal_isolation', 'exact_pitch_transcription_from_audio', 'in_game_test', 'automatic_run_continuation', 'cross_process_run_coordination', 'server_side_model_calls', 'automatic_proposal_acceptance']) {
     assert.equal(caps.capabilities[name], false, `${name} must be false`);
   }
   assert.equal(caps.capabilities.one_click_run_orchestration, true);
+  assert.equal(caps.capabilities.read_only_run_continuation, true);
   // The cost and privacy position is unchanged: no provider, no paid service.
   assert.equal(caps.cost.llm_api_dependency, 'NONE');
   assert.equal(caps.cost.external_paid_services, 'NONE');
@@ -457,6 +463,7 @@ test('each run operation accepts exactly one set of fields, on both transports',
   // MCP response view, like project_id it is consumed by the transport itself.
   assert.deepEqual(declaredKeys('studio_run_plan', 'project_id', 'report_page'), [...PLAN_INPUT_KEYS].sort());
   assert.equal(runTool('studio_run_plan').inputSchema.properties.report_page.type, 'object');
+  assert.deepEqual(declaredKeys('studio_run_next', 'project_id', 'run_id', 'report_page'), [...RUN_NEXT_INPUT_KEYS].sort());
   assert.deepEqual(declaredKeys('studio_run_start', 'project_id'), [...START_INPUT_KEYS].sort());
   assert.deepEqual(declaredKeys('studio_run_resume', 'project_id', 'run_id'), [...RESUME_INPUT_KEYS].sort());
 
@@ -500,6 +507,7 @@ test('every shared bound is one constant, and both surfaces sit on it', async ()
   const planProperties = runTool('studio_run_plan').inputSchema.properties;
 
   // Declared bounds are the service's own constants, not a second copy.
+  assert.equal(runTool('studio_run_next').inputSchema.properties.expected_run_revision.maximum, LIMITS.maxRunRevision);
   assert.equal(properties.asset_ids.maxItems, LIMITS.maxAssetsPerProject);
   assert.equal(properties.meter_text.maxLength, LIMITS.maxMeterTextLength);
   assert.equal(properties.decisions.maxItems, LIMITS.maxDecisionsPerRequest);
