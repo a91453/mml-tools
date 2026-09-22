@@ -19,7 +19,7 @@ function walk(path) {
 }
 
 test('cross-agent Railway Agent policy entry points are present', () => {
-  for (const path of ['AGENTS.md', 'CLAUDE.md', 'docs/RAILWAY_AGENT_POLICY.md']) {
+  for (const path of ['AGENTS.md', 'CLAUDE.md', '.github/copilot-instructions.md', 'docs/RAILWAY_AGENT_POLICY.md']) {
     const content = read(path);
     assert.match(content, /Railway Agent/i, `${path} must name the prohibited service`);
     assert.match(content, /never|prohibit|disabled|MUST NOT/i, `${path} must state a prohibition`);
@@ -30,6 +30,19 @@ test('cross-agent Railway Agent policy entry points are present', () => {
   assert.match(agents, /Codex/i);
   assert.match(agents, /ChatGPT/i);
   assert.match(agents, /Claude Code/i);
+  assert.match(agents, /GitHub Copilot/i);
+});
+
+test('delegated GitHub Copilot CLI is denied for Codex and Claude', () => {
+  const rules = read('.codex/rules/railway-agent.rules');
+  assert.match(rules, /pattern\s*=\s*\["gh",\s*"copilot"\]/);
+  assert.match(rules, /pattern\s*=\s*\["copilot"\]/);
+
+  const settings = JSON.parse(read('.claude/settings.json'));
+  const deny = settings?.permissions?.deny ?? [];
+  for (const rule of ['Bash(gh copilot)', 'Bash(gh copilot *)', 'Bash(copilot)', 'Bash(copilot *)']) {
+    assert.ok(deny.includes(rule), `missing Claude Copilot deny rule: ${rule}`);
+  }
 });
 
 test('Codex forbids Railway Agent CLI dispatch', () => {
@@ -74,6 +87,7 @@ test('repository automation does not dispatch Railway Agent', () => {
     { label: 'Railway CLI agent command', regex: /^\s*(?:run:\s*)?(?:npx\s+)?railway\s+agent(?:\s|$)/im },
     { label: 'Railway MCP agent tool', regex: /mcp__railway__railway_agent/i },
     { label: 'Railway connector agent tool', regex: /(^|[^A-Za-z0-9_])railway_agent([^A-Za-z0-9_]|$)/i },
+    { label: 'GitHub Copilot CLI command', regex: /^\s*(?:run:\s*)?(?:gh\s+copilot|copilot)(?:\s|$)/im },
   ];
 
   const violations = [];
