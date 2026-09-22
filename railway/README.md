@@ -29,6 +29,7 @@ The Permanent Studio Web deployment, its pinned artifact, its trust bundle and i
 - `MML_STUDIO_DURABILITY`: `persistent` only when `/data` really is a mounted volume. Nothing in the service detects a real mount, so durability is reported from this declaration rather than assumed.
 - `MML_OAUTH_REDIRECT_HOSTS` (optional): comma-separated bare hostnames whose exact HTTPS callbacks may register. Unset, the default is `chatgpt.com,chat.openai.com,claude.ai,claude.com`. A value that is not a bare hostname list refuses to start. The service workspace additionally admits only the exact callback `${MML_PUBLIC_ORIGIN}/studio/`; this does not admit arbitrary callbacks on the service host.
 - `MML_OAUTH_LOOPBACK_REDIRECTS` (optional): `false` to refuse RFC 8252 loopback callbacks from native clients. Unset or `true`, they are accepted.
+- Production agent continuation is optional and **disabled by default**. To enable the only supported production provider, set `MML_AGENT_PROVIDER=openai-responses`, an explicit `MML_AGENT_MODEL`, and a sealed runtime `OPENAI_API_KEY`. Production continues to reject `MML_AGENT_CODEX`, and Railway Agent remains prohibited. Optional budget variables are `MML_AGENT_MAX_STEPS`, `MML_AGENT_MAX_CALLS_PER_RUN`, `MML_AGENT_MAX_CALLS_PER_DAY`, `MML_AGENT_MAX_INPUT_BYTES`, `MML_AGENT_MAX_OUTPUT_TOKENS`, and `MML_AGENT_TIMEOUT_MS`; code-enforced ceilings are documented in `docs/STUDIO_AGENT_CONTINUATION.md` and cannot be raised through environment configuration.
 - `PORT`: Railway's supplied port, or 3000.
 - Healthcheck: `/healthz`.
 
@@ -38,7 +39,7 @@ Configure these values through Railway service settings. `service-settings.json`
 
 The official Node image runs as root so it can write the root-mounted Railway volume. The application sets a restrictive file creation mask. No request can select a file path, run a shell command, install packages, or access other services. A non-root deployment needs the volume's ownership configured separately.
 
-The image installs exactly one npm package — `fast-xml-parser`, already pinned to an exact version in `package.json` and already required by the MusicXML adapter the Studio backend uses — with `--omit=dev --ignore-scripts`, so no package install script runs. It installs nothing else and contacts no paid service. Build from the root of the same source commit that passed the tests.
+The image installs exactly one npm package — `fast-xml-parser`, already pinned to an exact version in `package.json` and already required by the MusicXML adapter the Studio backend uses — with `--omit=dev --ignore-scripts`, so no package install script runs. It installs no model SDK. With production agent continuation disabled it contacts no paid model service; when the explicitly configured `openai-responses` provider is enabled, it calls only the OpenAI Responses HTTPS endpoint through Node's built-in `fetch`, with `store:false`, no provider-native tools, persistent per-run/per-day request budgets and no automatic provider retry. Build from the root of the same source commit that passed the tests.
 
 The image carries a Git object store and the `git` binary. This is not incidental: the Published Canonical bootstrap reads `docs/CANONICAL_MANIFEST.md` from `refs/remotes/origin/main` and every rule document from the pinned rules snapshot commit `0a172900a01fdf39c2e9e84cf176961320b779ea`, so without Git history no Canonical-aware operation can run.
 
@@ -179,9 +180,11 @@ Nothing in this repository changes a running Railway service. After the Studio A
    - `MML_STUDIO_DATA_DIR=/data/studio` (already the image default)
    - `MML_STUDIO_DURABILITY=persistent` — set this **only** if `/data` really is the mounted volume. Nothing detects a real mount; durability is reported from this declaration, so an inaccurate value makes the capability endpoint lie.
 
-4. **Verify the deploy** using the two credential-free checks above.
+4. **Optionally enable bounded production continuation.** Leave it unset to keep `external_agent.enabled=false`. To enable it, set `MML_AGENT_PROVIDER=openai-responses`, `MML_AGENT_MODEL=<explicit model id>`, and a sealed `OPENAI_API_KEY`. Do not set `MML_AGENT_CODEX` in production. Keep Railway Agent's separate hard usage limit at `$0`. Before spending any model quota, read `GET /api/v1/capabilities` and confirm the reported provider, call/input/output/timeout limits, `automatic_provider_retry:false`, and `privacy.provider_response_storage:false`.
 
-5. **Re-verify after any Canonical release.** Because the Canonical view is pinned at image build, compare the `canonical.published_main_head` reported by this service's public root endpoint against the current `main`. If they differ, the service is serving an older Manifest view and needs a rebuild.
+5. **Verify the deploy** using the two credential-free checks above, then use the authenticated capability endpoint to verify any optional provider configuration.
+
+6. **Re-verify after any Canonical release.** Because the Canonical view is pinned at image build, compare the `canonical.published_main_head` reported by this service's public root endpoint against the current `main`. If they differ, the service is serving an older Manifest view and needs a rebuild.
 
 No variable rotation, volume change, bucket change, service creation or migration is required or implied by this work.
 
