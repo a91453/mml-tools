@@ -19,6 +19,7 @@ server/*
 !server/api.mjs
 !server/studio-agent-driver.mjs
 !server/studio-agent-codex.mjs
+!server/studio-agent-openai.mjs
 !railway/
 railway/*
 !railway/Dockerfile
