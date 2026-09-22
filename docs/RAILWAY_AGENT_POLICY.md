@@ -4,7 +4,7 @@ Status: repository operations policy. This is **not** a Mabinogi Mobile MML Cano
 
 ## Mandatory rule
 
-Railway Agent is disabled for work on this repository.
+Railway Agent is disabled for work on this repository. GitHub Copilot is also prohibited as a delegated or secondary AI agent when ChatGPT, Codex, Claude Code, or another primary agent is performing the work.
 
 This rule applies to every human-operated or automated coding assistant, including:
 
@@ -13,7 +13,7 @@ This rule applies to every human-operated or automated coding assistant, includi
 - Claude Code / Claude Desktop Code / Claude Agent SDK;
 - GitHub or other coding agents, subagents, routines, MCP clients, and future automation.
 
-They MUST NOT invoke, delegate to, resume, or fall back to Railway's AI Agent for any task.
+They MUST NOT invoke, delegate to, resume, or fall back to Railway's AI Agent for any task. They also MUST NOT hand repository work to GitHub Copilot, Copilot CLI, or Copilot cloud agent as a secondary agent.
 
 Prohibited surfaces include, but are not limited to:
 
