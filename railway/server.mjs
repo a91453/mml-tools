@@ -8,6 +8,7 @@ import { studioWebResponse } from '../server/studio-web.mjs';
 import { createStudioApplication } from '../studio/backend/application/index.mjs';
 import { createAgentDriver } from '../server/studio-agent-driver.mjs';
 import { createCodexDecider } from '../server/studio-agent-codex.mjs';
+import { createOpenAIResponsesDecider } from '../server/studio-agent-openai.mjs';
 import { join } from 'node:path';
 import { scrubBuildCredentialVariables } from '../studio/backend/bootstrap/index.mjs';
 
@@ -117,16 +118,91 @@ export function parsePublicOrigin(env = process.env) {
   return `https://${domain}`;
 }
 
+export const PRODUCTION_AGENT_HARD_LIMITS = Object.freeze({
+  maxSteps: 8,
+  maxCallsPerRun: 12,
+  maxCallsPerDay: 24,
+  maxConcurrentRuns: 1,
+  maxInputBytes: 393216,
+  maxOutputTokens: 1200,
+  timeoutMs: 60000,
+});
+
+const PRODUCTION_AGENT_DEFAULTS = Object.freeze({
+  maxSteps: 6,
+  maxCallsPerRun: 10,
+  maxCallsPerDay: 16,
+  maxConcurrentRuns: 1,
+  maxInputBytes: 262144,
+  maxOutputTokens: 900,
+  timeoutMs: 60000,
+});
+
+function agentBudgetInteger(env, key, fallback, minimum, maximum) {
+  const raw = env[key];
+  if (raw === undefined || raw === null || raw === '') return fallback;
+  if (!/^\\d+$/.test(String(raw))) throw Error(`${key} must be an integer`);
+  const value = Number(raw);
+  if (!Number.isSafeInteger(value) || value < minimum || value > maximum) {
+    throw Error(`${key} must be between ${minimum} and ${maximum}`);
+  }
+  return value;
+}
+
+function productionAgentBudget(env) {
+  return {
+    agentMaxSteps: agentBudgetInteger(env, 'MML_AGENT_MAX_STEPS', PRODUCTION_AGENT_DEFAULTS.maxSteps, 1, PRODUCTION_AGENT_HARD_LIMITS.maxSteps),
+    agentMaxCallsPerRun: agentBudgetInteger(env, 'MML_AGENT_MAX_CALLS_PER_RUN', PRODUCTION_AGENT_DEFAULTS.maxCallsPerRun, 1, PRODUCTION_AGENT_HARD_LIMITS.maxCallsPerRun),
+    agentMaxCallsPerDay: agentBudgetInteger(env, 'MML_AGENT_MAX_CALLS_PER_DAY', PRODUCTION_AGENT_DEFAULTS.maxCallsPerDay, 1, PRODUCTION_AGENT_HARD_LIMITS.maxCallsPerDay),
+    agentMaxConcurrentRuns: PRODUCTION_AGENT_HARD_LIMITS.maxConcurrentRuns,
+    agentMaxInputBytes: agentBudgetInteger(env, 'MML_AGENT_MAX_INPUT_BYTES', PRODUCTION_AGENT_DEFAULTS.maxInputBytes, 4096, PRODUCTION_AGENT_HARD_LIMITS.maxInputBytes),
+    agentMaxOutputTokens: agentBudgetInteger(env, 'MML_AGENT_MAX_OUTPUT_TOKENS', PRODUCTION_AGENT_DEFAULTS.maxOutputTokens, 64, PRODUCTION_AGENT_HARD_LIMITS.maxOutputTokens),
+    agentTimeoutMs: agentBudgetInteger(env, 'MML_AGENT_TIMEOUT_MS', PRODUCTION_AGENT_DEFAULTS.timeoutMs, 1000, PRODUCTION_AGENT_HARD_LIMITS.timeoutMs),
+  };
+}
+
 export function productionAgentConfiguration(env = process.env) {
   const production = env.NODE_ENV === 'production';
   const executable = env.MML_AGENT_CODEX ?? null;
-  const model = env.MML_AGENT_MODEL ?? null;
-  if (production && (executable || model)) {
-    throw Error('External model runner is prohibited in production; remove MML_AGENT_CODEX and MML_AGENT_MODEL');
+  const provider = (env.MML_AGENT_PROVIDER ?? '').trim();
+  const model = (env.MML_AGENT_MODEL ?? '').trim() || null;
+
+  if (!production) {
+    if (provider && provider !== 'openai-responses') throw Error('Unsupported MML_AGENT_PROVIDER');
+    return {
+      agentCodexExecutable: executable,
+      agentProvider: provider || null,
+      agentApiKey: provider === 'openai-responses' ? (env.OPENAI_API_KEY ?? null) : null,
+      agentModel: model,
+      ...productionAgentBudget(env),
+    };
+  }
+
+  if (executable) {
+    throw Error('MML_AGENT_CODEX child-process runner is prohibited in production; use the bounded openai-responses provider instead');
+  }
+  if (!provider) {
+    if (model) throw Error('MML_AGENT_MODEL requires MML_AGENT_PROVIDER=openai-responses in production');
+    return {
+      agentCodexExecutable: null,
+      agentProvider: null,
+      agentApiKey: null,
+      agentModel: null,
+      ...productionAgentBudget(env),
+    };
+  }
+  if (provider !== 'openai-responses') throw Error('Production MML_AGENT_PROVIDER must be openai-responses');
+  if (!model) throw Error('MML_AGENT_MODEL is required when production agent continuation is enabled');
+  const apiKey = env.OPENAI_API_KEY ?? null;
+  if (typeof apiKey !== 'string' || apiKey.trim().length < 20) {
+    throw Error('OPENAI_API_KEY is required when production agent continuation is enabled');
   }
   return {
-    agentCodexExecutable: production ? null : executable,
-    agentModel: production ? null : model,
+    agentCodexExecutable: null,
+    agentProvider: provider,
+    agentApiKey: apiKey,
+    agentModel: model,
+    ...productionAgentBudget(env),
   };
 }
 
@@ -147,20 +223,47 @@ export function createApplication(options) {
     // Production passes nothing.
     loadEngines: options.studioLoadEngines,
   });
-  const agent = createAgentDriver({ application: studio, decide: options.agentDecide ?? (options.agentCodexExecutable
-    ? createCodexDecider({ executable: options.agentCodexExecutable, model: options.agentModel }) : null),
-    directory: options.studioDataDirectory ? join(options.studioDataDirectory, 'agent-dispatch') : null });
+  const externalDecide = options.agentDecide ?? (options.agentProvider === 'openai-responses'
+    ? createOpenAIResponsesDecider({
+      apiKey: options.agentApiKey,
+      model: options.agentModel,
+      timeoutMs: options.agentTimeoutMs ?? PRODUCTION_AGENT_DEFAULTS.timeoutMs,
+      maxInputBytes: options.agentMaxInputBytes ?? PRODUCTION_AGENT_DEFAULTS.maxInputBytes,
+      maxOutputTokens: options.agentMaxOutputTokens ?? PRODUCTION_AGENT_DEFAULTS.maxOutputTokens,
+    })
+    : options.agentCodexExecutable
+      ? createCodexDecider({ executable: options.agentCodexExecutable, model: options.agentModel })
+      : null);
+  const agent = createAgentDriver({
+    application: studio,
+    decide: externalDecide,
+    directory: options.studioDataDirectory ? join(options.studioDataDirectory, 'agent-dispatch') : null,
+    maxSteps: options.agentMaxSteps ?? 12,
+    maxCallsPerRun: options.agentMaxCallsPerRun ?? 24,
+    maxCallsPerDay: options.agentMaxCallsPerDay ?? 96,
+    maxConcurrentRuns: options.agentMaxConcurrentRuns ?? 2,
+  });
   // Host-level cost/privacy statements must include the optional model runner;
   // the underlying provider-independent music engine still calls no model.
   const exposedStudio = Object.freeze({ ...studio, async capabilities() {
     const base = await studio.capabilities();
-    return { ...base, external_agent: { enabled: agent.enabled, execution: 'explicitly-authorized-bounded-continuation',
-      automatic_restart: false, native_tool_results_accepted: false, max_concurrent_runs: 2 },
+    const provider = agent.enabled ? (options.agentProvider ?? (options.agentCodexExecutable ? 'codex-cli' : 'in-process')) : null;
+    return { ...base, external_agent: { enabled: agent.enabled, provider, execution: 'explicitly-authorized-bounded-continuation',
+      automatic_restart: false, native_tool_results_accepted: false, automatic_provider_retry: false,
+      max_concurrent_runs: agent.limits.max_concurrent_runs,
+      limits: {
+        ...agent.limits,
+        max_input_bytes: options.agentMaxInputBytes ?? null,
+        max_output_tokens: options.agentMaxOutputTokens ?? null,
+        timeout_ms: options.agentTimeoutMs ?? null,
+      } },
       ...(agent.enabled ? {
-        cost: { ...base.cost, additional_recurring_cost: 'OPERATOR_CONFIGURED', external_paid_services: 'OPERATOR_CONFIGURED',
-          notice: 'The optional external agent uses the configured Codex account or provider quota. Core musical operations do not require a model.' },
+        cost: { ...base.cost, additional_recurring_cost: 'BOUNDED_OPERATOR_CONFIGURED', external_paid_services: provider,
+          llm_api_dependency: provider === 'openai-responses' ? 'OPENAI_RESPONSES_API' : 'OPERATOR_CONFIGURED',
+          notice: 'The optional external agent is limited by persistent per-run and per-day inference-call budgets, per-request input/output ceilings, one production concurrent run, timeout, and no automatic provider retry. Core musical operations do not require a model.' },
         privacy: { ...base.privacy, uploaded_assets_leave_this_service: true, raw_asset_bytes_sent: false, derived_symbolic_data_sent: true,
-          calls_external_analysis_services: true, notice: 'The enabled agent sends run metadata, derived symbolic events, cited evidence and reports to its configured model. Raw audio/MIDI bytes are not sent.' },
+          calls_external_analysis_services: true, provider_response_storage: provider === 'openai-responses' ? false : null,
+          notice: 'The enabled agent sends run metadata, derived symbolic events, cited evidence and reports to its configured model. Raw audio/MIDI bytes are not sent. The OpenAI Responses provider requests store:false.' },
       } : {}),
     };
   } });
