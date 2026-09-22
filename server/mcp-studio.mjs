@@ -373,6 +373,23 @@ export const STUDIO_MCP_TOOLS = [
     annotations: readOnly,
   },
   {
+    name: 'studio_run_next',
+    title: 'Read-only provider-neutral continuation',
+    description: 'Read an explicit existing run: revision, baseline/candidate, Canonical identities, stopped step, conditional operations, missing evidence and blockers. '
+      + 'Creates and changes nothing; never accepts a proposal, reconciles an interruption, computes a gate or calls a model. '
+      + 'Use current request keys with the existing proposal tools; only explicit authorized acceptance reaches the existing resume path. '
+      + 'Gate snapshots are historical, not a new PASS. Server exposure does not prove this conversation connector exposes or can execute all continuation tools.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        project_id: projectId, run_id: runId,
+        expected_run_revision: { type: 'integer', minimum: 1, maximum: LIMITS.maxRunRevision, description: 'Optional observed revision; a mismatch is refused without writing.' },
+      },
+      required: ['project_id', 'run_id'], additionalProperties: false,
+    },
+    annotations: readOnly,
+  },
+  {
     name: 'studio_run_resume',
     title: '續跑一鍵流程',
     description: '在明確補上新的輸入、決定或證據之後，重新檢查每一個綁定並續跑同一個 run。'
@@ -639,6 +656,12 @@ async function dispatchStudioTool(name, args, { application, owner }) {
       return application.startRun(owner, args.project_id, runInput(args));
     case 'studio_run_status':
       return application.getRun(owner, args.project_id, args.run_id ?? null);
+    case 'studio_run_next': {
+      // Forward all non-address fields, so even an in-process caller cannot
+      // hide a forbidden field by having the adapter silently discard it.
+      const { project_id, run_id, report_page, ...input } = args;
+      return application.nextRun(owner, project_id, run_id, input);
+    }
     case 'studio_run_resume':
       return application.resumeRun(owner, args.project_id, args.run_id, runInput(args));
     case 'studio_proposal_targets':
