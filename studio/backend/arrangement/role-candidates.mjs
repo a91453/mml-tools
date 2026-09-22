@@ -29,7 +29,7 @@
 // order, and no beat is ever projected to a float.
 
 import { f, ROLES } from '../mml/index.mjs';
-import { splitProjectSourceVoices } from './voice-split.mjs';
+import { splitProjectRoleConsistentVoices, splitProjectSourceVoices } from './voice-split.mjs';
 import { analyzeLegacyMergeLane } from './merge-diagnostics.mjs';
 
 // ─── exact-rational helpers ─────────────────────────────────────────────────
@@ -2080,8 +2080,15 @@ export function suggestRoleCandidates(project, options = {}) {
   const { notes, unsupported } = normalizeProject(project);
   const noteById = new Map(notes.map(note => [note.id, note]));
 
+  // `roleConsistentLanes` is for a candidate whose roles are already accepted:
+  // a source voice that carries several assigned roles is decomposed per role,
+  // so the candidate's own arrangement reaches the role-level evaluation instead
+  // of reading as competing declared roles. It changes nothing for a voice with
+  // a single role or none, which is every Source-Faithful Baseline.
   const decompositions = options.decompositions
-    ?? splitProjectSourceVoices({ ...project, events: notes });
+    ?? (options.roleConsistentLanes === true
+      ? splitProjectRoleConsistentVoices({ ...project, events: notes })
+      : splitProjectSourceVoices({ ...project, events: notes }));
   if (!Array.isArray(decompositions)) throw Error('options.decompositions must be an array of G11-B decomposition results');
 
   const lanes = buildLanes(decompositions, noteById);

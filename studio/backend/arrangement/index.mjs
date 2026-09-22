@@ -5,6 +5,7 @@
 export {
   splitCanonicalVoice,
   splitProjectSourceVoices,
+  splitProjectRoleConsistentVoices,
   VOICE_SPLIT_STATUS,
 } from './voice-split.mjs';
 
