@@ -230,3 +230,45 @@ test('an uncertain operation stays inspectable and cannot be blindly redispatche
   assert.equal(recovered.task.pending_action, null); assert.equal(recovered.task.state, 'stopped');
   assert.equal((await s.application.getRun('owner', s.projectId, s.runId)).run.revision, s.input.expected_run_revision);
 });
+
+
+test('persistent inference budgets stop before another paid decision request', async t => {
+  const directory = await mkdtemp(join(tmpdir(), 'mml-dispatch-budget-test-'));
+  t.after(() => rm(directory, { recursive: true, force: true, maxRetries: 10, retryDelay: 50 }));
+  let calls = 0;
+  const decide = async c => {
+    calls++;
+    return { tool: 'studio_proposal_targets', arguments_json: JSON.stringify({ project_id: c.project_id, run_id: c.run_id }), reason: 'bounded read' };
+  };
+  const s = await setup(decide, { directory, maxSteps: 5, maxCallsPerRun: 10, maxCallsPerDay: 1, maxConcurrentRuns: 1 });
+  await s.driver.start('owner', s.projectId, s.runId, s.input);
+  await s.driver.settled();
+  const first = (await s.driver.status('owner', s.projectId, s.runId)).task;
+  assert.equal(calls, 1);
+  assert.equal(first.steps, 1);
+  assert.equal(first.inference_calls, 1);
+  assert.equal(first.state, 'budget_exhausted');
+  assert.deepEqual(s.driver.limits, {
+    max_steps_per_dispatch: 5,
+    max_calls_per_run: 10,
+    max_calls_per_day: 1,
+    max_concurrent_runs: 1,
+  });
+
+  const restarted = createAgentDriver({
+    application: s.application,
+    directory,
+    decide,
+    maxSteps: 5,
+    maxCallsPerRun: 10,
+    maxCallsPerDay: 1,
+    maxConcurrentRuns: 1,
+  });
+  await restarted.start('owner', s.projectId, s.runId, { ...s.input, idempotency_key: 'dispatch-after-budget' });
+  await restarted.settled();
+  const second = (await restarted.status('owner', s.projectId, s.runId)).task;
+  assert.equal(calls, 1, 'daily budget must be claimed before the provider is called');
+  assert.equal(second.inference_calls, 1);
+  assert.equal(second.state, 'budget_exhausted');
+  assert.match(second.reason, /daily host inference budget/);
+});
