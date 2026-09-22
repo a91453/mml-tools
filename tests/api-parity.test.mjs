@@ -143,6 +143,7 @@ test('every studio MCP tool dispatches to an operation the Application Service a
     studio_run_plan: 'planRun',
     studio_run_start: 'startRun',
     studio_run_status: 'getRun',
+    studio_run_next: 'nextRun',
     studio_run_resume: 'resumeRun',
     studio_proposal_targets: 'proposalTargets',
     studio_proposal_submit: 'proposeDecision',
