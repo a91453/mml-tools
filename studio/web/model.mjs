@@ -17,6 +17,7 @@ import { acceptedArrangementBinding, acceptedDecisionBindings, acceptedRevisionH
 import { planMobileAdaptation, applyMobileAdaptation } from '../backend/adaptation/index.mjs';
 import { planFinalReduction, applyFinalReduction } from '../backend/reduction/index.mjs';
 import { buildRollProjection } from './roll-model.mjs';
+import { compareReadback, normalizeCapture } from './preview/readback.mjs';
 
 export const WORKSPACE_SCHEMA = 'mml-studio-web/workspace@1';
 export const MAX_TEXT_BYTES = 4 * 1024 * 1024;
@@ -90,6 +91,8 @@ export function invalidate(workspace) {
   next.acceptedDecisions = [];
   next.audio = null;
   next.acceptance = null;
+  // A player readback describes one exact string at one revision.
+  delete next.playerReadback;
   // A delivery MML is the exact string for one exact candidate. Once the
   // candidate, its sources or the project settings change, that string is no
   // longer the delivery for what is now on screen. Leaving it behind is what
@@ -234,7 +237,7 @@ export function importWorkspace(raw) {
   // can re-check from the file. It is preserved and shown, never restored into
   // the live `finalReduction` slot, so the reduction has to be previewed and
   // accepted again against what is actually loaded.
-  clean.importedHistory = { reviews: input.reviews, acceptance: input.acceptance, audio: input.audio, acceptedDecisions: input.acceptedDecisions, leadEvidence: input.leadEvidence, leadPromotionEvidence: input.leadPromotionEvidence, mobileAdaptation: input.mobileAdaptation, finalReduction: input.finalReduction };
+  clean.importedHistory = { reviews: input.reviews, acceptance: input.acceptance, audio: input.audio, acceptedDecisions: input.acceptedDecisions, leadEvidence: input.leadEvidence, leadPromotionEvidence: input.leadPromotionEvidence, mobileAdaptation: input.mobileAdaptation, finalReduction: input.finalReduction, playerReadback: input.playerReadback };
   return clean;
 }
 
@@ -530,6 +533,57 @@ function verifyDelivery(candidate, rawMml, meterText) {
   return { technical, deliveryMatches };
 }
 
+// ─── Gate 6 player readback ─────────────────────────────────────────────────
+//
+// N/A only on the existing path: the user declared no player/preview was used
+// and the Tempo review is current. PASS only when the user declared the player
+// was used, the Tempo review is current, and a stored capture of what the
+// preview engine processed -- for this revision and this exact delivery
+// string, the whole song from the start with no role muted -- matches an
+// independent parse of that string. The comparison is recomputed here on every
+// analysis; a stored verdict is never read. Anything else stays PENDING.
+function playerReadbackGate(w, rawMml, technical, deliveryMatches) {
+  const tempo = reviewed(w, 'tempo');
+  const result = (status, reason, summary = null) => ({ status, reason, summary });
+  if (w.settings.preview === 'none') return tempo ? result('N/A', 'USER_DECLARED_NO_PREVIEW') : result('PENDING', 'TEMPO_REVIEW_REQUIRED');
+  if (w.settings.preview !== 'used') return result('PENDING', 'PREVIEW_USE_NOT_DECLARED');
+  const record = w.playerReadback;
+  if (!record) return result('PENDING', 'PLAYER_READBACK_NOT_RECORDED');
+  const exact = technical?.ok && deliveryMatches && typeof rawMml === 'string' ? rawMml.trim() : null;
+  if (record.revision !== w.revision || record.workspaceId !== w.id) return result('PENDING', 'PLAYER_READBACK_STALE_REVISION');
+  if (!exact || record.exactMml !== exact) return result('PENDING', 'PLAYER_READBACK_MML_CHANGED');
+  let capture;
+  try { capture = normalizeCapture(record.capture); } catch (error) { return result('PENDING', `PLAYER_READBACK_INVALID: ${error.message}`); }
+  const comparison = compareReadback(technical.song, capture);
+  const summary = { recordedAt: record.recordedAt, bank: capture.bank, engine: capture.engine, program: capture.program, scope: capture.scope,
+    gameTimbreEquivalent: false, comparison };
+  if (!comparison.ok) return result('PENDING', `PLAYER_READBACK_MISMATCH: ${comparison.errors.join(' · ')}`, summary);
+  return tempo ? result('PASS', 'ENGINE_EVENTS_MATCH_EXACT_MML', summary) : result('PENDING', 'TEMPO_REVIEW_REQUIRED', summary);
+}
+
+// Store one capture of the preview engine as the readback for the applied
+// delivery. The binding (workspace, revision, exact string) is checked against
+// what is loaded now; a capture of anything else is refused, not stored. A
+// capture that does not match is stored all the same -- it is what the engine
+// did -- and the gate reports the mismatch.
+export function recordPlayerReadback(w, capture, { workspaceId, revision, exactMml } = {}) {
+  if (w.settings.preview !== 'used') throw Error('請先在專案設定將「驗證播放器」設為「有使用」，再記錄回讀');
+  if (workspaceId !== w.id || revision !== w.revision) throw Error('STALE_PLAYER_READBACK: 專案或 revision 已變更，請重新播放整首');
+  const context = analysisContext(w);
+  const exact = context.report.rawMml;
+  if (!exact) throw Error('需要已通過驗證的交付 MML，才能記錄播放器回讀');
+  if (exactMml !== exact) throw Error('STALE_PLAYER_READBACK: 回讀的 MML 不是目前套用的交付 MML');
+  const clean = normalizeCapture(capture);
+  if (!clean.complete || clean.from !== 0 || clean.muted.some(Boolean)) throw Error(`回讀未涵蓋整首（${clean.incomplete.join('、') || '未從頭播放或有角色靜音'}）；請從頭完整播放一次`);
+  return { ...copy(w), playerReadback: { workspaceId: w.id, revision: w.revision, exactMml: exact, recordedAt: new Date().toISOString(), capture: clean } };
+}
+
+export function clearPlayerReadback(w) {
+  const next = copy(w);
+  delete next.playerReadback;
+  return next;
+}
+
 // One reconstruction, one analysis, two consumers.
 //
 // `analyzeWorkspace` reports this context; `generateFinalDelivery` emits from
@@ -669,10 +723,12 @@ function analysisContext(w) {
       return stale([`LEAD_PROMOTION_EVIDENCE_INVALID: ${error.message}`]);
     }
   });
+  const playerReadback = playerReadbackGate(w, rawMml, technical, deliveryMatches);
   const audioPresent = Object.values(w.assets).some(a => a.project.sources.some(s => s.kind === 'original-audio')) || Boolean(w.audio);
   const audioRequired = audioPresent || w.settings.audioRequired !== 'no';
-  const readiness = evaluateProjectReadiness({ project, mmlValidation: technical, core3Report: core3, core3CompletenessReport: core3Completeness, harmonyReport: harmony, leadDemotionReports: leadReports, leadPromotionReports, lineageReport: lineage, versionDriftReviewed: reviewed(w, 'version'), originalAudioRequired: audioRequired, originalAudioReviewed: reviewed(w, 'audio'), playerReadback: w.settings.preview === 'none' && reviewed(w, 'tempo') ? 'N/A' : 'PENDING', mobileAdaptation: reviewed(w, 'adaptation') ? 'PASS' : 'PENDING', regressionReviewed: reviewed(w, 'regression') });
+  const readiness = evaluateProjectReadiness({ project, mmlValidation: technical, core3Report: core3, core3CompletenessReport: core3Completeness, harmonyReport: harmony, leadDemotionReports: leadReports, leadPromotionReports, lineageReport: lineage, versionDriftReviewed: reviewed(w, 'version'), originalAudioRequired: audioRequired, originalAudioReviewed: reviewed(w, 'audio'), playerReadback: playerReadback.status, mobileAdaptation: reviewed(w, 'adaptation') ? 'PASS' : 'PENDING', regressionReviewed: reviewed(w, 'regression') });
   const gates = { ...readiness.gates };
+  gates.playerReadback = { ...gates.playerReadback, reason: playerReadback.reason };
   if (finalReductionError) gates.finalReductionIntegrity = pending(finalReductionError);
   if (mobileAdaptationError) gates.mobileAdaptationIntegrity = pending(mobileAdaptationError);
   delete gates.inGameAcceptance;
@@ -728,6 +784,7 @@ function analysisContext(w) {
     tracks: technical?.ok && deliveryMatches ? splitMML(rawMml) : null, rawMml: technical?.ok && deliveryMatches ? rawMml.trim() : null, deliveryOrigin,
     mobileAdaptation: mobileAdaptation ? { plan: mobileAdaptation.plan, diffFromBaseline: mobileAdaptation.diffFromBaseline, diffFromParent: mobileAdaptation.diffFromParent } : null,
     finalReduction: finalReduction ? { plan: finalReduction.plan, accounting: finalReduction.accounting, diffFromBaseline: finalReduction.diffFromBaseline, diffFromParent: finalReduction.diffFromParent } : null,
+    playerReadback: playerReadback.summary,
     historicalRegression: 'FIXTURE_PENDING', audioError, importedDecisions: candidate.decisions,
     // Display projection for the review roll; carries no gate or review meaning.
     roll: buildRollProjection(candidate, { harmony }) };
@@ -846,9 +903,10 @@ export function applyFinalDelivery(w, result) {
   if (result.status !== EMIT_STATUS.PASS) return next;
   next.deliveryMml = result.combinedMml;
   next.deliveryBinding = { revision: w.revision, origin: 'generated' };
-  // The exact delivery MML changed, so an acceptance recorded against the old
-  // one no longer describes what would be pasted.
+  // The exact delivery MML changed, so an acceptance or a player readback
+  // recorded against the old one no longer describes what would be pasted.
   next.acceptance = null;
+  delete next.playerReadback;
   return next;
 }
 

@@ -48,9 +48,19 @@ test('the timbre preview engine is vendored from npm, self-contained, licensed a
   // is not servable by type-allowlisting hosts and would fail the SW install.
   assert.match(lib, /^\/\*! SpessaSynth — vendored from npm: spessasynth_lib@\d+\.\d+\.\d+, spessasynth_core@\d+\.\d+\.\d+/);
   assert.match(lib, /Apache License\s+Version 2\.0/);
+  // The player readback names the engine it captured and relies on the worklet
+  // posting each event with its own audio clock. Both are pinned here, so an
+  // engine upgrade that changes either fails the build instead of a readback.
+  const { ENGINE_VERSIONS } = await import('../web/preview/player.mjs');
+  const pkg = JSON.parse(await readFile(new URL('../../package.json', import.meta.url), 'utf8'));
+  assert.ok(lib.startsWith(`/*! SpessaSynth — vendored from npm: ${ENGINE_VERSIONS.lib}, ${ENGINE_VERSIONS.core} `));
+  assert.equal(`spessasynth_lib@${pkg.dependencies?.spessasynth_lib ?? pkg.devDependencies?.spessasynth_lib}`, ENGINE_VERSIONS.lib);
+  assert.equal(`spessasynth_core@${pkg.dependencies?.spessasynth_core ?? pkg.devDependencies?.spessasynth_core}`, ENGINE_VERSIONS.core);
+  assert.match(await read('vendor/spessasynth/processor.js'), /post\(\{type:"eventCall",data:\w+,currentTime:this\.synthesizer\.currentTime\}\)/);
+  assert.match(lib, /this\.worklet\.port\.onmessage = \(e\) => this\.handleMessage\(e\.data\);/);
   for (const path of ['vendor/spessasynth/core.js', 'vendor/spessasynth/processor.js']) assert.match(await read(path), /SPDX-License-Identifier: Apache-2\.0/);
   const sw = await read('sw.js');
-  for (const path of ['vendor/spessasynth/lib.js', 'vendor/spessasynth/core.js', 'vendor/spessasynth/processor.js', 'studio/web/preview/player.mjs', 'studio/web/preview/worklet-console.mjs']) {
+  for (const path of ['vendor/spessasynth/lib.js', 'vendor/spessasynth/core.js', 'vendor/spessasynth/processor.js', 'studio/web/preview/player.mjs', 'studio/web/preview/readback.mjs', 'studio/web/preview/worklet-console.mjs']) {
     assert.ok(sw.includes(`./${path}`), `offline asset missing: ${path}`);
   }
   // No sound bank ships in the build: the bank is a user-picked local file.

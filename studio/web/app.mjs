@@ -6,6 +6,7 @@ import { createUpdateFlow } from './pwa-update.mjs';
 import { buildRoles, diagnosticsFromValidation, renderHTML, roleCharacterCounts, segmentRoles } from './mml-highlight.mjs';
 import { mountReviewRoll } from './review-roll.mjs';
 import { PROBES, buildObservation, summarize } from './engine-probe.mjs';
+import { compareReadback, normalizeCapture } from './preview/readback.mjs';
 // Request identity only. The MIDI decoder, the Canonical conversion and the
 // G11-B/G11-C derivation all live behind the Worker, so the main thread never
 // imports the backend and never parses a source file itself.
@@ -528,7 +529,7 @@ function render() {
   $('#app').innerHTML = `
     <div class="hero"><p class="eyebrow">LOCAL-FIRST / STUDIO V1</p><div class="hero-line"><h1>${esc(w.title)}</h1>${badge(r.state)}</div><p>保留來源、看見差異，再決定如何演奏。你的符號樂譜與審核紀錄在本機處理。</p><div class="state-path"><span class="${r.state === 'CANDIDATE' ? 'current' : ''}">01　Candidate</span><span class="${r.state === 'VALIDATED' ? 'current' : ''}">02　Validated</span><span class="${r.state === 'IN_GAME_ACCEPTED' ? 'current' : ''}">03　In-game Accepted</span></div><p class="meta">${w.savedAt ? `本機已保存 ${esc(new Date(w.savedAt).toLocaleString())}` : '尚未儲存'} · Revision ${w.revision}</p></div>
     <section id="intake"><div class="section-heading"><h2>01　專案與來源</h2><small>裝置本地處理</small></div>
-      <div class="card"><form id="settings"><div class="field-grid">${input('title', '專案／歌曲名稱', w.title)}${input('recording', '錄音版本（專輯／MV／Live 等）', s.recording)}${input('offset', '有效音樂起點（秒）', s.offset, 'type="number" min="0" step="any"')}${input('end', '有效音樂終點（秒）', s.end, 'type="number" min="0" step="any"')}<label>來源確認的拍號圖<textarea name="meterText" placeholder="例如：0 4/4&#10;32 3/4">${esc(s.meterText)}</textarea></label><div><label>原曲音訊是否為來源集的一部分？<select name="audioRequired">${options([['unknown','尚未確認'],['yes','是，需要 Audio evidence'],['no','否，本專案沒有原曲音訊']],s.audioRequired)}</select></label><label>本次是否使用驗證播放器？<select name="preview">${options([['unknown','尚未確認'],['none','本次未使用播放器／preview'],['used','有使用，需要實際回讀（v1 尚待支援）']],s.preview)}</select></label></div></div><div class="actions"><button>儲存專案設定</button></div><p class="meta">來源、設定或候選內容變更後，先前審核與實機接受將失效。</p></form></div>
+      <div class="card"><form id="settings"><div class="field-grid">${input('title', '專案／歌曲名稱', w.title)}${input('recording', '錄音版本（專輯／MV／Live 等）', s.recording)}${input('offset', '有效音樂起點（秒）', s.offset, 'type="number" min="0" step="any"')}${input('end', '有效音樂終點（秒）', s.end, 'type="number" min="0" step="any"')}<label>來源確認的拍號圖<textarea name="meterText" placeholder="例如：0 4/4&#10;32 3/4">${esc(s.meterText)}</textarea></label><div><label>原曲音訊是否為來源集的一部分？<select name="audioRequired">${options([['unknown','尚未確認'],['yes','是，需要 Audio evidence'],['no','否，本專案沒有原曲音訊']],s.audioRequired)}</select></label><label>本次是否使用驗證播放器？<select name="preview">${options([['unknown','尚未確認'],['none','本次未使用播放器／preview'],['used','有使用，需要播放器實際回讀（06 試聽整首後記錄）']],s.preview)}</select></label></div></div><div class="actions"><button>儲存專案設定</button></div><p class="meta">來源、設定或候選內容變更後，先前審核與實機接受將失效。</p></form></div>
       <div class="row"><p class="meta">MusicXML 與 MIDI 預設為第三方 supporting。只有已確認的官方譜／官方 MIDI 可選 primary symbolic；這只改變來源紀錄，不會讓不完整的來源變完整。</p><select id="authority" aria-label="MusicXML／MIDI 來源權威"><option value="supporting">第三方／未確認</option><option value="primary-symbolic">已確認官方 symbolic</option></select></div>
       <div class="grid intake-grid">${intakeCard('candidate','目前候選','這次要審核的版本')}${intakeCard('baseline','Source-Faithful Baseline','編修之前、可逐事件比對的來源基準')}${intakeCard('previous','已接受的前一版','有歷史版本時，用於回歸比較')}</div>
       <details class="card"><summary>貼上 MML／Canonical IR，或附上交付 MML</summary><form id="paste"><div class="field-grid"><label>用途<select name="slot">${options([['candidate','目前候選'],['baseline','來源基準'],['previous','已接受前版'],['delivery','IR 候選對應的交付 MML']],'candidate')}</select></label>${input('name','檔名','pasted.mml')}</div><label for="paste-content">完整文字</label><div class="mml-hl"><pre class="mml-hl-layer" id="paste-layer" aria-hidden="true"></pre><textarea id="paste-content" name="content" class="code" required spellcheck="false" placeholder="MML@…,…,…,…,…,…;"></textarea></div><p class="meta" id="paste-counts" aria-live="polite"></p><div class="actions"><button>在本機載入</button></div></form></details>
@@ -860,30 +861,64 @@ function bindEngineProbes() {
   if (exporter) exporter.onclick = () => download('in-game-probe-observations.json', JSON.stringify({ kind: 'in-game-probe-observations', note: 'Class E in-game evidence for the stated client/version/instrument and exact test string. Changes no Canonical rule by itself.', exportedAt: new Date().toISOString(), observations: probeState.observations }, null, 2));
 }
 // ─── Timbre preview ─────────────────────────────────────────────────────────
-// Plays the applied Final MML through SpessaSynth with a sound bank the user
-// picks (studio/web/preview/). The engine and bank live across re-renders; the
-// markup is re-bound after each render. Listening aid only: it never touches a
-// gate, a review or the workspace, and the bank never leaves this browser.
-const preview = { voices: 0, bank: undefined, bankChecked: false, context: null, engine: null, transport: null, songKey: null, program: null, position: 0, muted: [false, false, false, false, false, false], busy: false, error: null };
+// Plays the delivery MML through SpessaSynth with a sound bank the user picks
+// (studio/web/preview/). The engine and bank live across re-renders; the
+// markup is re-bound after each render. Listening never touches a gate, a
+// review or the workspace, and the bank never leaves this browser. The one
+// write is explicit: after a complete playback from the start, the user may
+// record the engine's processed events as the Gate 6 player readback, which
+// the Worker re-checks against the exact MML on every analysis.
+const preview = { voices: 0, bank: undefined, bankChecked: false, context: null, engine: null, transport: null, songKey: null, program: null, position: 0, muted: [false, false, false, false, false, false], busy: false, error: null, playBinding: null, lastCapture: null };
 // Re-render only the preview card: a full render() would discard whatever the
 // user is typing in another form.
 function refreshPreview() { const card = $('#timbre-preview'); if (!card) return; card.outerHTML = timbrePreviewCard(); bindTimbrePreview(); }
 const clock = seconds => `${Math.floor(seconds / 60)}:${String(Math.floor(seconds % 60)).padStart(2, '0')}`;
+// The capture of the last complete playback, while it still describes the
+// project, revision and exact string on screen.
+function currentCapture() {
+  const last = preview.lastCapture;
+  if (!last || last.binding.workspaceId !== workspace?.id || last.binding.revision !== workspace?.revision || last.binding.exactMml !== report?.rawMml) return null;
+  return last;
+}
+function readbackBlock() {
+  const gate = report?.gates?.playerReadback;
+  const stored = report?.playerReadback;
+  const used = workspace?.settings?.preview === 'used';
+  const last = currentCapture();
+  const rows = [];
+  if (stored) {
+    const c = stored.comparison;
+    rows.push(`<p class="meta">已記錄 ${esc(new Date(stored.recordedAt).toLocaleString())} · ${esc(stored.bank.name)} <code class="digest">sha256 ${esc(stored.bank.sha256.slice(0, 12))}…</code> · ${esc(String(stored.program.program + 1).padStart(3, '0'))} ${esc(stored.program.name)} · ${esc(stored.engine.lib)} / ${esc(stored.engine.core)}<br>引擎處理 ${c.processedNotes}／${c.expectedNotes} 個音符 · 最大時間偏差 ${c.maxDriftMs} ms（容許 ${c.toleranceMs} ms）</p>`);
+    if (!c.ok) rows.push(`<ul class="codes">${c.errors.map(error => `<li><code>${esc(error)}</code></li>`).join('')}</ul>`);
+  }
+  if (last) {
+    const c = last.comparison;
+    rows.push(`<p class="${c.ok ? 'meta' : 'note'}">剛才的整首播放：引擎處理 ${c.processedNotes}／${c.expectedNotes} 個音符 · 最大偏差 ${c.maxDriftMs} ms · ${c.ok ? '與目前的 exact MML 一致' : `不一致：${esc(c.errors.join(' · '))}`}</p>`);
+    if (last.capture.complete) rows.push(`<div class="actions"><button type="button" id="record-readback" ${used ? '' : 'disabled'}>記錄為播放器實際回讀</button></div>`);
+    else rows.push('<p class="meta">這次播放沒有涵蓋整首（靜音、跳轉或換音色），不能記錄；請從頭完整播放一次。</p>');
+  } else if (report?.rawMml) rows.push('<p class="meta">從頭完整播放一次（不靜音、不跳轉、不換音色），結束後可記錄回讀。</p>');
+  if (!used) rows.push('<p class="note">Gate 6 只在專案設定「本次是否使用驗證播放器？」選「有使用」時採用回讀。變更設定會讓 revision 前進，之後需要重新完整播放。</p>');
+  if (workspace?.playerReadback) rows.push('<div class="actions"><button type="button" id="clear-readback" class="quiet">移除回讀紀錄</button></div>');
+  return `<div class="readback" id="player-readback"><div class="attempt-head"><h4>播放器實際回讀（Gate 6）</h4>${gate ? badge(gate.status) : ''}</div>
+    ${gate?.reason ? `<p class="meta"><code>${esc(gate.reason)}</code></p>` : ''}${rows.join('')}
+    <p class="meta">回讀只證明這個播放器載入並處理了這份 exact MML 的每個音符（範圍：${esc('processed_engine_events_not_hardware_audio')}）。它不是硬體錄音，不代表遊戲音色，也不是實機接受。</p></div>`;
+}
 function timbrePreviewCard() {
   const song = report?.technical?.ok ? report.technical.song : null;
-  const ready = Boolean(appliedDelivery() && song);
+  const ready = Boolean(report?.rawMml && song);
   const bank = preview.bank;
   const bankLine = bank === undefined ? '讀取音色庫中…' : bank ? `${esc(bank.name)} · ${bytesLabel(bank.size)} · <code class="digest">sha256 ${esc(bank.sha256.slice(0, 16))}…</code>` : '尚未選擇音色庫';
   const programs = preview.engine?.presets ?? [];
   return `<div class="card preview-card" id="timbre-preview"><div class="attempt-head"><h3>遊戲音色試聽</h3><span class="badge na">模擬試聽</span></div>
-    <p class="note">用你在這台裝置選取的音色庫播放目前套用的 Final MML。這是<strong>聆聽輔助</strong>：不是實機驗收，也不會通過「播放器實際回讀」Gate。音色庫只存在這台裝置的瀏覽器，不會上傳，也不會進入專案備份。</p>
+    <p class="note">用你在這台裝置選取的音色庫播放目前的交付 MML。這是<strong>聆聽輔助</strong>，不是實機驗收；光是播放不會通過任何 Gate。音色庫只存在這台裝置的瀏覽器，不會上傳，也不會進入專案備份。</p>
     <div class="preview-bank"><span class="meta" id="bank-status">${bankLine}</span><label class="file-button secondary">${bank ? '更換音色庫' : '選擇音色庫'}<input type="file" id="bank-file" accept=".dls,.sf2,.sf3" aria-label="選擇音色庫檔案"></label>${bank ? '<button type="button" id="bank-clear" class="quiet">移除音色庫</button>' : ''}</div>
-    ${ready ? '' : '<p class="empty">需先有通過驗證並已套用的 Final MML，才能試聽。</p>'}
+    ${ready ? '' : '<p class="empty">需先有通過驗證、且與候選一致的交付 MML，才能試聽。</p>'}
     <div class="preview-controls"><label>音色<select id="preview-program" ${programs.length ? '' : 'disabled'}>${programs.length ? programs.map(p => `<option value="${p.program}" ${p.program === preview.program ? 'selected' : ''}>${esc(String(p.program + 1).padStart(3, '0'))} ${esc(p.name)}</option>`).join('') : '<option>按播放後載入音色清單</option>'}</select></label>
       <button type="button" id="preview-play" ${ready && bank ? '' : 'disabled'}>${preview.busy ? '載入中…' : '▶ 播放'}</button><button type="button" id="preview-stop" class="secondary" ${preview.transport?.playing ? '' : 'disabled'}>■ 停止</button>
       <input type="range" id="preview-seek" min="0" max="1000" value="0" aria-label="播放位置" ${ready && bank ? '' : 'disabled'}><span class="meta" id="preview-time">${clock(preview.position)} / ${clock(preview.transport?.duration ?? 0)}</span></div>
     <div class="preview-roles" role="group" aria-label="試聽角色">${roles.map((role, i) => `<label><input type="checkbox" data-preview-role="${i}" ${preview.muted[i] ? '' : 'checked'}> ${role}</label>`).join('')}</div>
-    ${preview.error ? `<p class="note">${esc(preview.error)}</p>` : ''}</div>`;
+    ${preview.error ? `<p class="note">${esc(preview.error)}</p>` : ''}
+    ${ready ? readbackBlock() : ''}</div>`;
 }
 function bindTimbrePreview() {
   const card = $('#timbre-preview');
@@ -891,12 +926,13 @@ function bindTimbrePreview() {
   if (!preview.bankChecked) loadStoredBankInfo();
   const song = report?.technical?.ok ? report.technical.song : null;
   const songKey = song ? report.rawMml : null;
+  const time = () => { const el = $('#preview-time'); if (el) el.textContent = `${clock(preview.position)} / ${clock(preview.transport?.duration ?? 0)}${preview.transport?.playing ? ` · 發聲 ${preview.voices}` : ''}`; };
   if (preview.transport && songKey !== preview.songKey) {
     preview.transport.load(song);
     preview.songKey = songKey;
     preview.position = 0;
+    time();
   }
-  const time = () => { const el = $('#preview-time'); if (el) el.textContent = `${clock(preview.position)} / ${clock(preview.transport?.duration ?? 0)}${preview.transport?.playing ? ` · 發聲 ${preview.voices}` : ''}`; };
   const seek = () => { const el = $('#preview-seek'); if (el && preview.transport?.duration) el.value = String(Math.round((preview.position / preview.transport.duration) * 1000)); };
   const fail = error => { preview.error = error.message; preview.busy = false; message(error.message, true); refreshPreview(); };
   const ensureEngine = async () => {
@@ -908,7 +944,16 @@ function bindTimbrePreview() {
     preview.engine = await createPreviewEngine(bank, preview.context);
     preview.transport = createTransport(preview.engine, {
       onPosition: (position, duration, voices = 0) => { preview.position = position; preview.voices = voices; time(); seek(); },
-      onEnd: () => { preview.position = 0; refreshPreview(); },
+      onEnd: capture => {
+        preview.position = 0;
+        const binding = preview.playBinding;
+        preview.playBinding = null;
+        if (capture && binding) {
+          try { preview.lastCapture = { binding, capture, comparison: compareReadback(report.technical.song, normalizeCapture(capture)) }; }
+          catch (error) { preview.lastCapture = null; preview.error = `回讀無法使用：${error.message}`; }
+        }
+        refreshPreview();
+      },
     });
     const lute = preview.engine.presets.find(p => /lute/i.test(p.name));
     preview.program ??= (lute ?? preview.engine.presets[0]).program;
@@ -931,6 +976,7 @@ function bindTimbrePreview() {
       await ensureEngine();
       if (preview.songKey !== songKey) { preview.transport.load(song); preview.songKey = songKey; }
       preview.busy = false;
+      preview.playBinding = preview.position === 0 ? { workspaceId: workspace.id, revision: workspace.revision, exactMml: songKey } : null;
       await preview.transport.play(preview.position);
       refreshPreview();
     } catch (error) {
@@ -939,7 +985,20 @@ function bindTimbrePreview() {
       fail(error);
     }
   };
-  $('#preview-stop').onclick = () => { preview.transport?.stop(); preview.position = 0; refreshPreview(); };
+  $('#preview-stop').onclick = () => { preview.transport?.stop(); preview.position = 0; preview.playBinding = null; refreshPreview(); };
+  const record = $('#record-readback');
+  if (record) record.onclick = () => {
+    const last = currentCapture();
+    if (!last) return message('回讀已不是目前的內容，請重新完整播放一次', true);
+    run(async () => {
+      await commit(await call('recordPlayerReadback', workspace, last.capture, last.binding));
+      preview.lastCapture = null;
+      refreshPreview();
+      message(report.gates.playerReadback?.status === 'PASS' ? '已記錄播放器實際回讀；Gate 6 通過。' : `已記錄播放器實際回讀；Gate 6 仍待處理：${report.gates.playerReadback?.reason ?? ''}`);
+    });
+  };
+  const clearReadback = $('#clear-readback');
+  if (clearReadback) clearReadback.onclick = () => run(async () => { await commit(await call('clearPlayerReadback', workspace)); message('已移除播放器回讀紀錄。'); });
   $('#preview-seek').onchange = event => {
     const duration = preview.transport?.duration ?? 0;
     preview.position = (Number(event.target.value) / 1000) * duration;

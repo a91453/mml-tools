@@ -192,7 +192,8 @@ exact timing, event identity and the evidence boundaries. See
     paste box shows per-role counts with the P1 disclaimer.
 - **Timbre preview** (section 06; `preview/player.mjs`, `preview/schedule.mjs`,
   `preview/soundbank-store.mjs`).
-  - **What it plays.** The applied Final MML, played through SpessaSynth with a
+  - **What it plays.** The current delivery MML (generated, pasted, or a
+    candidate that is itself valid MML), played through SpessaSynth with a
     DLS/SF2/SF3 bank you pick on your device.
   - **Where the bank lives.** In its own IndexedDB database on that device. It
     is never uploaded, never in a project backup, and never in the build.
@@ -204,8 +205,34 @@ exact timing, event identity and the evidence boundaries. See
     and only the resulting times become floats. Volume and channel mapping
     follow the owner's MML 工房 player. Per-role mute and live instrument
     switching are supported.
-  - **What it is not.** It is a listening aid, not in-game acceptance, and it
-    does not satisfy the player-readback gate.
+  - **What it is not.** It is a listening aid, not in-game acceptance.
+    Playing it passes no gate.
+- **Player readback** (Gate 6; `preview/readback.mjs`).
+  - **What is captured.** A playback that starts at the beginning records every
+    note and program event the SpessaSynth worklet reports as processed, with
+    the worklet's own audio clock. A seek, a stop, a muted role or an
+    instrument switch makes the capture incomplete, and an incomplete capture
+    cannot be recorded.
+  - **Recording.** Only on 「記錄為播放器實際回讀」, only when the project
+    declares that a verification player was used, and only for the project,
+    revision and exact delivery string that were playing. It is stored with
+    the bank name and SHA-256, the program, the engine versions and
+    `scope: processed_engine_events_not_hardware_audio`,
+    `gameTimbreEquivalent: false`.
+  - **Verdict.** Every analysis parses the exact delivery string again and
+    compares, per channel, the order, pitch and velocity of every note on and
+    off exactly, and the timing within 25 ms of the exact tempo-map time. The
+    expected events are derived without the preview scheduler, so a scheduling
+    fault is a mismatch. A stored verdict is never read.
+  - **Gate.** PASS needs a matching readback and a current Tempo review. The
+    N/A path is unchanged (no player declared, Tempo reviewed). Anything else,
+    including a mismatch, is PENDING. A new revision, a new delivery string or
+    an import drops the readback (an import keeps it as history only).
+  - **What it is not.** It is not a hardware recording, not a proof that
+    anyone listened, not the game's timbre and not in-game acceptance.
+  - **Order of work.** Gate 6 blocks Final generation, so with a player
+    declared the readback is of a pasted delivery, or of a candidate that is
+    itself valid MML.
 - **Release updates** (`pwa-update.mjs`, `sw.js`).
   - **Download.** Install fetches bypass the HTTP cache, so a new release can
     never be stored with an older module.
@@ -316,9 +343,11 @@ persistence, scope and remaining work.
   pitch 107 remain source evidence but cannot pass Final delivery while unverified.
 - The built-in Core3 continuity report is only a source-relative diagnostic.
   Musical Core3/Lead/Full6 completeness requires separate explicit review.
-- This v1 does not implement a verification player. If one was used, the actual
-  readback gate remains PENDING. Only explicitly declaring that no preview/player
-  was used, with the Tempo review, makes that conditional gate N/A.
+- The verification player is the section 06 preview. If one was used, the
+  readback gate stays PENDING until a complete playback of the exact delivery
+  string is recorded and matches, with the Tempo review current. Declaring
+  that no preview/player was used, with the Tempo review, still makes that
+  conditional gate N/A.
 - Named historical-song regressions without reproducible fixtures remain
   `FIXTURE_PENDING`. Synthetic tests never certify those songs.
 

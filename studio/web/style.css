@@ -94,3 +94,6 @@ code.digest,.facts dd code,table code{font-family:ui-monospace,SFMono-Regular,Me
 .save-state{font-size:12px;font-weight:700;margin:14px 0 2px}
 .save-state.ok{color:#21613d}
 .save-state.warn{color:#943a30}
+/* Player readback block (preview/readback.mjs). */
+.readback{border-top:1px solid var(--line,#d9ddd5);margin-top:14px;padding-top:12px}
+.readback h4{margin:0;font-size:14px}
