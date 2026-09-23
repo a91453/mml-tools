@@ -431,6 +431,21 @@ export function createApiRouter({ application, ownerOf, challenge = null, agentD
     ['POST', /^\/projects\/([^/]+)\/proposals\/([^/]+)\/resolve$/, async (m, request, owner) =>
       json(await application.resolveProposal(owner, m[1], m[2], await readJson(request)))],
 
+    // ── audio prescreen ─────────────────────────────────────────────────────
+    //
+    // The same operations the `studio_audio_prescreen` and
+    // `studio_prescreen_shadow_record` tools reach. Computing a prescreen is a
+    // POST because it takes a body, not because it writes: it writes no record.
+    // Only the shadow POST writes, and only the project's calibration record.
+    ['POST', /^\/audio-prescreen$/, async (_m, request, owner) =>
+      json(await application.audioPrescreen(owner, null, await readJson(request)))],
+    ['POST', /^\/projects\/([^/]+)\/audio-prescreen$/, async (m, request, owner) =>
+      json(await application.audioPrescreen(owner, m[1], await readJson(request)))],
+    ['GET', /^\/projects\/([^/]+)\/audio-prescreen\/shadow$/, async (m, _r, owner) =>
+      json(await application.prescreenShadowStatus(owner, m[1]))],
+    ['POST', /^\/projects\/([^/]+)\/audio-prescreen\/shadow$/, async (m, request, owner) =>
+      json(await application.recordPrescreenShadow(owner, m[1], await readJson(request)))],
+
     ['GET', /^\/projects\/([^/]+)\/jobs$/, async (m, _r, owner) => json(await application.listJobs(owner, m[1]))],
     ['GET', /^\/jobs\/([^/]+)$/, async (m, _r, owner) => json(await application.getJob(owner, m[1]))],
     ['GET', /^\/artifacts\/([^/]+)$/, async (m, _r, owner) => json(await application.getArtifact(owner, m[1]))],

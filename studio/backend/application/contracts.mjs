@@ -312,6 +312,12 @@ export const ERROR_CODES = freeze({
   FORBIDDEN: 'FORBIDDEN',
   PAYLOAD_TOO_LARGE: 'PAYLOAD_TOO_LARGE',
   STORAGE_FULL: 'STORAGE_FULL',
+  // The audio prescreen's GM sound bank. It is downloaded on first need from
+  // one pinned URL and verified; a bank that cannot be obtained, or whose
+  // bytes are not the pinned bytes, is refused rather than used.
+  AUDIO_BANK_UNAVAILABLE: 'AUDIO_BANK_UNAVAILABLE',
+  AUDIO_BANK_HASH_MISMATCH: 'AUDIO_BANK_HASH_MISMATCH',
+  AUDIO_RENDER_FAILED: 'AUDIO_RENDER_FAILED',
 });
 
 // Transport-neutral severity. The HTTP adapter maps these to status codes and
@@ -345,6 +351,9 @@ export const ERROR_HTTP_STATUS = freeze({
   [ERROR_CODES.FORBIDDEN]: 404,
   [ERROR_CODES.PAYLOAD_TOO_LARGE]: 413,
   [ERROR_CODES.STORAGE_FULL]: 507,
+  [ERROR_CODES.AUDIO_BANK_UNAVAILABLE]: 503,
+  [ERROR_CODES.AUDIO_BANK_HASH_MISMATCH]: 503,
+  [ERROR_CODES.AUDIO_RENDER_FAILED]: 500,
 });
 
 // `FORBIDDEN` maps to 404 on purpose. A caller who names a record they do not

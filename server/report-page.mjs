@@ -7,7 +7,7 @@ export const PAGED_REPORT_TOOLS = new Set([
   'studio_project_get', 'studio_baseline_events', 'studio_arrangement_suggest',
   'studio_final_reduction_plan', 'studio_mobile_adaptation_plan', 'studio_candidate_review',
   'studio_run_plan', 'studio_run_status', 'studio_run_next', 'studio_proposal_targets',
-  'studio_proposal_status', 'studio_job_status', 'studio_artifact_get',
+  'studio_proposal_status', 'studio_job_status', 'studio_artifact_get', 'studio_audio_prescreen',
 ]);
 
 export const REPORT_PAGE_SCHEMA = {

@@ -130,7 +130,12 @@ test('with an Application Service the studio control surface is advertised', asy
   // apart: merging them would make submitting a proposal into accepting it,
   // which is precisely the escalation the design refuses.
   // One additional read-only continuation projection; no new mutation engine.
-  assert.ok(tools.length <= 30, 'the surface must stay small enough for a model to reason about');
+  //
+  // The audio prescreen adds two: the read-only prescreen (which also reads
+  // the shadow calibration record) and the one write that records a
+  // prediction or the owner's choice. They are two for the reason the run and
+  // proposal tools are: a read must not share a tool with a write.
+  assert.ok(tools.length <= 32, 'the surface must stay small enough for a model to reason about');
 });
 
 // Every Application Service operation a reviewer has to reach, and the tool that

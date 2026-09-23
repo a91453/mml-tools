@@ -147,6 +147,12 @@ export function buildCapabilities({ canonical, storage, jobs, transports = [] })
       // as an explicitly labelled diagnostic whose PASS is not a Canonical PASS.
       canonical_technical_validation: true,
       legacy_technical_diagnostic: true,
+      // 音色 A/B 預篩: machine evidence only. It selects nothing, and
+      // nothing applies its verdicts (the rule that would is an unpublished
+      // draft). Shadow mode records predictions and the owner's choices.
+      audio_prescreen: true,
+      audio_prescreen_shadow_record: true,
+      automatic_prescreen_selection: false,
       in_game_test: false,
     }),
 
@@ -362,6 +368,27 @@ export function buildCapabilities({ canonical, storage, jobs, transports = [] })
       notice: 'mobile_adaptation, regression, core3_completeness and audio can reach PASS only from explicit candidate-bound evidence-backed Gate 8 / Gate 9 / Gate 4 / Gate 7 reviews, each of which requires at least one evidence reference (audio additionally requires warning-free alignment evidence, and its review is bound to the active audio evidence revision); parser/emitter/test success does not upgrade them. The Core3 source-continuity axis moves only through per-change evidence-backed approvals, and the Lead axes only through the shared Lead grader re-run over a cited evidence record — a Lead approval is never a Core3 approval and neither axis of Gate 4 answers the other. in_game is recorded only by the user or a controlled target-client test. No parser, emitter, transport, job or model call can set in_game, so it stays PENDING.',
     }),
 
+    audio_prescreen: freeze({
+      report_schema: 'mml-studio/audio-prescreen-report@1',
+      shadow_schema: 'mml-studio/audio-prescreen-shadow@1',
+      operations: freeze(['audioPrescreen', 'prescreenShadowStatus', 'recordPrescreenShadow']),
+      read_only_operations: freeze(['audioPrescreen', 'prescreenShadowStatus']),
+      alternatives: '2-4: raw six-role MML, or a project candidate or Final artifact',
+      metrics: freeze(['roughness (low/mid, source-inherited pairs excluded)', 'masking', 'smear', 'clipping', 'original_similarity (WAV/PCM recordings with active alignment only)']),
+      verdicts: freeze(['OBVIOUS', 'NEEDS_HUMAN', 'NO_DIFFERENCE']),
+      sound_bank: freeze({
+        name: 'FluidR3Mono GM (SF3), MIT',
+        sha256: 'cfcd66d89e8386823400eca64934b14fbea7bf48ba1f00d21189af1262794ec2',
+        stored_in_repository_or_image: false,
+        obtained: 'downloaded once on first need from one pinned URL, verified by SHA-256 and size, cached in the service data directory',
+        is_game_timbre: false,
+      }),
+      sets_gates: false,
+      never_sets: freeze(['audio (Gate 7)', 'player_readback (Gate 6)', 'in_game']),
+      automatic_selection: false,
+      notice: 'Machine prescreen evidence only. An OBVIOUS verdict selects, accepts and applies nothing; the draft rule that would let one be applied provisionally (docs/canonical-candidates/MACHINE_PRESCREEN_SELECTION.md) is unpublished.',
+    }),
+
     audio: freeze({
       role: AUDIO_WORKER_ROLE,
       produces: freeze(['beat_seconds_control_points', 'tempo_drift_diagnostics', 'alignment_confidence', 'coverage_metrics']),
@@ -379,6 +406,9 @@ export function buildCapabilities({ canonical, storage, jobs, transports = [] })
       uploaded_assets_leave_this_service: false,
       reads_conversation_history: false,
       calls_external_analysis_services: false,
+      // The one outbound request: the audio prescreen's pinned, public sound
+      // bank, fetched without any project data and verified by SHA-256.
+      outbound_downloads: freeze(['audio prescreen GM sound bank (pinned URL, SHA-256 verified, no project data sent)']),
       notice: 'Project assets are processed by this service and the existing Studio backend only.',
     }),
   });

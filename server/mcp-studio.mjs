@@ -50,6 +50,7 @@ const structuredPayload = description => ({ type: 'object', additionalProperties
 // audit is answered by `studio_core3_change_approve`, one change at a time, and
 // the musical-completeness review is answered here, and neither is the other.
 import { LIMITS, PROPOSAL_KIND_NAMES, PROPOSAL_STATE_NAMES, RESOLUTION_NAMES } from '../studio/backend/application/index.mjs';
+import { GAME_INSTRUMENTS, GAME_INSTRUMENT_IDS } from '../studio/backend/audio/instruments.mjs';
 import { PAGED_REPORT_TOOLS, REPORT_PAGE_SCHEMA, validateReportPage, readReportPage } from './report-page.mjs';
 import { compactStudioResponse } from './mcp-compaction.mjs';
 
@@ -77,6 +78,42 @@ const RELEASE_REPRESENTATION_DESCRIPTION = '選填：Final 無法表示的 relea
   + 'attestation 只是提交者的 provenance（稽核紀錄），不影響證據等級：人類、對話式 AI、工具提交同一份證據，結果完全相同。證據生效的條件是：引用本專案真的持有、且與第三方檔案不同位元組的獨立 primary 來源（官方譜／官方 MIDI，或原曲音訊），basis 為 direct-source-review（直接審閱該來源本身，例如譜面寫的時值、錄音在 locator 處的延音／斷奏），並附 locator 與 finding。'
   + 'machine-metric／alignment-locator（SOURCE_POLICY §6 只是定位）、encoding-pattern、imported-assertion、第三方、工具輸出只會記錄、不計入，並保持 PENDING；不要把自己沒有實際審閱的來源標成 direct-source-review。來源 release 永遠保留在 baseline 與事件紀錄，onset／音高／角色不動，不加 tie、不合併重複音。傳 {decisions:[]} 可只取得逐 release 的分析與 releaseEvidenceRequirement（依本專案現有來源列出能解決的證據）。';
 const RUN_FINALIZE_DESCRIPTION = 'finalize 選項：technical_timing_repair（明確 opt-in，預設 false，沒有自動模式）、pickup、final_partial（來源確認的弱起拍與末小節拍長，不會自行推測）。';
+
+// The audio prescreen's inputs, shared by the read-only prescreen and the
+// shadow-record write so the two cannot describe the same request differently.
+const PRESCREEN_NOTICE_TEXT = '預篩結果只是機器證據：不設定 Gate 7（原曲音訊證據）、不設定玩家回讀（Gate 6 player_readback）、不設定 in_game，也不選定、接受或套用任何版本。免費 GM 音色（FluidR3Mono，首次需要時由服務下載並以 SHA-256 驗證）不是遊戲音色。';
+const prescreenMml = { type: 'string', minLength: 1, maxLength: 16384, description: '完整六軌 MML@...,...,...,...,...,...; 原文；本工具不改寫。' };
+const prescreenInstruments = {
+  type: 'array', minItems: 6, maxItems: 6, items: { type: 'string', enum: [...GAME_INSTRUMENT_IDS] },
+  description: `六角色（Melody、Chord1–Chord5）各自的遊戲樂器，以 GM 音色近似：${GAME_INSTRUMENTS.map(item => `${item.id} ${item.label}=${item.drumNotes ? `GM 鼓 ${item.drumNotes[0]}` : `GM ${item.program}`}`).join('、')}。省略時六角色皆為 lute。`,
+};
+const prescreenProperties = {
+  alternatives: {
+    type: 'array', minItems: 2, maxItems: 4,
+    description: '2–4 個替代版本，每個恰好指定 mml、candidate_id 或 artifact_id 其中之一（後兩者需 project_id）；label 選填（預設 A、B、C、D）；instruments 選填，覆寫共用的 instruments。',
+    items: {
+      type: 'object', additionalProperties: false,
+      properties: {
+        label: { type: 'string', minLength: 1, maxLength: 16 },
+        mml: prescreenMml,
+        candidate_id: candidateId,
+        artifact_id: { type: 'string', minLength: 68, maxLength: 68, description: 'Final artifact（art_ 開頭），使用其已交付的 MML 與拍號圖。' },
+        instruments: prescreenInstruments,
+      },
+    },
+  },
+  meter_text: { type: 'string', minLength: 1, maxLength: 2048, description: '來源確認的拍號圖，每行「起拍 拍號」。有 MML 替代版本時必填；候選／artifact 未提供時沿用其自身拍號圖。不可假定 4/4。' },
+  pickup: { type: 'string', minLength: 1, maxLength: 32, description: '來源確認的弱起拍長；沒有時省略。' },
+  instruments: prescreenInstruments,
+  bar_range: { type: 'object', additionalProperties: false, required: ['from'], properties: { from: { type: 'integer', minimum: 1, maximum: 10000 }, to: { type: 'integer', minimum: 1, maximum: 10000 } }, description: '選填：只預篩第 from–to 小節（依拍號圖編號）。' },
+  reference: {
+    type: 'object', additionalProperties: false,
+    properties: { mml: prescreenMml, candidate_id: candidateId },
+    description: '來源忠實度的參照：mml（無專案時的來源 MML）或 candidate_id（本專案已接受的候選）。專案中省略時使用 Source-Faithful Baseline。沒有參照時，替代版本符號內容不同的小節一律 NEEDS_HUMAN（SOURCE_FIDELITY_UNAVAILABLE）。',
+  },
+  thresholds: structuredPayload('選填：覆寫預設門檻，例如 {"roughness":{"margin_abs":0.004}}；鍵為 roughness／masking／smear／clipping／original_similarity，欄位為 margin_abs／margin_rel／tolerance_abs／tolerance_rel。門檻變更會改變 thresholds.id 與 report_id。'),
+  render: { type: 'object', additionalProperties: false, properties: { sample_rate: { type: 'integer', minimum: 22050, maximum: 44100 }, channels: { type: 'integer', minimum: 1, maximum: 2 } }, description: '選填：22050 或 44100 Hz，單聲道 1 或立體聲 2（預設 22050／1）。' },
+};
 
 export const STUDIO_MCP_TOOLS = [
   {
@@ -523,6 +560,40 @@ export const STUDIO_MCP_TOOLS = [
     annotations: writes,
   },
   {
+    name: 'studio_audio_prescreen',
+    title: '音色 A/B 預篩（唯讀）',
+    description: '把 2–4 個替代版本（MML 原文，或本專案的候選／Final artifact）以同一套免費 GM 音色渲染，逐小節比較：低中音粗糙度（感官不協和，指出是哪一對音，例如某個低音小二度；來源本來就有的不協和只回報、不計入勝差）、角色遮蔽／可聽度、衰減拖尾、削波／峰值，以及專案有原曲音訊且有 active 對位證據時與原曲的相似度（目前只讀 WAV／PCM，其他格式回報 ORIGINAL_AUDIO_METRIC_UNAVAILABLE）。'
+      + '只有每一項適用指標都指向同一個勝者、各自勝差超過門檻、勝者在其他指標上不比最好的差超過容許值、而且勝者離來源不比其他版本遠時，該小節才是 OBVIOUS；否則是 NEEDS_HUMAN 並附理由（METRICS_CONFLICT／MARGIN_TOO_SMALL／METRIC_UNAVAILABLE／SOURCE_FIDELITY_TRADEOFF／SOURCE_FIDELITY_UNAVAILABLE），human_review 列出要 A/B 試聽的小節與版本（listen_link 目前為 null）。'
+      + '報告含每個版本的 MML SHA-256、音色庫與渲染器身分、門檻 id 與 report_id；相同輸入得到相同報告。不寫入任何專案紀錄。'
+      + '只帶 project_id、不帶其他欄位時，改為回傳本專案的 shadow 校準紀錄與逐指標／逐類別一致率。'
+      + PRESCREEN_NOTICE_TEXT,
+    inputSchema: { type: 'object', properties: { project_id: projectId, ...prescreenProperties }, additionalProperties: false },
+    annotations: readOnly,
+  },
+  {
+    name: 'studio_prescreen_shadow_record',
+    title: '預篩 shadow 校準紀錄',
+    description: 'Shadow 模式：只寫入本專案的預篩校準紀錄（服務資料目錄，不是專案或 repo）。entry=prediction 時以與 studio_audio_prescreen 相同的欄位由服務重新計算並記錄預測（同一份報告重複記錄不會重複）；entry=owner_choice 時記錄擁有者對某個預測區段實際選了哪個版本（prediction_id、region_id、chosen 為版本 label 或 NO_PREFERENCE、accepted_by 必填、reason 選填），之後的紀錄取代同一區段的舊選擇但保留歷史。'
+      + '回傳逐指標與逐類別的一致率。這些紀錄不是任何 gate 的證據，也不會自動套用任何版本；自動套用只在擁有者發布對應的 Canonical 規則後才可能存在，目前沒有。'
+      + PRESCREEN_NOTICE_TEXT,
+    inputSchema: {
+      type: 'object',
+      properties: {
+        project_id: projectId,
+        entry: { type: 'string', enum: ['prediction', 'owner_choice'] },
+        ...prescreenProperties,
+        prediction_id: { type: 'string', minLength: 36, maxLength: 36, description: 'entry=owner_choice：先前記錄的 prediction_id（psp_ 開頭）。' },
+        region_id: { type: 'string', minLength: 1, maxLength: 40, description: 'entry=owner_choice：該預測中的 region_id，例如 bars-12-15。' },
+        chosen: { type: 'string', minLength: 1, maxLength: 16, description: 'entry=owner_choice：擁有者實際選的版本 label，或 NO_PREFERENCE。' },
+        accepted_by: { type: 'string', minLength: 1, maxLength: 120, description: 'entry=owner_choice 必填：做出選擇的人。' },
+        reason: { type: 'string', minLength: 1, maxLength: 500 },
+      },
+      required: ['project_id', 'entry'],
+      additionalProperties: false,
+    },
+    annotations: writes,
+  },
+  {
     name: 'studio_job_status',
     title: '工作狀態',
     description: '以 job_id 查詢工作狀態與狀態轉換紀錄。本版本工作為同步執行，取得 job_id 時已是終態；能力查詢中的 background_execution 為 false。',
@@ -689,6 +760,18 @@ async function dispatchStudioTool(name, args, { application, owner }) {
         : application.getProposal(owner, args.project_id, args.proposal_id);
     case 'studio_proposal_resolve':
       return application.resolveProposal(owner, args.project_id, args.proposal_id, proposalResolveInput(args));
+    case 'studio_audio_prescreen': {
+      const { project_id, report_page, ...input } = args;
+      // With only a project id there is nothing to compare, so the project's
+      // shadow calibration record is the answer, as a list read is for the
+      // other status tools.
+      if (project_id !== undefined && !Object.keys(input).length) return application.prescreenShadowStatus(owner, project_id);
+      return application.audioPrescreen(owner, project_id ?? null, input);
+    }
+    case 'studio_prescreen_shadow_record': {
+      const { project_id, ...input } = args;
+      return application.recordPrescreenShadow(owner, project_id, input);
+    }
     case 'studio_job_status':
       return application.getJob(owner, args.job_id);
     case 'studio_artifact_get':
