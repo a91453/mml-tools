@@ -368,8 +368,58 @@ test('LRA-11 no backend, transport or script source keys evidence authority on a
       if (!/\.mjs$/.test(name)) continue;
       const text = readFileSync(path, 'utf8');
       if (/reviewer_kind\s*[!=]==?\s*['"]human['"]|['"]human['"]\s*[!=]==?\s*[\w.?]*reviewer_kind|HUMAN_ATTESTED/.test(text)) offenders.push(path);
+      // Where evidence is graded, no comparison against an actor kind or an
+      // actor-prefixed identity may appear at all.
+      if (path.includes(`${join('studio', 'backend')}`) && /['"](?:human|agent|tool)['"]\s*[!=]==?|[!=]==?\s*['"](?:human|agent|tool)['"]|startsWith\(\s*['"](?:human|agent|user|tool):?['"]/.test(text)) offenders.push(`${path} (actor comparison)`);
     }
   };
   for (const dir of ['studio/backend', 'server', 'scripts']) if (existsSync(join(repository, dir))) walk(join(repository, dir));
   assert.deepEqual(offenders, []);
+});
+
+test('LRA-12 an audio classification whose method is not a direct review never counts, however availability is written', async () => {
+  // Submitted: an audio classification with availability null is available and
+  // classified, exactly as the grader reads it, so `not-used` is refused.
+  {
+    const { service, projectId, candidateId } = await stalePromotion();
+    const shape = promotionEvidence('chord3-1', { scoreEvidence: { availability: 'unavailable' }, audioEvidence: { availability: null, classification: 'foreground', citation: 'CQT salience', ref: CITED.audio } });
+    await assert.rejects(() => service.reviewLeadEvidence(OWNER, projectId, { candidateId, review: review(submitter('tool', 'not-used'), { lead_evidence: shape }) }), /cannot be not-used/);
+  }
+  // Stored or hand-edited: the same inconsistent entry is graded as a metric.
+  const dir = mkdtempSync(join(tmpdir(), 'lra12-'));
+  try {
+    const { service, projectId, candidateId } = await stalePromotion(dir);
+    const store = createStore({ directory: dir, durability: 'persistent' });
+    const record = store.readProjectRecord(projectId);
+    const key = `lead-evidence-reviews:${projectId}:${candidateId}`;
+    const entry = {
+      event_id: 'chord3-1', axis: 'promotion', reason: 'tampered', evidence: ['e'], origin_event_id: 'chord3-1', baseline_id: record.baseline.baseline_id, candidate_id: candidateId, at: '2026-09-23T00:00:00.000Z',
+      lead_context_digest: leadContextDigestOf(store.getJson(`application:${projectId}:${candidateId}`).candidate),
+      lead_evidence: promotionEvidence('chord3-1', { scoreEvidence: { availability: 'unavailable' }, audioEvidence: { availability: null, classification: 'foreground', citation: 'CQT salience', ref: CITED.audio, basis: 'listening' } }),
+    };
+    for (const attestation of [submitter('human', 'not-used'), submitter('agent', 'not-used'), submitter('human', 'machine-metric')]) {
+      store.putJson(key, [{ ...entry, attestation }]);
+      const report = reportFor((await service.reviewCandidate(OWNER, projectId, { candidateId })).review.lead_promotion, 'chord3-1');
+      assert.equal(report.status, 'PENDING', JSON.stringify(attestation));
+      assert.ok(report.warnings.includes(AUDIO_METRIC_NOT_ROLE_EVIDENCE));
+    }
+    // Stated as a direct review, the same entry is positive evidence, for anyone.
+    store.putJson(key, [{ ...entry, attestation: submitter('agent', 'listening') }]);
+    assert.equal(reportFor((await service.reviewCandidate(OWNER, projectId, { candidateId })).review.lead_promotion, 'chord3-1').status, 'PASS');
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test('LRA-13 a caller cannot declare its own source authority: every classified citation is resolved again', async () => {
+  const { service, projectId, candidateId } = await stalePromotion();
+  const claimed = promotionEvidence('chord3-1', {
+    scoreEvidence: { availability: 'available', classification: 'lead', citation: 'cover top line', ref: CITED.thirdParty, sourceAuthority: 'primary' },
+    audioEvidence: { availability: 'unavailable' },
+  });
+  const recorded = await service.reviewLeadEvidence(OWNER, projectId, { candidateId, review: review(submitter('agent', 'not-used'), { lead_evidence: claimed }) });
+  assert.equal(recorded.evidence_sources.score.sourceAuthority, 'supporting');
+  assert.equal(recorded.report.status, 'PENDING');
+  const after = (await service.reviewCandidate(OWNER, projectId, { candidateId })).review;
+  assert.equal(reportFor(after.lead_promotion, 'chord3-1').status, 'PENDING', 'and from the stored record');
 });

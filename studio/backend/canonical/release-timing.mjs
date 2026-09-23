@@ -767,8 +767,6 @@ export function summarizeReleaseTiming(analysis) {
 
 const PRIMARY_SYMBOLIC_KINDS = new Set(['official-midi', 'official-musicxml']);
 const PRIMARY_AUDIO_KINDS = new Set(['original-audio']);
-// Kinds whose bytes cannot become independent primary evidence by relabelling.
-const SUPPORTING_KINDS = new Set(['third-party-midi', 'third-party-musicxml', 'current-mml', 'historical-mml', 'derived']);
 const normalizeKind = kind => (typeof kind === 'string' ? kind.trim().toLowerCase().replaceAll('_', '-') : null);
 
 /**
@@ -777,37 +775,56 @@ const normalizeKind = kind => (typeof kind === 'string' ? kind.trim().toLowerCas
  *
  * Evidence must resolve to bytes the project really holds. An uploaded asset
  * holds its own bytes. A Canonical source only names bytes: it holds them when
- * its SHA-256 equals an uploaded asset's, so a source an imported IR merely
- * declares (no digest, or a digest nothing uploaded matches) is never evidence.
- * A primary entry whose bytes are identical to a supporting entry is a
- * relabelled copy, not an independent source (for example a third-party MIDI
- * uploaded a second time as `official_midi`), and an entry whose bytes are
- * unknown cannot be shown independent either.
+ * its SHA-256 equals an uploaded asset's of a compatible kind (a score through
+ * an official score/MIDI asset, the recording through an original-audio
+ * asset), so a source an imported IR merely declares (no digest, a digest
+ * nothing uploaded matches, or audio bytes declared as a score) is never
+ * evidence. A primary entry whose bytes are identical to any non-primary file
+ * is a relabelled copy, not an independent source (a third-party MIDI uploaded
+ * again as `official_midi`, a Final MML or report uploaded as audio), and an
+ * entry whose bytes are unknown cannot be shown independent either. A source id
+ * that is also an asset id is ambiguous and resolves to nothing.
  */
 export function buildEvidenceRegistry({ assets = [], sources = [] } = {}) {
   const entries = [];
   const digest = value => (typeof value === 'string' && /^[0-9a-f]{64}$/i.test(value) ? value.toLowerCase() : null);
+  const isPrimaryKind = kind => PRIMARY_SYMBOLIC_KINDS.has(kind) || PRIMARY_AUDIO_KINDS.has(kind);
   for (const asset of assets) {
     if (!text(asset?.asset_id)) continue;
     const sha256 = digest(asset.sha256);
     entries.push({ ref: asset.asset_id, origin: 'asset', kind: normalizeKind(asset.kind), sha256, bytesHeld: sha256 !== null });
   }
-  const assetShas = new Set(entries.map(entry => entry.sha256).filter(Boolean));
+  const assetEntries = [...entries];
+  const assetRefs = new Set(assetEntries.map(entry => entry.ref));
+  // A source holds bytes only through an uploaded asset with the same digest
+  // and a compatible kind: a score through an official score/MIDI asset, the
+  // recording through an original-audio asset. Audio bytes are never a score.
+  const backedBy = (sha256, kind) => sha256 !== null && assetEntries.some(asset => asset.sha256 === sha256
+    && (PRIMARY_SYMBOLIC_KINDS.has(kind) ? PRIMARY_SYMBOLIC_KINDS.has(asset.kind)
+      : PRIMARY_AUDIO_KINDS.has(kind) ? PRIMARY_AUDIO_KINDS.has(asset.kind) : true));
   for (const source of sources) {
     if (!text(source?.id)) continue;
+    // A source id that is also an asset id is ambiguous: neither is guessed.
+    if (assetRefs.has(source.id)) {
+      const index = entries.findIndex(entry => entry.ref === source.id);
+      entries[index] = { ref: source.id, origin: 'ambiguous', kind: 'ambiguous-reference', sha256: null, bytesHeld: false };
+      continue;
+    }
     const authority = typeof source.authority === 'string' ? source.authority : null;
     // A Canonical source is primary only when kind and authority agree; an
     // imported authority string cannot promote a supporting record.
     let kind = normalizeKind(source.kind);
     if ((PRIMARY_SYMBOLIC_KINDS.has(kind) && authority !== 'primary-symbolic') || (PRIMARY_AUDIO_KINDS.has(kind) && authority !== 'primary-audio')) kind = 'derived';
     const sha256 = digest(source.sha256);
-    entries.push({ ref: source.id, origin: 'source', kind, sha256, bytesHeld: sha256 !== null && assetShas.has(sha256) });
+    entries.push({ ref: source.id, origin: 'source', kind, sha256, bytesHeld: backedBy(sha256, kind) });
   }
-  const supportingShas = new Set(entries.filter(entry => SUPPORTING_KINDS.has(entry.kind) && entry.sha256).map(entry => entry.sha256));
+  // Bytes any non-primary file also has cannot be independent primary evidence:
+  // a relabelled third-party file, a Final MML or report uploaded as audio, ...
+  const nonPrimaryShas = new Set(entries.filter(entry => !isPrimaryKind(entry.kind) && entry.sha256).map(entry => entry.sha256));
   const byRef = new Map();
   for (const entry of entries) {
-    const primary = PRIMARY_SYMBOLIC_KINDS.has(entry.kind) || PRIMARY_AUDIO_KINDS.has(entry.kind);
-    const independent = primary ? entry.sha256 !== null && !supportingShas.has(entry.sha256) : true;
+    const primary = isPrimaryKind(entry.kind);
+    const independent = primary ? entry.sha256 !== null && !nonPrimaryShas.has(entry.sha256) : true;
     const resolved = { ...entry, primary, independent };
     byRef.set(entry.ref, Object.freeze({ ...resolved, sourceClass: evidenceSourceClassOf(resolved) }));
   }

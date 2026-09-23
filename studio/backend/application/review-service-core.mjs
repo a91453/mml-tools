@@ -679,7 +679,8 @@ export function createReviewService({ canonical, projects, intake, arrangement, 
         // What each classified citation's source may prove, resolved against the
         // project's sources now: only `primary` can be positive role evidence.
         evidence_sources: prepared.sources,
-        report: counted ? dryRun ?? null : before ?? null,
+        // Every filed review is graded, so the report is the gate with it.
+        report: dryRun ?? null,
         notice: 'A Lead evidence review re-supplies one citation for one already-applied Lead move on one candidate. It is graded by the shared Lead gate on its evidence — the cited source, the method and the finding — on every review and finalize, whoever submitted it; it carries no previous verdict forward and is not loaded for any other candidate. A third-party or unresolved citation, or an audio classification from a machine metric, is recorded and never positive role evidence.',
       });
     },

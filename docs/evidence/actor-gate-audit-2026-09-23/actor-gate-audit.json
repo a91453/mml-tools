@@ -6,28 +6,204 @@
     "canonical_status": "PUBLISHED",
     "rules_snapshot_sha": "0a172900a01fdf39c2e9e84cf176961320b779ea",
     "manifest_commit": "5e7666b850a37f1c85ee2dd8cd0f4fac037a9e14",
-    "actor_bound_rules_found": ["ACCEPTANCE_CRITERIA Gate 10: only the user or a controlled target-client test can set IN_GAME_ACCEPTED"],
+    "actor_bound_rules_found": [
+      "ACCEPTANCE_CRITERIA Gate 10: only the user or a controlled target-client test can set IN_GAME_ACCEPTED"
+    ],
     "reviewer_species_for_source_or_lead_evidence": "none named; SOURCE_POLICY §1/§4 grade sources, §6 limits machine metrics to locators"
   },
-  "search_terms": ["reviewer_kind", "HUMAN_ATTESTED", "human", "agent", "tool", "never_agent_settlable", "counted", "attestation", "acceptedBy", "accepted_by", "submitted_by", "proposed_by", "actor", "review authority", "human review", "human listening", "IN_GAME_ACCEPTED"],
+  "search_terms": [
+    "reviewer_kind",
+    "HUMAN_ATTESTED",
+    "human",
+    "agent",
+    "tool",
+    "never_agent_settlable",
+    "counted",
+    "attestation",
+    "acceptedBy",
+    "accepted_by",
+    "submitted_by",
+    "proposed_by",
+    "actor",
+    "review authority",
+    "human review",
+    "human listening",
+    "IN_GAME_ACCEPTED"
+  ],
   "findings": [
-    { "class": "A", "where": "application/contracts.mjs (in_game), final-service.mjs / review-service-core.mjs (inGameAcceptance: 'PENDING'), proposal-contracts.mjs NEVER_AGENT_SETTLABLE[0]", "what": "IN_GAME_ACCEPTED is set only by the user or a controlled target-client test; no service path sets it", "action": "kept", "pinned_by": ["RDR-4", "LRA-10", "RT-19b"] },
-    { "class": "C", "where": "canonical/release-timing.mjs gradeReleaseEvidence (first version)", "what": "release evidence counted only when attestation.reviewer_kind === 'human' (ATTESTATION_NOT_HUMAN_REVIEWER_EVIDENCE) and audio_basis === 'listening'", "action": "fixed in 39c4f26/970e820: provenance recorded, never graded; basis and source decide", "pinned_by": ["RT-8", "RT-9", "RT-9b", "RT-9c", "RT-9d", "RT-10", "RT-11", "RT-19", "RRA-1..6", "RDR-2", "RDR-3"] },
-    { "class": "C", "where": "application/lead-review-authority.mjs leadReviewAuthorityOf + review-service-core.mjs counted (main since f020b95)", "what": "Lead evidence reviews reached the shared Lead grader only when reviewer_kind === 'human' (HUMAN_ATTESTED); readiness Gate 3 (leadPromotion/leadDemotion) depended on it", "action": "fixed in ff83bad: every attested review is graded on its evidence; classified citations resolve (ref) against the project registry; only primary, held, independent sources prove a role", "pinned_by": ["LRA-3", "LRA-4", "LRA-5", "LRA-6", "LRA-8", "LRA-9", "LRA-11"] },
-    { "class": "C", "where": "scripts/studio-lead-review-queue.mjs", "what": "queue classification HUMAN_CONFIRMED required a human attestation", "action": "fixed in ff83bad: DIRECT_REVIEW_ON_RECORD by stated method" },
-    { "class": "C", "where": "server/mcp-studio.mjs, server/mcp.mjs, application/capabilities.mjs, application/proposal-contracts.mjs, application/run-service.mjs (text)", "what": "tool/instruction/capability text stated that only human reviews count or that an agent-authored citation moves a gate on its own assertion", "action": "fixed: text now states evidence-based grading for every submitter" },
-    { "class": "B", "where": "release-timing attestation {reviewer, reviewer_kind}; lead review attestation {reviewer, reviewer_kind} + authenticated_owner", "what": "who submitted", "action": "kept as provenance; required for audit for every submitter" },
-    { "class": "B", "where": "application/audio-report-history.mjs submitted_by; proposal-service proposed_by/submitted_by; decisions acceptedBy; run/adaptation accepted_by", "what": "declared submitter / acceptor text", "action": "kept; any string; no actor-kind check" },
-    { "class": "B", "where": "scripts/studio-agent.mjs (actor must be agent:*, accepted_by must equal the actor), server/studio-agent-driver.mjs (AGENT_ACTOR)", "what": "an agent CLI/driver may only speak as itself", "action": "kept; provenance honesty, not an authority gate" },
-    { "class": "B", "where": "final/delivery-evaluator.mjs human_reviewed: false", "what": "descriptive field of the inactive machine-delivery projection", "action": "kept; gates nothing" },
-    { "class": "D", "where": "arbitration/lead-demotion.mjs (audio basis machine-metric), canonical/release-timing.mjs (EVIDENCE_BASIS)", "what": "machine metrics and alignment locators are never positive evidence (SOURCE_POLICY §6)", "action": "kept, for every submitter", "pinned_by": ["LRA-5", "LRA-7", "RT-9", "RRA-2"] },
-    { "class": "D", "where": "release-timing registry; lead evidence source resolution", "what": "third-party/derived sources are supporting only (§1C); relabelled copies are not independent; declared sources without project bytes prove nothing", "action": "kept/added, for every submitter", "pinned_by": ["LRA-4", "LRA-7b", "RT-9c", "RRA-6"] },
-    { "class": "D", "where": "review-service-core.mjs EVIDENCE_REQUIRED_ON_TRUE", "what": "Gate 4/7/8/9 confirmations need at least one evidence reference", "action": "kept; actor-neutral" },
-    { "class": "D", "where": "proposal-contracts.mjs NEVER_AGENT_SETTLABLE, capabilities.mjs proposals.refuses, proposal-service accepted_by", "what": "a proposal (a suggestion, from any client) never settles a gate, a confirmation, a Core3 approval or a Lead citation, and needs an explicit acceptance; the same statements are filed through their own operations (recordConfirmations, approveCore3SourceChange, reviewLeadEvidence), open to any client and graded on evidence", "action": "kept as protocol separation; rationale text no longer actor-based; the constant name is historical" }
+    {
+      "class": "A",
+      "where": "application/contracts.mjs (in_game), final-service.mjs / review-service-core.mjs (inGameAcceptance: 'PENDING'), proposal-contracts.mjs NEVER_AGENT_SETTLABLE[0]",
+      "what": "IN_GAME_ACCEPTED is set only by the user or a controlled target-client test; no service path sets it",
+      "action": "kept",
+      "pinned_by": [
+        "RDR-4",
+        "LRA-10",
+        "RT-19b"
+      ]
+    },
+    {
+      "class": "C",
+      "where": "canonical/release-timing.mjs gradeReleaseEvidence (first version)",
+      "what": "release evidence counted only when attestation.reviewer_kind === 'human' (ATTESTATION_NOT_HUMAN_REVIEWER_EVIDENCE) and audio_basis === 'listening'",
+      "action": "fixed in 39c4f26/970e820: provenance recorded, never graded; basis and source decide",
+      "pinned_by": [
+        "RT-8",
+        "RT-9",
+        "RT-9b",
+        "RT-9c",
+        "RT-9d",
+        "RT-10",
+        "RT-11",
+        "RT-19",
+        "RRA-1..6",
+        "RDR-2",
+        "RDR-3"
+      ]
+    },
+    {
+      "class": "C",
+      "where": "application/lead-review-authority.mjs leadReviewAuthorityOf + review-service-core.mjs counted (main since f020b95)",
+      "what": "Lead evidence reviews reached the shared Lead grader only when reviewer_kind === 'human' (HUMAN_ATTESTED); readiness Gate 3 (leadPromotion/leadDemotion) depended on it",
+      "action": "fixed in ff83bad: every attested review is graded on its evidence; classified citations resolve (ref) against the project registry; only primary, held, independent sources prove a role",
+      "pinned_by": [
+        "LRA-3",
+        "LRA-4",
+        "LRA-5",
+        "LRA-6",
+        "LRA-8",
+        "LRA-9",
+        "LRA-11"
+      ]
+    },
+    {
+      "class": "C",
+      "where": "scripts/studio-lead-review-queue.mjs",
+      "what": "queue classification HUMAN_CONFIRMED required a human attestation",
+      "action": "fixed in ff83bad: DIRECT_REVIEW_ON_RECORD by stated method"
+    },
+    {
+      "class": "C",
+      "where": "server/mcp-studio.mjs, server/mcp.mjs, application/capabilities.mjs, application/proposal-contracts.mjs, application/run-service.mjs (text), application/proposal-service.mjs (leadEvidence refusal text)",
+      "what": "tool/instruction/capability text stated that only human reviews count or that an agent-authored citation moves a gate on its own assertion",
+      "action": "fixed: text now states evidence-based grading for every submitter"
+    },
+    {
+      "class": "B",
+      "where": "release-timing attestation {reviewer, reviewer_kind}; lead review attestation {reviewer, reviewer_kind} + authenticated_owner",
+      "what": "who submitted",
+      "action": "kept as provenance; required for audit for every submitter"
+    },
+    {
+      "class": "B",
+      "where": "application/audio-report-history.mjs submitted_by; proposal-service proposed_by/submitted_by; decisions acceptedBy; run/adaptation accepted_by",
+      "what": "declared submitter / acceptor text",
+      "action": "kept; any string; no actor-kind check"
+    },
+    {
+      "class": "B",
+      "where": "scripts/studio-agent.mjs (actor must be agent:*, accepted_by must equal the actor), server/studio-agent-driver.mjs (AGENT_ACTOR)",
+      "what": "an agent CLI/driver may only speak as itself",
+      "action": "kept; provenance honesty, not an authority gate"
+    },
+    {
+      "class": "B",
+      "where": "final/delivery-evaluator.mjs human_reviewed: false",
+      "what": "descriptive field of the inactive machine-delivery projection",
+      "action": "kept; gates nothing"
+    },
+    {
+      "class": "D",
+      "where": "arbitration/lead-demotion.mjs (audio basis machine-metric), canonical/release-timing.mjs (EVIDENCE_BASIS)",
+      "what": "machine metrics and alignment locators are never positive evidence (SOURCE_POLICY §6)",
+      "action": "kept, for every submitter",
+      "pinned_by": [
+        "LRA-5",
+        "LRA-7",
+        "RT-9",
+        "RRA-2"
+      ]
+    },
+    {
+      "class": "D",
+      "where": "release-timing registry; lead evidence source resolution",
+      "what": "third-party/derived sources are supporting only (§1C); relabelled copies are not independent; declared sources without project bytes prove nothing",
+      "action": "kept/added, for every submitter",
+      "pinned_by": [
+        "LRA-4",
+        "LRA-7b",
+        "RT-9c",
+        "RRA-6"
+      ]
+    },
+    {
+      "class": "D",
+      "where": "review-service-core.mjs EVIDENCE_REQUIRED_ON_TRUE",
+      "what": "Gate 4/7/8/9 confirmations need at least one evidence reference",
+      "action": "kept; actor-neutral"
+    },
+    {
+      "class": "D",
+      "where": "proposal-contracts.mjs NEVER_AGENT_SETTLABLE, capabilities.mjs proposals.refuses, proposal-service accepted_by",
+      "what": "a proposal (a suggestion, from any client) never settles a gate, a confirmation, a Core3 approval or a Lead citation, and needs an explicit acceptance; the same statements are filed through their own operations (recordConfirmations, approveCore3SourceChange, reviewLeadEvidence), open to any client and graded on evidence",
+      "action": "kept as protocol separation; rationale text no longer actor-based; the constant name is historical"
+    }
   ],
   "found_not_changed": [
-    { "where": "applyDecisions.leadEvidence (decision-time Lead citations)", "what": "free-text citations are not resolved against the project's sources; graded identically for every submitter (no actor gate), so not an actor restriction, but an evidence-strength gap", "why_not_changed": "changes existing decision-time PASS semantics on main; a separate decision" },
-    { "where": "proposal-service Mobile adaptation proposals", "what": "carry only a profile; release representation decisions are submitted through resumeRun.mobile_adaptation or the adaptation operations", "why_not_changed": "not an actor restriction; protocol feature scope" }
+    {
+      "where": "applyDecisions.leadEvidence (decision-time Lead citations)",
+      "what": "free-text citations are not resolved against the project's sources; graded identically for every submitter (no actor gate), so not an actor restriction, but an evidence-strength gap",
+      "why_not_changed": "changes existing decision-time PASS semantics on main; a separate decision"
+    },
+    {
+      "where": "proposal-service Mobile adaptation proposals",
+      "what": "carry only a profile; release representation decisions are submitted through resumeRun.mobile_adaptation or the adaptation operations",
+      "why_not_changed": "not an actor restriction; protocol feature scope"
+    }
   ],
-  "remaining_improper_actor_gates_blocking_the_deterministic_flow": []
+  "remaining_improper_actor_gates_blocking_the_deterministic_flow": [],
+  "adversarial_review_fixes": [
+    {
+      "severity": "major",
+      "what": "an audio classification with availability null and audio_basis not-used reached the grader with no basis and counted as positive evidence (pre-existing for human attestations; this PR had widened it to every submitter)",
+      "fix": "the validator reads availability as the grader does; any classified audio whose stated method is not a direct review is graded as a machine metric, including stored or hand-edited entries",
+      "pinned_by": [
+        "LRA-12"
+      ]
+    },
+    {
+      "severity": "major",
+      "what": "PR text offered decision-time leadEvidence as a route, where citations are still free text",
+      "fix": "text now points only to reviewLeadEvidence and states the decision-path gap",
+      "pinned_by": []
+    },
+    {
+      "severity": "minor",
+      "what": "relabelled-copy detection limited to a fixed supporting-kind list; a source's declared kind not checked against its backing asset; a source id equal to an asset id replaced the asset entry",
+      "fix": "a primary entry sharing bytes with any non-primary file is not independent; a source holds bytes only through an asset of a compatible kind; a colliding id is ambiguous and resolves to nothing",
+      "pinned_by": [
+        "RT-9e"
+      ]
+    },
+    {
+      "severity": "minor",
+      "what": "proposal-service leadEvidence refusal still said an agent-authored citation would move Gate 3 on its own assertion",
+      "fix": "reworded to the protocol reason",
+      "pinned_by": []
+    },
+    {
+      "severity": "minor",
+      "what": "no test pinned that a caller-declared sourceAuthority is overwritten",
+      "fix": "added",
+      "pinned_by": [
+        "LRA-13"
+      ]
+    }
+  ],
+  "behaviour_changes_on_deploy": [
+    "Stored Lead evidence reviews attested reviewer_kind human on main with free-text (no ref) citations were counted; they are now graded on their evidence and their unresolved citations prove nothing (PASS -> PENDING until resubmitted with project references).",
+    "Stored agent/tool-attested reviews that the old rule refused are now graded on their evidence.",
+    "The authority values HUMAN_ATTESTED and AGENT_OR_TOOL_NOT_REVIEWER_EVIDENCE are replaced by GRADED_ON_EVIDENCE; UNATTESTED_LEGACY_NOT_REVIEWER_EVIDENCE is unchanged. counted_as_reviewer_evidence now means handed to the grader, which every attested review is.",
+    "reviewLeadEvidence responses add evidence_sources (what each classified citation's source may prove)."
+  ]
 }

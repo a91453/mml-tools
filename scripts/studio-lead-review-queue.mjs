@@ -107,8 +107,9 @@ export function classifyLeadDecision({ event, review }) {
     && audio.classification === 'foreground';
 
   let classification;
-  if (authority === LEAD_REVIEW_AUTHORITY.GRADED_ON_EVIDENCE && review.attestation?.audio_basis === 'listening') classification = CLASSIFICATION.DIRECT_REVIEW_ON_RECORD;
-  else if (registerMismatch || scoreConflicts) classification = CLASSIFICATION.CONTRADICTORY;
+  // A review that contradicts itself stays contradictory whatever method it states.
+  if (registerMismatch || scoreConflicts) classification = CLASSIFICATION.CONTRADICTORY;
+  else if (authority === LEAD_REVIEW_AUTHORITY.GRADED_ON_EVIDENCE && review.attestation?.audio_basis === 'listening') classification = CLASSIFICATION.DIRECT_REVIEW_ON_RECORD;
   else if (audioKind === 'f0' || audioKind === 'predominant-pitch-class') classification = CLASSIFICATION.F0_PITCH_CLASS_ONLY;
   else if (audioKind === 'cqt-salience' || audioKind === 'unspecified') classification = CLASSIFICATION.WEAK_MACHINE;
   else if (audioKind === 'locator') classification = CLASSIFICATION.AUDIO_LOCATOR_ONLY;

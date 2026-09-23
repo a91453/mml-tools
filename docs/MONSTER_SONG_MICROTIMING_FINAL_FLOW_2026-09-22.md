@@ -412,6 +412,30 @@ gate remains on the deterministic path. Found, not changed: decision-time
 not source-resolved) — a separate decision because it changes existing
 decision-time PASS semantics on main.
 
+### Behaviour changes on deploy (stated, not hidden)
+
+- A stored Lead review attested `human` on main with free-text citations (no
+  `ref`) was counted; it is now graded on its evidence and its unresolved
+  citations prove nothing — PASS → PENDING until resubmitted with project
+  references. Stored agent/tool reviews the old rule refused are now graded too.
+- `authority` values `HUMAN_ATTESTED` / `AGENT_OR_TOOL_NOT_REVIEWER_EVIDENCE`
+  are replaced by `GRADED_ON_EVIDENCE`; `counted_as_reviewer_evidence` now means
+  "handed to the grader", which every attested review is. Responses add
+  `evidence_sources`.
+
+### Adversarial review of this follow-up
+
+Fixed: an audio classification written with `availability: null` and
+`audio_basis: not-used` reached the grader with no basis and counted as positive
+(pre-existing for `human`; this change had widened it) — the validator now reads
+availability as the grader does, and any classified audio not stated as a direct
+review is graded as a metric, stored entries included (LRA-12); relabelled
+output (e.g. a Final MML uploaded as audio), audio bytes declared as a score and
+ids naming both an asset and a source are no longer primary (RT-9e); a
+caller-declared `sourceAuthority` is pinned as overwritten (LRA-13); the last
+actor-worded refusal text is gone. Not changed: decision-time Lead citations
+(see the audit).
+
 ### Kaiju Lead: before and after
 
 Before and after, Gate 3 is **PENDING**: 569 provisional Melody events, all
@@ -434,8 +458,12 @@ Before and after, Gate 3 is **PENDING**: 569 provisional Melody events, all
 **Category B — genuinely missing source evidence; 0 of 569 were held only by the
 submitter rule.** What would resolve them: per Melody section, positive Lead
 evidence from a primary source (a direct review of the recording stating which
-line is foreground, citing the original_audio asset, or an official score), a
-resolved section role, checked continuity and Core3 — from any submitter.
+line is foreground, citing the original_audio asset by reference, or an official
+score), a resolved section role, checked continuity and Core3, filed through
+`reviewLeadEvidence` — from any submitter. Decision-time citations
+(`applyDecisions.leadEvidence`) are still free text on main and are not the
+route: they would accept the same weak evidence from anyone (found, not changed;
+see the audit).
 
 The rest of the song is unchanged: micro-timing PENDING on
 `MICRO_TIMING_RELEASE_EVIDENCE_REQUIRED` (§8), Gates 0/2/4/7/8/9 and player

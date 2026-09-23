@@ -627,3 +627,26 @@ test('RT-22 a profile-only plan keeps its identity, and technical repair grades 
   assert.equal(repaired.verification.releaseRepresentationRecords.registryChecked, true);
   assert.equal(repaired.verification.releaseEvidenceRequirement.anyOf[0].code, RELEASE_EVIDENCE_REQUIREMENT.ORIGINAL_AUDIO_REVIEW_REQUIRED);
 });
+
+test('RT-9e relabelled output, audio declared as a score and colliding references are never primary evidence', () => {
+  const recording = 'a'.repeat(64); const finalMml = 'b'.repeat(64);
+  const registry = buildEvidenceRegistry({
+    assets: [
+      { asset_id: 'final', kind: 'final_mml', sha256: finalMml },
+      { asset_id: 'final-as-audio', kind: 'original_audio', sha256: finalMml },
+      { asset_id: 'rec', kind: 'original_audio', sha256: recording },
+      { asset_id: 'shared-id', kind: 'original_audio', sha256: 'c'.repeat(64) },
+    ],
+    sources: [
+      createSource({ id: 'audio-as-score', label: 'x', kind: 'official-midi', authority: 'primary-symbolic', sha256: recording }),
+      createSource({ id: 'shared-id', label: 'x', kind: 'official-midi', authority: 'primary-symbolic', sha256: recording }),
+      createSource({ id: 'rec-source', label: 'x', kind: 'original-audio', authority: 'primary-audio', sha256: recording }),
+    ],
+  });
+  assert.equal(registry.get('final-as-audio').sourceClass, 'not-independent', 'Final MML bytes uploaded as audio');
+  assert.equal(registry.get('audio-as-score').sourceClass, 'bytes-not-held', 'audio bytes are never a score');
+  assert.equal(registry.get('shared-id').sourceClass, 'bytes-not-held', 'an id naming both an asset and a source is ambiguous');
+  assert.equal(registry.get('rec').sourceClass, 'primary-audio');
+  assert.equal(registry.get('rec-source').sourceClass, 'primary-audio');
+  for (const ref of ['final-as-audio', 'shared-id']) assert.equal(gradeReleaseEvidence(audioDecision(['a'], { ref }), registry).admissible, false, ref);
+});

@@ -61,6 +61,11 @@ export const LEAD_EVIDENCE_SOURCE_REFUSAL = Object.freeze({
 
 const nonEmpty = value => typeof value === 'string' && value.trim().length > 0;
 const plain = value => value !== null && typeof value === 'object' && !Array.isArray(value);
+// Available and classified, read exactly the way the shared grader reads it:
+// an absent or null availability means available.
+const audioIsClassified = audio => plain(audio)
+  && (audio.availability ?? 'available') !== 'unavailable'
+  && (audio.classification ?? 'unknown') !== 'unknown';
 
 /**
  * Validate a submitted attestation against the Lead evidence it accompanies.
@@ -78,9 +83,7 @@ export function validateLeadReviewAttestation(attestation, leadEvidence) {
   if (!LEAD_REVIEW_AUDIO_BASES.includes(attestation.audio_basis)) {
     return { ok: false, error: `review.attestation.audio_basis must be one of ${LEAD_REVIEW_AUDIO_BASES.join(', ')}.` };
   }
-  const audioAvailable = leadEvidence?.audioEvidence?.availability === 'available'
-    || (leadEvidence?.audioEvidence && leadEvidence.audioEvidence.availability === undefined);
-  const audioClassified = audioAvailable && (leadEvidence?.audioEvidence?.classification ?? 'unknown') !== 'unknown';
+  const audioClassified = audioIsClassified(leadEvidence?.audioEvidence);
   if (audioClassified && attestation.audio_basis === 'not-used') {
     return { ok: false, error: 'review.attestation.audio_basis cannot be not-used while lead_evidence.audioEvidence carries a classification. State whether it came from a direct review of the recording or from a machine metric.' };
   }
@@ -139,7 +142,13 @@ function resolveItem(item, kind, registry) {
 export function gradedLeadEvidenceOf(leadEvidence, attestation, registry = undefined) {
   if (!plain(leadEvidence)) return { leadEvidence, sources: null };
   const next = { ...leadEvidence };
-  if (plain(leadEvidence.audioEvidence) && (attestation?.audio_basis === 'machine-metric' || attestation?.audio_basis === 'listening')) {
+  // The stated method always decides, never a `basis` inside the evidence. A
+  // classified audio item whose method is not a direct review of the recording
+  // is a metric as far as the grader is concerned -- including an entry whose
+  // attestation says `not-used`, which a stored or hand-edited record can carry.
+  if (audioIsClassified(leadEvidence.audioEvidence)) {
+    next.audioEvidence = { ...leadEvidence.audioEvidence, basis: attestation?.audio_basis === 'listening' ? 'listening' : 'machine-metric' };
+  } else if (plain(leadEvidence.audioEvidence) && (attestation?.audio_basis === 'machine-metric' || attestation?.audio_basis === 'listening')) {
     next.audioEvidence = { ...leadEvidence.audioEvidence, basis: attestation.audio_basis };
   }
   // `registry === undefined` means the caller does not resolve sources (the
