@@ -150,7 +150,7 @@ test('an unchanged implementation cannot silently adopt a different Canonical re
 
 test('real Studio imports and Bootstrap CLI stop when published discovery is unavailable', t => {
   const { cwd } = fixture(t);
-  for (const path of ['package.json', 'dist/core.js', 'studio/backend/bootstrap/index.mjs', 'studio/backend/rules/index.mjs', 'studio/backend/mml/index.mjs', 'studio/backend/mml/parser.mjs', 'scripts/bootstrap-canonical.mjs']) put(cwd, path, read(path));
+  for (const path of ['package.json', 'dist/core.js', 'studio/backend/bootstrap/index.mjs', 'studio/backend/rules/index.mjs', 'studio/backend/rules/supported-releases.mjs', 'studio/backend/mml/index.mjs', 'studio/backend/mml/parser.mjs', 'scripts/bootstrap-canonical.mjs']) put(cwd, path, read(path));
   git(cwd, 'update-ref', '-d', BOOTSTRAP_CONTRACT.publishedRef);
   const code = `try { await import('./studio/backend/mml/index.mjs'); process.exitCode = 2; } catch (error) { console.log(JSON.stringify({ code: error.code })); }`;
   const adapter = spawnSync(process.execPath, ['--input-type=module', '-e', code], { cwd, encoding: 'utf8' });

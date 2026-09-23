@@ -3,6 +3,7 @@ import { resolve, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { createHash } from 'node:crypto';
 import { loadPublishedCanonical } from '../studio/backend/bootstrap/index.mjs';
+import { SUPPORTED_CANONICAL_VERSIONS } from '../studio/backend/rules/supported-releases.mjs';
 import { SERVICE_WORKER_ASSET, byPath, computeBuildId, computeCacheId, readServiceWorkerTemplate, renderServiceWorker } from './studio-artifact-identity.mjs';
 
 const root = fileURLToPath(new URL('../', import.meta.url));
@@ -12,7 +13,7 @@ const out = resolve(root, process.env.STUDIO_WEB_BUILD_OUT ?? 'studio/web-build'
 const prHead = process.env.GITHUB_EVENT_NAME === 'pull_request'
   ? JSON.parse(await readFile(process.env.GITHUB_EVENT_PATH, 'utf8')).pull_request.head.sha : null;
 // Fail before producing any output if published discovery/history is missing.
-const canonical = loadPublishedCanonical({ root, prHead, supportedCanonicalVersion: '2026-09-13-v1' });
+const canonical = loadPublishedCanonical({ root, prHead, supportedCanonicalVersion: SUPPORTED_CANONICAL_VERSIONS });
 const digest = value => createHash('sha256').update(value).digest('hex');
 await rm(out, { recursive: true, force: true });
 const put = async (path, text) => { await mkdir(dirname(resolve(out, path)), { recursive: true }); await writeFile(resolve(out, path), text); };
@@ -53,7 +54,7 @@ await put('dist/core.js', await readFile(resolve(root, 'dist/core.js')));
 // sources and an unchanged Canonical release. It ships in build.json instead.
 const { provenance, ...runtimeCanonical } = canonical;
 const data = JSON.stringify(runtimeCanonical);
-await put('studio/backend/bootstrap/index.mjs', `const loaded = ${data};\nfunction freeze(x){for(const v of Object.values(x))if(v&&typeof v==='object')freeze(v);return Object.freeze(x)}\nfreeze(loaded);\nexport function loadPublishedCanonical({supportedCanonicalVersion=null}={}){if(supportedCanonicalVersion&&supportedCanonicalVersion!==loaded.metadata.canonical_version)throw Error('CANONICAL_NOT_LOADED');return loaded}\n`);
+await put('studio/backend/bootstrap/index.mjs', `const loaded = ${data};\nfunction freeze(x){for(const v of Object.values(x))if(v&&typeof v==='object')freeze(v);return Object.freeze(x)}\nfreeze(loaded);\nexport function loadPublishedCanonical({supportedCanonicalVersion=null}={}){if(supportedCanonicalVersion&&![].concat(supportedCanonicalVersion).includes(loaded.metadata.canonical_version))throw Error('CANONICAL_NOT_LOADED');return loaded}\n`);
 await put('studio/web/published.mjs', `export const canonical = ${data};\nexport const canonicalDigest = '${digest(data)}';\n`);
 const parserDir = dirname(dirname(fileURLToPath(import.meta.resolve('fast-xml-parser'))));
 const vendor = await readFile(resolve(parserDir, 'lib/fxp.min.js'), 'utf8');

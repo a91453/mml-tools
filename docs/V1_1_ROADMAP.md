@@ -651,6 +651,38 @@ symlink entry in the pinned snapshot reads as a `blob` for `IMPLEMENTER` /
 content-checked and unaffected.
 
 
+## Listening-loop register
+
+Scheduled for the release after `2026-09-23-v2`. Under that release a delivery
+the machine could fully determine is handed over for listening while the
+reviewer residue stays unresolved; these items shorten the loop between that
+listening and the next AI revision. They are Web workspace features: none of
+them records an acceptance, moves a gate or reads a stored verdict, and each
+leaves the gate model exactly as published.
+
+| ID | Subject | Status | Blocker class | Canonical impact |
+| --- | --- | --- | --- | --- |
+| L1 | Jump from the unresolved ledger to the flagged bars | `OPEN` | `IMPLEMENTATION_WORK` | `NONE` |
+| L2 | Play only the bars changed since the previous version | `OPEN` | `IMPLEMENTATION_WORK` | `NONE` |
+| L3 | Mark issues on the review roll as AI revision targets | `OPEN` | `DESIGN_REQUIRED` | `NONE` |
+
+- **L1.** Each `NON_BLOCKING_PENDING` entry that names events or bars becomes a
+  link that seeks the preview player and scrolls the review roll to that span.
+  Entries without a locatable span stay plain text; nothing is guessed.
+- **L2.** A diff of the exact candidate and `previous` MML, bar by bar on the
+  exact rational timeline, drives a preview limited to the changed bars (with a
+  short lead-in). Changed-bar playback is a listening aid only: it produces no
+  Gate 6 readback, which still requires a whole-piece capture from the start.
+- **L3.** A mark on the roll (span, roles, free-text note) is stored with the
+  workspace revision it was made on and exported as a revision request an AI
+  client can read. A mark is a request, not a decision: it never becomes an
+  accepted decision, evidence or a review without the existing Composer or
+  review flows. Open design point: whether marks travel to the service over MCP
+  as proposal targets or stay local until exported.
+
+Follow-ups after L1–L3: accepting several reviewed decisions in one step, and
+A/B listening between two candidate variants.
+
 ## Dependencies
 
 - **G13 depends on M3b.** The lockfile posture and the durable release intent both

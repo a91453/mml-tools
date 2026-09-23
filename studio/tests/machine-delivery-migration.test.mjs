@@ -20,10 +20,16 @@ test('the real-song acceptance scenario remains unresolved and classified conser
   assert.equal(migrated.migrated, true);
   assert.equal(fixture.project_id, 'prj_a808b53c7cafadaf4c6bf5f0fe4c370a');
   assert.equal(migrated.record.machine_delivery.complete_gate_map, true);
+  // Source, micro-timing and Lead promotion are machine-determined and block.
+  // The captured Core3 completeness result is reviewer residue only
+  // (CORE3_COMPLETENESS_UNRESOLVED), which v2 delivers for listening first
+  // (ACCEPTANCE_CRITERIA "Machine delivery"): unresolved, never PASS.
   assert.deepEqual(migrated.record.machine_delivery.blocking.map(x => x.gate),
-    ['source', 'microTiming', 'core3Completeness', 'leadPromotion']);
+    ['source', 'microTiming', 'leadPromotion']);
   assert.deepEqual(migrated.record.machine_delivery.non_blocking_pending.map(x => x.gate),
-    ['originalAudio', 'mobileAdaptation', 'regression']);
+    ['core3Completeness', 'originalAudio', 'mobileAdaptation', 'regression']);
+  assert.deepEqual(migrated.record.machine_delivery.non_blocking_pending.find(x => x.gate === 'core3Completeness').blockers,
+    ['CORE3_COMPLETENESS_UNRESOLVED']);
   assert.deepEqual(migrated.record.machine_delivery.post_delivery.map(x => x.gate),
     ['playerReadback', 'inGameAcceptance']);
   assert.equal(migrated.record.machine_delivery.lifecycle, 'CANDIDATE');
