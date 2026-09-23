@@ -567,9 +567,18 @@ function serializeItems(role, items, lattice, facts, options) {
 
 // ── gates and entry point ──────────────────────────────────────────────────
 
+// A rest is silence, not material a role plays. A rest placed in a role is
+// written as that role's rest; a rest no role holds -- a notated MusicXML rest
+// carried through from the Source-Faithful Baseline -- occupies no slot, exactly
+// as the silence between MIDI notes (which have no rest events at all) occupies
+// none. It is left out of the role streams rather than reported as unassigned
+// material, and the baseline keeps it untouched.
+const isRoleSpan = event => event && SPAN_KINDS.has(event.kind)
+  && (event.kind === 'note' || ROLE_SET.has(event.role));
+
 function collectSpanEvents(project) {
   const events = Array.isArray(project?.events) ? project.events : [];
-  return events.filter(event => event && SPAN_KINDS.has(event.kind));
+  return events.filter(isRoleSpan);
 }
 
 function normalizeTempoEvents(project) {
@@ -599,8 +608,8 @@ function normalizeTempoEvents(project) {
       diagnostics.push(diagnostic(
         EMIT_DIAGNOSTICS.TEMPO_POSITION_NOT_STRICTLY_INCREASING,
         DIAGNOSTIC_SEVERITY.ERROR,
-        `Two Tempo events share beat ${event.beat}. The emitter will not choose between them.`,
-        { beat: event.beat, tempoIds: [events[index - 1].id, event.id] },
+        `Two Tempo events share beat ${event.beat} (${events[index - 1].bpm} from ${(events[index - 1].sourceIds ?? []).join(', ') || 'no source'}; ${event.bpm} from ${(event.sourceIds ?? []).join(', ') || 'no source'}). The emitter will not choose between them.`,
+        { beat: event.beat, tempoIds: [events[index - 1].id, event.id], bpms: [events[index - 1].bpm, event.bpm] },
       ));
     }
   }
@@ -885,7 +894,7 @@ export function emitFinalMml(project, options = {}) {
     diagnostics.push(diagnostic(
       EMIT_DIAGNOSTICS.EVENT_ROLE_UNASSIGNED,
       DIAGNOSTIC_SEVERITY.ERROR,
-      `${unassigned.length} note/rest event(s) carry no six-slot role. The emitter will not choose a slot for them.`,
+      `${unassigned.length} note event(s) carry no six-slot role. The emitter will not choose a slot for them.`,
       { eventIds: Object.freeze(unassigned.slice(0, 20).map(event => event.id)) },
     ));
     return buildResult(EMIT_STATUS.FAIL, null, [], diagnostics, gates.microGap, null, facts, gates.repair, gates.extra);

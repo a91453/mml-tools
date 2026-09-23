@@ -186,9 +186,14 @@ export function createTimingArtifactAttestation({
   });
 }
 
+// A rest no role holds is source silence, not a stream member: it is never
+// written to Final and bounds no Final interval, just as the silence between
+// MIDI notes (which carry no rest events) bounds none. Only notes, and rests a
+// role actually holds, take part in the interval and stream analysis.
 function spanEvents(project) {
   const events = Array.isArray(project?.events) ? project.events : [];
-  return events.filter(event => event && SPAN_KINDS.has(event.kind) && event.id && event.start != null && event.end != null);
+  return events.filter(event => event && SPAN_KINDS.has(event.kind) && event.id && event.start != null && event.end != null
+    && (event.kind === 'note' || ASSIGNED_ROLES.has(event.role)));
 }
 
 function durationIdentityFor(event) {

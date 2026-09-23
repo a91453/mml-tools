@@ -1,4 +1,7 @@
 import { createCanonicalProject } from './index.mjs';
+import { normalizeControlEvents, controlConflictDiagnostic } from './control-map.mjs';
+
+export { normalizeControlEvents, controlConflictDiagnostic, meterMapText } from './control-map.mjs';
 
 function assertProject(project, index) {
   if (!project || typeof project !== 'object') throw Error(`projects[${index}] must be an object`);
@@ -50,8 +53,17 @@ export function mergeCanonicalProjects(projects, options = {}) {
   }
 
   const events = ensureUniqueIds(projects.flatMap(project => project.events ?? []), 'event');
-  const tempoEvents = ensureUniqueIds(projects.flatMap(project => project.tempoEvents ?? []), 'tempo event');
-  const meterEvents = ensureUniqueIds(projects.flatMap(project => project.meterEvents ?? []), 'meter event');
+  // One tempo map and one meter map. Two sources stating the same tempo or
+  // meter at the same beat are one control with two witnesses; different
+  // values at one beat are a disagreement that is kept, named and left
+  // blocking (the Final emitter refuses two tempi at one beat, the Final meter
+  // map two meters) -- never settled by picking one.
+  const controls = normalizeControlEvents({
+    tempoEvents: ensureUniqueIds(projects.flatMap(project => project.tempoEvents ?? []), 'tempo event'),
+    meterEvents: ensureUniqueIds(projects.flatMap(project => project.meterEvents ?? []), 'meter event'),
+  });
+  const { tempoEvents, meterEvents } = controls;
+  const controlConflicts = controls.conflicts.map(controlConflictDiagnostic);
   const decisions = ensureUniqueIds(projects.flatMap(project => project.decisions ?? []), 'decision');
 
   const incompleteInputs = projects
@@ -73,7 +85,7 @@ export function mergeCanonicalProjects(projects, options = {}) {
     meterEvents,
     decisions,
     metadata: {
-      notes: 'Merging preserves separate sources/events; it does not reconcile or deduplicate musically equivalent events across sources.',
+      notes: 'Merging preserves separate sources/events; it does not reconcile or deduplicate musically equivalent note/rest events across sources. A tempo or meter stated identically by several sources at one beat is kept once with every witness cited (metadata.controlMap); different values at one beat are kept and reported as conflicts.',
       // Caller metadata is annotation, so it is spread first. What the merge
       // itself determined is written after it and is not overridable:
       // `sourceComplete` is read as a Gate 2 verdict by
@@ -84,6 +96,14 @@ export function mergeCanonicalProjects(projects, options = {}) {
       componentProjects: projectKinds,
       sourceComplete: incompleteInputs.length === 0,
       incompleteInputs,
+      controlMap: {
+        collapsed: controls.collapsed.map(item => ({ ...item, absorbedIds: [...item.absorbedIds] })),
+        conflicts: controlConflicts.map(item => structuredClone(item)),
+      },
+      unsupported: [
+        ...(Array.isArray(options.metadata?.unsupported) ? options.metadata.unsupported : []),
+        ...controlConflicts.map(item => structuredClone(item)),
+      ],
     },
   });
 }
