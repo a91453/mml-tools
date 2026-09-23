@@ -1,0 +1,112 @@
+<!doctype html>
+<html lang="zh-Hant">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="referrer" content="no-referrer">
+<title>MML 試聽</title>
+<style>/*@STYLE@*/</style>
+</head>
+<body>
+<div class="app" id="app">
+  <header class="head">
+    <div class="title-row">
+      <h1 id="title">MML 試聽</h1>
+      <span id="source" class="badge"></span>
+    </div>
+    <p class="notice" id="preview-notice">預覽合成器，不是遊戲內音色。</p>
+  </header>
+
+  <p id="empty" class="empty">等待 studio_listen 的結果…</p>
+
+  <main id="main" hidden>
+    <section class="transport" aria-label="播放控制">
+      <button id="play" class="primary" type="button">▶ 播放</button>
+      <button id="stop" type="button">■ 停止</button>
+      <button id="rewind" type="button" title="回到開頭" aria-label="回到開頭">⏮</button>
+      <div class="pos"><span id="pos-bar">—</span><span id="pos-time">0:00.0 / 0:00.0</span></div>
+      <button id="mark" class="mark" type="button">標記問題</button>
+    </section>
+
+    <section class="jump" aria-label="跳到位置">
+      <label>從小節 <input id="jump-bar" type="number" min="1" step="1" inputmode="numeric"></label>
+      <button id="jump-bar-go" type="button" aria-label="從這個小節播放">▶</button>
+      <label>從時間 <input id="jump-time" type="text" placeholder="1:23" inputmode="decimal" maxlength="12"></label>
+      <button id="jump-time-go" type="button" aria-label="從這個時間播放">▶</button>
+      <span class="ab" id="ab" hidden>
+        <button id="ver-a" type="button" aria-pressed="true">A 目前</button><button id="ver-b" type="button" aria-pressed="false">B 對照</button>
+      </span>
+      <span class="zoom">
+        <button id="zoom-out" type="button" aria-label="縮小">－</button><button id="zoom-in" type="button" aria-label="放大">＋</button>
+      </span>
+    </section>
+
+    <!-- Not a <form>: a sandboxed frame without allow-forms never fires submit. -->
+    <div id="draft" class="draft" role="group" aria-label="標記問題" hidden>
+      <div class="draft-pos" id="draft-pos"></div>
+      <div class="chips" id="draft-kinds" role="radiogroup" aria-label="問題種類"></div>
+      <div class="draft-row">
+        <label>角色 <select id="draft-role"></select></label>
+        <input id="draft-text" type="text" maxlength="200" placeholder="補充說明（選填）" aria-label="補充說明">
+        <button type="button" id="draft-add" class="primary">加入</button>
+        <button type="button" id="draft-cancel">取消</button>
+      </div>
+    </div>
+
+    <canvas id="roll" class="roll" aria-label="鋼琴捲簾，點擊可移動播放位置"></canvas>
+    <canvas id="overview" class="overview" aria-label="整曲概覽，點擊可跳到該處"></canvas>
+    <div id="roles" class="roles" aria-label="角色靜音與獨奏"></div>
+
+    <nav class="tabs" role="tablist">
+      <button type="button" role="tab" data-tab="markers" aria-selected="true">待聽標記 <span id="count-markers" class="count"></span></button>
+      <button type="button" role="tab" data-tab="feedback" aria-selected="false">回饋 <span id="count-feedback" class="count"></span></button>
+      <button type="button" role="tab" data-tab="sound" aria-selected="false">音色</button>
+    </nav>
+
+    <section id="tab-markers" class="tab" role="tabpanel">
+      <ol id="markers" class="list"></ol>
+      <div id="song-notes" class="song-notes"></div>
+      <p id="parse-note" class="small"></p>
+    </section>
+
+    <section id="tab-feedback" class="tab" role="tabpanel" hidden>
+      <ol id="feedback" class="list"></ol>
+      <div class="row">
+        <button id="send" type="button" class="primary">送出給 AI</button>
+        <button id="copy" type="button">複製</button>
+      </div>
+      <textarea id="copy-area" readonly hidden rows="6" aria-label="回饋文字"></textarea>
+      <p class="small" id="feedback-notice"></p>
+    </section>
+
+    <section id="tab-sound" class="tab" role="tabpanel" hidden>
+      <div class="sound">
+        <label><input type="radio" name="voice" value="synth" checked> 預覽合成器（內建，永遠可用）</label>
+        <label><input type="radio" name="voice" value="sf2" id="voice-sf2" disabled> 自己的音色庫（.sf2）</label>
+        <div class="load-row">
+          <input type="file" id="sf2-file" accept=".sf2,.sf3,.dls,application/octet-stream">
+          <span id="sf2-status" class="small">檔案只在這個播放器的記憶體裡使用，不會上傳、不會儲存；關閉即清除。</span>
+        </div>
+        <div id="sf2-presets" class="presets"></div>
+        <div id="samples-block" hidden>
+          <label><input type="radio" name="voice" value="samples" id="voice-samples"> 取樣音色（<span id="samples-credit"></span>）</label>
+          <div id="samples-programs" class="presets"></div>
+          <span id="samples-status" class="small"></span>
+        </div>
+        <p class="small">任何音色都只是預覽，不是遊戲內音色。</p>
+      </div>
+    </section>
+
+    <footer class="foot">
+      <button id="open-web" type="button" hidden>在 Studio Web 開啟</button>
+      <button id="open-web-here" type="button" hidden>從目前位置在 Studio Web 開啟</button>
+      <span id="status" class="status" role="status" aria-live="polite"></span>
+    </footer>
+  </main>
+</div>
+<script type="application/json" id="mml-listen-config">/*@CONFIG@*/</script>
+<script type="module">
+/*@SCRIPT@*/
+</script>
+</body>
+</html>

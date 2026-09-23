@@ -805,6 +805,22 @@ The `studio_*` tools, plus the three original tools unchanged:
 `project_id`: the project's prescreen shadow record) and
 `studio_prescreen_shadow_record` (writes only that record).
 
+One read-only listening projection sits after them: `studio_listen`
+(`server/mcp-listen.mjs`). Given a delivered Final's `artifact_id` (or inline
+six-role MML), it returns a listening view — the MML, meter, tempo, markers
+from the machine-delivery ledger's NON_BLOCKING_PENDING / POST_DELIVERY entries
+that state a position, song-level notes for those that do not — plus a text
+summary. Hosts that render UI show it in the `ui://mml-studio/player.html`
+resource (MCP Apps, `text/html;profile=mcp-app`; an Apps SDK template alias is
+served beside it), which is why the server advertises `resources` when the
+Studio is attached. When `STUDIO_WEB_ORIGIN` is set it also returns a Studio Web
+listen link, `<origin>/#listen=<payload>`, encoded through the Studio Web's own
+`mml-studio/listen-link@1` contract (`studio/web/listen-link.mjs`). It has no
+HTTP route of its own because it adds no operation: the artifact is already
+`GET /api/v1/artifacts/:id`, and the link is a client-side encoding of it.
+Feedback a person sends from the player is conversation text; the player calls
+no tool, and nothing it produces is a confirmation, evidence or acceptance.
+
 The four run tools are four rather than one for the same reason the reduction
 and adaptation previews are separate from their applies: `studio_run_plan` and
 `studio_run_status` write nothing and are annotated read-only, while

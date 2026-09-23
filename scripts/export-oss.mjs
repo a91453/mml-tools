@@ -80,12 +80,20 @@ await copyTree('studio');
 // which the tree copy above already exports, so leaving them behind would ship
 // two transports with no public regressions. `railway.test.mjs` stays out: it
 // covers the private deployment's OAuth service, which is not exported.
+// The listening player (`server/mcp-listen.mjs`, `server/listen/`) ships with
+// its own suites for the same reason; the browser smoke test skips itself where
+// no Chromium is installed. The listen-link contract it encodes through is
+// `studio/web/listen-link.mjs`, exported with the studio tree and its suite.
 for (const path of [
   'tests/core.test.mjs',
   'tests/mcp.test.mjs',
   'tests/player.test.mjs',
   'tests/api.test.mjs',
   'tests/mcp-studio.test.mjs',
+  'tests/mcp-listen.test.mjs',
+  'tests/listen-mml-events.test.mjs',
+  'tests/listen-widget-browser.test.mjs',
+  'tests/fixtures/synthetic-soundfont.mjs',
 ]) await copyFile(path);
 for (const path of [
   'scripts/build-studio-web.mjs',

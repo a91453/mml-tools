@@ -41,13 +41,16 @@ export async function bundleSitesWorker(root, assets) {
   }, ['createTechnicalService']));
   // createTechnicalService already refuses Canonical operations when its gate
   // is null. This adapter supplies no rule identity, fake snapshot or verifier.
-  parts.push(`const sitesEnvironment = Object.freeze({\ncreateCanonicalGate: () => null,\nSTUDIO_MCP_TOOLS: Object.freeze([]),\nUPLOAD_INSTRUCTION: ${JSON.stringify(sitesNotice)},\nrunStudioTool: () => { throw new Error('Studio is unavailable in Sites'); }\n});\n`);
+  // The listening player (studio_listen and its UI resource) is advertised only
+  // with an attached Studio, which Sites never has; these are its inert stand-ins.
+  parts.push(`const sitesEnvironment = Object.freeze({\ncreateCanonicalGate: () => null,\nSTUDIO_MCP_TOOLS: Object.freeze([]),\nUPLOAD_INSTRUCTION: ${JSON.stringify(sitesNotice)},\nrunStudioTool: () => { throw new Error('Studio is unavailable in Sites'); },\nDEFAULT_LISTEN_CONFIG: null,\nLISTEN_MCP_TOOLS: Object.freeze([]),\nLISTEN_TOOL_NAME: 'studio_listen',\nlistenResources: () => [],\nreadListenResource: () => null,\nrunListenTool: () => { throw new Error('Studio is unavailable in Sites'); }\n});\n`);
   parts.push(await scope(root, 'server/mcp.mjs', 'sitesMcp', {
     '../dist/core.js': 'sitesCore',
     '../studio/backend/application/technical-service.mjs': 'sitesTechnical',
     '../studio/backend/application/contracts.mjs': 'sitesContracts',
     '../studio/backend/application/provenance.mjs': 'sitesEnvironment',
     './mcp-studio.mjs': 'sitesEnvironment',
+    './mcp-listen.mjs': 'sitesEnvironment',
   }, ['handleMcp', 'SERVICE_VERSION']));
   parts.push(await scope(root, 'server/worker.mjs', 'sitesWorker', { './mcp.mjs': 'sitesMcp' }, ['createWorker']));
   parts.push(`const bundledAssets = ${JSON.stringify(assets)};\nexport default sitesWorker.createWorker(bundledAssets);\n`);

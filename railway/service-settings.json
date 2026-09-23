@@ -17,6 +17,9 @@
       "/server/studio-web.mjs",
       "/server/studio-agent-driver.mjs",
       "/server/studio-agent-codex.mjs",
+      "/server/mcp-listen.mjs",
+      "/server/listen/**",
+      "/studio/web/listen-link.mjs",
       "/studio/web/service/**",
       "/server/api.mjs",
       "/studio/backend/**",
@@ -72,7 +75,10 @@
     "MML_STUDIO_DATA_DIR",
     "MML_STUDIO_DURABILITY",
     "MML_OAUTH_REDIRECT_HOSTS",
-    "MML_OAUTH_LOOPBACK_REDIRECTS"
+    "MML_OAUTH_LOOPBACK_REDIRECTS",
+    "STUDIO_WEB_ORIGIN",
+    "STUDIO_LISTEN_SAMPLES_URL",
+    "STUDIO_LISTEN_SAMPLES_CREDIT"
   ],
   "plane": "agent-control-plane",
   "note": "Agent Control Plane only (project mml-tools-allen / service mml-tools). The Permanent Studio Web plane (mml-tools-studio-permanent / studio-web-permanent) is configured separately and is not described by this file.",
