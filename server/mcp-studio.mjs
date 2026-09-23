@@ -51,6 +51,7 @@ const structuredPayload = description => ({ type: 'object', additionalProperties
 // the musical-completeness review is answered here, and neither is the other.
 import { LIMITS, PROPOSAL_KIND_NAMES, PROPOSAL_STATE_NAMES, RESOLUTION_NAMES } from '../studio/backend/application/index.mjs';
 import { GAME_INSTRUMENTS, GAME_INSTRUMENT_IDS } from '../studio/backend/audio/instruments.mjs';
+import { LABELS as PRESCREEN_LABELS } from '../studio/backend/audio/prescreen/prescreen.mjs';
 import { PAGED_REPORT_TOOLS, REPORT_PAGE_SCHEMA, validateReportPage, readReportPage } from './report-page.mjs';
 import { compactStudioResponse } from './mcp-compaction.mjs';
 import { prescreenListenLinks } from './prescreen-listen.mjs';
@@ -676,23 +677,31 @@ const proposalFilter = args => pick(args, PROPOSAL_FILTER_FIELDS);
  */
 export async function runStudioTool(name, args, { application, owner, listen = null }) {
   const page = args.report_page === undefined ? null : validateReportPage(name, args);
-  let result = await dispatchStudioTool(name, args, { application, owner });
-  // The one addition to a result: listen links for the prescreen's
-  // human_review regions, beside the report and never inside it
-  // (server/prescreen-listen.mjs). A page read is of the report itself.
-  if (name === 'studio_audio_prescreen' && !page && result?.prescreen?.human_review) {
-    result = { ...result, listen: await prescreenListenLinks(result.prescreen, { listen, mmlOf: prescreenMmlOf(args, { application, owner }) }) };
-  }
+  const result = await dispatchStudioTool(name, args, { application, owner });
   // A page is read from the full result; any other response is the bounded
   // view (mcp-compaction.mjs), whose summaries point back at those pages.
-  return page ? readReportPage(result, page) : compactStudioResponse(name, args, result);
+  const view = page ? readReportPage(result, page) : compactStudioResponse(name, args, result);
+  // The one addition to a response: listen links for the prescreen's
+  // human_review regions, beside the report and never inside it
+  // (server/prescreen-listen.mjs). A page read is of the report itself, so
+  // the links are added after the view is taken: inside the compacted result
+  // a song-length report's links were summarized into a report_page pointer
+  // at a path the report does not have, and every link was lost. They are
+  // bounded on their own (PRESCREEN_LISTEN_LIMITS) and stay whole.
+  if (name === 'studio_audio_prescreen' && !page && result?.prescreen?.human_review) {
+    return { ...view, listen: await prescreenListenLinks(result.prescreen, { listen, mmlOf: prescreenMmlOf(args, { application, owner }) }) };
+  }
+  return view;
 }
 
 // The MML an alternative label names: the text it was given, or the Final
-// artifact's delivered MML. A candidate alternative has none.
+// artifact's delivered MML. A candidate alternative has none. The report
+// names an alternative by the label the Application Service gave it, which is
+// the caller's label or the positional default (A, B, C, D) when the caller
+// gave none, so the lookup resolves labels the same way.
 function prescreenMmlOf(args, { application, owner }) {
   return async label => {
-    const entry = (args.alternatives ?? []).find(item => item.label === label);
+    const entry = (args.alternatives ?? []).find((item, index) => (item.label ?? PRESCREEN_LABELS[index]) === label);
     if (typeof entry?.mml === 'string') return entry.mml;
     if (typeof entry?.artifact_id === 'string') {
       const { artifact } = await application.getArtifact(owner, entry.artifact_id);

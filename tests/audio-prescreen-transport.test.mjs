@@ -7,7 +7,7 @@ import assert from 'node:assert/strict';
 import { createHash } from 'node:crypto';
 
 import { handleMcp } from '../server/mcp.mjs';
-import { STUDIO_MCP_TOOLS } from '../server/mcp-studio.mjs';
+import { STUDIO_MCP_TOOLS, runStudioTool } from '../server/mcp-studio.mjs';
 import { PAGED_REPORT_TOOLS } from '../server/report-page.mjs';
 import { API_PREFIX, createApiRouter } from '../server/api.mjs';
 import { createStudioApplication } from '../studio/backend/application/index.mjs';
@@ -204,6 +204,62 @@ test('APT-L1 each human_review region gets an A/B listen link beside the report,
   }
   assert.equal(without.listen.status, 'ORIGIN_NOT_CONFIGURED');
   assert.deepEqual(without.listen.links, []);
+});
+
+test('APT-L3 alternatives given without labels get the same links as labelled ones', async () => {
+  // The report names alternatives by the labels the service assigned: the
+  // caller's, or the positional defaults A, B, C, D. Looking the MML up by the
+  // caller's raw label left every link NO_MML_FOR_ALTERNATIVE for the
+  // documented default-label request.
+  const base = syntheticSongMml({ bars: 4 }), crunch = syntheticSongMml({ bars: 4, variant: 'crunch' });
+  const listen = createListenConfig({ studioWebOrigin: 'https://studio.example' });
+  const unlabelled = await rpcWith(listen, 'studio_audio_prescreen', { alternatives: [{ mml: base }, { mml: crunch }], meter_text: SYNTHETIC_METER });
+  assert.ok(unlabelled.prescreen.human_review.length > 0, 'the fixture has regions for a person to hear');
+  assert.equal(unlabelled.listen.status, 'OK');
+  assert.equal(unlabelled.listen.links.length, unlabelled.prescreen.human_review.length);
+  assert.ok(unlabelled.listen.links.every(link => link.status === 'OK' && link.mml_label === 'A' && link.compare_label === 'B'), JSON.stringify(unlabelled.listen.links.map(link => link.status)));
+  const document = await decodeListenLink(listenPayloadFromUrl(unlabelled.listen.links[0].url).payload, NODE_LISTEN_CODEC);
+  assert.equal(document.mml, base);
+  assert.equal(document.compare_mml, crunch);
+  // A caller's own label still wins over the positional default.
+  const mixed = await rpcWith(listen, 'studio_audio_prescreen', { alternatives: [{ label: 'base', mml: base }, { mml: crunch }], meter_text: SYNTHETIC_METER });
+  assert.ok(mixed.listen.links.every(link => link.status === 'OK' && link.mml_label === 'base' && link.compare_label === 'B'));
+});
+
+test('APT-L4 a song-length prescreen keeps every listen link beside its compacted report', async () => {
+  // Song-sized alternatives make the links themselves larger than the
+  // response budget. Inside the compacted result they were summarized into a
+  // report_page pointer at a path the report does not have (the links are not
+  // part of the report), so the owner got no link at all; taken after the
+  // view, they stay whole, and a page read of the report carries none.
+  const notes = 'cdefgab', lens = ['4', '8', '16', '2'];
+  let seed = 7;
+  const rnd = n => { seed = (seed * 1103515245 + 12345) & 0x7fffffff; return seed % n; };
+  const role = () => { let text = 't120o4'; while (text.length < 2300) text += notes[rnd(7)] + (rnd(3) ? '' : '+') + lens[rnd(4)]; return text; };
+  const song = () => `MML@${Array.from({ length: 6 }, role).join(',')};`;
+  const A = song(), B = song();
+  const region = n => ({ region_id: `bars-${n}-${n}`, bars: [n, n], beats: [String(4 * (n - 1)), String(4 * n)], alternatives: ['A', 'B'], reasons: ['MARGIN_TOO_SMALL'], listen_link: null });
+  const metrics = i => Object.fromEntries(['roughness', 'masking', 'smear', 'clipping'].map(name => [name, { A: 0.123456 + i, B: 0.234567 + i }]));
+  const evidence = { roughness: { low_mid: 0.1, high: 0.2, attribution: ['Chord1:c4', 'Chord2:c+3'] }, audibility: { Melody: 0.9, Chord1: 0.8, Chord2: 0.7, Chord3: 0.6, Chord4: 0.5, Chord5: 0.4 }, smear: { attacks: 3, worst: 0.3 }, peak_dbfs: -3 };
+  const report = {
+    schema: 'mml-studio/audio-prescreen-report@1', report_id: 'aps:song', inputs: { meter: '0 4/4' }, summary: { bars: 200 },
+    human_review: Array.from({ length: 8 }, (_, i) => region(i + 1)),
+    bars: Array.from({ length: 200 }, (_, i) => ({ bar: i + 1, beats: [String(4 * i), String(4 * i + 4)], verdict: 'NEEDS_HUMAN', winner: null, reasons: ['MARGIN_TOO_SMALL'], metrics: metrics(i), evidence: { A: evidence, B: evidence } })),
+  };
+  const stub = { audioPrescreen: async () => ({ prescreen: report, canonical: { rules_snapshot: 'x' } }), getArtifact: async () => ({}) };
+  const listen = createListenConfig({ studioWebOrigin: 'https://studio.example' });
+  const args = { alternatives: [{ mml: A }, { mml: B }], meter_text: '0 4/4' };
+  const view = await runStudioTool('studio_audio_prescreen', args, { application: stub, owner: OWNER, listen });
+  assert.ok(view.response_compaction, 'the bar list is over the response budget');
+  assert.ok(!Array.isArray(view.prescreen.bars), 'the bar list was summarized');
+  assert.ok(Array.isArray(view.listen.links), 'the links are not a summary');
+  assert.equal(view.listen.links.filter(link => link.status === 'OK').length, 8);
+  assert.ok(view.listen.links.every(link => link.mml_label === 'A' && link.compare_label === 'B'));
+  assert.ok(Buffer.byteLength(JSON.stringify(view)) * 2 < MCP_RESULT_CAP, 'carried twice, the response stays under the result cap');
+  const page = await runStudioTool('studio_audio_prescreen', { ...args, report_page: view.prescreen.bars.report_page.arguments?.report_page ?? { path: ['prescreen', 'bars'] } }, { application: stub, owner: OWNER, listen });
+  assert.equal(page.listen, undefined, 'a page is read from the report itself');
+  assert.deepEqual(page.report_page.path, ['prescreen', 'bars']);
+  assert.ok(typeof page.report_page.json_fragment === 'string' && page.report_page.json_fragment.length > 0);
 });
 
 test('APT-L2 a candidate has no MML to link, and the link count is bounded', async () => {
