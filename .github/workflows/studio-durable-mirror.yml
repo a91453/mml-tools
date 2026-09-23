@@ -7,6 +7,12 @@ name: Studio durable release mirror
 # secrets for the duration of the transfer; delete them afterwards.
 
 on:
+  # Manual dispatch needs this file on the default branch. Until then, a push
+  # of this file on the release branch runs it; a run is idempotent because
+  # it never overwrites an existing object.
+  push:
+    branches: [claude/interface-fusion-logic-a9iai6]
+    paths: [.github/workflows/studio-durable-mirror.yml]
   workflow_dispatch:
 
 concurrency:
