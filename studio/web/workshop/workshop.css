@@ -236,7 +236,10 @@ header .spacer{flex:1}
       position:absolute; left:22px; top:50%; transform:translateY(-50%);
     }
 }
-header .ico{
+/* Icon-only header buttons. Scoped to buttons: the SVG icons inside every
+   header button carry class ico too, and a plain `header .ico` hid them all,
+   the phone menu button's own icon included, leaving an empty square. */
+header button.ico{
     display:none; align-items:center; justify-content:center; align-self:center;
     width:28px; height:28px; padding:0; box-sizing:border-box; flex:0 0 auto;
     background:var(--btn-bg); border:1px solid var(--line); border-radius:3px;
@@ -244,7 +247,7 @@ header .ico{
     transition:color .15s,background .15s,border-color .15s;
   }
 header button.ico svg.ico{font-size:13px}
-header .ico:not(.on):hover{border-color:var(--t2);color:var(--txt)}
+header button.ico:not(.on):hover{border-color:var(--t2);color:var(--txt)}
 header .ico.toggle.on{background:var(--sel);border-color:var(--sel);color:var(--on-color)}
 header .ico.toggle.on:hover{background:var(--sel-hi);border-color:var(--sel-hi)}
 #viewToggles{display:none; align-items:center; gap:6px; align-self:center}
@@ -262,6 +265,12 @@ header .ico.toggle.on:hover{background:var(--sel-hi);border-color:var(--sel-hi)}
 .grp{display:flex; align-items:center; flex-wrap:nowrap; flex:0 0 auto}
 #rollbar .grp{gap:8px}
 header .grp{gap:16px; align-self:center}
+/* The header commands wrap inside the page instead of widening it, and sit a
+   little closer on tablet widths so a portrait iPad keeps them on one row. */
+header .grp{flex-wrap:wrap; max-width:100%; row-gap:8px}
+@media (max-width:1100px){
+header .grp{column-gap:8px}
+}
 #rollbar button{
     display:inline-flex; align-items:center; justify-content:center;
     height:var(--btnh); box-sizing:border-box; flex:0 0 auto;
@@ -522,10 +531,13 @@ main{flex:0 0 300px;display:flex;min-height:0}
     position:fixed; inset:0 0 0 auto; width:min(420px,92vw); z-index:70;
     background:var(--panel); border-left:1px solid var(--line);
     display:flex; flex-direction:column; overflow-y:auto;
-    transform:translateX(100%); transition:transform .22s ease;
+    transform:translateX(100%); transition:transform .22s ease, box-shadow .22s ease;
     box-shadow:-18px 0 50px rgba(var(--shadow-rgb),.55);
   }
 .drawer.on{transform:translateX(0)}
+/* A closed drawer sits just past the right edge; its shadow would still reach
+   into the page as a haze down the right-hand side. */
+.drawer:not(.on){box-shadow:none}
 .drawer .head{
     display:flex; align-items:center; gap:10px; flex:0 0 auto;
     padding:14px 18px; border-bottom:1px solid var(--line); background:var(--bg2);
@@ -1325,6 +1337,8 @@ header.navopen #navMenu{display:flex}
     }
 header{padding:8px 10px}
 #rollbar{padding-left:10px;padding-right:10px}
+/* Wrap within the screen rather than widen the page (English at 375-390px). */
+#rollbar .grp{flex-wrap:wrap; max-width:100%; gap:6px}
 .panebar{padding-left:10px;padding-right:10px}
 .status{padding:5px 10px; column-gap:12px}
 textarea,
