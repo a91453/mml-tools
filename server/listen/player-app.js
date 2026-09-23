@@ -781,6 +781,7 @@ function renderMarkers() {
   if (!S.bars) extra.push(S.view.meter_text ? '拍號圖無法用來分小節，只能用拍與時間定位。' : '沒有拍號圖，只能用拍與時間定位（不會自行假設 4/4）。');
   if (parse.finding_count) extra.push(`試聽讀取有 ${parse.finding_count} 則提醒（不是技術檢查結論）。`);
   if (S.view.truncated_markers) extra.push(`另有 ${S.view.truncated_markers} 個標記超過上限未顯示。`);
+  if (S.view.response_compaction) extra.push('回應大小上限：標記已合併成較少的區段（×N 是涵蓋的項目數）。');
   $('parse-note').textContent = extra.join(' ');
 }
 

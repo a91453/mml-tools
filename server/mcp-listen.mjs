@@ -45,7 +45,8 @@ import {
 } from './listen/mml-events.mjs';
 import { LISTEN_LIMITS, LISTEN_LINK_SCHEMA, ListenLinkError, encodeListenLink, listenUrl } from '../studio/web/listen-link.mjs';
 import { buildListenWidgetHtml, parseSampleLibrary } from './listen/widget.mjs';
-import { beatOf, clip, finalListeningMarkers, flagLabel } from './listen/final-markers.mjs';
+import { beatOf, clip, finalListeningMarkers, flagLabel, groupRuns } from './listen/final-markers.mjs';
+import { RESPONSE_COMPACTION } from './mcp-compaction.mjs';
 
 export const LISTEN_TOOL_NAME = 'studio_listen';
 export const LISTEN_VIEW_SCHEMA = 'mml-studio/listen-view@1';
@@ -212,7 +213,9 @@ export const LISTEN_MCP_TOOLS = [
       + '給 artifact_id（已交付的 Final，可附 project_id 限定）時，Final 暫定延長的每個 release（provisional-release）與 ledger 中未驗證的 Lead 音（lead-unverified）會成為播放器標記，數量多時依角色合併成區段、總數列在整曲待確認；沒有位置的 ledger 項目與交付旗標也列在整曲待確認；'
       + '或給 mml（完整六軌 MML@…;）與來源確認的 meter_text（沒有拍號圖時只能用拍與時間定位，不會自行假設 4/4）。'
       + 'markers 可標出你剛修改（changed）或想請使用者注意（note）的位置；start_bar 讓播放器與連結從該小節開始。'
-      + '播放器是預覽合成器，不是遊戲內音色。使用者在播放器按「送出給 AI」時，回饋會以使用者訊息出現在對話裡：那只是試聽感受文字，不是 Gate 確認、證據或接受，請依內容修改 MML 後再呼叫本工具讓使用者重聽。本工具不寫入任何資料。',
+      + '播放器是預覽合成器，不是遊戲內音色。使用者在播放器按「送出給 AI」時，回饋會以使用者訊息出現在對話裡：那只是試聽感受文字，不是 Gate 確認、證據或接受，請依內容修改 MML 後再呼叫本工具讓使用者重聽。本工具不寫入任何資料。'
+      + '回應依 Studio 回應大小規則限界：MML 原文不截斷；超過上限時標記依種類與角色合併成較少的區段（count 是涵蓋的項目數，沒有丟棄），並在 response_compaction 註明；Final 的完整紀錄請用 studio_artifact_get（report_page）讀取。'
+      + 'Responses are bounded like every Studio response: the MML is never cut; over the limit, markers are merged into fewer ranges (count covers every item) and response_compaction says so.',
     inputSchema: {
       type: 'object',
       properties: {
@@ -386,7 +389,8 @@ export async function runListenTool(args, { application, owner, listen = DEFAULT
   }
   placed.sort((a, b) => listenBeatNumber(a.beat) - listenBeatNumber(b.beat));
   const truncatedMarkers = Math.max(0, placed.length - MAX_MARKERS);
-  const markers = placed.slice(0, MAX_MARKERS).map((marker, index) => {
+  const listed = placed.slice(0, MAX_MARKERS);
+  const viewMarkers = list => list.map((marker, index) => {
     const beat = listenBeatNumber(marker.beat);
     const bar = meterUsable ? listenBarAt(bars, beat) : null;
     const endBeat = marker.end_beat !== null && listenBeatNumber(marker.end_beat) >= beat ? marker.end_beat : null;
@@ -414,9 +418,10 @@ export async function runListenTool(args, { application, owner, listen = DEFAULT
   const mmlSha = sha256Hex(new TextEncoder().encode(mml));
   const compareSha = compare ? sha256Hex(new TextEncoder().encode(args.compare_mml)) : null;
 
-  let listenLink = null;
-  let linkStatus = listen.studioWebOriginStatus;
-  if (listen.studioWebOrigin) {
+  // The link carries the markers the view carries, so it is rebuilt whenever
+  // the response bound below merges them.
+  const linkFor = async markers => {
+    if (!listen.studioWebOrigin) return { listenLink: null, linkStatus: listen.studioWebOriginStatus };
     const payload = {
       schema: LISTEN_LINK_SCHEMA,
       mml,
@@ -434,17 +439,20 @@ export async function runListenTool(args, { application, owner, listen = DEFAULT
     };
     try {
       const url = await listenLinkUrl(listen.studioWebOrigin, payload);
-      listenLink = { url, origin: listen.studioWebOrigin, characters: url.length };
-      linkStatus = 'OK';
+      // The link travels twice (in the view and in the text a host without UI
+      // shows), so a link longer than the response allows is withheld, as one
+      // the contract refuses is.
+      if (url.length > LISTEN_RESPONSE.linkChars) return { listenLink: null, linkStatus: 'LINK_TOO_LONG' };
+      return { listenLink: { url, origin: listen.studioWebOrigin, characters: url.length }, linkStatus: 'OK' };
     } catch (error) {
       // The contract refused the document: the view is still complete, only
       // without a link, and the reason is stated rather than repaired.
       if (!(error instanceof ListenLinkError)) throw error;
-      linkStatus = error.code === 'LISTEN_LINK_TOO_LARGE' ? 'PAYLOAD_TOO_LARGE' : 'PAYLOAD_INVALID';
+      return { listenLink: null, linkStatus: error.code === 'LISTEN_LINK_TOO_LARGE' ? 'PAYLOAD_TOO_LARGE' : 'PAYLOAD_INVALID' };
     }
-  }
+  };
 
-  const view = {
+  const viewOf = ({ markers, notes, link }) => ({
     schema: LISTEN_VIEW_SCHEMA,
     title,
     source,
@@ -461,7 +469,7 @@ export async function runListenTool(args, { application, owner, listen = DEFAULT
     start,
     markers,
     truncated_markers: truncatedMarkers,
-    song_notes: songNotes,
+    song_notes: notes,
     delivery_flags: fromFinal.delivery_flags,
     provisional_releases: fromFinal.provisional_releases,
     unverified_lead: fromFinal.unverified_lead,
@@ -470,13 +478,144 @@ export async function runListenTool(args, { application, owner, listen = DEFAULT
       findings: parsed.findings.slice(0, 10),
       notice: PARSE_NOTICE,
     },
-    listen_link: listenLink,
-    listen_link_status: linkStatus,
+    listen_link: link.listenLink,
+    listen_link_status: link.linkStatus,
     preview_notice: PREVIEW_NOTICE,
     feedback_notice: FEEDBACK_NOTICE,
     ...(canonical ? { canonical } : {}),
-  };
+  });
+
+  // The link depends on the markers only, so it is encoded once per marker set.
+  let built = null;
+  const view = await boundListenView({
+    markers: listed,
+    notes: songNotes,
+    build: async (markers, notes) => {
+      if (built?.from !== markers) {
+        const shown = viewMarkers(markers);
+        built = { from: markers, shown, link: await linkFor(shown) };
+      }
+      return viewOf({ markers: built.shown, notes, link: built.link });
+    },
+    retrieve: source.kind === 'final_artifact' ? [{ tool: 'studio_artifact_get', arguments: { artifact_id: source.artifact_id } }] : [],
+  });
   return { structuredContent: view, text: summaryText(view) };
+}
+
+// ─── the response bound ─────────────────────────────────────────────────────
+//
+// studio_listen answers under the size rules every Studio tool answers under
+// (server/mcp-compaction.mjs), kept in a form a player can still render:
+//
+//   * `mml` and `compare_mml` are the song itself and, like any huge string
+//     there, are never cut (the link contract bounds each at 40,000
+//     characters, and the text summary never repeats them);
+//   * everything else in the view -- markers, song-level notes, figures, the
+//     link -- is returned exactly as built while it is at most
+//     RESPONSE_COMPACTION.triggerBytes, as a v3 Final within its own marker
+//     budgets normally is (about 300 bytes a marker). Above it, markers are
+//     merged per kind and role into fewer ranges, with the smallest merge
+//     from a fixed ladder that brings the view without its link to
+//     RESPONSE_COMPACTION.budgetBytes. A merged marker's count covers every
+//     item inside it, so nothing is dropped, and the markers stay a list.
+//     Song-level notes past what then fits are counted, not sent. The view
+//     says so in `response_compaction`, in the Studio compaction schema;
+//   * the link, which travels in the view and again in the text, is bounded
+//     on its own: it is withheld past LISTEN_RESPONSE.linkChars. The text
+//     lists at most LISTEN_RESPONSE.textMarkers markers and textNotes notes.
+//
+// The worst case is then about half the MCP result cap: two MML texts, the
+// trigger, and the text summary with the link.
+export const LISTEN_RESPONSE = Object.freeze({
+  triggerBytes: RESPONSE_COMPACTION.triggerBytes,
+  budgetBytes: RESPONSE_COMPACTION.budgetBytes,
+  // Markers per kind, tried in order until the view fits.
+  mergeBudgets: Object.freeze([200, 100, 50, 25, 12, 6, 1]),
+  linkChars: 64 * 1024,
+  textMarkers: 20,
+  textNotes: 8,
+});
+
+const KIND_TEXT = Object.freeze({ 'provisional-release': 'release 暫定表示', 'lead-unverified': '主旋律未驗證', pending: '待聽', changed: '已修改', note: '備註' });
+export const LISTEN_COMPACTION_NOTICE = 'This listening view was larger than a Studio response may be, so its markers were merged per kind and role into fewer ranges (a marker\'s count is every item inside it; nothing was dropped) and any song-level notes past the budget are counted here, not sent. The MML texts are never cut. Read a Final\'s full records with the retrieve read (report_page on artifact.provisional_release_rendering or artifact.machine_delivery).';
+
+// The view's size apart from the MML texts, as JSON text, and the part of it
+// merging and notes can change (without the separately bounded link).
+const outsideMml = view => {
+  const { mml: _mml, compare_mml: _compare, ...rest } = view;
+  return Buffer.byteLength(JSON.stringify(rest));
+};
+const listBytes = view => outsideMml({ ...view, listen_link: null });
+
+/**
+ * Merge placed markers per kind and role with groupRuns (the gap ladder the
+ * Final's own markers use) so that each kind has at most `budget` markers,
+ * wherever a role allows. A marker that merges nothing is kept as it is.
+ */
+export function mergeListenMarkers(markers, budget) {
+  const merged = [];
+  for (const kind of Object.keys(KIND_TEXT)) {
+    const items = markers.filter(marker => marker.kind === kind).map(marker => {
+      const start = listenBeatNumber(marker.beat);
+      const end = marker.end_beat ? Math.max(start, listenBeatNumber(marker.end_beat)) : start;
+      return { role: marker.role ?? '', start, end, beat: marker.beat, endBeat: end > start ? marker.end_beat : marker.beat, marker };
+    });
+    if (!items.length) continue;
+    for (const group of groupRuns(items, budget).groups) {
+      if (group.items.length === 1) { merged.push(group.items[0].marker); continue; }
+      const members = group.items.map(item => item.marker);
+      const shared = key => (members.every(member => member[key] === members[0][key]) ? members[0][key] : null);
+      const count = members.reduce((sum, member) => sum + (Number.isSafeInteger(member.count) && member.count > 0 ? member.count : 1), 0);
+      merged.push({
+        beat: group.beat,
+        end_beat: group.end > group.start ? group.endBeat : null,
+        role: group.role || null,
+        kind,
+        gate: shared('gate'),
+        source: shared('source') ?? 'merged',
+        count,
+        label: clip(`${KIND_TEXT[kind]} ×${count}：beat ${group.beat}–${group.endBeat}（回應大小上限，合併 ${members.length} 個標記）`),
+      });
+    }
+  }
+  return merged.sort((a, b) => listenBeatNumber(a.beat) - listenBeatNumber(b.beat));
+}
+
+/**
+ * The view `build(markers, notes)` makes, bounded as described above. Pure
+ * apart from `build`, and deterministic.
+ */
+export async function boundListenView({ markers, notes, build, retrieve = [] }) {
+  const full = await build(markers, notes);
+  if (outsideMml(full) <= LISTEN_RESPONSE.triggerBytes) return full;
+
+  let view = full;
+  let mergedWith = null;
+  let shown = markers;
+  for (const budget of LISTEN_RESPONSE.mergeBudgets) {
+    if (listBytes(view) <= LISTEN_RESPONSE.budgetBytes) break;
+    shown = mergeListenMarkers(markers, budget);
+    view = await build(shown, notes);
+    mergedWith = budget;
+  }
+  let kept = notes.length;
+  while (kept > 0 && listBytes(view) > LISTEN_RESPONSE.budgetBytes) view = await build(shown, notes.slice(0, --kept));
+  // Over the trigger only because of the link, which is bounded on its own.
+  if (mergedWith === null && kept === notes.length) return full;
+
+  const compacted = [{ path: ['markers'], total: markers.length, kept: view.markers.length, merge_budget: mergedWith }];
+  if (kept < notes.length) compacted.push({ path: ['song_notes'], total: notes.length, kept, sha256: sha256Hex(new TextEncoder().encode(JSON.stringify(notes))) });
+  return {
+    ...view,
+    response_compaction: {
+      schema: RESPONSE_COMPACTION.schema,
+      trigger_bytes: LISTEN_RESPONSE.triggerBytes,
+      budget_bytes: LISTEN_RESPONSE.budgetBytes,
+      compacted,
+      retrieve,
+      notice: LISTEN_COMPACTION_NOTICE,
+    },
+  };
 }
 
 const LINK_STATUS_TEXT = Object.freeze({
@@ -484,6 +623,7 @@ const LINK_STATUS_TEXT = Object.freeze({
   ORIGIN_INVALID: '（STUDIO_WEB_ORIGIN 不是有效的 https origin，所以沒有 Studio Web 試聽連結。）',
   PAYLOAD_TOO_LARGE: '（內容超過試聽連結的 256 KB 上限，所以沒有 Studio Web 試聽連結。）',
   PAYLOAD_INVALID: '（這份內容無法編成試聽連結。）',
+  LINK_TOO_LONG: '（試聽連結超過這個回應能帶的長度，所以沒有附上；播放器仍可完整試聽。）',
 });
 
 function summaryText(view) {
@@ -495,14 +635,18 @@ function summaryText(view) {
   if (view.parse.finding_count) lines.push(`試聽讀取有 ${view.parse.finding_count} 則提醒（不是技術檢查結論）。`);
   if (view.markers.length) {
     lines.push(`請特別聽 ${view.markers.length} 處：`);
-    for (const marker of view.markers.slice(0, 20)) {
+    for (const marker of view.markers.slice(0, LISTEN_RESPONSE.textMarkers)) {
       const place = marker.bar ? `第${marker.bar}小節` : `beat ${marker.beat}`;
       lines.push(`- ${place}（${formatTime(marker.seconds)}）${marker.role ? ` ${marker.role}` : ''} [${marker.kind}] ${marker.label}`);
     }
-    if (view.markers.length > 20) lines.push(`- …另外 ${view.markers.length - 20} 處在播放器裡。`);
+    if (view.markers.length > LISTEN_RESPONSE.textMarkers) lines.push(`- …另外 ${view.markers.length - LISTEN_RESPONSE.textMarkers} 處在播放器裡。`);
   }
   if (view.delivery_flags.length) lines.push(`交付旗標：${view.delivery_flags.map(flag => `${flag}（${flagLabel(flag)}）`).join('、')}。旗標是仍未解決的標籤，不是結論。`);
-  if (view.song_notes.length) lines.push(`整曲待確認：${view.song_notes.map(note => note.label).slice(0, 8).join('；')}`);
+  if (view.song_notes.length) lines.push(`整曲待確認：${view.song_notes.map(note => note.label).slice(0, LISTEN_RESPONSE.textNotes).join('；')}`);
+  if (view.response_compaction) {
+    const notes = view.response_compaction.compacted.find(entry => entry.path[0] === 'song_notes');
+    lines.push(`回應大小上限：標記已依種類與角色合併成 ${view.markers.length} 個區段（×N 是涵蓋的項目數，沒有丟棄）${notes ? `；整曲待確認另有 ${notes.total - notes.kept} 則未附上` : ''}。`);
+  }
   lines.push(view.listen_link ? `Studio Web 試聽連結：${view.listen_link.url}` : (LINK_STATUS_TEXT[view.listen_link_status] ?? '（沒有 Studio Web 試聽連結。）'));
   lines.push(PREVIEW_NOTICE);
   lines.push(FEEDBACK_NOTICE);

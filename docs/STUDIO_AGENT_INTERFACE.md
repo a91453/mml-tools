@@ -828,6 +828,18 @@ HTTP route of its own because it adds no operation: the artifact is already
 Feedback a person sends from the player is conversation text; the player calls
 no tool, and nothing it produces is a confirmation, evidence or acceptance.
 
+`studio_listen` answers under the same size rules as the other Studio tools
+(`server/mcp-compaction.mjs`), in a form the player can still render. The MML
+texts are never cut. The rest of the view is returned as built while it is at
+most `RESPONSE_COMPACTION.triggerBytes`; above that, markers are merged per kind
+and role into fewer ranges until it fits `RESPONSE_COMPACTION.budgetBytes` (a
+marker's `count` covers every item it merged, so none is dropped), song-level
+notes that still do not fit are counted, and `response_compaction` says what
+was bounded and names `studio_artifact_get` for a Final's full records. The
+listen link travels in the view and in the text, so one longer than
+`LISTEN_RESPONSE.linkChars` is withheld (`LINK_TOO_LONG`). The worst case is
+about half the MCP result cap.
+
 The four run tools are four rather than one for the same reason the reduction
 and adaptation previews are separate from their applies: `studio_run_plan` and
 `studio_run_status` write nothing and are annotated read-only, while

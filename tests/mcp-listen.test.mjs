@@ -14,9 +14,10 @@ import { readFile } from 'node:fs/promises';
 import { handleMcp } from '../server/mcp.mjs';
 import {
   LISTEN_MCP_TOOLS, LISTEN_VIEW_SCHEMA, MCP_APP_MIME_TYPE, LEGACY_WIDGET_MIME_TYPE, PLAYER_RESOURCE_URI, PLAYER_LEGACY_RESOURCE_URI,
-  NODE_LISTEN_CODEC, createListenConfig, encodeListenPayload, listenConfigFromEnv, listenLinkUrl, parseStudioWebOrigin,
+  LISTEN_RESPONSE, NODE_LISTEN_CODEC, createListenConfig, encodeListenPayload, listenConfigFromEnv, listenLinkUrl, mergeListenMarkers, parseStudioWebOrigin,
 } from '../server/mcp-listen.mjs';
-import { ListenLinkError, decodeListenLink, streamCodec } from '../studio/web/listen-link.mjs';
+import { RESPONSE_COMPACTION } from '../server/mcp-compaction.mjs';
+import { LISTEN_LIMITS, ListenLinkError, decodeListenLink, streamCodec } from '../studio/web/listen-link.mjs';
 import { createStudioApplication } from '../studio/backend/application/index.mjs';
 import { sha256Hex } from '../studio/backend/source/sha256.mjs';
 import { canonicalProjectBytes, keepEveryRole, sixRoleBaseline } from '../studio/tests/fixtures/application-fixtures.mjs';
@@ -558,4 +559,152 @@ const syntheticArtifact = extra => ({
   type: 'final_mml', artifact_id: ARTIFACT_ID, project_id: PROJECT_ID, candidate_id: 'g11d:rev:synthetic', song_state: 'VALIDATED',
   mml: SONG, final_bar: { pickup: null, final_partial: null, meter_text: '0 4/4' },
   ...extra,
+});
+
+// ─── the response bound (server/mcp-compaction.mjs rules) ────────────────────
+
+const MCP_RESULT_CAP = 524288;
+const outsideMml = view => { const { mml: _mml, compare_mml: _compare, ...rest } = view; return Buffer.byteLength(JSON.stringify(rest)); };
+const listBytes = view => outsideMml({ ...view, listen_link: null });
+const sixRoles = track => `MML@${Array.from({ length: 6 }, () => track).join(',')};`;
+const responseBytes = result => Buffer.byteLength(JSON.stringify(result.structuredContent)) + Buffer.byteLength(result.content[0].text);
+
+test('the listen bound is the Studio compaction bound', () => {
+  assert.equal(LISTEN_RESPONSE.triggerBytes, RESPONSE_COMPACTION.triggerBytes);
+  assert.equal(LISTEN_RESPONSE.budgetBytes, RESPONSE_COMPACTION.budgetBytes);
+  // Two MML texts, the trigger and the text with its link stay near half the cap.
+  const worst = 2 * LISTEN_LIMITS.mmlChars + LISTEN_RESPONSE.triggerBytes + LISTEN_RESPONSE.linkChars + 24 * 1024;
+  assert.ok(worst < MCP_RESULT_CAP * 0.55, String(worst));
+  assert.match(LISTEN_MCP_TOOLS[0].description, /response_compaction/);
+});
+
+test('a v3 Final with a full listening load is returned exactly as built, far under the result cap', async () => {
+  // 150 separate provisional releases and 100 separate unverified Lead notes
+  // (the Lead budget): a Final a person has a lot to listen to in.
+  const roles = ['Melody', 'Chord1', 'Chord2', 'Chord3', 'Chord4', 'Chord5'];
+  const renderings = Array.from({ length: 150 }, (_, i) => ({ eventId: `e${i}`, role: roles[i % 6], onset: String(4 * i), release: `${(4 * i + 1) * 480 - 7}/480`, renderedRelease: String(4 * i + 1), intervalKeys: ['k'] }));
+  const mml = sixRoles(`t120o4${'c4'.repeat(900)}`);
+  const artifact = syntheticArtifact({
+    mml,
+    provisional_release_rendering: { applied: true, renderings, heldEventCount: 150, closedIntervalCount: 150, releaseOffsetSources: [] },
+    machine_delivery: {
+      schema: MACHINE_DELIVERY_SCHEMA_V2,
+      unresolved_evidence_ledger: [
+        { gate: 'microTiming', classification: 'NON_BLOCKING_PENDING', status: 'PENDING', blockers: [], provisional_releases: [] },
+        { gate: 'leadPromotion', classification: 'NON_BLOCKING_PENDING', status: 'PENDING', blockers: [], unverified_lead_event_ids: Array.from({ length: 100 }, (_, i) => `m${i * 7 + 2}`) },
+      ],
+    },
+    delivery: { flags: ['RELEASES_RENDERED_PROVISIONALLY', 'LEAD_UNVERIFIED'] },
+  });
+  const application = { ...stubApplication(artifact), async listBaselineEvents(owner, projectId, { eventIds }) { return { events: eventIds.map(id => ({ event_id: id, start: id.slice(1) })) }; } };
+  const result = (await surface({ application }).call({ artifact_id: ARTIFACT_ID, compare_mml: mml.replace('c4', 'd4') })).result;
+  assert.equal(result.isError, false);
+  const view = result.structuredContent;
+  assert.equal(view.markers.filter(marker => marker.kind === 'provisional-release').length, 150);
+  assert.equal(view.markers.filter(marker => marker.kind === 'lead-unverified').length, LEAD_MARKER_BUDGET);
+  assert.ok(outsideMml(view) <= LISTEN_RESPONSE.triggerBytes * 0.9, String(outsideMml(view)));
+  assert.equal(view.response_compaction, undefined, 'at or below the trigger nothing is touched');
+  assert.equal((await linkPayload(view.listen_link.url)).markers.length, 250);
+  assert.ok(responseBytes(result) < MCP_RESULT_CAP / 2, String(responseBytes(result)));
+});
+
+test('an oversized listening view merges markers into fewer ranges, drops none, and says so', async () => {
+  // A ledger that files 100 positions with long findings, and 100 caller notes
+  // with long labels: well past the trigger.
+  const finding = '聽'.repeat(190);
+  const artifact = syntheticArtifact({
+    mml: sixRoles(`t120o4${'c4'.repeat(500)}`),
+    machine_delivery: {
+      unresolved_evidence_ledger: [
+        { gate: 'mobileAdaptation', classification: 'NON_BLOCKING_PENDING', status: 'PENDING', blockers: [], locations: Array.from({ length: 100 }, (_, i) => ({ beat: String(i * 3), role: 'Chord1', finding })) },
+        { gate: 'inGameAcceptance', classification: 'POST_DELIVERY', status: 'PENDING', blockers: [] },
+      ],
+    },
+  });
+  const markers = Array.from({ length: 100 }, (_, i) => ({ beat: String(i * 4 + 1), end_beat: String(i * 4 + 2), role: i % 2 ? 'Melody' : 'Chord2', kind: 'note', label: `n${i} `.padEnd(200, '·') }));
+  const result = (await surface({ application: stubApplication(artifact) }).call({ artifact_id: ARTIFACT_ID, markers })).result;
+  assert.equal(result.isError, false);
+  const view = result.structuredContent;
+  const compaction = view.response_compaction;
+  assert.equal(compaction.schema, RESPONSE_COMPACTION.schema);
+  assert.equal(compaction.trigger_bytes, RESPONSE_COMPACTION.triggerBytes);
+  assert.equal(compaction.budget_bytes, RESPONSE_COMPACTION.budgetBytes);
+  assert.deepEqual(compaction.compacted[0].path, ['markers']);
+  assert.equal(compaction.compacted[0].total, 200);
+  assert.equal(compaction.compacted[0].kept, view.markers.length);
+  assert.deepEqual(compaction.retrieve, [{ tool: 'studio_artifact_get', arguments: { artifact_id: ARTIFACT_ID } }]);
+  assert.match(compaction.notice, /nothing was dropped/);
+  // Fewer markers, the same items: per kind and role the counts add up.
+  assert.ok(view.markers.length < 200 && view.markers.length > 0);
+  assert.ok(listBytes(view) <= LISTEN_RESPONSE.budgetBytes, String(listBytes(view)));
+  const counted = (kind, role) => view.markers.filter(marker => marker.kind === kind && marker.role === role).reduce((sum, marker) => sum + marker.count, 0);
+  assert.equal(counted('pending', 'Chord1'), 100);
+  assert.equal(counted('note', 'Melody'), 50);
+  assert.equal(counted('note', 'Chord2'), 50);
+  assert.ok(view.markers.some(marker => marker.count > 1 && /回應大小上限，合併 \d+ 個標記/.test(marker.label)));
+  // The markers stay a list the player renders, ids in order, and the link carries the same ones.
+  assert.deepEqual(view.markers.map(marker => marker.id), view.markers.map((_, index) => `m${index + 1}`));
+  assert.deepEqual((await linkPayload(view.listen_link.url)).markers.map(marker => [marker.kind, marker.beat, marker.role, marker.label]), view.markers.map(marker => [marker.kind, marker.beat, marker.role ?? undefined, marker.label]));
+  assert.deepEqual(view.song_notes.map(note => note.gate), ['inGameAcceptance'], 'notes that fit are all sent');
+  assert.match(result.content[0].text, /回應大小上限：標記已依種類與角色合併成 \d+ 個區段/);
+  assert.ok(responseBytes(result) < MCP_RESULT_CAP / 4, String(responseBytes(result)));
+});
+
+test('marker merging keeps every item in exactly one range, per kind and role', () => {
+  const at = (beat, extra = {}) => ({ beat: String(beat), end_beat: null, role: 'Chord3', kind: 'pending', gate: 'regression', source: 'machine-delivery-ledger', count: 1, label: `at ${beat}`, ...extra });
+  const markers = [at(0), at(1), at(2, { count: 3 }), at(40), at(41), at(5, { role: 'Melody' }), at(6, { kind: 'changed', gate: null, source: 'caller' })];
+  // A budget every marker fits keeps them all, merging only touching neighbours.
+  const loose = mergeListenMarkers(markers, 100);
+  assert.deepEqual(loose.map(marker => [marker.kind, marker.role, marker.beat, marker.count]), [
+    ['pending', 'Chord3', '0', 1], ['pending', 'Chord3', '1', 1], ['pending', 'Chord3', '2', 3], ['pending', 'Melody', '5', 1], ['changed', 'Chord3', '6', 1], ['pending', 'Chord3', '40', 1], ['pending', 'Chord3', '41', 1],
+  ]);
+  assert.equal(loose[0], markers[0], 'an unmerged marker is the same object');
+  const tight = mergeListenMarkers(markers, 1);
+  assert.deepEqual(tight.map(marker => [marker.kind, marker.role, marker.beat, marker.end_beat, marker.count, marker.gate, marker.source]), [
+    ['pending', 'Chord3', '0', '41', 7, 'regression', 'machine-delivery-ledger'], ['pending', 'Melody', '5', null, 1, 'regression', 'machine-delivery-ledger'], ['changed', 'Chord3', '6', null, 1, null, 'caller'],
+  ]);
+  assert.match(tight[0].label, /^待聽 ×7：beat 0–41（回應大小上限，合併 5 個標記）$/);
+});
+
+test('a link longer than the response allows is withheld with its reason; the player view is complete', async () => {
+  // High-entropy synthetic MML and 200 markers with high-entropy labels: a view
+  // under the trigger whose link cannot compress below the link bound.
+  let seed = 20260923;
+  const next = n => { seed ^= seed << 13; seed ^= seed >>> 17; seed ^= seed << 5; return Math.floor(((seed >>> 0) / 4294967296) * n); };
+  const noise = length => {
+    let text = 't120';
+    while (text.length < length - 8) text += `${'<>'[next(2)]}${'cdefgab'[next(7)]}${['', '+', '-'][next(3)]}${[1, 2, 4, 8, 16, 32][next(6)]}${next(4) ? '' : '.'}v${next(16)}`;
+    return text;
+  };
+  const ALPHABET = [...Array(94)].map((_, i) => String.fromCharCode(33 + i)).filter(c => c !== '"' && c !== '\\').join('');
+  const words = () => Array.from({ length: 200 }, () => ALPHABET[next(ALPHABET.length)]).join('');
+  const mml = `MML@${Array.from({ length: 6 }, () => noise(6600)).join(',')};`;
+  const compare = `MML@${Array.from({ length: 6 }, () => noise(6600)).join(',')};`;
+  const artifact = syntheticArtifact({
+    mml,
+    machine_delivery: {
+      unresolved_evidence_ledger: ['regression', 'versionDrift', 'playerReadback', 'mobileAdaptation'].map((gate, g) => ({
+        gate, classification: 'NON_BLOCKING_PENDING', status: 'PENDING', blockers: [], locations: Array.from({ length: 25 }, (_, i) => ({ beat: String(i * 6 + g), finding: words() })),
+      })),
+    },
+  });
+  const markers = Array.from({ length: 100 }, (_, i) => ({ beat: String(i * 5 + 3), kind: 'note', label: words() }));
+  const result = (await surface({ application: stubApplication(artifact) }).call({ artifact_id: ARTIFACT_ID, compare_mml: compare, markers })).result;
+  assert.equal(result.isError, false, JSON.stringify(result.structuredContent).slice(0, 300));
+  const view = result.structuredContent;
+  assert.equal(view.markers.length, 200);
+  assert.equal(view.response_compaction, undefined, 'the view itself is under the trigger');
+  assert.ok(outsideMml(view) <= LISTEN_RESPONSE.triggerBytes);
+  assert.equal(view.listen_link, null);
+  assert.equal(view.listen_link_status, 'LINK_TOO_LONG');
+  assert.match(result.content[0].text, /試聽連結超過這個回應能帶的長度/);
+  assert.equal(view.mml, mml, 'the MML is never cut');
+  assert.equal(view.compare_mml, compare);
+  // The same document is a valid link on its own; only this response withholds it.
+  const url = await listenLinkUrl(STUDIO_WEB, {
+    schema: 'mml-studio/listen-link@1', mml, title: view.title, meter_text: view.meter_text, compare_mml: compare,
+    markers: view.markers.map(marker => ({ beat: marker.beat, kind: marker.kind, label: marker.label })),
+  });
+  assert.ok(url.length > LISTEN_RESPONSE.linkChars, String(url.length));
+  assert.ok(responseBytes(result) < MCP_RESULT_CAP / 2, String(responseBytes(result)));
 });
