@@ -88,8 +88,14 @@ await put('vendor/spessasynth/processor.js', `${spessaBanner} * Full license tex
 // downloaded from its upstream by the browser that first needs it and kept
 // only there (studio/web/preview/default-bank.mjs); a bank the user picks
 // stays in their browser too.
-const xmlPath = 'studio/backend/score/musicxml.mjs';
-await put(xmlPath, (await readFile(resolve(root, xmlPath), 'utf8')).replace("from 'fast-xml-parser'", "from '../../../vendor/xml.mjs'"));
+// Every backend module that imports the XML parser by bare specifier is pointed
+// at the vendored browser build; a bare specifier left in any shipped module is
+// refused below, because the browser cannot resolve it and the page never boots.
+for (const xmlPath of ['studio/backend/score/musicxml.mjs', 'studio/backend/score/mxl.mjs']) {
+  const text = await readFile(resolve(root, xmlPath), 'utf8');
+  if (!text.includes("from 'fast-xml-parser'")) throw Error(`${xmlPath} no longer imports fast-xml-parser by bare specifier; update the vendoring step`);
+  await put(xmlPath, text.replace("from 'fast-xml-parser'", "from '../../../vendor/xml.mjs'"));
+}
 for (const name of ['index.html', 'style.css', 'manifest.webmanifest', 'icon.svg', 'apple-touch-icon.png']) {
   try { await cp(resolve(root, 'studio/web', name), resolve(out, name)); }
   catch (error) { if (error.code !== 'ENOENT') throw error; }
@@ -104,6 +110,9 @@ async function inventory(dir = '') {
 }
 await inventory();
 const runtimeFiles = files.sort();
+for (const path of runtimeFiles.filter(path => /\.m?js$/.test(path))) {
+  if (/\bfrom\s*['"]fast-xml-parser['"]/.test(await readFile(resolve(out, path), 'utf8'))) throw Error(`${path} imports fast-xml-parser by bare specifier, which a browser cannot resolve`);
+}
 const runtimeHashes = await Promise.all(runtimeFiles.map(async path => [path, digest(await readFile(resolve(out, path)))]));
 
 // Stage A - cache identity, shared with the artifact verifier so the two

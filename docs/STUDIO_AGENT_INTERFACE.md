@@ -256,6 +256,14 @@ the mapping, so this never becomes a second Canonical source vocabulary.
 Kinds that carry no symbolic content (`original_audio`, reports, outputs) have
 `intake: false` and are refused by intake rather than handed to a guessed parser.
 
+A MusicXML kind accepts plain MusicXML or compressed `.mxl`. Which one it is is
+read from the bytes (the ZIP magic), not from the filename or the declared media
+type (`application/vnd.recordare.musicxml`, `application/vnd.recordare.musicxml+xml`
+and `application/zip` are accepted declarations). The asset stays the uploaded
+archive; the extracted rootfile is derived and recorded on the baseline
+(`formats[].container`). Limits and refusals are in
+`studio/backend/score/README.md`.
+
 The SHA-256 is computed from the bytes received; a caller cannot assert one. It
 is re-checked on every read, and a blob that no longer matches the metadata it is
 filed under is refused rather than parsed.

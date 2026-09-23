@@ -29,7 +29,7 @@ self.onmessage = async ({ data }) => {
     // Listening sessions: read an MML string with the repository parser. It
     // reads a string and returns a song; it never sees a workspace.
     else if (data.action === 'parseListening') result = (await import('./listen-model.mjs')).parseListening(...data.args);
-    else if (['newWorkspace', 'intake', 'intakeMidi', 'analyzeWorkspace', 'invalidate', 'importWorkspace', 'recordReview', 'recordLeadEvidence', 'recordLeadPromotionEvidence', 'recordAcceptedDecision', 'previewAcceptedDecision', 'acceptPreviewedDecision', 'clearAcceptedDecisions', 'recordAcceptance', 'recordPlayerReadback', 'clearPlayerReadback', 'generateFinalDelivery', 'applyFinalDelivery', 'previewMobileAdaptation', 'applyWorkspaceMobileAdaptation', 'clearMobileAdaptation', 'previewFinalReduction', 'applyWorkspaceFinalReduction', 'clearFinalReduction'].includes(data.action)) result = model[data.action](...data.args);
+    else if (['newWorkspace', 'intake', 'intakeMxl', 'intakeMidi', 'analyzeWorkspace', 'invalidate', 'importWorkspace', 'recordReview', 'recordLeadEvidence', 'recordLeadPromotionEvidence', 'recordAcceptedDecision', 'previewAcceptedDecision', 'acceptPreviewedDecision', 'clearAcceptedDecisions', 'recordAcceptance', 'recordPlayerReadback', 'clearPlayerReadback', 'generateFinalDelivery', 'applyFinalDelivery', 'previewMobileAdaptation', 'applyWorkspaceMobileAdaptation', 'clearMobileAdaptation', 'previewFinalReduction', 'applyWorkspaceFinalReduction', 'clearFinalReduction'].includes(data.action)) result = model[data.action](...data.args);
     else throw Error('UNSUPPORTED: worker action');
     self.postMessage({ id: data.id, result });
   } catch (error) { self.postMessage({ id: data.id, error: error.message }); }

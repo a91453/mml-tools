@@ -290,12 +290,13 @@ search-policy limit; raising only the bound makes the same candidate emit.
 | the bounded search finds no exact plan | `FAIL` — never rounded to the nearest token, and reported as a search-policy limit rather than as unrepresentability |
 | duration search budget exhausted | `FAIL`, reported as a search limit rather than a proof of impossibility |
 | two notes overlap inside one role | `FAIL` — a role is one sequential voice; neither note is dropped or truncated |
-| a note/rest event carries no six-slot role | `FAIL` — the emitter does not choose a slot |
+| a note event carries no six-slot role | `FAIL` — the emitter does not choose a slot |
+| a rest event carries no six-slot role | not a slot's material: a rest is silence, and one no role holds (a notated MusicXML rest carried from the baseline) is left out of the role streams, as the gaps of a MIDI source are; a rest a role holds is written as that role's rest |
 | some notes in a role have a decided volume and some do not | `FAIL` — no level is invented for the rest |
 | pitch above the official `0–107` range | `FAIL` — not re-spelled, and `Nxx` is not substituted (P3) |
 | pitch with no ordinary spelling in the octave mapping | `FAIL` (P6) |
 | tempo not an integer, or outside `T32–T255` | `FAIL` — never rounded or clamped |
-| no tempo at beat 0, or two tempi on one beat | `FAIL` — nothing is invented or deduplicated |
+| no tempo at beat 0, or two tempi on one beat | `FAIL` — nothing is invented or deduplicated here; the diagnostic names both values and sources. A tempo several sources state identically at one beat is already one event after the Canonical merge (`canonical/control-map.mjs`) |
 | a tempo position falls past a non-empty role's end | `FAIL` — the role is **not** padded with filler rests (P2 / P14 stay open) |
 | any role exceeds the 2,400-character budget | `FAIL` with role, count, overage and attack count — no note, attack or rest is removed |
 | G10 reports confirmed technical residue | `FAIL` — unless `technicalTimingRepair` is opted into *and* the repair layer normalizes it exactly (§5a) |

@@ -46,6 +46,11 @@ const MEDIA_TYPES = Object.freeze({
   'application/octet-stream': true,
   'application/xml': true,
   'text/xml': true,
+  // MusicXML's registered types, and a ZIP for a compressed .mxl. Declarations
+  // only: the intake reader decides from the bytes, not from these.
+  'application/vnd.recordare.musicxml+xml': true,
+  'application/vnd.recordare.musicxml': true,
+  'application/zip': true,
   'application/json': true,
   'text/plain': true,
 });

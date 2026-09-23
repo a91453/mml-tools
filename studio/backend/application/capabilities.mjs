@@ -62,6 +62,11 @@ export function buildCapabilities({ canonical, storage, jobs, transports = [] })
     capabilities: freeze({
       midi_ingest: true,
       musicxml_ingest: true,
+      // Compressed .mxl (bounded container reader), repeat/volta/D.C./D.S./
+      // Coda/Fine expansion into playback order, pickup placement. Ambiguous
+      // navigation is refused and leaves the source incomplete.
+      musicxml_compressed_ingest: true,
+      musicxml_navigation_expansion: true,
       mml_ingest: true,
       canonical_project_ingest: true,
       audio_alignment: true,

@@ -39,9 +39,14 @@ const SPAN_KINDS = new Set(['note', 'rest']);
 // Reference oracle: the pre-C2B brute-force semantics, transcribed unchanged.
 // ---------------------------------------------------------------------------
 
+// The span set follows the current rule: a rest no role holds is source
+// silence and takes no part in stream analysis (a role-held rest still does).
+// Only the brute-force pairing below is the pre-C2B oracle; the equivalence is
+// between that pairing and the windowed sweep over the same span set.
 function referenceSpanEvents(project) {
   const events = Array.isArray(project?.events) ? project.events : [];
-  return events.filter(event => event && SPAN_KINDS.has(event.kind) && event.id && event.start != null && event.end != null);
+  return events.filter(event => event && SPAN_KINDS.has(event.kind) && event.id && event.start != null && event.end != null
+    && (event.kind === 'note' || ASSIGNED_ROLES.has(event.role)));
 }
 
 function referenceIsAssignedRole(event) {

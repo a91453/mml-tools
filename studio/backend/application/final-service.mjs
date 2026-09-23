@@ -277,13 +277,17 @@ export function createFinalService({ canonical, projects, review, store }) {
       // readiness could only report NOT_RUN. Now there is one, so readiness is
       // asked again with it — rather than the emitter's own PASS being copied
       // across as if it were the readiness answer. The meter map comes from the
-      // candidate's own meter events, never from a caller.
-      const meterText = (project.meterEvents ?? [])
-        .map(event => `${event.beat} ${event.numerator}/${event.denominator}`)
-        .join('\n');
-      const mmlValidation = passed && meterText
-        ? engines.mml.validateMML(emitted.combinedMml, { meterText, pickup: barInputs.pickup ?? undefined, finalPartial: barInputs.final_partial ?? undefined })
-        : null;
+      // candidate's own meter events, never from a caller: sorted by beat, one
+      // line for a meter several sources state identically at one beat, and a
+      // named refusal -- not an anonymous duplicate position -- when sources
+      // state different meters at one beat.
+      const meterMap = engines.merge.meterMapText(project.meterEvents ?? []);
+      const meterText = meterMap.text ?? '';
+      const mmlValidation = passed && meterMap.conflicts.length
+        ? { ok: false, errors: meterMap.conflicts.map(item => ({ code: item.code, message: item.message, beat: item.beat })), warnings: [] }
+        : passed && meterText
+          ? engines.mml.validateMML(emitted.combinedMml, { meterText, pickup: barInputs.pickup ?? undefined, finalPartial: barInputs.final_partial ?? undefined })
+          : null;
       // A player readback PASS that named the MML it read back counts only for
       // that exact MML. The emitted string is now known, so the claim can be
       // checked; a readback of some other string is not a readback of this one
