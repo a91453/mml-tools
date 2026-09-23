@@ -59,6 +59,24 @@ const parserDir = dirname(dirname(fileURLToPath(import.meta.resolve('fast-xml-pa
 const vendor = await readFile(resolve(parserDir, 'lib/fxp.min.js'), 'utf8');
 // Ship the installed package's own browser build, without a CDN or new parser.
 await put('vendor/xml.mjs', `(function(){${vendor}\n}).call(globalThis);\nexport const { XMLParser, XMLValidator } = globalThis.fxp;\n`);
+// Timbre preview engine (studio/web/preview/player.mjs), from the installed npm
+// packages spessasynth_lib / spessasynth_core (Apache-2.0), never a CDN. The lib
+// imports its core by bare specifier; the browser build points it at the
+// vendored copy. Source-map comments are dropped so no unlisted asset is asked for.
+// The Apache-2.0 text travels as a comment header in lib.js rather than as a
+// separate extension-less LICENSE file: hosts serve an allowlist of file types,
+// and one unservable precache entry fails the whole Service Worker install.
+const stripMap = text => text.replace(/\n\/\/# sourceMappingURL=\S+\s*$/, '\n');
+const libDist = dirname(fileURLToPath(import.meta.resolve('spessasynth_lib')));
+const coreDist = dirname(fileURLToPath(import.meta.resolve('spessasynth_core')));
+const spessaLib = await readFile(resolve(libDist, 'index.js'), 'utf8');
+if (!spessaLib.includes('from "spessasynth_core"')) throw Error('spessasynth_lib no longer imports spessasynth_core by bare specifier; update the vendoring step');
+const spessaVersions = await Promise.all(['spessasynth_lib', 'spessasynth_core'].map(async name => `${name}@${JSON.parse(await readFile(resolve(name === 'spessasynth_lib' ? libDist : coreDist, '../package.json'), 'utf8')).version}`));
+const spessaLicense = (await readFile(resolve(libDist, '../LICENSE'), 'utf8')).replaceAll('*/', '* /');
+const spessaBanner = `/*! SpessaSynth — vendored from npm: ${spessaVersions.join(', ')} (https://github.com/spessasus/spessasynth_lib)\n * SPDX-License-Identifier: Apache-2.0. Not covered by this repository's MIT License.\n`;
+await put('vendor/spessasynth/lib.js', `${spessaBanner}\n${spessaLicense}\n*/\n${stripMap(spessaLib.replaceAll('from "spessasynth_core"', 'from "./core.js"'))}`);
+await put('vendor/spessasynth/core.js', `${spessaBanner} * Full license text: the header of vendor/spessasynth/lib.js.\n */\n${stripMap(await readFile(resolve(coreDist, 'index.js'), 'utf8'))}`);
+await put('vendor/spessasynth/processor.js', `${spessaBanner} * Full license text: the header of vendor/spessasynth/lib.js.\n */\n${stripMap(await readFile(resolve(libDist, 'spessasynth_processor.min.js'), 'utf8'))}`);
 const xmlPath = 'studio/backend/score/musicxml.mjs';
 await put(xmlPath, (await readFile(resolve(root, xmlPath), 'utf8')).replace("from 'fast-xml-parser'", "from '../../../vendor/xml.mjs'"));
 for (const name of ['index.html', 'style.css', 'manifest.webmanifest', 'icon.svg', 'apple-touch-icon.png']) {

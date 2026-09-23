@@ -11,26 +11,23 @@ redistribute a source event, or to clear any `ACCEPTANCE_CRITERIA.md` gate.
 
 ## What was studied
 
-A third-party DLS sound pack supplied as a task attachment, together with its
-`.def` preset list:
-
-* `Fury_Sound_Pack_v150.dls` — 15,324,600 bytes, RIFF/DLS Level 2
-* `Fury_Sound_Pack_v150.def` — UTF-8 preset/localization list
+A DLS sound pack supplied as a task attachment, together with its `.def`
+preset list: a RIFF/DLS Level 2 bank of about 15 MB and a UTF-8
+preset/localization list. The pack is deliberately not named here.
 
 **Neither file is committed to this repository**, and neither is required for
-anything. G12 runs identically without them; there is no code path that reads a
-DLS or a `.def`.
+anything. G12 runs identically without them. The Final pipeline reads neither a
+DLS nor a `.def`. Studio Web's optional timbre preview plays only a bank that
+each user selects locally, and that file stays in their browser.
 
 ## Why it cannot be evidence
 
-The pack's own `INFO/ICMT` chunk says what it is:
-
-> This sound bank is different from the original. It is for simulation purposes
-> only, and unauthorized reproduction and commercial use are prohibited.
+The pack's own `INFO` metadata describes it as a simulation that differs from
+the original, not as the client's own sound source.
 
 So by its own description it is a **simulation**, not the target Mabinogi Mobile
-client's synthesis. `INFO/ISFT` records `Awave Studio v10.6`, i.e. the samples
-were passed through a third-party editor. Under `SOURCE_POLICY.md` this sits in
+client's synthesis. Its `INFO` metadata also records that the samples were
+edited in a third-party audio editor. Under `SOURCE_POLICY.md` this sits in
 class **C / F** — third-party and community material, supporting evidence at
 most, and only once independently confirmed. It is not class E in-game evidence,
 and a third-party `.def` is not an official Nexon specification.

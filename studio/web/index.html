@@ -7,7 +7,8 @@
   <meta name="apple-mobile-web-app-capable" content="yes">
   <meta name="apple-mobile-web-app-status-bar-style" content="default">
   <meta name="description" content="在 iPhone 與 iPad 本地整理、比對與審核 Mabinogi Mobile 六軌 MML。">
-  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self' data:; connect-src 'self' https:; worker-src 'self'; object-src 'none'; base-uri 'self'; form-action 'none'">
+  <!-- 'wasm-unsafe-eval' lets the vendored SpessaSynth timbre-preview engine compile its bundled WebAssembly (Ogg Vorbis decoder). It permits WebAssembly compilation only, never JavaScript eval; scripts still load only from 'self'. -->
+  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' 'wasm-unsafe-eval'; style-src 'self'; img-src 'self' data:; connect-src 'self' https:; worker-src 'self'; object-src 'none'; base-uri 'self'; form-action 'none'">
   <title>MML Studio</title>
   <link rel="manifest" href="./manifest.webmanifest">
   <link rel="icon" href="./icon.svg" type="image/svg+xml">
@@ -18,7 +19,7 @@
   <a href="#main" class="skip">跳至專案</a>
   <header class="topbar"><a class="brand" href="#main"><img src="./icon.svg" alt="" width="36" height="36"><span>MML <strong>Studio</strong><small>MABINOGI MOBILE</small></span></a><span class="local-pill" id="network">本地工作空間</span></header>
   <div class="layout">
-    <aside><p class="eyebrow">YOUR WORKSPACE</p><label for="projects">專案</label><select id="projects" aria-label="開啟專案"></select><button id="new-project" class="secondary">＋ 新增專案</button><a class="file-button quiet" href="./studio/web/service/index.html">服務專案 · AI / MCP</a><nav aria-label="工作流程"><a href="#intake">01　來源</a><a href="#raw-midi">02　Raw MIDI</a><a href="#gates">03　分析 Gate</a><a href="#review">04　比對與審核</a><a href="#audio">05　音訊證據</a><a href="#final-delivery">06　Final MML</a><a href="#delivery">07　實機接受</a></nav><p class="aside-note">MusicXML、MML 與審核在此裝置執行。</p><button id="export-project" class="quiet">匯出專案備份</button><label class="file-button quiet">匯入專案備份<input id="restore-project" type="file" accept=".json,application/json"></label><details class="install"><summary>加入主畫面</summary><p>在 Safari 開啟，點「分享」→「加入主畫面」。首次載入完成後可離線開啟；檔案保存在本機，請定期匯出備份。</p></details></aside>
+    <aside><p class="eyebrow">YOUR WORKSPACE</p><label for="projects">專案</label><select id="projects" aria-label="開啟專案"></select><button id="new-project" class="secondary">＋ 新增專案</button><a class="file-button quiet" href="./studio/web/service/index.html">服務專案 · AI / MCP</a><nav aria-label="工作流程"><a href="#intake">01　來源</a><a href="#raw-midi">02　Raw MIDI</a><a href="#gates">03　分析 Gate</a><a href="#review">04　比對與審核</a><a href="#audio">05　音訊證據</a><a href="#final-delivery">06　Final MML</a><a href="#delivery">07　實機接受</a></nav><p class="aside-note">MusicXML、MML 與審核在此裝置執行。</p><button id="export-project" class="quiet">匯出專案備份</button><label class="file-button quiet">匯入專案備份<input id="restore-project" type="file" accept=".json,application/json"></label><button id="apply-update" class="secondary" hidden>套用新版（重新載入）</button><details class="install"><summary>加入主畫面</summary><p>在 Safari 開啟，點「分享」→「加入主畫面」。首次載入完成後可離線開啟；檔案保存在本機，請定期匯出備份。</p></details></aside>
     <main id="main"><div id="boot" role="status">正在核對 Published Canonical…</div><div id="app" hidden></div></main>
   </div>
   <div id="message" role="status" aria-live="polite"></div>

@@ -57,6 +57,9 @@ const SPAN_KINDS = new Set(['note', 'rest']);
 // rule: it can only make the output longer, never wrong, because representability
 // does not depend on which default length is in force.
 const MAX_DEFAULT_LENGTH_CANDIDATES = 12;
+// Always-offered default lengths for long tie/rest segments; see the
+// default-length candidates block in serializeItems().
+const LONG_SEGMENT_DEFAULTS = Object.freeze([1, 2]);
 
 const digits = value => String(value).length;
 
@@ -317,9 +320,18 @@ function serializeItems(role, items, lattice, facts, options) {
   if (diagnostics.some(item => item.severity === DIAGNOSTIC_SEVERITY.ERROR)) return { diagnostics, mml: null };
 
   // --- default-length candidates ------------------------------------------
-  // Only lengths that some duration in this role actually spells as one token
-  // can pay for their own `lN`, plus the parser's own starting default so the
-  // plan may simply keep it.
+  // Lengths that some duration in this role spells as one token, the parser's
+  // own starting default, and the long segment lengths `l1`/`l2`. The last pair
+  // is the lesson from the owner's MML 工房 compressor, found by the
+  // differential harness (scripts/fusion-emitter-diff.mjs): a default that no
+  // single duration spells can still pay for itself as a tie or rest SEGMENT
+  // length — `l1` turns `r1r1r1.` into `l1r.r.r2.` — and the occurrence rule
+  // alone never offered it. On the song-reference corpus this shortens every
+  // song by 287 characters (4.6%) with events unchanged. Offering all seven
+  // preferred plain lengths saves nothing more and costs twice the planning
+  // time; `l1`/`l2` alone cost about a quarter. The planner still picks by
+  // exact cost, so within the search budget an extra candidate can only keep
+  // or shorten a role; budget exhaustion still fails closed as before.
   const frequency = new Map();
   for (const item of items) {
     if (!item.duration) continue;
@@ -332,7 +344,8 @@ function serializeItems(role, items, lattice, facts, options) {
     .sort((left, right) => right[1] - left[1] || left[0] - right[0])
     .slice(0, MAX_DEFAULT_LENGTH_CANDIDATES)
     .map(([candidate]) => candidate);
-  const candidates = [...new Set([facts.defaultLength, ...ranked])].sort((left, right) => left - right);
+  const segmentLengths = lattice.defaultLengthCandidates.filter(candidate => LONG_SEGMENT_DEFAULTS.includes(candidate));
+  const candidates = [...new Set([facts.defaultLength, ...ranked, ...segmentLengths])].sort((left, right) => left - right);
 
   // --- duration plans ------------------------------------------------------
   // One plan per (duration, default length, per-segment cost). The third key is

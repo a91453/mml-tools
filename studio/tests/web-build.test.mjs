@@ -33,3 +33,31 @@ test('built offline engine preserves native parser/IR behavior and complete asse
   assert.equal(canonical.provenance,undefined);
   assert.notEqual(build.release.canonical.rules_snapshot_sha,build.audit.published_main_head);
 });
+
+test('the timbre preview engine is vendored from npm, self-contained, licensed and offline', async () => {
+  execFileSync(process.execPath, ['scripts/build-studio-web.mjs'], { cwd: root });
+  const read = path => readFile(new URL(`../web-build/${path}`, import.meta.url), 'utf8');
+  const lib = await read('vendor/spessasynth/lib.js');
+  assert.doesNotMatch(lib, /from ["']spessasynth_core["']/, 'no bare specifier survives in the browser build');
+  assert.match(lib, /from "\.\/core\.js"/);
+  for (const path of ['vendor/spessasynth/lib.js', 'vendor/spessasynth/core.js', 'vendor/spessasynth/processor.js']) {
+    assert.doesNotMatch(await read(path), /sourceMappingURL=/, `${path} must not ask for an unlisted source map`);
+  }
+  assert.match(await read('vendor/spessasynth/processor.js'), /registerProcessor\(/);
+  // The license rides inside the vendored code: an extension-less LICENSE file
+  // is not servable by type-allowlisting hosts and would fail the SW install.
+  assert.match(lib, /^\/\*! SpessaSynth — vendored from npm: spessasynth_lib@\d+\.\d+\.\d+, spessasynth_core@\d+\.\d+\.\d+/);
+  assert.match(lib, /Apache License\s+Version 2\.0/);
+  for (const path of ['vendor/spessasynth/core.js', 'vendor/spessasynth/processor.js']) assert.match(await read(path), /SPDX-License-Identifier: Apache-2\.0/);
+  const sw = await read('sw.js');
+  for (const path of ['vendor/spessasynth/lib.js', 'vendor/spessasynth/core.js', 'vendor/spessasynth/processor.js', 'studio/web/preview/player.mjs', 'studio/web/preview/worklet-console.mjs']) {
+    assert.ok(sw.includes(`./${path}`), `offline asset missing: ${path}`);
+  }
+  // No sound bank ships in the build: the bank is a user-picked local file.
+  const build = JSON.parse(await read('build.json'));
+  assert.ok(build.files.every(([path]) => !/\.(dls|sf2|sf3)$/i.test(path)));
+  // Every precached file must have a type the static hosts serve, or the
+  // whole Service Worker install fails and the app never works offline.
+  const servable = new Set(['.html', '.mjs', '.js', '.css', '.json', '.webmanifest', '.svg', '.png']);
+  for (const [path] of build.files) assert.ok(servable.has(path.slice(path.lastIndexOf('.'))) && path.includes('.'), `unservable precache entry: ${path}`);
+});
