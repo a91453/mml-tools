@@ -102,3 +102,6 @@ code.digest,.facts dd code,table code{font-family:ui-monospace,SFMono-Regular,Me
 .composer-card h4{margin:0;font-size:14px}.composer-preview{border-top:1px solid var(--line);margin-top:14px;padding-top:12px}
 .compose-roles{border:1px solid var(--line);border-radius:8px;padding:8px 12px;display:flex;gap:12px;flex-wrap:wrap}.compose-roles label{display:flex;gap:6px;align-items:center;font-family:ui-monospace,monospace}.compose-roles input{width:18px;height:18px;min-height:0;margin:0}
 #roll-info button{min-height:34px;padding:4px 10px;font-size:12px;margin-top:6px}
+/* Phone sidebar: the service link gets its own row and the library buttons
+   sit two per row, wrapping their labels instead of clipping them. */
+@media(max-width:720px){aside>.quiet{flex:1 1 calc(50% - 5px);min-width:0;white-space:normal;line-height:1.3;padding:10px 8px;text-align:center}aside>a.file-button{flex-basis:100%}aside>.save-state{flex-basis:100%;margin:0}}
