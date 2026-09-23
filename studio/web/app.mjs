@@ -146,7 +146,7 @@ function intakeCard(slot, title, hint) {
   // A Raw MIDI asset has no text representation, so its identity is stated as
   // the byte count and the digest of the bytes that were actually parsed.
   const source = asset?.source?.sha256 ? `<p class="meta">${bytesLabel(asset.source.byteLength)} · SMF ${esc(asset.midi?.smfFormat ?? '?')} · ${asset.midi?.trackCount ?? '?'} tracks<br><code class="digest">sha256 ${esc(asset.source.sha256.slice(0, 16))}…</code></p>` : '';
-  return `<div class="card"><h3>${title}</h3><p class="meta">${hint}</p>${asset ? `<p><strong>${esc(asset.name)}</strong></p><p class="meta">${esc(asset.format)} · ${asset.project.events.length} events</p>${source}${badge(asset.unsupported.length ? 'UNSUPPORTED' : 'PENDING')} <small>${asset.complete ? '解析完成，等待來源審核' : '來源未完整'}</small>${detail('來源 authority／warnings／unsupported', { sources: asset.project.sources, warnings: asset.warnings, errors: asset.errors, unsupported: asset.unsupported })}` : '<div class="empty">尚未加入來源<br>MusicXML · MML · MIDI · Canonical IR</div>'}<label class="file-button secondary">${asset ? '更換來源' : '選擇檔案'}<input type="file" data-intake="${slot}" accept=".xml,.musicxml,.mml,.txt,.json,.mid,.midi,application/xml,text/xml,text/plain,application/json,audio/midi,audio/x-midi" aria-label="${title}檔案"></label>${asset ? `<button class="quiet" data-download-ir="${slot}">匯出 IR</button>` : ''}${asset?.format === 'MML' ? `<button class="quiet" data-listen-asset="${slot}">送到試聽</button>` : ''}</div>`;
+  return `<div class="card"><h3>${title}</h3><p class="meta">${hint}</p>${asset ? `<p><strong>${esc(asset.name)}</strong></p><p class="meta">${esc(asset.format)} · ${asset.project.events.length} events</p>${source}${badge(asset.unsupported.length ? 'UNSUPPORTED' : 'PENDING')} <small>${asset.complete ? '解析完成，等待來源審核' : '來源未完整'}</small>${detail('來源 authority／warnings／unsupported', { sources: asset.project.sources, warnings: asset.warnings, errors: asset.errors, unsupported: asset.unsupported })}` : '<div class="empty">尚未加入來源<br>MusicXML · MML · MIDI · Canonical IR</div>'}<label class="file-button secondary">${asset ? '更換來源' : '選擇檔案'}<input type="file" data-intake="${slot}" accept=".xml,.musicxml,.mxl,.mml,.txt,.json,.mid,.midi,application/xml,text/xml,application/vnd.recordare.musicxml,text/plain,application/json,audio/midi,audio/x-midi" aria-label="${title}檔案"></label>${asset ? `<button class="quiet" data-download-ir="${slot}">匯出 IR</button>` : ''}${asset?.format === 'MML' ? `<button class="quiet" data-listen-asset="${slot}">送到試聽</button>` : ''}</div>`;
 }
 // ─── Raw MIDI presentation ──────────────────────────────────────────────────
 //
@@ -585,6 +585,18 @@ async function isMidiFile(file) {
   if (head.length === 4 && head[0] === 0x4d && head[1] === 0x54 && head[2] === 0x68 && head[3] === 0x64) return true;
   return /\.(mid|midi)$/i.test(file.name);
 }
+// Compressed MusicXML is a ZIP archive: "PK\x03\x04", whatever the file is
+// called. Its bytes go to the shared container reader, never through text().
+async function isZipFile(file) {
+  const head = new Uint8Array(await file.slice(0, 4).arrayBuffer());
+  return head.length === 4 && head[0] === 0x50 && head[1] === 0x4b && head[2] === 0x03 && head[3] === 0x04;
+}
+async function putMxlSource(slot, file, authority) {
+  const bytes = new Uint8Array(await file.arrayBuffer());
+  const asset = await call('intakeMxl', { name: file.name, bytes, id: crypto.randomUUID(), meterText: workspace.settings.meterText, authority });
+  const next = await call('invalidate', workspace); next.assets[slot] = asset;
+  await commit(next);
+}
 async function putMidiSource(slot, file, authority, token) {
   // Checked on both sides of the decode, because either side can go stale: a
   // second file may be chosen for this slot while this one waits its turn, and
@@ -734,6 +746,7 @@ function bind() {
     run(async()=>{
       if(file.size>MAX_SOURCE_BYTES)throw Error(`UNSUPPORTED: 來源檔案 ${(file.size/1048576).toFixed(1)} MiB 超過 4 MiB 上限`);
       if(await isMidiFile(file))await putMidiSource(slot,file,authority,token);
+      else if(await isZipFile(file))await putMxlSource(slot,file,authority);
       else await putSource(slot,file.name,await file.text(),authority);
     },{revisionBound:false});
   });

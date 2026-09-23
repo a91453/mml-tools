@@ -63,9 +63,25 @@ export function createIntakeService({ canonical, projects, assets, store }) {
         return { project: engines.source.midiFragmentToProject(fragment), fragment, format: 'MIDI' };
       }
       if (wiring.adapter === 'musicxml') {
-        const { content } = assets.text(owner, projectId, asset.asset_id);
-        const fragment = engines.score.ingestMusicXML(content, { ...options, kind: wiring.canonicalKind, authority: wiring.authority });
-        return { project: engines.score.musicXMLFragmentToProject(fragment), fragment, format: 'MusicXML' };
+        // The container is recognised by its bytes, never by the filename. A
+        // compressed .mxl is opened through its META-INF/container.xml under
+        // the reader's own size, entry and path limits; the asset stays the
+        // uploaded archive (its digest is the source identity) and the XML is
+        // derived, with the entry it came from and that entry's digest recorded.
+        const { bytes } = assets.read(owner, projectId, asset.asset_id);
+        let content;
+        let container = null;
+        if (engines.score.isZipContainer(bytes)) {
+          try {
+            ({ xml: content, container } = engines.score.decodeMusicXMLBytes(bytes));
+          } catch (error) {
+            return fail(ERROR_CODES.UNSUPPORTED_SOURCE, `Compressed MusicXML (.mxl) for asset ${asset.asset_id} was refused: ${error?.message ?? 'unreadable archive'}`, { asset_id: asset.asset_id, kind: asset.kind, reason: error?.code ?? null });
+          }
+        } else {
+          ({ content } = assets.text(owner, projectId, asset.asset_id));
+        }
+        const fragment = engines.score.ingestMusicXML(content, { ...options, kind: wiring.canonicalKind, authority: wiring.authority, container });
+        return { project: engines.score.musicXMLFragmentToProject(fragment), fragment, format: container ? 'MusicXML (compressed .mxl)' : 'MusicXML', container };
       }
       if (wiring.adapter === 'mml') {
         const { content } = assets.text(owner, projectId, asset.asset_id);
@@ -173,7 +189,14 @@ export function createIntakeService({ canonical, projects, assets, store }) {
         // it, and a later review cannot substitute for it.
         source_complete: project.metadata?.sourceComplete === true,
         incomplete_inputs: [...(project.metadata?.incompleteInputs ?? [])],
-        formats: ingested.map(entry => ({ asset_id: entry.asset.asset_id, kind: entry.asset.kind, format: entry.format })),
+        formats: ingested.map(entry => ({
+          asset_id: entry.asset.asset_id,
+          kind: entry.asset.kind,
+          format: entry.format,
+          // Derived-document provenance for a compressed upload: which entry
+          // of the archive was read, and that entry's own digest.
+          ...(entry.container ? { container: { format: entry.container.format, rootfile: entry.container.rootfile, rootfile_sha256: entry.container.rootfileSha256, rootfile_bytes: entry.container.rootfileBytes } } : {}),
+        })),
         // Implementer provenance: which inputs this baseline was actually built
         // from, beyond the asset ids. It is recorded because the meter map is an
         // intake input for an MML source — `normalizeMMLSource` parses against

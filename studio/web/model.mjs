@@ -1,7 +1,7 @@
 import { createSource, createCanonicalNoteEvent, createCanonicalRestEvent, createCanonicalTempoEvent, createCanonicalMeterEvent, createCanonicalProject, createArbitrationDecision } from '../backend/canonical/index.mjs';
 import { normalizeMMLSource, mmlFragmentToProject } from '../backend/mml/canonicalize.mjs';
 import { validateMML, splitMML } from '../backend/mml/parser.mjs';
-import { ingestMusicXML, musicXMLFragmentToProject } from '../backend/score/index.mjs';
+import { ingestMusicXML, musicXMLFragmentToProject, decodeMusicXMLBytes, isZipContainer } from '../backend/score/index.mjs';
 import { compareCandidateLineage, compareCanonicalVersions } from '../backend/compare/version-drift.mjs';
 import { evaluateCore3Continuity } from '../backend/arbitration/core3.mjs';
 import { evaluateCore3Completeness } from '../backend/arbitration/core3-completeness.mjs';
@@ -48,22 +48,39 @@ export function readCanonical(value) {
     tempoEvents: (value.tempoEvents ?? []).map(createCanonicalTempoEvent), meterEvents: (value.meterEvents ?? []).map(createCanonicalMeterEvent), decisions: (value.decisions ?? []).map(createArbitrationDecision) });
 }
 
-export function intake({ name, content, id, authority = 'supporting', meterText = '' }) {
+export function intake({ name, content, id, authority = 'supporting', meterText = '', container = null }) {
   if (typeof content !== 'string' || new TextEncoder().encode(content).length > MAX_TEXT_BYTES) throw Error('UNSUPPORTED: symbolic file exceeds 4 MiB');
   let project, fragment;
   const options = { sourceId: id, label: name, meterText };
-  if (/\.mxl$/i.test(name)) throw Error('UNSUPPORTED: compressed MXL; use uncompressed MusicXML');
+  // An archive read as text is not MusicXML; compressed MusicXML arrives as
+  // bytes through intakeMxl, which opens the container first.
+  if (/^PK\u0003\u0004/.test(content)) throw Error('UNSUPPORTED: compressed MusicXML (.mxl) must be picked as a file so its bytes can be opened');
   if (/^\s*MML@/i.test(content)) {
     fragment = normalizeMMLSource(content, { ...options, authority: 'derived' });
     project = mmlFragmentToProject(fragment);
   } else if (/^\s*</.test(content)) {
     const official = authority === 'primary-symbolic';
-    fragment = ingestMusicXML(content, { ...options, kind: official ? 'official-musicxml' : 'third-party-musicxml', authority: official ? authority : 'supporting' });
+    fragment = ingestMusicXML(content, { ...options, kind: official ? 'official-musicxml' : 'third-party-musicxml', authority: official ? authority : 'supporting', container });
     project = musicXMLFragmentToProject(fragment);
   } else project = readCanonical(JSON.parse(content));
-  return { name, content, project, format: fragment?.validation ? 'MML' : fragment ? 'MusicXML' : 'Canonical IR', complete: fragment ? fragment.complete : project.metadata.sourceComplete === true,
+  return { name, content, project, format: fragment?.validation ? 'MML' : fragment ? (container ? 'MusicXML (compressed .mxl)' : 'MusicXML') : 'Canonical IR', complete: fragment ? fragment.complete : project.metadata.sourceComplete === true,
+    ...(container ? { container } : {}),
     warnings: copy(fragment?.validation?.warnings ?? fragment?.warnings ?? project.metadata.warnings ?? []),
     errors: copy(fragment?.validation?.errors ?? project.metadata.errors ?? []), unsupported: copy(fragment?.unsupported ?? project.metadata.unsupported ?? []) };
+}
+
+// Compressed MusicXML arrives as bytes. The shared score reader opens the ZIP
+// container (magic bytes, META-INF/container.xml, bounded inflate, CRC and
+// path checks) exactly as the service intake does; the extracted document is
+// then ingested as MusicXML, and the asset records which archive entry it came
+// from and that entry's digest. The workspace keeps the extracted XML as the
+// asset's text, so a backup restores it as the MusicXML it was read as.
+export function intakeMxl({ name, bytes, id, authority = 'supporting', meterText = '' }) {
+  const data = bytes instanceof Uint8Array ? bytes : new Uint8Array(bytes);
+  if (!isZipContainer(data)) throw Error('UNSUPPORTED: not a compressed MusicXML (.mxl) archive');
+  let decoded;
+  try { decoded = decodeMusicXMLBytes(data); } catch (error) { throw Error(`UNSUPPORTED: compressed MusicXML refused: ${error.message}`); }
+  return intake({ name, content: decoded.xml, id, authority, meterText, container: decoded.container });
 }
 
 // Raw MIDI arrives as bytes, never as text. The whole decode runs in the

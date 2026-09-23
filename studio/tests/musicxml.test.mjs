@@ -123,7 +123,7 @@ test('unsupported symbolic constructs are surfaced instead of silently invented'
   assert.equal(fragment.events.length, 0);
 });
 
-test('repeat and navigation markers force incomplete status until playback-order expansion exists', () => {
+test('a repeat barline is detected in the text and expanded into playback order', () => {
   const xml = `<?xml version="1.0"?><score-partwise version="4.0">
     <part-list><score-part id="P1"><part-name>Piano</part-name></score-part></part-list>
     <part id="P1"><measure number="1">
@@ -134,9 +134,12 @@ test('repeat and navigation markers force incomplete status until playback-order
   </score-partwise>`;
   assert.ok(detectUnexpandedNavigation(xml).some(item => item.code === 'REPEAT_BARLINE'));
   const fragment = ingestMusicXML(xml, { sourceId: 'repeat', label: 'Repeat fixture' });
-  assert.equal(fragment.complete, false);
-  assert.ok(fragment.unsupported.some(item => item.code === 'REPEAT_BARLINE'));
-  assert.equal(fragment.events.filter(event => event.kind === 'note').length, 1);
+  assert.equal(fragment.complete, true, JSON.stringify(fragment.unsupported));
+  const notes = fragment.events.filter(event => event.kind === 'note');
+  assert.deepEqual(notes.map(event => [event.id, event.start, event.metadata.pass]), [
+    ['repeat:note:P1:1:2', '0', 1],
+    ['repeat:note:P1:1:2:pass2', '1', 2],
+  ]);
 });
 
 test('MusicXML rejects timewise scores and entity-bearing DTD subsets', () => {

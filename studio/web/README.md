@@ -417,9 +417,13 @@ produce a gate no review could answer. See
 [Mobile Adaptation v1](../../docs/MOBILE_ADAPTATION_V1.md) for profiles,
 persistence, scope and remaining work.
 
-- Uncompressed score-partwise MusicXML, complete six-slot MML, Canonical IR @2 and
-  Raw MIDI `.mid` / `.midi` intake are supported. Compressed MXL and unrecognized
-  IR schemas remain unsupported in this Web intake.
+- Score-partwise MusicXML (uncompressed, or compressed `.mxl` read through the
+  same bounded container reader the service uses), complete six-slot MML,
+  Canonical IR @2 and Raw MIDI `.mid` / `.midi` intake are supported. Repeats,
+  voltas and D.C./D.S./Coda/Fine are expanded into playback order and a pickup
+  is placed as described in `studio/backend/score/README.md`. An `.mxl` is
+  stored in the workspace as the MusicXML it was read as, with the archive entry
+  and its digest recorded; unrecognized IR schemas remain unsupported.
 - Raw MIDI support stops at preserved source evidence, G11-B decomposition,
   G11-C candidate suggestions, G11-D application of explicitly accepted
   arrangement decisions, and existing readiness information. It does not

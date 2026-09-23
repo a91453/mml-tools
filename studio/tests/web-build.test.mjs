@@ -14,7 +14,9 @@ test('built offline engine preserves native parser/IR behavior and complete asse
   assert.deepEqual(intake(mml),nativeIntake(mml));
   const xml={name:'fixture.musicxml',id:'fixture',content:'<score-partwise><part-list><score-part id="P1"><part-name>Piano</part-name></score-part></part-list><part id="P1"><measure number="1"><attributes><divisions>1</divisions></attributes><note><pitch><step>C</step><octave>4</octave></pitch><duration>4</duration></note><barline><repeat direction="backward"/></barline></measure></part></score-partwise>'};
   assert.deepEqual(intake(xml),nativeIntake(xml));
-  assert.equal(intake(xml).complete,false);
+  // The backward repeat is expanded in the built engine exactly as in the native one.
+  assert.equal(intake(xml).complete,true);
+  assert.equal(intake(xml).project.events.length,2);
   const {canonical,canonicalDigest}=await import('../web-build/studio/web/published.mjs');
   assert.equal(createHash('sha256').update(JSON.stringify(canonical)).digest('hex'),canonicalDigest);
   // The vendored loader honours the same opt-in list as the source loader.
