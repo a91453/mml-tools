@@ -17,6 +17,10 @@ test('built offline engine preserves native parser/IR behavior and complete asse
   assert.equal(intake(xml).complete,false);
   const {canonical,canonicalDigest}=await import('../web-build/studio/web/published.mjs');
   assert.equal(createHash('sha256').update(JSON.stringify(canonical)).digest('hex'),canonicalDigest);
+  // The vendored loader honours the same opt-in list as the source loader.
+  const vendoredLoader=await import('../web-build/studio/backend/bootstrap/index.mjs');
+  assert.equal(vendoredLoader.loadPublishedCanonical({supportedCanonicalVersion:['unsupported-release',canonical.metadata.canonical_version]}).metadata.canonical_version,canonical.metadata.canonical_version);
+  assert.throws(()=>vendoredLoader.loadPublishedCanonical({supportedCanonicalVersion:['unsupported-release']}),/CANONICAL_NOT_LOADED/);
   const build=JSON.parse(await readFile(new URL('../web-build/build.json',import.meta.url)));
   // Executable Service Worker code must be inside the release identity.
   assert.ok(build.files.some(([path])=>path==='sw.js'),'sw.js must be covered by the asset manifest');

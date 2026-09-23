@@ -2,6 +2,7 @@ import { cp, mkdir, readFile, readdir, rm, writeFile } from 'node:fs/promises';
 import { dirname, extname, relative, resolve, sep } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { loadPublishedCanonical } from '../studio/backend/bootstrap/index.mjs';
+import { SUPPORTED_CANONICAL_VERSIONS } from '../studio/backend/rules/supported-releases.mjs';
 
 const root = resolve(fileURLToPath(new URL('../', import.meta.url)));
 const output = resolve(root, process.argv[2] ?? '.oss-export');
@@ -123,7 +124,7 @@ for (const path of ['studio/backend/bootstrap/materialize.mjs', 'studio/tests/bo
 // Resolve the Published Canonical from the private source checkout once, then
 // vendor the resulting immutable package. The public distribution therefore
 // does not require access to the private repository's Git history.
-const canonical = loadPublishedCanonical({ root, supportedCanonicalVersion: '2026-09-13-v1' });
+const canonical = loadPublishedCanonical({ root, supportedCanonicalVersion: SUPPORTED_CANONICAL_VERSIONS });
 const vendored = {
   ...canonical,
   provenance: {
@@ -143,7 +144,7 @@ for (const document of canonical.documents) {
   await writeFile(target, document.content);
 }
 
-const publicBootstrap = `import { readFileSync } from 'node:fs';\n\nexport const STATIC_VENDORED_CANONICAL = true;\nconst loaded = JSON.parse(readFileSync(new URL('../../../canonical/published.json', import.meta.url), 'utf8'));\nfunction freeze(value) { for (const child of Object.values(value)) if (child && typeof child === 'object') freeze(child); return Object.freeze(value); }\nfreeze(loaded);\nexport const BOOTSTRAP_CONTRACT = freeze({ repository: 'a91453/mml-tools-oss', entryPoint: 'canonical/published.json', publishedRef: null, role: 'VENDORED_CONSUMER', localSkillAuthority: 'WORKFLOW_ONLY', executableContractDefinesRules: false, failureStatus: 'CANONICAL_NOT_LOADED', legacyFallbackAllowed: false });\nexport class CanonicalNotLoadedError extends Error { constructor(reason, cause) { super('CANONICAL_NOT_LOADED: ' + reason, { cause }); this.name = 'CanonicalNotLoadedError'; this.code = 'CANONICAL_NOT_LOADED'; } }\nexport function loadPublishedCanonical({ supportedCanonicalVersion = null } = {}) { if (supportedCanonicalVersion !== null && supportedCanonicalVersion !== loaded.metadata.canonical_version) throw new CanonicalNotLoadedError('Unsupported vendored Canonical version'); return loaded; }\nexport function parseCanonicalManifest() { throw new CanonicalNotLoadedError('Manifest parsing is a source-repository concern; this distribution uses canonical/published.json'); }\nexport function gitEnvironment(environment = process.env) { return { ...environment, GIT_OPTIONAL_LOCKS: '0' }; }\nexport function gitSubprocess() { throw new CanonicalNotLoadedError('Git-backed Canonical discovery is unavailable in the public vendored distribution'); }\n`;
+const publicBootstrap = `import { readFileSync } from 'node:fs';\n\nexport const STATIC_VENDORED_CANONICAL = true;\nconst loaded = JSON.parse(readFileSync(new URL('../../../canonical/published.json', import.meta.url), 'utf8'));\nfunction freeze(value) { for (const child of Object.values(value)) if (child && typeof child === 'object') freeze(child); return Object.freeze(value); }\nfreeze(loaded);\nexport const BOOTSTRAP_CONTRACT = freeze({ repository: 'a91453/mml-tools-oss', entryPoint: 'canonical/published.json', publishedRef: null, role: 'VENDORED_CONSUMER', localSkillAuthority: 'WORKFLOW_ONLY', executableContractDefinesRules: false, failureStatus: 'CANONICAL_NOT_LOADED', legacyFallbackAllowed: false });\nexport class CanonicalNotLoadedError extends Error { constructor(reason, cause) { super('CANONICAL_NOT_LOADED: ' + reason, { cause }); this.name = 'CanonicalNotLoadedError'; this.code = 'CANONICAL_NOT_LOADED'; } }\nexport function loadPublishedCanonical({ supportedCanonicalVersion = null } = {}) { if (supportedCanonicalVersion !== null && ![].concat(supportedCanonicalVersion).includes(loaded.metadata.canonical_version)) throw new CanonicalNotLoadedError('Unsupported vendored Canonical version'); return loaded; }\nexport function parseCanonicalManifest() { throw new CanonicalNotLoadedError('Manifest parsing is a source-repository concern; this distribution uses canonical/published.json'); }\nexport function gitEnvironment(environment = process.env) { return { ...environment, GIT_OPTIONAL_LOCKS: '0' }; }\nexport function gitSubprocess() { throw new CanonicalNotLoadedError('Git-backed Canonical discovery is unavailable in the public vendored distribution'); }\n`;
 await writeFile(resolve(output, 'studio/backend/bootstrap/index.mjs'), publicBootstrap);
 
 // Public tests omit only what a vendored distribution cannot observe: the
@@ -153,7 +154,7 @@ await writeFile(resolve(output, 'studio/backend/bootstrap/index.mjs'), publicBoo
 // it imports only exported modules and needs no source repository. All parser,
 // canonical IR, arrangement, Final, web and browser behaviour remains covered
 // by the exported suite.
-const publicRunner = `import { readdirSync } from 'node:fs';\nimport { spawnSync } from 'node:child_process';\nconst excluded = new Set(['bootstrap-concurrency.test.mjs','bootstrap.test.mjs','canonical-manifest.test.mjs','web-build-reproducibility.test.mjs']);\nconst legacy = readdirSync('tests').filter(x => x.endsWith('.test.mjs')).map(x => 'tests/' + x);\nconst studio = readdirSync('studio/tests').filter(x => x.endsWith('.test.mjs') && !excluded.has(x)).map(x => 'studio/tests/' + x);\nconst onlyStudio = process.argv.includes('--studio');\nconst files = onlyStudio ? studio : [...legacy, ...studio];\nconst result = spawnSync(process.execPath, ['--test', ...files], { stdio: 'inherit' });\nprocess.exit(result.status ?? 1);\n`;
+const publicRunner = `import { readdirSync } from 'node:fs';\nimport { spawnSync } from 'node:child_process';\nconst excluded = new Set(['bootstrap-concurrency.test.mjs','bootstrap.test.mjs','canonical-manifest.test.mjs','canonical-v2-activation.test.mjs','web-build-reproducibility.test.mjs']);\nconst legacy = readdirSync('tests').filter(x => x.endsWith('.test.mjs')).map(x => 'tests/' + x);\nconst studio = readdirSync('studio/tests').filter(x => x.endsWith('.test.mjs') && !excluded.has(x)).map(x => 'studio/tests/' + x);\nconst onlyStudio = process.argv.includes('--studio');\nconst files = onlyStudio ? studio : [...legacy, ...studio];\nconst result = spawnSync(process.execPath, ['--test', ...files], { stdio: 'inherit' });\nprocess.exit(result.status ?? 1);\n`;
 await writeFile(resolve(output, 'scripts/run-public-tests.mjs'), publicRunner);
 
 const metadata = {

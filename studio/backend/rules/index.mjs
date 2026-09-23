@@ -1,11 +1,15 @@
 import { parseTrack as legacyParseTrack } from '../../../dist/core.js';
 import { loadPublishedCanonical } from '../bootstrap/index.mjs';
+import { SUPPORTED_CANONICAL_VERSIONS } from './supported-releases.mjs';
 
 // An executable implementation must opt into a new release explicitly; reading
 // a newer repository HEAD must never relabel these unchanged policy values.
-export const PUBLISHED_CANONICAL = loadPublishedCanonical({ supportedCanonicalVersion: '2026-09-13-v1' });
+export const PUBLISHED_CANONICAL = loadPublishedCanonical({ supportedCanonicalVersion: SUPPORTED_CANONICAL_VERSIONS });
 
 export const EFFECTIVE_RULESET = Object.freeze({
+  // The MML profile id (STUDIO_MML_PROFILE). 2026-09-23-v2 changes no syntax or
+  // policy value, so the profile introduced by v1 is still the one implemented;
+  // the loaded release itself is `canonical` below.
   id: 'mabinogi-mobile-mml-canonical-v1-2026-09-13',
   status: 'implements-published-canonical',
   canonical: PUBLISHED_CANONICAL.metadata,

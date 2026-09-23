@@ -34,6 +34,31 @@ const CLASS_BY_GATE = Object.freeze({
 
 export const MACHINE_DELIVERY_GATE_NAMES = Object.freeze(Object.keys(CLASS_BY_GATE));
 
+// ACCEPTANCE_CRITERIA "Machine delivery" (2026-09-23-v2): what a machine can
+// determine blocks; what needs a person's judgment is delivered for listening
+// first. Two BLOCKING gates carry both kinds of result, so the split is made on
+// the evaluator's own status and blocker codes, never on caller input:
+//   * core3Completeness -- FAIL (CORE3_INCOMPLETE: no Lead, or a Core3 that
+//     depends on Chord3-Chord5) and an evaluation that did not run stay
+//     BLOCKING; PENDING whose every blocker is reviewer residue does not;
+//   * versionDrift -- its only unresolved state is a review request when
+//     divergence increased (MASTER_RULES §10: a review trigger, not a verdict).
+// A PENDING with no blocker, or with any other blocker, stays BLOCKING.
+const REVIEWER_RESIDUE = Object.freeze({
+  core3Completeness: Object.freeze(['CORE3_COMPLETENESS_UNRESOLVED', 'CORE3_ENRICHMENT_DEPENDENCE_UNRESOLVED']),
+  versionDrift: Object.freeze(['VERSION_DIVERGENCE_REVIEW_REQUIRED']),
+});
+
+function classify(name, value) {
+  const base = CLASS_BY_GATE[name] ?? DELIVERY_CLASS.BLOCKING; // unknown gates fail closed
+  const residue = REVIEWER_RESIDUE[name];
+  const blockers = Array.isArray(value?.blockers) ? value.blockers : [];
+  if (residue && value?.status === 'PENDING' && blockers.length && blockers.every(code => residue.includes(code))) {
+    return DELIVERY_CLASS.NON_BLOCKING_PENDING;
+  }
+  return base;
+}
+
 const ACTIVATION_BLOCKER = Object.freeze({
   NOT_PUBLISHED: 'MACHINE_DELIVERY_CANONICAL_NOT_PUBLISHED',
   SNAPSHOT_INVALID: 'MACHINE_DELIVERY_RULES_SNAPSHOT_INVALID',
@@ -89,7 +114,7 @@ export function evaluateMachineDelivery(gates, {
 
   const ledger = [];
   for (const [name, value] of Object.entries(gates)) {
-    const classification = CLASS_BY_GATE[name] ?? DELIVERY_CLASS.BLOCKING; // unknown gates fail closed
+    const classification = classify(name, value);
     if (!PASS_LIKE.has(value?.status)) ledger.push(unresolvedEntry(name, value, classification));
   }
 

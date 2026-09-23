@@ -44,17 +44,29 @@ const requireValue = (condition, reason) => {
   if (!condition) throw new CanonicalNotLoadedError(reason);
 };
 
+// The four fields every published Manifest carries, and the one optional field
+// a release may add. `machine_delivery_schema` names the machine-delivery
+// contract a release activates (ACCEPTANCE_CRITERIA "Machine delivery"); the
+// loader only carries it through, and final/delivery-evaluator.mjs decides
+// whether it matches. Any other field is refused, so a Manifest cannot grow an
+// authority the loader does not know about.
+const REQUIRED_MANIFEST_FIELDS = Object.freeze(['canonical_status', 'canonical_version', 'manifest_version', 'rules_snapshot_sha']);
+const OPTIONAL_MANIFEST_FIELDS = Object.freeze({ machine_delivery_schema: /^[a-z0-9-]+\/[a-z0-9-]+@\d+$/ });
+
 // Parse the published Manifest's index format, never the music rules it indexes.
 export function parseCanonicalManifest(text) {
   const header = text.match(/^---\n([\s\S]*?)\n---\n/);
   requireValue(header, 'Manifest metadata is missing');
   const metadata = {};
   for (const line of header[1].split('\n')) {
-    const field = line.match(/^([a-z_]+): ([A-Za-z0-9-]+)$/);
+    const field = line.match(/^([a-z_]+): (\S+)$/);
     requireValue(field && !Object.hasOwn(metadata, field[1]), `Invalid or duplicate Manifest metadata: ${line}`);
+    const pattern = Object.hasOwn(OPTIONAL_MANIFEST_FIELDS, field[1]) ? OPTIONAL_MANIFEST_FIELDS[field[1]] : /^[A-Za-z0-9-]+$/;
+    requireValue(pattern.test(field[2]), `Invalid or duplicate Manifest metadata: ${line}`);
     metadata[field[1]] = field[2];
   }
-  requireValue(Object.keys(metadata).sort().join(',') === 'canonical_status,canonical_version,manifest_version,rules_snapshot_sha', 'Unexpected Manifest metadata fields');
+  const keys = Object.keys(metadata);
+  requireValue(REQUIRED_MANIFEST_FIELDS.every(key => keys.includes(key)) && keys.every(key => REQUIRED_MANIFEST_FIELDS.includes(key) || Object.hasOwn(OPTIONAL_MANIFEST_FIELDS, key)), 'Unexpected Manifest metadata fields');
   requireValue(metadata.canonical_status === 'PUBLISHED', 'Manifest does not designate a published release');
   requireValue(/^\d{4}-\d{2}-\d{2}-v\d+$/.test(metadata.canonical_version), 'Invalid Canonical version');
   requireValue(metadata.manifest_version.startsWith(`${metadata.canonical_version}-manifest`), 'Manifest version does not identify this release');
@@ -279,7 +291,8 @@ export function loadPublishedCanonical({ root = repositoryRoot, prHead = null, s
     const manifestCommit = line(['log', '-1', '--format=%H', publishedHead, '--', BOOTSTRAP_CONTRACT.entryPoint]);
     requireValue(shaPattern.test(manifestCommit) && snapshot !== manifestCommit, 'Invalid or self-referencing Manifest provenance');
     run(['merge-base', '--is-ancestor', snapshot, manifestCommit]);
-    if (supportedCanonicalVersion !== null) requireValue(metadata.canonical_version === supportedCanonicalVersion, 'Implementation does not support the published Canonical version');
+    // One release or the list an implementation opts into (rules/supported-releases.mjs).
+    if (supportedCanonicalVersion !== null) requireValue([].concat(supportedCanonicalVersion).includes(metadata.canonical_version), 'Implementation does not support the published Canonical version');
     if (prHead !== null) requireValue(shaPattern.test(prHead), 'PR head must come from actual PR metadata');
 
     // Every indexed resource is read from the pinned snapshot in one batch.
