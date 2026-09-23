@@ -29,6 +29,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
 import { createStudioApplication, ERROR_CODES, RUN_STATE, RUN_STEP, RUN_STEP_STATUS } from '../backend/application/index.mjs';
+import { createStore } from '../backend/application/store.mjs';
 import { enginesWith } from './support/real-engines.mjs';
 import { FIXTURE_CONFIRMATIONS, RUN_REVIEWER, mobileProfile, projectWithSymbolicAsset, runDecisionsFor, sixRoleBaseline, sixRoleBaselineWithVolumes } from './fixtures/run-fixtures.mjs';
 
@@ -263,6 +264,118 @@ test('a run bound to one rules snapshot will not continue under another', async 
     // records; a code change is not a release change and vice versa.
     assert.equal(resumed.run.implementation.run_schema, 'mabinogi-mobile-mml-studio/application-run@1');
     assert.match(resumed.run.implementation.notice, /not a new Canonical release/);
+  });
+});
+
+/**
+ * The refusal a named candidate from another rules snapshot gets.
+ *
+ * The same answer the reduction and adaptation operations give, with the two
+ * snapshots and the remedy for the field that named it.
+ */
+const snapshotRefusal = ({ candidateId, candidateSnapshot, loadedSnapshot, field }) => error => {
+  assert.equal(error.code, ERROR_CODES.INVALID_REQUEST, `${error.code}: ${error.message}`);
+  assert.equal(error.message, 'The candidate belongs to a different Canonical snapshot.');
+  assert.equal(error.details.candidate_id, candidateId);
+  assert.equal(error.details.candidate_rules_snapshot_sha, candidateSnapshot);
+  assert.equal(error.details.loaded_rules_snapshot_sha, loadedSnapshot);
+  assert.ok(error.details.remedy.includes(`without ${field}`), error.details.remedy);
+  return true;
+};
+
+test('a candidate derived under another rules snapshot is refused where it is named, not halfway through a run', async () => {
+  await withDirectory(async directory => {
+    const app = createStudioApplication({ dataDirectory: directory, durability: 'persistent' });
+    // Read from the loaded provenance, never hard-coded: the suite runs under
+    // whichever Published Canonical release is current.
+    const loaded = (await app.capabilities()).canonical.rules_snapshot_sha;
+    assert.match(loaded, /^[0-9a-f]{40}$/);
+    const other = loaded === 'f'.repeat(40) ? 'e'.repeat(40) : 'f'.repeat(40);
+
+    // A service over the same records that had another release loaded when it
+    // derived the candidate: what a published release move leaves behind.
+    // Everything else about its load is real, so the candidate is consistent
+    // with itself and differs only in the snapshot it was derived under.
+    const earlier = createStudioApplication({
+      dataDirectory: directory,
+      durability: 'persistent',
+      loadEngines: enginesWith(engines => ({
+        rules: {
+          ...engines.rules,
+          PUBLISHED_CANONICAL: {
+            ...engines.rules.PUBLISHED_CANONICAL,
+            metadata: { ...engines.rules.PUBLISHED_CANONICAL.metadata, rules_snapshot_sha: other },
+          },
+        },
+        emitterContract: { ...engines.emitterContract, canonicalIdentity: () => ({ ...engines.emitterContract.canonicalIdentity(), rules_snapshot_sha: other }) },
+      })),
+    });
+    const fixture = await preparedCandidate(earlier);
+    const stale = fixture.candidateId;
+    const current = (await app.applyDecisions(OWNER, fixture.projectId, { decisions: runDecisionsFor(fixture.project) })).decisions.candidate_id;
+    assert.notEqual(current, stale);
+    const refused = (candidateId, field) => snapshotRefusal({ candidateId, candidateSnapshot: other, loadedSnapshot: loaded, field });
+
+    // The plan describes what a start would do, so it refuses too, rather than
+    // reporting the candidate as a satisfied apply_decisions result.
+    await assert.rejects(app.planRun(OWNER, fixture.projectId, { target_candidate_id: stale }), refused(stale, 'target_candidate_id'));
+
+    // The start refuses before a run exists, so none is left behind to fail at
+    // the reduction step.
+    await assert.rejects(app.startRun(OWNER, fixture.projectId, { target_candidate_id: stale }), refused(stale, 'target_candidate_id'));
+    assert.deepEqual((await app.getRun(OWNER, fixture.projectId)).runs, []);
+
+    // Adopting it into a live run is refused the same way, and the run is not
+    // moved onto it.
+    const open = await app.startRun(OWNER, fixture.projectId, { asset_ids: [fixture.assetId] });
+    assert.equal(open.run.candidate_id, null);
+    await assert.rejects(app.resumeRun(OWNER, fixture.projectId, open.run.run_id, { adopt_candidate_id: stale }), refused(stale, 'adopt_candidate_id'));
+    const untouched = (await app.getRun(OWNER, fixture.projectId, open.run.run_id)).run;
+    assert.equal(untouched.revision, open.run.revision);
+    assert.equal(untouched.candidate_id, null);
+
+    // A candidate derived under the loaded release is named, planned, started
+    // and adopted exactly as before.
+    const planned = (await app.planRun(OWNER, fixture.projectId, { target_candidate_id: current })).plan;
+    assert.equal(planned.planned_steps.find(entry => entry.step === RUN_STEP.APPLY_DECISIONS).status, RUN_STEP_STATUS.SATISFIED);
+    const started = await app.startRun(OWNER, fixture.projectId, { target_candidate_id: current });
+    assert.equal(started.run.candidate_id, current);
+    assert.equal(statusOf(started.run, RUN_STEP.FINAL_REDUCTION), RUN_STEP_STATUS.SKIPPED);
+    const adopted = await app.resumeRun(OWNER, fixture.projectId, open.run.run_id, { adopt_candidate_id: current });
+    assert.equal(adopted.run.candidate_id, current);
+    assert.equal(statusOf(adopted.run, RUN_STEP.FINAL_REDUCTION), RUN_STEP_STATUS.SKIPPED);
+  });
+});
+
+test('an idempotent start is replayed before its candidate is re-checked, and a candidate that records no snapshot matches none', async () => {
+  await withDirectory(async directory => {
+    const app = createStudioApplication({ dataDirectory: directory, durability: 'persistent' });
+    const fixture = await preparedCandidate(app);
+    const loaded = (await app.capabilities()).canonical.rules_snapshot_sha;
+    const request = { idempotency_key: 'run-snapshot-replay', target_candidate_id: fixture.candidateId };
+    const first = await app.startRun(OWNER, fixture.projectId, request);
+    assert.equal(first.run.candidate_id, fixture.candidateId);
+
+    // The stored application loses its revision identity after the run was
+    // created on it.
+    const store = createStore({ directory });
+    const key = `application:${fixture.projectId}:${fixture.candidateId}`;
+    const application = store.getJson(key);
+    delete application.revision.canonicalIdentity;
+    store.putJson(key, application);
+
+    // The retry of the request that created the run is answered by its key,
+    // which is decided first: nothing is re-checked and nothing is re-applied.
+    const replayed = await app.startRun(OWNER, fixture.projectId, request);
+    assert.equal(replayed.replayed, true);
+    assert.equal(replayed.run.run_id, first.run.run_id);
+
+    // Any new request naming it is refused: an unrecorded snapshot is not the
+    // loaded one.
+    const refused = snapshotRefusal({ candidateId: fixture.candidateId, candidateSnapshot: null, loadedSnapshot: loaded, field: 'target_candidate_id' });
+    await assert.rejects(app.planRun(OWNER, fixture.projectId, { target_candidate_id: fixture.candidateId }), refused);
+    await assert.rejects(app.startRun(OWNER, fixture.projectId, { target_candidate_id: fixture.candidateId }), refused);
+    assert.equal((await app.getRun(OWNER, fixture.projectId)).runs.length, 1, 'the refused start created no run');
   });
 });
 

@@ -225,11 +225,23 @@ Normal top-up of evidence is the ordinary path: resume with the new
 confirmation, approval or citation and the current candidate is reviewed again
 and the run continues.
 
+That per-step check compares the run's *own* recorded snapshot with the loaded
+one, and a run started now records the loaded one whatever candidate it names.
+So a named candidate — `target_candidate_id` on a plan or a start,
+`adopt_candidate_id` on a resume — whose stored application was derived under a
+different rules snapshot, or records none, is refused where it is named with
+`INVALID_REQUEST` ("The candidate belongs to a different Canonical snapshot.",
+the reduction and adaptation operations' own answer), with both snapshots and
+the remedy in the details: supply the arrangement decisions again so a candidate
+is derived under the loaded release, or name one that was. No run is created on
+it and no run is moved onto it; an idempotent replay is still decided first.
+
 A candidate produced by an operation outside the run is adopted only when named
-(`adopt_candidate_id`) and only after its baseline and lineage are verified —
-never by being the newest. Naming one is not a way past the interruption rules
-below: a candidate recorded in a pending step's before-set predates that step's
-effect, so naming it is refused rather than written down as the effect.
+(`adopt_candidate_id`) and only after its rules snapshot, baseline and lineage
+are verified — never by being the newest. Naming one is not a way past the
+interruption rules below: a candidate recorded in a pending step's before-set
+predates that step's effect, so naming it is refused rather than written down as
+the effect.
 
 ### Interruption
 

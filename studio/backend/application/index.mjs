@@ -246,6 +246,21 @@ export function createStudioApplication({
     },
 
     /**
+     * The rules snapshot a stored candidate was derived under, or null.
+     *
+     * Read from the stored application's own revision identity: the field the
+     * reduction and adaptation operations compare with the loaded rules before
+     * they derive anything from a candidate. The run reads it so that it can
+     * refuse such a candidate where it is named, not halfway through a run.
+     * Read-only. An application that records no identity answers null, and
+     * null matches no loaded snapshot.
+     */
+    candidateRulesSnapshot(record, candidateId) {
+      const { revision } = arrangement.loadCandidate(record, candidateId);
+      return revision.canonicalIdentity?.rules_snapshot_sha ?? null;
+    },
+
+    /**
      * The Source-Faithful Baseline's events, for resolving a citation.
      *
      * Read-only, and the same projection `listBaselineEvents` serves. The
