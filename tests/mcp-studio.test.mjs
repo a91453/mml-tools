@@ -10,6 +10,7 @@ import assert from 'node:assert/strict';
 
 import { handleMcp, MCP_TOOLS, MAX_BODY_BYTES, SERVICE_VERSION } from '../server/mcp.mjs';
 import { STUDIO_MCP_TOOLS } from '../server/mcp-studio.mjs';
+import { LISTEN_MCP_TOOLS } from '../server/mcp-listen.mjs';
 import { API_PREFIX, createApiRouter } from '../server/api.mjs';
 import { createStudioApplication } from '../studio/backend/application/index.mjs';
 import { sixRoleBaseline, canonicalProjectBytes, keepEveryRole } from '../studio/tests/fixtures/application-fixtures.mjs';
@@ -95,7 +96,11 @@ test('service info lists the tools that are actually available', async () => {
 test('with an Application Service the studio control surface is advertised', async () => {
   const tools = await mcp(createStudioApplication({})).list();
   assert.deepEqual(tools.slice(0, 3), MCP_TOOLS);
-  assert.deepEqual(tools.slice(3), STUDIO_MCP_TOOLS);
+  assert.deepEqual(tools.slice(3, 3 + STUDIO_MCP_TOOLS.length), STUDIO_MCP_TOOLS);
+  // The listening projection comes last and is the only addition.
+  assert.deepEqual(tools.slice(3 + STUDIO_MCP_TOOLS.length), LISTEN_MCP_TOOLS);
+  assert.deepEqual(LISTEN_MCP_TOOLS.map(tool => tool.name), ['studio_listen']);
+  assert.equal(LISTEN_MCP_TOOLS[0].annotations.readOnlyHint, true);
 
   const names = tools.map(tool => tool.name);
   for (const expected of [
@@ -135,7 +140,10 @@ test('with an Application Service the studio control surface is advertised', asy
   // the shadow calibration record) and the one write that records a
   // prediction or the owner's choice. They are two for the reason the run and
   // proposal tools are: a read must not share a tool with a write.
-  assert.ok(tools.length <= 32, 'the surface must stay small enough for a model to reason about');
+  //
+  // And one read-only listening projection (`studio_listen`), which writes
+  // nothing and exists so a person can hear a Final inside the conversation.
+  assert.ok(tools.length <= 33, 'the surface must stay small enough for a model to reason about');
 });
 
 // Every Application Service operation a reviewer has to reach, and the tool that

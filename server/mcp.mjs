@@ -3,6 +3,7 @@ import { createTechnicalService } from '../studio/backend/application/technical-
 import { ERROR_CODES, StudioApplicationError } from '../studio/backend/application/contracts.mjs';
 import { createCanonicalGate } from '../studio/backend/application/provenance.mjs';
 import { STUDIO_MCP_TOOLS, UPLOAD_INSTRUCTION, runStudioTool } from './mcp-studio.mjs';
+import { DEFAULT_LISTEN_CONFIG, LISTEN_MCP_TOOLS, LISTEN_TOOL_NAME, listenResources, readListenResource, runListenTool } from './mcp-listen.mjs';
 
 // A deliberately small, stateless Streamable HTTP implementation. No sessions,
 // background work, network requests, file writes, model calls or song repair.
@@ -177,8 +178,13 @@ async function mcpRunTool(name, args, context) {
 // (project records, asset storage, the Canonical-aware engines), so a transport
 // without one advertises exactly the three original tools rather than offering
 // tools it cannot run.
+//
+// `studio_listen` is a read-only listening projection with a UI resource
+// (server/mcp-listen.mjs). It is listed after the control surface, and with it
+// the `resources` capability, only where the Studio is attached: the Sites
+// gateway's contract stays exactly the three technical tools.
 function mcpToolsFor(context) {
-  return context.application ? [...MCP_TOOLS, ...STUDIO_MCP_TOOLS] : MCP_TOOLS;
+  return context.application ? [...MCP_TOOLS, ...STUDIO_MCP_TOOLS, ...LISTEN_MCP_TOOLS] : MCP_TOOLS;
 }
 
 // A response cap is checked AFTER dispatch. A write may already have landed,
@@ -250,7 +256,7 @@ async function mcpReadBody(request) {
 // and keeps the ChatGPT-only default it always had.
 export const DEFAULT_MCP_ORIGINS = Object.freeze(['https://chatgpt.com']);
 
-export async function handleMcp(request, { application = null, owner = null, allowedOrigins = DEFAULT_MCP_ORIGINS } = {}) {
+export async function handleMcp(request, { application = null, owner = null, allowedOrigins = DEFAULT_MCP_ORIGINS, listen = DEFAULT_LISTEN_CONFIG } = {}) {
   const context = { application, owner };
   const origin = request.headers.get('origin');
   if (origin && origin !== new URL(request.url).origin && !allowedOrigins.includes(origin)) return mcpRpcError(null, -32000, 'Origin not allowed', 403);
@@ -277,10 +283,26 @@ export async function handleMcp(request, { application = null, owner = null, all
   if (message.method === 'initialize') {
     if (!params || typeof params.protocolVersion !== 'string' || !params.clientInfo || typeof params.clientInfo.name !== 'string' || typeof params.clientInfo.version !== 'string' || !params.capabilities || typeof params.capabilities !== 'object' || Array.isArray(params.capabilities)) return mcpRpcError(id, -32602, 'Invalid initialize parameters');
     const instructions = application
-      ? `Studio control surface plus the original technical MML checks. For an orchestrated song, discover studio_capabilities and studio_project_get, upload the sources, then studio_run_start with an idempotency_key. Inspect studio_run_status and studio_proposal_targets; submit a cited studio_proposal_submit, read its review, and use studio_proposal_resolve only for an explicitly authorized acceptance. Re-read the run after every operation. Use studio_run_resume for a new authorized advancement; nothing continues in the background after a response. Missing reviewer evidence must stay pending: never invent confirmations, Lead/Core3 evidence or gate acceptance. The direct operation tools remain available for deliberate, source-cited review workflows by any client, not as shortcuts around proposal policy; no evidence is graded on who submits it, so cite only a source you actually reviewed and state the method honestly. A suggestion is never an acceptance and PENDING is never a default. Gate axes are independent: technical success never establishes source, audio, player or in-game acceptance, and nothing you can call sets in_game. Long lists in a response (for example the per-release records of a machine-delivery ledger) are summarized as {compacted, total, first, sha256, report_page or retrieve}; read the full list with report_page on the named read tool and path. A PAYLOAD_TOO_LARGE error whose details say operation_returned: true (for example operation: "succeeded") means the operation already took effect: never retry it; read the state back through details.recovery_reads, using report_page for large reads. studio_audio_prescreen compares 2-4 alternatives bar by bar and returns machine evidence only: an OBVIOUS bar is not an acceptance, it never sets Gate 7, player readback or in_game, and its free GM bank is not the game timbre; NEEDS_HUMAN bars are for the owner to hear. ${UPLOAD_INSTRUCTION}`
+      ? `Studio control surface plus the original technical MML checks. For an orchestrated song, discover studio_capabilities and studio_project_get, upload the sources, then studio_run_start with an idempotency_key. Inspect studio_run_status and studio_proposal_targets; submit a cited studio_proposal_submit, read its review, and use studio_proposal_resolve only for an explicitly authorized acceptance. Re-read the run after every operation. Use studio_run_resume for a new authorized advancement; nothing continues in the background after a response. Missing reviewer evidence must stay pending: never invent confirmations, Lead/Core3 evidence or gate acceptance. The direct operation tools remain available for deliberate, source-cited review workflows by any client, not as shortcuts around proposal policy; no evidence is graded on who submits it, so cite only a source you actually reviewed and state the method honestly. A suggestion is never an acceptance and PENDING is never a default. Gate axes are independent: technical success never establishes source, audio, player or in-game acceptance, and nothing you can call sets in_game. To let the user hear a delivered Final or a revision, call the read-only studio_listen; what the user sends back from its player is listening feedback in the conversation, never a gate confirmation, evidence or acceptance. Long lists in a response (for example the per-release records of a machine-delivery ledger) are summarized as {compacted, total, first, sha256, report_page or retrieve}; read the full list with report_page on the named read tool and path. A PAYLOAD_TOO_LARGE error whose details say operation_returned: true (for example operation: "succeeded") means the operation already took effect: never retry it; read the state back through details.recovery_reads, using report_page for large reads. studio_audio_prescreen compares 2-4 alternatives bar by bar and returns machine evidence only: an OBVIOUS bar is not an acceptance, it never sets Gate 7, player readback or in_game, and its free GM bank is not the game timbre; NEEDS_HUMAN bars are for the owner to hear. ${UPLOAD_INSTRUCTION}`
       : 'Only technical MML checks. Pass MML and source-confirmed meter explicitly. Never interpret technical_ok as listening, source, player, or game acceptance. Tools do not rewrite songs or access conversation history.';
-    result = { protocolVersion: MCP_VERSIONS.includes(params.protocolVersion) ? params.protocolVersion : MCP_VERSIONS[0], capabilities: { tools: { listChanged: false } }, serverInfo: { name: 'mml-workbench-tools', version: SERVICE_VERSION }, instructions };
+    // Resources exist only for the listening player's UI, so they are
+    // advertised only where `studio_listen` is.
+    const capabilities = application
+      ? { tools: { listChanged: false }, resources: { subscribe: false, listChanged: false } }
+      : { tools: { listChanged: false } };
+    result = { protocolVersion: MCP_VERSIONS.includes(params.protocolVersion) ? params.protocolVersion : MCP_VERSIONS[0], capabilities, serverInfo: { name: 'mml-workbench-tools', version: SERVICE_VERSION }, instructions };
   } else if (message.method === 'ping') result = {};
+  else if (application && message.method === 'resources/list') {
+    if (params?.cursor !== undefined) return mcpRpcError(id, -32602, 'This resource list is not paginated');
+    result = { resources: listenResources(listen) };
+  } else if (application && message.method === 'resources/templates/list') {
+    if (params?.cursor !== undefined) return mcpRpcError(id, -32602, 'This resource template list is not paginated');
+    result = { resourceTemplates: [] };
+  } else if (application && message.method === 'resources/read') {
+    if (!params || typeof params.uri !== 'string' || params.uri.length > 256) return mcpRpcError(id, -32602, 'Invalid resource uri');
+    result = readListenResource(params.uri, listen);
+    if (!result) return mcpReply({ jsonrpc: '2.0', id, error: { code: -32002, message: 'Resource not found', data: { uri: params.uri.slice(0, 256) } } });
+  }
   else if (message.method === 'tools/list') {
     if (params?.cursor !== undefined) return mcpRpcError(id, -32602, 'This tool list is not paginated');
     result = { tools: mcpToolsFor(context) };
@@ -291,16 +313,22 @@ export async function handleMcp(request, { application = null, owner = null, all
     try { mcpCheckSchema(tool.inputSchema, args); }
     catch (error) { return mcpRpcError(id, -32602, error.message); }
     try {
-      const data = await mcpRunTool(tool.name, args, context), serialized = JSON.stringify(data);
+      // `studio_listen` answers a person as well as a model: its text content
+      // is a readable summary with the listen link, for hosts that render no
+      // UI. Every other tool's text content stays the serialized report.
+      let data, text = null;
+      if (tool.name === LISTEN_TOOL_NAME) ({ structuredContent: data, text } = await runListenTool(args, { ...context, listen }));
+      else data = await mcpRunTool(tool.name, args, context);
+      const serialized = JSON.stringify(data);
       // A deliberate, caller-actionable refusal rather than a fault, so it is
       // raised in the structured form that survives the sanitizer below.
-      const responseBytes = mcpTextEncoder.encode(serialized).byteLength;
+      const responseBytes = mcpTextEncoder.encode(serialized).byteLength + (text === null ? 0 : mcpTextEncoder.encode(text).byteLength);
       if (responseBytes > 524288) {
         throw new StudioApplicationError(ERROR_CODES.PAYLOAD_TOO_LARGE,
           'The operation already returned, but its full response exceeds the MCP size limit. Inspect recovery details before retrying.',
           oversizedResultDetails(tool, args, data, responseBytes));
       }
-      result = { content: [{ type: 'text', text: serialized }], structuredContent: data, isError: false };
+      result = { content: [{ type: 'text', text: text ?? serialized }], structuredContent: data, isError: false };
     } catch (error) {
       // A structured Application Service refusal keeps its code and details: a
       // model that is told only "failed" cannot tell a blocked gate from a

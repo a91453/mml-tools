@@ -3,6 +3,7 @@ import { Readable } from 'node:stream';
 import { pathToFileURL } from 'node:url';
 import { createAuth } from './auth.mjs';
 import { handleMcp, SERVICE_VERSION } from '../server/mcp.mjs';
+import { createListenConfig } from '../server/mcp-listen.mjs';
 import { createApiRouter } from '../server/api.mjs';
 import { studioWebResponse } from '../server/studio-web.mjs';
 import { createStudioApplication } from '../studio/backend/application/index.mjs';
@@ -164,6 +165,14 @@ export function createApplication(options) {
       } : {}),
     };
   } });
+  // The in-conversation listening player: which Studio Web a listen link
+  // opens, and the optional sample library the player may fetch. Both are
+  // optional; unset, there is no link and the player makes no request.
+  const listen = createListenConfig({
+    studioWebOrigin: options.studioWebOrigin ?? null,
+    samplesUrl: options.listenSamplesUrl ?? null,
+    samplesCredit: options.listenSamplesCredit ?? null,
+  });
   const api = createApiRouter({ application: exposedStudio, ownerOf: () => SERVICE_OWNER, challenge: auth.unauthorized().headers.get('www-authenticate'), agentDriver: agent });
   return {
     close() { agent.close(); auth.close(); },
@@ -182,7 +191,7 @@ export function createApplication(options) {
         // Only locally issued, audience-bound OAuth access tokens authorize this
         // standalone service. Sites identity headers have no authority here.
         if (!auth.authenticated(request)) return auth.unauthorized();
-        return handleMcp(request, { application: exposedStudio, owner: SERVICE_OWNER, allowedOrigins: auth.allowedOrigins });
+        return handleMcp(request, { application: exposedStudio, owner: SERVICE_OWNER, allowedOrigins: auth.allowedOrigins, listen });
       }
       // The Application HTTP surface, behind the same OAuth check. The router
       // is told whether the request is authenticated rather than deciding it:
@@ -275,6 +284,10 @@ if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) 
     ...productionAgentConfiguration(process.env),
     allowedRedirectHosts: parseRedirectHosts(process.env),
     allowLoopbackRedirects: parseLoopbackSetting(process.env),
+    // Optional; see server/mcp-listen.mjs. An invalid origin yields no link.
+    studioWebOrigin: process.env.STUDIO_WEB_ORIGIN ?? null,
+    listenSamplesUrl: process.env.STUDIO_LISTEN_SAMPLES_URL ?? null,
+    listenSamplesCredit: process.env.STUDIO_LISTEN_SAMPLES_CREDIT ?? null,
   });
   const server = createHttpServer(application);
   server.listen(port, '0.0.0.0', () => console.log('MML OAuth service is ready'));

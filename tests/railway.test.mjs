@@ -422,3 +422,21 @@ test('production runtime refuses external agent environment variables', () => {
     agentModel: 'example-model',
   });
 });
+
+test('the deployment passes its Studio Web origin to studio_listen and serves the player resource behind OAuth', async t => {
+  const rpc = (token, method, params) => req('/mcp', 'POST', JSON.stringify({ jsonrpc: '2.0', id: 1, method, params }), { ...rpcHeaders, authorization: 'Bearer ' + token });
+  const listen = { name: 'studio_listen', arguments: { mml: 'MML@t120o4c4d4e4f4,t120o3c1,,,,;', meter_text: '0 4/4' } };
+  const send = setup(t, { studioWebOrigin: 'https://studio.example' });
+  const { access_token: token } = await tokens(send);
+  const view = (await (await send(rpc(token, 'tools/call', listen))).json()).result.structuredContent;
+  assert.ok(view.listen_link.url.startsWith('https://studio.example/#listen='));
+  const page = (await (await send(rpc(token, 'resources/read', { uri: 'ui://mml-studio/player.html' }))).json()).result.contents[0];
+  assert.equal(page.mimeType, 'text/html;profile=mcp-app');
+  assert.equal((await send(req('/mcp', 'POST', JSON.stringify({ jsonrpc: '2.0', id: 1, method: 'resources/list' }), rpcHeaders))).status, 401, 'the resource is behind the same OAuth check');
+
+  const bare = setup(t);
+  const { access_token: bareToken } = await tokens(bare);
+  const unlinked = (await (await bare(rpc(bareToken, 'tools/call', listen))).json()).result.structuredContent;
+  assert.equal(unlinked.listen_link, null);
+  assert.equal(unlinked.listen_link_status, 'ORIGIN_NOT_CONFIGURED');
+});

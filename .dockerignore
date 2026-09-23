@@ -20,6 +20,16 @@ server/*
 !server/api.mjs
 !server/studio-agent-driver.mjs
 !server/studio-agent-codex.mjs
+!server/mcp-listen.mjs
+!server/listen/
+server/listen/*
+!server/listen/widget.mjs
+!server/listen/mml-events.mjs
+!server/listen/final-markers.mjs
+!server/listen/sf2.mjs
+!server/listen/player-app.js
+!server/listen/player.html
+!server/listen/player.css
 !railway/
 railway/*
 !railway/Dockerfile
@@ -35,6 +45,8 @@ studio/*
 !studio/backend/
 !studio/web/
 studio/web/*
+# The Studio Web listen-link contract, which studio_listen encodes through.
+!studio/web/listen-link.mjs
 !studio/web/service/
 studio/web/service/*
 !studio/web/service/index.html
