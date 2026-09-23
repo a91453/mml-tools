@@ -25,6 +25,10 @@ import {
   TARGET_STATUS,
   RELEASE_REFUSAL,
   EVIDENCE_REFUSAL,
+  EVIDENCE_BASIS,
+  DECISION_AUTHOR_KINDS,
+  RELEASE_CLAIM,
+  RELEASE_EVIDENCE_REQUIREMENT,
   RECORD_VIOLATION,
   RELEASE_RECORD_KEY,
   classifyPosition,
@@ -33,6 +37,7 @@ import {
   buildEvidenceRegistry,
   gradeReleaseEvidence,
   planReleaseRepresentation,
+  releaseEvidenceRequirement,
   releaseRecordFor,
   verifyReleaseRepresentation,
   sourceIdentityOf,
@@ -174,7 +179,7 @@ test('RT-7 a keep claim makes the release UNSUPPORTED in Final, never a represen
   const target = analysis.targets.find(item => item.eventId === 'a');
   assert.equal(target.status, TARGET_STATUS.SOURCE_SUPPORTED_NOT_REPRESENTABLE);
   assert.equal(target.musicalMeaning, 'SOURCE_SUPPORTED_CLAIM');
-  const plan = planReleaseRepresentation({ analysis, registry: buildEvidenceRegistry({}), input: { decisions: [humanAudioDecision(['a'])] } });
+  const plan = planReleaseRepresentation({ analysis, registry: buildEvidenceRegistry({}), input: { decisions: [audioDecision(['a'])] } });
   assert.deepEqual(plan.blockers.map(item => item.code), [RELEASE_REFUSAL.KEEP_DECISION_PRESENT]);
   assert.equal(plan.changes.length, 0);
 });
@@ -187,10 +192,14 @@ test('RT-8 a uniform encoding pattern is reported as an observation and is never
   assert.deepEqual(observation.offsetsBeforeNextGrid, { '1 tick(s)': 4 });
   assert.equal(observation.evidenceClass, 'SOURCE_ENCODING_PATTERN');
   assert.equal(observation.admissibleAsEvidence, false);
-  const grade = gradeReleaseEvidence({ attestation: { reviewer: 'r', reviewer_kind: 'human', audio_basis: 'not-used' }, evidence: [{ class: 'source-encoding-pattern', ref: 'third', locator: 'whole file', finding: 'every release is one tick early' }] }, buildEvidenceRegistry({ sources: [THIRD] }));
-  assert.equal(grade.admissible, false);
-  assert.deepEqual(grade.items[0].reasons, [EVIDENCE_REFUSAL.CLASS_NOT_ADMISSIBLE]);
-  assert.match(grade.items[0].nonAdmissibleClassNotice, /not source-supported musical meaning/);
+  // Whoever submits it: the pattern is structure over a supporting file.
+  for (const reviewer_kind of ['agent', 'human']) {
+    const grade = gradeReleaseEvidence({ representation: REPRESENTATION.EXTEND_TO_NEXT_GRID, attestation: { reviewer: 'r', reviewer_kind }, evidence: [{ class: 'source-encoding-pattern', ref: 'third', basis: EVIDENCE_BASIS.ENCODING_PATTERN, locator: 'whole file', finding: 'every release is one tick early' }] }, buildEvidenceRegistry({ sources: [THIRD] }));
+    assert.equal(grade.admissible, false, reviewer_kind);
+    assert.deepEqual(grade.items[0].reasons, [EVIDENCE_REFUSAL.CLASS_NOT_ADMISSIBLE, EVIDENCE_REFUSAL.BASIS_NOT_SOURCE_REVIEW]);
+    assert.match(grade.items[0].nonAdmissibleClassNotice, /not source-supported musical meaning/);
+    assert.match(grade.items[0].nonAdmissibleBasisNotice, /not source-supported musical meaning/);
+  }
 });
 
 const ASSETS = Object.freeze([
@@ -200,29 +209,103 @@ const ASSETS = Object.freeze([
   { asset_id: 'ast_score', kind: 'official_musicxml', sha256: 'd'.repeat(64) },
   { asset_id: 'ast_audio', kind: 'original_audio', sha256: 'e'.repeat(64) },
 ]);
-function humanAudioDecision(eventIds, { id = 'rr-audio', representation = REPRESENTATION.EXTEND_TO_NEXT_GRID, attestation = { reviewer: 'user:reviewer', reviewer_kind: 'human', audio_basis: 'listening' } } = {}) {
+// A direct review of the original recording. The default submitter is a
+// conversational AI on purpose: who submits is provenance, not authority.
+const AGENT = Object.freeze({ reviewer: 'agent:assistant', reviewer_kind: 'agent' });
+const HUMAN = Object.freeze({ reviewer: 'user:reviewer', reviewer_kind: 'human' });
+function audioDecision(eventIds, { id = 'rr-audio', representation = REPRESENTATION.EXTEND_TO_NEXT_GRID, attestation = AGENT, basis = EVIDENCE_BASIS.DIRECT_SOURCE_REVIEW, ref = 'ast_audio' } = {}) {
   return { id, eventIds, representation, reason: 'Legato in the recording; no audible separation at these boundaries.', attestation,
-    evidence: [{ class: 'primary-audio', ref: 'ast_audio', locator: '0:12-0:20', finding: 'Sustained through each boundary; no audible break.' }] };
+    evidence: [{ class: 'primary-audio', ref, basis, locator: '0:12-0:20', finding: 'Sustained through each boundary; no separation before the next attack.' }] };
 }
+function scoreDecision(eventIds, { id = 'rr-score', attestation = AGENT, ref = 'ast_score', basis = EVIDENCE_BASIS.DIRECT_SOURCE_REVIEW, evidenceClass = 'primary-symbolic' } = {}) {
+  return { id, eventIds, representation: REPRESENTATION.EXTEND_TO_NEXT_GRID, reason: 'Notated durations reach the next beat.', attestation,
+    evidence: [{ class: evidenceClass, ref, basis, locator: 'bars 1-4', finding: 'Notated quarter notes, no staccato or rest between them.' }] };
+}
+// The grade with the submitter taken out: what must not depend on who submitted.
+const gradeWithoutProvenance = grade => JSON.stringify({ admissible: grade.admissible, claim: grade.claim, reasons: grade.reasons, items: grade.items });
 
-test('RT-9 evidence counts only when a human attests an independent primary source under a matching kind', () => {
+test('RT-9 evidence authority is the cited source, its basis and the claim; who submitted the decision is provenance only', () => {
   const registry = buildEvidenceRegistry({ assets: ASSETS, sources: [THIRD] });
   assert.equal(registry.get('ast_relabelled').independent, false, 'byte-identical to the third-party MIDI');
   assert.equal(registry.get('ast_score').independent, true);
   const grade = decision => gradeReleaseEvidence(decision, registry);
-  assert.equal(grade(humanAudioDecision(['a'])).admissible, true);
-  assert.deepEqual(grade(humanAudioDecision(['a'], { attestation: { reviewer: 'agent:x', reviewer_kind: 'agent', audio_basis: 'listening' } })).reasons, [EVIDENCE_REFUSAL.ATTESTATION_NOT_HUMAN]);
-  assert.equal(grade(humanAudioDecision(['a'], { attestation: { reviewer: 'agent:x', reviewer_kind: 'agent', audio_basis: 'listening' } })).countedAsReviewerEvidence, false);
-  assert.deepEqual(grade(humanAudioDecision(['a'], { attestation: { reviewer: 'u', reviewer_kind: 'human', audio_basis: 'machine-metric' } })).items[0].reasons, [EVIDENCE_REFUSAL.AUDIO_BASIS_NOT_LISTENING]);
-  assert.deepEqual(grade({ attestation: null, evidence: [] }).reasons, [EVIDENCE_REFUSAL.ATTESTATION_MISSING]);
-  const symbolic = ref => ({ attestation: { reviewer: 'u', reviewer_kind: 'human', audio_basis: 'not-used' }, evidence: [{ class: 'primary-symbolic', ref, locator: 'bars 1-4', finding: 'Notated eighth notes, no staccato.' }] });
-  assert.equal(grade(symbolic('ast_score')).admissible, true);
-  assert.deepEqual(grade(symbolic('ast_relabelled')).items[0].reasons, [EVIDENCE_REFUSAL.NOT_INDEPENDENT]);
-  assert.deepEqual(grade(symbolic('ast_third')).items[0].reasons, [EVIDENCE_REFUSAL.KIND_MISMATCH]);
-  assert.deepEqual(grade(symbolic('ast_missing')).items[0].reasons, [EVIDENCE_REFUSAL.REF_UNKNOWN]);
+
+  // R1/R2/R3: the same independent primary citation grades the same for every
+  // kind of submitter, a conversational AI included.
+  const byKind = kind => ({ audio: grade(audioDecision(['a'], { attestation: { reviewer: `${kind}:x`, reviewer_kind: kind } })), score: grade(scoreDecision(['a'], { attestation: { reviewer: `${kind}:x`, reviewer_kind: kind } })) });
+  const reference = byKind('human');
+  assert.equal(reference.audio.admissible, true);
+  assert.equal(reference.score.admissible, true);
+  for (const kind of DECISION_AUTHOR_KINDS) {
+    const graded = byKind(kind);
+    assert.equal(graded.audio.attestation.reviewer_kind, kind, 'provenance is recorded');
+    assert.equal(gradeWithoutProvenance(graded.audio), gradeWithoutProvenance(reference.audio), `${kind}: audio grade`);
+    assert.equal(gradeWithoutProvenance(graded.score), gradeWithoutProvenance(reference.score), `${kind}: score grade`);
+  }
+  assert.equal(reference.audio.claim, RELEASE_CLAIM.SUSTAINS_TO_GRID);
+  assert.match(reference.audio.items[0].claimAuthority, /SOURCE_POLICY §1B/);
+  assert.match(reference.score.items[0].claimAuthority, /SOURCE_POLICY §1A/);
+  // A decision must still say who submitted it, whoever that is.
+  assert.deepEqual(grade({ ...audioDecision(['a']), attestation: null }).reasons, [EVIDENCE_REFUSAL.PROVENANCE_MISSING]);
+  assert.deepEqual(grade({ ...audioDecision(['a']), attestation: { reviewer: 'x', reviewer_kind: 'wizard' } }).reasons, [EVIDENCE_REFUSAL.PROVENANCE_MISSING]);
+
+  // R4: a person does not make weak evidence strong.
+  for (const attestation of [HUMAN, AGENT]) {
+    assert.deepEqual(grade(scoreDecision(['a'], { attestation, ref: 'ast_third', evidenceClass: 'third-party' })).items[0].reasons, [EVIDENCE_REFUSAL.CLASS_NOT_ADMISSIBLE]);
+    assert.deepEqual(grade(scoreDecision(['a'], { attestation, ref: 'ast_third' })).items[0].reasons, [EVIDENCE_REFUSAL.KIND_MISMATCH]);
+    assert.deepEqual(grade(scoreDecision(['a'], { attestation, ref: 'ast_relabelled' })).items[0].reasons, [EVIDENCE_REFUSAL.NOT_INDEPENDENT]);
+    assert.deepEqual(grade(scoreDecision(['a'], { attestation, ref: 'ast_missing' })).items[0].reasons, [EVIDENCE_REFUSAL.REF_UNKNOWN]);
+  }
+
+  // R6/R8: the original recording stays a primary source (R7), but a metric or
+  // an alignment locator computed from it is not a finding about it (SOURCE_POLICY
+  // §6), for anyone; nor is an unstated basis.
+  for (const attestation of [HUMAN, AGENT]) {
+    for (const basis of [EVIDENCE_BASIS.MACHINE_METRIC, EVIDENCE_BASIS.ALIGNMENT_LOCATOR, EVIDENCE_BASIS.IMPORTED_ASSERTION]) {
+      const metric = grade(audioDecision(['a'], { attestation, basis }));
+      assert.equal(metric.admissible, false, `${attestation.reviewer_kind} ${basis}`);
+      assert.deepEqual(metric.items[0].reasons, [EVIDENCE_REFUSAL.BASIS_NOT_SOURCE_REVIEW]);
+      assert.equal(metric.items[0].resolved.primary, true, 'the source itself is still primary');
+    }
+    assert.deepEqual(grade(audioDecision(['a'], { attestation, basis: '' })).items[0].reasons, [EVIDENCE_REFUSAL.BASIS_MISSING]);
+    const metricClass = grade({ ...audioDecision(['a'], { attestation }), evidence: [{ class: 'audio-metric', ref: 'ast_audio', basis: EVIDENCE_BASIS.MACHINE_METRIC, locator: '0:12', finding: 'release energy drop' }] });
+    assert.deepEqual(metricClass.items[0].reasons, [EVIDENCE_REFUSAL.CLASS_NOT_ADMISSIBLE, EVIDENCE_REFUSAL.BASIS_NOT_SOURCE_REVIEW]);
+  }
+  assert.match(grade(audioDecision(['a'], { basis: EVIDENCE_BASIS.MACHINE_METRIC })).items[0].nonAdmissibleBasisNotice, /SOURCE_POLICY §6/);
+
+  // The first schema's decision-level audio_basis still reads, with its old
+  // human-only meaning gone: `listening` is a direct review by whoever did it.
+  const legacy = attestation => ({ ...audioDecision(['a'], { basis: '' }), attestation });
+  assert.equal(grade(legacy({ reviewer: 'agent:x', reviewer_kind: 'agent', audio_basis: 'listening' })).admissible, true);
+  assert.deepEqual(grade(legacy({ reviewer: 'user:x', reviewer_kind: 'human', audio_basis: 'machine-metric' })).items[0].reasons, [EVIDENCE_REFUSAL.BASIS_NOT_SOURCE_REVIEW]);
+  assert.deepEqual(grade(legacy({ reviewer: 'user:x', reviewer_kind: 'human', audio_basis: 'constructor' })).items[0].reasons, [EVIDENCE_REFUSAL.BASIS_MISSING], 'only own table keys are read');
+  assert.equal(grade(legacy({ reviewer: 'user:x', reviewer_kind: 'human', audio_basis: 'listening' })).attestation.audio_basis, undefined, 'provenance records who, not how');
+
   // An imported Canonical source cannot promote itself by its authority string alone.
   const imported = buildEvidenceRegistry({ sources: [createSource({ id: 'claims-official', label: 'x', kind: 'third-party-midi', authority: 'primary-symbolic' })] });
-  assert.equal(gradeReleaseEvidence(symbolic('claims-official'), imported).admissible, false);
+  assert.equal(gradeReleaseEvidence(scoreDecision(['a'], { ref: 'claims-official' }), imported).admissible, false);
+});
+
+test('RT-9b what would settle an open release is named from the sources the project holds, never from who may submit it', () => {
+  const kaijuShaped = buildEvidenceRegistry({ assets: [ASSETS[0], ASSETS[1], ASSETS[3]], sources: [THIRD] });
+  const requirement = releaseEvidenceRequirement(kaijuShaped);
+  assert.deepEqual(requirement.anyOf.map(item => [item.code, [...item.availableRefs], [...item.notIndependentRefs]]), [
+    [RELEASE_EVIDENCE_REQUIREMENT.ORIGINAL_AUDIO_REVIEW_REQUIRED, ['ast_audio'], []],
+    [RELEASE_EVIDENCE_REQUIREMENT.SYMBOLIC_SOURCE_REQUIRED, [], ['ast_relabelled']],
+  ]);
+  assert.doesNotMatch(JSON.stringify(requirement), /human|HUMAN|listen/);
+  const withScore = releaseEvidenceRequirement(buildEvidenceRegistry({ assets: ASSETS }));
+  assert.equal(withScore.anyOf[1].code, RELEASE_EVIDENCE_REQUIREMENT.SYMBOLIC_SOURCE_REVIEW_REQUIRED);
+  assert.deepEqual([...withScore.anyOf[1].availableRefs], ['ast_score']);
+  assert.equal(releaseEvidenceRequirement(buildEvidenceRegistry({})).anyOf[0].code, RELEASE_EVIDENCE_REQUIREMENT.ORIGINAL_AUDIO_SOURCE_REQUIRED);
+  assert.equal(releaseEvidenceRequirement(null), null, 'without a registry nothing is guessed');
+  // Surfaced by the micro-timing gate as a precise blocker when a registry is known.
+  const a = note({ id: 'a', start: 0, end: tickBefore(1) });
+  const candidate = project([a, note({ id: 'b', start: 2, end: 3 })]);
+  const gate = enforceMicroGaps(candidate, { releaseEvidenceRegistry: kaijuShaped });
+  assert.ok(gate.blockers.includes(MICRO_GAP_BLOCKERS.RELEASE_EVIDENCE_REQUIRED));
+  assert.equal(gate.releaseEvidenceRequirement.anyOf[0].code, RELEASE_EVIDENCE_REQUIREMENT.ORIGINAL_AUDIO_REVIEW_REQUIRED);
+  assert.ok(!enforceMicroGaps(candidate).blockers.includes(MICRO_GAP_BLOCKERS.RELEASE_EVIDENCE_REQUIRED), 'unknown sources: no requirement is guessed');
 });
 
 test('RT-10 decisions become exact per-event changes only when admissible, and malformed statements are refused', () => {
@@ -231,22 +314,28 @@ test('RT-10 decisions become exact per-event changes only when admissible, and m
   const c = note({ id: 'c', start: 2, end: 3 });
   const analysis = analyzeReleaseTiming({ candidate: project([a, b, c]) });
   const registry = buildEvidenceRegistry({ assets: ASSETS, sources: [THIRD] });
-  const pending = planReleaseRepresentation({ analysis, registry, input: { decisions: [humanAudioDecision(['a', 'b'], { attestation: { reviewer: 'agent', reviewer_kind: 'agent', audio_basis: 'listening' } })] } });
-  assert.equal(pending.changes.length, 0, 'an agent assertion moves nothing');
+  const pending = planReleaseRepresentation({ analysis, registry, input: { decisions: [audioDecision(['a', 'b'], { basis: EVIDENCE_BASIS.MACHINE_METRIC })] } });
+  assert.equal(pending.changes.length, 0, 'a metric-only citation moves nothing');
   assert.equal(pending.pending.length, 1);
+  assert.deepEqual([...pending.pending[0].reasons], [EVIDENCE_REFUSAL.NO_ADMISSIBLE_ITEM]);
+  assert.deepEqual([...pending.pending[0].items[0].reasons], [EVIDENCE_REFUSAL.BASIS_NOT_SOURCE_REVIEW]);
   assert.equal(pending.unresolvedTargetCount, 2);
-  const applied = planReleaseRepresentation({ analysis, registry, input: { decisions: [humanAudioDecision(['a', 'b'])] } });
+  const applied = planReleaseRepresentation({ analysis, registry, input: { decisions: [audioDecision(['a', 'b'])] } });
+  // The same citation submitted by a person plans the identical changes.
+  const byHuman = planReleaseRepresentation({ analysis, registry, input: { decisions: [audioDecision(['a', 'b'], { attestation: HUMAN })] } });
+  assert.deepEqual(byHuman.changes, applied.changes);
+  assert.equal(applied.decisions[0].claim, RELEASE_CLAIM.SUSTAINS_TO_GRID);
   assert.deepEqual(applied.changes.map(change => [change.eventId, change.before.end, change.after.end, change.delta, change.selectedRecommended]), [
     ['a', '479/480', '1', '1/480', true],
     ['b', '959/480', '2', '1/480', true],
   ]);
   assert.equal(applied.unresolvedTargetCount, 0);
-  const refused = planReleaseRepresentation({ analysis, registry, input: { decisions: [humanAudioDecision(['c'])] } });
+  const refused = planReleaseRepresentation({ analysis, registry, input: { decisions: [audioDecision(['c'])] } });
   assert.deepEqual(refused.blockers.map(item => item.code), [RELEASE_REFUSAL.EVENT_NOT_A_TARGET]);
-  const conflict = planReleaseRepresentation({ analysis, registry, input: { decisions: [humanAudioDecision(['a'], { id: 'one' }), humanAudioDecision(['a'], { id: 'two' })] } });
+  const conflict = planReleaseRepresentation({ analysis, registry, input: { decisions: [audioDecision(['a'], { id: 'one' }), audioDecision(['a'], { id: 'two' })] } });
   assert.ok(conflict.blockers.every(item => item.code === RELEASE_REFUSAL.DECISION_CONFLICT));
-  assert.throws(() => planReleaseRepresentation({ analysis, registry, input: { decisions: [{ ...humanAudioDecision(['a']), pitch: 61 }] } }), /unsupported/);
-  assert.throws(() => planReleaseRepresentation({ analysis, registry, input: { decisions: [{ ...humanAudioDecision(['a']), representation: 'QUANTIZE' }] } }), /representation/);
+  assert.throws(() => planReleaseRepresentation({ analysis, registry, input: { decisions: [{ ...audioDecision(['a']), pitch: 61 }] } }), /unsupported/);
+  assert.throws(() => planReleaseRepresentation({ analysis, registry, input: { decisions: [{ ...audioDecision(['a']), representation: 'QUANTIZE' }] } }), /representation/);
 });
 
 function represented(candidateEvents, changes, decisions, { snapshotEvents = candidateEvents } = {}) {
@@ -263,7 +352,7 @@ test('RT-11 a recorded representation re-verifies from the project alone, and ev
   const b = note({ id: 'b', start: 1, end: 2 });
   const analysis = analyzeReleaseTiming({ candidate: project([a, b]) });
   const registry = buildEvidenceRegistry({ assets: ASSETS, sources: [THIRD] });
-  const plan = planReleaseRepresentation({ analysis, registry, input: { decisions: [humanAudioDecision(['a'])] } });
+  const plan = planReleaseRepresentation({ analysis, registry, input: { decisions: [audioDecision(['a'])] } });
   const good = represented([a, b], plan.changes, plan.decisions);
   assert.deepEqual(verifyReleaseRepresentation(good).violations, []);
   const clean = enforceMicroGaps(good);
@@ -275,8 +364,11 @@ test('RT-11 a recorded representation re-verifies from the project alone, and ev
   assert.ok(codes(represented([a, b], plan.changes, plan.decisions, { snapshotEvents: [note({ id: 'a', start: 0, end: tickBefore('3/4') }), b] })).includes(RECORD_VIOLATION.SOURCE_RELEASE_MISMATCH));
   // The decision the record names is not stored.
   assert.ok(codes(represented([a, b], plan.changes, [])).includes(RECORD_VIOLATION.DECISION_MISSING));
-  // A stored decision whose attestation is an agent's never re-grades admissible.
-  const forged = plan.decisions.map(decision => ({ ...decision, attestation: { ...decision.attestation, reviewer_kind: 'agent' } }));
+  // Re-labelling the submitter changes nothing either way: provenance is not authority.
+  const relabelled = plan.decisions.map(decision => ({ ...decision, attestation: { ...decision.attestation, reviewer_kind: 'human' } }));
+  assert.deepEqual(codes(represented([a, b], plan.changes, relabelled)), []);
+  // A stored citation whose basis was edited to a metric never re-grades admissible.
+  const forged = plan.decisions.map(decision => ({ ...decision, evidence: decision.evidence.map(item => ({ ...item, basis: EVIDENCE_BASIS.MACHINE_METRIC })) }));
   assert.ok(codes(represented([a, b], plan.changes, forged)).includes(RECORD_VIOLATION.DECISION_NOT_ADMISSIBLE));
   // A release moved by more than one sub-grid step is not a representation.
   const far = plan.changes.map(change => ({ ...change, after: { end: '2' }, delta: f('2').sub(change.before.end).toString() }));
@@ -291,7 +383,7 @@ test('RT-12 the source identity of a represented note is its source release, and
   const a = note({ id: 'a', start: 0, end: tickBefore(1) });
   const b = note({ id: 'b', start: 1, end: 2 });
   const analysis = analyzeReleaseTiming({ candidate: project([a, b]) });
-  const plan = planReleaseRepresentation({ analysis, registry: buildEvidenceRegistry({ assets: ASSETS }), input: { decisions: [humanAudioDecision(['a'])] } });
+  const plan = planReleaseRepresentation({ analysis, registry: buildEvidenceRegistry({ assets: ASSETS }), input: { decisions: [audioDecision(['a'])] } });
   const adapted = represented([a, b], plan.changes, plan.decisions).events.find(event => event.id === 'a');
   assert.equal(adapted.end, '1');
   assert.equal(sourceIdentityOf(adapted, a).end, '479/480');
@@ -318,7 +410,7 @@ test('RT-14 an accepted previous version stays comparable, and the comparison sh
   const b = note({ id: 'b', start: 1, end: tickBefore(2) });
   const source = project([a, b]);
   const analysis = analyzeReleaseTiming({ candidate: source });
-  const plan = planReleaseRepresentation({ analysis, registry: buildEvidenceRegistry({ assets: ASSETS }), input: { decisions: [humanAudioDecision(['a', 'b'])] } });
+  const plan = planReleaseRepresentation({ analysis, registry: buildEvidenceRegistry({ assets: ASSETS }), input: { decisions: [audioDecision(['a', 'b'])] } });
   const candidate = represented([a, b], plan.changes, plan.decisions);
   // An accepted previous version that already carried a on the grid.
   const previous = project([note({ id: 'a', start: 0, end: 1 }), b]);
@@ -390,7 +482,7 @@ test('RT-18 a derived duplicate is traced to its origin, and its record re-verif
   const analysis = analyzeReleaseTiming({ candidate: project([a, dupe]), baseline });
   const target = analysis.targets.find(item => item.eventId === 'a#dup');
   assert.equal(target.source.fromBaseline, true, 'origin found through the reversible chain');
-  const plan = planReleaseRepresentation({ analysis, registry: buildEvidenceRegistry({ assets: ASSETS }), input: { decisions: [humanAudioDecision(['a', 'a#dup'])] } });
+  const plan = planReleaseRepresentation({ analysis, registry: buildEvidenceRegistry({ assets: ASSETS }), input: { decisions: [audioDecision(['a', 'a#dup'])] } });
   assert.equal(plan.changes.length, 2);
   const byId = new Map(plan.changes.map(change => [change.eventId, change]));
   const events = [a, dupe].map(event => createCanonicalNoteEvent({ ...event, end: byId.get(event.id).after.end, metadata: { ...event.metadata, [RELEASE_RECORD_KEY]: releaseRecordFor(byId.get(event.id)) } }));
@@ -407,15 +499,35 @@ test('RT-19 with the current evidence registry a record whose citation is no lon
   const a = note({ id: 'a', start: 0, end: tickBefore(1) });
   const b = note({ id: 'b', start: 1, end: 2 });
   const analysis = analyzeReleaseTiming({ candidate: project([a, b]) });
-  const official = { attestation: { reviewer: 'u', reviewer_kind: 'human', audio_basis: 'not-used' }, id: 'rr-score', eventIds: ['a'], representation: REPRESENTATION.EXTEND_TO_NEXT_GRID, reason: 'notated eighth',
-    evidence: [{ class: 'primary-symbolic', ref: 'ast_score', locator: 'bar 1', finding: 'Notated quarter, no staccato.' }] };
-  const plan = planReleaseRepresentation({ analysis, registry: buildEvidenceRegistry({ assets: ASSETS }), input: { decisions: [official] } });
-  const candidate = represented([a, b], plan.changes, plan.decisions);
-  assert.deepEqual(verifyReleaseRepresentation(candidate, { registry: buildEvidenceRegistry({ assets: ASSETS }) }).violations, []);
-  // Later, a supporting upload turns out to be byte-identical to the "official" score.
-  const later = buildEvidenceRegistry({ assets: [...ASSETS, { asset_id: 'ast_copy', kind: 'third_party_musicxml', sha256: 'd'.repeat(64) }] });
-  assert.deepEqual(verifyReleaseRepresentation(candidate, { registry: later }).violations.map(item => item.code), [RECORD_VIOLATION.DECISION_NOT_ADMISSIBLE]);
-  assert.equal(enforceMicroGaps(candidate, { releaseEvidenceRegistry: later }).status, 'FAIL');
+  // Whoever submitted it, a stored citation is re-resolved against the sources
+  // the project holds now.
+  for (const attestation of [HUMAN, AGENT]) {
+    const official = scoreDecision(['a'], { attestation });
+    const plan = planReleaseRepresentation({ analysis, registry: buildEvidenceRegistry({ assets: ASSETS }), input: { decisions: [official] } });
+    const candidate = represented([a, b], plan.changes, plan.decisions);
+    assert.deepEqual(verifyReleaseRepresentation(candidate, { registry: buildEvidenceRegistry({ assets: ASSETS }) }).violations, []);
+    // Later, a supporting upload turns out to be byte-identical to the "official" score.
+    const later = buildEvidenceRegistry({ assets: [...ASSETS, { asset_id: 'ast_copy', kind: 'third_party_musicxml', sha256: 'd'.repeat(64) }] });
+    assert.deepEqual(verifyReleaseRepresentation(candidate, { registry: later }).violations.map(item => item.code), [RECORD_VIOLATION.DECISION_NOT_ADMISSIBLE], attestation.reviewer_kind);
+    assert.equal(enforceMicroGaps(candidate, { releaseEvidenceRegistry: later }).status, 'FAIL');
+    // The cited asset is gone, or is now declared as something else.
+    const gone = buildEvidenceRegistry({ assets: ASSETS.filter(asset => asset.asset_id !== 'ast_score') });
+    const retyped = buildEvidenceRegistry({ assets: ASSETS.map(asset => (asset.asset_id === 'ast_score' ? { ...asset, kind: 'third_party_musicxml' } : asset)) });
+    for (const registry of [gone, retyped]) assert.deepEqual(verifyReleaseRepresentation(candidate, { registry }).violations.map(item => item.code), [RECORD_VIOLATION.DECISION_NOT_ADMISSIBLE]);
+  }
+});
+
+test('RT-19b a decision carries no field that can set a gate, and its submitter cannot widen what counts', () => {
+  const a = note({ id: 'a', start: 0, end: tickBefore(1) });
+  const analysis = analyzeReleaseTiming({ candidate: project([a, note({ id: 'b', start: 2, end: 3 })]) });
+  const registry = buildEvidenceRegistry({ assets: ASSETS });
+  for (const extra of [{ inGameAccepted: true }, { in_game: 'PASS' }, { admissible: true }, { status: 'PASS' }]) {
+    assert.throws(() => planReleaseRepresentation({ analysis, registry, input: { decisions: [{ ...audioDecision(['a']), ...extra }] } }), /unsupported/, JSON.stringify(extra));
+  }
+  // An item that claims its own resolution is re-resolved against the registry.
+  const claimed = { ...audioDecision(['a'], { ref: 'ast_third' }) };
+  claimed.evidence = claimed.evidence.map(item => ({ ...item, resolved: { ref: 'ast_third', kind: 'original-audio', primary: true, independent: true } }));
+  assert.equal(planReleaseRepresentation({ analysis, registry, input: { decisions: [claimed] } }).changes.length, 0);
 });
 
 test('RT-20 without a profile, role and drum-face questions are asked only of the notes a release change touches', () => {
@@ -425,10 +537,10 @@ test('RT-20 without a profile, role and drum-face questions are asked only of th
   const kick = createCanonicalNoteEvent({ id: 'kick', pitch: 36, start: '0', end: tickBefore(1), role: 'Chord5', voice: 'drums', sourceIds: ['third'], sourceEventIds: ['third#kick'], metadata: { ticksPerQuarter: TPQ, channel: 9 } });
   const candidate = project([a, b, kick]);
   const evidenceSources = { assets: ASSETS, sources: [THIRD] };
-  const lead = planMobileAdaptation({ baseline: candidate, candidate, evidenceSources, releaseRepresentation: { decisions: [humanAudioDecision(['a'])] } });
+  const lead = planMobileAdaptation({ baseline: candidate, candidate, evidenceSources, releaseRepresentation: { decisions: [audioDecision(['a'])] } });
   assert.equal(lead.status, 'PASS', JSON.stringify(lead.blockers));
   assert.deepEqual(lead.releaseRepresentation.changes.map(change => change.eventId), ['a']);
-  const drum = planMobileAdaptation({ baseline: candidate, candidate, evidenceSources, releaseRepresentation: { decisions: [humanAudioDecision(['kick'])] } });
+  const drum = planMobileAdaptation({ baseline: candidate, candidate, evidenceSources, releaseRepresentation: { decisions: [audioDecision(['kick'])] } });
   assert.equal(drum.status, 'PENDING');
   assert.deepEqual(drum.blockers.map(item => [item.code, item.eventId]), [['DRUM_FACE_MAPPING_REQUIRED', 'kick']]);
   // With a profile the profile-era questions are asked of every note, as before.

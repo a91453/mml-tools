@@ -4,7 +4,7 @@
 // Source-Faithful Baseline whose every note-off is one 480-tpq tick before the
 // 1/64 grid, Melody reached by Lead promotions — but everything here is
 // synthetic and proves nothing about that song. Nothing here fabricates a gate:
-// the listening decision is a test input a reviewer would state, not a default.
+// the release decision is a test input a submitter would state, not a default.
 import assert from 'node:assert/strict';
 import { F, f } from '../../backend/mml/index.mjs';
 import {
@@ -81,11 +81,16 @@ export async function candidateWithAudio(service, title = 'Release representatio
   return { baseline, projectId: created.project_id, candidateId: applied.decisions.candidate_id, audioAssetId: audio.asset_id };
 }
 
-export const listeningDecision = (audioAssetId, eventIds, { id = 'rr:legato', reviewerKind = 'human', audioBasis = 'listening' } = {}) => ({
+// Who submits a decision is provenance: the fixture defaults to a conversational
+// AI so every path below proves that an AI-submitted, source-backed decision is
+// graded like anyone else's. `basis` is how the finding was derived.
+export const AGENT_SUBMITTER = Object.freeze({ reviewer: 'agent:assistant', reviewer_kind: 'agent' });
+export const HUMAN_SUBMITTER = Object.freeze({ reviewer: 'user:listener', reviewer_kind: 'human' });
+export const audioReviewDecision = (audioAssetId, eventIds, { id = 'rr:legato', submitter = AGENT_SUBMITTER, basis = 'direct-source-review' } = {}) => ({
   id, eventIds, representation: 'EXTEND_TO_NEXT_GRID',
-  reason: 'The recording sustains through each of these boundaries; the one-tick gap has no audible meaning.',
-  attestation: { reviewer: reviewerKind === 'human' ? 'user:listener' : 'agent:assistant', reviewer_kind: reviewerKind, audio_basis: audioBasis },
-  evidence: [{ class: 'primary-audio', ref: audioAssetId, locator: '0:00-0:02 (bars 1-2)', finding: 'Legato; no break is heard at any release in this window.' }],
+  reason: 'The recording sustains through each of these boundaries; the one-tick gap has no counterpart in it.',
+  attestation: { ...submitter },
+  evidence: [{ class: 'primary-audio', ref: audioAssetId, basis, locator: '0:00-0:02 (bars 1-2)', finding: 'Legato; no separation before any following attack in this window.' }],
 });
 
 export const ALL_RELEASE_EVENTS = Object.freeze(['lead-1', 'lead-2', 'lead-3', 'lead-4', 'harm-1', 'harm-2', 'bass-1', 'bass-2']);

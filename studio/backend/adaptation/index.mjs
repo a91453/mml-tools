@@ -5,8 +5,9 @@
 // Release representation is the one timing transformation this stage performs,
 // and it needs no profile: a note release no admitted Final token can express
 // (canonical/release-timing.mjs) is moved to an adjacent 1/64 grid point only
-// by an explicit decision whose evidence a human reviewer attests from an
-// independent primary source. The Source-Faithful release stays on the baseline
+// by an explicit decision whose evidence cites an independent primary source by
+// a direct review of it. Who submitted the decision is recorded and never
+// graded. The Source-Faithful release stays on the baseline
 // and on the event's record; onsets, pitches, roles and event identities never
 // move, and no tie, merge or deletion is ever introduced.
 import { createCanonicalProject, createCanonicalNoteEvent, createArbitrationDecision } from '../canonical/index.mjs';
@@ -22,6 +23,7 @@ import {
   analyzeReleaseTiming,
   buildEvidenceRegistry,
   planReleaseRepresentation,
+  releaseEvidenceRequirement,
   releaseRecordFor,
   summarizeReleaseTiming,
 } from '../canonical/release-timing.mjs';
@@ -266,7 +268,10 @@ export function planMobileAdaptation({ baseline, candidate = baseline, profile =
       notice: 'No register or volume adaptation was attempted. A Mobile target profile must be supplied by a caller with its own reason and evidence; release representation does not depend on it.',
     },
     certifiesGates: [],
-    notice: 'An executable adaptation plan, not a Mobile acceptance verdict. Evidence references are caller-supplied, not independently authenticated; release representation evidence counts only as a human reviewer attestation of an independent primary source.',
+    // What would settle the releases that still need a decision, from the sources
+    // this project holds. Not part of the plan identity.
+    releaseEvidenceRequirement: releasePlan.unresolvedTargetCount > 0 ? releaseEvidenceRequirement(registry) : null,
+    notice: 'An executable adaptation plan, not a Mobile acceptance verdict. Evidence references are caller-supplied; the service verifies each cited source against the project (presence, kind, independence) but cannot verify the act of review. Release representation evidence counts when it cites an independent primary source by a direct review of it, for a claim that source class can support; who submitted it is recorded and never graded.',
   };
 }
 

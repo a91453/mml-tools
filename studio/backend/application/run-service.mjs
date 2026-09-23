@@ -1988,8 +1988,10 @@ export function createRunService({ canonical, projects, store, operations, seria
         encoding_observations: (summary.encodingObservations ?? []).map(item => ({ source_id: item.sourceId, offsets_before_next_grid: item.offsetsBeforeNextGrid, uniform: item.uniform, evidence_class: item.evidenceClass, admissible_as_evidence: false })),
         windows: (plan.releaseTiming?.windows ?? []).slice(0, LIMITS.maxReviewRequestEventIds).map(window => ({ window_id: window.windowId, role: window.role, start: window.start, end: window.end, count: window.count })),
         decision_required: summary.decisionRequiredCount > 0,
-        admissible_evidence: ['primary-symbolic: an independent official score/MIDI asset, attested by a human reviewer', 'primary-audio: the original recording, attested by a human reviewer who listened (audio_basis: listening)'],
-        how_to_supply: 'resumeRun.mobile_adaptation.release_representation.decisions (preview first with planMobileAdaptation to obtain expected_plan_id); agent, tool, third-party, encoding-pattern and audio-metric evidence are recorded but never counted',
+        // What would settle the open releases, from the sources this project holds.
+        evidence_requirement: plan.releaseEvidenceRequirement ?? null,
+        admissible_evidence: ['primary-symbolic: an independent official score/MIDI asset, cited with basis direct-source-review, a locator and a finding', 'primary-audio: the original recording, cited with basis direct-source-review (its sustain/articulation at the locator), a locator and a finding'],
+        how_to_supply: 'resumeRun.mobile_adaptation.release_representation.decisions (preview first with planMobileAdaptation to obtain expected_plan_id). Any submitter — a person, a conversational AI, a tool — may supply a decision; the submitter is recorded as provenance and does not change the grade. Third-party files, encoding patterns, metrics or alignment locators, tool output and bare assertions are recorded but never counted.',
       };
     } catch (error) {
       // Still never a halt, but never silent: a summary that could not be
@@ -2060,7 +2062,7 @@ export function createRunService({ canonical, projects, store, operations, seria
             missing: [
               'The adaptation was refused by the adaptation stage. A refusal naming a Lead-bound event is the existing prohibition on re-pitching or re-voicing material a Lead evidence record still binds — including a Melody assigned from a role-less Source-Faithful Baseline. It is answered through the Lead evidence path, never by clearing the evidence, changing the baseline role, copying an older PASS or relaxing the profile.',
               'A stale plan id means the plan inputs moved — most often because the profile changed — so the plan must be re-previewed and re-accepted before it can be applied.',
-              'RELEASE_DECISION_EVIDENCE_NOT_ADMISSIBLE means no release representation decision carried evidence that counts: a human reviewer attesting an independent primary source (an official score, or the original recording by listening). Agent, tool, third-party, encoding-pattern and audio-metric evidence is recorded and never counted; the release stays at its source value and the micro-timing gate stays PENDING.',
+              'RELEASE_DECISION_EVIDENCE_NOT_ADMISSIBLE means no release representation decision carried evidence that counts: an independent primary source (an official score, or the original recording) cited by a direct review of it, for a claim that source class can support. Who submitted the decision does not matter; third-party, encoding-pattern, metric, locator and tool evidence is recorded and never counted; the release stays at its source value and the micro-timing gate stays PENDING.',
             ],
             availableOperations: ['planMobileAdaptation', 'applyMobileAdaptation', 'reviewLeadEvidence', 'listBaselineEvents'],
             invalidatedBy: ['candidate', 'canonical', 'plan'],

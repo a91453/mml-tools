@@ -24,7 +24,7 @@ import { createStudioApplication, RUN_STATE, RUN_STEP, RUN_STEP_STATUS } from '.
 import { splitMML, parseTrack } from '../backend/mml/parser.mjs';
 import { ROLES } from '../backend/mml/index.mjs';
 import { RELEASE_REGRID_CANDIDATE } from '../backend/canonical/release-regrid-candidate.mjs';
-import { OWNER, listeningDecision, oneTickEarlyBaseline, roleDecisions, ALL_RELEASE_EVENTS } from './fixtures/release-fixtures.mjs';
+import { OWNER, AGENT_SUBMITTER, HUMAN_SUBMITTER, audioReviewDecision, oneTickEarlyBaseline, roleDecisions, ALL_RELEASE_EVENTS } from './fixtures/release-fixtures.mjs';
 
 const statusOf = (run, step) => run.steps.find(entry => entry.step === step)?.status ?? null;
 const receiptOf = (run, step) => [...run.steps].reverse().find(entry => entry.step === step) ?? null;
@@ -55,15 +55,16 @@ const alignmentReport = (baseline, audio, candidateProjectId) => ({
   alignment: { control_points: [{ beat: 0, seconds: 0 }, { beat: 4, seconds: 1.6 }], metrics: { confidence: 0.93, score_frame_coverage: 0.99, audio_frame_coverage: 0.96 } },
 });
 
-async function deliver(app, { acceptedBy = 'reviewer:fixture' } = {}) {
+async function deliver(app, { acceptedBy = 'reviewer:fixture', submitter = AGENT_SUBMITTER } = {}) {
   const fixture = await setUp(app);
   const { projectId } = fixture;
   // 1. One call: everything deterministic runs; the run stops where evidence is missing.
   const started = await app.startRun(OWNER, projectId, { asset_ids: [fixture.symbolicAssetId], decisions: roleDecisions(), accepted_by: acceptedBy });
   const runId = started.run.run_id;
   const g11d = started.run.candidate_id;
-  // 2. The reviewer previews the release representation the recording supports.
-  const releaseRepresentation = { decisions: [listeningDecision(fixture.audio.asset_id, ALL_RELEASE_EVENTS)] };
+  // 2. A decision citing the recording, submitted by a conversational AI unless
+  //    a test says otherwise, is previewed.
+  const releaseRepresentation = { decisions: [audioReviewDecision(fixture.audio.asset_id, ALL_RELEASE_EVENTS, { submitter })] };
   const plan = (await app.planMobileAdaptation(OWNER, projectId, { candidateId: g11d, releaseRepresentation })).adaptation.plan;
   // 3. One call: adaptation, re-review.
   const adapted = await app.resumeRun(OWNER, projectId, runId, { mobile_adaptation: { release_representation: releaseRepresentation, expected_plan_id: plan.id, accepted_by: acceptedBy } });
@@ -142,11 +143,13 @@ test('RDR-2 evidence and reviewer statements take the same run to a VALIDATED pa
   assert.deepEqual(RELEASE_REGRID_CANDIDATE.activeInCanonicalVersions, []);
 });
 
-test('RDR-3 the conversation provider named in the run changes no validation result and no MML', async () => {
+test('RDR-3 the conversation provider and the decision submitter change no validation result and no MML', async () => {
   const appA = createStudioApplication({});
   const appB = createStudioApplication({});
-  const a = await deliver(appA, { acceptedBy: 'conversation:chatgpt-relay' });
-  const b = await deliver(appB, { acceptedBy: 'conversation:claude-relay' });
+  const a = await deliver(appA, { acceptedBy: 'conversation:chatgpt-relay', submitter: { reviewer: 'agent:chatgpt', reviewer_kind: 'agent' } });
+  const b = await deliver(appB, { acceptedBy: 'conversation:claude-relay', submitter: HUMAN_SUBMITTER });
+  // Provenance is recorded as submitted, and differs.
+  assert.deepEqual([a.plan.releaseRepresentation.decisions[0].attestation.reviewer_kind, b.plan.releaseRepresentation.decisions[0].attestation.reviewer_kind], ['agent', 'human']);
   assert.equal(a.finished.run.state, RUN_STATE.COMPLETED);
   assert.equal(b.finished.run.state, RUN_STATE.COMPLETED);
   const artifactA = (await appA.getArtifact(OWNER, a.finished.run.final_artifact_id)).artifact;

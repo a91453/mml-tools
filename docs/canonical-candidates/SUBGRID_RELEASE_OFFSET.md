@@ -177,8 +177,10 @@ implemented under Published v1 as an evidence-gated **release representation**
 in Mobile Adaptation v1 (`canonical/release-timing.mjs`,
 `docs/MONSTER_SONG_MICROTIMING_FINAL_FLOW_2026-09-22.md`). There, a release no
 admitted Final token can express moves to an adjacent 1/64 grid point only under a
-reviewer decision whose evidence a human attests from an independent primary
-source (an official score, or the original recording by listening); the
+decision whose evidence cites an independent primary source (an official score,
+or the original recording) by a direct review of it, whoever submits it
+(corrected 2026-09-23: the first version also required a human submitter, which
+no Published rule asks for); the
 uniform-encoding observation this candidate rests on is reported but is not
 admissible evidence there. The difference that remains is exactly the one this
 candidate proposes to change: whether the machine-derived pattern alone may

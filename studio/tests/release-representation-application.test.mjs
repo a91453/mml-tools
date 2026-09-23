@@ -9,7 +9,7 @@ import assert from 'node:assert/strict';
 
 import { createStudioApplication } from '../backend/application/index.mjs';
 import { f } from '../backend/mml/index.mjs';
-import { OWNER, TICK, ALL_RELEASE_EVENTS as ALL, candidateWithAudio, listeningDecision } from './fixtures/release-fixtures.mjs';
+import { OWNER, TICK, ALL_RELEASE_EVENTS as ALL, HUMAN_SUBMITTER, candidateWithAudio, audioReviewDecision } from './fixtures/release-fixtures.mjs';
 
 test('RRA-1 the read-only plan reports every non-representable release and what still needs a profile', async () => {
   const service = createStudioApplication();
@@ -26,16 +26,29 @@ test('RRA-1 the read-only plan reports every non-representable release and what 
   const review = (await service.reviewCandidate(OWNER, projectId, { candidateId })).review;
   assert.equal(review.readiness.gates.microTiming.status, 'PENDING');
   assert.ok(review.readiness.gates.microTiming.blockers.includes('MICRO_TIMING_RELEASE_NOT_FINAL_REPRESENTABLE'), 'the release before a real rest and the role ends are no longer invisible');
+  // The open releases are blocked on named evidence the project could supply,
+  // never on who would have to supply it.
+  assert.ok(review.readiness.gates.microTiming.blockers.includes('MICRO_TIMING_RELEASE_EVIDENCE_REQUIRED'));
+  assert.deepEqual(review.readiness.gates.microTiming.releaseEvidenceRequirement.anyOf.map(item => [item.code, item.availableRefs.length]), [['ORIGINAL_AUDIO_ARTICULATION_REVIEW_REQUIRED', 1], ['INDEPENDENT_SYMBOLIC_SOURCE_REQUIRED', 0]]);
+  assert.doesNotMatch(JSON.stringify(review.readiness.gates.microTiming), /HUMAN|human|NOT_LISTENING/);
 });
 
-test('RRA-2 an agent-attested or metric-only decision changes nothing and says why', async () => {
+test('RRA-2 a metric-only or locator-only decision changes nothing and says why, whoever submits it', async () => {
   const service = createStudioApplication();
   const { projectId, candidateId, audioAssetId } = await candidateWithAudio(service);
-  for (const decision of [listeningDecision(audioAssetId, ALL, { reviewerKind: 'agent' }), listeningDecision(audioAssetId, ALL, { audioBasis: 'machine-metric' })]) {
+  const weak = [];
+  for (const submitter of [HUMAN_SUBMITTER, undefined]) {
+    for (const basis of ['machine-metric', 'alignment-locator']) weak.push(audioReviewDecision(audioAssetId, ALL, { submitter, basis }));
+  }
+  for (const decision of weak) {
     const releaseRepresentation = { decisions: [decision] };
     const { plan } = (await service.planMobileAdaptation(OWNER, projectId, { candidateId, releaseRepresentation })).adaptation;
     assert.equal(plan.status, 'PENDING');
     assert.deepEqual(plan.blockers.map(item => item.code), ['RELEASE_DECISION_EVIDENCE_NOT_ADMISSIBLE']);
+    assert.deepEqual(plan.blockers[0].reasons, ['NO_ADMISSIBLE_EVIDENCE']);
+    assert.deepEqual([...plan.releaseRepresentation.pending[0].items[0].reasons], ['EVIDENCE_BASIS_IS_NOT_A_DIRECT_SOURCE_REVIEW']);
+    // What would settle it is named from the project's sources, not from who may submit it.
+    assert.deepEqual(plan.releaseEvidenceRequirement.anyOf.map(item => item.code), ['ORIGINAL_AUDIO_ARTICULATION_REVIEW_REQUIRED', 'INDEPENDENT_SYMBOLIC_SOURCE_REQUIRED']);
     const applied = await service.applyMobileAdaptation(OWNER, projectId, { candidateId, releaseRepresentation, expectedPlanId: plan.id, acceptedBy: 'user:listener' });
     assert.equal(applied.operation, 'blocked');
     assert.equal(applied.adaptation.applied, false);
@@ -44,20 +57,20 @@ test('RRA-2 an agent-attested or metric-only decision changes nothing and says w
   assert.equal(record.project.candidates.length, 1, 'no revision was minted');
 });
 
-test('RRA-3 a human listening decision represents the releases, keeps the source releases and every attack, and clears micro-timing', async () => {
+test('RRA-3 a source-backed decision submitted by a conversational AI represents the releases, keeps the source releases and every attack, and clears micro-timing', async () => {
   const service = createStudioApplication();
   const { projectId, candidateId, audioAssetId } = await candidateWithAudio(service);
   const before = (await service.reviewCandidate(OWNER, projectId, { candidateId })).review;
   assert.equal(before.readiness.gates.leadPromotion.status, 'PASS', 'the promotions carry complete evidence');
 
-  const releaseRepresentation = { decisions: [listeningDecision(audioAssetId, ALL)] };
+  const releaseRepresentation = { decisions: [audioReviewDecision(audioAssetId, ALL)] };
   const { plan } = (await service.planMobileAdaptation(OWNER, projectId, { candidateId, releaseRepresentation })).adaptation;
   assert.equal(plan.status, 'PASS');
   assert.equal(plan.releaseRepresentation.changes.length, 8);
   assert.ok(plan.releaseRepresentation.changes.every(change => change.delta === '1/480' && change.representation === 'EXTEND_TO_NEXT_GRID'));
   assert.equal(plan.releaseRepresentation.unresolvedTargetCount, 0);
 
-  const applied = await service.applyMobileAdaptation(OWNER, projectId, { candidateId, releaseRepresentation, expectedPlanId: plan.id, acceptedBy: 'user:listener' });
+  const applied = await service.applyMobileAdaptation(OWNER, projectId, { candidateId, releaseRepresentation, expectedPlanId: plan.id, acceptedBy: 'agent:assistant' });
   assert.equal(applied.operation, 'succeeded');
   assert.equal(applied.adaptation.applied, true);
   const adaptedId = applied.adaptation.candidate_id;
@@ -91,15 +104,15 @@ test('RRA-3 a human listening decision represents the releases, keeps the source
 test('RRA-4 a stale plan id is refused and a decision id cannot be applied twice', async () => {
   const service = createStudioApplication();
   const { projectId, candidateId, audioAssetId } = await candidateWithAudio(service);
-  const first = { decisions: [listeningDecision(audioAssetId, ['lead-1', 'lead-2'])] };
+  const first = { decisions: [audioReviewDecision(audioAssetId, ['lead-1', 'lead-2'])] };
   const { plan } = (await service.planMobileAdaptation(OWNER, projectId, { candidateId, releaseRepresentation: first })).adaptation;
-  const stale = await service.applyMobileAdaptation(OWNER, projectId, { candidateId, releaseRepresentation: { decisions: [listeningDecision(audioAssetId, ['lead-1'])] }, expectedPlanId: plan.id, acceptedBy: 'user:listener' });
+  const stale = await service.applyMobileAdaptation(OWNER, projectId, { candidateId, releaseRepresentation: { decisions: [audioReviewDecision(audioAssetId, ['lead-1'])] }, expectedPlanId: plan.id, acceptedBy: 'user:listener' });
   assert.equal(stale.adaptation.applied, false);
   assert.deepEqual(stale.adaptation.blockers.map(item => item.code), ['STALE_MOBILE_ADAPTATION_PLAN']);
   const applied = await service.applyMobileAdaptation(OWNER, projectId, { candidateId, releaseRepresentation: first, expectedPlanId: plan.id, acceptedBy: 'user:listener' });
   const adaptedId = applied.adaptation.candidate_id;
   // The rest of the song, under a new decision, on top of the first revision.
-  const rest = { decisions: [listeningDecision(audioAssetId, ALL.filter(id => !['lead-1', 'lead-2'].includes(id)), { id: 'rr:rest' })] };
+  const rest = { decisions: [audioReviewDecision(audioAssetId, ALL.filter(id => !['lead-1', 'lead-2'].includes(id)), { id: 'rr:rest' })] };
   const second = (await service.planMobileAdaptation(OWNER, projectId, { candidateId: adaptedId, releaseRepresentation: rest })).adaptation.plan;
   assert.equal(second.releaseTiming.representedCount, 2);
   assert.equal(second.releaseRepresentation.changes.length, 6);
@@ -115,7 +128,7 @@ test('RRA-4 a stale plan id is refused and a decision id cannot be applied twice
 test('RRA-5 review re-grades a recorded representation against the project\'s current evidence, not the stored citation', async () => {
   const service = createStudioApplication();
   const { projectId, candidateId, audioAssetId } = await candidateWithAudio(service);
-  const releaseRepresentation = { decisions: [listeningDecision(audioAssetId, ALL)] };
+  const releaseRepresentation = { decisions: [audioReviewDecision(audioAssetId, ALL)] };
   const { plan } = (await service.planMobileAdaptation(OWNER, projectId, { candidateId, releaseRepresentation })).adaptation;
   const applied = await service.applyMobileAdaptation(OWNER, projectId, { candidateId, releaseRepresentation, expectedPlanId: plan.id, acceptedBy: 'user:listener' });
   const adaptedId = applied.adaptation.candidate_id;

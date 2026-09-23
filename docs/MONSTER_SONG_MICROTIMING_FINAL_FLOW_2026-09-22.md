@@ -2,6 +2,13 @@
 
 Status: IMPLEMENTATION NOTES (not a Canonical rule source; publishes nothing)
 
+> **Correction, 2026-09-23 — read §8 first.** The first version of this work
+> (checkpoints A–D and `9e6d07d`) made release evidence count only when a
+> **human** submitted it (`ATTESTATION_NOT_HUMAN_REVIEWER_EVIDENCE`,
+> `AUDIO_BASIS_NOT_LISTENING`). No Published Canonical rule says that; it was an
+> implementation assumption. §2 and §4 below are kept as written, with the
+> superseded statements marked; §8 describes the corrected model and the re-run.
+
 Branch `claude/monster-song-source-microtiming-final-flow-e4sjv6`, started from
 Published main `8bec72a74f665f7e86533ae895228345c9212efc` (PR #65 merge).
 
@@ -58,6 +65,7 @@ while the Final emitter could not write them either.
 | B. Analysis precision | `canonical/release-timing.mjs` (`analyzeReleaseTiming`) | exact position class, offset to the grid (beats, ticks; seconds only with a Tempo Map), following shape, repeated-attack flag, both 1/64-safe options with their exact effects, a minimal-change recommendation, and the encoding pattern as an **observation** | nothing — the recommendation is arithmetic, never a musical verdict |
 | C. Mobile Final representation | Mobile Adaptation v1, `release_representation` | a release moved to an adjacent 1/64 grid point by a reviewer decision; record with source release, Final release, decision id, exact reversal | only through a decision whose evidence is admissible |
 
+*(Superseded by §8: who submits a decision is provenance, not authority.)*
 Admissible evidence for a representation decision (SOURCE_POLICY §1): a **human**
 reviewer attesting an **independent primary** source of the matching kind —
 an official score/MIDI (`primary-symbolic`), or the original recording by
@@ -130,7 +138,9 @@ for all 1,544 (0 without a valid representation); 331 targets precede a
 same-pitch repeated attack (kept as two attacks). No Tempo Map is exported, so no
 seconds are claimed.
 
-Evidence the project holds, graded by the same function the stage uses:
+Evidence the project holds, graded by the same function the stage uses
+*(first version; superseded by §8, where every row is graded identically for a
+human and an AI submitter)*:
 
 | Citation shape | Admissible? | Why |
 | --- | --- | --- |
@@ -198,8 +208,9 @@ primary evidence that does not exist. Nothing was fabricated to move them.
   the evidence registry from the project's current sources and assets and
   re-grade every recorded citation against it (RT-19, RRA-5): a cited asset that
   becomes byte-identical to a supporting file, or disappears, turns the record
-  invalid and the gate `FAIL`. The human attestation itself is a reviewer
-  statement; nothing here can verify that the listening happened.
+  invalid and the gate `FAIL`. A `direct-source-review` basis is the submitter's
+  statement, whoever the submitter is; nothing here can verify that the review
+  happened.
 - **Without a profile**, role-assignment and drum-face questions are asked only
   of notes a release change touches (RT-20); a release change on a percussion
   note is refused with `DRUM_FACE_MAPPING_REQUIRED`.
@@ -221,4 +232,112 @@ prerequisite.
 | A source / analysis layers | `e27aa9a` |
 | B evidence-gated Mobile release representation | `2586722` |
 | C VALIDATED song state, delivery identity, exact long rests | `9af0317` |
-| D real-song E2E and notes | the commit adding this file (read the PR head from the PR) |
+| D real-song E2E and notes | `870f7bb` (then `b3679de`, `9e6d07d` review fixes) |
+| E evidence authority decoupled from submitter type (§8) | the commit adding §8 (read the PR head from the PR) |
+
+## 8. Follow-up 2026-09-23 — evidence authority is not the submitter's type
+
+Published Canonical re-loaded from main's Manifest before this change:
+`2026-09-13-v1`, `rules_snapshot_sha` `0a172900…`, Manifest commit `5e7666b8…`;
+origin/main and the PR base still `8bec72a7…`; none of the six indexed documents
+is changed by this branch.
+
+### What was wrong
+
+`gradeReleaseEvidence` refused any decision whose `attestation.reviewer_kind`
+was not `human` (`ATTESTATION_NOT_HUMAN_REVIEWER_EVIDENCE`) and any primary-audio
+item whose `audio_basis` was not `listening` (`AUDIO_BASIS_NOT_LISTENING`). The
+Published rules name no reviewer species for source evidence: SOURCE_POLICY §1
+assigns authority to *sources* (official symbolic for onset and duration; the
+original recording for sustain and articulation), §6 limits *metrics* to
+locators, and the only actor-bound rule is ACCEPTANCE Gate 10 (in-game
+acceptance: the user or a controlled client). So a provider-neutral client — a
+conversational AI through MCP — citing an independent official score was refused
+for being an AI, while the rule that matters (a metric is not a finding) was
+expressed as "not listening", as if only human ears could read a recording.
+
+### Corrected model (`canonical/release-timing.mjs`)
+
+| Concept | Field | Effect on the grade |
+| --- | --- | --- |
+| Provenance — who submitted | `attestation: { reviewer, reviewer_kind: human \| agent \| tool \| mcp-client \| imported }` | none; recorded and required for the audit trail (`DECISION_PROVENANCE_MISSING` if absent, for anyone) |
+| Source — what is cited | `evidence[].class` + `ref`, resolved in the project's registry | primary-symbolic / primary-audio only; kind must match; must be independent of every supporting file |
+| Basis — how the finding was derived | `evidence[].basis` | only `direct-source-review` establishes a finding; `machine-metric`, `alignment-locator` (SOURCE_POLICY §6), `encoding-pattern`, `imported-assertion` are recorded and never counted |
+| Claim — what the representation asserts | derived: EXTEND → `SOURCE_EVENT_SUSTAINS_TO_GRID_POINT`, TRUNCATE → `SOURCE_EVENT_RELEASES_BY_PREVIOUS_GRID_POINT` | the cited class must be one SOURCE_POLICY lets support it (§1A onset/duration, §1B sustain/articulation: both do) |
+
+Unchanged: third-party files, the encoding pattern, metrics, tool output and an
+accepted prior (no record to bind) never count; a relabelled copy is not
+independent; stored decisions are re-graded against the project's *current*
+registry at every review and finalize (RT-19, RRA-5), whoever submitted them; a
+decision carries no field that can set a gate, and nothing on this path can set
+`IN_GAME_ACCEPTED` (RT-19b, RDR-4). A decision-level `audio_basis` from the first
+schema is still read as the default basis of a primary-audio item, with its
+human-only meaning removed. The service verifies the cited source; it cannot
+verify the act of review, for a person or an AI alike.
+
+When releases still need a decision, the micro-timing gate now says what would
+settle them from the sources the project holds — `MICRO_TIMING_RELEASE_EVIDENCE_REQUIRED`
+with `releaseEvidenceRequirement.anyOf`: `ORIGINAL_AUDIO_ARTICULATION_REVIEW_REQUIRED`
+or `ORIGINAL_AUDIO_SOURCE_REQUIRED`, and `INDEPENDENT_SYMBOLIC_SOURCE_REVIEW_REQUIRED`
+or `INDEPENDENT_SYMBOLIC_SOURCE_REQUIRED` — never who must submit it.
+
+Regressions: RT-8 (encoding pattern, any submitter), RT-9 (every submitter kind
+grades identically; weak evidence stays weak for a person; metrics and locators
+stay locators for anyone; legacy schema), RT-9b (requirement), RT-10 (a metric
+moves nothing; AI and human submissions plan identical changes), RT-11 (editing
+the submitter changes nothing; editing a basis to a metric invalidates), RT-19 /
+RT-19b (re-verification for any submitter; no gate-setting fields), RRA-1/2/3,
+RDR-2/3 (an AI-submitted decision reaches a VALIDATED Final; human- and
+AI-submitted runs deliver byte-identical MML).
+
+### Kaiju, re-evaluated from the real evidence
+
+Re-read 2026-09-23 (read-only `studio_project_get`, report `6c7ee26b…`): the
+project is unchanged since 2026-09-22 15:59 — the same five assets, two alignment
+reports, no artifact. The E2E was re-run through the existing Studio run;
+receipt: [release-timing-e2e.json](evidence/monster-song-evidence-authority-2026-09-23/release-timing-e2e.json)
+(`unknownIntervals` still byte-identical to production `23f23907…`; exports,
+release analysis and finalize identical to the first receipt).
+
+| Question | Answer from the evidence |
+| --- | --- |
+| Intentional articulation? | **Undetermined** — no primary-source finding about these releases is on record. |
+| Encoding artifact / technical micro-gap? | **Undetermined** — the uniform one-tick pattern is an observation about the third-party file; it is not read as meaningless for being uniform or for being one tick. |
+| Does any subset differ? | No. 1,282 close a one-tick gap before the next attack, 257 shorten a real rest by one tick, 5 are role ends, 331 precede a same-pitch repeated attack (kept as two attacks); every subset asks the same source question. |
+| Is EXTEND justified? | **Not yet.** It is the minimal valid option for all 1,544 arithmetically; the claim it makes has no admissible finding. |
+| Original audio available? | Yes — one recording, `35a05318…` (`ast_6154…`, `ast_bf88…`), independent. |
+| Does the audio evidence on record support the claim? | No. The only audio evidence is the alignment report `342aea74…` (confidence 0.456, `LOW_ALIGNMENT_CONFIDENCE` + `LOW_SCORE_FRAME_COVERAGE`): a locator (§6), and a weak one, so even the recording-time locations of the 41 release windows are unreliable (Gate 0 recording version and Gate 7 are open). The audio worker implements alignment only; no articulation analysis exists, and any metric would still be a locator. |
+| Independent symbolic source? | No — `official_midi` `ast_62c0…` is byte-identical to the third-party MIDI. |
+| Accepted prior version? | No — none exists, and no Final was ever delivered. |
+| Still insufficient? | **Yes.** |
+
+Every probe grades identically for a human and an AI submitter
+(`same_grade_for_every_submitter: true` for all ten).
+
+**microTiming: `PENDING`**, blocker `MICRO_TIMING_RELEASE_EVIDENCE_REQUIRED`, any
+one of: `ORIGINAL_AUDIO_ARTICULATION_REVIEW_REQUIRED` (a direct review of the
+recording at each window, stating whether the note is held to the grid point or
+released before it — from anyone able to review it) or
+`INDEPENDENT_SYMBOLIC_SOURCE_REQUIRED` (none held). Who submits it is not a
+blocker. This session did not supply the review: it has no access to the
+recording's sound, and a metric it could compute would be a locator.
+
+The rest of the Final Gate matrix (§4) is unchanged in substance: Gate 0 version
+confirmation, Gate 2 `source_complete` with evidence, 569 provisional Lead events
+without Lead evidence, Gate 4 completeness (answered by the release
+representation, per the counterfactual), Gate 7 (a better alignment and a review),
+Gate 8 (the release decision, a cited profile for the undecided volumes, a
+review), Gate 9 review and player readback. Each needs evidence that does not yet
+exist; none of them is blocked by who may supply it in this path. **Song state:
+`CANDIDATE`; no MML was produced.** The counterfactual (a hypothetical direct
+review, submitted under an *agent* provenance) behaves as before: 1,544 records
+re-verified, micro-timing and Gate 4 completeness `PASS`, six roles serialise
+with an exact round trip (1,096 / 816 / 1,472 / 671 / 209 / 0), still `CANDIDATE`.
+
+### Found, not changed here
+
+`application/lead-review-authority.mjs` (on main since `f020b95`) applies the same
+pattern to Lead evidence reviews: only a `human` attestation reaches the Lead
+grader. It predates this PR and governs a different gate; changing it is a
+separate decision. For Kaiju it changes nothing today — no Lead evidence of any
+kind has been submitted.

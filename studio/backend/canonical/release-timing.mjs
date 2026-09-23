@@ -31,7 +31,7 @@
 //      them, what each one would change. Analysis precision may be finer than the
 //      Final grid; it is evidence, not syntax, and it decides nothing.
 //   C. MOBILE FINAL REPRESENTATION — a release moved onto the 1/64 grid only by an
-//      explicit, reviewer-accepted, evidence-backed decision, recorded on the
+//      explicit, accepted, evidence-backed decision, recorded on the
 //      event together with the untouched source release so that the mapping stays
 //      reversible and the baseline diff shows the change.
 //
@@ -61,7 +61,28 @@
 // from a source type, or from the fact that a tool produced it. A uniform
 // encoding pattern is reported as an observation (`SOURCE_ENCODING_PATTERN`) and
 // is explicitly not admissible evidence. Meaning is established only by a
-// reviewer decision whose evidence is admissible under SOURCE_POLICY.
+// decision whose evidence is admissible under SOURCE_POLICY.
+//
+// Who submitted a decision is not what makes its evidence count. Four things
+// are kept apart (see `gradeReleaseEvidence`):
+//
+//   provenance  who submitted the decision — a person, a conversational AI, a
+//               tool, an MCP client, an imported record. Recorded for the audit
+//               trail and required for it; never read by the grader.
+//   source      what the cited item is, resolved against the project's evidence
+//               registry: its class, kind, bytes and independence. SOURCE_POLICY
+//               §1 decides what each class may prove.
+//   basis       how the finding was derived from that source: a direct review of
+//               the source itself, or a metric, alignment locator, encoding
+//               pattern or imported assertion (SOURCE_POLICY §6: locators).
+//   claim       what the representation asserts about the source event, and
+//               which source classes SOURCE_POLICY lets support that claim.
+//
+// Published Canonical names no reviewer species for source evidence; the only
+// actor-bound rule is ACCEPTANCE Gate 10 (in-game acceptance), which nothing
+// here touches. A strong citation does not fail because an AI submitted it, and
+// a weak one does not pass because a person did. The service verifies the cited
+// source; it cannot verify the act of review, and says so.
 import { f, F, ROLES } from '../mml/index.mjs';
 import { EFFECTIVE_RULESET } from '../rules/index.mjs';
 import { SAFE_GRID, MICRO_TIMING_KEEP_ACTION } from './micro-timing.mjs';
@@ -124,17 +145,72 @@ export const NON_ADMISSIBLE_EVIDENCE_CLASSES = Object.freeze({
   'accepted-prior': 'SOURCE_POLICY §1 D1 is admissible in principle, but this build has no accepted-previous-version record to bind a citation to; it stays PENDING rather than being accepted on assertion.',
 });
 
+// Who submitted a decision. Provenance only: recorded, required for the audit
+// trail, and never an input to the grade.
+export const DECISION_AUTHOR_KINDS = Object.freeze(['human', 'agent', 'tool', 'mcp-client', 'imported']);
+
+// How an item's finding was derived from the cited source.
+export const EVIDENCE_BASIS = Object.freeze({
+  // The finding was read from the cited source itself: the notated durations of
+  // a score, or the recording's own sustain and articulation at the locator.
+  DIRECT_SOURCE_REVIEW: 'direct-source-review',
+  MACHINE_METRIC: 'machine-metric',
+  ALIGNMENT_LOCATOR: 'alignment-locator',
+  ENCODING_PATTERN: 'encoding-pattern',
+  IMPORTED_ASSERTION: 'imported-assertion',
+});
+
+// Bases a caller may state that are recorded and never establish a finding.
+export const NON_ADMISSIBLE_EVIDENCE_BASES = Object.freeze({
+  [EVIDENCE_BASIS.MACHINE_METRIC]: 'SOURCE_POLICY §6: a metric computed from a source (onset, release, envelope, DTW, correlation, F0, confidence) is an evidence locator, not a musical verdict about that source.',
+  [EVIDENCE_BASIS.ALIGNMENT_LOCATOR]: 'SOURCE_POLICY §6: beat↔recording alignment locates where to look; it does not say what is there.',
+  [EVIDENCE_BASIS.ENCODING_PATTERN]: 'A regularity in how a file encodes releases is structure over that file, not source-supported musical meaning.',
+  [EVIDENCE_BASIS.IMPORTED_ASSERTION]: 'A statement copied from elsewhere does not show what the cited source contains.',
+});
+
+// What a release representation asserts about the source event.
+export const RELEASE_CLAIM = Object.freeze({
+  // The source event is held to the grid point: the sub-grid gap after it has no
+  // counterpart in the source.
+  SUSTAINS_TO_GRID: 'SOURCE_EVENT_SUSTAINS_TO_GRID_POINT',
+  // The source event ends at or before the grid point: the sub-grid overhang has
+  // no counterpart in the source.
+  RELEASES_BY_GRID: 'SOURCE_EVENT_RELEASES_BY_PREVIOUS_GRID_POINT',
+});
+
+// Which evidence classes SOURCE_POLICY §1 lets support each claim, and why.
+export const RELEASE_CLAIM_AUTHORITY = Object.freeze({
+  [RELEASE_CLAIM.SUSTAINS_TO_GRID]: Object.freeze({
+    'primary-symbolic': 'SOURCE_POLICY §1A: primary authority for onset and duration.',
+    'primary-audio': 'SOURCE_POLICY §1B: primary authority for sustain/articulation and performance timing.',
+  }),
+  [RELEASE_CLAIM.RELEASES_BY_GRID]: Object.freeze({
+    'primary-symbolic': 'SOURCE_POLICY §1A: primary authority for onset and duration.',
+    'primary-audio': 'SOURCE_POLICY §1B: primary authority for sustain/articulation and performance timing.',
+  }),
+});
+
 export const EVIDENCE_REFUSAL = Object.freeze({
-  ATTESTATION_MISSING: 'ATTESTATION_MISSING',
-  ATTESTATION_NOT_HUMAN: 'ATTESTATION_NOT_HUMAN_REVIEWER_EVIDENCE',
-  AUDIO_BASIS_NOT_LISTENING: 'AUDIO_BASIS_NOT_LISTENING',
+  PROVENANCE_MISSING: 'DECISION_PROVENANCE_MISSING',
   CLASS_NOT_ADMISSIBLE: 'EVIDENCE_CLASS_NOT_ADMISSIBLE',
   REF_UNKNOWN: 'EVIDENCE_REFERENCE_NOT_IN_PROJECT',
   KIND_MISMATCH: 'EVIDENCE_REFERENCE_KIND_DOES_NOT_MATCH_CLASS',
   NOT_INDEPENDENT: 'EVIDENCE_SOURCE_NOT_INDEPENDENT',
   LOCATOR_MISSING: 'EVIDENCE_LOCATOR_MISSING',
   FINDING_MISSING: 'EVIDENCE_FINDING_MISSING',
+  BASIS_MISSING: 'EVIDENCE_BASIS_MISSING',
+  BASIS_NOT_SOURCE_REVIEW: 'EVIDENCE_BASIS_IS_NOT_A_DIRECT_SOURCE_REVIEW',
+  CLAIM_NOT_SUPPORTED: 'EVIDENCE_CLASS_CANNOT_SUPPORT_CLAIM',
   NO_ADMISSIBLE_ITEM: 'NO_ADMISSIBLE_EVIDENCE',
+});
+
+// What would settle a release that still needs a decision, given the sources the
+// project really holds. Any one of the listed items is enough.
+export const RELEASE_EVIDENCE_REQUIREMENT = Object.freeze({
+  ORIGINAL_AUDIO_REVIEW_REQUIRED: 'ORIGINAL_AUDIO_ARTICULATION_REVIEW_REQUIRED',
+  ORIGINAL_AUDIO_SOURCE_REQUIRED: 'ORIGINAL_AUDIO_SOURCE_REQUIRED',
+  SYMBOLIC_SOURCE_REVIEW_REQUIRED: 'INDEPENDENT_SYMBOLIC_SOURCE_REVIEW_REQUIRED',
+  SYMBOLIC_SOURCE_REQUIRED: 'INDEPENDENT_SYMBOLIC_SOURCE_REQUIRED',
 });
 
 export const RECORD_VIOLATION = Object.freeze({
@@ -729,31 +805,55 @@ export function buildEvidenceRegistry({ assets = [], sources = [] } = {}) {
   });
 }
 
-function normalizeAttestation(value) {
+// Who submitted the decision. `attestation` keeps its name from the first
+// version of this schema; it is provenance, not authority. The legacy
+// `audio_basis` is read only as the default basis of a primary-audio item that
+// states none: `listening` is a direct review of the recording, whoever or
+// whatever did it, and `machine-metric` stays a metric.
+const LEGACY_AUDIO_BASIS = Object.freeze({ listening: EVIDENCE_BASIS.DIRECT_SOURCE_REVIEW, 'machine-metric': EVIDENCE_BASIS.MACHINE_METRIC });
+// Caller strings index these tables; only own keys count, never the prototype.
+const own = (table, key) => (typeof key === 'string' && Object.hasOwn(table, key) ? table[key] : null);
+function normalizeProvenance(value) {
   if (!plainObject(value)) return null;
   return Object.freeze({
     reviewer: text(value.reviewer) ? value.reviewer.trim().slice(0, 200) : null,
-    reviewer_kind: ['human', 'agent', 'tool'].includes(value.reviewer_kind) ? value.reviewer_kind : null,
-    audio_basis: ['listening', 'machine-metric', 'not-used'].includes(value.audio_basis) ? value.audio_basis : null,
+    reviewer_kind: DECISION_AUTHOR_KINDS.includes(value.reviewer_kind) ? value.reviewer_kind : null,
   });
+}
+
+/** The claim a representation makes about its source event. */
+export function releaseClaimOf(representation) {
+  if (representation === REPRESENTATION.EXTEND_TO_NEXT_GRID) return RELEASE_CLAIM.SUSTAINS_TO_GRID;
+  if (representation === REPRESENTATION.TRUNCATE_TO_PREVIOUS_GRID) return RELEASE_CLAIM.RELEASES_BY_GRID;
+  return null;
 }
 
 /**
  * Grade one decision's evidence. Returns the resolved items (so a stored record
  * can be re-graded later without the registry) and whether any item is
- * admissible. Admissible means: a human reviewer attests the finding, the item
- * cites a primary source this project really holds under a matching kind, and a
- * primary symbolic source is independent of the supporting sources.
+ * admissible.
+ *
+ * An item is admissible when: it cites a primary source this project really
+ * holds, under a matching kind, and independent of the supporting sources; its
+ * finding was derived by a direct review of that source (not a metric, locator,
+ * encoding pattern or imported assertion); SOURCE_POLICY lets that source class
+ * support the claim the representation makes; and it carries a locator and a
+ * finding. The decision must say who submitted it. Who that is — a person, a
+ * conversational AI, a tool — is recorded and never read here.
  */
 export function gradeReleaseEvidence(decision, registry) {
-  const attestation = normalizeAttestation(decision?.attestation);
+  const provenance = normalizeProvenance(decision?.attestation);
+  const legacyAudioBasis = plainObject(decision?.attestation) ? own(LEGACY_AUDIO_BASIS, decision.attestation.audio_basis) : null;
+  const claim = releaseClaimOf(decision?.representation);
+  const authority = claim ? RELEASE_CLAIM_AUTHORITY[claim] : {};
   const decisionReasons = [];
-  if (!attestation || !attestation.reviewer || !attestation.reviewer_kind) decisionReasons.push(EVIDENCE_REFUSAL.ATTESTATION_MISSING);
-  else if (attestation.reviewer_kind !== 'human') decisionReasons.push(EVIDENCE_REFUSAL.ATTESTATION_NOT_HUMAN);
+  if (!provenance || !provenance.reviewer || !provenance.reviewer_kind) decisionReasons.push(EVIDENCE_REFUSAL.PROVENANCE_MISSING);
   const items = (Array.isArray(decision?.evidence) ? decision.evidence : []).map(raw => {
     const item = plainObject(raw) ? raw : {};
     const evidenceClass = typeof item.class === 'string' ? item.class.trim() : '';
     const ref = typeof item.ref === 'string' ? item.ref.trim() : '';
+    const statedBasis = typeof item.basis === 'string' ? item.basis.trim() : '';
+    const basis = statedBasis || (evidenceClass === EVIDENCE_CLASS.PRIMARY_AUDIO ? legacyAudioBasis : null) || null;
     const reasons = [];
     const stored = plainObject(item.resolved) ? item.resolved : null;
     const resolved = registry ? registry.get(ref) : stored;
@@ -762,16 +862,21 @@ export function gradeReleaseEvidence(decision, registry) {
     else if (evidenceClass === EVIDENCE_CLASS.PRIMARY_SYMBOLIC && !PRIMARY_SYMBOLIC_KINDS.has(resolved.kind)) reasons.push(EVIDENCE_REFUSAL.KIND_MISMATCH);
     else if (evidenceClass === EVIDENCE_CLASS.PRIMARY_AUDIO && !PRIMARY_AUDIO_KINDS.has(resolved.kind)) reasons.push(EVIDENCE_REFUSAL.KIND_MISMATCH);
     else if (resolved.independent === false) reasons.push(EVIDENCE_REFUSAL.NOT_INDEPENDENT);
-    if (evidenceClass === EVIDENCE_CLASS.PRIMARY_AUDIO && attestation?.audio_basis !== 'listening') reasons.push(EVIDENCE_REFUSAL.AUDIO_BASIS_NOT_LISTENING);
+    if (Object.values(EVIDENCE_CLASS).includes(evidenceClass) && !own(authority, evidenceClass)) reasons.push(EVIDENCE_REFUSAL.CLAIM_NOT_SUPPORTED);
+    if (!basis) reasons.push(EVIDENCE_REFUSAL.BASIS_MISSING);
+    else if (basis !== EVIDENCE_BASIS.DIRECT_SOURCE_REVIEW) reasons.push(EVIDENCE_REFUSAL.BASIS_NOT_SOURCE_REVIEW);
     if (!text(item.locator)) reasons.push(EVIDENCE_REFUSAL.LOCATOR_MISSING);
     if (!text(item.finding)) reasons.push(EVIDENCE_REFUSAL.FINDING_MISSING);
     return Object.freeze({
       class: evidenceClass,
       ref,
+      basis: basis ? basis.slice(0, 64) : null,
       locator: text(item.locator) ? item.locator.trim().slice(0, 500) : null,
       finding: text(item.finding) ? item.finding.trim().slice(0, 2000) : null,
       resolved: resolved ? Object.freeze({ ref: resolved.ref, origin: resolved.origin, kind: resolved.kind, sha256: resolved.sha256, primary: resolved.primary, independent: resolved.independent }) : null,
-      nonAdmissibleClassNotice: NON_ADMISSIBLE_EVIDENCE_CLASSES[evidenceClass] ?? null,
+      claimAuthority: own(authority, evidenceClass),
+      nonAdmissibleClassNotice: own(NON_ADMISSIBLE_EVIDENCE_CLASSES, evidenceClass),
+      nonAdmissibleBasisNotice: own(NON_ADMISSIBLE_EVIDENCE_BASES, basis),
       admissible: reasons.length === 0 && decisionReasons.length === 0,
       reasons: Object.freeze(reasons),
     });
@@ -781,10 +886,37 @@ export function gradeReleaseEvidence(decision, registry) {
   if (!decisionReasons.length && !items.some(item => item.admissible)) reasons.push(EVIDENCE_REFUSAL.NO_ADMISSIBLE_ITEM);
   return Object.freeze({
     admissible,
-    attestation,
-    countedAsReviewerEvidence: attestation?.reviewer_kind === 'human',
+    claim,
+    // Provenance, recorded for the audit trail. Not part of the grade.
+    attestation: provenance,
     items: Object.freeze(items),
     reasons: Object.freeze(reasons),
+  });
+}
+
+/**
+ * What evidence would settle a release that still needs a decision, from the
+ * sources this project really holds. Any one listed item is enough, submitted
+ * by anyone, as long as it cites the source with a direct-source-review basis, a
+ * locator and a finding. Returns null without a registry: what the project holds
+ * is then unknown, and nothing is guessed.
+ */
+export function releaseEvidenceRequirement(registry) {
+  if (!registry) return null;
+  const entries = registry.entries ?? [];
+  const refsOf = (kinds, independent) => entries.filter(entry => kinds.has(entry.kind) && entry.independent === independent).map(entry => entry.ref);
+  const symbolic = refsOf(PRIMARY_SYMBOLIC_KINDS, true);
+  const audio = refsOf(PRIMARY_AUDIO_KINDS, true);
+  return Object.freeze({
+    anyOf: Object.freeze([
+      Object.freeze(audio.length
+        ? { code: RELEASE_EVIDENCE_REQUIREMENT.ORIGINAL_AUDIO_REVIEW_REQUIRED, class: EVIDENCE_CLASS.PRIMARY_AUDIO, availableRefs: Object.freeze(audio), notIndependentRefs: Object.freeze(refsOf(PRIMARY_AUDIO_KINDS, false)), needed: 'A direct review of the original recording at each listed release (locator in the recording) stating whether the note is held to the grid point or released before it. Alignment, envelope or onset metrics locate the place to look and do not answer it (SOURCE_POLICY §6).' }
+        : { code: RELEASE_EVIDENCE_REQUIREMENT.ORIGINAL_AUDIO_SOURCE_REQUIRED, class: EVIDENCE_CLASS.PRIMARY_AUDIO, availableRefs: Object.freeze([]), notIndependentRefs: Object.freeze(refsOf(PRIMARY_AUDIO_KINDS, false)), needed: 'The project holds no independent original recording.' }),
+      Object.freeze(symbolic.length
+        ? { code: RELEASE_EVIDENCE_REQUIREMENT.SYMBOLIC_SOURCE_REVIEW_REQUIRED, class: EVIDENCE_CLASS.PRIMARY_SYMBOLIC, availableRefs: Object.freeze(symbolic), notIndependentRefs: Object.freeze(refsOf(PRIMARY_SYMBOLIC_KINDS, false)), needed: 'A direct reading of the independent official score/MIDI at each listed release stating its written duration.' }
+        : { code: RELEASE_EVIDENCE_REQUIREMENT.SYMBOLIC_SOURCE_REQUIRED, class: EVIDENCE_CLASS.PRIMARY_SYMBOLIC, availableRefs: Object.freeze([]), notIndependentRefs: Object.freeze(refsOf(PRIMARY_SYMBOLIC_KINDS, false)), needed: 'The project holds no independent official score or MIDI; an asset labelled official whose bytes equal a supporting file is a relabelled copy.' }),
+    ]),
+    notice: 'Any one item settles the releases it names. Who submits it is recorded and does not change its grade; third-party files, encoding patterns, metrics, tool output and bare assertions are recorded and never counted.',
   });
 }
 
@@ -815,7 +947,7 @@ export function normalizeReleaseRepresentationInput(input) {
 }
 
 /**
- * Turn reviewer decisions into exact, per-event release changes.
+ * Turn representation decisions into exact, per-event release changes.
  *
  * A decision whose evidence is not admissible is kept on the plan as PENDING and
  * changes nothing; its reasons are reported. A decision that names an event that
@@ -849,10 +981,10 @@ export function planReleaseRepresentation({ analysis, input, registry }) {
       eventIds: Object.freeze([...decision.eventIds].sort(cmpStr)),
       representation: decision.representation,
       reason: decision.reason,
+      claim: grade.claim,
       attestation: grade.attestation,
       evidence: grade.items,
       admissible: grade.admissible,
-      countedAsReviewerEvidence: grade.countedAsReviewerEvidence,
       evidenceReasons: grade.reasons,
       classification: grade.admissible ? 'NO_SOURCE_SUPPORTED_MEANING_ESTABLISHED_BY_EVIDENCE' : 'UNDETERMINED',
     });

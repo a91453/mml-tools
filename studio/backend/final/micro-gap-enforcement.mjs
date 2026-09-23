@@ -64,6 +64,7 @@ import {
 } from '../canonical/micro-timing.mjs';
 import {
   analyzeReleaseTiming,
+  releaseEvidenceRequirement,
   summarizeReleaseTiming,
   verifyReleaseRepresentation,
 } from '../canonical/release-timing.mjs';
@@ -108,6 +109,11 @@ export const MICRO_GAP_BLOCKERS = Object.freeze({
   // A recorded release representation that does not re-verify from the project:
   // a timing change without the evidence-backed decision it claims.
   RELEASE_RECORD_INVALID: 'MICRO_TIMING_RELEASE_REPRESENTATION_RECORD_INVALID',
+  // Releases still awaiting a representation decision, stated as the evidence
+  // that would settle them given the sources this project holds
+  // (`releaseEvidenceRequirement`). Raised only when the caller supplied the
+  // project's evidence registry: without it what the project holds is unknown.
+  RELEASE_EVIDENCE_REQUIRED: 'MICRO_TIMING_RELEASE_EVIDENCE_REQUIRED',
 });
 
 // Canonical IR beats are quarter notes, so a whole-note 1/N is 4/N IR beats.
@@ -287,6 +293,10 @@ export function enforceMicroGaps(project, { mobileSyntax, releaseEvidenceRegistr
   if (releaseAnalysis.notVisibleToIntervalAnalyzerCount > 0) blockers.push(MICRO_GAP_BLOCKERS.RELEASE_NOT_FINAL_REPRESENTABLE);
   const recordInvalid = releaseRecords.violations.length > 0;
   if (recordInvalid) blockers.push(MICRO_GAP_BLOCKERS.RELEASE_RECORD_INVALID);
+  const evidenceRequirement = releaseEvidenceRegistry && releaseAnalysis.decisionRequiredCount > 0
+    ? releaseEvidenceRequirement(releaseEvidenceRegistry)
+    : null;
+  if (evidenceRequirement) blockers.push(MICRO_GAP_BLOCKERS.RELEASE_EVIDENCE_REQUIRED);
 
   // Appended last so an unmarked project's blocker list is unchanged byte for byte.
   if (carriesCanonicalCandidateMarker(project) && !isReleaseRegridCandidateActive(EFFECTIVE_RULESET.canonical?.canonical_version)) {
@@ -334,6 +344,8 @@ export function enforceMicroGaps(project, { mobileSyntax, releaseEvidenceRegistr
     // every recorded release representation. The full per-event analysis is the
     // Mobile adaptation plan's, not this report's.
     releaseTiming: summarizeReleaseTiming(releaseAnalysis),
+    // Which evidence would settle the releases still awaiting a decision, or null.
+    releaseEvidenceRequirement: evidenceRequirement,
     releaseRepresentationRecords: Object.freeze({
       recordCount: releaseRecords.recordCount,
       registryChecked: releaseRecords.registryChecked === true,
