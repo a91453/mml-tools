@@ -1,38 +1,38 @@
 {
   "schema": "studio-durable-release-v1",
   "repository": "a91453/mml-tools",
-  "tag": "studio-v1-durable-45c5a2963b1e",
-  "sourceSha": "45c5a2963b1e2e55fb6d28cf21aeb6af2f6e7614",
-  "buildId": "dd273beedc0ce16485bd837cf6074171d63eda262fe0b4599f312961ca3b9e97",
-  "cacheId": "c76deb21ba7848c261d6c1f7100e95fe4ac7874c3b4e4f6f05c61b04c1b8a05f",
+  "tag": "studio-v1-durable-e8d7a998d926",
+  "sourceSha": "e8d7a998d926744450d477402a544ca03e9c044a",
+  "buildId": "8d45514dee668a3b8f3dfbfd9d0f858fc865802c7975539baac37fae9a5ced36",
+  "cacheId": "2842150c8192a7bdc7d66aa2d4b1bdcb53c838147ef6508eb9fd42bc23916f5c",
   "canonical": {
-    "canonical_version": "2026-09-23-v2",
+    "canonical_version": "2026-09-23-v3",
     "canonical_status": "PUBLISHED",
-    "manifest_version": "2026-09-23-v2-manifest1",
-    "rules_snapshot_sha": "1c84c95133990e3882a5770077c3d2d39b1a6b04",
-    "machine_delivery_schema": "mabinogi-mobile-mml-studio/machine-delivery@1"
+    "manifest_version": "2026-09-23-v3-manifest1",
+    "rules_snapshot_sha": "ff1a9df054f5ca1ae42571067fc95feb274755ef",
+    "machine_delivery_schema": "mabinogi-mobile-mml-studio/machine-delivery@2"
   },
-  "manifestCommit": "c0800845dd8970c2cbd2256bb9d3eb650c5d69e0",
-  "runtimeBundleDigest": "5fa0b6d735f6cfdc8d8f1c4e53b17e244e4fdd561444f4dbb5587d0e100b48e2",
-  "buildJsonSha256": "b84218d1956122930957d4ee43736e7ceb5cfa130ed9b2ca31b7390e80e1f335",
-  "assetCount": 83,
+  "manifestCommit": "44f3f0082cf5c30328edf1c251398b844488ad0a",
+  "runtimeBundleDigest": "8f01a836fefd2af1d1ca997e5124283ccb282d2b6ec8c60e4bfb34cde987703b",
+  "buildJsonSha256": "a3df02f9a19a3936509d61d88d0e07e56b3616c23396009626fae4ea151f217e",
+  "assetCount": 154,
   "artifact": {
-    "filename": "mml-studio-dd273beedc0ce16485bd837cf6074171d63eda262fe0b4599f312961ca3b9e97.zip",
-    "sha256": "66e52407a18068381800318678ba703d4f4b965f612fa26f0b78a09ab6e6020c",
-    "bytes": 2810897,
-    "objectKey": "releases/studio-v1-durable-45c5a2963b1e/66e52407a18068381800318678ba703d4f4b965f612fa26f0b78a09ab6e6020c/mml-studio-dd273beedc0ce16485bd837cf6074171d63eda262fe0b4599f312961ca3b9e97.zip"
+    "filename": "mml-studio-8d45514dee668a3b8f3dfbfd9d0f858fc865802c7975539baac37fae9a5ced36.zip",
+    "sha256": "3fe8e09e8e13ceda66097b8a3fabd3dbbe689da574da0d36106210d4ec8c2eaa",
+    "bytes": 4118527,
+    "objectKey": "releases/studio-v1-durable-e8d7a998d926/3fe8e09e8e13ceda66097b8a3fabd3dbbe689da574da0d36106210d4ec8c2eaa/mml-studio-8d45514dee668a3b8f3dfbfd9d0f858fc865802c7975539baac37fae9a5ced36.zip"
   },
   "trust": {
-    "filename": "studio-trust-45c5a2963b1e2e55fb6d28cf21aeb6af2f6e7614.zip",
-    "sha256": "97c2825cf13639126ab5135d48951ce38c274cfd7fcae26f9054e496b11a79c7",
-    "bytes": 17569,
-    "sourceSha": "45c5a2963b1e2e55fb6d28cf21aeb6af2f6e7614",
+    "filename": "studio-trust-e8d7a998d926744450d477402a544ca03e9c044a.zip",
+    "sha256": "c685443377138a71ece02503cb84e0aeacf89681457be0767ce139f646ac0d90",
+    "bytes": 18104,
+    "sourceSha": "e8d7a998d926744450d477402a544ca03e9c044a",
     "files": {
       "scripts/studio-artifact-identity.mjs": "05720058074423e445186b42ddc1b5c3ef6bf9953c4ff59d1fbb8a642db451f6",
-      "scripts/verify-studio-artifact.mjs": "4945f3353cfdf311c7103a02d2c2a1f475a9647441b2b6d944b3d3ea718349f2",
+      "scripts/verify-studio-artifact.mjs": "568b7dd60862eb421c496e537ded888162c7fdd4b638b1a1efd77486c3e1ba58",
       "studio/web/canonical-contract.mjs": "1de173bdef33c70c92568dfb461ecc27427f45bade3dd7264cfa5e499389e7f4",
-      "studio/web/sw.js": "bc0813c2cd9d888272382c256b187d283a2f4c8813bd86902e26521068d6f572"
+      "studio/web/sw.js": "5b6a394eabdf1dc2d003e50daf1b72bb4f7116fc408dbc5f60a2c221b174ce07"
     },
-    "objectKey": "releases/studio-v1-durable-45c5a2963b1e/97c2825cf13639126ab5135d48951ce38c274cfd7fcae26f9054e496b11a79c7/studio-trust-45c5a2963b1e2e55fb6d28cf21aeb6af2f6e7614.zip"
+    "objectKey": "releases/studio-v1-durable-e8d7a998d926/c685443377138a71ece02503cb84e0aeacf89681457be0767ce139f646ac0d90/studio-trust-e8d7a998d926744450d477402a544ca03e9c044a.zip"
   }
 }

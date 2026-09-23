@@ -2,18 +2,20 @@
 
 > Railway resource IDs are kept out of this public repository and appear as `<redacted-id-N>` (the same N is the same resource). Read them from the Railway dashboard.
 
-Current release: main `45c5a2963b1e`, which carries Published Canonical
-`2026-09-23-v2`. See [RELEASE_2026-09-23-v2.md](RELEASE_2026-09-23-v2.md) for
-its identity, runs, startup log and rollback; the release before it (main
-`66e9244f89e2`, Canonical v1) is [RELEASE_2026-09-23.md](RELEASE_2026-09-23.md). The original migration (main `5769e76849e5`) is recorded in
+Current release: main `e8d7a998d926`, which carries Published Canonical
+`2026-09-23-v3`. See [RELEASE_2026-09-23-v3.md](RELEASE_2026-09-23-v3.md) for
+its identity, runs, startup log and rollback; the releases before it are
+[RELEASE_2026-09-23-v2.md](RELEASE_2026-09-23-v2.md) (main `45c5a2963b1e`,
+Canonical v2) and [RELEASE_2026-09-23.md](RELEASE_2026-09-23.md) (main
+`66e9244f89e2`, Canonical v1). The original migration (main `5769e76849e5`) is recorded in
 [MIGRATION_RESULT.md](MIGRATION_RESULT.md); the sections below keep describing
 that historical release where they name its pins.
 
 This is deployment operations material, not Canonical policy or a Studio feature release.
-The current release serves Published Canonical `2026-09-23-v2` / `PUBLISHED`, with
-Manifest revision `2026-09-23-v2-manifest1`, rules snapshot
-`1c84c95133990e3882a5770077c3d2d39b1a6b04` and Manifest commit
-`c0800845dd8970c2cbd2256bb9d3eb650c5d69e0`. The historical migration below served
+The current release serves Published Canonical `2026-09-23-v3` / `PUBLISHED`, with
+Manifest revision `2026-09-23-v3-manifest1`, rules snapshot
+`ff1a9df054f5ca1ae42571067fc95feb274755ef` and Manifest commit
+`44f3f0082cf5c30328edf1c251398b844488ad0a`. The historical migration below served
 `2026-09-13-v1` at snapshot `0a172900a01fdf39c2e9e84cf176961320b779ea`.
 
 ## Fixed sources
