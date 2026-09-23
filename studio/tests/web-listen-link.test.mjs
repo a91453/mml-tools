@@ -119,6 +119,13 @@ test('corrupt payloads are refused as corrupt, never half-read', async () => {
   await rejects(decodeListenLink(payloadOf('{"schema":'), zlibCodec), 'LISTEN_LINK_CORRUPT');
 });
 
+test('a browser without DecompressionStream reports that, not a corrupt link', async t => {
+  const saved = globalThis.DecompressionStream;
+  t.after(() => { globalThis.DecompressionStream = saved; });
+  globalThis.DecompressionStream = undefined;
+  await rejects(decodeListenLink(vectors[0].payload), 'LISTEN_LINK_UNSUPPORTED');
+});
+
 test('the payload is found in #listen= or ?listen=, and removed again for replaceState', () => {
   const payload = vectors[0].payload;
   assert.deepEqual(listenPayloadFromUrl(`https://studio.example/app/#listen=${payload}`), { payload, from: 'hash' });

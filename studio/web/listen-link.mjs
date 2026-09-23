@@ -234,9 +234,15 @@ async function readCapped(stream, maxBytes) {
   for (const chunk of chunks) { out.set(chunk, at); at += chunk.byteLength; }
   return out;
 }
+// An older browser without (De)CompressionStream says so, rather than calling
+// a valid link corrupt.
+const stream = (Kind, name) => {
+  if (typeof Kind !== 'function') throw new ListenLinkError('LISTEN_LINK_UNSUPPORTED', `this browser has no ${name}('deflate-raw')`);
+  return new Kind('deflate-raw');
+};
 export const streamCodec = Object.freeze({
-  deflateRaw: async bytes => readCapped(new Blob([bytes]).stream().pipeThrough(new CompressionStream('deflate-raw')), Infinity),
-  inflateRaw: async (bytes, maxBytes) => readCapped(new Blob([bytes]).stream().pipeThrough(new DecompressionStream('deflate-raw')), maxBytes),
+  deflateRaw: async bytes => readCapped(new Blob([bytes]).stream().pipeThrough(stream(globalThis.CompressionStream, 'CompressionStream')), Infinity),
+  inflateRaw: async (bytes, maxBytes) => readCapped(new Blob([bytes]).stream().pipeThrough(stream(globalThis.DecompressionStream, 'DecompressionStream')), maxBytes),
 });
 
 /**
@@ -255,7 +261,7 @@ export async function encodeListenLink(value, codec = streamCodec) {
 /**
  * Decode a payload into a validated, normalised link document, or throw a
  * ListenLinkError (LISTEN_LINK_CORRUPT, LISTEN_LINK_TOO_LARGE,
- * LISTEN_LINK_UNKNOWN_SCHEMA or LISTEN_LINK_INVALID).
+ * LISTEN_LINK_UNKNOWN_SCHEMA, LISTEN_LINK_INVALID or LISTEN_LINK_UNSUPPORTED).
  */
 export async function decodeListenLink(payload, codec = streamCodec) {
   if (typeof payload !== 'string' || !payload.length) throw new ListenLinkError('LISTEN_LINK_CORRUPT', 'payload is empty');
