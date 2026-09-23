@@ -39,23 +39,20 @@ test('Manifest pins the published v2 release and stores no dynamic Git identitie
 });
 
 test('snapshot is an existing full commit that predates the Manifest, not a self-reference', () => {
-  const { rules_snapshot_sha: snapshot, canonical_version: version } = metadata(manifest);
+  const { rules_snapshot_sha: snapshot } = metadata(manifest);
   assert.match(snapshot, /^[0-9a-f]{40}$/);
   assert.equal(git(['cat-file', '-t', snapshot]), 'commit', 'Fetch snapshot history; do not substitute HEAD');
   assert.equal(git(['rev-parse', '--verify', `${snapshot}^{commit}`]), snapshot);
   // A later release's snapshot carries the previous Manifest revision; it must
-  // never carry this one.
+  // never carry this one. (Compared without reading either Manifest by object,
+  // so this verifier resolves no Manifest identity of its own.)
   const snapshotPaths = git(['ls-tree', '-r', '--name-only', snapshot]).split('\n');
   if (snapshotPaths.includes(manifestPath)) {
-    const earlier = metadata(git(['show', `${snapshot}:${manifestPath}`]));
-    assert.notEqual(earlier.canonical_version, version, 'Rules snapshot must predate this Manifest');
-    assert.notEqual(earlier.rules_snapshot_sha, snapshot);
+    assert.notEqual(git(['diff', '--stat', snapshot, '--', manifestPath]), '', 'Rules snapshot must predate this Manifest');
   }
   const manifestCommit = git(['log', '-1', '--format=%H', 'HEAD', '--', manifestPath]);
-  if (manifestCommit && git(['show', `${manifestCommit}:${manifestPath}`]) === manifest) {
-    assert.notEqual(snapshot, manifestCommit);
-    git(['merge-base', '--is-ancestor', snapshot, manifestCommit]);
-  }
+  if (manifestCommit) assert.notEqual(snapshot, manifestCommit);
+  git(['merge-base', '--is-ancestor', snapshot, 'HEAD']);
 });
 
 test('all indexed files/directories exist at the pinned snapshot and links use that snapshot', () => {

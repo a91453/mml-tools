@@ -418,7 +418,7 @@ test('a missing Manifest on published main cannot fall back to the pinned snapsh
   // publishing it leaves a main with every rule document and no entry point. (A
   // later release's snapshot carries the previous Manifest, so it cannot.)
   const firstSnapshot = '0a172900a01fdf39c2e9e84cf176961320b779ea';
-  assert.throws(() => git(repositoryRoot, 'cat-file', '-e', `${firstSnapshot}:${BOOTSTRAP_CONTRACT.entryPoint}`));
+  assert.equal(git(repositoryRoot, 'ls-tree', '--name-only', firstSnapshot, '--', BOOTSTRAP_CONTRACT.entryPoint).trim(), '');
   published.publish(firstSnapshot);
   assert.throws(() => materializePublishedCanonical({ root, publishedSource: published.url }), notLoaded);
   assert.throws(() => loadPublishedCanonical({ root }), notLoaded);
