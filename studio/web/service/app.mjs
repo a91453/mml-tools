@@ -6,6 +6,8 @@ let mobilePreview = null, reviewBinding = null;
 let agentEnabled = false, agentTask = null, agentTimer = null;
 const mobileRoles = ['Melody', 'Chord1', 'Chord2', 'Chord3', 'Chord4', 'Chord5'];
 const selectionKey = 'mml-service-selection';
+// The last service address typed here (a per-viewer convenience only).
+const originKey = 'mml-service-origin';
 const attemptKey = id => `mml-service-start:${id}`;
 const text = (selector, value) => { $(selector).textContent = value; };
 const message = value => text('#message', value);
@@ -202,6 +204,7 @@ $('#logout').onclick = () => act(async () => { clearTimeout(agentTimer); try { a
 $('#open-service').onsubmit = event => { event.preventDefault(); act(async () => {
   const url = new URL(new FormData(event.target).get('origin'));
   if ((url.protocol !== 'https:' && !(url.protocol === 'http:' && ['127.0.0.1', '[::1]'].includes(url.hostname))) || url.username || url.password || url.pathname !== '/' || url.search || url.hash) throw Error('請填入 HTTPS 服務來源網址，不含路徑或憑證');
+  try { localStorage.setItem(originKey, url.origin); } catch {}
   location.assign(url.origin + '/studio/');
 }); };
 $('#create-project').onsubmit = event => { event.preventDefault(); const title = new FormData(event.target).get('title'); act(async () => {
@@ -309,5 +312,13 @@ try {
   if (new URL(callback).searchParams.has('code') || new URL(callback).searchParams.has('error')) history.replaceState(null, '', location.pathname);
   await client.discover(); $('#login').disabled = false;
   if (await client.completeLogin(callback)) { authView(); await act(() => loadProjects()); } else authView();
-} catch (error) { message(error.message); text('#connection-status', '尚未連上服務；本機專案不受影響。'); $('#open-service').hidden = false; }
+} catch (error) {
+  // A static host (the permanent offline Studio) serves this page without the
+  // service behind it. That is not an outage: say where the service workspace
+  // lives and offer the address, keeping the technical reason small.
+  text('#connection-status', '這個網址沒有服務（只提供離線 Studio 時就是如此）。服務專案要在服務網址上開啟；本機專案不受影響。');
+  text('#connection-detail', error.message);
+  $('#open-service').hidden = false;
+  try { const last = localStorage.getItem(originKey); if (last) $('#open-service [name="origin"]').value = last; } catch {}
+}
 controls();
