@@ -148,6 +148,8 @@ export async function runWorkshopChecks({ page, base, idle, file, screenshot, pr
   assert.match(text, /^\[Settings\]\r\nEncoding=utf-8\r\n/);
   assert.match(text, /\[3MLE EXTENSION\]\r\n\/\* DO NOT EDIT!!/);
   await command('#file');
+  // iPhone/iPad grey out an .xml an accept list does not map; read() routes by content.
+  assert.equal(await page.locator('#midFile').getAttribute('accept'), null, 'the import picker carries no accept list');
   await page.locator('#midFile').setInputFiles({ name: 'workshop-check.mml', mimeType: 'text/plain', buffer: mml.bytes });
   await page.locator('#midiBox.on').waitFor();
   await page.locator('#midiMode input[value="new"]').check();

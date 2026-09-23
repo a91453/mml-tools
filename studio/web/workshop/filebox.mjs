@@ -546,6 +546,8 @@ export function init({ onImport: cb, onClear: clear, onNew: fresh,
   $("#newSong").addEventListener("click", newSong);
   $("#clearAll").addEventListener("click", clearAll);
 
+  // #midFile has no accept list: iPhone/iPad grey out an .xml they do not map
+  // to one. read() routes by content, as it does for a dropped file.
   $("#midFile").addEventListener("change", e => {
     const f = e.target.files[0];
     e.target.value = "";

@@ -68,6 +68,8 @@ try {
       const file=async(slot,content,name)=>{await page.locator(`[data-intake="${slot}"]`).setInputFiles({name,mimeType:'text/plain',buffer:Buffer.from(content)});await page.waitForFunction(name=>document.querySelector('#intake')?.textContent.includes(name),name);await idle();};
       await page.goto(base);await page.locator('#app h1').waitFor();await idle();
       assert.equal(await page.locator('#copy-mml').isEnabled(),false);
+      // iPhone/iPad grey out an .xml an accept list does not map; the bytes decide the reader.
+      assert.deepEqual(await page.locator('[data-intake]').evaluateAll(inputs=>inputs.filter(input=>input.hasAttribute('accept')).map(input=>input.dataset.intake)),[],'source pickers carry no accept list');
       await page.screenshot({path:fileURLToPath(new URL(`${profile.name}-empty.png`,out)),fullPage:true});
       await page.getByLabel('專案／歌曲名稱',{exact:true}).fill('Studio browser fixture');
       await page.getByLabel('錄音版本（專輯／MV／Live 等）',{exact:true}).fill('Synthetic studio v1');
