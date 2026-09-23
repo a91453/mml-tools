@@ -6,7 +6,10 @@
 // no other tool, and the player it links writes nothing either. What comes
 // back is a listening view -- the MML, meter, tempo, the markers a person
 // should listen to, the song-level items no position can be given for -- and,
-// when the deployment names its Studio Web origin, a listen link.
+// when the deployment names its Studio Web origin, a listen link. For a Final
+// the markers are read from what it files (server/listen/final-markers.mjs):
+// its provisional release renderings, the unverified Lead notes its ledger
+// names, and any ledger entry that states a position.
 //
 // Two ways a host can show it, one tool, one answer:
 //
@@ -42,6 +45,7 @@ import {
 } from './listen/mml-events.mjs';
 import { LISTEN_LIMITS, LISTEN_LINK_SCHEMA, ListenLinkError, encodeListenLink, listenUrl } from '../studio/web/listen-link.mjs';
 import { buildListenWidgetHtml, parseSampleLibrary } from './listen/widget.mjs';
+import { beatOf, clip, finalListeningMarkers, flagLabel } from './listen/final-markers.mjs';
 
 export const LISTEN_TOOL_NAME = 'studio_listen';
 export const LISTEN_VIEW_SCHEMA = 'mml-studio/listen-view@1';
@@ -52,7 +56,7 @@ export const LEGACY_WIDGET_MIME_TYPE = 'text/html+skybridge';
 export const MCP_APPS_EXTENSION = 'io.modelcontextprotocol/ui';
 
 const MAX_MARKERS = LISTEN_LIMITS.markers;
-const MAX_SONG_NOTES = 50;
+const MAX_SONG_NOTES = 60;
 const MAX_LABEL = LISTEN_LIMITS.labelChars;
 const PREVIEW_NOTICE = '播放器使用內建預覽合成器（或你自己在瀏覽器載入的音色庫），不是遊戲內音色；聽起來的樣子不代表實機。';
 const FEEDBACK_NOTICE = '播放器送回對話的只是試聽回饋文字，給 AI 修改參考；它不是任何 Gate 的確認、證據或接受，播放器與本工具都不寫入任何紀錄。';
@@ -205,7 +209,7 @@ export const LISTEN_MCP_TOOLS = [
     name: LISTEN_TOOL_NAME,
     title: '在對話中試聽 MML',
     description: '唯讀。回傳可在對話裡直接播放的六軌試聽播放器（支援互動 UI 的主機會顯示播放器；其他主機收到文字摘要與 Studio Web 試聽連結）。'
-      + '給 artifact_id（已交付的 Final，可附 project_id 限定）時，machine-delivery ledger 中 NON_BLOCKING_PENDING／POST_DELIVERY 且有位置的項目會成為播放器標記（pending、lead-unverified、provisional-release），沒有位置的列為整曲待確認；'
+      + '給 artifact_id（已交付的 Final，可附 project_id 限定）時，Final 暫定延長的每個 release（provisional-release）與 ledger 中未驗證的 Lead 音（lead-unverified）會成為播放器標記，數量多時依角色合併成區段、總數列在整曲待確認；沒有位置的 ledger 項目與交付旗標也列在整曲待確認；'
       + '或給 mml（完整六軌 MML@…;）與來源確認的 meter_text（沒有拍號圖時只能用拍與時間定位，不會自行假設 4/4）。'
       + 'markers 可標出你剛修改（changed）或想請使用者注意（note）的位置；start_bar 讓播放器與連結從該小節開始。'
       + '播放器是預覽合成器，不是遊戲內音色。使用者在播放器按「送出給 AI」時，回饋會以使用者訊息出現在對話裡：那只是試聽感受文字，不是 Gate 確認、證據或接受，請依內容修改 MML 後再呼叫本工具讓使用者重聽。本工具不寫入任何資料。',
@@ -246,24 +250,6 @@ export const LISTEN_MCP_TOOLS = [
 
 const invalid = (message, reason) => fail(ERROR_CODES.INVALID_REQUEST, message, { reason });
 const isObject = value => value !== null && typeof value === 'object' && !Array.isArray(value);
-// The characters the link contract refuses in a title or label.
-const clip = (text, max = MAX_LABEL) => {
-  const value = String(text ?? '').replace(/[\u0000-\u001f\u007f-\u009f\u2028\u2029]+/g, ' ').trim();
-  return value.length > max ? `${value.slice(0, max - 1)}…` : value;
-};
-
-// A beat as the repository prints a rational ("88", "177/2"), or null.
-function beatOf(value) {
-  if (typeof value === 'number') {
-    if (!Number.isFinite(value) || value < 0) return null;
-    value = Number.isInteger(value) ? String(value) : value.toFixed(9).replace(/0+$/, '');
-  }
-  if (typeof value !== 'string' || !/^\d{1,9}(?:\/[1-9]\d{0,8}|\.\d{1,9})?$/.test(value)) return null;
-  try {
-    const beat = new F(value);
-    return beat.cmp(0) < 0 ? null : beat.toString();
-  } catch { return null; }
-}
 
 // A bar start as an exact rational. Bar starts are sums of meter lengths, so a
 // small search over dyadic and triadic denominators recovers them exactly.
@@ -273,87 +259,6 @@ function beatStringOfNumber(value) {
     if (Math.abs(scaled - Math.round(scaled)) < 1e-7) return new F(Math.round(scaled), denominator).toString();
   }
   return beatOf(Number(value.toFixed(9)));
-}
-
-const POSITION_LISTS = ['locations', 'positions', 'events', 'items', 'releases', 'entries', 'markers', 'decisions', 'spans'];
-
-/**
- * Every position an unknown-shaped record states, read defensively: a record
- * with `beat`/`start_beat`/`start`/`onset` or `bar`, and the same inside a few
- * conventional list fields, at most two levels down. Nothing is guessed.
- */
-function positionsOf(record, depth = 0, out = []) {
-  if (!isObject(record) || depth > 2 || out.length >= MAX_MARKERS) return out;
-  const beat = beatOf(record.beat ?? record.start_beat ?? record.at_beat ?? record.onset ?? record.start);
-  const bar = [record.bar, record.bar_index, record.bar_number].find(value => Number.isSafeInteger(value) && value >= 1 && value <= 10000) ?? null;
-  if (beat !== null || bar !== null) {
-    const label = [record.label, record.finding, record.message, record.reason, record.representation, record.code]
-      .find(value => typeof value === 'string' && value.trim());
-    out.push({
-      beat,
-      bar,
-      end_beat: beatOf(record.end_beat ?? record.end),
-      role: LISTEN_ROLES.includes(record.role) ? record.role : null,
-      label: label ? clip(label) : null,
-    });
-  }
-  for (const key of POSITION_LISTS) {
-    if (Array.isArray(record[key])) for (const item of record[key].slice(0, MAX_MARKERS)) positionsOf(item, depth + 1, out);
-  }
-  return out;
-}
-
-const GATE_LABELS = Object.freeze({
-  originalAudio: '原曲音訊對照',
-  mobileAdaptation: 'Mobile 適配審查',
-  regression: '回歸審查',
-  playerReadback: '播放器回讀',
-  inGameAcceptance: '遊戲內驗收',
-  core3Completeness: 'Core3 完整度審查',
-  versionDrift: '版本差異審查',
-  leadPromotion: 'Lead（主旋律）證據',
-});
-const gateLabel = gate => GATE_LABELS[gate] ?? gate;
-const LISTENABLE_CLASSES = new Set(['NON_BLOCKING_PENDING', 'POST_DELIVERY']);
-
-function ledgerOf(artifact) {
-  const delivery = isObject(artifact.machine_delivery) ? artifact.machine_delivery : null;
-  if (!delivery) return [];
-  const ledger = Array.isArray(delivery.unresolved_evidence_ledger)
-    ? delivery.unresolved_evidence_ledger
-    : [...(Array.isArray(delivery.non_blocking_pending) ? delivery.non_blocking_pending : []), ...(Array.isArray(delivery.post_delivery) ? delivery.post_delivery : [])];
-  return ledger.filter(entry => isObject(entry) && typeof entry.gate === 'string' && LISTENABLE_CLASSES.has(entry.classification));
-}
-
-// A provisional-release list may be added to Final artifacts by a later
-// change. Read it if it is there, in whichever of the two names it lands.
-function provisionalReleasesOf(artifact) {
-  for (const key of ['provisional_releases', 'provisional_release_representation']) {
-    const value = artifact[key];
-    if (Array.isArray(value)) return positionsOf({ items: value });
-    if (isObject(value)) return positionsOf(value);
-  }
-  return [];
-}
-
-function markersFromArtifact(artifact) {
-  const markers = [];
-  const notes = [];
-  for (const entry of ledgerOf(artifact)) {
-    const kind = entry.gate === 'leadPromotion' ? 'lead-unverified' : 'pending';
-    const where = positionsOf(entry);
-    const status = typeof entry.status === 'string' ? entry.status : 'PENDING';
-    const blockers = Array.isArray(entry.blockers) ? entry.blockers.filter(code => typeof code === 'string').slice(0, 12) : [];
-    if (!where.length) {
-      if (notes.length < MAX_SONG_NOTES) notes.push({ gate: entry.gate, classification: entry.classification, status, blockers, label: `${gateLabel(entry.gate)}：${status}` });
-      continue;
-    }
-    for (const position of where) markers.push({ ...position, kind, gate: entry.gate, source: 'machine-delivery-ledger', label: clip(position.label ? `${gateLabel(entry.gate)}：${position.label}` : `${gateLabel(entry.gate)}：${status}`) });
-  }
-  for (const position of provisionalReleasesOf(artifact)) {
-    markers.push({ ...position, kind: 'provisional-release', gate: null, source: 'provisional-release', label: clip(position.label ? `release 暫定表示：${position.label}` : 'release 暫定表示，請聽這裡的收尾') });
-  }
-  return { markers, notes };
 }
 
 function checkInlineMml(mml, field) {
@@ -377,6 +282,8 @@ const formatTime = seconds => {
  * text summary a host without UI shows. Throws StudioApplicationError.
  */
 export async function runListenTool(args, { application, owner, listen = DEFAULT_LISTEN_CONFIG }) {
+  // Reads only: getArtifact, getProject (title) and, to place unverified Lead
+  // ids, listBaselineEvents.
   const fromArtifact = args.artifact_id !== undefined;
   if (fromArtifact === (args.mml !== undefined)) invalid('Pass exactly one of artifact_id (a delivered Final) or mml.', 'LISTEN_SOURCE_REQUIRED');
   if (!fromArtifact && args.project_id !== undefined) invalid('project_id only scopes an artifact_id.', 'LISTEN_PROJECT_WITHOUT_ARTIFACT');
@@ -388,12 +295,12 @@ export async function runListenTool(args, { application, owner, listen = DEFAULT
   let pickup = null;
   let title = args.title ?? null;
   let canonical = null;
-  let fromLedger = { markers: [], notes: [] };
+  let artifact = null;
 
   if (fromArtifact) {
     if (!application) invalid('Stored Finals need the Studio service.', 'LISTEN_STUDIO_UNAVAILABLE');
     const read = await application.getArtifact(owner, args.artifact_id);
-    const artifact = read.artifact;
+    artifact = read.artifact;
     canonical = read.canonical ?? null;
     // A project that does not own the artifact cannot see it, exactly as an
     // unknown id.
@@ -411,11 +318,11 @@ export async function runListenTool(args, { application, owner, listen = DEFAULT
       candidate_id: artifact.candidate_id ?? null,
       song_state: artifact.song_state ?? null,
       lifecycle: artifact.machine_delivery?.lifecycle ?? null,
+      machine_delivery_schema: typeof artifact.machine_delivery?.schema === 'string' ? artifact.machine_delivery.schema : null,
     };
     if (title === null && application.getProject) {
       try { title = (await application.getProject(owner, artifact.project_id))?.project?.title ?? null; } catch { title = null; }
     }
-    fromLedger = markersFromArtifact(artifact);
   } else {
     mml = args.mml;
     meterText = args.meter_text ?? null;
@@ -431,6 +338,24 @@ export async function runListenTool(args, { application, owner, listen = DEFAULT
   const bars = listenBars(meterText, totalBeats, { pickup });
   const meterUsable = Array.isArray(bars) && bars.length > 0;
 
+  // What the Final itself files about where it still needs a person's ear
+  // (server/listen/final-markers.mjs). The baseline projection is read only to
+  // place ledger event ids, and every placement is checked against the
+  // delivered MML's own Melody.
+  const lookupBaselineEvents = artifact && typeof application?.listBaselineEvents === 'function'
+    ? async eventIds => {
+      const events = [];
+      for (let index = 0; index < eventIds.length; index += 500) {
+        const page = await application.listBaselineEvents(owner, artifact.project_id, { eventIds: eventIds.slice(index, index + 500), limit: 500 });
+        events.push(...(Array.isArray(page?.events) ? page.events : []));
+      }
+      return events;
+    }
+    : null;
+  const fromFinal = artifact
+    ? await finalListeningMarkers(artifact, { parsedTracks: parsed.tracks, totalBeats, lookupBaselineEvents })
+    : { markers: [], notes: [], delivery_flags: [], provisional_releases: null, unverified_lead: null };
+
   const barStart = bar => {
     if (!meterUsable) invalid('A bar position needs a meter map (meter_text); use beat instead.', 'LISTEN_BAR_WITHOUT_METER');
     if (bar > bars.length) invalid(`Bar ${bar} is beyond the last bar (${bars.length}).`, 'LISTEN_BAR_OUT_OF_RANGE');
@@ -443,16 +368,16 @@ export async function runListenTool(args, { application, owner, listen = DEFAULT
     if (beat === null) invalid('marker.beat must be a non-negative integer, decimal or n/d beat.', 'LISTEN_MARKER_POSITION');
     const end = marker.end_beat === undefined ? null : beatOf(marker.end_beat);
     if (marker.end_beat !== undefined && (end === null || listenBeatNumber(end) < listenBeatNumber(beat))) invalid('marker.end_beat must not precede its beat.', 'LISTEN_MARKER_POSITION');
-    return { beat, end_beat: end, role: marker.role ?? null, kind: marker.kind, gate: null, source: 'caller', label: clip(marker.label) };
+    return { beat, end_beat: end, role: marker.role ?? null, kind: marker.kind, gate: null, source: 'caller', count: 1, label: clip(marker.label) };
   });
 
   // Positions from a record with only a bar resolve through the meter map; a
   // position no meter can place stays a song-level note rather than a guess.
-  const songNotes = [...fromLedger.notes];
+  const songNotes = [...fromFinal.notes];
   const placed = [];
-  for (const marker of [...fromLedger.markers, ...callerMarkers]) {
+  for (const marker of [...fromFinal.markers, ...callerMarkers]) {
     let beat = marker.beat;
-    if (beat === null && marker.bar !== null && meterUsable && marker.bar <= bars.length) beat = beatStringOfNumber(bars[marker.bar - 1].start);
+    if (beat === null && marker.bar !== null && marker.bar !== undefined && meterUsable && marker.bar <= bars.length) beat = beatStringOfNumber(bars[marker.bar - 1].start);
     if (beat === null || listenBeatNumber(beat) > totalBeats) {
       if (songNotes.length < MAX_SONG_NOTES) songNotes.push({ gate: marker.gate, classification: null, status: null, blockers: [], label: marker.label });
       continue;
@@ -476,6 +401,7 @@ export async function runListenTool(args, { application, owner, listen = DEFAULT
       label: marker.label,
       gate: marker.gate ?? null,
       source: marker.source,
+      count: Number.isSafeInteger(marker.count) && marker.count > 0 ? marker.count : 1,
     };
   });
 
@@ -536,6 +462,9 @@ export async function runListenTool(args, { application, owner, listen = DEFAULT
     markers,
     truncated_markers: truncatedMarkers,
     song_notes: songNotes,
+    delivery_flags: fromFinal.delivery_flags,
+    provisional_releases: fromFinal.provisional_releases,
+    unverified_lead: fromFinal.unverified_lead,
     parse: {
       finding_count: parsed.findings.length,
       findings: parsed.findings.slice(0, 10),
@@ -572,6 +501,7 @@ function summaryText(view) {
     }
     if (view.markers.length > 20) lines.push(`- …另外 ${view.markers.length - 20} 處在播放器裡。`);
   }
+  if (view.delivery_flags.length) lines.push(`交付旗標：${view.delivery_flags.map(flag => `${flag}（${flagLabel(flag)}）`).join('、')}。旗標是仍未解決的標籤，不是結論。`);
   if (view.song_notes.length) lines.push(`整曲待確認：${view.song_notes.map(note => note.label).slice(0, 8).join('；')}`);
   lines.push(view.listen_link ? `Studio Web 試聽連結：${view.listen_link.url}` : (LINK_STATUS_TEXT[view.listen_link_status] ?? '（沒有 Studio Web 試聽連結。）'));
   lines.push(PREVIEW_NOTICE);

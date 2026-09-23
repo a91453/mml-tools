@@ -808,9 +808,16 @@ The `studio_*` tools, plus the three original tools unchanged:
 One read-only listening projection sits after them: `studio_listen`
 (`server/mcp-listen.mjs`). Given a delivered Final's `artifact_id` (or inline
 six-role MML), it returns a listening view — the MML, meter, tempo, markers
-from the machine-delivery ledger's NON_BLOCKING_PENDING / POST_DELIVERY entries
-that state a position, song-level notes for those that do not — plus a text
-summary. Hosts that render UI show it in the `ui://mml-studio/player.html`
+and song-level notes — plus a text summary. For a v3 Final the markers are what
+the Final files (`server/listen/final-markers.mjs`): each release in
+`provisional_release_rendering` (else the ledger's microTiming
+`provisional_releases`) at its source release, and each Melody note the ledger's
+leadPromotion `unverified_lead_event_ids` names, placed from the renderings'
+onsets or the read-only baseline projection and kept only where the delivered
+Melody has that note. Runs are grouped per role into ranges within a marker
+budget; the full counts, per-source offset figures and `delivery.flags` are
+song-level notes, as are other listenable ledger entries unless they state a
+position. Hosts that render UI show it in the `ui://mml-studio/player.html`
 resource (MCP Apps, `text/html;profile=mcp-app`; an Apps SDK template alias is
 served beside it), which is why the server advertises `resources` when the
 Studio is attached. When `STUDIO_WEB_ORIGIN` is set it also returns a Studio Web

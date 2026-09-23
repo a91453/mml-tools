@@ -25,6 +25,7 @@ server/*
 server/listen/*
 !server/listen/widget.mjs
 !server/listen/mml-events.mjs
+!server/listen/final-markers.mjs
 !server/listen/sf2.mjs
 !server/listen/player-app.js
 !server/listen/player.html

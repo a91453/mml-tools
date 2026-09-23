@@ -20,6 +20,13 @@ import { ListenLinkError, decodeListenLink, streamCodec } from '../studio/web/li
 import { createStudioApplication } from '../studio/backend/application/index.mjs';
 import { sha256Hex } from '../studio/backend/source/sha256.mjs';
 import { canonicalProjectBytes, keepEveryRole, sixRoleBaseline } from '../studio/tests/fixtures/application-fixtures.mjs';
+import { OWNER as RELEASE_OWNER, assign, oneTickEarlyBaseline, roleDecisions } from '../studio/tests/fixtures/release-fixtures.mjs';
+import { DELIVERY_FLAG, MACHINE_DELIVERY_SCHEMA_V2 } from '../studio/backend/final/delivery-evaluator.mjs';
+import { finalListeningMarkers, groupRuns, PROVISIONAL_MARKER_BUDGET, LEAD_MARKER_BUDGET } from '../server/listen/final-markers.mjs';
+import { parseListenMml } from '../server/listen/mml-events.mjs';
+import { mkdtemp, rm } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 
 const ORIGIN = 'https://mml.example';
 const OWNER = 'owner:service';
@@ -332,15 +339,212 @@ test('a delivered Final: its MML, meter, ledger notes and a link back to its ide
   assert.equal(withMeter.structuredContent.error.details.reason, 'LISTEN_METER_NOT_ALLOWED');
 });
 
-// A stand-in Application Service holding one synthetic artifact, so the
-// ledger shapes a later release may carry can be exercised directly.
+// ─── Canonical v3 (@2) Finals: the real shapes ─────────────────────────────
+//
+// A Final delivered through the real v3 path -- readiness, provisional release
+// rendering, the Final service -- under an injected @2 identity, the way
+// studio/tests/provisional-release-emission.test.mjs does it, so the markers
+// are read from exactly what a v3 Final files. The fixture is synthetic
+// (studio/tests/fixtures/release-fixtures.mjs): every release one 480-tpq tick
+// before the grid, Melody reached by Lead promotions.
+
+const AT2 = Object.freeze({ canonical_version: '2026-09-23-v3', canonical_status: 'PUBLISHED', rules_snapshot_sha: 'd'.repeat(40), machine_delivery_schema: MACHINE_DELIVERY_SCHEMA_V2 });
+const V3_CONFIRMATIONS = Object.freeze({
+  source_complete: { value: true, reason: 'The synthetic baseline is the complete material.' },
+  version_drift_reviewed: { value: true, reason: 'No earlier version exists for this synthetic fixture.' },
+  player_readback: { value: 'N/A', reason: 'No preview or verification player is used for this synthetic cue.' },
+  core3_completeness_reviewed: { value: true, reason: 'Melody, Chord1 and Chord2 stand as a one-player arrangement in the fixture.', evidence: ['fixture:gate-4'] },
+  mobile_adaptation_reviewed: { value: true, reason: 'The fixture needs no Mobile adaptation beyond the listed releases.', evidence: ['fixture:gate-8'] },
+  regression_reviewed: { value: true, reason: 'Compared against the Source-Faithful Baseline.', evidence: ['fixture:gate-9'] },
+  original_audio_required: { value: false, reason: 'The synthetic workflow has no recording.' },
+});
+
+async function serviceUnderAt2(directory) {
+  const engines = await createStudioApplication({}).canonical.engines();
+  return createStudioApplication({
+    dataDirectory: directory,
+    durability: 'persistent',
+    loadEngines: async () => ({
+      ...engines,
+      final: {
+        ...engines.final,
+        evaluateProjectReadiness: input => engines.final.evaluateProjectReadiness({ ...input, canonical: AT2 }),
+        emitFinalMml: (project, options = {}) => engines.final.emitFinalMml(project, { ...options, canonical: AT2 }),
+      },
+    }),
+  });
+}
+
+async function v3Final(t, decisions) {
+  const directory = await mkdtemp(join(tmpdir(), 'mml-listen-v3-'));
+  t.after(() => rm(directory, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 }));
+  const service = await serviceUnderAt2(directory);
+  const created = (await service.createProject(RELEASE_OWNER, { title: 'Synthetic v3 listening fixture' })).project;
+  await service.uploadAsset(RELEASE_OWNER, created.project_id, { kind: 'canonical_project', filename: 'b.json', mediaType: 'application/json', bytes: new TextEncoder().encode(JSON.stringify(oneTickEarlyBaseline())) });
+  await service.analyzeSources(RELEASE_OWNER, created.project_id);
+  const applied = await service.applyDecisions(RELEASE_OWNER, created.project_id, { decisions });
+  assert.equal(applied.decisions.applied, true, JSON.stringify(applied.decisions.rejected ?? null));
+  const final = await service.finalize(RELEASE_OWNER, created.project_id, { candidateId: applied.decisions.candidate_id, confirmations: V3_CONFIRMATIONS });
+  assert.equal(final.operation, 'succeeded', JSON.stringify(final.blockers));
+  const { artifact } = await service.getArtifact(RELEASE_OWNER, final.artifact_id);
+  assert.equal(artifact.machine_delivery.schema, MACHINE_DELIVERY_SCHEMA_V2);
+  return { service, artifact, projectId: created.project_id };
+}
+
+const listenOn = (application, owner = RELEASE_OWNER) => async args => (await (await handleMcp(new Request(`${ORIGIN}/mcp`, {
+  method: 'POST', headers, body: JSON.stringify({ jsonrpc: '2.0', id: 1, method: 'tools/call', params: { name: 'studio_listen', arguments: args } }),
+}), { application, owner, listen: createListenConfig({ studioWebOrigin: STUDIO_WEB }) })).json()).result;
+
+test('a v3 Final: every provisionally rendered release is a marker at its source release, with the counts and per-source figures as notes', async t => {
+  const { service, artifact } = await v3Final(t, roleDecisions());
+  assert.deepEqual(artifact.delivery.flags, [DELIVERY_FLAG.RELEASES_RENDERED_PROVISIONALLY]);
+  assert.equal(artifact.provisional_release_rendering.renderings.length, 8);
+
+  const result = await listenOn(service)({ artifact_id: artifact.artifact_id });
+  assert.equal(result.isError, false, JSON.stringify(result.structuredContent).slice(0, 300));
+  const view = result.structuredContent;
+  assert.deepEqual(view.delivery_flags, ['RELEASES_RENDERED_PROVISIONALLY']);
+  assert.equal(view.source.machine_delivery_schema, MACHINE_DELIVERY_SCHEMA_V2);
+  // One marker per held release: from the source release (one tick before the
+  // grid) to the rendered release, on the role the rendering names.
+  const expected = [...artifact.provisional_release_rendering.renderings]
+    .map(item => [item.role, item.release, item.renderedRelease])
+    .sort((a, b) => listenBeat(a[1]) - listenBeat(b[1]) || ['Melody', 'Chord1', 'Chord2'].indexOf(a[0]) - ['Melody', 'Chord1', 'Chord2'].indexOf(b[0]));
+  assert.deepEqual(view.markers.map(marker => [marker.role, marker.beat, marker.end_beat]), expected);
+  assert.ok(view.markers.every(marker => marker.kind === 'provisional-release' && marker.gate === 'microTiming' && marker.count === 1 && marker.source === 'provisional_release_rendering'));
+  assert.equal(view.markers[0].beat, '479/480');
+  assert.equal(view.markers[0].end_beat, '1');
+  assert.deepEqual(view.provisional_releases, { held: 8, closed_intervals: artifact.provisional_release_rendering.closedIntervalCount, placed: 8, unplaced: 0, markers: 8, source: 'provisional_release_rendering' });
+  assert.match(view.song_notes[0].label, /共 8 個 release 暫時延到下一格（Melody 4、Chord1 2、Chord2 2）/);
+  assert.match(view.song_notes[1].label, /來源 fixture:third-party-midi：主要偏移 1 tick\(s\)，占 8\/8（100\.0%），門檻 95\/100，符合；暫定 8、未解決 0/);
+  assert.match(result.content[0].text, /交付旗標：RELEASES_RENDERED_PROVISIONALLY（release 暫定表示）/);
+  // The link carries the same markers for the Studio Web.
+  assert.deepEqual((await linkPayload(view.listen_link.url)).markers.map(marker => [marker.kind, marker.beat, marker.end_beat]), view.markers.map(marker => ['provisional-release', marker.beat, marker.end_beat]));
+});
+
+test('a v3 Final with an unverified Lead: the ledger ids are placed on the delivered Melody and grouped, from the renderings or the baseline projection', async t => {
+  const decisions = [
+    ...['lead-1', 'lead-2', 'lead-3', 'lead-4'].map(id => assign(id, 'Melody', { leadEvidence: null })),
+    ...['harm-1', 'harm-2'].map(id => assign(id, 'Chord1')),
+    ...['bass-1', 'bass-2'].map(id => assign(id, 'Chord2')),
+  ];
+  const { service, artifact, projectId } = await v3Final(t, decisions);
+  assert.deepEqual(artifact.delivery.flags, [DELIVERY_FLAG.RELEASES_RENDERED_PROVISIONALLY, DELIVERY_FLAG.LEAD_UNVERIFIED]);
+  const ledgerLead = artifact.machine_delivery.non_blocking_pending.find(entry => entry.gate === 'leadPromotion');
+  assert.deepEqual([...ledgerLead.unverified_lead_event_ids].sort(), ['lead-1', 'lead-2', 'lead-3', 'lead-4']);
+  assert.ok(ledgerLead.blockers.includes('LEAD_PROMOTION_PRIMARY_EVIDENCE_MISSING'));
+
+  const view = (await listenOn(service)({ artifact_id: artifact.artifact_id, project_id: projectId })).structuredContent;
+  const lead = view.markers.filter(marker => marker.kind === 'lead-unverified');
+  // Four consecutive Melody notes, one range over the delivered Melody.
+  assert.deepEqual(lead.map(marker => [marker.role, marker.beat, marker.end_beat, marker.count, marker.gate]), [['Melody', '0', '4', 4, 'leadPromotion']]);
+  assert.deepEqual(view.unverified_lead, { unverified: 4, placed: 4, unplaced: 0, markers: 1 });
+  assert.deepEqual(view.delivery_flags, ['RELEASES_RENDERED_PROVISIONALLY', 'LEAD_UNVERIFIED']);
+  assert.ok(view.song_notes.some(note => /主旋律未驗證：4 個 Melody 音缺主要 Lead 證據/.test(note.label)));
+  assert.equal(view.markers.filter(marker => marker.kind === 'provisional-release').length, 8);
+
+  // Without rendering records the Lead ids are placed from the read-only
+  // baseline projection, and the releases from the ledger's own list.
+  const withoutRendering = { ...artifact, provisional_release_rendering: null };
+  const application = {
+    getArtifact: async (owner, id) => ({ ...(await service.getArtifact(owner, id)), artifact: withoutRendering }),
+    getProject: (...args) => service.getProject(...args),
+    listBaselineEvents: (...args) => service.listBaselineEvents(...args),
+    canonical: service.canonical,
+  };
+  const fallback = (await listenOn(application)({ artifact_id: artifact.artifact_id })).structuredContent;
+  assert.deepEqual(fallback.markers.filter(marker => marker.kind === 'lead-unverified').map(marker => [marker.beat, marker.end_beat, marker.count]), [['0', '4', 4]]);
+  const fromLedger = fallback.markers.filter(marker => marker.kind === 'provisional-release');
+  assert.equal(fromLedger.length, 8);
+  assert.ok(fromLedger.every(marker => marker.source === 'machine-delivery-ledger'));
+  assert.equal(fallback.provisional_releases.source, 'machine-delivery-ledger');
+
+  // With nothing to place them on, the ids stay a song-level count.
+  const blind = { ...application, listBaselineEvents: undefined };
+  const unplaced = (await listenOn(blind)({ artifact_id: artifact.artifact_id })).structuredContent;
+  assert.equal(unplaced.markers.filter(marker => marker.kind === 'lead-unverified').length, 0);
+  assert.deepEqual(unplaced.unverified_lead, { unverified: 4, placed: 0, unplaced: 4, markers: 0 });
+  assert.ok(unplaced.song_notes.some(note => /4 個無法在交付的 Melody 上定位/.test(note.label)));
+});
+
+const listenBeat = text => { const [n, d = '1'] = String(text).split('/'); return Number(n) / Number(d); };
+
+test('a real-sized Final (1,500 held releases, 400 unverified Lead notes) stays within the marker budgets with the full counts kept', async () => {
+  const roles = ['Melody', 'Chord1', 'Chord2', 'Chord3', 'Chord4', 'Chord5'];
+  const renderings = [];
+  for (let i = 0; i < 1500; i++) {
+    const role = roles[i % 6];
+    const beat = Math.floor(i / 6) + 1;
+    renderings.push({ eventId: `e${i}`, role, onset: String(beat - 1), release: `${beat * 480 - 1}/480`, renderedRelease: String(beat), intervalKeys: [`k${i}`] });
+  }
+  const mml = `MML@t120o4${'c4'.repeat(800)},,,,,;`;
+  const parsed = parseListenMml(mml);
+  const artifact = {
+    provisional_release_rendering: { applied: true, renderings, heldEventCount: 1500, closedIntervalCount: 1500, releaseOffsetSources: [] },
+    machine_delivery: {
+      unresolved_evidence_ledger: [
+        { gate: 'microTiming', classification: 'NON_BLOCKING_PENDING', status: 'PENDING', blockers: ['MICRO_TIMING_RELEASE_PROVISIONAL'], delivery_flag: 'RELEASES_RENDERED_PROVISIONALLY', provisional_releases: [] },
+        // Every other Melody note: 400 separate notes until neighbours are merged.
+        { gate: 'leadPromotion', classification: 'NON_BLOCKING_PENDING', status: 'PENDING', blockers: ['LEAD_PROMOTION_EVIDENCE_REQUIRED', 'LEAD_PROMOTION_PRIMARY_EVIDENCE_MISSING'], delivery_flag: 'LEAD_UNVERIFIED', unverified_lead_event_ids: Array.from({ length: 400 }, (_, i) => `m${i * 2}`) },
+        { gate: 'inGameAcceptance', classification: 'POST_DELIVERY', status: 'PENDING', blockers: [] },
+      ],
+    },
+    delivery: { flags: ['RELEASES_RENDERED_PROVISIONALLY', 'LEAD_UNVERIFIED'] },
+  };
+  const lookup = async ids => ids.map(id => ({ event_id: id, start: id.slice(1) }));
+  const result = await finalListeningMarkers(artifact, { parsedTracks: parsed.tracks, totalBeats: 800, lookupBaselineEvents: lookup });
+  const provisional = result.markers.filter(marker => marker.kind === 'provisional-release');
+  const lead = result.markers.filter(marker => marker.kind === 'lead-unverified');
+  assert.ok(provisional.length <= PROVISIONAL_MARKER_BUDGET && provisional.length > 0, String(provisional.length));
+  assert.equal(provisional.reduce((sum, marker) => sum + marker.count, 0), 1500, 'every release is inside exactly one range');
+  assert.ok(lead.length <= LEAD_MARKER_BUDGET && lead.length > 0);
+  assert.equal(lead.reduce((sum, marker) => sum + marker.count, 0), 400);
+  assert.ok(result.markers.length <= 500);
+  assert.match(result.notes[0].label, /共 1,500 個 release/);
+  assert.match(result.notes[0].label, /合併成 \d+ 個區段標記/);
+  assert.equal(result.provisional_releases.held, 1500);
+  assert.deepEqual(result.unverified_lead, { unverified: 400, placed: 400, unplaced: 0, markers: lead.length });
+  assert.deepEqual(result.notes.at(-1), { gate: 'inGameAcceptance', classification: 'POST_DELIVERY', status: 'PENDING', blockers: [], label: '遊戲內驗收：PENDING' });
+  // Ranges stay on one role and never overlap within it.
+  for (const role of roles) {
+    const ranges = provisional.filter(marker => marker.role === role).map(marker => [listenBeat(marker.beat), listenBeat(marker.end_beat ?? marker.beat)]);
+    for (let i = 1; i < ranges.length; i++) assert.ok(ranges[i][0] > ranges[i - 1][1], `${role} ranges overlap`);
+  }
+
+  // The grouping itself: the smallest merge that fits, deterministic.
+  const items = Array.from({ length: 10 }, (_, i) => ({ role: 'Chord1', start: i * 2, end: i * 2 + 1, beat: String(i * 2), endBeat: String(i * 2 + 1) }));
+  assert.equal(groupRuns(items, 10).groups.length, 10);
+  assert.deepEqual(groupRuns(items, 9).groups.map(group => [group.beat, group.endBeat, group.items.length]), [['0', '19', 10]]);
+});
+
+test('ledger entries without a real position field stay song-level notes; a positioned one is still read', async () => {
+  const artifact = syntheticArtifact({
+    machine_delivery: {
+      unresolved_evidence_ledger: [
+        { gate: 'mobileAdaptation', classification: 'NON_BLOCKING_PENDING', status: 'PENDING', blockers: [], locations: [{ beat: '8', end_beat: '10', role: 'Chord1', finding: 'range check' }] },
+        { gate: 'originalAudio', classification: 'NON_BLOCKING_PENDING', status: 'PENDING', blockers: [], positions: [{ beat: '400' }] },
+        { gate: 'inGameAcceptance', classification: 'POST_DELIVERY', status: 'PENDING', blockers: [] },
+        { gate: 'core3', classification: 'BLOCKING', status: 'FAIL', blockers: ['CORE3'], locations: [{ beat: '2' }] },
+      ],
+    },
+  });
+  const view = (await surface({ application: stubApplication(artifact) }).call({ artifact_id: ARTIFACT_ID })).result.structuredContent;
+  assert.deepEqual(view.markers.map(marker => [marker.kind, marker.beat, marker.end_beat ?? null, marker.role, marker.gate]), [['pending', '8', '10', 'Chord1', 'mobileAdaptation']]);
+  assert.match(view.markers[0].label, /Mobile 適配審查：range check/);
+  assert.deepEqual(view.song_notes.map(note => note.gate), ['inGameAcceptance', 'originalAudio'], 'past the end of the song is a note, not a guess');
+  assert.deepEqual(view.delivery_flags, []);
+  assert.equal(view.provisional_releases, null);
+  assert.equal(view.unverified_lead, null);
+
+  const notFinal = (await surface({ application: stubApplication({ ...artifact, type: 'report' }) }).call({ artifact_id: ARTIFACT_ID })).result;
+  assert.equal(notFinal.structuredContent.error.details.reason, 'LISTEN_ARTIFACT_NOT_FINAL');
+});
+
+// A stand-in Application Service holding one synthetic artifact.
 function stubApplication(artifact) {
   return {
     async getArtifact(owner, artifactId) {
-      if (artifactId !== artifact.artifact_id) {
-        const error = Object.assign(new Error('Unknown artifact'), { name: 'StudioApplicationError', code: 'ARTIFACT_NOT_FOUND', details: {} });
-        throw error;
-      }
+      if (artifactId !== artifact.artifact_id) throw Object.assign(new Error('Unknown artifact'), { name: 'StudioApplicationError', code: 'ARTIFACT_NOT_FOUND', details: {} });
       return { canonical: { status: 'CANONICAL_LOADED' }, operation: 'succeeded', artifact };
     },
     async getProject() { return { project: { title: 'Synthetic ledger fixture' } }; },
@@ -354,69 +558,4 @@ const syntheticArtifact = extra => ({
   type: 'final_mml', artifact_id: ARTIFACT_ID, project_id: PROJECT_ID, candidate_id: 'g11d:rev:synthetic', song_state: 'VALIDATED',
   mml: SONG, final_bar: { pickup: null, final_partial: null, meter_text: '0 4/4' },
   ...extra,
-});
-
-test('ledger entries with a position become markers; the rest are song-level notes', async () => {
-  const artifact = syntheticArtifact({
-    machine_delivery: {
-      lifecycle: 'CANDIDATE',
-      unresolved_evidence_ledger: [
-        { gate: 'mobileAdaptation', classification: 'NON_BLOCKING_PENDING', status: 'PENDING', blockers: ['X'], locations: [{ beat: '8', end_beat: '10', role: 'Chord1', finding: 'range check' }] },
-        { gate: 'leadPromotion', classification: 'NON_BLOCKING_PENDING', status: 'PENDING', blockers: [], events: [{ start: '4', role: 'Melody' }, { bar: 5, role: 'Melody', label: 'second promotion' }] },
-        { gate: 'originalAudio', classification: 'NON_BLOCKING_PENDING', status: 'PENDING', blockers: [], positions: [{ beat: '400' }] },
-        { gate: 'inGameAcceptance', classification: 'POST_DELIVERY', status: 'PENDING', blockers: [] },
-        { gate: 'core3', classification: 'BLOCKING', status: 'FAIL', blockers: ['CORE3'], locations: [{ beat: '2' }] },
-        { gate: 'regression', classification: 'NON_BLOCKING_PENDING', status: 'PENDING', blockers: [], locations: [{ beat: 'nonsense' }, { beat: 3.5 }] },
-      ],
-    },
-    provisional_releases: [
-      { bar: 3, role: 'Chord2', representation: 'EXTEND_TO_NEXT_GRID' },
-      { event_id: 'no position at all' },
-    ],
-  });
-  const mcp = surface({ application: stubApplication(artifact) });
-  const result = (await mcp.call({ artifact_id: ARTIFACT_ID })).result;
-  assert.equal(result.isError, false, JSON.stringify(result.structuredContent).slice(0, 400));
-  const view = result.structuredContent;
-  assert.deepEqual(view.markers.map(marker => [marker.kind, marker.beat, marker.end_beat ?? null, marker.bar, marker.role, marker.gate, marker.source]), [
-    ['pending', '7/2', null, 1, null, 'regression', 'machine-delivery-ledger'],
-    ['lead-unverified', '4', null, 2, 'Melody', 'leadPromotion', 'machine-delivery-ledger'],
-    ['pending', '8', '10', 3, 'Chord1', 'mobileAdaptation', 'machine-delivery-ledger'],
-    ['provisional-release', '8', null, 3, 'Chord2', null, 'provisional-release'],
-    ['lead-unverified', '16', null, 5, 'Melody', 'leadPromotion', 'machine-delivery-ledger'],
-  ]);
-  assert.match(view.markers.find(marker => marker.kind === 'provisional-release').label, /EXTEND_TO_NEXT_GRID/);
-  assert.match(view.markers[2].label, /Mobile 適配審查：range check/);
-  // A position past the end of the song and a gate with none are notes, not guesses.
-  assert.deepEqual(view.song_notes.map(note => note.gate), ['inGameAcceptance', 'originalAudio']);
-  assert.ok(!view.markers.some(marker => marker.gate === 'core3'), 'a BLOCKING entry is not a listening marker');
-  assert.equal(view.source.lifecycle, 'CANDIDATE');
-  assert.deepEqual((await linkPayload(view.listen_link.url)).markers.map(marker => marker.kind), ['pending', 'lead-unverified', 'pending', 'provisional-release', 'lead-unverified']);
-
-  // The other name a later release may use, as an object.
-  const renamed = syntheticArtifact({ provisional_release_representation: { decisions: [{ id: 'd1', eventIds: ['e'], locations: [{ beat: '12', role: 'Chord3' }] }] } });
-  const other = (await surface({ application: stubApplication(renamed) }).call({ artifact_id: ARTIFACT_ID })).result.structuredContent;
-  assert.deepEqual(other.markers.map(marker => [marker.kind, marker.beat, marker.role]), [['provisional-release', '12', 'Chord3']]);
-
-  const notFinal = (await surface({ application: stubApplication({ ...artifact, type: 'report' }) }).call({ artifact_id: ARTIFACT_ID })).result;
-  assert.equal(notFinal.structuredContent.error.details.reason, 'LISTEN_ARTIFACT_NOT_FINAL');
-});
-
-test('markers are capped at 500 and an oversized link is withheld, not truncated', async () => {
-  const label = '聽'.repeat(190);
-  const artifact = syntheticArtifact({
-    mml: `MML@t120${'o4c4'.repeat(500)},,,,,;`,
-    machine_delivery: {
-      unresolved_evidence_ledger: [{ gate: 'mobileAdaptation', classification: 'NON_BLOCKING_PENDING', status: 'PENDING', blockers: [], locations: Array.from({ length: 499 }, (_, i) => ({ beat: String(i), finding: label })) }],
-    },
-    provisional_releases: Array.from({ length: 30 }, (_, i) => ({ beat: String(i), representation: label })),
-  });
-  const result = (await surface({ application: stubApplication(artifact) }).call({ artifact_id: ARTIFACT_ID })).result;
-  const view = result.structuredContent;
-  assert.equal(view.markers.length, 500);
-  assert.equal(view.truncated_markers, 29);
-  assert.equal(view.listen_link, null);
-  assert.equal(view.listen_link_status, 'PAYLOAD_TOO_LARGE');
-  assert.match(result.content[0].text, /256 KB/);
-  assert.ok(Buffer.byteLength(JSON.stringify(result)) < 524288);
 });
