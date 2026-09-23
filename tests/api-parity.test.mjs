@@ -153,6 +153,11 @@ test('every studio MCP tool dispatches to an operation the Application Service a
     // reaches with an id.
     studio_proposal_status: 'getProposal',
     studio_proposal_resolve: 'resolveProposal',
+    // One read tool, two reads, like `studio_proposal_status`: with
+    // alternatives it computes a prescreen; with only a project id it reads
+    // that project's shadow calibration record (`prescreenShadowStatus`).
+    studio_audio_prescreen: 'audioPrescreen',
+    studio_prescreen_shadow_record: 'recordPrescreenShadow',
   };
   for (const tool of STUDIO_MCP_TOOLS) {
     const operation = operations[tool.name];

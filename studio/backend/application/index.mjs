@@ -106,6 +106,7 @@ import { createTechnicalService } from './technical-service.mjs';
 import { createRunService } from './run-service.mjs';
 import { createRunNextService } from './run-next.mjs';
 import { createProposalService } from './proposal-service.mjs';
+import { createPrescreenService } from './prescreen-service.mjs';
 
 export const APPLICATION_VERSION = '1.0.0';
 
@@ -153,6 +154,10 @@ function createProjectSerializer() {
  *   interruption inside a run step, in the same spirit as `loadEngines`.
  *   Production passes nothing. See `run-service.mjs` for the three hooks and
  *   the three interruption classes they stand in for.
+ * @param {object}   [options.audioPrescreen] Sound-bank and worker settings for
+ *   the audio prescreen (`prescreen-service.mjs`). Production passes nothing
+ *   and gets the pinned free GM bank, downloaded on first need and cached
+ *   under the data directory; tests inject a synthetic bank.
  */
 export function createStudioApplication({
   dataDirectory = null,
@@ -162,6 +167,7 @@ export function createStudioApplication({
   serviceVersion = APPLICATION_VERSION,
   transports = [],
   runHooks = undefined,
+  audioPrescreen = {},
 } = {}) {
   const canonical = createCanonicalGate(loadEngines ? { load: loadEngines } : {});
   const store = createStore({ directory: dataDirectory, durability, maxBytes: maxStoreBytes });
@@ -173,6 +179,7 @@ export function createStudioApplication({
   const review = createReviewService({ canonical, projects, intake, arrangement, store });
   const final = createFinalService({ canonical, projects, review, store });
   const technical = createTechnicalService({ serviceVersion, canonical });
+  const prescreen = createPrescreenService({ canonical, projects, intake, arrangement, final, assets, store, dataDirectory, options: audioPrescreen });
   const serialized = createProjectSerializer();
   const mutate = (projectId, work) => serialized(String(projectId), work);
 
@@ -623,6 +630,38 @@ export function createStudioApplication({
      */
     async resolveProposal(owner, projectId, proposalId, input = {}) {
       return envelope({ operation: OPERATION_STATUS.SUCCEEDED, ...(await proposals.resolve(owner, projectId, proposalId, publicInput(input))) });
+    },
+
+    // ── audio prescreen ─────────────────────────────────────────────────────
+    //
+    // 音色 A/B 預篩. Renders 2-4 alternatives with a free GM bank and says, bar
+    // by bar, whether one is obviously better by every applicable machine
+    // metric or whether the owner should listen. Machine evidence only: it
+    // writes no project record, selects nothing, and sets no gate -- not Gate
+    // 7, not player readback, not in_game. See `prescreen-service.mjs`.
+
+    /** Read-only. `projectId` null for raw MML alternatives. */
+    async audioPrescreen(owner, projectId, input = {}) {
+      return envelope({ operation: OPERATION_STATUS.SUCCEEDED, prescreen: await prescreen.prescreen(owner, projectId ?? null, publicInput(input)) });
+    },
+
+    /** Read-only. The project's shadow-mode calibration record and agreement figures. */
+    async prescreenShadowStatus(owner, projectId) {
+      return envelope({ operation: OPERATION_STATUS.SUCCEEDED, shadow: prescreen.shadowStatus(owner, projectId) });
+    },
+
+    /**
+     * Record a prediction (recomputed here, never taken from the caller) or the
+     * owner's actual choice for one predicted region (requires accepted_by).
+     * Writes only the shadow calibration record.
+     */
+    async recordPrescreenShadow(owner, projectId, input = {}) {
+      return mutate(projectId, async () => envelope({ operation: OPERATION_STATUS.SUCCEEDED, shadow: await prescreen.recordShadow(owner, projectId, publicInput(input)) }));
+    },
+
+    /** Stop the prescreen's render workers (they also stop on their own when idle). */
+    async releaseAudioWorkers() {
+      await prescreen.close();
     },
 
     // ── jobs and artifacts ──────────────────────────────────────────────────
