@@ -280,7 +280,7 @@ export function textWidth(str) {
 
 export function clampMarkText(str) {
   const flat = String(str ?? "")
-    .replace(/[ -]/g, " ")
+    .replace(/[\u0000-\u001f\u007f]/g, " ")
     .trim();
   let out = "", w = 0;
   for (const ch of flat) {
