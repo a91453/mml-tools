@@ -233,7 +233,8 @@ prerequisite.
 | B evidence-gated Mobile release representation | `2586722` |
 | C VALIDATED song state, delivery identity, exact long rests | `9af0317` |
 | D real-song E2E and notes | `870f7bb` (then `b3679de`, `9e6d07d` review fixes) |
-| E evidence authority decoupled from submitter type (§8) | the commit adding §8 (read the PR head from the PR) |
+| E evidence authority decoupled from submitter type (§8) | `39c4f26`, `970e820` |
+| F Lead evidence graded independently of the submitter (§9) | `ff83bad`, then the commit adding §9 (read the PR head from the PR) |
 
 ## 8. Follow-up 2026-09-23 — evidence authority is not the submitter's type
 
@@ -363,3 +364,79 @@ client submits a release decision through `resumeRun.mobile_adaptation` or the
 MCP/HTTP adaptation operations, not through a proposal. Admissibility also does
 not check the cited recording's version (SOURCE_POLICY §7) or its Gate 7
 alignment; those remain separate required gates before `VALIDATED`.
+
+## 9. Follow-up 2026-09-23 (2) — Lead evidence is not the submitter's type either
+
+Published Canonical re-loaded from main's Manifest: `2026-09-13-v1` / PUBLISHED,
+manifest `2026-09-13-v1-manifest1`, `rules_snapshot_sha` `0a172900…`, Manifest
+commit `5e7666b8…`; main still `8bec72a7…`. No indexed document changed.
+
+### Old behaviour and root cause
+
+On main since `f020b95`, `leadReviewAuthorityOf` returned `HUMAN_ATTESTED` only
+for `reviewer_kind: human`, and `reviewLeadEvidence` / the review context handed
+only those reviews to the shared Lead grader (`counted = authority ===
+HUMAN_ATTESTED`); readiness Gate 3 (`leadPromotion` / `leadDemotion`) read the
+grader's reports, so it depended on the submitter's type. The rule was added to
+stop agent reviews built on F0/CQT metrics from passing, which was right to stop;
+but Published Canonical keys that on the *method* (SOURCE_POLICY §6) and the
+*source* (§1, §4), not on who submits. The actor key also stood in for a source
+check that did not exist: Lead citations were free text, so a `human` label on a
+third-party top line counted.
+
+### New behaviour (`ff83bad`)
+
+| Concept | Where | Effect |
+| --- | --- | --- |
+| Provenance | `attestation {reviewer, reviewer_kind: human\|agent\|tool\|mcp-client\|imported}` + authenticated owner | required, recorded, never graded (`GRADED_ON_EVIDENCE`) |
+| Method | `attestation.audio_basis` (`listening` = `direct-source-review`, `machine-metric`, `not-used`) | a metric classification is never positive role evidence (§6) |
+| Source | `scoreEvidence.ref` / `audioEvidence.ref`, resolved in the project's evidence registry (the release-timing one; entries carry `sourceClass`) | only an official score (§1A) or the original recording (§1B) the project holds, independent of every supporting file, may prove a role; third-party/derived is supporting (§1C); uncited, unknown, bytes-less or mismatched references prove nothing |
+
+The shared grader (`evaluateLeadPromotion/Demotion`) reads `sourceAuthority`;
+supporting or unresolved evidence is never positive but can still raise a
+conflict, so it fails closed toward the Source-Faithful Lead. Lead demotion
+still needs positive evidence; "not proven Vocal" and "highest note" are not
+evidence. Unattested historical reviews stay on record and are not graded.
+Stored attested reviews are re-resolved against the current sources on every
+review and finalize. Gate 10 is untouched: nothing on this path can set
+`IN_GAME_ACCEPTED` (LRA-10).
+
+Actor-gate audit (machine-readable): [actor-gate-audit.json](evidence/actor-gate-audit-2026-09-23/actor-gate-audit.json).
+Improper actor gates found and fixed: release representation (`39c4f26`), Lead
+review authority, Lead queue classification and the tool/capability wording
+(`ff83bad`). Kept: Gate 10 (A); provenance fields and the agent CLI's
+speak-as-yourself rule (B); metric/source/evidence-required rules and the
+proposal protocol's suggestion-vs-acceptance separation (D). No improper actor
+gate remains on the deterministic path. Found, not changed: decision-time
+`applyDecisions.leadEvidence` citations are still free text (actor-neutral, but
+not source-resolved) — a separate decision because it changes existing
+decision-time PASS semantics on main.
+
+### Kaiju Lead: before and after
+
+Before and after, Gate 3 is **PENDING**: 569 provisional Melody events, all
+`LEAD_EVIDENCE_MISSING`. The E2E now records why (receipt `lead` section):
+
+- 395 events have no Lead review at all;
+- the 174 stored production reviews are **unattested** (no submitter, no method)
+  — the old human-only rule never applied to them, and they are not graded now;
+- resubmitted with any attestation they would still prove nothing: their audio
+  classifications come from CQT salience (150), predominant pitch-class (22) or
+  F0 (2) — metrics, i.e. locators — and a score citation can only name the
+  third-party MIDI (supporting) or its relabelled "official" copy (not
+  independent); none names a project source at all;
+- the probes, graded through the service's own preparation and the shared
+  grader for a human and an agent submitter, agree exactly: metric audio,
+  third-party or relabelled score, uncited score → PENDING; a direct review of
+  the recording citing the original_audio asset → would prove the role (shape
+  only; no such review exists).
+
+**Category B — genuinely missing source evidence; 0 of 569 were held only by the
+submitter rule.** What would resolve them: per Melody section, positive Lead
+evidence from a primary source (a direct review of the recording stating which
+line is foreground, citing the original_audio asset, or an official score), a
+resolved section role, checked continuity and Core3 — from any submitter.
+
+The rest of the song is unchanged: micro-timing PENDING on
+`MICRO_TIMING_RELEASE_EVIDENCE_REQUIRED` (§8), Gates 0/2/4/7/8/9 and player
+readback open, song state **`CANDIDATE`**, finalize refused, **no MML**.

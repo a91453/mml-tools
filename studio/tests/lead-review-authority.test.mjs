@@ -358,7 +358,7 @@ test('LRA-10 a Lead review cannot set in-game acceptance, whatever it carries', 
   assert.equal(after.gates.in_game, 'PENDING');
 });
 
-test('LRA-11 no backend or transport source keys evidence authority on a human submitter', () => {
+test('LRA-11 no backend, transport or script source keys evidence authority on a human submitter', () => {
   const repository = fileURLToPath(new URL('../../', import.meta.url));
   const offenders = [];
   const walk = dir => {
@@ -370,6 +370,6 @@ test('LRA-11 no backend or transport source keys evidence authority on a human s
       if (/reviewer_kind\s*[!=]==?\s*['"]human['"]|['"]human['"]\s*[!=]==?\s*[\w.?]*reviewer_kind|HUMAN_ATTESTED/.test(text)) offenders.push(path);
     }
   };
-  for (const dir of ['studio/backend', 'server']) if (existsSync(join(repository, dir))) walk(join(repository, dir));
+  for (const dir of ['studio/backend', 'server', 'scripts']) if (existsSync(join(repository, dir))) walk(join(repository, dir));
   assert.deepEqual(offenders, []);
 });

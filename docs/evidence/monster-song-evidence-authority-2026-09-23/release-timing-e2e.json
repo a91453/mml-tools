@@ -1087,6 +1087,194 @@
         "not_a_blocker": "who the submitter is"
       }
     },
+    "lead": {
+      "gate": {
+        "status": "PENDING",
+        "blockers": [
+          "LEAD_PROMOTION_EVIDENCE_REQUIRED"
+        ]
+      },
+      "promotion_reports": {
+        "total": 569,
+        "by_status": {
+          "PENDING": 569
+        },
+        "blocker_counts": {
+          "LEAD_EVIDENCE_EVENT_IDENTITY_MISMATCH": 569,
+          "LEAD_EVIDENCE_MISSING": 569
+        }
+      },
+      "stored_production_reviews": {
+        "source": "docs/evidence/kaiju-final-remediation-2026-09-22/lead-review-queue.json",
+        "reviews_sha256": "2646aab8136316c8af8ea41f78c8da6240155af8fd04d2f5dccb2105cac6ba23",
+        "melody_events": 569,
+        "without_any_review": 395,
+        "stored": 174,
+        "attested": 0,
+        "by_classification": {
+          "contradictory-evidence": 21,
+          "f0-or-pitch-class-only": 3,
+          "unresolved-missing-evidence": 395,
+          "weak-machine-evidence": 150
+        },
+        "audio_citation_kinds": {
+          "cqt-salience": 150,
+          "f0": 2,
+          "predominant-pitch-class": 22
+        },
+        "score_citation_available": {
+          "false": 171,
+          "true": 3
+        },
+        "carrying_a_project_reference": 0,
+        "note": "The stored reviews predate the `ref` field, so none names a project source; the queue omits citation text."
+      },
+      "evidence_probes": [
+        {
+          "probe": "original_audio ast_6154754b4b22da998fc266ff5400b879 classified from CQT/F0/pitch-class metrics (what the stored reviews rest on)",
+          "status": "PENDING",
+          "same_grade_for_every_submitter": true,
+          "blockers": [
+            "POSITIVE_LEAD_EVIDENCE_MISSING"
+          ],
+          "sources": {
+            "audio": {
+              "ref": "ast_6154754b4b22da998fc266ff5400b879",
+              "sourceAuthority": "primary",
+              "reason": null,
+              "sourceClass": "primary-audio",
+              "kind": "original-audio"
+            }
+          }
+        },
+        {
+          "probe": "original_audio ast_6154754b4b22da998fc266ff5400b879 by a direct review of the recording (shape only; no such review is on record)",
+          "status": "PASS",
+          "same_grade_for_every_submitter": true,
+          "blockers": [],
+          "sources": {
+            "audio": {
+              "ref": "ast_6154754b4b22da998fc266ff5400b879",
+              "sourceAuthority": "primary",
+              "reason": null,
+              "sourceClass": "primary-audio",
+              "kind": "original-audio"
+            }
+          }
+        },
+        {
+          "probe": "original_audio ast_bf887f2d0fa6409762fa60307f95774e classified from CQT/F0/pitch-class metrics (what the stored reviews rest on)",
+          "status": "PENDING",
+          "same_grade_for_every_submitter": true,
+          "blockers": [
+            "POSITIVE_LEAD_EVIDENCE_MISSING"
+          ],
+          "sources": {
+            "audio": {
+              "ref": "ast_bf887f2d0fa6409762fa60307f95774e",
+              "sourceAuthority": "primary",
+              "reason": null,
+              "sourceClass": "primary-audio",
+              "kind": "original-audio"
+            }
+          }
+        },
+        {
+          "probe": "original_audio ast_bf887f2d0fa6409762fa60307f95774e by a direct review of the recording (shape only; no such review is on record)",
+          "status": "PASS",
+          "same_grade_for_every_submitter": true,
+          "blockers": [],
+          "sources": {
+            "audio": {
+              "ref": "ast_bf887f2d0fa6409762fa60307f95774e",
+              "sourceAuthority": "primary",
+              "reason": null,
+              "sourceClass": "primary-audio",
+              "kind": "original-audio"
+            }
+          }
+        },
+        {
+          "probe": "third_party_midi ast_477a6c594a7c4728ed06ee9a981ce1ad top line as score-role evidence",
+          "status": "PENDING",
+          "same_grade_for_every_submitter": true,
+          "blockers": [
+            "POSITIVE_LEAD_EVIDENCE_MISSING"
+          ],
+          "sources": {
+            "score": {
+              "ref": "ast_477a6c594a7c4728ed06ee9a981ce1ad",
+              "sourceAuthority": "supporting",
+              "reason": "LEAD_EVIDENCE_SOURCE_SUPPORTING_ONLY",
+              "sourceClass": "supporting",
+              "kind": "third-party-midi"
+            }
+          }
+        },
+        {
+          "probe": "third_party_midi ast_2ba293828d08c0c7e4b67240fb7dad28 top line as score-role evidence",
+          "status": "PENDING",
+          "same_grade_for_every_submitter": true,
+          "blockers": [
+            "POSITIVE_LEAD_EVIDENCE_MISSING"
+          ],
+          "sources": {
+            "score": {
+              "ref": "ast_2ba293828d08c0c7e4b67240fb7dad28",
+              "sourceAuthority": "supporting",
+              "reason": "LEAD_EVIDENCE_SOURCE_SUPPORTING_ONLY",
+              "sourceClass": "supporting",
+              "kind": "third-party-midi"
+            }
+          }
+        },
+        {
+          "probe": "official_midi ast_62c0678854fc1b80138aa530e6776db5 as score-role evidence",
+          "status": "PENDING",
+          "same_grade_for_every_submitter": true,
+          "blockers": [
+            "POSITIVE_LEAD_EVIDENCE_MISSING"
+          ],
+          "sources": {
+            "score": {
+              "ref": "ast_62c0678854fc1b80138aa530e6776db5",
+              "sourceAuthority": "supporting",
+              "reason": "LEAD_EVIDENCE_SOURCE_NOT_INDEPENDENT",
+              "sourceClass": "not-independent",
+              "kind": "official-midi"
+            }
+          }
+        },
+        {
+          "probe": "a score citation with no project reference (the shape of every stored review)",
+          "status": "PENDING",
+          "same_grade_for_every_submitter": true,
+          "blockers": [
+            "POSITIVE_LEAD_EVIDENCE_MISSING"
+          ],
+          "sources": {
+            "score": {
+              "ref": null,
+              "sourceAuthority": "unresolved",
+              "reason": "LEAD_EVIDENCE_SOURCE_NOT_CITED",
+              "sourceClass": null,
+              "kind": null
+            }
+          }
+        }
+      ],
+      "determination": {
+        "category": "B_GENUINELY_MISSING_SOURCE_EVIDENCE",
+        "blocked_only_by_the_submitter_rule": 0,
+        "why": [
+          "395 Melody events have no Lead review at all.",
+          "174 stored reviews state no submitter and no method (unattested); under the old rule and the new one they are not graded.",
+          "Resubmitted with any attestation, they would still prove nothing: their audio classifications come from CQT salience, predominant pitch-class or F0 (metrics: locators, SOURCE_POLICY §6), and a score citation can only name the third-party MIDI (supporting, §1C) or its relabelled \"official\" copy (not independent); see evidence_probes.",
+          "The Lead events are the highest sounding pitch of a third-party piano MIDI; \"highest note ⇒ Lead\" is a forbidden shortcut (MASTER_RULES §4)."
+        ],
+        "would_resolve": "Per Melody section: positive Lead evidence from a primary source — a direct review of the original recording stating which line is foreground (citing the original_audio asset), or an official score — plus a resolved section role, checked continuity and Core3, submitted through reviewLeadEvidence (any submitter) or with the decisions."
+      }
+    },
     "counterfactual": {
       "label": "COUNTERFACTUAL_NOT_A_RESULT",
       "hypothetical_inputs": [
@@ -1138,5 +1326,6 @@
       }
     }
   },
-  "deterministic_rerun": "Two independent runs of scripts/studio-release-timing-e2e.mjs at the committed script produced byte-identical receipts."
+  "deterministic_rerun": "Two independent runs of scripts/studio-release-timing-e2e.mjs at the committed script produced byte-identical receipts.",
+  "lead_actor_gate_rerun": "2026-09-23, after ff83bad (Lead evidence graded independently of the submitter): the E2E adds a 'lead' section (gate, 569 promotion reports, the 174 stored production reviews from the committed public queue, and evidence probes graded by the service's own preparation and the shared grader for two submitters). Every other section is byte-identical to the previous receipt."
 }

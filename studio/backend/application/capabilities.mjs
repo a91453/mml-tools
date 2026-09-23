@@ -138,6 +138,11 @@ export function buildCapabilities({ canonical, storage, jobs, transports = [] })
       // Lead picture. Both axes; the shared grader runs every time.
       lead_evidence_lineage_recovery: true,
       lead_evidence_re_review: true,
+      // A re-review is graded on its evidence, whoever submits it: the submitter
+      // is provenance; each classified score/audio citation names a project
+      // source (`ref`) that must be an official score or the original recording
+      // the project holds; a machine-metric audio basis is never positive.
+      lead_evidence_graded_on_evidence_not_submitter: true,
       // The Published Canonical validator, and the legacy engine kept beside it
       // as an explicitly labelled diagnostic whose PASS is not a Canonical PASS.
       canonical_technical_validation: true,

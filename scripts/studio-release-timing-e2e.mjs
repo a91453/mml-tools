@@ -43,12 +43,14 @@ import { createStore } from '../studio/backend/application/store.mjs';
 import { createCanonicalMeterEvent, createCanonicalProject, createCanonicalTempoEvent } from '../studio/backend/canonical/index.mjs';
 import { EVIDENCE_BASIS, buildEvidenceRegistry, gradeReleaseEvidence, releaseEvidenceRequirement } from '../studio/backend/canonical/release-timing.mjs';
 import { emitFinalMml } from '../studio/backend/final/mml-emitter.mjs';
+import { evaluateLeadPromotion } from '../studio/backend/arbitration/lead-demotion.mjs';
+import { gradedLeadEvidenceOf, leadReviewAuthorityOf, validateLeadReviewAttestation } from '../studio/backend/application/lead-review-authority.mjs';
 import { loadBaselineEvents } from './studio-microtiming-audit.mjs';
 
 const HELP = `Real-song release-timing E2E through the Studio run (isolated, no network)
   node scripts/studio-release-timing-e2e.mjs --work-dir NEW_DIR --events p1.json[,p2.json...]
        --decisions proposal.json [--project production-project.json | --assets production-assets.json]
-       [--ticks-per-quarter N]
+       [--lead-queue lead-review-queue.json] [--ticks-per-quarter N]
        [--counterfactual] [--out receipt.json]
 `;
 const OWNER = 'local:release-timing-e2e';
@@ -201,7 +203,83 @@ function arbitration(analysis, evidence, { project, gates }) {
   };
 }
 
-export async function releaseTimingE2E({ workDir, eventPaths, decisionsPath, assets = [], project: productionProject = null, ticksPerQuarter = null, counterfactual = false }) {
+// The Lead evidence state, and whether the old submitter rule was what held it.
+// `queue` is the committed public Lead review queue (classifications and
+// citation kinds of the stored production reviews, no citation text). The
+// probes grade representative citation shapes with the service's own
+// preparation (gradedLeadEvidenceOf) and the shared grader, against the
+// production evidence registry, for two submitters; every other Lead
+// requirement is filled in so the probe isolates what the evidence proves.
+function leadSection({ review, assets, sources, queue }) {
+  const gate = review.readiness.gates.leadPromotion;
+  const reports = review.lead_promotion ?? [];
+  const byStatus = {}; const blockerCounts = {};
+  for (const report of reports) { bump(byStatus, report.status); for (const blocker of report.blockers ?? []) bump(blockerCounts, blocker); }
+  const registry = buildEvidenceRegistry({ assets, sources });
+  const byKind = kind => assets.filter(asset => asset.kind === kind).map(asset => asset.asset_id);
+  const event = { id: 'probe', role: 'Chord1', sourceIds: ['probe-source'], sourceEventIds: ['probe-source#e'] };
+  const complete = { sourceIdentity: { sourceId: 'probe-source', sourceEventId: 'probe-source#e' }, sectionRole: 'vocal-active', continuity: { checked: true, createsLeadGap: false, replacementEventIds: [] }, core3: { checked: true, status: 'PASS' }, positiveReason: 'probe' };
+  const probe = (label, leadEvidence, audioBasis) => {
+    const outcomes = ['human', 'agent'].map(kind => {
+      const attested = validateLeadReviewAttestation({ reviewer: `probe:${kind}`, reviewer_kind: kind, audio_basis: audioBasis }, leadEvidence);
+      if (!attested.ok) return { error: attested.error };
+      const prepared = gradedLeadEvidenceOf(leadEvidence, attested.attestation, registry);
+      const graded = evaluateLeadPromotion({ ...complete, ...prepared.leadEvidence, event });
+      return { status: graded.status, blockers: graded.blockers, warnings: graded.warnings, sources: prepared.sources };
+    });
+    return { probe: label, status: outcomes[0].status ?? null, same_grade_for_every_submitter: JSON.stringify(outcomes[0]) === JSON.stringify(outcomes[1]), blockers: outcomes[0].blockers ?? null, sources: outcomes[0].sources ?? null };
+  };
+  const audio = (ref, classification = 'foreground') => ({ availability: 'available', classification, citation: 'probe', ref });
+  const probes = [];
+  for (const ref of byKind('original_audio')) {
+    probes.push(probe(`original_audio ${ref} classified from CQT/F0/pitch-class metrics (what the stored reviews rest on)`, { scoreEvidence: { availability: 'unavailable' }, audioEvidence: audio(ref) }, 'machine-metric'));
+    probes.push(probe(`original_audio ${ref} by a direct review of the recording (shape only; no such review is on record)`, { scoreEvidence: { availability: 'unavailable' }, audioEvidence: audio(ref) }, 'direct-source-review'));
+  }
+  for (const ref of byKind('third_party_midi')) probes.push(probe(`third_party_midi ${ref} top line as score-role evidence`, { scoreEvidence: { availability: 'available', classification: 'lead', citation: 'probe', ref }, audioEvidence: { availability: 'unavailable' } }, 'not-used'));
+  for (const ref of byKind('official_midi')) probes.push(probe(`official_midi ${ref} as score-role evidence`, { scoreEvidence: { availability: 'available', classification: 'lead', citation: 'probe', ref }, audioEvidence: { availability: 'unavailable' } }, 'not-used'));
+  probes.push(probe('a score citation with no project reference (the shape of every stored review)', { scoreEvidence: { availability: 'available', classification: 'lead', citation: 'free text' }, audioEvidence: { availability: 'unavailable' } }, 'not-used'));
+
+  const items = queue?.items ?? [];
+  const stored = items.filter(item => item.storedReview);
+  const count = (list, key) => sorted(list.reduce((map, item) => { bump(map, String(key(item))); return map; }, {}));
+  // The public queue records each stored review's authority; a full export
+  // carries the attestation itself.
+  const unattested = 'UNATTESTED_LEGACY_NOT_REVIEWER_EVIDENCE';
+  const attested = stored.filter(item => (item.storedReview.attestation !== undefined
+    ? leadReviewAuthorityOf({ attestation: item.storedReview.attestation })
+    : item.storedReview.authority) !== unattested).length;
+  return {
+    gate: { status: gate.status, blockers: (gate.blockers ?? []).slice(0, 8) },
+    promotion_reports: { total: reports.length, by_status: sorted(byStatus), blocker_counts: sorted(blockerCounts) },
+    stored_production_reviews: queue ? {
+      source: 'docs/evidence/kaiju-final-remediation-2026-09-22/lead-review-queue.json',
+      reviews_sha256: queue.exports?.reviews_sha256 ?? null,
+      melody_events: items.length,
+      without_any_review: items.length - stored.length,
+      stored: stored.length,
+      attested,
+      by_classification: count(items, item => item.classification),
+      audio_citation_kinds: count(stored, item => item.storedReview.audioCitationKind),
+      score_citation_available: count(stored, item => item.storedReview.scoreCitationAvailable),
+      carrying_a_project_reference: 0,
+      note: 'The stored reviews predate the `ref` field, so none names a project source; the queue omits citation text.',
+    } : null,
+    evidence_probes: probes,
+    determination: {
+      category: 'B_GENUINELY_MISSING_SOURCE_EVIDENCE',
+      blocked_only_by_the_submitter_rule: 0,
+      why: [
+        `${items.length - stored.length} Melody events have no Lead review at all.`,
+        `${stored.length} stored reviews state no submitter and no method (unattested); under the old rule and the new one they are not graded.`,
+        'Resubmitted with any attestation, they would still prove nothing: their audio classifications come from CQT salience, predominant pitch-class or F0 (metrics: locators, SOURCE_POLICY §6), and a score citation can only name the third-party MIDI (supporting, §1C) or its relabelled "official" copy (not independent); see evidence_probes.',
+        'The Lead events are the highest sounding pitch of a third-party piano MIDI; "highest note ⇒ Lead" is a forbidden shortcut (MASTER_RULES §4).',
+      ],
+      would_resolve: 'Per Melody section: positive Lead evidence from a primary source — a direct review of the original recording stating which line is foreground (citing the original_audio asset), or an official score — plus a resolved section role, checked continuity and Core3, submitted through reviewLeadEvidence (any submitter) or with the decisions.',
+    },
+  };
+}
+
+export async function releaseTimingE2E({ workDir, eventPaths, decisionsPath, assets = [], project: productionProject = null, leadQueue = null, ticksPerQuarter = null, counterfactual = false }) {
   if (existsSync(workDir)) throw Error(`${workDir} already exists; use a new isolated directory.`);
   mkdirSync(workDir, { recursive: true });
   const events = loadBaselineEvents(eventPaths);
@@ -272,6 +350,7 @@ export async function releaseTimingE2E({ workDir, eventPaths, decisionsPath, ass
   };
 
   receipt.arbitration = arbitration(plan.releaseTiming, receipt.evidence, { project: productionProject, gates: review.readiness.gates });
+  receipt.lead = leadSection({ review, assets, sources: exported.sources, queue: leadQueue });
   if (counterfactual) receipt.counterfactual = await counterfactualEvaluation({ app, projectId, runId: run.run_id, candidateId, plan, workDir });
   return receipt;
 }
@@ -328,7 +407,7 @@ async function counterfactualEvaluation({ app, projectId, runId, candidateId, pl
 
 async function main(argv = process.argv.slice(2)) {
   const { values } = parseArgs({ args: argv, options: {
-    'work-dir': { type: 'string' }, events: { type: 'string' }, decisions: { type: 'string' }, assets: { type: 'string' }, project: { type: 'string' },
+    'work-dir': { type: 'string' }, events: { type: 'string' }, decisions: { type: 'string' }, assets: { type: 'string' }, project: { type: 'string' }, 'lead-queue': { type: 'string' },
     'ticks-per-quarter': { type: 'string' }, counterfactual: { type: 'boolean' }, out: { type: 'string' }, help: { type: 'boolean' },
   } });
   if (values.help || !values['work-dir'] || !values.events || !values.decisions) { process.stdout.write(HELP); return values.help ? 0 : 1; }
@@ -342,6 +421,7 @@ async function main(argv = process.argv.slice(2)) {
     decisionsPath: resolve(values.decisions),
     assets: assets.map(({ asset_id, kind, sha256, filename }) => ({ asset_id, kind, sha256, filename })),
     project: project ? { audio_evidence: project.audio_evidence ?? [], artifacts: project.artifacts ?? [] } : null,
+    leadQueue: values['lead-queue'] ? readJson(resolve(values['lead-queue'])) : null,
     ticksPerQuarter: values['ticks-per-quarter'] ? Number(values['ticks-per-quarter']) : null,
     counterfactual: values.counterfactual === true,
   });
