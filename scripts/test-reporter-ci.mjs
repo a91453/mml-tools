@@ -5,8 +5,10 @@
 import { relative } from 'node:path';
 import { tap } from 'node:test/reporters';
 
-// A parent that failed only because a subtest did adds no information.
-const SUMMARY_ONLY = new Set(['subtestsFailed']);
+// Not a cause of its own: a parent that failed only because a subtest did,
+// and a test cancelled because its parent failed (a failing hook, a timed-out
+// file), whose parent is listed with the actual cause.
+const SUMMARY_ONLY = new Set(['subtestsFailed', 'cancelledByParent']);
 const MESSAGE_LIMIT = 200;
 
 const escapeProperty = text => text.replace(/%/g, '%25').replace(/\r/g, '%0D').replace(/\n/g, '%0A').replace(/:/g, '%3A').replace(/,/g, '%2C');

@@ -229,6 +229,7 @@ export default {
   "fileBox.okWipe": "지우고 가져오기",
   "fileBox.okImport": "가져오기",
   "fileBox.readFailed": "이 파일을 읽을 수 없습니다: {msg}",
+  "fileBox.notMxl": "이 압축 파일은 읽을 수 있는 MusicXML(.mxl)이 아닙니다: {msg}",
   "fileBox.noNotes": "이 파일에서 음표를 찾지 못했습니다.",
   "fileBox.format2": "이것은 Format 2 MIDI입니다(각 트랙이 독립된 악절). 여러 개를 체크하면 겹쳐서 울립니다",
   "fileBox.unknownFile": "이 파일을 인식하지 못했습니다. 사용 가능한 것은 .mid, 3MLE의 .mml, 마비노기의 .mmi, 또는 MML@…;만 있는 텍스트 파일입니다.",

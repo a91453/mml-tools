@@ -229,6 +229,7 @@ export default {
   "fileBox.okWipe": "清空並匯入",
   "fileBox.okImport": "匯入",
   "fileBox.readFailed": "讀不了這個檔案：{msg}",
+  "fileBox.notMxl": "這個壓縮檔不是可讀的 MusicXML（.mxl）：{msg}",
   "fileBox.noNotes": "這個檔裡沒有找到任何音符。",
   "fileBox.format2": "這是 Format 2 的 MIDI（每個音軌是獨立的樂段），同時勾多個音軌會疊在一起",
   "fileBox.unknownFile": "認不出這個檔案。可以吃 .mid、3MLE 的 .mml、瑪奇的 .mmi，或是只有 MML@…; 的純文字檔。",

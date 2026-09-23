@@ -108,10 +108,11 @@ function fillPresets() {
 
 let bankFile = null;
 
-// Bank loads run one at a time, in the order they were asked for, so the
-// synth and the label end on the last choice. The stored bank read at boot is
-// dropped once the user has picked one: otherwise a slow boot load finishing
-// last would replace the bank they just chose.
+// Bank loads run one at a time, and a load only runs while nothing newer
+// was asked for, so the synth, the label and the bank store end on the last
+// choice. A pick takes its number the moment it is made, before any file is
+// read; the stored bank read at boot counts as older than any pick: otherwise
+// a slow boot load finishing last would replace the bank just chosen.
 let bankQueue = Promise.resolve();
 let bankPicks = 0;
 function queueBank(task) {
@@ -627,7 +628,7 @@ export async function loadStoredBank() {
   try { await queueBank(() => bankPicks === picks ? loadBank(stored.bytes, stored.name, false, null) : undefined); }
   catch (err) {
     console.warn("[Workshop] stored bank failed to load:", err);
-    $("#dlsName").textContent = i18n.t("ui.bankFailed");
+    if (bankPicks === picks) $("#dlsName").textContent = i18n.t("ui.bankFailed");
   }
 }
 
@@ -3333,18 +3334,22 @@ export function init() {
   $("#dls").addEventListener("change", async e => {
     const f = e.target.files[0]; if (!f) return;
     e.target.value = "";
-    bankPicks++;
+    const pick = ++bankPicks;
     if (defBuiltin) { defMap = new Map(); defNames = new Map(); defLabel = ""; defBuiltin = false; }
   $("#dlsName").textContent = i18n.t("ui.bankReading");
     // Kept in Studio's local bank store (never uploaded) so the Studio preview
     // and the next Workshop visit use the same bank.
     try {
-      await bankStore.storeBank(f).catch(err => console.warn("[Workshop] bank not stored:", err));
-      const buf = await f.arrayBuffer();
-      await queueBank(() => loadBank(buf, f.name, false, f));
+      await queueBank(async () => {
+        if (pick !== bankPicks) return;
+        await bankStore.storeBank(f).catch(err => console.warn("[Workshop] bank not stored:", err));
+        await loadBank(await f.arrayBuffer(), f.name, false, f);
+      });
     }
     catch (err) {
       console.error(err);
+      // A newer pick is loading or loaded; its label and errors are the ones shown.
+      if (pick !== bankPicks) return;
     $("#dlsName").textContent = i18n.t("ui.bankFailed");
     say(describe(err, i18n.t("ui.bankLoadError")));
     }

@@ -10,12 +10,16 @@
 import { rmSync } from 'node:fs';
 import { setTimeout as delay } from 'node:timers/promises';
 
+// ENOTEMPTY is what Linux reports; EBUSY and EPERM are how other platforms
+// report a file still open or being created in the tree.
+const RETRIED = new Set(['ENOTEMPTY', 'EBUSY', 'EPERM']);
+
 export async function removeRepository(dir, { attempts = 10, delayMs = 100 } = {}) {
   for (let attempt = 1; ; attempt++) {
     try {
       return rmSync(dir, { recursive: true, force: true });
     } catch (error) {
-      if (error.code !== 'ENOTEMPTY' || attempt >= attempts) throw error;
+      if (!RETRIED.has(error.code) || attempt >= attempts) throw error;
       await delay(delayMs * attempt);
     }
   }

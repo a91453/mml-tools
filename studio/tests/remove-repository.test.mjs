@@ -24,7 +24,7 @@ test('a repository still being written by a background process is removed once i
   await exited;
 });
 
-test('errors other than ENOTEMPTY are not retried', async () => {
+test('errors other than a busy tree are not retried', async () => {
   const file = join(mkdtempSync(join(tmpdir(), 'mml-remove-')), 'plain');
   writeFileSync(file, 'x');
   await assert.rejects(removeRepository(join(file, 'child'), { attempts: 3, delayMs: 1000 }), { code: 'ENOTDIR' });

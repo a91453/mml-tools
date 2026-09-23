@@ -142,8 +142,13 @@ const showErr = msg => {
 };
 const clearErr = () => { $("#fileErr").hidden = true; };
 
+// Each read() takes a number; one that finishes after a newer read() began
+// is dropped, so the list shown is always the last file chosen.
+let reads = 0;
+
 async function read(file) {
   if (!file) return;
+  const token = ++reads;
   clearErr();
   srcName = file.name ?? "";
 
@@ -151,20 +156,21 @@ async function read(file) {
   try {
     buf = new Uint8Array(await file.arrayBuffer());
   } catch (err) {
-    showErr(i18n.t("fileBox.readFailed", { msg: err.message }));
+    if (token === reads) showErr(i18n.t("fileBox.readFailed", { msg: err.message }));
     return;
   }
+  if (token !== reads) return;
 
   if (buf.length >= 4 && buf[0] === 0x4d && buf[1] === 0x54 && buf[2] === 0x68 && buf[3] === 0x64)
     return readMidi(buf, file.name);
 
   // Compressed MusicXML (.mxl) is a ZIP archive, whatever the file is called.
   if (buf.length >= 4 && buf[0] === 0x50 && buf[1] === 0x4b && buf[2] === 0x03 && buf[3] === 0x04)
-    return readMxl(buf, file.name);
+    return readMxl(buf, file.name, token);
 
   const head = new TextDecoder("utf-8").decode(buf.subarray(0, 2048));
   if (/<score-(partwise|timewise)\b/.test(head) || /\.(musicxml|xml)$/i.test(file.name ?? ""))
-    return readXml(buf, file.name);
+    return readXml(new TextDecoder("utf-8").decode(buf), file.name);
 
   return readText(buf, file.name);
 }
@@ -228,25 +234,27 @@ function readText(buf, name) {
   openList(label, r.warnings);
 }
 
-// Local MusicXML (uncompressed score-partwise), read in this browser only.
-// The same container reader Studio's intake uses finds the score inside; it is
-// loaded only when an archive is picked. The score then reads like a .musicxml.
-async function readMxl(buf, name) {
+// Compressed MusicXML (.mxl): the same container reader Studio's intake uses
+// finds the score inside; it is loaded only when an archive is picked. The
+// score then reads like a .musicxml.
+async function readMxl(buf, name, token) {
   let xml;
   try {
     const { extractMusicXmlFromMxl } = await import("../../backend/score/mxl.mjs");
     xml = extractMusicXmlFromMxl(buf).xml;
   } catch (err) {
-    showErr(i18n.t("fileBox.readFailed", { msg: err.message }));
+    if (token === reads) showErr(i18n.t("fileBox.notMxl", { msg: err.message }));
     return;
   }
-  return readXml(new TextEncoder().encode(xml), name);
+  if (token !== reads) return;
+  return readXml(xml, name);
 }
 
-function readXml(buf, name) {
+// Local MusicXML (uncompressed score-partwise), read in this browser only.
+function readXml(text, name) {
   let smf, list;
   try {
-    smf = parseMusicXML([new TextDecoder("utf-8").decode(buf)]);
+    smf = parseMusicXML([text]);
     list = inventory(smf);
   } catch (err) {
     showErr(err instanceof MusicXmlError ? err.message

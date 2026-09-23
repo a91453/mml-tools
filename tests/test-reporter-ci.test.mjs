@@ -20,7 +20,7 @@ const run = async (files, env = {}) => {
     await rm(dir, { recursive: true, force: true });
   }
 };
-const header = "import test, { describe, it } from 'node:test';\nimport assert from 'node:assert/strict';\n";
+const header = "import test, { before, describe, it } from 'node:test';\nimport assert from 'node:assert/strict';\n";
 const failing = {
   'a.test.mjs': header + "test('passes', () => {});\ntest('outer', async t => { await t.test('inner fails', () => assert.equal(1, 2)); });\n",
   'b.test.mjs': header + "describe('suite', () => { it('deep fail', () => assert.ok(false, 'deep message')); });\ntest.todo('todo', () => { throw Error('not counted'); });\n",
@@ -43,6 +43,13 @@ test('under GitHub Actions each failure is also an error annotation', async () =
   const result = await run(failing, { GITHUB_ACTIONS: 'true' });
   assert.match(result.stdout, /^::error file=a\.test\.mjs,line=4,title=Failed test%3A outer › inner fails::Expected values/m);
   assert.equal(result.stdout.match(/^::error /gm).length, 3);
+});
+
+test('a failing hook is listed once, not with every test it cancelled', async () => {
+  const result = await run({ 'h.test.mjs': header + "describe('suite', () => {\n  before(() => { throw Error('hook broke'); });\n  it('one', () => {});\n  it('two', () => {});\n});\n" });
+  assert.equal(result.status, 1, result.stderr);
+  const tail = result.stdout.slice(result.stdout.lastIndexOf('# duration_ms'));
+  assert.match(tail, /# Failed tests \(1\):\n#   h\.test\.mjs:3 › suite — hook broke/);
 });
 
 test('a passing run prints plain TAP and nothing after it', async () => {

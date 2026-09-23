@@ -229,6 +229,7 @@ export default {
   "fileBox.okWipe": "Clear and import",
   "fileBox.okImport": "Import",
   "fileBox.readFailed": "Could not read this file: {msg}",
+  "fileBox.notMxl": "This archive is not a readable compressed MusicXML (.mxl): {msg}",
   "fileBox.noNotes": "No notes were found in this file.",
   "fileBox.format2": "This is a Format 2 MIDI (each track is an independent passage) — ticking several tracks will layer them on top of each other",
   "fileBox.unknownFile": "This file was not recognised. Accepted: .mid, 3MLE .mml, Mabinogi .mmi, or a plain text file containing just MML@…;",
