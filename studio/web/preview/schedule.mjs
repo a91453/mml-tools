@@ -6,7 +6,7 @@
 // because an AudioContext schedules in seconds.
 //
 // The volume → velocity curve and the role → channel mapping follow the
-// repository owner's MML 工房 player. They describe this preview, not the
+// repository owner's earlier frontend player. They describe this preview, not the
 // game engine.
 import { addBeat, cmpBeat, parseBeat } from '../roll-geometry.mjs';
 

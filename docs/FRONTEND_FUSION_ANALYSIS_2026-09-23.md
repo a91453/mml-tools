@@ -1,4 +1,4 @@
-# 第三方前端「MML 工房」融合分析：新介面與新邏輯
+# 擁有者早期前端融合分析：新介面與新邏輯
 
 Status: 實作筆記（non-Canonical）
 Date: 2026-09-23
@@ -6,7 +6,12 @@ Date: 2026-09-23
 本文件**不是**規則來源，也不是 `SOURCE_POLICY.md` 所定義的任何證據類別。規則載入唯一入口仍是
 [`docs/CANONICAL_MANIFEST.md`](CANONICAL_MANIFEST.md)。本文只盤點：使用者提供的前端擷取包裡，
 哪些行為、設計概念與程式碼值得吸收進本 repo，形成新介面與新邏輯；哪些必須拒絕。
-擁有者授權後可以直接移植的部分，見 §11。
+擁有者授權後可以直接移植的部分，見 §11；整個編輯器以「工作坊」移植進 Studio Web 的紀錄，見 §14。
+
+> **更正（2026-09-23）：** 本文初版把這份擷取包稱為「第三方前端」，並依包內 README 的
+> 「Do not copy into studio/」不移植程式碼。repo 擁有者已確認這是**擁有者本人早期的前端**，
+> 並授權移植其站方自有程式碼（不含 vendor 函式庫與音色庫）。下文改稱「擁有者早期前端」；
+> 原本「不得移植」的限制已不適用，其餘結論（vendor 授權、Canonical 規則邊界、拒絕清單的規則理由）不變。
 本文沒有新增、修改或解釋任何 Canonical 規則；文中提出的 PENDING 候選項都只是提案，尚未寫入
 `docs/PENDING.md`。
 
@@ -18,7 +23,7 @@ Date: 2026-09-23
 | --- | --- |
 | 檔案 | 前端擷取包（任務附件；檔名與雜湊不記錄於公開 repository） |
 | 內容 | 公開前端擷取 v1.1.0，112 個檔案：72 個站方 JS 模組、CSS、4 語系 shell／manifest、公開說明頁、vendor 函式庫、音色庫與 `.def` |
-| 自述 | 「Third-party. Not Canonical. Do not copy into studio/.」 |
+| 自述 | 包內 README 自稱第三方並要求不得複製進 `studio/`；擁有者已確認為本人早期前端並授權移植（見下方「授權處理」） |
 | 不含 | ASP.NET／C#／資料庫、`/api/*` 回應、登入頁、使用者分享樂譜 |
 | 參照驗證狀態 | `MML_MABI_REFERENCE_NOT_VERIFIED`：擷取檔不能證明與正式站行為一致 |
 
@@ -72,7 +77,7 @@ Date: 2026-09-23
 1. **介面缺口最大：Studio Web 目前沒有任何視覺化、播放或編輯。**
    - 除了 Final 與 per-role 貼上框外，全部是表格與可展開的 JSON 區塊。
    - 唯一的捲軸是舊 Workbench 的 `drawRoll`：唯讀、以浮點投影、高度固定。
-   - 第三方前端最成熟的部分正好補這一塊：虛擬化 canvas 捲軸、觸控手勢、純函式繪圖、決定性渲染。
+   - 擁有者早期前端最成熟的部分正好補這一塊：虛擬化 canvas 捲軸、觸控手勢、純函式繪圖、決定性渲染。
    - 融合後的新介面是**「六角色審核捲軸」**：
      - 唯讀；
      - 時間以精確有理數投影；
@@ -105,7 +110,7 @@ Date: 2026-09-23
 
 ## 2. 能力對照
 
-| 能力 | 第三方前端 | repo 現況 | 融合方向 |
+| 能力 | 擁有者早期前端 | repo 現況 | 融合方向 |
 | --- | --- | --- | --- |
 | 鋼琴捲軸 | 虛擬化 canvas、15 軌疊圖、觸控、完整編輯 | 舊 Workbench 唯讀 `drawRoll`；Studio 沒有 | 新 UI-1／UI-2／UI-3（唯讀＋提案式） |
 | 瀑布視覺化 | 純函式 `draw(t)`、決定性、12 種樣式 | 無 | 吸收架構，不吸收裝飾（UI-1、UI-6） |
@@ -396,7 +401,7 @@ Date: 2026-09-23
 
 ## 5. 拒絕清單（D）
 
-| 第三方設計 | 拒絕理由 |
+| 早期前端設計 | 拒絕理由（針對 Canonical 流程；工作坊見 §14） |
 | --- | --- |
 | PPQ 480 整數 tick、60-tick（1/32）取整、浮點中間值、依小節格線 snap | Gate 1 精確時間；`FINAL_MML_EMITTER.md` §2 D |
 | 八度折疊到 `o1c`–`o7b` 或 MIDI 24–107，clamp `t`／`v` | 靜默改音高與時間；`MASTER_RULES` §2 |
@@ -421,7 +426,7 @@ Date: 2026-09-23
 
 資料來源是擷取包的程式碼（仍是 `MML_MABI_REFERENCE_NOT_VERIFIED`）。
 
-| 問題 | 第三方行為 | repo 對應 |
+| 問題 | 早期前端行為 | repo 對應 |
 | --- | --- | --- |
 | Voice split | 以 (MTrk, channel) 為一列；先取整到 grid、合併 unison（留最長）；模式：melody／root／both／voices（4 或 3 lane）／all（15 lane） | G11-B 無損，C |
 | 軌道合併 | 匯入時不合併；捲軸中由使用者合併 A→B，五種模式；A 的音符之後一律變休止 | `merge-diagnostics.mjs` 只診斷，C |
@@ -442,7 +447,7 @@ Date: 2026-09-23
 以下全屬 class F 社群證據，**不是權威**。說明頁與 JS 之間也彼此矛盾：`guide-reference.html`
 描述的是像 PC 版的 16 個 score，Melody 1600／Chord1 1200……，但 `config.js` 是 6×2400。
 
-| # | 第三方主張 | repo | 狀態 |
+| # | 早期前端主張 | repo | 狀態 |
 | --- | --- | --- | --- |
 | D1 | `n0 = o0c = MIDI 12`，`n48 = o4c` | `N60 = o4c` | **差 12 半音**（P3／P6）→ LG-1 |
 | D2 | Mobile 拒絕 `l15`、`l17`、`l21`；標準長度含 3、6、12、24、48 | 1–64 全部接受；3／6／12／24／48 屬 caution | 與 §3 衝突（P4／P13）；對方也承認 `l5`、`l7`、`l9` 未經實機測試 |
@@ -599,13 +604,13 @@ Date: 2026-09-23
 
 ### 11.6 仍然不採用（與授權無關）
 
-§5 的清單全部維持不變，原因都是規則衝突，不是著作權：
+§5 的清單對 **Canonical／審核流程**全部維持不變，原因都是規則衝突，不是著作權。工作坊（§14）是流程外的編輯器，其中的量化、直接編輯等功能只作用在工作坊副本上，送回 Studio 時一律重新驗證：
 
 - 60-tick 量化、八度折疊、tempo 合併、unison 合併、slur 當 tie、最高聲部 = Melody；
 - 直接破壞性編輯、面板關閉即提交；
 - 雲端分享／存檔；
 - 環境音、殘響與空間化；
-- lamejs：第三方 LGPL；
+- lamejs：上游 LGPL-3.0，不隨 MIT 匯出的 `studio/` 發佈（工作坊只輸出 WAV，見 §14）；
 - 擷取包內的音色庫：只用本機上傳（§13）。
 
 ### 11.7 修正後的建議順序
@@ -633,12 +638,12 @@ Date: 2026-09-23
 
 ### 12.1 Service Worker 更新流程（UI-8 的 SW 部分）
 
-| 面向 | MML 工房 | Studio 原本 | 合成後 |
+| 面向 | 擁有者早期前端 | Studio 原本 | 合成後 |
 | --- | --- | --- | --- |
-| install | `cache:'reload'` | `addAll`，可能取到 HTTP 快取中的舊檔 | 採 MML 工房：`cache:'reload'` |
+| install | `cache:'reload'` | `addAll`，可能取到 HTTP 快取中的舊檔 | 採早期前端：`cache:'reload'` |
 | 程式碼快取策略 | network-first，線上即新版 | 單一版本 cache-first，不混用新舊模組 | 採 Studio：cache-first；因此必須主動公告新版 |
-| 偵測 | `waiting`／`installing`／`updatefound` 三路；focus＋visibility 節流 | 只聽 `updatefound` | 採 MML 工房的三路偵測與節流 |
-| 套用 | 使用者按鈕 → `SKIP_WAITING`；reload 由「本分頁要求」旗標把關 | 只能關閉所有分頁 | 採 MML 工房的按鈕與旗標；**新增**：排在任務佇列之後執行，專案未儲存時拒絕 |
+| 偵測 | `waiting`／`installing`／`updatefound` 三路；focus＋visibility 節流 | 只聽 `updatefound` | 採早期前端的三路偵測與節流 |
+| 套用 | 使用者按鈕 → `SKIP_WAITING`；reload 由「本分頁要求」旗標把關 | 只能關閉所有分頁 | 採早期前端的按鈕與旗標；**新增**：排在任務佇列之後執行，專案未儲存時拒絕 |
 | 其他分頁 | 無處理（network-first 不需要） | 無 | **新增**：未要求更新的分頁標為 stale，必須重新載入才能繼續操作，避免新舊模組混用 |
 | 舊快取清理 | keep-list，會刪同源其他 app 的快取 | 以 prefix 清理 | 採 Studio：只清自己 prefix 的快取 |
 
@@ -646,7 +651,7 @@ Date: 2026-09-23
 
 ### 12.2 MML 語法高亮與逐角色字數（UI-4）
 
-- **採用 MML 工房的做法：**
+- **採用 擁有者早期前端的做法：**
   - 每個字元對應一個角色位元組；
   - `t`／`l`／`o`／`v` 連同數字一起上色，音長不上色；
   - 超過字數上限的部分用色帶標示，從不截斷；
@@ -664,7 +669,7 @@ Date: 2026-09-23
 
 ### 12.3 六角色審核捲軸（UI-1，並納入 UI-2 的訊號層）
 
-- **採用 MML 工房的做法：**
+- **採用 擁有者早期前端的做法：**
   - 視口大小的 sticky canvas，搭配撐出整首歌長度的 spacer；
   - 只繪製可見範圍；
   - 繪製時有重入保護；
@@ -707,7 +712,7 @@ Date: 2026-09-23
 
 差異比對也列出不能移植的節省來源，包括 `lN.`、Nxx、省略首個 `o`、`6.`。這些在 Final 中不合法，因此不採用。
 
-它也確認了 LG-1：MML 工房把 `nN` 解讀為 MIDI N+12，並把超出 24–107 的音折回範圍內。其預設壓縮器用 Nxx 省字元時，經 repo parser 回讀後每個音都低 12 個半音。LG-1 仍待實機 A/B 驗證。
+它也確認了 LG-1：擁有者早期前端把 `nN` 解讀為 MIDI N+12，並把超出 24–107 的音折回範圍內。其預設壓縮器用 Nxx 省字元時，經 repo parser 回讀後每個音都低 12 個半音。LG-1 仍待實機 A/B 驗證。
 
 ### 12.5 仍未做的項目
 
@@ -736,7 +741,7 @@ Date: 2026-09-23
   - 與擷取包中的 vendor 檔內容相同，但取自上游。
   - Apache-2.0 全文放在 `vendor/spessasynth/lib.js` 開頭的註解中。不用獨立的 LICENSE 檔，因為主機只允許特定副檔名，一個無法提供的 precache 檔會讓整個 Service Worker 安裝失敗。
   - 建置時由 `scripts/build-studio-web.mjs` 放到 `vendor/spessasynth/`，只在按下播放時才載入。
-- **沿用 MML 工房的架構**：
+- **沿用 擁有者早期前端的架構**：
   - 單一 AudioContext，搭配 AudioWorklet 合成器與輸出 gain；
   - look-ahead 排程：25 ms tick、0.3 s 視窗、0.12 s 起始延遲；
   - 已排入的事件無法撤回，所以停止時把輸出靜音到視窗結束；
@@ -758,3 +763,44 @@ Date: 2026-09-23
 
 - 音色庫不進 repo、不進建置、不進 OSS 匯出，也不在 repo 或 PR 中記錄它的名稱或檔內資訊。
 - 使用者在各自的裝置上選取檔案即可試聽。
+
+---
+
+## 14. 工作坊：整個編輯器移植進 Studio Web（2026-09-23 第三批）
+
+擁有者確認擷取包是本人早期的前端並授權移植後，選擇把整個編輯器以「工作坊 / Workshop」
+放進 Studio Web（`studio/web/workshop/`），讓 Studio 成為它的升級版。
+
+### 14.1 邊界
+
+- 工作坊在 **Canonical／驗證流程之外**。頁面上一律標示「工作坊編輯（未經 Studio 驗證）」，
+  它從不把任何東西標為 VALIDATED 或已接受。
+- **從 Studio 開啟**：讀 Studio 自己的 IndexedDB（唯讀），以副本開啟 Final／交付 MML 或 MML 形式的
+  候選、Baseline、前一版。Studio 專案本身不變。
+- **送回 Studio 驗證**：只送遊戲讀的前 6 軌，經 `studio/web/workshop-link.mjs` 交給 Studio 既有的來源
+  intake（`putSource` → `intake` → `invalidate`），成為衍生候選；Studio 重新做技術驗證，審核重新開始。
+- **Nxx 換算**：兩邊的 parser 對 Nxx 差 12 半音（LG-1，仍待實機驗證）。交接時改寫 `n` 的數值，讓兩邊
+  讀到相同音高；其他文字不改寫。工作坊方言的 `h`／`p`／`#`／`@n` 送回時改成 Studio 讀得懂的寫法。
+- 聲音使用 Studio 既有的 SpessaSynth（同一份 vendor，不另帶一份）與使用者自備、存在本機的音色庫；
+  工作坊不附音色庫。11 種 Mabinogi Mobile 樂器以 GM 近似：Lute→24、Mandolin→25、Chalumeau→71、
+  Xylophone→13、Flute→73、Violin→40、Piano→0、Harp→46、Music Box→10；BassDrum、Cymbals 用打擊組
+  （鍵 35/36、49/57，o4c 以下用前者）。音色庫自己的音色仍可逐軌選用。這只是聆聽近似，不是遊戲音色。
+
+### 14.2 移植、改寫與刪除
+
+- **移植**（去除所有註解後直接沿用，只改 import 與儲存命名空間 `studio-workshop/…`）：MML 解析與壓縮、
+  鋼琴捲軸與編輯、選取、右鍵選單、觸控 nudge pad、復原／重做、分軌、拍號與段落標記、本機歌曲庫、
+  自動存檔、MIDI／MusicXML／3MLE `.mml`／`.mmi`（含 bzip2 擴充區塊）匯入匯出、剪貼簿、語法上色、
+  播放排程、瀑布繪圖與樣式、MP4 muxer、WebCodecs 影片流程、i18n（繁中／英／日／韓）與主題。
+- **改寫**：引擎改用 Studio 的 vendor 與音色庫儲存；樂器改為上述 Mobile 表；混音只輸出 WAV；
+  影片改成頁內對話框；靜態 HTML 的四語系改由 `data-i18n` 在前端套用（原本由伺服器輸出）；
+  語言與主題在首繪前由 `boot.js` 套用（CSP 不允許 inline script）；圖示改為 inline SVG。
+- **刪除**：帳號／登入、伺服器存檔與分享、OMR 上傳、法律頁、統計、離線音色包下載、
+  環境音與空間化混音、MP3（lamejs：npm 上游套件的 `LICENSE` 只是 LAME FAQ 摘要而非 LGPL 全文，
+  且 `studio/` 以 MIT 匯出，因此不隨附；只輸出 WAV）。原 demo 曲改成一段自寫的短範例。
+
+### 14.3 驗證
+
+單元測試 `studio/tests/workshop-*.test.mjs`；瀏覽器測試 `studio/browser-tests/workshop.mjs`
+（Chromium：從 Studio 開啟、語言切換、深淺主題、捲軸畫音符與復原、3MLE 匯出再匯入、WAV、
+影片預覽、送回 Studio 成為候選且不是 VALIDATED）。

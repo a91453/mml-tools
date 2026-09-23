@@ -13,7 +13,11 @@ export async function installWorkerControls(page) {
       constructor(...args) {
         super(...args); window.workerStarts++;
         const post = this.postMessage.bind(this);
-        this.postMessage = request => {
+        // Only Studio's action-shaped requests are held or failed; any other
+        // worker (the Workshop's render worker) passes through untouched,
+        // transfer list included.
+        this.postMessage = (request, transfer) => {
+          if (request?.action === undefined) return post(request, transfer);
           if (window.holdNextAction === request.action) {
             window.holdNextAction = null;
             window.releaseWorker = () => { window.releaseWorker = null; post(request); };

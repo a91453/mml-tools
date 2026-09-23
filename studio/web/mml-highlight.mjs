@@ -1,11 +1,11 @@
 // MML syntax highlighting for Studio Web.
 //
-// Ported from the owner's MML 工房 `mml-highlight.js` (frontend capture
+// Ported from the owner's earlier frontend `mml-highlight.js` (frontend capture
 // f1b7024f…baad9a, owner authorization 2026-09-23) and merged with Studio's
 // parser. Pure functions; no DOM, no backend import (the main thread never
 // imports the Canonical engines, see app.mjs).
 //
-// Kept from MML 工房:
+// Kept from the earlier frontend:
 //   * one role byte per source character. The array length IS the text length,
 //     so the overlay cannot drift out of alignment with the textarea the way a
 //     hand-built span list silently can;
@@ -20,7 +20,7 @@
 //
 // Changed for Studio, where the two disagree:
 //   * the token set is Studio's parser (studio/backend/mml/parser.mjs), not
-//     MML 工房's wider dialect: `h`, `p`, `@n`, `[ ]` and comments are errors
+//     the earlier frontend's wider dialect: `h`, `p`, `@n`, `[ ]` and comments are errors
 //     here, so they are drawn as errors. `scanTokens` mirrors the parser's
 //     character loop and studio/tests/web-mml-highlight.test.mjs holds the two
 //     together;

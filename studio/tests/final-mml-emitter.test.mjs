@@ -755,7 +755,7 @@ test('a long silence between two notes is written exactly as consecutive rests; 
 
 test('a long rest or sustain may switch to l1 even though no event lasts exactly a whole note', () => {
   // 30 beats of rest then a quarter note. No event lasts exactly 4 beats, so
-  // the occurrence rule alone never offered `l1`; the owner's MML 工房
+  // the occurrence rule alone never offered `l1`; the owner's earlier frontend
   // compressor showed that a whole-note segment default pays for itself here.
   const result = emit([rest({ start: 0, end: 30 }), note({ start: 30, end: 31 }), note({ pitch: 64, start: 31, end: 45 })]);
   assert.equal(result.status, 'PASS');

@@ -52,6 +52,11 @@ async function copyModules(directory) {
 await copyModules('studio/backend');
 await copyModules('studio/web');
 for (const name of ['index.html', 'style.css']) await put(`studio/web/service/${name}`, await readFile(resolve(root, 'studio/web/service', name)));
+// The Workshop editor page (studio/web/workshop/, outside the Canonical
+// pipeline). Its modules are copied with the rest of studio/web above; the
+// page, its stylesheet and its first-paint script are the only other files.
+// It reuses vendor/spessasynth/ below and ships no bank and no icon font.
+for (const name of ['index.html', 'workshop.css', 'boot.js']) await put(`studio/web/workshop/${name}`, await readFile(resolve(root, 'studio/web/workshop', name)));
 await put('dist/core.js', await readFile(resolve(root, 'dist/core.js')));
 // Preserve all engine modules. Only replace the environment-specific Git loader.
 // Dynamic Git provenance (repository_head / published_main_head / pr_head and

@@ -144,3 +144,4 @@ code.digest,.facts dd code,table code{font-family:ui-monospace,SFMono-Regular,Me
 .preview-card .preview-instruments summary{min-height:44px}
 .preview-card .preview-instrument-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(200px,1fr));gap:10px 14px}
 .preview-card .preview-instrument-grid label{font-family:ui-monospace,SFMono-Regular,Consolas,monospace;font-size:13px}
+.workshop-return{margin-bottom:28px;border-color:#d5ae6f}.workshop-return textarea{min-height:90px}.workshop-link{margin-top:8px}
