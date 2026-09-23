@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict';
+import { crc32 } from 'node:zlib';
 import { BasicSoundBank } from 'spessasynth_core';
 
 // The Workshop editor (studio/web/workshop/), end to end in a real browser:
@@ -10,6 +11,33 @@ import { BasicSoundBank } from 'spessasynth_core';
 // Everything is driven by element ids, so the check is language-independent.
 // Touch profiles tap, and reach the header commands through the phone menu.
 const texts = page => page.evaluate(() => [...document.querySelectorAll('.pane textarea')].map(t => t.value));
+
+// A stored (uncompressed) ZIP of the given entries: enough of an .mxl for the
+// container reader, which accepts stored and deflated entries alike.
+function storedZip(entries) {
+  const locals = [], centrals = [];
+  let offset = 0;
+  for (const [name, text] of entries) {
+    const path = Buffer.from(name), data = Buffer.from(text), crc = crc32(data);
+    const local = Buffer.alloc(30);
+    local.writeUInt32LE(0x04034b50, 0); local.writeUInt16LE(20, 4); local.writeUInt16LE(0x0800, 6);
+    local.writeUInt32LE(crc, 14); local.writeUInt32LE(data.length, 18); local.writeUInt32LE(data.length, 22); local.writeUInt16LE(path.length, 26);
+    const central = Buffer.alloc(46);
+    central.writeUInt32LE(0x02014b50, 0); central.writeUInt16LE(20, 4); central.writeUInt16LE(20, 6); central.writeUInt16LE(0x0800, 8);
+    central.writeUInt32LE(crc, 16); central.writeUInt32LE(data.length, 20); central.writeUInt32LE(data.length, 24); central.writeUInt16LE(path.length, 28); central.writeUInt32LE(offset, 42);
+    locals.push(local, path, data); centrals.push(central, path);
+    offset += 30 + path.length + data.length;
+  }
+  const directory = Buffer.concat(centrals), end = Buffer.alloc(22);
+  end.writeUInt32LE(0x06054b50, 0); end.writeUInt16LE(entries.length, 8); end.writeUInt16LE(entries.length, 10);
+  end.writeUInt32LE(directory.length, 12); end.writeUInt32LE(offset, 16);
+  return Buffer.concat([...locals, directory, end]);
+}
+const SCORE = '<?xml version="1.0" encoding="UTF-8"?><score-partwise version="4.0"><part-list><score-part id="P1"><part-name>Piano</part-name></score-part></part-list><part id="P1">'
+  + '<measure number="1"><attributes><divisions>1</divisions><time><beats>4</beats><beat-type>4</beat-type></time></attributes><direction><sound tempo="120"/></direction>'
+  + '<note><pitch><step>C</step><octave>4</octave></pitch><duration>2</duration></note><note><pitch><step>E</step><octave>4</octave></pitch><duration>2</duration></note></measure>'
+  + '<measure number="2"><note><pitch><step>G</step><octave>4</octave></pitch><duration>4</duration></note></measure></part></score-partwise>';
+const CONTAINER = '<?xml version="1.0" encoding="UTF-8"?><container><rootfiles><rootfile full-path="score.xml" media-type="application/vnd.recordare.musicxml+xml"/></rootfiles></container>';
 const bare = s => s.replace(/\s+/g, '');
 
 async function download(page, action) {
@@ -148,6 +176,8 @@ export async function runWorkshopChecks({ page, base, idle, file, screenshot, pr
   assert.match(text, /^\[Settings\]\r\nEncoding=utf-8\r\n/);
   assert.match(text, /\[3MLE EXTENSION\]\r\n\/\* DO NOT EDIT!!/);
   await command('#file');
+  // iPhone/iPad grey out an .xml an accept list does not map; read() routes by content.
+  assert.equal(await page.locator('#midFile').getAttribute('accept'), null, 'the import picker carries no accept list');
   await page.locator('#midFile').setInputFiles({ name: 'workshop-check.mml', mimeType: 'text/plain', buffer: mml.bytes });
   await page.locator('#midiBox.on').waitFor();
   await page.locator('#midiMode input[value="new"]').check();
@@ -158,6 +188,22 @@ export async function runWorkshopChecks({ page, base, idle, file, screenshot, pr
   const reimported = await texts(page);
   const song = t => page.evaluate(async list => (await import('./mml.mjs')).parseAll(list).tracks.map(tr => tr.notes.map(n => [n.tick, n.durTick, n.midi, n.vel].join(':'))), t);
   assert.deepEqual(await song(reimported.filter(Boolean)), await song(edited.filter(Boolean)), '3MLE round trip keeps every note');
+
+  // ── MusicXML, plain and compressed (.mxl), import to the same score ──────
+  const importAll = async (name, buffer, mimeType) => {
+    await command('#file');
+    await page.locator('#midFile').setInputFiles({ name, mimeType, buffer });
+    await page.locator('#midiBox.on').waitFor();
+    await page.locator('#midiMode input[value="new"]').check();
+    await page.locator('#pickAll').check();
+    await page.locator('#midiOk').click();
+    await page.waitForFunction(() => !document.querySelector('#midiBox')?.classList.contains('on'));
+    return song((await texts(page)).filter(Boolean));
+  };
+  const fromXml = await importAll('score.musicxml', Buffer.from(SCORE), 'application/xml');
+  assert.deepEqual(fromXml.flat().map(note => note.split(':')[2]), ['60', '64', '67'], 'the plain MusicXML score imports its three notes');
+  const fromMxl = await importAll('score.mxl', storedZip([['mimetype', 'application/vnd.recordare.musicxml'], ['META-INF/container.xml', CONTAINER], ['score.xml', SCORE]]), 'application/octet-stream');
+  assert.deepEqual(fromMxl, fromXml, 'an .mxl imports exactly as the MusicXML it carries');
 
   // ── WAV export through the real render worker ─────────────────────────────
   await command('#file');

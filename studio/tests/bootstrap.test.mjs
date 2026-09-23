@@ -1,13 +1,14 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { execFileSync, spawnSync } from 'node:child_process';
-import { readFileSync, writeFileSync, mkdirSync, mkdtempSync, rmSync, existsSync } from 'node:fs';
+import { readFileSync, writeFileSync, mkdirSync, mkdtempSync, existsSync } from 'node:fs';
 import { dirname, resolve } from 'node:path';
 import { tmpdir } from 'node:os';
 import { fileURLToPath } from 'node:url';
 import { BOOTSTRAP_CONTRACT, loadPublishedCanonical, parseCanonicalManifest } from '../backend/bootstrap/index.mjs';
 import { EFFECTIVE_RULESET, PUBLISHED_CANONICAL } from '../backend/rules/index.mjs';
 import { MML_ENGINE_ADAPTER } from '../backend/mml/index.mjs';
+import { removeRepository } from './support/remove-repository.mjs';
 
 const root = fileURLToPath(new URL('../../', import.meta.url));
 const entryPoint = BOOTSTRAP_CONTRACT.entryPoint;
@@ -29,7 +30,7 @@ const notLoaded = error => error.code === 'CANONICAL_NOT_LOADED';
 // fixture is maintained here: document bytes are read from the published snapshot.
 function fixture(t, { omitPath, transformDocument = text => text, transformManifest = text => text } = {}) {
   const cwd = mkdtempSync(resolve(tmpdir(), 'mml-bootstrap-'));
-  t.after(() => rmSync(cwd, { recursive: true, force: true }));
+  t.after(() => removeRepository(cwd));
   git(cwd, 'init', '-b', 'main');
   for (const entry of PUBLISHED_CANONICAL.authority.map) {
     if (entry.path === omitPath) continue;

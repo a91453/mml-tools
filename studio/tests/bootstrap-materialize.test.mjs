@@ -40,6 +40,7 @@ import {
 } from '../backend/bootstrap/materialize.mjs';
 import { createCanonicalGate } from '../backend/application/provenance.mjs';
 import { PUBLISHED_CANONICAL } from '../backend/rules/index.mjs';
+import { removeRepository } from './support/remove-repository.mjs';
 
 const repositoryRoot = fileURLToPath(new URL('../../', import.meta.url));
 const notLoaded = error => error.code === 'CANONICAL_NOT_LOADED';
@@ -60,7 +61,7 @@ const IMAGE_SOURCES = ['studio/backend', 'scripts', 'dist/core.js', 'package.jso
 
 function temporary(t, prefix) {
   const dir = mkdtempSync(resolve(tmpdir(), prefix));
-  t.after(() => rmSync(dir, { recursive: true, force: true }));
+  t.after(() => removeRepository(dir));
   return dir;
 }
 

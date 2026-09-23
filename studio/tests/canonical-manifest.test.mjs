@@ -1,13 +1,14 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { execFileSync } from 'node:child_process';
-import { readFileSync, statSync, mkdtempSync, mkdirSync, writeFileSync, rmSync } from 'node:fs';
+import { readFileSync, statSync, mkdtempSync, mkdirSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { EFFECTIVE_RULESET } from '../backend/rules/index.mjs';
 import { parseCanonicalManifest } from '../backend/bootstrap/index.mjs';
 import { MACHINE_DELIVERY_SCHEMA_V2 } from '../backend/final/delivery-evaluator.mjs';
+import { removeRepository } from './support/remove-repository.mjs';
 
 const root = fileURLToPath(new URL('../../', import.meta.url));
 const manifestPath = 'docs/CANONICAL_MANIFEST.md';
@@ -89,7 +90,7 @@ test('only the four human-readable rule sources have Canonical rule authority', 
 
 test('an unrelated Git HEAD advance leaves the loaded release and Manifest commit unchanged', t => {
   const fixture = mkdtempSync(resolve(tmpdir(), 'mml-manifest-'));
-  t.after(() => rmSync(fixture, { recursive: true, force: true }));
+  t.after(() => removeRepository(fixture));
   git(['init', '-b', 'manifest-test'], fixture);
   mkdirSync(resolve(fixture, 'docs'));
   writeFileSync(resolve(fixture, manifestPath), manifest);

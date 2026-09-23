@@ -1,10 +1,11 @@
 import { execFileSync } from 'node:child_process';
-import { readFileSync, writeFileSync, mkdirSync, mkdtempSync, rmSync } from 'node:fs';
+import { readFileSync, writeFileSync, mkdirSync, mkdtempSync } from 'node:fs';
 import { dirname, resolve } from 'node:path';
 import { tmpdir } from 'node:os';
 import { fileURLToPath } from 'node:url';
 import { BOOTSTRAP_CONTRACT } from '../../backend/bootstrap/index.mjs';
 import { PUBLISHED_CANONICAL } from '../../backend/rules/index.mjs';
+import { removeRepository } from './remove-repository.mjs';
 
 // A Git history shaped like the publication of one Canonical release, for the
 // activation tests. Nothing here touches this checkout: every repository is a
@@ -42,7 +43,7 @@ export const withHeader = (manifest, header) => manifest.replace(/^---\n[\s\S]*?
  */
 export function publishedReleaseRepository(t, { version, schema }) {
   const cwd = mkdtempSync(resolve(tmpdir(), 'mml-release-'));
-  t.after(() => rmSync(cwd, { recursive: true, force: true }));
+  t.after(() => removeRepository(cwd));
   git(cwd, 'init', '-b', 'main');
   for (const entry of PUBLISHED_CANONICAL.authority.map) {
     if (entry.path.endsWith('/')) put(cwd, `${entry.path}fixture.txt`, 'Implementation fixture only\n');
