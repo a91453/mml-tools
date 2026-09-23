@@ -104,6 +104,14 @@
 // point set unchanged — rather than trusting the plan that produced it. There is
 // deliberately no weaker "the attacks survived" class.
 //
+// A second, separate path shares this machinery and none of its neutrality
+// claim: the provisional release rendering at the end of this file
+// (ACCEPTANCE_CRITERIA "Delivered first, flagged for listening", 2026-09-23-v3).
+// It is not a repair. It holds a note's release -- exactly what
+// `NOTE_RELEASE_NOT_PROVEN_NEUTRAL` above refuses to do, and still refuses -- for
+// a delivered Final only, never in a candidate, and only for the releases the
+// enforcement report lists. `repairTechnicalTiming` never reaches it.
+//
 // Nothing here is approximate. No epsilon, no float, no rounding, no snapping,
 // no quantization, no grid search. Every comparison and every delta is exact
 // rational. The repaired candidate is a *new* project with its own id and its own
@@ -124,7 +132,7 @@ import {
   createIntervalIdentity,
   intervalIdentityKey,
 } from '../canonical/micro-timing.mjs';
-import { MICRO_GAP_ENFORCEMENT, enforceMicroGaps } from './micro-gap-enforcement.mjs';
+import { MICRO_GAP_BLOCKERS, MICRO_GAP_ENFORCEMENT, enforceMicroGaps } from './micro-gap-enforcement.mjs';
 
 export const REPAIR_STATUS = Object.freeze({
   PASS: 'PASS',
@@ -556,10 +564,10 @@ function rejectInteractingPlans(plans) {
 
 // ── applying ───────────────────────────────────────────────────────────────
 
-function rebuildEvent(event, { start, end, extraSourceIds = [], extraSourceEventIds = [], repairRecord }) {
+function rebuildEvent(event, { start, end, extraSourceIds = [], extraSourceEventIds = [], repairRecord, metadataKey = 'technicalTimingRepair' }) {
   const metadata = {
     ...structuredClone(event.metadata ?? {}),
-    technicalTimingRepair: repairRecord,
+    [metadataKey]: repairRecord,
   };
   const sourceIds = [...new Set([...event.sourceIds, ...extraSourceIds])];
   const sourceEventIds = [...new Set([...(event.sourceEventIds ?? []), ...extraSourceEventIds])];
@@ -1083,5 +1091,377 @@ export function repairTechnicalTiming(project, { mobileSyntax, enforcement, rele
     finalEmissionEligible: status === REPAIR_STATUS.PASS
       && verificationClean
       && verification.preservedIntervalKeys.length === 0,
+  });
+}
+
+// ── provisional release rendering (machine delivery only) ──────────────────
+//
+// ACCEPTANCE_CRITERIA "Delivered first, flagged for listening", rule 1
+// (2026-09-23-v3). Where a sub-grid release interval stays UNKNOWN only because
+// the evidence to decide the release is missing, and the release follows its
+// source's systematic export offset, a delivered Final may hold that release to
+// the following attack or next 1/64 grid point (EXTEND_TO_NEXT_GRID).
+//
+// This is not a repair and claims no neutrality: a held note sounds longer than
+// the candidate says, by less than the grid. It is therefore kept apart from
+// everything above:
+//
+//   * its only worklist is `provisionalReleases` from an enforcement report that
+//     carries MICRO_TIMING_RELEASE_PROVISIONAL, verified against a freshly
+//     computed report. It never decides which releases qualify;
+//   * each listed release is re-checked against the project: the note is
+//     current, its release is exactly the listed one, the hold is a single
+//     sub-grid step onto the safe grid, and no other span of its role lies in
+//     between. Every blocked interval must be closed by some listed release;
+//   * the rendered project is a new project and exists for serialization only.
+//     The candidate it came from is never mutated, never stored and never
+//     re-graded as if it were the rendering. Its intervals stay UNKNOWN;
+//   * `verifyProvisionalRenderingInvariants` checks the produced project rather
+//     than the plan: only the listed notes' releases moved, each to exactly its
+//     listed point, the role's silence shrank by exactly those spans, and
+//     nothing else changed;
+//   * the same enforcement then has to find the rendering clean.
+//
+// Whether a delivery may use it at all is the machine-delivery schema's call
+// (final/delivery-evaluator.mjs), made by the emitter before it asks for one.
+
+export const PROVISIONAL_RELEASE_RENDERING = Object.freeze({
+  OPERATION: 'hold-release-provisionally-to-next-grid-point',
+  REPRESENTATION: 'EXTEND_TO_NEXT_GRID',
+  METADATA_KEY: 'provisionalReleaseRendering',
+  SCOPE: 'delivered-final-only',
+});
+
+export const PROVISIONAL_RENDERING_DIAGNOSTICS = Object.freeze({
+  ENFORCEMENT_STALE: 'PROVISIONAL_RELEASE_ENFORCEMENT_STALE',
+  NOT_ELIGIBLE: 'PROVISIONAL_RELEASE_NOT_ELIGIBLE',
+  WORKLIST_NOT_CURRENT: 'PROVISIONAL_RELEASE_WORKLIST_NOT_CURRENT',
+  INTERVAL_NOT_COVERED: 'PROVISIONAL_RELEASE_INTERVAL_NOT_COVERED',
+  REBUILD_FAILED: 'PROVISIONAL_RELEASE_REBUILD_FAILED',
+  INVARIANT_VIOLATED: 'PROVISIONAL_RELEASE_INVARIANT_VIOLATED',
+  VERIFICATION_NOT_CLEAR: 'PROVISIONAL_RELEASE_VERIFICATION_NOT_CLEAR',
+  APPLIED: 'PROVISIONAL_RELEASES_RENDERED',
+});
+
+export const PROVISIONAL_RENDERING_NOTICE = 'Provisional release rendering is a delivery representation only (ACCEPTANCE_CRITERIA "Delivered first, flagged for listening"). Each listed release is held to the following attack or next 1/64 grid point in the delivered MML. The stored candidate and the Source-Faithful Baseline keep the source release, and every interval a hold closes stays UNKNOWN. It certifies nothing: not PASS, not technical residue, not source-supported meaning, not VALIDATED and not IN_GAME_ACCEPTED.';
+
+// The parts of a report the rendering acts on, on top of what a repair acts on.
+function provisionalFingerprint(report) {
+  return JSON.stringify([
+    enforcementFingerprint(report),
+    [...(report?.blockers ?? [])],
+    (report?.provisionalReleases ?? []).map(item => [item?.eventId ?? null, item?.role ?? null, item?.release ?? null, item?.heldTo ?? null, [...(item?.intervalKeys ?? [])]]),
+  ]);
+}
+
+function renderingResult(fields) {
+  return Object.freeze({
+    canonical: EFFECTIVE_RULESET.canonical,
+    safeGrid: SAFE_GRID.toString(),
+    notice: PROVISIONAL_RENDERING_NOTICE,
+    storedProjectId: null,
+    renderedProject: null,
+    renderedProjectId: null,
+    renderings: Object.freeze([]),
+    heldEventIds: Object.freeze([]),
+    intervalKeys: Object.freeze([]),
+    releaseOffsetSources: Object.freeze([]),
+    preRendering: null,
+    verification: null,
+    diagnostics: Object.freeze([]),
+    ...fields,
+  });
+}
+
+const normalizedSpans = spans => spans.map(([start, end]) => [f(start).toString(), f(end).toString()]);
+
+// Exact interval-set difference of sorted, disjoint spans.
+function subtractSpans(spans, cuts) {
+  let result = spans.map(([start, end]) => [f(start), f(end)]);
+  for (const [cutStart, cutEnd] of cuts.map(([start, end]) => [f(start), f(end)])) {
+    result = result.flatMap(([start, end]) => {
+      if (cutEnd.cmp(start) <= 0 || cutStart.cmp(end) >= 0) return [[start, end]];
+      const kept = [];
+      if (cutStart.cmp(start) > 0) kept.push([start, cutStart]);
+      if (cutEnd.cmp(end) < 0) kept.push([cutEnd, end]);
+      return kept;
+    });
+  }
+  return result.map(([start, end]) => [start.toString(), end.toString()]);
+}
+
+/**
+ * Everything a provisional rendering is forbidden to have done, checked on the
+ * produced project rather than assumed from the holds that produced it.
+ *
+ * Exported for the same reason as `verifyRepairInvariants`: the planner refuses
+ * everything this catches, so a regression drives it with hand-built projects.
+ */
+export function verifyProvisionalRenderingInvariants(before, after, holds) {
+  const violations = [];
+  const held = new Map(holds.map(hold => [hold.eventId, hold]));
+  const byId = events => new Map(events.map(event => [event.id, event]));
+  const beforeNotes = before.events.filter(event => event.kind === 'note');
+  const afterNotes = after.events.filter(event => event.kind === 'note');
+  const afterNoteById = byId(afterNotes);
+  if (beforeNotes.length !== afterNotes.length) violations.push(`attack count changed: ${beforeNotes.length} -> ${afterNotes.length}`);
+  if (before.events.length !== after.events.length) violations.push(`event count changed: ${before.events.length} -> ${after.events.length}`);
+
+  const shapeWithoutEnd = event => JSON.stringify({ id: event.id, kind: event.kind, pitch: event.pitch ?? null, start: event.start, volume: event.volume ?? null, role: event.role, voice: event.voice ?? null, sourceIds: [...(event.sourceIds ?? [])], sourceEventIds: [...(event.sourceEventIds ?? [])] });
+  for (const note of beforeNotes) {
+    const now = afterNoteById.get(note.id);
+    if (!now) { violations.push(`note ${note.id} disappeared`); continue; }
+    // Onset, pitch, volume, role and provenance never move. Only a listed
+    // note's release does, and only to its listed point.
+    if (shapeWithoutEnd(note) !== shapeWithoutEnd(now)) violations.push(`note ${note.id} changed beyond its release`);
+    const hold = held.get(note.id);
+    if (!hold) {
+      if (!exactlyEqual(note.end, now.end)) violations.push(`note ${note.id} release moved without being listed`);
+      continue;
+    }
+    if (!exactlyEqual(note.end, hold.release)) violations.push(`note ${note.id} was listed at release ${hold.release} but the candidate says ${note.end}`);
+    if (!exactlyEqual(now.end, hold.heldTo)) violations.push(`note ${note.id} is held to ${now.end}, not its listed ${hold.heldTo}`);
+    const delta = f(now.end).sub(f(note.end));
+    if (delta.cmp(0) <= 0 || delta.cmp(SAFE_GRID) >= 0) violations.push(`note ${note.id} moved by ${delta.toString()}, which is not one sub-grid step later`);
+    if (f(now.end).div(SAFE_GRID).d !== 1n) violations.push(`note ${note.id} is held to ${now.end}, which is not a safe-grid point`);
+    const overlapped = afterNotes.filter(other => other.id !== now.id && other.role === now.role
+      && f(other.start).cmp(now.end) < 0 && f(other.end).cmp(note.end) > 0);
+    if (overlapped.length) violations.push(`note ${note.id} is held across ${overlapped.map(other => other.id).join(', ')}`);
+  }
+  for (const note of afterNotes) if (!beforeNotes.some(event => event.id === note.id)) violations.push(`note ${note.id} was invented`);
+  for (const id of held.keys()) if (!beforeNotes.some(event => event.id === id)) violations.push(`listed event ${id} is not a note of the candidate`);
+
+  // Rests are never touched at all.
+  const restShape = event => JSON.stringify({ id: event.id, start: event.start, end: event.end, role: event.role, sourceIds: [...(event.sourceIds ?? [])] });
+  const afterRests = byId(after.events.filter(event => event.kind === 'rest'));
+  const beforeRests = before.events.filter(event => event.kind === 'rest');
+  for (const restEvent of beforeRests) {
+    const now = afterRests.get(restEvent.id);
+    if (!now) violations.push(`rest ${restEvent.id} disappeared`);
+    else if (restShape(restEvent) !== restShape(now)) violations.push(`rest ${restEvent.id} changed`);
+  }
+  for (const id of afterRests.keys()) if (!beforeRests.some(event => event.id === id)) violations.push(`rest ${id} was invented`);
+
+  // The role's silence shrank by exactly the held spans, and by nothing else.
+  const cutsByRole = new Map();
+  for (const hold of holds) {
+    if (!cutsByRole.has(hold.role)) cutsByRole.set(hold.role, []);
+    cutsByRole.get(hold.role).push([hold.release, hold.heldTo]);
+  }
+  const silenceBefore = silenceByRole(before);
+  const silenceAfter = silenceByRole(after);
+  for (const role of new Set([...Object.keys(silenceBefore), ...Object.keys(silenceAfter)])) {
+    const expected = subtractSpans(normalizedSpans(silenceBefore[role] ?? []), cutsByRole.get(role) ?? []);
+    if (JSON.stringify(expected) !== JSON.stringify(normalizedSpans(silenceAfter[role] ?? []))) {
+      violations.push(`${role}: the silence did not shrink by exactly the held spans`);
+    }
+  }
+
+  for (const event of after.events) {
+    if (f(event.end).cmp(event.start) <= 0) violations.push(`${event.id} has a non-positive duration`);
+  }
+  const controlsBefore = JSON.stringify([...before.tempoEvents].map(controlShape).concat([...before.meterEvents].map(controlShape)));
+  const controlsAfter = JSON.stringify([...after.tempoEvents].map(controlShape).concat([...after.meterEvents].map(controlShape)));
+  if (controlsBefore !== controlsAfter) violations.push('tempo or meter map changed');
+  if (JSON.stringify(before.sources) !== JSON.stringify(after.sources)) violations.push('source set changed');
+  if (JSON.stringify(before.decisions) !== JSON.stringify(after.decisions)) violations.push('decision record changed');
+  if (before.id === after.id) violations.push('the rendering is indistinguishable from the stored candidate');
+  return violations;
+}
+
+function applyProvisionalHolds(project, holds) {
+  const replacements = new Map();
+  for (const hold of holds) {
+    const target = project.events.find(event => event.id === hold.eventId);
+    const record = freezeDeep({
+      operation: PROVISIONAL_RELEASE_RENDERING.OPERATION,
+      representation: PROVISIONAL_RELEASE_RENDERING.REPRESENTATION,
+      scope: PROVISIONAL_RELEASE_RENDERING.SCOPE,
+      classification: MICRO_TIMING_CLASSIFICATIONS.UNKNOWN,
+      release: hold.release,
+      heldTo: hold.heldTo,
+      delta: hold.delta,
+      intervalKeys: [...hold.intervalKeys],
+      reversal: { field: 'end', restore: hold.release },
+      canonical: EFFECTIVE_RULESET.canonical,
+    });
+    replacements.set(hold.eventId, rebuildEvent(target, {
+      start: target.start,
+      end: hold.heldTo,
+      repairRecord: record,
+      metadataKey: PROVISIONAL_RELEASE_RENDERING.METADATA_KEY,
+    }));
+  }
+  return createCanonicalProject({
+    id: `${project.id}#provisional-release-rendering`,
+    title: `${project.title} (provisional release rendering)`,
+    sources: [...project.sources],
+    events: project.events.map(event => replacements.get(event.id) ?? event),
+    tempoEvents: [...project.tempoEvents],
+    meterEvents: [...project.meterEvents],
+    decisions: [...project.decisions],
+    metadata: {
+      ...structuredClone(project.metadata ?? {}),
+      [PROVISIONAL_RELEASE_RENDERING.METADATA_KEY]: freezeDeep({
+        storedProjectId: project.id,
+        scope: PROVISIONAL_RELEASE_RENDERING.SCOPE,
+        heldEventIds: holds.map(hold => hold.eventId),
+        canonical: EFFECTIVE_RULESET.canonical,
+      }),
+    },
+  });
+}
+
+// The stored candidate's verdict the rendering started from. Counts, not key
+// lists: the keys are on the enforcement report and on each rendering.
+const preRenderingOf = report => freezeDeep({
+  status: report?.status ?? null,
+  blockers: [...(report?.blockers ?? [])],
+  blockedIntervalCount: (report?.blockedIntervalKeys ?? []).length,
+  unknownCount: report?.unknownCount ?? null,
+});
+
+/**
+ * Hold, for a delivered Final only, exactly the releases a fresh enforcement
+ * report lists under MICRO_TIMING_RELEASE_PROVISIONAL, or say precisely why not.
+ *
+ * `enforcement` may be supplied by a caller that already computed it; it is
+ * verified against a fresh report and a difference is fatal. Never mutates
+ * `project`. Returns PASS only with a rendered project the same enforcement
+ * finds clean.
+ */
+export function renderProvisionalReleases(project, { mobileSyntax, enforcement, releaseEvidenceRegistry = null } = {}) {
+  if (!project || typeof project !== 'object') throw Error('Canonical project is required');
+  const options = {
+    ...(mobileSyntax === undefined ? {} : { mobileSyntax }),
+    ...(releaseEvidenceRegistry ? { releaseEvidenceRegistry } : {}),
+  };
+  const fresh = enforceMicroGaps(project, options);
+  const base = {
+    storedProjectId: project.id,
+    preRendering: preRenderingOf(fresh),
+    releaseOffsetSources: fresh.releaseOffsetSources ?? Object.freeze([]),
+  };
+  const refuse = (status, code, severity, message, details = {}) => renderingResult({
+    ...base,
+    status,
+    diagnostics: freezeDeep([diagnostic(code, severity, message, details)]),
+  });
+
+  if (enforcement && provisionalFingerprint(enforcement) !== provisionalFingerprint(fresh)) {
+    return refuse(REPAIR_STATUS.FAIL, PROVISIONAL_RENDERING_DIAGNOSTICS.ENFORCEMENT_STALE, REPAIR_SEVERITY.ERROR,
+      'The supplied micro-gap enforcement report does not describe this project. A provisional worklist is only meaningful against the enforcement pass that produced it.');
+  }
+  if (fresh.status !== 'PENDING' || !fresh.blockers.includes(MICRO_GAP_BLOCKERS.RELEASE_PROVISIONAL) || !fresh.provisionalReleases?.length) {
+    return refuse(REPAIR_STATUS.PENDING, PROVISIONAL_RENDERING_DIAGNOSTICS.NOT_ELIGIBLE, REPAIR_SEVERITY.PENDING,
+      `Micro-gap enforcement returned ${fresh.status} (${fresh.blockers.join(', ') || 'no blockers'}) without listing every open question as a provisional release. Nothing is rendered.`,
+      { blockers: fresh.blockers });
+  }
+
+  const spans = spanEvents(project);
+  const eventsById = new Map(spans.map(event => [event.id, event]));
+  const spansByRole = new Map();
+  for (const event of spans) {
+    if (!ASSIGNED_ROLES.has(event.role)) continue;
+    if (!spansByRole.has(event.role)) spansByRole.set(event.role, []);
+    spansByRole.get(event.role).push(event);
+  }
+  const blocked = new Set(fresh.blockedIntervalKeys);
+  const covered = new Set();
+  const holds = [];
+  const refused = [];
+  const listed = new Set();
+  for (const item of fresh.provisionalReleases) {
+    const event = eventsById.get(item.eventId);
+    const refuseItem = reason => refused.push({ eventId: item.eventId ?? null, reason });
+    if (!event || event.kind !== 'note') { refuseItem('listed event is not a note of this project'); continue; }
+    if (listed.has(event.id)) { refuseItem('listed more than once'); continue; }
+    listed.add(event.id);
+    if (!ASSIGNED_ROLES.has(event.role) || event.role !== item.role) { refuseItem('role does not match the project'); continue; }
+    if (!exactlyEqual(event.end, item.release)) { refuseItem(`release is ${event.end}, listed ${item.release}`); continue; }
+    let release;
+    let heldTo;
+    try { release = f(item.release); heldTo = f(item.heldTo); } catch { refuseItem('hold point is not an exact rational'); continue; }
+    const delta = heldTo.sub(release);
+    if (delta.cmp(0) <= 0 || delta.cmp(SAFE_GRID) >= 0) { refuseItem(`hold by ${delta.toString()} is not one sub-grid step later`); continue; }
+    if (heldTo.div(SAFE_GRID).d !== 1n) { refuseItem(`hold point ${item.heldTo} is not on the safe grid`); continue; }
+    const occupied = spansInsideOpenInterval(spansByRole.get(event.role) ?? [], release, heldTo, new Set([event.id]));
+    if (occupied.length) { refuseItem(`${occupied.length} other span(s) of ${event.role} lie between the release and the hold point`); continue; }
+    const keys = Array.isArray(item.intervalKeys) ? item.intervalKeys : [];
+    if (keys.some(key => !blocked.has(key))) { refuseItem('names an interval enforcement does not hold open'); continue; }
+    for (const key of keys) covered.add(key);
+    holds.push({ eventId: event.id, role: event.role, release: release.toString(), heldTo: heldTo.toString(), delta: delta.toString(), intervalKeys: [...keys] });
+  }
+  if (refused.length) {
+    return refuse(REPAIR_STATUS.FAIL, PROVISIONAL_RENDERING_DIAGNOSTICS.WORKLIST_NOT_CURRENT, REPAIR_SEVERITY.ERROR,
+      `${refused.length} listed release(s) do not describe this project. Nothing is rendered.`, { refused: freezeDeep(refused) });
+  }
+  const uncovered = [...blocked].filter(key => !covered.has(key));
+  if (uncovered.length) {
+    return refuse(REPAIR_STATUS.FAIL, PROVISIONAL_RENDERING_DIAGNOSTICS.INTERVAL_NOT_COVERED, REPAIR_SEVERITY.ERROR,
+      `${uncovered.length} unproven interval(s) are not closed by any listed release. Nothing is rendered.`, { uncoveredIntervalKeys: freezeDeep(uncovered) });
+  }
+
+  let rendered;
+  try {
+    rendered = applyProvisionalHolds(project, holds);
+  } catch (error) {
+    return refuse(REPAIR_STATUS.FAIL, PROVISIONAL_RENDERING_DIAGNOSTICS.REBUILD_FAILED, REPAIR_SEVERITY.ERROR,
+      `The rendering could not be built: ${error.message}`);
+  }
+  const violations = verifyProvisionalRenderingInvariants(project, rendered, holds);
+  if (violations.length) {
+    return refuse(REPAIR_STATUS.FAIL, PROVISIONAL_RENDERING_DIAGNOSTICS.INVARIANT_VIOLATED, REPAIR_SEVERITY.ERROR,
+      `The rendering violates ${violations.length} invariant(s). Nothing is emitted from it.`, { violations: freezeDeep(violations) });
+  }
+
+  // The authority that listed the releases has to find the rendering clean.
+  const verification = enforceMicroGaps(rendered, options);
+  const clean = verification.status === 'PASS'
+    && verification.blockers.length === 0
+    && verification.blockedIntervalKeys.length === 0
+    && verification.preservedIntervalKeys.length === 0
+    && verification.rejectedIntervalKeys.length === 0
+    && (verification.provisionalReleases ?? []).length === 0;
+  if (!clean) {
+    return renderingResult({
+      ...base,
+      status: REPAIR_STATUS.PENDING,
+      verification,
+      diagnostics: freezeDeep([diagnostic(PROVISIONAL_RENDERING_DIAGNOSTICS.VERIFICATION_NOT_CLEAR, REPAIR_SEVERITY.PENDING,
+        `Re-running micro-gap enforcement on the rendering returned ${verification.status} (${verification.blockers.join(', ') || 'no blockers'}). Nothing is emitted from it.`,
+        { blockers: verification.blockers })]),
+    });
+  }
+
+  const renderings = fresh.provisionalReleases.map(item => freezeDeep({
+    eventId: item.eventId,
+    role: item.role,
+    pitch: item.pitch,
+    onset: item.onset,
+    release: item.release,
+    renderedRelease: item.heldTo,
+    delta: item.delta,
+    deltaTicks: item.deltaTicks ?? null,
+    baselineRelease: item.baselineRelease ?? null,
+    sourceIds: [...(item.sourceIds ?? [])],
+    offsetBeforeNextGrid: item.offsetBeforeNextGrid ?? null,
+    effect: item.effect ?? null,
+    representation: PROVISIONAL_RELEASE_RENDERING.REPRESENTATION,
+    classification: MICRO_TIMING_CLASSIFICATIONS.UNKNOWN,
+    intervalKeys: [...item.intervalKeys],
+  }));
+  return renderingResult({
+    ...base,
+    status: REPAIR_STATUS.PASS,
+    renderedProject: rendered,
+    renderedProjectId: rendered.id,
+    renderings: Object.freeze(renderings),
+    heldEventIds: freezeDeep(holds.map(hold => hold.eventId)),
+    intervalKeys: freezeDeep(fresh.provisionalReleaseIntervalKeys ?? []),
+    verification,
+    diagnostics: freezeDeep([diagnostic(PROVISIONAL_RENDERING_DIAGNOSTICS.APPLIED, REPAIR_SEVERITY.NOTICE,
+      `${holds.length} release(s) are held provisionally for delivery. The rendering is a distinct project; the stored candidate is unchanged and its intervals stay UNKNOWN.`,
+      { heldEventCount: holds.length, renderedProjectId: rendered.id })]),
   });
 }

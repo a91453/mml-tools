@@ -59,11 +59,15 @@ import {
 } from '../canonical/release-regrid-candidate.mjs';
 import {
   SAFE_GRID,
+  INTERVAL_TYPES,
   MICRO_TIMING_CLASSIFICATIONS,
   analyzeProjectMicroTiming,
 } from '../canonical/micro-timing.mjs';
 import {
+  REPRESENTATION,
+  TARGET_STATUS,
   analyzeReleaseTiming,
+  releaseOffsetKeyOf,
   releaseEvidenceRequirement,
   summarizeReleaseTiming,
   verifyReleaseRepresentation,
@@ -114,7 +118,196 @@ export const MICRO_GAP_BLOCKERS = Object.freeze({
   // (`releaseEvidenceRequirement`). Raised only when the caller supplied the
   // project's evidence registry: without it what the project holds is unknown.
   RELEASE_EVIDENCE_REQUIRED: 'MICRO_TIMING_RELEASE_EVIDENCE_REQUIRED',
+  // Added, never substituted, when the whole of what keeps this gate open is
+  // release-side: every UNKNOWN interval is the gap between a note's release and
+  // the next attack in its role, or a sub-grid note duration its release decides,
+  // and every release Final cannot express can be held to the following attack
+  // or next grid point (ACCEPTANCE_CRITERIA "Delivered first, flagged for
+  // listening", 2026-09-23-v3). `provisionalReleases` lists each one. It is a
+  // statement about this project, not a verdict: the intervals stay UNKNOWN,
+  // the status stays PENDING, and whether a delivery may render them is decided
+  // by the machine-delivery schema the loaded release declares
+  // (final/delivery-evaluator.mjs), which reads exactly this code.
+  RELEASE_PROVISIONAL: 'MICRO_TIMING_RELEASE_PROVISIONAL',
 });
+
+// ACCEPTANCE_CRITERIA "Delivered first, flagged for listening", rule 1
+// (2026-09-23-v3): the executable echo of its systematic-export-offset
+// precondition. A symbolic source qualifies when one sub-grid offset before the
+// next safe-grid point accounts for at least this share of its releases that
+// fall short of a grid point; only its releases at exactly that offset may be
+// held. Exact integer comparison, never a float.
+//
+// It lives here, beside the one check that reads it, rather than in
+// EFFECTIVE_RULESET: that object echoes the policy values every supported
+// release shares, and studio/tests/bootstrap.test.mjs pins them to the first
+// published snapshot.
+export const PROVISIONAL_RELEASE_POLICY = Object.freeze({
+  dominantOffsetMinShare: Object.freeze({ numerator: 95, denominator: 100 }),
+});
+
+// The blockers a release-side result may carry beside RELEASE_PROVISIONAL.
+const RELEASE_SIDE_BLOCKERS = new Set([
+  MICRO_GAP_BLOCKERS.CLASSIFICATION_UNKNOWN,
+  MICRO_GAP_BLOCKERS.RELEASE_NOT_FINAL_REPRESENTABLE,
+  MICRO_GAP_BLOCKERS.RELEASE_EVIDENCE_REQUIRED,
+]);
+
+// An interval that is UNKNOWN only because the evidence is missing. A pending,
+// accepted-but-unbound, conflicting or ambiguous decision on it is an open
+// question of its own, not missing evidence.
+const EVIDENCE_MISSING_BASES = new Set(['insufficient-proof', 'rejected-keep-decision']);
+
+const cmpText = (a, b) => (a < b ? -1 : a > b ? 1 : 0);
+
+/**
+ * Per symbolic source: the offset its non-representable releases share, how
+ * dominant it is, and whether that meets the precondition. Read from the
+ * release analysis's own `encodingObservations` (canonical/release-timing.mjs),
+ * never re-derived; `releaseOffsetKeyOf` is the key both use.
+ *
+ * An observation, not evidence: SOURCE_POLICY §6 is unchanged, and nothing here
+ * says a release is meaningless. It only says where the provisional delivery
+ * default may apply.
+ */
+function releaseOffsetSources(releaseAnalysis) {
+  const { numerator, denominator } = PROVISIONAL_RELEASE_POLICY.dominantOffsetMinShare;
+  return (releaseAnalysis?.encodingObservations ?? []).map(observation => {
+    const counts = Object.entries(observation.offsetsBeforeNextGrid ?? {});
+    const releaseCount = counts.reduce((sum, [, count]) => sum + count, 0);
+    const most = counts.reduce((max, [, count]) => Math.max(max, count), 0);
+    const leaders = counts.filter(([, count]) => count === most).map(([key]) => key);
+    // A tie has no dominant offset.
+    const dominantOffset = leaders.length === 1 ? leaders[0] : null;
+    const sample = dominantOffset === null ? null : releaseAnalysis.targets.find(target => target.sourceIds.includes(observation.sourceId)
+      && releaseOffsetKeyOf(target) === dominantOffset) ?? null;
+    const dominantOffsetBeats = sample ? sample.analysis.offsetBeforeNextGrid : null;
+    const subGrid = dominantOffsetBeats !== null && f(dominantOffsetBeats).cmp(0) > 0 && f(dominantOffsetBeats).cmp(SAFE_GRID) < 0;
+    const dominantCount = dominantOffset === null ? 0 : most;
+    const meetsShare = releaseCount > 0 && BigInt(dominantCount) * BigInt(denominator) >= BigInt(numerator) * BigInt(releaseCount);
+    return {
+      sourceId: observation.sourceId,
+      dominantOffset,
+      dominantOffsetBeats,
+      dominantCount,
+      releaseCount,
+      share: releaseCount ? `${dominantCount}/${releaseCount}` : null,
+      // Display only, rounded down so it never overstates the share.
+      sharePercent: releaseCount ? (Math.floor((dominantCount * 1000) / releaseCount) / 10).toFixed(1) : null,
+      minimumShare: `${numerator}/${denominator}`,
+      qualifies: dominantOffset !== null && subGrid && meetsShare,
+    };
+  }).sort((a, b) => cmpText(a.sourceId, b.sourceId));
+}
+
+/**
+ * Whether every open micro-timing question of this project is a release that
+ * can be held, for delivery only, to the following attack or next grid point --
+ * and if so, which releases and what each one closes.
+ *
+ * Nothing here decides meaning. A release qualifies only when every one of its
+ * sources shows a systematic export offset and the release sits at exactly that
+ * offset, and when the release analysis's own EXTEND_TO_NEXT_GRID option is
+ * valid for it (that option already refuses a hold that would cross a same-role
+ * onset, enter an explicit rest, create a cross-role same-pitch overlap or leave
+ * a sub-grid silence). Any release or interval outside that shape, any
+ * unsupported onset or rest boundary, any source-supported or technical
+ * interval, and any blocker beyond the three release-side ones makes the whole
+ * answer "no": then nothing is held and the gate keeps its usual codes.
+ */
+function provisionalReleasePlan({ project, blockers, unknown, preserved, rejected, invariantViolated, recordInvalid, releaseAnalysis }) {
+  const sources = releaseOffsetSources(releaseAnalysis);
+  const refuse = () => Object.freeze({
+    eligible: false,
+    releases: Object.freeze([]),
+    sources: Object.freeze(sources.map(source => Object.freeze({
+      ...source,
+      provisionallyRendered: 0,
+      unresolved: source.releaseCount,
+    }))),
+  });
+  if (rejected.length || preserved.length || invariantViolated || recordInvalid) return refuse();
+  if (!blockers.length || !blockers.every(code => RELEASE_SIDE_BLOCKERS.has(code))) return refuse();
+  if (releaseAnalysis.unsupportedBoundaries.length || !releaseAnalysis.targets.length) return refuse();
+
+  const sourceById = new Map(sources.map(source => [source.sourceId, source]));
+  const eventsById = new Map((Array.isArray(project?.events) ? project.events : [])
+    .filter(event => event && typeof event.id === 'string')
+    .map(event => [event.id, event]));
+  const holds = new Map();
+  for (const target of releaseAnalysis.targets) {
+    if (target.status !== TARGET_STATUS.REPRESENTATION_DECISION_REQUIRED) return refuse();
+    // The precondition, per release: every source it comes from qualifies, and
+    // it sits at exactly that source's dominant offset. An outlier keeps the
+    // ordinary handling, which blocks.
+    const offset = releaseOffsetKeyOf(target);
+    if (!target.sourceIds.length || !target.sourceIds.every(id => sourceById.get(id)?.qualifies === true
+      && sourceById.get(id).dominantOffset === offset)) return refuse();
+    const option = target.options.find(item => item.representation === REPRESENTATION.EXTEND_TO_NEXT_GRID);
+    const event = eventsById.get(target.eventId);
+    if (!option?.valid || event?.kind !== 'note') return refuse();
+    const release = f(event.end);
+    const heldTo = f(option.finalRelease);
+    const delta = heldTo.sub(release);
+    if (delta.cmp(0) <= 0 || delta.cmp(SAFE_GRID) >= 0) return refuse();
+    holds.set(target.eventId, { target, event, option, offset, release, heldTo, delta, intervalKeys: [] });
+  }
+
+  for (const interval of unknown) {
+    if (!EVIDENCE_MISSING_BASES.has(interval.classificationBasis)) return refuse();
+    const identity = interval.identity;
+    let hold = null;
+    if (identity.type === INTERVAL_TYPES.INTER_EVENT_GAP) {
+      // The gap after a note's release, closed exactly by holding that release.
+      hold = holds.get(identity.previousEventId) ?? null;
+      if (!hold || hold.release.cmp(identity.start) !== 0 || hold.heldTo.cmp(identity.end) !== 0) return refuse();
+    } else if (identity.type === INTERVAL_TYPES.EVENT_DURATION) {
+      // A sub-grid note whose release, once held, makes it at least a grid long.
+      hold = holds.get(identity.eventId) ?? null;
+      if (!hold
+        || f(hold.event.start).cmp(identity.start) !== 0
+        || hold.release.cmp(identity.end) !== 0
+        || hold.heldTo.sub(hold.event.start).cmp(SAFE_GRID) < 0) return refuse();
+    } else {
+      return refuse();
+    }
+    hold.intervalKeys.push(interval.identityKey);
+  }
+
+  const releases = [...holds.values()]
+    .sort((a, b) => cmpText(a.target.role, b.target.role) || cmpText(a.target.eventId, b.target.eventId))
+    .map(({ target, event, option, offset, release, heldTo, delta, intervalKeys }) => Object.freeze({
+      eventId: target.eventId,
+      role: target.role,
+      pitch: event.pitch,
+      onset: String(event.start),
+      // The candidate's release, and where a delivery holds it. The Source-Faithful
+      // Baseline's release is beside them for the audit trail.
+      release: release.toString(),
+      heldTo: heldTo.toString(),
+      delta: delta.toString(),
+      deltaTicks: option.deltaTicks,
+      baselineRelease: target.source.release,
+      sourceIds: Object.freeze([...target.sourceIds]),
+      offsetBeforeNextGrid: offset,
+      effect: option.effect,
+      followingShape: target.analysis.followingShape,
+      representation: REPRESENTATION.EXTEND_TO_NEXT_GRID,
+      // Held for delivery only; the intervals it closes stay UNKNOWN.
+      classification: MICRO_TIMING_CLASSIFICATIONS.UNKNOWN,
+      intervalKeys: Object.freeze([...intervalKeys].sort()),
+    }));
+  const rendered = source => releases.filter(item => item.sourceIds.includes(source.sourceId)).length;
+  return Object.freeze({
+    eligible: true,
+    releases: Object.freeze(releases),
+    sources: Object.freeze(sources.map(source => Object.freeze({
+      ...source,
+      provisionallyRendered: rendered(source),
+      unresolved: source.releaseCount - rendered(source),
+    }))),
+  });
+}
 
 // Canonical IR beats are quarter notes, so a whole-note 1/N is 4/N IR beats.
 // Exact rational throughout: no float, no rounding, no epsilon.
@@ -216,6 +409,9 @@ function failedAnalysisReport(policy, error) {
     releaseTiming: null,
     releaseRepresentationRecords: null,
     unsupportedBoundaries: Object.freeze([]),
+    provisionalReleases: Object.freeze([]),
+    provisionalReleaseIntervalKeys: Object.freeze([]),
+    releaseOffsetSources: Object.freeze([]),
   });
 }
 
@@ -303,6 +499,11 @@ export function enforceMicroGaps(project, { mobileSyntax, releaseEvidenceRegistr
     blockers.push(MICRO_GAP_BLOCKERS.UNPUBLISHED_CANONICAL_CANDIDATE);
   }
 
+  // After everything else, so it can only ever be added to a list that is
+  // otherwise release-side, and never changes a project's list when it is not.
+  const provisional = provisionalReleasePlan({ project, blockers, unknown, preserved, rejected, invariantViolated, recordInvalid, releaseAnalysis });
+  if (provisional.eligible) blockers.push(MICRO_GAP_BLOCKERS.RELEASE_PROVISIONAL);
+
   // A confirmed Final violation outranks uncertainty, but the uncertain counts
   // and blockers stay visible rather than being hidden behind the FAIL. A
   // non-conformant contract can only ever demote PASS to PENDING; it can never
@@ -352,6 +553,15 @@ export function enforceMicroGaps(project, { mobileSyntax, releaseEvidenceRegistr
       violations: Object.freeze([...releaseRecords.violations]),
     }),
     unsupportedBoundaries: releaseAnalysis.unsupportedBoundaries,
+    // With RELEASE_PROVISIONAL: every release a delivery may hold to the
+    // following attack or next grid point, and the UNKNOWN interval keys each
+    // one closes. Empty otherwise. The provisional rendering's only worklist.
+    provisionalReleases: provisional.releases,
+    provisionalReleaseIntervalKeys: Object.freeze(provisional.releases.flatMap(item => item.intervalKeys)),
+    // Per symbolic source: its dominant offset before the next grid point, that
+    // offset's share, whether it meets PROVISIONAL_RELEASE_POLICY, and how many
+    // of its releases are held provisionally and how many remain unresolved.
+    releaseOffsetSources: provisional.sources,
   });
 }
 

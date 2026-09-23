@@ -1,6 +1,6 @@
 # Acceptance Criteria
 
-Version: 2026-09-23-v2
+Version: 2026-09-23-v3
 Status: PUBLISHED CANONICAL
 
 A Mabinogi Mobile MML candidate becomes final only by passing layered gates. Passing one layer does not imply the next.
@@ -142,18 +142,35 @@ Every result that is not `PASS` or `N/A` stays in an unresolved evidence ledger,
 
 | Phase | Gates | Effect |
 | --- | --- | --- |
-| `BLOCKING` | Source traceability and completeness (Gate 2); Source-Faithful Baseline integrity; technical legality and character limits (Gate 1); Final round-trip; source-aware micro-timing; Core3 source continuity (Gate 4); a Core3 completeness defect the evaluator determines, or a completeness evaluation that did not run (Gate 4); Lead demotion and promotion evidence (Gate 3); cross-source harmony (Gate 5); unresolved arbitration decisions; any unknown or future gate; any destructive or unsupported edit | Prevents machine delivery. |
-| `NON_BLOCKING_PENDING` | Core3 completeness residue that the evaluator reports as needing a reviewer (Gate 4); version-drift review (MASTER_RULES §10); original-audio evidence (Gate 7); candidate-specific Mobile adaptation review (Gate 8); regression review (Gate 9) | Recorded as unresolved, never rewritten as `PASS` or `N/A`. Machine delivery may proceed; `VALIDATED` still requires them. |
+| `BLOCKING` | Source traceability and completeness (Gate 2); Source-Faithful Baseline integrity; technical legality and character limits (Gate 1); Final round-trip; source-aware micro-timing, except sub-grid releases rendered provisionally (below); Core3 source continuity (Gate 4); a Core3 completeness defect the evaluator determines, or a completeness evaluation that did not run (Gate 4); Lead demotion evidence (Gate 3); Lead promotion evidence, except missing primary evidence (below) (Gate 3); cross-source harmony (Gate 5); unresolved arbitration decisions; any unknown or future gate; any destructive or unsupported edit | Prevents machine delivery. |
+| `NON_BLOCKING_PENDING` | Core3 completeness residue that the evaluator reports as needing a reviewer (Gate 4); version-drift review (MASTER_RULES §10); sub-grid releases whose meaning is unproven, rendered provisionally (below); Lead promotion without primary evidence, flagged "Lead unverified" (below) (Gate 3); original-audio evidence (Gate 7); candidate-specific Mobile adaptation review (Gate 8); regression review (Gate 9) | Recorded as unresolved, never rewritten as `PASS` or `N/A`. Machine delivery may proceed; `VALIDATED` still requires them. |
 | `POST_DELIVERY` | Loaded-player readback and human listening (Gate 6); in-game acceptance (Gate 10) | Evaluated only after an artifact exists; never inferred from emitter success. |
 
 The dividing line: what a machine can determine blocks; what needs a person's judgment is delivered for listening first and stays unresolved until that person decides.
+
+### Delivered first, flagged for listening
+
+Two results need a person's judgment and no machine can decide them. They are delivered first and flagged. Everything around them that a machine can determine still blocks.
+
+1. **Sub-grid releases.** A sub-1/64 interval can stay `UNKNOWN` only because the evidence to decide a note's release is missing. That is either the gap between a note's release and the next attack in the same role, or a release that falls short of the next Final grid point. Such an interval is delivered with that release held provisionally to the following attack or the next grid point (the `EXTEND_TO_NEXT_GRID` direction), but only where its source shows a systematic export offset.
+   - The offset is checked first, per symbolic source. Take the source's releases that fall short of the next 1/64 grid point by an offset no Final length can express, and measure each one's offset before that point (in ticks for MIDI). The source qualifies when one offset dominates: a single sub-1/64 offset accounts for at least 95% of those releases. Only a release of a qualifying source whose offset equals that dominant offset is held. Any other release, and every such release of a source that does not qualify, keeps the ordinary handling: `UNKNOWN`, `BLOCKING`, and evidence or an explicit release-representation decision required. A source with no such release is unaffected.
+   - The pattern is only the precondition for this default. It is never evidence of musical meaning (SOURCE_POLICY §6 is unchanged).
+   - No attack moves. Pitch, onset and note identity never change. The silence from that grid point on is untouched: a meaningful rest of at least 1/64 is representable and is never removed, filled or shortened past the grid point, and an explicit rest is never entered.
+   - The rendering exists only in the delivered Final. The stored candidate and the Source-Faithful Baseline keep the source release.
+   - The interval stays `UNKNOWN`. It is never `PASS`, never technical residue and never source-supported. The Final lists every provisionally rendered release: the event, its source release, its rendered release and the interval it closes. The Final and the ledger report, per source, the dominant offset, its share, how many releases were held provisionally and how many remain unresolved.
+   - Source-aware micro-timing is `NON_BLOCKING_PENDING` only when every unresolved micro-timing item is covered by this rule.
+   - Still `BLOCKING`: a release whose source does not qualify or whose offset is not the dominant one; any `UNKNOWN` interval that is not such a release-side case, for example attack or onset timing, a sub-grid rest, or a sub-grid note duration that holding its release does not resolve; a release that cannot be held without crossing an onset, entering an explicit rest, creating a cross-role same-pitch overlap or leaving a sub-1/64 silence; an open source-supported claim on the interval; unresolved stream identity; an analysis that did not run; an invalid recorded release representation; confirmed technical residue; and anything else the micro-timing gate reports.
+   - Source-supported micro-timing is still preserved, and technical residue is handled as before.
+2. **Lead promotion without primary evidence.** Material can be promoted or assigned into Melody when the only open question is missing primary evidence: no evidence was supplied, or the grader found no positive primary Lead evidence (SOURCE_POLICY §1C: third-party material is supporting only). Such a promotion is `NON_BLOCKING_PENDING`. The Melody is delivered as arranged and flagged "Lead unverified".
+   - Still `BLOCKING`: any Lead demotion (MASTER_RULES §4 is unchanged); invalid evidence, contradicting evidence, or evidence that describes another event or an earlier candidate; an origin that is not in the Source-Faithful Baseline; a promotion the grader has not evaluated; a Lead identity correspondence that is unresolved; a missing Lead-gate implementation; a Core3 completeness defect such as no Lead; and anything else.
+3. Neither creates a `PASS` or `VALIDATED`. A delivery with either unresolved is `AUTOMATED_VALIDATED` only. Both stay in the unresolved ledger until evidence resolves them the normal way. An evidence-backed release representation or Lead review later replaces the provisional rendering or the flag.
 
 Rules:
 - Studio computes the phases. A conversation-hosted AI may submit sources, evidence and explicitly authorized decisions; it cannot submit or override `AUTOMATED_VALIDATED`, a human review, or `IN_GAME_ACCEPTED`.
 - Missing evidence is never `PASS` or `N/A`, and an unknown gate is `BLOCKING`.
 - Without an evidence-backed instrument profile, delivery uses the generic Mobile delivery of `MOBILE_SYNTAX.md` (syntax, range, character limits and round-trip), with the Mobile review left unresolved.
 - A new candidate revision re-evaluates every phase; an earlier machine delivery does not carry over.
-- Existing runs and Final artifacts receive a lazy, non-mutating projection from their stored gate data; a missing or incomplete gate map is `BLOCKING` and creates no `PASS`.
+- Existing runs and Final artifacts receive a lazy, non-mutating projection from their stored gate data; a missing or incomplete gate map is `BLOCKING` and creates no `PASS`. A projection recorded under an earlier classification keeps that classification.
 
 ## Final state vocabulary
 

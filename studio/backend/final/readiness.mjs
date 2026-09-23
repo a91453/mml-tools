@@ -1,7 +1,8 @@
 import { EFFECTIVE_RULESET, studioFinalBlockers } from '../rules/index.mjs';
 import { compareCanonicalVersions } from '../compare/version-drift.mjs';
 import { enforceMicroGaps } from './micro-gap-enforcement.mjs';
-import { evaluateMachineDelivery } from './delivery-evaluator.mjs';
+import { LISTEN_FIRST_CODES, evaluateMachineDelivery } from './delivery-evaluator.mjs';
+import { LEAD_EVIDENCE_IDENTITY_MISMATCH } from '../arbitration/lead-demotion.mjs';
 
 const PASS_LIKE = new Set(['PASS', 'N/A']);
 
@@ -328,6 +329,71 @@ function leadDemotionGate(reports, leadEventDiff = null) {
   );
 }
 
+// ACCEPTANCE_CRITERIA "Delivered first, flagged for listening", rule 2
+// (2026-09-23-v3): a promotion into Melody whose only open question is missing
+// primary evidence. Read from the Lead grader's own report for each pending
+// event (arbitration/lead-demotion.mjs, arrangement/decision-review.mjs), never
+// from a caller's statement about it.
+//
+// The report must say primary positive Lead evidence is missing -- none was
+// supplied, or what was supplied is supporting-only or a metric (SOURCE_POLICY
+// §1C, §6) -- and may otherwise only say which parts of the review were not
+// supplied at all. Anything the grader determined (a conflict, a Lead gap, a
+// Core3 failure), anything wrong with the evidence (malformed, describing
+// another event or an earlier candidate, a citation that resolves to nothing
+// the project holds), an origin outside the baseline, and a promotion with no
+// report at all -- the grader never ran -- keep the gate BLOCKING.
+const PRIMARY_LEAD_EVIDENCE_MISSING = new Set([
+  'POSITIVE_LEAD_EVIDENCE_MISSING',
+  'LEAD_EVIDENCE_MISSING',
+  'LEAD_PROMOTION_EVIDENCE_MISSING',
+]);
+const LEAD_REVIEW_NOT_SUPPLIED = new Set([
+  'SOURCE_IDENTITY_MISSING',
+  'SECTION_ROLE_UNRESOLVED',
+  'POSITIVE_DESTINATION_REASON_MISSING',
+  'LEAD_CONTINUITY_NOT_CHECKED',
+  'CORE3_NOT_CHECKED',
+]);
+
+function onlyPrimaryLeadEvidenceMissing(report) {
+  if (report?.status !== 'PENDING') return false;
+  const blockers = Array.isArray(report.blockers) ? report.blockers : [];
+  if (!blockers.some(code => PRIMARY_LEAD_EVIDENCE_MISSING.has(code))) return false;
+  // Given no evidence record at all, the lineage grader reports the absence
+  // together with the binding's mismatch code: with nothing cited, nothing
+  // describes another event. That exact pair is absence, and only that pair.
+  const noRecordAtAll = blockers.length === 2
+    && blockers.includes('LEAD_EVIDENCE_MISSING')
+    && blockers.includes(LEAD_EVIDENCE_IDENTITY_MISMATCH);
+  if (!noRecordAtAll && !blockers.every(code => PRIMARY_LEAD_EVIDENCE_MISSING.has(code) || LEAD_REVIEW_NOT_SUPPLIED.has(code))) return false;
+  // A citation that resolves to nothing the project holds is invalid evidence,
+  // not missing evidence.
+  const evidence = report.evidence;
+  return ![evidence?.score, evidence?.audio].some(item => item?.sourceAuthority === 'unresolved');
+}
+
+function withPrimaryLeadEvidenceMissing(result, reports) {
+  if (result.status !== 'PENDING') return result;
+  const blockers = Array.isArray(result.blockers) ? result.blockers : [];
+  if (blockers.length !== 1 || blockers[0] !== 'LEAD_PROMOTION_EVIDENCE_REQUIRED') return result;
+  const pending = Array.isArray(result.pendingEventIds) ? result.pendingEventIds : [];
+  if (!pending.length) return result;
+  // The same report per event the gate itself read.
+  const byEventId = new Map(reports
+    .filter(report => report?.status !== 'N/A' && typeof report?.eventId === 'string' && report.eventId)
+    .map(report => [report.eventId, report]));
+  if (!pending.every(id => onlyPrimaryLeadEvidenceMissing(byEventId.get(id)))) return result;
+  const { status: _status, ...details } = result;
+  return gate('PENDING', {
+    ...details,
+    blockers: [...blockers, LISTEN_FIRST_CODES.LEAD_PROMOTION_PRIMARY_EVIDENCE_MISSING],
+    // Delivered as arranged and flagged "Lead unverified" where the loaded
+    // machine-delivery schema says so; unresolved either way.
+    unverifiedLeadEventIds: Object.freeze([...pending]),
+  });
+}
+
 function leadPromotionGate(reports, leadEventDiff = null) {
   const requiredEventIds = new Set();
   for (const id of leadEventDiff?.promotedEventIds ?? []) {
@@ -341,14 +407,14 @@ function leadPromotionGate(reports, leadEventDiff = null) {
     const id = move.afterId ?? move.beforeId;
     if (typeof id === 'string' && id) requiredEventIds.add(id);
   }
-  return leadGateWithIdentity(
+  return withPrimaryLeadEvidenceMissing(leadGateWithIdentity(
     evidenceReportGate(reports, requiredEventIds, {
       reportName: 'leadPromotionReports',
       blocker: 'LEAD_PROMOTION_EVIDENCE_REQUIRED',
       noneReason: 'No Lead promotion requires arbitration.',
     }),
     leadEventDiff?.identityUnresolved?.promotion ?? [],
-  );
+  ), reports);
 }
 
 // G10. Published MOBILE_SYNTAX forbids technical micro-gaps and decomposition
@@ -451,6 +517,9 @@ export function evaluateProjectReadiness({
   // The project's current release evidence registry. With it, recorded release
   // representations are re-graded against today's sources and assets.
   releaseEvidenceRegistry = null,
+  // The Canonical identity the machine-delivery ledger is classified under: the
+  // loaded release, unless a regression names another one explicitly.
+  canonical = EFFECTIVE_RULESET.canonical,
 }) {
   if (!project || typeof project !== 'object') throw Error('Canonical project is required');
 
@@ -522,7 +591,7 @@ export function evaluateProjectReadiness({
   const preGameBlocking = preGameGateNames.filter(name => !PASS_LIKE.has(gates[name].status));
   const candidateReady = preGameBlocking.length === 0;
   const finalAccepted = candidateReady && gates.inGameAcceptance.status === 'PASS';
-  const machineDelivery = evaluateMachineDelivery(gates, { canonical: EFFECTIVE_RULESET.canonical });
+  const machineDelivery = evaluateMachineDelivery(gates, { canonical });
   // ACCEPTANCE_CRITERIA "Final state vocabulary", stated rather than left for a
   // caller to reassemble from two booleans: VALIDATED is every required
   // non-game gate PASS/N-A; IN_GAME_ACCEPTED additionally needs the in-game gate,

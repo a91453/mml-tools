@@ -26,8 +26,20 @@
 import { F, f, ROLES } from '../mml/index.mjs';
 import { EFFECTIVE_RULESET, studioFinalBlockers } from '../rules/index.mjs';
 import { enforceMicroGaps } from './micro-gap-enforcement.mjs';
-import { deliveryBlockingGates } from './delivery-evaluator.mjs';
-import { REPAIR_STATUS, repairTechnicalTiming } from './technical-timing-repair.mjs';
+import {
+  DELIVERY_CLASS,
+  MACHINE_DELIVERY_SCHEMA_V2,
+  deliveryBlockingGates,
+  deliveryClassOf,
+  machineDeliveryAuthority,
+  machineDeliverySchemaOf,
+} from './delivery-evaluator.mjs';
+import {
+  PROVISIONAL_RENDERING_NOTICE,
+  REPAIR_STATUS,
+  renderProvisionalReleases,
+  repairTechnicalTiming,
+} from './technical-timing-repair.mjs';
 import {
   EMIT_STATUS,
   DIAGNOSTIC_SEVERITY,
@@ -614,6 +626,52 @@ function normalizeTempoEvents(project) {
 }
 
 /**
+ * Drop every Tempo event that restates the Tempo already in effect.
+ *
+ * MOBILE_SYNTAX §7 (2026-09-23-v3): such an event changes no timing and is not
+ * part of the Tempo Map; a Final delivered under machine delivery collapses it.
+ * Exact and machine-determined: the Tempo in force at every beat is the same
+ * before and after, and the round trip compares the emitted string against the
+ * collapsed map. A Tempo *change* is never dropped, wherever it falls. Runs on
+ * events `normalizeTempoEvents` accepted, so they are strictly increasing.
+ */
+function collapseTempoRestatements(events) {
+  const kept = [];
+  const collapsed = [];
+  for (const event of events) {
+    const inEffect = kept.at(-1);
+    if (inEffect && f(event.beat).cmp(inEffect.beat) > 0 && event.bpm === inEffect.bpm) {
+      collapsed.push(Object.freeze({ tempoId: event.id ?? null, beat: String(event.beat), bpm: event.bpm, inEffectSince: String(inEffect.beat), inEffectTempoId: inEffect.id ?? null }));
+      continue;
+    }
+    kept.push(event);
+  }
+  return { kept, collapsed };
+}
+
+// Whether this emission may collapse restatements: asked for, and the identity
+// it is decided under has machine-delivery authority under the schema that
+// carries the rule.
+function tempoCollapseDecision(settings) {
+  if (!settings.collapseTempoRestatements) return null;
+  const identity = settings.canonical ?? EFFECTIVE_RULESET.canonical;
+  const schema = machineDeliverySchemaOf(identity);
+  const effective = machineDeliveryAuthority(identity).active && schema === MACHINE_DELIVERY_SCHEMA_V2;
+  return { requested: true, effective, schema, applied: false, collapsed: [] };
+}
+
+function tempoBlock(tempo) {
+  if (!tempo) return null;
+  return Object.freeze({
+    requested: true,
+    applied: tempo.applied === true,
+    machineDeliverySchema: tempo.schema,
+    reason: tempo.effective ? null : `${tempo.schema} does not collapse Tempo restatements; the Tempo Map is written as the candidate carries it`,
+    collapsed: Object.freeze([...tempo.collapsed]),
+  });
+}
+
+/**
  * The gates that must hold before any serialization is attempted.
  *
  * G10 is consumed here rather than re-derived: `enforceMicroGaps` owns the
@@ -685,6 +743,55 @@ function evaluateGates(project, options) {
     }
   }
 
+  // Provisional release rendering (ACCEPTANCE_CRITERIA "Delivered first,
+  // flagged for listening", 2026-09-23-v3). Only on request, only under an
+  // active machine-delivery identity whose schema classifies this very result
+  // NON_BLOCKING_PENDING, and only through the renderer's own worklist
+  // discipline. Like the repair above, it never answers a gate: it changes which
+  // project is serialized, the rendering is re-graded by the same enforcement,
+  // and anything short of a clean rendering leaves the original verdict in place.
+  //
+  // What the result reports is the stored candidate's micro-timing, not the
+  // rendering's: the stored intervals stay UNKNOWN and the report says so.
+  const storedMicroGap = microGap;
+  const provisional = { requested: options.provisionalReleaseRendering === true, applied: false, classification: null, schema: null, result: null, reason: null };
+  if (provisional.requested) {
+    const identity = options.canonical ?? EFFECTIVE_RULESET.canonical;
+    provisional.schema = machineDeliverySchemaOf(identity);
+    provisional.classification = deliveryClassOf('microTiming', { status: microGap.status, blockers: microGap.blockers }, { canonical: identity });
+    if (repair.applied || microGap.status !== 'PENDING') {
+      provisional.reason = `micro-timing is ${microGap.status}; there is nothing to render provisionally`;
+    } else if (!machineDeliveryAuthority(identity).active) {
+      provisional.reason = 'the Canonical identity has no machine-delivery authority';
+    } else if (provisional.classification !== DELIVERY_CLASS.NON_BLOCKING_PENDING) {
+      provisional.reason = `micro-timing is ${provisional.classification} under ${provisional.schema}`;
+    } else {
+      provisional.result = renderProvisionalReleases(candidate, { enforcement: microGap, releaseEvidenceRegistry: options.releaseEvidenceRegistry });
+      if (provisional.result.status === REPAIR_STATUS.PASS && provisional.result.renderedProject) {
+        candidate = provisional.result.renderedProject;
+        microGap = provisional.result.verification;
+        provisional.applied = true;
+        diagnostics.push(diagnostic(
+          EMIT_DIAGNOSTICS.PROVISIONAL_RELEASES_RENDERED,
+          DIAGNOSTIC_SEVERITY.NOTICE,
+          `${provisional.result.renderings.length} release(s) whose meaning is unproven are held provisionally to the following attack or next grid point for delivery (${provisional.schema}). The emitted MML describes the rendering "${candidate.id}"; the stored candidate "${project.id}" is unchanged and its intervals stay UNKNOWN. The result's provisionalReleaseRendering lists each one.`,
+          {
+            renderedProjectId: candidate.id,
+            storedProjectId: project.id,
+            heldEventCount: provisional.result.heldEventIds.length,
+          },
+        ));
+      } else {
+        diagnostics.push(diagnostic(
+          EMIT_DIAGNOSTICS.PROVISIONAL_RELEASE_RENDERING_UNAVAILABLE,
+          DIAGNOSTIC_SEVERITY.NOTICE,
+          `Provisional release rendering returned ${provisional.result.status} and produced no deliverable rendering. The stored candidate is graded unchanged.`,
+          { renderingStatus: provisional.result.status, renderingDiagnostics: Object.freeze(provisional.result.diagnostics.map(item => item.code)) },
+        ));
+      }
+    }
+  }
+
   if (microGap.status === 'FAIL') {
     diagnostics.push(diagnostic(
       EMIT_DIAGNOSTICS.MICRO_GAP_TECHNICAL_RESIDUE,
@@ -744,7 +851,7 @@ function evaluateGates(project, options) {
     }
   }
 
-  return { status, diagnostics, microGap, repair, candidate };
+  return { status, diagnostics, microGap: provisional.applied ? storedMicroGap : microGap, repair, provisional, candidate };
 }
 
 /**
@@ -761,9 +868,10 @@ export function emitFinalMml(project, options = {}) {
   const lattice = buildTokenLattice({ cautionLengthOptIn: settings.cautionLengthOptIn });
 
   const gates = evaluateGates(project, settings);
+  gates.extra = { provisional: gates.provisional, tempo: tempoCollapseDecision(settings) };
   const diagnostics = [...gates.diagnostics];
   if (gates.status !== EMIT_STATUS.PASS) {
-    return buildResult(gates.status, null, [], diagnostics, gates.microGap, null, facts, gates.repair);
+    return buildResult(gates.status, null, [], diagnostics, gates.microGap, null, facts, gates.repair, gates.extra);
   }
 
   // Everything below serializes `candidate`: the input project, or the repaired
@@ -780,13 +888,29 @@ export function emitFinalMml(project, options = {}) {
       `${unassigned.length} note/rest event(s) carry no six-slot role. The emitter will not choose a slot for them.`,
       { eventIds: Object.freeze(unassigned.slice(0, 20).map(event => event.id)) },
     ));
-    return buildResult(EMIT_STATUS.FAIL, null, [], diagnostics, gates.microGap, null, facts, gates.repair);
+    return buildResult(EMIT_STATUS.FAIL, null, [], diagnostics, gates.microGap, null, facts, gates.repair, gates.extra);
   }
 
   const tempo = normalizeTempoEvents(candidate);
   diagnostics.push(...tempo.diagnostics);
   if (tempo.diagnostics.some(item => item.severity === DIAGNOSTIC_SEVERITY.ERROR)) {
-    return buildResult(EMIT_STATUS.FAIL, null, [], diagnostics, gates.microGap, null, facts, gates.repair);
+    return buildResult(EMIT_STATUS.FAIL, null, [], diagnostics, gates.microGap, null, facts, gates.repair, gates.extra);
+  }
+  // Only restatements go, and only where the rule is in force. Everything below
+  // (role splits, the tempo tokens and the round trip) reads the collapsed map.
+  if (gates.extra.tempo?.effective) {
+    const { kept, collapsed } = collapseTempoRestatements(tempo.events);
+    tempo.events = kept;
+    gates.extra.tempo.applied = true;
+    gates.extra.tempo.collapsed = collapsed;
+    if (collapsed.length) {
+      diagnostics.push(diagnostic(
+        EMIT_DIAGNOSTICS.TEMPO_RESTATEMENTS_COLLAPSED,
+        DIAGNOSTIC_SEVERITY.NOTICE,
+        `${collapsed.length} Tempo event(s) restate the Tempo already in effect and change no timing. They are not part of the Tempo Map and are not written (MOBILE_SYNTAX §7, ${gates.extra.tempo.schema}).`,
+        { collapsed: Object.freeze([...collapsed]) },
+      ));
+    }
   }
 
   const roles = [];
@@ -833,10 +957,10 @@ export function emitFinalMml(project, options = {}) {
   }
 
   if (diagnostics.some(item => item.severity === DIAGNOSTIC_SEVERITY.ERROR)) {
-    return buildResult(EMIT_STATUS.FAIL, null, roles, diagnostics, gates.microGap, null, facts, gates.repair);
+    return buildResult(EMIT_STATUS.FAIL, null, roles, diagnostics, gates.microGap, null, facts, gates.repair, gates.extra);
   }
   if (diagnostics.some(item => item.severity === DIAGNOSTIC_SEVERITY.PENDING)) {
-    return buildResult(EMIT_STATUS.PENDING, null, roles, diagnostics, gates.microGap, null, facts, gates.repair);
+    return buildResult(EMIT_STATUS.PENDING, null, roles, diagnostics, gates.microGap, null, facts, gates.repair, gates.extra);
   }
 
   // Character budget is checked against the one existing contract value. P1
@@ -859,11 +983,11 @@ export function emitFinalMml(project, options = {}) {
     ));
   }
   if (overBudget.length) {
-    return buildResult(EMIT_STATUS.FAIL, null, roles, diagnostics, gates.microGap, null, facts, gates.repair);
+    return buildResult(EMIT_STATUS.FAIL, null, roles, diagnostics, gates.microGap, null, facts, gates.repair, gates.extra);
   }
 
   const combined = `MML@${roles.map(entry => entry.mml).join(',')};`;
-  return finalizeWithRoundTrip(combined, expected, roles, diagnostics, gates.microGap, settings, facts, gates.repair);
+  return finalizeWithRoundTrip(combined, expected, roles, diagnostics, gates.microGap, settings, facts, gates.repair, gates.extra);
 }
 
 /**
@@ -877,13 +1001,13 @@ export function emitFinalMml(project, options = {}) {
  * coverage: a redundant check that is never exercised silently stops being a
  * check at all.
  */
-export function finalizeWithRoundTrip(combinedMml, expected, roles, diagnostics, microGap, settings, facts, repair = null) {
+export function finalizeWithRoundTrip(combinedMml, expected, roles, diagnostics, microGap, settings, facts, repair = null, extra = {}) {
   const readback = verifyFinalReadback(combinedMml, expected, settings);
   const all = [...diagnostics, ...readback.diagnostics];
   if (readback.report.status !== 'PASS') {
-    return buildResult(EMIT_STATUS.FAIL, null, roles, all, microGap, readback.report, facts, repair);
+    return buildResult(EMIT_STATUS.FAIL, null, roles, all, microGap, readback.report, facts, repair, extra);
   }
-  return buildResult(EMIT_STATUS.PASS, combinedMml, roles, all, microGap, readback.report, facts, repair);
+  return buildResult(EMIT_STATUS.PASS, combinedMml, roles, all, microGap, readback.report, facts, repair, extra);
 }
 
 /**
@@ -934,7 +1058,46 @@ function repairBlock(repair) {
   });
 }
 
-function buildResult(status, combinedMml, roles, diagnostics, microGap, roundTrip, facts, repair = null) {
+/**
+ * The provisional release block of an emit result: which releases the emitted
+ * MML holds, where each one is held to, which unproven intervals that closes,
+ * and the per-source offset figures the precondition read. `null` when the
+ * caller did not ask for provisional rendering.
+ *
+ * The round trip compares the emitted MML with the rendering, the only
+ * semantics that string claims. The rendering itself was checked against the
+ * stored candidate (`verifyProvisionalRenderingInvariants`): it differs only in
+ * the listed releases, each moved to exactly its listed point.
+ */
+function provisionalBlock(provisional) {
+  if (!provisional?.requested) return null;
+  const result = provisional.result;
+  const applied = provisional.applied === true;
+  return Object.freeze({
+    requested: true,
+    applied,
+    status: result?.status ?? null,
+    reason: result ? null : provisional.reason,
+    classification: provisional.classification,
+    machineDeliverySchema: provisional.schema,
+    storedProjectId: result?.storedProjectId ?? null,
+    renderedProjectId: applied ? result.renderedProjectId : null,
+    // One record per held release: event, source and rendered release, and the
+    // unproven intervals it closes. Everything else here is a count, so a Final
+    // that holds many releases carries each one once.
+    renderings: applied ? result.renderings : Object.freeze([]),
+    heldEventCount: applied ? result.heldEventIds.length : 0,
+    closedIntervalCount: applied ? result.intervalKeys.length : 0,
+    releaseOffsetSources: result?.releaseOffsetSources ?? Object.freeze([]),
+    preRendering: result?.preRendering ?? null,
+    renderingVerification: applied ? Object.freeze({ status: result.verification.status, projectId: result.renderedProjectId }) : null,
+    roundTripAgainst: applied ? 'rendered-project' : null,
+    diagnostics: Object.freeze((result?.diagnostics ?? []).map(item => Object.freeze({ code: item.code, severity: item.severity, message: item.message }))),
+    notice: PROVISIONAL_RENDERING_NOTICE,
+  });
+}
+
+function buildResult(status, combinedMml, roles, diagnostics, microGap, roundTrip, facts, repair = null, { provisional = null, tempo = null } = {}) {
   return Object.freeze({
     status,
     combinedMml: status === EMIT_STATUS.PASS ? combinedMml : null,
@@ -962,6 +1125,8 @@ function buildResult(status, combinedMml, roles, diagnostics, microGap, roundTri
       gradedProjectId: repair?.applied === true ? repair.result?.repairedProjectId ?? null : null,
     }),
     technicalTimingRepair: repairBlock(repair),
+    provisionalReleaseRendering: provisionalBlock(provisional),
+    tempoRestatements: tempoBlock(tempo),
     roundTrip,
     diagnostics: Object.freeze(diagnostics),
     canonical: canonicalIdentity(),

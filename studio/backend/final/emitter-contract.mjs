@@ -49,6 +49,12 @@ export const EMIT_DIAGNOSTICS = Object.freeze({
   // emitter is looking at, never what any gate demands of it.
   TECHNICAL_TIMING_REPAIR_APPLIED: 'TECHNICAL_TIMING_REPAIR_APPLIED',
   TECHNICAL_TIMING_REPAIR_UNAVAILABLE: 'TECHNICAL_TIMING_REPAIR_UNAVAILABLE',
+  // Provisional release rendering (2026-09-23-v3). Notices too: the rendering
+  // changes which project is serialized for delivery, never what a gate says
+  // about the stored candidate.
+  PROVISIONAL_RELEASES_RENDERED: 'PROVISIONAL_RELEASES_RENDERED',
+  PROVISIONAL_RELEASE_RENDERING_UNAVAILABLE: 'PROVISIONAL_RELEASE_RENDERING_UNAVAILABLE',
+  TEMPO_RESTATEMENTS_COLLAPSED: 'TEMPO_RESTATEMENTS_COLLAPSED',
   SOURCE_SUPPORTED_INTERVAL_NOT_REPRESENTABLE: 'SOURCE_SUPPORTED_INTERVAL_NOT_REPRESENTABLE',
   READINESS_BLOCKED: 'READINESS_BLOCKED',
   IMPLEMENTATION_BLOCKED: 'IMPLEMENTATION_BLOCKED',
@@ -183,6 +189,22 @@ export const DEFAULT_EMIT_OPTIONS = Object.freeze({
   // Recorded release representations are then re-graded against it rather than
   // against their own stored citation shape.
   releaseEvidenceRegistry: null,
+  // Provisional release rendering (ACCEPTANCE_CRITERIA "Delivered first,
+  // flagged for listening", 2026-09-23-v3) is opt-in, for the machine-delivery
+  // path only. Opting in grants nothing: the emitter renders only when the
+  // machine-delivery schema of `canonical` classifies its own fresh micro-timing
+  // result NON_BLOCKING_PENDING. Off, the emitter refuses unproven sub-grid
+  // releases exactly as before; the Studio Web never opts in.
+  provisionalReleaseRendering: false,
+  // A Tempo event restating the Tempo already in effect changes no timing and
+  // is not part of the Tempo Map (MOBILE_SYNTAX §7, 2026-09-23-v3). Opt-in, for
+  // the machine-delivery path only, and effective only when `canonical`
+  // declares the machine-delivery schema that carries that sentence; the
+  // collapsed restatements are listed in the result.
+  collapseTempoRestatements: false,
+  // The Canonical identity those two are decided under. `null` is the loaded
+  // release; a regression may name another one explicitly.
+  canonical: null,
 });
 
 export function normalizeEmitOptions(options = {}) {
@@ -200,6 +222,9 @@ export function normalizeEmitOptions(options = {}) {
     readiness: options.readiness ?? null,
     technicalTimingRepair: options.technicalTimingRepair === true,
     releaseEvidenceRegistry: options.releaseEvidenceRegistry ?? null,
+    provisionalReleaseRendering: options.provisionalReleaseRendering === true,
+    collapseTempoRestatements: options.collapseTempoRestatements === true,
+    canonical: options.canonical ?? null,
   });
 }
 

@@ -1,17 +1,31 @@
 import assert from 'node:assert/strict';
 import { EFFECTIVE_RULESET } from '../../backend/rules/index.mjs';
-import { machineDeliveryAuthority } from '../../backend/final/delivery-evaluator.mjs';
+import {
+  MACHINE_DELIVERY_SCHEMA_V2,
+  machineDeliveryAuthority,
+  machineDeliverySchemaOf,
+} from '../../backend/final/delivery-evaluator.mjs';
 
 // Which unresolved gates stop delivery is decided by the loaded release, and
 // the loaded release is read from the published Manifest on origin/main: the
 // previous release while a publication is still a pull request, the new one
 // once it is merged. A test whose outcome depends on that difference states
-// both outcomes and picks one by this flag, never by a version literal.
+// both outcomes and picks one by these flags, never by a version literal.
 //
-//   false  2026-09-13-v1: every pre-game gate blocks Final.
-//   true   2026-09-23-v2: only the machine-delivery BLOCKING phase does; the
-//          rest is delivered for listening first and stays unresolved.
+//   MACHINE_DELIVERY_ACTIVE
+//     false  2026-09-13-v1: every pre-game gate blocks Final.
+//     true   2026-09-23-v2 and later: only the machine-delivery BLOCKING phase
+//            does; the rest is delivered for listening first and stays
+//            unresolved.
+//   LISTEN_FIRST_RELEASES_ACTIVE
+//     true   2026-09-23-v3 (schema @2): in addition, micro-timing that is only
+//            release-side is delivered with those releases held provisionally,
+//            and a Lead promotion missing only primary evidence is delivered
+//            flagged "Lead unverified" (ACCEPTANCE_CRITERIA "Delivered first,
+//            flagged for listening"). Both stay unresolved.
 export const MACHINE_DELIVERY_ACTIVE = machineDeliveryAuthority(EFFECTIVE_RULESET.canonical).active;
+export const LOADED_MACHINE_DELIVERY_SCHEMA = machineDeliverySchemaOf(EFFECTIVE_RULESET.canonical);
+export const LISTEN_FIRST_RELEASES_ACTIVE = MACHINE_DELIVERY_ACTIVE && LOADED_MACHINE_DELIVERY_SCHEMA === MACHINE_DELIVERY_SCHEMA_V2;
 
 /**
  * `gate` is unresolved and treated as the loaded release says: a delivery
