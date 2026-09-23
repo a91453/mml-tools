@@ -36,6 +36,7 @@ function controls() {
   $('#start').disabled = busy || !projectId;
   $('#start-existing').disabled = busy || !projectId || !$('#existing-source').value;
   $('#upload-audio').disabled = busy || !projectId;
+  $('#upload-extra').disabled = busy || !projectId;
   $('#review').disabled = busy || !current?.run?.candidate_id;
   $('#handoff').disabled = busy || !current?.run;
   $('#download-final').disabled = busy || current?.run?.state !== 'completed' || !current.run.final_artifact_id || Boolean(current.staleness?.length);
@@ -224,6 +225,16 @@ $('#start').onclick = () => act(async () => {
 });
 $('#retry-start').onclick = () => act(async () => { const attempt = saved(attemptKey(projectId)); if (!attempt?.asset_id) throw Error('沒有可重用的啟動請求'); await startAttempt(attempt); });
 $('#start-existing').onclick = () => act(() => startAttempt({ asset_id: $('#existing-source').value, idempotency_key: crypto.randomUUID() }));
+$('#upload-extra').onclick = () => act(async () => {
+  const file = $('#extra-source').files[0], kind = $('#extra-kind').value;
+  const musicxml = kind.endsWith('_musicxml');
+  if (!file || !(musicxml ? /\.(musicxml|xml)$/i : /\.midi?$/i).test(file.name)) throw Error(musicxml ? '請選擇未壓縮的 MusicXML（.musicxml 或 .xml）' : '請選擇 MIDI 檔案');
+  // A .musicxml file often carries a vendor type (or none) that the service does
+  // not list; the bytes are XML text either way.
+  const uploaded = await client.upload(projectId, musicxml ? new File([file], file.name, { type: 'application/xml' }) : file, kind);
+  await loadProject(projectId, current?.run?.run_id);
+  message(`已加入來源 ${uploaded.asset.asset_id}；尚未啟動任務，也不代表來源已被採用。`);
+});
 $('#upload-audio').onclick = () => act(async () => { await client.upload(projectId, $('#audio').files[0], 'original_audio'); await loadProject(projectId, current?.run?.run_id); message('已加入原曲音訊；對齊與聽驗仍需另行執行。'); });
 $('#review').onclick = () => act(async () => {
   const observed = binding(); reviewBinding = null;

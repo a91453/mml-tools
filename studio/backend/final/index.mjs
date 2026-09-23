@@ -8,6 +8,7 @@
 export {
   MICRO_GAP_ENFORCEMENT,
   MICRO_GAP_BLOCKERS,
+  PROVISIONAL_RELEASE_POLICY,
   enforceMicroGaps,
   readMicroGapPolicy,
   isBelowSafeGrid,
@@ -27,6 +28,12 @@ export {
   repairTechnicalTiming,
   readRejectedTechnicalRecords,
   verifyRepairInvariants,
+  // Provisional release rendering for a delivered Final only (2026-09-23-v3).
+  PROVISIONAL_RELEASE_RENDERING,
+  PROVISIONAL_RENDERING_DIAGNOSTICS,
+  PROVISIONAL_RENDERING_NOTICE,
+  renderProvisionalReleases,
+  verifyProvisionalRenderingInvariants,
 } from './technical-timing-repair.mjs';
 
 // Per-song readiness. Remains the readiness authority; the emitter never
@@ -36,11 +43,17 @@ export {
   evaluateMachineDelivery,
   machineDeliveryAuthority,
   DELIVERY_CLASS,
-  MACHINE_DELIVERY_SCHEMA,
+  MACHINE_DELIVERY_SCHEMA_V1,
+  MACHINE_DELIVERY_SCHEMA_V2,
+  MACHINE_DELIVERY_SCHEMAS,
   MACHINE_DELIVERY_PROJECTION_VERSION,
   MACHINE_DELIVERY_GATE_NAMES,
   MACHINE_DELIVERY_GATE_MAP_INCOMPLETE,
   AUTOMATED_VALIDATED,
+  DELIVERY_FLAG,
+  LISTEN_FIRST_CODES,
+  deliveryClassOf,
+  machineDeliverySchemaOf,
 } from './delivery-evaluator.mjs';
 
 // Canonical-aware Final MML emitter.

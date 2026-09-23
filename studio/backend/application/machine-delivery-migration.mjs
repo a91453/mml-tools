@@ -1,6 +1,6 @@
 import {
   MACHINE_DELIVERY_PROJECTION_VERSION,
-  MACHINE_DELIVERY_SCHEMA,
+  MACHINE_DELIVERY_SCHEMAS,
   evaluateMachineDelivery,
   machineDeliveryAuthority,
 } from '../final/delivery-evaluator.mjs';
@@ -54,15 +54,21 @@ function equalJson(left, right) {
   return JSON.stringify(left) === JSON.stringify(right);
 }
 
-// Pure/lazy migration for persisted v1 run and artifact projections. It does
-// not edit evidence, stored gate maps, or any acceptance state. The returned
+// Pure/lazy migration for persisted run and artifact projections. It does not
+// edit evidence, stored gate maps, or any acceptance state. The returned
 // projection is a read model; callers do not need to persist it.
+//
+// A complete projection recorded under a known machine-delivery schema keeps
+// that schema's classification: a run or Final recorded under @1 is not
+// re-classified under @2 because a later release is loaded. Only its authority
+// is re-read, from the identity it was recorded under. A record with no complete
+// projection is classified once, under the schema its own identity declares.
 export function migrateMachineDeliveryState(record, { canonical = record?.canonical ?? null } = {}) {
   if (!record || typeof record !== 'object' || Array.isArray(record)) throw Error('record is required');
 
   const clone = structuredClone(record);
   const existing = clone.machine_delivery;
-  if (existing?.schema === MACHINE_DELIVERY_SCHEMA
+  if (MACHINE_DELIVERY_SCHEMAS.includes(existing?.schema)
     && existing?.projection_version === MACHINE_DELIVERY_PROJECTION_VERSION
     && existing?.complete_gate_map === true) {
     const refreshed = refreshAuthority(existing, canonical);

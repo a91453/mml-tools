@@ -26,6 +26,7 @@ import { ROLES } from '../backend/mml/index.mjs';
 import { RELEASE_REGRID_CANDIDATE } from '../backend/canonical/release-regrid-candidate.mjs';
 import { OWNER, AGENT_SUBMITTER, HUMAN_SUBMITTER, audioReviewDecision, oneTickEarlyBaseline, roleDecisions, ALL_RELEASE_EVENTS } from './fixtures/release-fixtures.mjs';
 import { PUBLISHED_CANONICAL } from '../backend/rules/index.mjs';
+import { LISTEN_FIRST_RELEASES_ACTIVE } from './support/loaded-release.mjs';
 
 const statusOf = (run, step) => run.steps.find(entry => entry.step === step)?.status ?? null;
 const receiptOf = (run, step) => [...run.steps].reverse().find(entry => entry.step === step) ?? null;
@@ -93,9 +94,22 @@ test('RDR-1 the run stops only where evidence is missing and says what would ans
   assert.equal(adaptation.detail.release_timing.decision_required, true);
   assert.deepEqual(adaptation.detail.release_timing.encoding_observations.map(item => [item.uniform, item.admissible_as_evidence]), [[true, false]]);
   const micro = started.run.review_requests.find(request => request.gate === 'microTiming');
-  assert.ok(micro, JSON.stringify(started.run.review_requests.map(request => request.gate)));
-  assert.deepEqual(micro.available_operations, ['planMobileAdaptation', 'applyMobileAdaptation.release_representation']);
-  assert.ok(micro.blockers.includes('MICRO_TIMING_RELEASE_NOT_FINAL_REPRESENTABLE'));
+  if (LISTEN_FIRST_RELEASES_ACTIVE) {
+    // 2026-09-23-v3 (schema @2): every release sits at its source's single
+    // export offset, so micro-timing is delivered for listening first with those
+    // releases held provisionally. It is not a review request, and it stays
+    // unresolved in the ledger with the same codes.
+    assert.equal(micro, undefined, JSON.stringify(started.run.review_requests.map(request => request.gate)));
+    const entry = started.run.machine_delivery.non_blocking_pending.find(item => item.gate === 'microTiming');
+    assert.ok(entry, JSON.stringify(started.run.machine_delivery.non_blocking_pending.map(item => item.gate)));
+    assert.equal(entry.delivery_flag, 'RELEASES_RENDERED_PROVISIONALLY');
+    assert.ok(entry.blockers.includes('MICRO_TIMING_RELEASE_NOT_FINAL_REPRESENTABLE'));
+    assert.equal(entry.provisional_releases.length, 8);
+  } else {
+    assert.ok(micro, JSON.stringify(started.run.review_requests.map(request => request.gate)));
+    assert.deepEqual(micro.available_operations, ['planMobileAdaptation', 'applyMobileAdaptation.release_representation']);
+    assert.ok(micro.blockers.includes('MICRO_TIMING_RELEASE_NOT_FINAL_REPRESENTABLE'));
+  }
   // Nothing was delivered and the song is a CANDIDATE.
   assert.equal(started.run.final_artifact_id ?? null, null);
   const direct = await app.finalize(OWNER, fixture.projectId, { candidateId: started.run.candidate_id });

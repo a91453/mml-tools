@@ -6,7 +6,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { createStudioApplication, ERROR_CODES, RUN_STEP } from '../backend/application/index.mjs';
 import { FIXTURE_CONFIRMATIONS, projectWithSymbolicAsset, runDecisionsFor } from './fixtures/run-fixtures.mjs';
-import { MACHINE_DELIVERY_ACTIVE } from './support/loaded-release.mjs';
+import { LOADED_MACHINE_DELIVERY_SCHEMA, MACHINE_DELIVERY_ACTIVE } from './support/loaded-release.mjs';
 
 const OWNER = 'owner:continuation';
 const rejected = (promise, code) => assert.rejects(promise, error => error.code === code);
@@ -37,7 +37,8 @@ test('next is byte-and-mtime read-only, repeatable, detached, and uses the exist
     const app = createStudioApplication({ dataDirectory: directory, durability: 'persistent' });
     const f = await fixture(app); const before = snapshots(directory);
     const status = await app.getRun(OWNER, f.projectId, f.run.run_id);
-    assert.equal(status.run.machine_delivery.schema, 'mabinogi-mobile-mml-studio/machine-delivery@1');
+    // Classified under the schema the loaded release declares (@1 for v2, @2 for v3).
+    assert.equal(status.run.machine_delivery.schema, LOADED_MACHINE_DELIVERY_SCHEMA);
     assert.equal(status.run.machine_delivery.lifecycle, 'CANDIDATE');
     assert.equal(status.run.machine_delivery.ready, false);
     assert.equal(status.run.machine_delivery.complete_gate_map, false);

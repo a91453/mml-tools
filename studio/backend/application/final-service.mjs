@@ -31,7 +31,7 @@ import { ERROR_CODES, GATE_STATUS, OPERATION_STATUS, fail, requireString } from 
 import { sha256Of } from './store.mjs';
 import { gatesFrom } from './review-service.mjs';
 import { migrateMachineDeliveryState } from './machine-delivery-migration.mjs';
-import { deliveryBlockingGates } from '../final/delivery-evaluator.mjs';
+import { MACHINE_DELIVERY_SCHEMA_V2, deliveryBlockingGates } from '../final/delivery-evaluator.mjs';
 
 const now = () => new Date().toISOString();
 const encoder = new TextEncoder();
@@ -247,7 +247,28 @@ export function createFinalService({ canonical, projects, review, store }) {
 
       // One call. The emitter owns micro-gap enforcement, the optional repair,
       // serialization and the round-trip readback, in that order.
-      const emitted = engines.final.emitFinalMml(project, { readiness, technicalTimingRepair, releaseEvidenceRegistry: ctx.releaseEvidenceRegistry });
+      //
+      // Provisional release rendering is asked for only when the authoritative
+      // ledger already delivers micro-timing for listening first
+      // (ACCEPTANCE_CRITERIA "Delivered first, flagged for listening"). Asking
+      // grants nothing: the emitter renders only when the same schema
+      // classifies its own fresh micro-timing result NON_BLOCKING_PENDING.
+      // Under a release without that classification it is never asked.
+      //
+      // Same-value Tempo restatements are collapsed where the authoritative
+      // ledger was classified under the schema that carries that sentence
+      // (MOBILE_SYNTAX §7, 2026-09-23-v3); the emitter re-checks it too.
+      const listenFirstReleases = readiness.machineDelivery?.authoritative === true
+        && readiness.machineDelivery.non_blocking_pending.some(entry => entry.gate === 'microTiming');
+      const collapseTempoRestatements = readiness.machineDelivery?.authoritative === true
+        && readiness.machineDelivery.schema === MACHINE_DELIVERY_SCHEMA_V2;
+      const emitted = engines.final.emitFinalMml(project, {
+        readiness,
+        technicalTimingRepair,
+        releaseEvidenceRegistry: ctx.releaseEvidenceRegistry,
+        provisionalReleaseRendering: listenFirstReleases,
+        collapseTempoRestatements,
+      });
       const emitStatus = emitted.status;
       const passed = emitStatus === engines.final.EMIT_STATUS.PASS;
 
@@ -355,6 +376,10 @@ export function createFinalService({ canonical, projects, review, store }) {
           delivered,
           song_state: finalReadiness.songState,
           validated_under: { canonical_version: provenance.canonical_version ?? null, rules_snapshot_sha: provenance.rules_snapshot_sha ?? null },
+          // What this delivery carries unresolved and is flagged with, e.g.
+          // RELEASES_RENDERED_PROVISIONALLY or LEAD_UNVERIFIED. Each flag names a
+          // NON_BLOCKING_PENDING ledger entry; none is a verdict.
+          flags: [...(machineDelivery?.delivery_flags ?? [])],
           // Evidence that comes after delivery. It never blocks delivery and is
           // never supplied by this service.
           post_delivery_evidence: [
@@ -366,6 +391,13 @@ export function createFinalService({ canonical, projects, review, store }) {
         character_counts: emitted.characterCounts,
         micro_gap: emitted.microGap,
         technical_timing_repair: repairReport,
+        // Every release the delivered MML holds provisionally, the unproven
+        // intervals each one closes, and the per-source offset figures; the
+        // stored candidate keeps the source release. Null when none was asked.
+        provisional_release_rendering: emitted.provisionalReleaseRendering ?? null,
+        // Tempo events that restated the Tempo in effect and were not written.
+        // Null where the loaded release does not collapse them.
+        tempo_restatements: emitted.tempoRestatements ?? null,
         final_bar: { ...barInputs, meter_text: meterText },
         player_readback_binding: playerReadbackBinding,
         candidate_rules_snapshot_sha: ctx.candidateRulesSnapshot,
@@ -409,6 +441,8 @@ export function createFinalService({ canonical, projects, review, store }) {
         song_state: finalReadiness.songState,
         emit_status: emitStatus,
         technical_timing_repair: repairReport,
+        provisional_release_rendering: artifact.provisional_release_rendering,
+        tempo_restatements: artifact.tempo_restatements,
         final_bar: artifact.final_bar,
         player_readback_binding: playerReadbackBinding,
         candidate_rules_snapshot_sha: ctx.candidateRulesSnapshot,

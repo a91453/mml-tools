@@ -1,6 +1,6 @@
 # Mabinogi Mobile MML — Canonical Master Rules
 
-Version: 2026-09-23-v2
+Version: 2026-09-23-v3
 Status: PUBLISHED CANONICAL
 
 This document is the human-readable authority for project policy. Executable contracts, parsers, validators, Studio code, legacy skills, community posts, websites, and historical outputs MUST NOT silently redefine it.
@@ -77,6 +77,8 @@ Demoting a source-supported Lead requires positive role evidence and must preser
 
 If the evidence for demotion conflicts or is incomplete, preserve the Source-Faithful Lead event and mark the decision `PENDING` rather than cleaning it away.
 
+Material promoted or assigned into Melody without primary evidence is not a Lead verdict either way. Under machine delivery (`ACCEPTANCE_CRITERIA.md`) the Melody is delivered as arranged and flagged "Lead unverified", and the promotion stays unresolved until evidence decides it. This never applies to a demotion.
+
 ## 5. Core3 / Full6
 
 Core3 = Melody + Chord1 + Chord2 and is the single-player three-chord target.
@@ -113,6 +115,8 @@ When a confirmed non-musical overlap must be repaired, prefer evidence-backed re
 Preserve meaningful source rests, breaths, articulation gaps, and sparse passages. Do not fill true rests to improve continuity statistics.
 
 Technical micro-gaps without musical meaning may be normalized under `MOBILE_SYNTAX.md`.
+
+A sub-grid release whose meaning is unproven is not a technical micro-gap and is not normalized. Under machine delivery (`ACCEPTANCE_CRITERIA.md`), a release that follows its source's systematic export offset may be held provisionally to the following attack or the next grid point, in the delivered Final only. The offset pattern is a precondition for that default, never evidence of meaning. The Final lists every such release, and each stays unresolved. The candidate and the Source-Faithful Baseline keep the source release, and no true rest is filled.
 
 Tie (`&`) is used only when the musical event is a continuation of the same pitch. Adjacent repeated attacks must not be silently converted into one sustain.
 
@@ -155,6 +159,8 @@ Keep these separate:
 No lower layer may impersonate a higher layer.
 
 `AUTOMATED_VALIDATED` is a song-level machine-delivery state (`ACCEPTANCE_CRITERIA.md`): every `BLOCKING` gate passed under the active Published Canonical. It is not `VALIDATED`, which also requires human review, and not `IN_GAME_ACCEPTED`. It sets none of the layers above.
+
+A provisionally rendered release or an unverified Lead sets none of them either. `TECHNICAL_PASS` for such a Final covers the rendered MML only. It is not `SOURCE_PASS` for the release or the Lead.
 
 ## 12. Canonical change control and regression claims
 

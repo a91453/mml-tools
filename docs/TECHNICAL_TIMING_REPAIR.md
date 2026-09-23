@@ -381,3 +381,18 @@ of it (who submitted the decision is provenance, not authority; corrected
 Source-Faithful release on the event, and produces a new
 candidate that the micro-timing gate re-verifies. This layer is unchanged: it
 still refuses the note-preceded case, because it holds no such evidence.
+
+**Update (2026-09-23, `2026-09-23-v3` prose, not yet published).** Route 2 has
+been taken for delivery only. `ACCEPTANCE_CRITERIA` "Delivered first, flagged
+for listening" lets a Final delivered under machine-delivery schema `@2` hold a
+note's release to the following attack or next grid point, where the release
+follows its source's systematic export offset (one sub-1/64 offset for at least
+95% of that source's non-representable releases) and every open micro-timing
+item is such a release. It is implemented beside this layer, not in it:
+`renderProvisionalReleases` in `final/technical-timing-repair.mjs` reuses the
+worklist discipline (only the releases a fresh enforcement report lists, each
+re-checked against the project) and has its own invariant check. It produces a
+rendering for serialization only. The stored candidate keeps the source
+release, the intervals stay `UNKNOWN`, and the Final lists every held release.
+`repairTechnicalTiming` is unchanged and still refuses the note-preceded case
+(`NOTE_RELEASE_NOT_PROVEN_NEUTRAL`).

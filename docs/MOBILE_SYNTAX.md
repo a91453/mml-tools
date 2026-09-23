@@ -1,6 +1,6 @@
 # Mobile Syntax Policy
 
-Version: 2026-09-23-v2
+Version: 2026-09-23-v3
 Status: PUBLISHED CANONICAL
 
 This file separates documented game limits from project output policy.
@@ -64,6 +64,8 @@ Also `FINAL_FORBIDDEN`:
 
 Preferred rewrite: exact equivalent canonical note/tie/rest decomposition that preserves event timing and attack identity. The engine capability of forbidden dotted forms remains a separate `PENDING_IN_GAME` question.
 
+Provisional release rendering (machine delivery only). Some sub-1/64 release intervals have unproven meaning: they are neither source-supported nor technical residue. Where the release follows its source's systematic export offset, as `ACCEPTANCE_CRITERIA.md` defines it, a Final delivered under machine delivery may hold such a release to the following attack or the next 1/64 grid point instead of writing a sub-1/64 component. This is a delivery representation. It is not a normalization, not a Mobile adaptation decision and not a source correction. No attack moves, and the silence from that grid point on is unchanged. The Final lists every such release with its source release, and the interval stays unresolved. Nothing else in this section changes.
+
 ## 5. Numeric note command (`Nxx` / `nNN`)
 
 Community works demonstrate real use of numeric-note commands, so the project MUST NOT claim that the Mobile parser categorically lacks Nxx support.
@@ -109,6 +111,8 @@ Until controlled in-game tests prove a weaker requirement, `FINAL_CANONICAL_POLI
 
 Whether the client would remain synchronized with only one role carrying mid-song Tempo changes remains `PENDING_IN_GAME`.
 
+A Tempo event that restates the Tempo already in effect changes no timing and is not part of the Tempo Map. A Final delivered under machine delivery (`ACCEPTANCE_CRITERIA.md`) collapses it and records each collapsed restatement. A Tempo change keeps the handling above wherever it falls, including an off-grid position.
+
 ## 8. Tie / attack semantics
 
 `&` may join only the intended continuation of the same pitch. Do not use it to hide a repeated attack or to tie through a rest.
@@ -138,5 +142,7 @@ Before user delivery:
 6. verify each role independently against the 2,400-character limit;
 7. verify synchronization-safe Tempo policy, meter and time alignment;
 8. keep a reversible mapping from canonical output to source events/decisions.
+
+A release held provisionally under §4 satisfies step 5 in the delivered MML only. Its reversible mapping is the listed source release beside the rendered one.
 
 Technical syntax PASS does not certify musical correctness or in-game acceptance.

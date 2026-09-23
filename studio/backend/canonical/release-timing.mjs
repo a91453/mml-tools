@@ -691,7 +691,7 @@ export function analyzeReleaseTiming({ candidate, baseline = null, windowGapBeat
   for (const target of targets) {
     for (const sourceId of target.sourceIds) {
       if (!patterns.has(sourceId)) patterns.set(sourceId, new Map());
-      const key = target.analysis.offsetBeforeNextGridTicks !== null ? `${target.analysis.offsetBeforeNextGridTicks} tick(s)` : `${target.analysis.offsetBeforeNextGrid} beat(s)`;
+      const key = releaseOffsetKeyOf(target);
       patterns.get(sourceId).set(key, (patterns.get(sourceId).get(key) ?? 0) + 1);
     }
   }
@@ -731,6 +731,20 @@ export function analyzeReleaseTiming({ candidate, baseline = null, windowGapBeat
     encodingObservations: Object.freeze(encodingObservations),
     notice: 'Analysis only. Source releases are reported exactly as the Source-Faithful Baseline holds them; representation options and the recommendation are arithmetic, not a musical verdict. A release moves only through a reviewer-accepted decision with admissible evidence, and every move stays reversible and visible in the baseline diff.',
   });
+}
+
+/**
+ * How far a target release sits before its next safe-grid point, as the one
+ * key `encodingObservations` counts by: whole source ticks when the event
+ * carries its ticks-per-quarter and the offset is a whole number of them, the
+ * exact beat offset otherwise. Anything that groups releases by offset reads
+ * this, so an observation and a check on it can never disagree about what
+ * "the same offset" means.
+ */
+export function releaseOffsetKeyOf(target) {
+  return target.analysis.offsetBeforeNextGridTicks !== null
+    ? `${target.analysis.offsetBeforeNextGridTicks} tick(s)`
+    : `${target.analysis.offsetBeforeNextGrid} beat(s)`;
 }
 
 /** Compact counts for gates and run receipts; the full analysis stays in the plan. */

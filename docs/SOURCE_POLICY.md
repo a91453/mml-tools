@@ -1,6 +1,6 @@
 # Source Policy
 
-Version: 2026-09-23-v2
+Version: 2026-09-23-v3
 Status: PUBLISHED CANONICAL
 
 This document defines what each source is allowed to prove. Sources are complementary, not interchangeable.

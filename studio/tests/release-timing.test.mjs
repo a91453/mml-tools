@@ -120,7 +120,12 @@ test('RT-3 a release before a real rest or at a role end is now visible to micro
   assert.equal(rest.followingSilenceAfter, '1');
   const enforcement = enforceMicroGaps(candidate);
   assert.equal(enforcement.status, 'PENDING');
-  assert.deepEqual(enforcement.blockers, [MICRO_GAP_BLOCKERS.RELEASE_NOT_FINAL_REPRESENTABLE]);
+  // Both releases sit at their one source's single offset, one tick before the
+  // grid, and nothing else is open, so the gate also says the whole question is
+  // release-side (2026-09-23-v3). It stays PENDING; whether a delivery may hold
+  // the releases is the machine-delivery schema's call, not this gate's.
+  assert.deepEqual(enforcement.blockers, [MICRO_GAP_BLOCKERS.RELEASE_NOT_FINAL_REPRESENTABLE, MICRO_GAP_BLOCKERS.RELEASE_PROVISIONAL]);
+  assert.deepEqual(enforcement.provisionalReleases.map(item => [item.eventId, item.heldTo, item.intervalKeys.length]), [['a', '1', 0], ['b', '3', 0]]);
   assert.equal(enforcement.releaseTiming.targetCount, 2);
 });
 
