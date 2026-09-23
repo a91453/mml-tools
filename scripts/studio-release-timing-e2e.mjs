@@ -252,7 +252,7 @@ function leadSection({ review, assets, sources, queue }) {
     gate: { status: gate.status, blockers: (gate.blockers ?? []).slice(0, 8) },
     promotion_reports: { total: reports.length, by_status: sorted(byStatus), blocker_counts: sorted(blockerCounts) },
     stored_production_reviews: queue ? {
-      source: 'docs/evidence/kaiju-final-remediation-2026-09-22/lead-review-queue.json',
+      source: 'the --lead-queue export supplied to this run',
       reviews_sha256: queue.exports?.reviews_sha256 ?? null,
       melody_events: items.length,
       without_any_review: items.length - stored.length,

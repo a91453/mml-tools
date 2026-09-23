@@ -103,9 +103,8 @@ for (const path of ['docs/G11C_CANDIDATE_ARRANGEMENT.md']) await copyFile(path);
 
 // Regressions whose subject this export refuses to carry are removed from it
 // rather than merely skipped: song-reference-packages.test.mjs exists to police
-// imports/, which is never exported, and names a private song package while
-// doing so. Shipping it would publish that name and leave a test that can never
-// run. It is unchanged and still enforced in the source repository, and
+// imports/, which is never exported. Shipping it would leave a test with
+// nothing to check. It is unchanged and still enforced in the source repository, and
 // audit-oss-export.mjs refuses an export that carries it.
 for (const path of ['studio/tests/song-reference-packages.test.mjs']) {
   await rm(resolve(output, path), { force: true });

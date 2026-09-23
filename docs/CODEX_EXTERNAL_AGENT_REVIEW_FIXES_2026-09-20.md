@@ -69,11 +69,11 @@ git diff --check
 
 ## 真實歌曲狀態
 
-《怪獣の花唄》重新計算 review、讀取 run 並嘗試 export：仍是 revision 12、
+真實歌曲重新計算 review、讀取 run 並嘗試 export：仍是 revision 12、
 `awaiting_review`／`AWAITING_ACCEPTED_REDUCTION_DECISIONS`，匯出如實拒絕。
 專案 record SHA-256 仍為
 `abb3d886dead6d5577254adeda91dcda82e2d3bd7385b704c57efcd4c7a821df`。
-新 review 報告保存在忽略的 `.studio-agent/kaiju-review-after-code-review.json`；
+新 review 報告保存在忽略的本機 `.studio-agent/` 檔案；
 逐次 receipts 在 `.studio-agent/real-song/receipts/`。
 
 本次沒有新增使用者介入請求，也沒有把 test fixture confirmations 用於歌曲。

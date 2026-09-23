@@ -52,7 +52,7 @@
     "reason": "This session's egress policy denies CONNECT to mml-tools-production.up.railway.app; the proxy answered 403. No probe was executed and no expected value was relaxed to compensate.",
     "prior_evidence": "evidence/production-e2e-2026-09-20/public-probe.json (PASS at 2026-09-20T08:39:42Z)",
     "prior_evidence_still_current": true,
-    "currency_basis": "The Railway control plane reports the same deployment 8f375cb5-4640-4b4c-a15f-662d66cae6e6 created 2026-09-20T08:05:43Z still SUCCESS at bbb8534, so no redeploy occurred between the recorded probe and this check."
+    "currency_basis": "The Railway control plane reports the same deployment <redacted-id-1> created 2026-09-20T08:05:43Z still SUCCESS at bbb8534, so no redeploy occurred between the recorded probe and this check."
   },
   "railway": {
     "project": "mml-tools-allen",
@@ -60,7 +60,7 @@
     "service": "mml-tools",
     "domain": "mml-tools-production.up.railway.app",
     "domain_target_port": 3000,
-    "deployment_id": "8f375cb5-4640-4b4c-a15f-662d66cae6e6",
+    "deployment_id": "<redacted-id-1>",
     "deployment_status": "SUCCESS",
     "commit": "bbb8534245c78041573fd93af88c8fc7fd3e89bd",
     "branch": "main",

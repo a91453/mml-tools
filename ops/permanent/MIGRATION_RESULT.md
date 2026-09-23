@@ -1,5 +1,7 @@
 # PERMANENT_STUDIO_DURABLE
 
+> Railway resource IDs are kept out of this public repository and appear as `<redacted-id-N>` (the same N is the same resource). Read them from the Railway dashboard.
+
 Verified on 2026-09-14. Production is serving the reviewed, reproducible Studio v1
 release from an independent durable source. The historical production cache and
 volume are preserved for rollback. No Canonical or Studio feature changes were made.
@@ -39,17 +41,17 @@ artifacts nor an isolated/temporary service is a runtime source.
 ## Isolated proof
 
 The isolated service `studio-durable-isolated` used its own 1 GiB volume
-`a75fd368-2dcc-4e4f-8637-f242d3c2738d`. The final bootstrap's cold proof used the
+`<redacted-id-7>`. The final bootstrap's cold proof used the
 previously unused `/studio-cache/final-proof` namespace. No preview was available
 or configured. Production remained unchanged until all proofs passed.
 
 | Proof | Deployment | Result |
 | --- | --- | --- |
-| Final empty-cache cold bootstrap | `25caeae1-17dd-44fd-b1c4-9ed33b466859` | SUCCESS: trusted source, durable download, ZIP and artifact verification, atomic commit, then `.ready` and server |
-| Initial offline cached restart | `ed6f76e1-850d-4131-a0ce-699e3d7b88ff` | SUCCESS with `refetch:false` |
-| Deliberately corrupt cached `studio/web/app.mjs` with `.ready` retained | `228033e5-9b58-45ea-bebd-7b8f4dfb91b4` | Expected FAILED deployment: asset hash mismatch, no server start, no download; health request did not succeed |
-| Explicit whole-artifact durable recovery | `cec4e4a2-71ac-4a48-bd38-1192c8596434` | SUCCESS: rejected cache quarantined; full ZIP downloaded and reverified; 34/34 HTTP asset hashes match |
-| Final cached restart with downloading disabled | `055831dd-85ec-48ab-a4ef-994746267a43` | SUCCESS: full verification, `refetch:false`, health 200 and expected identity |
+| Final empty-cache cold bootstrap | `<redacted-id-13>` | SUCCESS: trusted source, durable download, ZIP and artifact verification, atomic commit, then `.ready` and server |
+| Initial offline cached restart | `<redacted-id-14>` | SUCCESS with `refetch:false` |
+| Deliberately corrupt cached `studio/web/app.mjs` with `.ready` retained | `<redacted-id-15>` | Expected FAILED deployment: asset hash mismatch, no server start, no download; health request did not succeed |
+| Explicit whole-artifact durable recovery | `<redacted-id-16>` | SUCCESS: rejected cache quarantined; full ZIP downloaded and reverified; 34/34 HTTP asset hashes match |
+| Final cached restart with downloading disabled | `<redacted-id-17>` | SUCCESS: full verification, `refetch:false`, health 200 and expected identity |
 
 `/health`, `/`, `/build.json`, all 34 runtime assets, and `sw.js` returned 200 in
 the stable HTTP audit. The actual browser initialized the PWA module/worker graph
@@ -63,16 +65,16 @@ and all six pinned Canonical documents. Evidence is in
 
 | Field | Result |
 | --- | --- |
-| Railway project | `mml-tools-studio-permanent` / `8382ec4b-8da6-4f27-947b-b325ea5aadfa` |
-| Service | `studio-web-permanent` / `311e2f06-bad4-415c-b020-d52e1a6bf064` |
-| Production deployment | `9ddaad2c-fc64-4822-a011-3924e3aae629` / SUCCESS |
+| Railway project | `mml-tools-studio-permanent` / `<redacted-id-18>` |
+| Service | `studio-web-permanent` / `<redacted-id-2>` |
+| Production deployment | `<redacted-id-11>` / SUCCESS |
 | Permanent URL | https://studio-web-permanent-production.up.railway.app |
 | Health, root, build.json | 200 / 200 / 200 |
 | Runtime and PWA assets | 34/34 status 200 and exact SHA256 matches, including final `sw.js` |
 | Bootstrap mode | `durable-source` |
-| Existing production volume | `fba8d8a3-0c88-4f9b-b2a4-54a772217388`, unchanged at `/studio-cache` |
-| Historical rollback deployment | `f9a9bd99-4809-4a3b-8612-07b96c196d4a` |
-| Historical deployment snapshot | `229e86e2-2b2d-4003-9903-fed319edbb0f`, retained in deployment history |
+| Existing production volume | `<redacted-id-4>`, unchanged at `/studio-cache` |
+| Historical rollback deployment | `<redacted-id-3>` |
+| Historical deployment snapshot | `<redacted-id-19>`, retained in deployment history |
 
 Production logs show this order on 2026-09-14 UTC:
 

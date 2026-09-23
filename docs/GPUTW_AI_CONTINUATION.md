@@ -32,7 +32,7 @@ GPUtw 的官方 AI 知識套件（[GPUtw-ai/GPUtw-Skill](https://github.com/GPUt
 - 目錄價以 USD/hr 表示、餘額以 NT$ 計；最低儲值 NT$100，入門卡每小時個位數台幣起跳，
   但跑得動 coding 模型的卡（大 VRAM 或多卡）不是最低價那一檔。實際價格以
   <https://gputw.ai/zh-TW/pricing> 為準。
-- **你的 `@nkust.edu.tw` 信箱符合 EDU 帳號資格**（註冊贈點＋學研價），這是這條路線
+- **學校信箱若符合 EDU 帳號資格**（註冊贈點＋學研價），這是這條路線
   對你划算的主要原因。
 - 判斷準則：等額度回復幾小時就能繼續的零星修改 → 直接等。**一次要做完一大批**
   （整輪 suggestion／review／finalize、大量測試修復、跨檔重構）→ 租機比較值得，

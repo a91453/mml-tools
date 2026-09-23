@@ -4,7 +4,7 @@
 // shared micro-gap enforcement. The rules are Published Canonical 2026-09-13-v1:
 // MOBILE_SYNTAX §3/§4/§11, MASTER_RULES §3/§7, SOURCE_POLICY §1/§6, Gate 8. They
 // add none. The fixtures are synthetic and labelled; the one-tick shape mirrors
-// the real 《怪獸之歌》 third-party MIDI encoding but proves nothing about that
+// the captured real song's third-party MIDI encoding but proves nothing about that
 // song.
 import test from 'node:test';
 import assert from 'node:assert/strict';
@@ -289,8 +289,8 @@ test('RT-9 evidence authority is the cited source, its basis and the claim; who 
 });
 
 test('RT-9b what would settle an open release is named from the sources the project holds, never from who may submit it', () => {
-  const kaijuShaped = buildEvidenceRegistry({ assets: [ASSETS[0], ASSETS[1], ASSETS[3]], sources: [THIRD] });
-  const requirement = releaseEvidenceRequirement(kaijuShaped);
+  const realSongShaped = buildEvidenceRegistry({ assets: [ASSETS[0], ASSETS[1], ASSETS[3]], sources: [THIRD] });
+  const requirement = releaseEvidenceRequirement(realSongShaped);
   assert.deepEqual(requirement.anyOf.map(item => [item.code, [...item.availableRefs], [...item.notIndependentRefs]]), [
     [RELEASE_EVIDENCE_REQUIREMENT.ORIGINAL_AUDIO_REVIEW_REQUIRED, ['ast_audio'], []],
     [RELEASE_EVIDENCE_REQUIREMENT.SYMBOLIC_SOURCE_REQUIRED, [], ['ast_relabelled']],
@@ -304,7 +304,7 @@ test('RT-9b what would settle an open release is named from the sources the proj
   // Surfaced by the micro-timing gate as a precise blocker when a registry is known.
   const a = note({ id: 'a', start: 0, end: tickBefore(1) });
   const candidate = project([a, note({ id: 'b', start: 2, end: 3 })]);
-  const gate = enforceMicroGaps(candidate, { releaseEvidenceRegistry: kaijuShaped });
+  const gate = enforceMicroGaps(candidate, { releaseEvidenceRegistry: realSongShaped });
   assert.ok(gate.blockers.includes(MICRO_GAP_BLOCKERS.RELEASE_EVIDENCE_REQUIRED));
   assert.equal(gate.releaseEvidenceRequirement.anyOf[0].code, RELEASE_EVIDENCE_REQUIREMENT.ORIGINAL_AUDIO_REVIEW_REQUIRED);
   assert.ok(!enforceMicroGaps(candidate).blockers.includes(MICRO_GAP_BLOCKERS.RELEASE_EVIDENCE_REQUIRED), 'unknown sources: no requirement is guessed');

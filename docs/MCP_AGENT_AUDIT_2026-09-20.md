@@ -80,7 +80,7 @@ technical service，並非只有 HTTP 可以技術驗證。
 
 ### 真實 MIDI 的完整分頁回讀
 
-使用原《怪獣の花唄》MIDI 所建立的獨立 store，以及既有歌曲 store 的副本。
+使用真實歌曲原始 MIDI 所建立的獨立 store，以及既有歌曲 store 的副本。
 每個工具先取得完整 Application Service JSON，再經實際 `handleMcp` 逐頁讀取，
 串接並比對完整文字、SHA-256 與 JSON 深度相等。這是報告資料傳輸的驗收，
 沒有把「完整讀到報告」當成「報告中的音樂審查已通過」。

@@ -20,6 +20,6 @@ accepted and historical MML still split into six tracks and parse without
 track-level errors under the current parser. Editing any package file requires
 regenerating its manifest.
 
-| song_id | Current accepted | Imported |
-| --- | --- | --- |
-| `back-number-mabataki` | `v29R` | 2026-09-17, see its `import-record.md` |
+No package is kept in the public repository. Song packages hold real-song
+material, so they are stored privately; the conventions above still apply to
+any package placed here.

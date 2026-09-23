@@ -95,10 +95,10 @@ This candidate is the "published Canonical change" route named there.
 
 ## 3. Rationale
 
-- The shape is a property of the encoder, not of individual notes: in the Kaiju
-  source 1,544 of 1,545 releases are exactly one tick before the grid, every
+- The shape is a property of the encoder, not of individual notes: in the captured
+  real-song source 1,544 of 1,545 releases are exactly one tick before the grid, every
   onset is on the grid, and every ≥1/64 rest is exactly one tick longer than a
-  grid length (`docs/evidence/kaiju-final-remediation-2026-09-22/microtiming-audit.json`).
+  grid length (per a micro-timing audit of that source, kept out of the public repository).
   A musically meaningful articulation would not be one tick (≈0.8 ms at 150 BPM)
   on every note of a piano arrangement, uniformly, including under sustained
   chords.
@@ -158,10 +158,10 @@ It never overrides a keep decision or a primary source.
 
 ## 8. What this does not do
 
-- It does not publish, and it does not make Kaiju `VALIDATED`.
+- It does not publish, and it does not make that song `VALIDATED`.
 - It does not classify any interval `TECHNICAL_RESIDUE` in the Published-v1
   analyzer and does not write any decision.
-- It does not address other Final blockers (for Kaiju, e.g. the long-rest
+- It does not address other Final blockers (for that song, e.g. the long-rest
   duration-search limit reported in the remediation notes).
 
 The alternative, no-rule-change route remains open: a primary symbolic source
@@ -174,8 +174,7 @@ This candidate is **unchanged, still unpublished and still inactive**
 (`activeInCanonicalVersions: []`). It is no longer the only way forward for the
 note-preceded case: the "alternative, no-rule-change route" above is now
 implemented under Published v1 as an evidence-gated **release representation**
-in Mobile Adaptation v1 (`canonical/release-timing.mjs`,
-`docs/MONSTER_SONG_MICROTIMING_FINAL_FLOW_2026-09-22.md`). There, a release no
+in Mobile Adaptation v1 (`canonical/release-timing.mjs`). There, a release no
 admitted Final token can express moves to an adjacent 1/64 grid point only under a
 decision whose evidence cites an independent primary source (an official score,
 or the original recording) by a direct review of it, whoever submits it

@@ -4,7 +4,7 @@ import { readFileSync } from 'node:fs';
 import { migrateMachineDeliveryState } from '../backend/application/machine-delivery-migration.mjs';
 import { MACHINE_DELIVERY_GATE_MAP_INCOMPLETE } from '../backend/final/delivery-evaluator.mjs';
 
-const fixture = JSON.parse(readFileSync(new URL('./fixtures/kaiju-production-machine-delivery.json', import.meta.url)));
+const fixture = JSON.parse(readFileSync(new URL('./fixtures/real-song-production-machine-delivery.json', import.meta.url)));
 const V1_CANONICAL = Object.freeze({
   canonical_version: '2026-09-13-v1',
   canonical_status: 'PUBLISHED',

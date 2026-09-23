@@ -1,5 +1,7 @@
 # Studio v1 durable deployment
 
+> Railway resource IDs are kept out of this public repository and appear as `<redacted-id-N>` (the same N is the same resource). Read them from the Railway dashboard.
+
 Current release: main `66e9244f89e2`, deployed 2026-09-23. See
 [RELEASE_2026-09-23.md](RELEASE_2026-09-23.md) for its identity, runs, startup
 log and rollback. The original migration (main `5769e76849e5`) is recorded in
@@ -32,7 +34,7 @@ accepts replacement bytes just because they are at the same URL, tag or object k
 The publishing workflow refuses to overwrite an existing asset.
 
 The private Railway bucket `studio-release-artifacts`
-(`e3ff79a7-f493-4436-894d-b166dfb97ab9`) contains byte-identical runtime and trust
+(`<redacted-id-5>`) contains byte-identical runtime and trust
 ZIP mirrors under SHA256-addressed keys. Both were read back after upload. It
 is independent of the production/isolated volumes. No Actions artifact or
 temporary service URL is a permanent source. Never delete the release, pinned
@@ -114,9 +116,9 @@ one file. Set the flag back to `0` after recovery.
 ## Rollback
 
 The pre-migration production deployment is
-`f9a9bd99-4809-4a3b-8612-07b96c196d4a`, service
-`311e2f06-bad4-415c-b020-d52e1a6bf064`, original volume
-`fba8d8a3-0c88-4f9b-b2a4-54a772217388`. [rollback-config.json](evidence/rollback-config.json)
+`<redacted-id-3>`, service
+`<redacted-id-2>`, original volume
+`<redacted-id-4>`. [rollback-config.json](evidence/rollback-config.json)
 preserves its full non-secret source/deploy/volume configuration and the restore
 pins derived from its successfully validated historical artifact. OAuth hides
 the original variable values, so this is not a claim to have exported secrets.

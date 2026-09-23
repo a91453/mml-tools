@@ -66,10 +66,10 @@ submitted proposal。拒絕 confirmations、reconcile、直接套用決策、假
   推論期间狀態變動、未知結果核對。
 - 桌面 Chromium、iPhone/iPad WebKit 驗證網頁自動 dispatch、狀態回讀及故意遺失
   首次啟動回應後沿用原任務。模型替身只回報等待審查，CI 不呼叫付費模型。
-- 真正 Codex CLI 在《怪獸之歌》修正版 run 執行2次推論，讀取 suggestion 後停在
+- 真正 Codex CLI 在真實歌曲的修正版 run 執行2次推論，讀取 suggestion 後停在
   waiting_review，revision仍6、沒有 proposal/Final。這是推論與協定驗證，不能當
   作歌曲角色、聽驗或遊戲內接受證据。真實模型與網頁的整合路徑分別驗證。
 - 完整 Node suite：1,831 PASS、0 FAIL；94.917秒、204次 bootstrap、shared refs不變。
   Studio Web build通過。正式站尚未啟用；歌曲完整 Final 路徑仍待所需角色證據。
 
-詳細歌曲身分、私有試聽頁及可公開證據見 [本次接續紀錄](KAIJU_CONTINUATION_2026-09-21.md)。
+歌曲身分、私有試聽頁與歌曲專屬證據不放在公開 repository。

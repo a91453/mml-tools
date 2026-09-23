@@ -1,5 +1,7 @@
 # Railway Agent migration audit — 2026-09-21
 
+> Railway resource IDs are kept out of this public repository and appear as `<redacted-id-N>` (the same N is the same resource). Read them from the Railway dashboard.
+
 Status: Railway Agent migration and migration-only resource retirement complete. This document is not a Canonical rule source.
 
 ## Scope
@@ -35,12 +37,12 @@ Because an external client can exist outside repository instruction loading, the
 
 Before deleting any migration-only Railway resource, the durable Studio rollback path was re-verified against `ops/permanent/README.md`, `ops/permanent/MIGRATION_RESULT.md`, and the live Railway inventory.
 
-- Production rollback targets `studio-web-permanent` service `311e2f06-bad4-415c-b020-d52e1a6bf064`, historical deployment `f9a9bd99-4809-4a3b-8612-07b96c196d4a`, and production volume `fba8d8a3-0c88-4f9b-b2a4-54a772217388`.
+- Production rollback targets `studio-web-permanent` service `<redacted-id-2>`, historical deployment `<redacted-id-3>`, and production volume `<redacted-id-4>`.
 - The historical cache used for rollback is retained on the production `/studio-cache` volume; rollback does not reference the isolated service or isolated volume.
-- `studio-release-artifacts` bucket `e3ff79a7-f493-4436-894d-b166dfb97ab9` is the durable recovery source and is explicitly independent of both production and isolated volumes.
+- `studio-release-artifacts` bucket `<redacted-id-5>` is the durable recovery source and is explicitly independent of both production and isolated volumes.
 - The operations runbook states that no isolated/temporary service URL is a permanent runtime source.
-- Therefore `studio-durable-isolated` service `2343a428-d442-4c3d-99cc-a3c2d690578d` and its dedicated volume `a75fd368-2dcc-4e4f-8637-f242d3c2738d` are not required for production rollback or durable recovery.
-- `charismatic-reverence` project `181279f2-d244-4ced-9a74-2474b923ab58` has no domains, variables, or volumes, shows zero CPU/RAM usage over the last 24 hours, and its only service continues to fail deployments from `main`; no repository reference identifies it as an intended runtime.
+- Therefore `studio-durable-isolated` service `<redacted-id-6>` and its dedicated volume `<redacted-id-7>` are not required for production rollback or durable recovery.
+- `charismatic-reverence` project `<redacted-id-8>` has no domains, variables, or volumes, shows zero CPU/RAM usage over the last 24 hours, and its only service continues to fail deployments from `main`; no repository reference identifies it as an intended runtime.
 
 This checkpoint authorizes only the migration-resource retirement described above. It does **not** authorize deletion of `studio-web-permanent`, its production volume, the durable release bucket, Git history/assets, or historical rollback evidence.
 
@@ -50,20 +52,20 @@ The owner explicitly authorized deletion of the migration-only resources after r
 
 ### Completed cleanup
 
-- `charismatic-reverence` service was removed, then the empty project was deleted from Railway Project Settings. A direct lookup by project id `181279f2-d244-4ced-9a74-2474b923ab58` now returns `Project not found`. A workspace project-list response may remain eventually consistent briefly after deletion, but the project is no longer addressable.
-- `studio-durable-isolated` service `2343a428-d442-4c3d-99cc-a3c2d690578d` was deleted.
-- Its dedicated cache volume `a75fd368-2dcc-4e4f-8637-f242d3c2738d` was deleted.
+- `charismatic-reverence` service was removed, then the empty project was deleted from Railway Project Settings. A direct lookup by project id `<redacted-id-8>` now returns `Project not found`. A workspace project-list response may remain eventually consistent briefly after deletion, but the project is no longer addressable.
+- `studio-durable-isolated` service `<redacted-id-6>` was deleted.
+- Its dedicated cache volume `<redacted-id-7>` was deleted.
 - `mml-tools-allen` preview environments `preview-base` and `mml-tools-pr-53` were deleted. Live project inventory now contains only the `production` environment.
 - The PR-environment enable/disable toggle is dashboard-only and is not readable through the connected Railway API; current live inventory verifies that no preview environment remains.
 
 ### Protected production resources verified after cleanup
 
-- `mml-tools-allen / production / mml-tools` remains on successful deployment `446fec19-4cb9-4381-aff5-f4c76671599f`.
-- Production `/data` volume `e90e0f81-854e-467c-9ab0-5be246118708` remains mounted at 5000 MB.
+- `mml-tools-allen / production / mml-tools` remains on successful deployment `<redacted-id-9>`.
+- Production `/data` volume `<redacted-id-10>` remains mounted at 5000 MB.
 - Production domain `mml-tools-production.up.railway.app` remains attached.
-- `studio-web-permanent` service `311e2f06-bad4-415c-b020-d52e1a6bf064` remains on successful deployment `9ddaad2c-fc64-4822-a011-3924e3aae629`.
-- Permanent Studio production volume `fba8d8a3-0c88-4f9b-b2a4-54a772217388` remains mounted at `/studio-cache`.
-- Durable release bucket `e3ff79a7-f493-4436-894d-b166dfb97ab9` remains present.
+- `studio-web-permanent` service `<redacted-id-2>` remains on successful deployment `<redacted-id-11>`.
+- Permanent Studio production volume `<redacted-id-4>` remains mounted at `/studio-cache`.
+- Durable release bucket `<redacted-id-5>` remains present.
 - Permanent Studio domain `studio-web-permanent-production.up.railway.app` remains attached.
 - No destructive cleanup touched the historical rollback evidence or production rollback path.
 
@@ -226,7 +228,7 @@ Mitigation: Studio CI evidence/static-build artifact uploads are non-blocking. T
 
 ## 2026-09-22 Wait-for-CI / production-audit deadlock
 
-Merge commit `37ddf414ee90abfb78109dfc1e6a8a43cb85e35c` (PR #63) produced Railway deployment `53fef58d-448f-4518-901f-48a305b940f1`, which stayed `WAITING` from 17:21:30 UTC although main-push `Studio CI` and `Studio service CI` had succeeded by 17:23:57. A `Railway production audit` run (`35760362985`) had been dispatched on the same commit at 17:23:26 and was polling that deployment. Because a `workflow_dispatch` run is also a check on its commit, Railway Wait for CI waited for the audit while the audit waited for Railway. The audit was cancelled at 17:33:35 (completed 17:35:00); Railway then released and the deployment reached `SUCCESS` at 17:36:01 with no second deployment. A post-release audit (`35761797109`) passed.
+Merge commit `37ddf414ee90abfb78109dfc1e6a8a43cb85e35c` (PR #63) produced Railway deployment `<redacted-id-12>`, which stayed `WAITING` from 17:21:30 UTC although main-push `Studio CI` and `Studio service CI` had succeeded by 17:23:57. A `Railway production audit` run (`35760362985`) had been dispatched on the same commit at 17:23:26 and was polling that deployment. Because a `workflow_dispatch` run is also a check on its commit, Railway Wait for CI waited for the audit while the audit waited for Railway. The audit was cancelled at 17:33:35 (completed 17:35:00); Railway then released and the deployment reached `SUCCESS` at 17:36:01 with no second deployment. A post-release audit (`35761797109`) passed.
 
 The earlier decision above (no `main push` trigger) was necessary but not sufficient: any run on the commit that waits on an unreleased deployment recreates the cycle.
 

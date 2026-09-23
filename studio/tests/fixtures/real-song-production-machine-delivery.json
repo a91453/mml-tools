@@ -1,6 +1,6 @@
 {
   "project_id": "prj_a808b53c7cafadaf4c6bf5f0fe4c370a",
-  "title": "怪獸之歌",
+  "title": "captured real-song scenario",
   "captured_as": "acceptance-scenario-not-production-evidence",
   "gates": {
     "implementation": { "status": "PASS" },
