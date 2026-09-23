@@ -228,10 +228,13 @@ $('#start-existing').onclick = () => act(() => startAttempt({ asset_id: $('#exis
 $('#upload-extra').onclick = () => act(async () => {
   const file = $('#extra-source').files[0], kind = $('#extra-kind').value;
   const musicxml = kind.endsWith('_musicxml');
-  if (!file || !(musicxml ? /\.(musicxml|xml)$/i : /\.midi?$/i).test(file.name)) throw Error(musicxml ? '請選擇未壓縮的 MusicXML（.musicxml 或 .xml）' : '請選擇 MIDI 檔案');
+  if (!file || !(musicxml ? /\.(musicxml|xml|mxl)$/i : /\.midi?$/i).test(file.name)) throw Error(musicxml ? '請選擇 MusicXML（.musicxml、.xml 或壓縮的 .mxl）' : '請選擇 MIDI 檔案');
   // A .musicxml file often carries a vendor type (or none) that the service does
-  // not list; the bytes are XML text either way.
-  const uploaded = await client.upload(projectId, musicxml ? new File([file], file.name, { type: 'application/xml' }) : file, kind);
+  // not list; the bytes are XML text either way. A compressed .mxl is declared
+  // as the MusicXML archive type; the service reads which one it is from the
+  // bytes, not from this declaration.
+  const declared = /\.mxl$/i.test(file.name) ? 'application/vnd.recordare.musicxml' : 'application/xml';
+  const uploaded = await client.upload(projectId, musicxml ? new File([file], file.name, { type: declared }) : file, kind);
   await loadProject(projectId, current?.run?.run_id);
   message(`已加入來源 ${uploaded.asset.asset_id}；尚未啟動任務，也不代表來源已被採用。`);
 });
