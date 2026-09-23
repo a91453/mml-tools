@@ -132,6 +132,11 @@ export function createReviewService({ canonical, projects, intake, arrangement, 
    * constructors, never by mutating a stored object, so a project that would
    * not pass the Canonical IR constructors cannot be reviewed at all.
    */
+  const releaseEvidenceRegistryFor = (engines, record, baselineProject, project) => engines.adaptation.buildEvidenceRegistry({
+    assets: record.assets ?? [],
+    sources: [...(baselineProject?.sources ?? []), ...(project?.sources ?? [])],
+  });
+
   const reviewProject = (engines, candidate, { confirmations, audioReports }) => {
     let project = candidate;
     if (confirmations.source_complete?.value === true) {
@@ -238,19 +243,29 @@ export function createReviewService({ canonical, projects, intake, arrangement, 
           attestation: entry.attestation ?? null,
           authenticatedOwner: entry.authenticated_owner ?? null,
           authority,
-          countedAsReviewerEvidence: authority === LEAD_REVIEW_AUTHORITY.HUMAN_ATTESTED,
+          // Handed to the shared Lead grader, which then grades its evidence.
+          // Not a verdict: a graded review can still leave the gate PENDING.
+          countedAsReviewerEvidence: authority === LEAD_REVIEW_AUTHORITY.GRADED_ON_EVIDENCE,
         };
       });
   };
 
-  // The subset the shared Lead grader may consume: human-attested reviews only,
-  // with a machine-metric audio basis carried into the audio evidence so the
-  // grader never counts it as positive role evidence (SOURCE_POLICY §6). Every
-  // other stored review stays visible in `leadEvidenceReviewsFor` for the audit
-  // trail and is reported as not counted -- never deleted, never rewritten.
-  const gradedLeadEvidenceReviews = reviews => reviews
+  // The subset the shared Lead grader consumes: every review that states who
+  // submitted it and how its audio classification was established, whoever
+  // that is. Its evidence is prepared for the grader from the evidence alone: a
+  // machine-metric audio basis is carried into the audio evidence so it is
+  // never positive role evidence (SOURCE_POLICY §6), and each classified
+  // score/audio citation is resolved against the project's current sources, so
+  // only an official score or the original recording the project holds can
+  // prove a role (§1). Unattested historical reviews stay visible in
+  // `leadEvidenceReviewsFor` for the audit trail -- never deleted, never
+  // rewritten -- and are not graded.
+  const gradedLeadEvidenceReviews = (reviews, registry) => reviews
     .filter(review => review.countedAsReviewerEvidence)
-    .map(review => ({ ...review, leadEvidence: gradedLeadEvidenceOf(review.leadEvidence, review.attestation) }));
+    .map(review => {
+      const prepared = gradedLeadEvidenceOf(review.leadEvidence, review.attestation, registry ?? null);
+      return { ...review, leadEvidence: prepared.leadEvidence, evidenceSources: prepared.sources };
+    });
 
   /** Everything review and finalize both need, assembled once. */
   const context = async (owner, projectId, candidateId) => {
@@ -278,7 +293,11 @@ export function createReviewService({ canonical, projects, intake, arrangement, 
     const loadedRulesSnapshot = engines.emitterContract.canonicalIdentity().rules_snapshot_sha;
 
     const leadEvidenceReviews = leadEvidenceReviewsFor(record, candidateId);
-    return { engines, record, baseline, baselineProject, entry, application, applicationLineage: arrangement.loadCandidateLineage(record, candidateId), core3Approvals: core3ApprovalsFor(record, candidateId), leadEvidenceReviews, gradedLeadEvidenceReviews: gradedLeadEvidenceReviews(leadEvidenceReviews), confirmations, staleConfirmations: stale, audioReports, audioErrors, project, parent, candidateRulesSnapshot, loadedRulesSnapshot };
+    // The project's evidence registry, as it is now: recorded release
+    // representations are re-graded against it, and Lead evidence citations are
+    // resolved against it. Never the resolution stored with a record.
+    const releaseEvidenceRegistry = releaseEvidenceRegistryFor(engines, record, baselineProject, project);
+    return { engines, record, baseline, baselineProject, entry, application, applicationLineage: arrangement.loadCandidateLineage(record, candidateId), core3Approvals: core3ApprovalsFor(record, candidateId), leadEvidenceReviews, gradedLeadEvidenceReviews: gradedLeadEvidenceReviews(leadEvidenceReviews, releaseEvidenceRegistry), confirmations, staleConfirmations: stale, audioReports, audioErrors, project, parent, candidateRulesSnapshot, loadedRulesSnapshot, releaseEvidenceRegistry };
   };
 
   /** Record an explicit confirmation. Each one needs a stated reason. */
@@ -343,7 +362,7 @@ export function createReviewService({ canonical, projects, intake, arrangement, 
       const evidence = normalizeEvidence(input.evidence);
       // A candidate-specific gate review that carries no evidence is an
       // assertion, not a review. Each of these three clears a required gate the
-      // modules deliberately leave PENDING until a human answers it, so a
+      // modules deliberately leave PENDING until a reviewer answers it with evidence, so a
       // reason string on its own must not be enough -- and Studio Web already
       // requires a note *and* evidence for the same three reviews, so anything
       // less here would be a parity hole an Agent caller could walk through.
@@ -533,8 +552,11 @@ export function createReviewService({ canonical, projects, intake, arrangement, 
       const attested = validateLeadReviewAttestation(review.attestation, leadEvidence);
       if (!attested.ok) fail(ERROR_CODES.INVALID_REQUEST, attested.error, { candidate_id: candidateId, event_id: eventId });
       const attestation = attested.attestation;
+      // Every validated review is graded on its evidence; who submitted it is
+      // recorded, not consulted.
       const authority = leadReviewAuthorityOf({ attestation });
-      const counted = authority === LEAD_REVIEW_AUTHORITY.HUMAN_ATTESTED;
+      const counted = authority === LEAD_REVIEW_AUTHORITY.GRADED_ON_EVIDENCE;
+      const prepared = gradedLeadEvidenceOf(leadEvidence, attestation, ctx.releaseEvidenceRegistry ?? null);
 
       // The Lead picture this review is an argument about. Recorded with the
       // review so a later candidate cannot silently inherit it.
@@ -544,7 +566,7 @@ export function createReviewService({ canonical, projects, intake, arrangement, 
 
       const stored = store.getJson(leadEvidenceReviewKey(record.project_id, candidateId));
       const existing = Array.isArray(stored) ? stored : [];
-      const graded = gradedLeadEvidenceReviews(leadEvidenceReviewsFor(record, candidateId));
+      const graded = gradedLeadEvidenceReviews(leadEvidenceReviewsFor(record, candidateId), ctx.releaseEvidenceRegistry);
       const others = graded.filter(entry => !(entry.eventId === eventId && entry.axis === axis));
       const reportsWith = freshReviews => {
         const inputs = { applications: ctx.applicationLineage, baseline: baselineProject, candidate: application.candidate, freshReviews };
@@ -604,7 +626,7 @@ export function createReviewService({ canonical, projects, intake, arrangement, 
       // the "is this waiting on evidence" check below apply to every review,
       // counted or not. Whether it then moves the gate is decided by authority.
       const dryRun = reportsWith([...others, {
-        eventId, axis, leadEvidence: gradedLeadEvidenceOf(leadEvidence, attestation), leadContextDigest, reason, evidence, originEventId: candidateEntry.origin_event_id, at: candidateEntry.at,
+        eventId, axis, leadEvidence: prepared.leadEvidence, leadContextDigest, reason, evidence, originEventId: candidateEntry.origin_event_id, at: candidateEntry.at,
       }]).find(report => report.eventId === eventId);
       const identityBlockers = (dryRun?.blockers ?? []).filter(blocker => engines.leadDemotion.LEAD_EVIDENCE_IDENTITY_BLOCKERS.includes(blocker));
       if (identityBlockers.length) {
@@ -654,12 +676,12 @@ export function createReviewService({ canonical, projects, intake, arrangement, 
         review: Object.freeze({ ...candidateEntry, evidence: Object.freeze([...evidence]) }),
         authority,
         counted_as_reviewer_evidence: counted,
-        // An agent/tool review is recorded for the audit trail and moves nothing:
-        // the report is the gate as it stands without it.
-        report: counted ? dryRun ?? null : before ?? null,
-        notice: counted
-          ? 'A Lead evidence review re-supplies one citation for one already-applied Lead move on one candidate. It is graded by the shared Lead gate on every review and finalize, it carries no previous verdict forward, and it is not loaded for any other candidate.'
-          : 'Recorded for the audit trail only. An agent- or tool-attested Lead review is not reviewer evidence: the shared Lead grader does not consume it and the gate is unchanged. A human reviewer must supply their own attested review.',
+        // What each classified citation's source may prove, resolved against the
+        // project's sources now: only `primary` can be positive role evidence.
+        evidence_sources: prepared.sources,
+        // Every filed review is graded, so the report is the gate with it.
+        report: dryRun ?? null,
+        notice: 'A Lead evidence review re-supplies one citation for one already-applied Lead move on one candidate. It is graded by the shared Lead gate on its evidence — the cited source, the method and the finding — on every review and finalize, whoever submitted it; it carries no previous verdict forward and is not loaded for any other candidate. A third-party or unresolved citation, or an audio classification from a machine metric, is recorded and never positive role evidence.',
       });
     },
 
@@ -734,6 +756,9 @@ export function createReviewService({ canonical, projects, intake, arrangement, 
         core3CompletenessReviewed: recorded.core3_completeness_reviewed?.value === true,
         // Never a parameter a caller can reach. See the header.
         inGameAcceptance: 'PENDING',
+        // Recorded release representations are re-graded against the project's
+        // sources and assets as they are now, not as they were when recorded.
+        releaseEvidenceRegistry: ctx.releaseEvidenceRegistry,
       };
 
       const applied = engines.arrangement.reviewAppliedCandidate({
@@ -832,7 +857,7 @@ export function leadReviewAuthoritySummary(reviews) {
     total: (reviews ?? []).length,
     counted_as_reviewer_evidence: (reviews ?? []).filter(review => review.countedAsReviewerEvidence).length,
     by_authority: Object.freeze(counts),
-    notice: 'Only HUMAN_ATTESTED reviews reach the shared Lead grader. Unattested historical reviews and agent/tool reviews stay on record for audit and are not counted. An attestation is caller-declared text, recorded with the authenticated owner; it is not proof that a human listened.',
+    notice: 'Every review that states who submitted it and how its audio classification was established is graded by the shared Lead grader on its evidence, whoever submitted it: only an official score or the original recording the project holds can prove a role, and a machine-metric audio classification never does. Unattested historical reviews stay on record for audit and are not graded. The submitter is caller-declared text recorded with the authenticated owner; the service verifies the cited source, not that anybody read it.',
   });
 }
 

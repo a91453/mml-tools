@@ -134,9 +134,17 @@ test('a duration one part in 10^20 off a token is not rounded to it', () => {
   const offBy = f('1').add(new F(1, 10n ** 20n));
   assert.equal(offBy.num(), 1, 'the two values must be indistinguishable as doubles');
   const drifted = emit([note({ start: 0, end: offBy.toString() })]);
-  assert.equal(drifted.status, 'FAIL');
+  // The release is now *proven* unreachable by any admitted Final token
+  // (canonical/release-timing.mjs: its whole-note denominator does not divide
+  // the lcm of the admitted lengths), so the shared micro-gap enforcement holds
+  // the candidate PENDING for an evidence-backed representation decision before
+  // the bounded duration search is ever asked. Either way nothing is rounded and
+  // nothing is written.
+  assert.notEqual(drifted.status, 'PASS');
   assert.equal(drifted.combinedMml, null);
-  assert.ok(codes(drifted).includes(EMIT_DIAGNOSTICS.DURATION_SEARCH_POLICY_LIMIT));
+  const pending = drifted.diagnostics.find(item => item.code === EMIT_DIAGNOSTICS.MICRO_GAP_BLOCKED_PENDING);
+  assert.ok(pending, 'the release is held for a representation decision');
+  assert.ok(pending.blockers.includes('MICRO_TIMING_RELEASE_NOT_FINAL_REPRESENTABLE'));
 });
 
 // ── 9–11. G10 consumption ──────────────────────────────────────────────────
@@ -723,4 +731,22 @@ test('no emitter diagnostic message claims a duration is unrepresentable', () =>
         `overclaiming message: ${item.message}`);
     }
   }
+});
+
+test('a long silence between two notes is written exactly as consecutive rests; a long sustain still is not', () => {
+  // An enrichment role that plays one note, rests for 96 beats and plays again.
+  // The rest has no attack and no tie, so the tie-segment cap on a sustain search
+  // is no reason to refuse it: whole-note rests plus an exact remainder express
+  // it exactly. The 100-beat *note* above keeps failing closed under the same cap.
+  const result = emit([note({ start: 0, end: 1 }), note({ start: 97, end: 98 })]);
+  assert.equal(result.status, 'PASS', JSON.stringify(result.diagnostics.map(item => item.code)));
+  const track = readTrack(result);
+  assert.deepEqual(track.events.map(event => [event.start, event.end]), [['0', '1'], ['97', '98']], 'two attacks, the silence between them exact');
+  assert.equal(melody(result).mml.includes('&'), false, 'no tie is introduced');
+  // A half-beat remainder (179/2 beats of silence) stays exact too.
+  const odd = emit([note({ start: 0, end: 1 }), note({ start: '181/2', end: '183/2' })]);
+  assert.equal(odd.status, 'PASS');
+  assert.equal(f(readTrack(odd).events[1].start).cmp(new F(181, 2)), 0);
+  const sustain = emit([note({ start: 0, end: 100 })]);
+  assert.equal(sustain.status, 'FAIL', 'a sustain is still bounded by the tie-segment cap');
 });

@@ -64,6 +64,53 @@ This is an implementation budget, not a game limit or a musical verdict. The
 before/after risk sweep is bounded by that same budget rather than by every pair
 of notes in the song.
 
+## Release representation (no profile required)
+
+A note release that no admitted Final token sequence can express (for example a
+MIDI note-off one 480-tpq tick before a 1/64 grid point) is reported per event by
+`canonical/release-timing.mjs`: the Source-Faithful release, the exact offset, the
+following shape, and the two adjacent 1/64-safe options with their effects. The
+plan accepts `releaseRepresentation.decisions` (MCP/HTTP/run:
+`release_representation`) alongside or instead of a profile:
+
+```json
+{ "decisions": [{
+  "id": "rr:verse-1", "eventIds": ["…"], "representation": "EXTEND_TO_NEXT_GRID",
+  "reason": "…",
+  "attestation": { "reviewer": "…", "reviewer_kind": "human | agent | tool | mcp-client | imported" },
+  "evidence": [{ "class": "primary-audio", "ref": "<original_audio asset id>", "basis": "direct-source-review", "locator": "0:12-0:20", "finding": "…" }]
+}] }
+```
+
+`attestation` is provenance: who submitted the decision. It is recorded and
+required for the audit trail, and it never changes the grade — the same citation
+grades the same whether a person, a conversational AI or a tool submits it. An
+item counts when it cites an independent primary source the project holds
+the bytes of (`primary-symbolic`: an official score/MIDI asset whose bytes are not
+a copy of a supporting asset; `primary-audio`: the original recording; a Canonical
+source counts only when its SHA-256 matches an uploaded asset, so a source an
+imported IR merely declares is `EVIDENCE_REFERENCE_NOT_BACKED_BY_PROJECT_BYTES`), with basis
+`direct-source-review` (the finding was read from that source itself), a locator
+and a finding, for a claim that source class can support under SOURCE_POLICY §1
+(both classes can support a release's sustain or written duration). Metrics and
+alignment locators computed from a source (SOURCE_POLICY §6), encoding patterns,
+imported assertions, third-party sources and tool output are recorded and never
+counted; a decision set with no admissible evidence is refused with
+`RELEASE_DECISION_EVIDENCE_NOT_ADMISSIBLE`, and the plan names what would settle
+the open releases from the sources the project holds
+(`releaseEvidenceRequirement`, for example `ORIGINAL_AUDIO_ARTICULATION_REVIEW_REQUIRED`).
+The service verifies each cited source against the project, at planning and
+again at every review and finalize; it cannot verify the act of review. The
+first version of this schema required `reviewer_kind: human` and
+`audio_basis: listening`; that was an implementation rule, not a Published
+Canonical one, and was removed (a decision-level `audio_basis` is still read as
+the default basis of a primary-audio item). Applying moves
+only the planned releases, writes a per-event record (source release, Final
+release, decision, reversal) that the micro-timing gate re-verifies, and never
+moves an onset, adds a tie, merges a repeated attack or removes a rest. It does
+not certify Gate 8. Without a profile, register and volume adaptation are not
+attempted and the plan says what still needs one (`profileRequirement`).
+
 ## Agent / HTTP workflow
 
 1. Build the Source-Faithful Baseline and use existing arrangement operations to

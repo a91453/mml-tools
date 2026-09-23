@@ -138,6 +138,11 @@ export function buildCapabilities({ canonical, storage, jobs, transports = [] })
       // Lead picture. Both axes; the shared grader runs every time.
       lead_evidence_lineage_recovery: true,
       lead_evidence_re_review: true,
+      // A re-review is graded on its evidence, whoever submits it: the submitter
+      // is provenance; each classified score/audio citation names a project
+      // source (`ref`) that must be an official score or the original recording
+      // the project holds; a machine-metric audio basis is never positive.
+      lead_evidence_graded_on_evidence_not_submitter: true,
       // The Published Canonical validator, and the legacy engine kept beside it
       // as an explicitly labelled diagnostic whose PASS is not a Canonical PASS.
       canonical_technical_validation: true,
@@ -239,7 +244,7 @@ export function buildCapabilities({ canonical, storage, jobs, transports = [] })
         'applying anything on submission: storing a proposal mints no candidate, takes no revision, records no confirmation, moves no gate and does not advance the run',
         'accepting a proposal on any verdict but REQUIRES_EXPLICIT_ACCEPTANCE, which is a single value rather than a list',
         'reusing the agent\'s proposed_by as an acceptance, or letting a proposed decision name its own acceptedBy',
-        'letting a proposal author a reviewer\'s own evidence record: a decision may not carry leadEvidence, because the shared Lead grader can check that a citation binds to a real baseline source identity but not that anybody read the source, so an agent-authored one would move Gate 3 on its own assertion',
+        'letting a proposal carry a review record: a proposed decision may not carry leadEvidence. A proposal is a suggestion that an explicit acceptance turns into a decision, and a Lead citation is a candidate-bound review record: it is filed through reviewLeadEvidence, where it is graded on its cited source, method and finding whoever submits it (the grader checks that a citation binds to a real baseline source identity and resolves to a source the project holds; it cannot check that anybody read the source)',
         'answering a readiness gate, a blocked finalize, a changed input or an interrupted step with anything but a description of what is missing',
         'recording source_complete, player_readback, the Gate 4 / 8 / 9 reviews, a Core3 approval, a Lead citation or in_game',
         'resolving a PENDING, converting a suggestion into an acceptance, or treating an absence of evidence as N/A or not-required',
@@ -273,9 +278,24 @@ export function buildCapabilities({ canonical, storage, jobs, transports = [] })
       version: 1,
       profile_schema: 'mml-studio/mobile-adaptation-profile@1',
       operations: freeze(['planMobileAdaptation', 'applyMobileAdaptation']),
-      supported: freeze(['uniform-role-octave-shift', 'relative-volume-offset', 'explicit-default-volume']),
-      notice: 'Requires a cited target profile and a candidate with assigned roles. Preview before apply; stale plans are refused. Atomic, reversible derived revision, with fresh review. Does not certify Gate 8, infer audibility, map MIDI velocity or reduce to six roles: six-role reduction is the separate final_six_role_reduction stage, which runs before this one.',
-      refuses: freeze(['pitch or volume change on an event a Lead evidence record still binds, including one only the revision lineage records; a Melody assigned from a role-less Source-Faithful Baseline is such an event, so Melody is not adaptable on a Raw MIDI project in v1']),
+      supported: freeze(['uniform-role-octave-shift', 'relative-volume-offset', 'explicit-default-volume', 'evidence-gated-release-representation']),
+      notice: 'Register and volume adaptation require a cited target profile and a candidate with assigned roles. Release representation needs no profile: a note release no admitted Final token can express moves to an adjacent 1/64 grid point only under a decision whose evidence cites an independent primary source by a direct review of it; who submitted the decision is recorded and never graded; the source release stays on the baseline and on the event record. Preview before apply; stale plans are refused. Atomic, reversible derived revision, with fresh review. Does not certify Gate 8, infer audibility, map MIDI velocity or reduce to six roles: six-role reduction is the separate final_six_role_reduction stage, which runs before this one.',
+      release_representation: freeze({
+        record_schema: 'mml-studio/release-representation-record@1',
+        decision_schema: 'mml-studio/release-representation-decision@1',
+        representations: freeze(['EXTEND_TO_NEXT_GRID', 'TRUNCATE_TO_PREVIOUS_GRID']),
+        admissible_evidence: freeze(['primary-symbolic (independent official score/MIDI asset, basis direct-source-review)', 'primary-audio (original recording, basis direct-source-review)']),
+        evidence_bases: freeze(['direct-source-review', 'machine-metric', 'alignment-locator', 'encoding-pattern', 'imported-assertion']),
+        submitter_kinds: freeze(['human', 'agent', 'tool', 'mcp-client', 'imported']),
+        submitter_is_provenance_only: true,
+        recorded_not_counted: freeze(['third-party score/MIDI/MML', 'source encoding pattern', 'audio metrics and alignment locators', 'tool output', 'imported assertions', 'accepted-prior (no record to bind in this build)']),
+        profile_required: false,
+      }),
+      refuses: freeze([
+        'pitch or volume change on an event a Lead evidence record still binds, including one only the revision lineage records; a Melody assigned from a role-less Source-Faithful Baseline is such an event, so Melody is not adaptable on a Raw MIDI project in v1 (release representation is not a pitch or volume change and is allowed on such events)',
+        'moving an onset, adding a tie, merging a repeated attack, removing a rest, or moving a release that Final can already express',
+        'moving a release whose sub-grid timing a keep decision claims is musically meaningful (Final UNSUPPORTED instead)',
+      ]),
     }),
 
     final_six_role_reduction: freeze({

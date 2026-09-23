@@ -70,8 +70,11 @@ const runAcceptedBy = { type: 'string', minLength: 1, maxLength: 120, descriptio
 const RUN_REDUCTION_DESCRIPTION = '明確接受的 G12 收斂：decisions（至少一筆）、expected_plan_id（來自唯讀 plan）、accepted_by，以及選填且僅供診斷的 instrument_profile。'
   + '省略時 run 只會產生唯讀 plan：若 ledger 顯示每個來源事件都已保留且沒有 blocker，就跳過且不產生 no-op 版本；否則停在 REDUCTION_DECISIONS_REQUIRED，附上 plan.id、未保留事件與原始 warning。OVERFLOW／PENDING 一律保留，字數不足不是刪音理由。'
   + '六角色已滿的 OVERFLOW 會另外附上 suggestion-only 的 7→6 merge 診斷：逐 lane／角色列出可無損塞入、完整同音覆蓋與會需要截短／丟音的事件數；這些數字不會自行產生 REDISTRIBUTE／OMIT，也不構成任何 Gate PASS。';
-const RUN_ADAPTATION_DESCRIPTION = '明確接受的 Mobile 適配：profile（schema=mml-studio/mobile-adaptation-profile@1，需真實提供且附 reason／evidence）、expected_plan_id、accepted_by。'
+const RUN_ADAPTATION_DESCRIPTION = '明確接受的 Mobile 適配：profile（schema=mml-studio/mobile-adaptation-profile@1，需真實提供且附 reason／evidence）、release_representation（見 studio_mobile_adaptation_plan）、expected_plan_id、accepted_by；profile 與 release_representation 至少一項。'
   + '省略時完全不做適配、不產生版本——但「沒做變更」不等於 Gate 8 通過，Gate 8 審查仍然必須另外提供。本服務不自造樂器音域或音量。';
+const RELEASE_REPRESENTATION_DESCRIPTION = '選填：Final 無法表示的 release（例如 MIDI 比 1/64 格點早一個 tick 的 note-off）的表示決定。{decisions:[{id, eventIds, representation: EXTEND_TO_NEXT_GRID|TRUNCATE_TO_PREVIOUS_GRID, reason, attestation:{reviewer, reviewer_kind: human|agent|tool|mcp-client|imported}, evidence:[{class: primary-symbolic|primary-audio, ref: asset_id 或 source id, basis: direct-source-review|machine-metric|alignment-locator|encoding-pattern|imported-assertion, locator, finding}]}]}。'
+  + 'attestation 只是提交者的 provenance（稽核紀錄），不影響證據等級：人類、對話式 AI、工具提交同一份證據，結果完全相同。證據生效的條件是：引用本專案真的持有、且與第三方檔案不同位元組的獨立 primary 來源（官方譜／官方 MIDI，或原曲音訊），basis 為 direct-source-review（直接審閱該來源本身，例如譜面寫的時值、錄音在 locator 處的延音／斷奏），並附 locator 與 finding。'
+  + 'machine-metric／alignment-locator（SOURCE_POLICY §6 只是定位）、encoding-pattern、imported-assertion、第三方、工具輸出只會記錄、不計入，並保持 PENDING；不要把自己沒有實際審閱的來源標成 direct-source-review。來源 release 永遠保留在 baseline 與事件紀錄，onset／音高／角色不動，不加 tie、不合併重複音。傳 {decisions:[]} 可只取得逐 release 的分析與 releaseEvidenceRequirement（依本專案現有來源列出能解決的證據）。';
 const RUN_FINALIZE_DESCRIPTION = 'finalize 選項：technical_timing_repair（明確 opt-in，預設 false，沒有自動模式）、pickup、final_partial（來源確認的弱起拍與末小節拍長，不會自行推測）。';
 
 export const STUDIO_MCP_TOOLS = [
@@ -211,15 +214,15 @@ export const STUDIO_MCP_TOOLS = [
   {
     name: 'studio_mobile_adaptation_plan',
     title: '預覽 Mobile 適配',
-    description: '依附有 reason/evidence 的 profile 自動規劃整個角色的最小八度調整與音量映射。profile schema=mml-studio/mobile-adaptation-profile@1，含 id、reason、evidence、roles；roles 以 Melody/Chord1–Chord5 為鍵，各值可含 pitchRange:[min,max]、volumeDelta、defaultVolume。音域上限 107，音量 0–15。沒有內建樂器校準，不猜測鼓面，不修剪音符。回傳 plan.id 與逐事件差異；PASS 僅表示可套用，不是 Gate 8 通過。已綁定 Lead 證據的事件（含僅由 revision lineage 記錄者）不可調整音高／音量；來源基準未指定角色時，被指派為 Melody 的事件即屬此類，v1 無法調整該 Melody。',
-    inputSchema: { type: 'object', properties: { project_id: projectId, candidate_id: candidateId, profile: structuredPayload() }, required: ['project_id', 'candidate_id', 'profile'], additionalProperties: false },
+    description: '依附有 reason/evidence 的 profile 自動規劃整個角色的最小八度調整與音量映射。profile schema=mml-studio/mobile-adaptation-profile@1，含 id、reason、evidence、roles；roles 以 Melody/Chord1–Chord5 為鍵，各值可含 pitchRange:[min,max]、volumeDelta、defaultVolume。音域上限 107，音量 0–15。沒有內建樂器校準，不猜測鼓面，不修剪音符。回傳 plan.id 與逐事件差異；PASS 僅表示可套用，不是 Gate 8 通過。已綁定 Lead 證據的事件（含僅由 revision lineage 記錄者）不可調整音高／音量；來源基準未指定角色時，被指派為 Melody 的事件即屬此類，v1 無法調整該 Melody。另可只帶 release_representation（不需 profile）：回傳逐 release 的來源值、分析、兩種 1/64 表示選項與證據需求（plan.releaseTiming），並把有可採證據的決定轉成精確的 release 變更。',
+    inputSchema: { type: 'object', properties: { project_id: projectId, candidate_id: candidateId, profile: structuredPayload('選填：Mobile target profile。'), release_representation: structuredPayload(RELEASE_REPRESENTATION_DESCRIPTION) }, required: ['project_id', 'candidate_id'], additionalProperties: false },
     annotations: readOnly,
   },
   {
     name: 'studio_mobile_adaptation_apply',
     title: '套用 Mobile 適配並重新審核',
     description: '重新計算適配計畫，只有 expected_plan_id 與目前 baseline/candidate/profile 一致時才原子套用。產生衍生 candidate、保留原始與前版，立即重新跑 review；舊 Gate 8/9、音訊與實機接受不會轉移。',
-    inputSchema: { type: 'object', properties: { project_id: projectId, candidate_id: candidateId, profile: structuredPayload(), expected_plan_id: { type: 'string' }, accepted_by: { type: 'string', minLength: 1, maxLength: 120 } }, required: ['project_id', 'candidate_id', 'profile', 'expected_plan_id', 'accepted_by'], additionalProperties: false },
+    inputSchema: { type: 'object', properties: { project_id: projectId, candidate_id: candidateId, profile: structuredPayload('選填：Mobile target profile。'), release_representation: structuredPayload(RELEASE_REPRESENTATION_DESCRIPTION), expected_plan_id: { type: 'string' }, accepted_by: { type: 'string', minLength: 1, maxLength: 120 } }, required: ['project_id', 'candidate_id', 'expected_plan_id', 'accepted_by'], additionalProperties: false },
     annotations: writes,
   },
   {
@@ -279,7 +282,7 @@ export const STUDIO_MCP_TOOLS = [
       properties: {
         project_id: projectId,
         candidate_id: candidateId,
-        review: structuredPayload('event_id（readiness 使用的事件 id；衍生複製請用候選中的衍生 id）、axis（promotion 或 demotion，兩者互不代替）、reason、至少一筆 evidence，以及 lead_evidence：精確 sourceIdentity、sectionRole、scoreEvidence／audioEvidence、continuity.checked、core3.checked/status 與正面的目的角色理由。sourceIdentity 請用 studio_baseline_events 取得，不可猜測；綁不到該 move 的 baseline 來源事件會被拒絕。必填 attestation：{ reviewer（誰做的審查）, reviewer_kind: human|agent|tool, audio_basis: listening|machine-metric|not-used }。只有 human 的審查會被 Lead grader 採計；agent/tool 審查只留作稽核紀錄、不移動 gate。audio_basis 為 machine-metric（F0、CQT、chroma 等）時，該音訊分類不算正面角色證據（SOURCE_POLICY §6）。AI 代理不得把自己的判斷標成 human。'),
+        review: structuredPayload('event_id（readiness 使用的事件 id；衍生複製請用候選中的衍生 id）、axis（promotion 或 demotion，兩者互不代替）、reason、至少一筆 evidence，以及 lead_evidence：精確 sourceIdentity、sectionRole、scoreEvidence／audioEvidence、continuity.checked、core3.checked/status 與正面的目的角色理由。sourceIdentity 請用 studio_baseline_events 取得，不可猜測；綁不到該 move 的 baseline 來源事件會被拒絕。必填 attestation：{ reviewer（誰提交）, reviewer_kind: human|agent|tool|mcp-client|imported, audio_basis: listening|direct-source-review|machine-metric|not-used }。attestation 只是 provenance（稽核紀錄），不影響評分：人類、對話式 AI、工具提交同一份證據，結果完全相同。scoreEvidence／audioEvidence 有分類時請附 ref（本專案的 asset_id 或 source id）：只有本專案持有位元組、且與第三方檔案不同的官方譜／官方 MIDI（score）或原曲錄音（audio）能當正面角色證據；第三方檔案只是輔助（SOURCE_POLICY §1C），沒有 ref 或 ref 對不到專案來源的引用不算。audio_basis 為 machine-metric（F0、CQT、chroma 等）時，該音訊分類只是定位，不算正面角色證據（SOURCE_POLICY §6）。只有實際直接審閱過來源時才可標 listening／direct-source-review。'),
       },
       required: ['project_id', 'candidate_id', 'review'],
       additionalProperties: false,
@@ -631,9 +634,9 @@ async function dispatchStudioTool(name, args, { application, owner }) {
     case 'studio_final_reduction_apply':
       return application.applyFinalReduction(owner, args.project_id, { candidateId: args.candidate_id, decisions: args.decisions ?? [], expectedPlanId: args.expected_plan_id, acceptedBy: args.accepted_by, instrumentProfile: args.instrument_profile ?? null });
     case 'studio_mobile_adaptation_plan':
-      return application.planMobileAdaptation(owner, args.project_id, { candidateId: args.candidate_id, profile: args.profile });
+      return application.planMobileAdaptation(owner, args.project_id, { candidateId: args.candidate_id, profile: args.profile ?? null, releaseRepresentation: args.release_representation ?? null });
     case 'studio_mobile_adaptation_apply':
-      return application.applyMobileAdaptation(owner, args.project_id, { candidateId: args.candidate_id, profile: args.profile, expectedPlanId: args.expected_plan_id, acceptedBy: args.accepted_by });
+      return application.applyMobileAdaptation(owner, args.project_id, { candidateId: args.candidate_id, profile: args.profile ?? null, releaseRepresentation: args.release_representation ?? null, expectedPlanId: args.expected_plan_id, acceptedBy: args.accepted_by });
     case 'studio_candidate_review':
       return application.reviewCandidate(owner, args.project_id, { candidateId: args.candidate_id, confirmations: args.confirmations ?? null });
     case 'studio_core3_change_approve':

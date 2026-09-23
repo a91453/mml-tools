@@ -5,6 +5,14 @@ import { evaluateMachineDelivery } from './delivery-evaluator.mjs';
 
 const PASS_LIKE = new Set(['PASS', 'N/A']);
 
+// The song-level states ACCEPTANCE_CRITERIA names. They are read out of the gates
+// below; nothing sets one directly.
+export const SONG_STATE = Object.freeze({
+  CANDIDATE: 'CANDIDATE',
+  VALIDATED: 'VALIDATED',
+  IN_GAME_ACCEPTED: 'IN_GAME_ACCEPTED',
+});
+
 function normalizeStatus(value, fallback = 'PENDING') {
   if (typeof value === 'string') return value;
   if (value && typeof value.status === 'string') return value.status;
@@ -365,8 +373,8 @@ function leadPromotionGate(reports, leadEventDiff = null) {
 // input data, never a verdict. Uncertainty never becomes PASS, and nothing here
 // mutates, quantizes, normalizes or deletes a source-supported interval to
 // reach PASS.
-function microTimingGate(project) {
-  const { status, blockers, ...details } = enforceMicroGaps(project);
+function microTimingGate(project, releaseEvidenceRegistry) {
+  const { status, blockers, ...details } = enforceMicroGaps(project, { releaseEvidenceRegistry });
   return gate(status, {
     ...(blockers.length ? { blockers } : {}),
     ...details,
@@ -440,6 +448,9 @@ export function evaluateProjectReadiness({
   mobileAdaptation = 'PENDING',
   regressionReviewed = false,
   inGameAcceptance = 'PENDING',
+  // The project's current release evidence registry. With it, recorded release
+  // representations are re-graded against today's sources and assets.
+  releaseEvidenceRegistry = null,
 }) {
   if (!project || typeof project !== 'object') throw Error('Canonical project is required');
 
@@ -471,7 +482,7 @@ export function evaluateProjectReadiness({
     // emitted MML is syntactically and technically valid; this one asks whether
     // sub-grid timing in the Canonical musical project has source-supported
     // meaning. Neither answer substitutes for the other.
-    microTiming: microTimingGate(project),
+    microTiming: microTimingGate(project, releaseEvidenceRegistry),
     // Retained under its historical name so existing callers and reports keep
     // reading the source-continuity verdict they always read.
     core3: gate(normalizeStatus(core3Report, 'NOT_RUN'), { blockers: core3Report?.blockers ?? [] }),
@@ -512,10 +523,16 @@ export function evaluateProjectReadiness({
   const candidateReady = preGameBlocking.length === 0;
   const finalAccepted = candidateReady && gates.inGameAcceptance.status === 'PASS';
   const machineDelivery = evaluateMachineDelivery(gates, { canonical: EFFECTIVE_RULESET.canonical });
+  // ACCEPTANCE_CRITERIA "Final state vocabulary", stated rather than left for a
+  // caller to reassemble from two booleans: VALIDATED is every required
+  // non-game gate PASS/N-A; IN_GAME_ACCEPTED additionally needs the in-game gate,
+  // which only the user or a controlled target-client test records.
+  const songState = finalAccepted ? SONG_STATE.IN_GAME_ACCEPTED : candidateReady ? SONG_STATE.VALIDATED : SONG_STATE.CANDIDATE;
 
   return Object.freeze({
     candidateReady,
     finalAccepted,
+    songState,
     machineDeliveryReady: machineDelivery.ready,
     automatedLifecycle: machineDelivery.lifecycle,
     machineDelivery,

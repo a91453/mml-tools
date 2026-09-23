@@ -1,0 +1,1332 @@
+{
+  "schema": "mml-studio/monster-song-microtiming-final-flow@1",
+  "notice": "Second receipt for the 《怪獸之歌》 / Kaiju real-data E2E on PR #66, after release evidence authority was decoupled from the submitter type (the first receipt, docs/evidence/monster-song-microtiming-2026-09-22/release-timing-e2e.json, is kept unchanged as history). Counts, identities and digests only: no source bytes, no pitch or duration list, no MML text. Not evidence, not a gate verdict beyond what the Studio run and readiness computed, never IN_GAME_ACCEPTED. The counterfactual block is labelled COUNTERFACTUAL_NOT_A_RESULT and proves nothing about the song.",
+  "identities": {
+    "canonical_version": "2026-09-13-v1",
+    "canonical_status": "PUBLISHED",
+    "manifest_version": "2026-09-13-v1-manifest1",
+    "rules_snapshot_sha": "0a172900a01fdf39c2e9e84cf176961320b779ea",
+    "manifest_commit": "5e7666b850a37f1c85ee2dd8cd0f4fac037a9e14",
+    "starting_origin_main": "8bec72a74f665f7e86533ae895228345c9212efc",
+    "production_build_source_head": "8bec72a74f665f7e86533ae895228345c9212efc (studio_capabilities self-report)",
+    "production_project_id": "prj_a808b53c7cafadaf4c6bf5f0fe4c370a",
+    "production_run_id": "run_faf465f75ad72e943adba4832f88f931",
+    "production_run_state": "awaiting_review",
+    "production_candidate_id": "g11d:rev:fc3c93547c09a668031005bbb67f96a88f109cc6e7f59a5cb0b2dbe5ddb75b63",
+    "production_baseline_id": "bas:315eb13d5b82f81a3a20d72986514bb2ee4bc3e70304199f693037b8fb4d7c0d",
+    "selected_source_asset": {
+      "asset_id": "ast_2ba293828d08c0c7e4b67240fb7dad28",
+      "kind": "third_party_midi",
+      "sha256": "5819c9c5e7b5f357c0523b16d69eda16dd84d5a2ad60a167802e904b02c23782"
+    },
+    "rerun_on_pr_head_parent": "9e6d07d16a7453f7a4bc8715cf31134a390152f9"
+  },
+  "production_reads": {
+    "method": "Mabinogi_MML_Studio MCP, read-only, 2026-09-23: studio_project_get prj_a808b53c7cafadaf4c6bf5f0fe4c370a (full report, report_sha256 6c7ee26bf6ed91c67d443f29445f0ac8b79a6f0515665b8bb515d59904fad6c9: assets, audio_evidence, artifacts). Baseline events and applied decisions are the 2026-09-22 read exports, whose digests match the first receipt. Zero writes.",
+    "project_updated_at": "2026-09-22T15:59:52.932Z",
+    "assets_unchanged_since_first_receipt": true,
+    "artifacts": 0,
+    "audio_evidence_reports": 2,
+    "exports_match_committed_receipt": {
+      "baseline_events_sha256": true,
+      "decisions_sha256": true
+    },
+    "ticks_per_quarter_basis": "docs/evidence/kaiju-final-remediation-2026-09-22/microtiming-audit.json production_reads.tick_metadata_sample (MIDI division is file-global)",
+    "tempo_map": "not exported by any read surface; no seconds are reported for the real song"
+  },
+  "reproduction_fidelity": {
+    "unknown_intervals_value_sha256": "23f2390773229fa55aea99497f099c67bfd1025da9360436577711101b5d3cd3",
+    "matches_production_unknown_intervals": true,
+    "differences_from_first_receipt": "run.review_requests[microTiming].blockers and readiness.gates.microTiming.blockers add MICRO_TIMING_RELEASE_EVIDENCE_REQUIRED; micro_timing adds release_evidence_requirement_isolated_store; evidence adds requirement, audio_evidence_on_record, bytes_held and per-submitter probes; arbitration is new; the counterfactual's hypothetical_inputs wording. exports, release_analysis, mobile_profile and finalize are byte-identical."
+  },
+  "e2e": {
+    "schema": "mml-studio/release-timing-e2e@1",
+    "notice": "Isolated local E2E from service read exports through the existing Studio run. Not a native backup, not reviewer evidence, not a gate verdict beyond what the run and readiness computed, never IN_GAME_ACCEPTED.",
+    "exports": {
+      "baseline_event_count": 1545,
+      "baseline_events_sha256": "c9eecab2b19eab2752c9bb8055d96fa073515db571bdd703dee9a28347cce1b1",
+      "decision_count": 298,
+      "decisions_sha256": "65074eaf3589f978872ebbcc9ffdd83ec7e4abe8ced1b95feca5d8f09cf1e497",
+      "decisions_accepted_by": "agent:ChatGPT",
+      "ticks_per_quarter": 480,
+      "tempo_map_exported": false
+    },
+    "run": {
+      "state": "awaiting_review",
+      "halt_reason": "AWAITING_REVIEW_EVIDENCE",
+      "steps": [
+        {
+          "step": "intake",
+          "status": "completed"
+        },
+        {
+          "step": "suggest",
+          "status": "completed"
+        },
+        {
+          "step": "apply_decisions",
+          "status": "completed"
+        },
+        {
+          "step": "final_reduction",
+          "status": "skipped"
+        },
+        {
+          "step": "mobile_adaptation",
+          "status": "skipped"
+        },
+        {
+          "step": "review",
+          "status": "awaiting_input"
+        }
+      ],
+      "candidate_id": "g11d:rev:6774dd1e257be88d42a64867cfcd7c2d368cd0e412af99faad208a7d438d3f34",
+      "mobile_adaptation_receipt": {
+        "status": "skipped",
+        "reason": "NO_MOBILE_PROFILE_SUPPLIED",
+        "profile_required_for": [
+          "register (pitchRange) adaptation per role",
+          "Mobile volume / prominence re-arbitration"
+        ],
+        "profile_not_required_for": [
+          "release representation of releases Final cannot express"
+        ],
+        "release_decision_required": true
+      },
+      "review_requests": [
+        {
+          "code": "READINESS_GATE_BLOCKED",
+          "gate": "source",
+          "blockers": [
+            "SOURCE_COMPLETENESS_NOT_CONFIRMED"
+          ],
+          "available_operations": [
+            "analyzeSources",
+            "recordConfirmations.source_complete"
+          ]
+        },
+        {
+          "code": "READINESS_GATE_BLOCKED",
+          "gate": "microTiming",
+          "blockers": [
+            "MICRO_TIMING_CLASSIFICATION_UNKNOWN",
+            "MICRO_TIMING_RELEASE_NOT_FINAL_REPRESENTABLE",
+            "MICRO_TIMING_RELEASE_EVIDENCE_REQUIRED"
+          ],
+          "available_operations": [
+            "planMobileAdaptation",
+            "applyMobileAdaptation.release_representation"
+          ]
+        },
+        {
+          "code": "READINESS_GATE_BLOCKED",
+          "gate": "core3Completeness",
+          "blockers": [
+            "CORE3_ENRICHMENT_DEPENDENCE_UNRESOLVED"
+          ],
+          "available_operations": [
+            "recordConfirmations.core3_completeness_reviewed"
+          ]
+        },
+        {
+          "code": "READINESS_GATE_BLOCKED",
+          "gate": "leadPromotion",
+          "blockers": [
+            "LEAD_PROMOTION_EVIDENCE_REQUIRED"
+          ],
+          "available_operations": [
+            "applyDecisions.leadEvidence",
+            "reviewLeadEvidence"
+          ]
+        },
+        {
+          "code": "READINESS_GATE_BLOCKED",
+          "gate": "originalAudio",
+          "blockers": [
+            "AUDIO_ALIGNMENT_EVIDENCE_MISSING"
+          ],
+          "available_operations": [
+            "attachAudioAlignment",
+            "recordConfirmations.original_audio_reviewed",
+            "recordConfirmations.original_audio_required"
+          ]
+        },
+        {
+          "code": "READINESS_GATE_BLOCKED",
+          "gate": "playerReadback",
+          "blockers": [],
+          "available_operations": [
+            "recordConfirmations.player_readback"
+          ]
+        },
+        {
+          "code": "READINESS_GATE_BLOCKED",
+          "gate": "mobileAdaptation",
+          "blockers": [
+            "MOBILE_ADAPTATION_REVIEW_REQUIRED"
+          ],
+          "available_operations": [
+            "applyMobileAdaptation",
+            "recordConfirmations.mobile_adaptation_reviewed"
+          ]
+        },
+        {
+          "code": "READINESS_GATE_BLOCKED",
+          "gate": "regression",
+          "blockers": [
+            "REGRESSION_REVIEW_REQUIRED"
+          ],
+          "available_operations": [
+            "recordConfirmations.regression_reviewed"
+          ]
+        }
+      ]
+    },
+    "readiness": {
+      "song_state": "CANDIDATE",
+      "candidate_ready": false,
+      "pre_game_blocking": [
+        "source",
+        "technical",
+        "microTiming",
+        "core3Completeness",
+        "leadPromotion",
+        "originalAudio",
+        "playerReadback",
+        "mobileAdaptation",
+        "regression"
+      ],
+      "gates": {
+        "implementation": {
+          "status": "PASS",
+          "blockers": []
+        },
+        "source": {
+          "status": "PENDING",
+          "blockers": [
+            "SOURCE_COMPLETENESS_NOT_CONFIRMED"
+          ]
+        },
+        "baseline": {
+          "status": "PASS",
+          "blockers": []
+        },
+        "technical": {
+          "status": "NOT_RUN",
+          "blockers": []
+        },
+        "microTiming": {
+          "status": "PENDING",
+          "blockers": [
+            "MICRO_TIMING_CLASSIFICATION_UNKNOWN",
+            "MICRO_TIMING_RELEASE_NOT_FINAL_REPRESENTABLE",
+            "MICRO_TIMING_RELEASE_EVIDENCE_REQUIRED"
+          ]
+        },
+        "core3": {
+          "status": "PASS",
+          "blockers": []
+        },
+        "core3Completeness": {
+          "status": "PENDING",
+          "blockers": [
+            "CORE3_ENRICHMENT_DEPENDENCE_UNRESOLVED"
+          ]
+        },
+        "leadDemotion": {
+          "status": "N/A",
+          "blockers": []
+        },
+        "leadPromotion": {
+          "status": "PENDING",
+          "blockers": [
+            "LEAD_PROMOTION_EVIDENCE_REQUIRED"
+          ]
+        },
+        "crossSourceHarmony": {
+          "status": "PASS",
+          "blockers": []
+        },
+        "versionDrift": {
+          "status": "PASS",
+          "blockers": []
+        },
+        "originalAudio": {
+          "status": "PENDING",
+          "blockers": [
+            "AUDIO_ALIGNMENT_EVIDENCE_MISSING"
+          ]
+        },
+        "playerReadback": {
+          "status": "NOT_RUN",
+          "blockers": []
+        },
+        "mobileAdaptation": {
+          "status": "PENDING",
+          "blockers": [
+            "MOBILE_ADAPTATION_REVIEW_REQUIRED"
+          ]
+        },
+        "regression": {
+          "status": "PENDING",
+          "blockers": [
+            "REGRESSION_REVIEW_REQUIRED"
+          ]
+        },
+        "inGameAcceptance": {
+          "status": "PENDING",
+          "blockers": []
+        },
+        "pendingDecisions": {
+          "status": "PASS",
+          "blockers": []
+        }
+      }
+    },
+    "micro_timing": {
+      "status": "PENDING",
+      "blockers": [
+        "MICRO_TIMING_CLASSIFICATION_UNKNOWN",
+        "MICRO_TIMING_RELEASE_NOT_FINAL_REPRESENTABLE",
+        "MICRO_TIMING_RELEASE_EVIDENCE_REQUIRED"
+      ],
+      "release_evidence_requirement_isolated_store": {
+        "anyOf": [
+          {
+            "code": "ORIGINAL_AUDIO_SOURCE_REQUIRED",
+            "class": "primary-audio",
+            "availableRefs": [],
+            "notIndependentRefs": [],
+            "needed": "The project holds no independent original recording."
+          },
+          {
+            "code": "INDEPENDENT_SYMBOLIC_SOURCE_REQUIRED",
+            "class": "primary-symbolic",
+            "availableRefs": [],
+            "notIndependentRefs": [],
+            "needed": "The project holds no independent official score or MIDI; an asset labelled official whose bytes equal a supporting file is a relabelled copy."
+          }
+        ],
+        "notice": "Any one item settles the releases it names. Who submits it is recorded and does not change its grade; third-party files, encoding patterns, metrics, tool output and bare assertions are recorded and never counted."
+      },
+      "interval_candidates": 1282,
+      "unknown": 1282,
+      "unknown_intervals_value_sha256": "23f2390773229fa55aea99497f099c67bfd1025da9360436577711101b5d3cd3",
+      "release_timing": {
+        "schema": "mml-studio/release-timing-analysis@1#summary",
+        "releaseCount": 1545,
+        "targetCount": 1544,
+        "decisionRequiredCount": 1544,
+        "sourceSupportedNotRepresentableCount": 0,
+        "noValidRepresentationCount": 0,
+        "representedCount": 0,
+        "unsupportedBoundaryCount": 0,
+        "notVisibleToIntervalAnalyzerCount": 262,
+        "samePitchRepeatedAttackTargets": 331,
+        "followingShapes": {
+          "rest-of-at-least-safe-grid": 257,
+          "sub-grid-gap-to-next-onset": 1282,
+          "role-end": 5
+        },
+        "byRole": {
+          "Chord1": {
+            "targets": 209,
+            "recommendedExtend": 209,
+            "recommendedTruncate": 0,
+            "noRecommendation": 0
+          },
+          "Chord2": {
+            "targets": 641,
+            "recommendedExtend": 641,
+            "recommendedTruncate": 0,
+            "noRecommendation": 0
+          },
+          "Chord3": {
+            "targets": 119,
+            "recommendedExtend": 119,
+            "recommendedTruncate": 0,
+            "noRecommendation": 0
+          },
+          "Chord4": {
+            "targets": 7,
+            "recommendedExtend": 7,
+            "recommendedTruncate": 0,
+            "noRecommendation": 0
+          },
+          "Melody": {
+            "targets": 568,
+            "recommendedExtend": 568,
+            "recommendedTruncate": 0,
+            "noRecommendation": 0
+          }
+        },
+        "windowCount": 41,
+        "encodingObservations": [
+          {
+            "sourceId": "midi:sha256:5819c9c5e7b5f357c0523b16d69eda16dd84d5a2ad60a167802e904b02c23782",
+            "offsetsBeforeNextGrid": {
+              "1 tick(s)": 1544
+            },
+            "uniform": true,
+            "evidenceClass": "SOURCE_ENCODING_PATTERN",
+            "admissibleAsEvidence": false,
+            "notice": "A uniform encoding pattern is machine-derived structure over a supporting source, not source-supported musical meaning (canonical/timing.mjs: never inferred from a statistical or quantization-looking pattern)."
+          }
+        ]
+      }
+    },
+    "release_analysis": {
+      "release_count": 1545,
+      "position_classes": {
+        "SAFE_GRID": 1,
+        "CAUTION_REPRESENTABLE": 0,
+        "NOT_FINAL_REPRESENTABLE": 1544
+      },
+      "target_count": 1544,
+      "decision_required": 1544,
+      "no_valid_representation": 0,
+      "source_supported_not_representable": 0,
+      "unsupported_boundaries": 0,
+      "not_visible_to_interval_analyzer": 262,
+      "targets_by_role": {
+        "Chord1": 209,
+        "Chord2": 641,
+        "Chord3": 119,
+        "Chord4": 7,
+        "Melody": 568
+      },
+      "following_shapes": {
+        "rest-of-at-least-safe-grid": 257,
+        "role-end": 5,
+        "sub-grid-gap-to-next-onset": 1282
+      },
+      "recommended": {
+        "EXTEND_TO_NEXT_GRID": 1544
+      },
+      "statuses": {
+        "REPRESENTATION_DECISION_REQUIRED": 1544
+      },
+      "offset_before_next_grid_ticks": {
+        "1": 1544
+      },
+      "offset_seconds_samples": [
+        null
+      ],
+      "same_pitch_repeated_attack_targets": 331,
+      "no_valid_representation_cases": [],
+      "encoding_observations": [
+        {
+          "sourceId": "midi:sha256:5819c9c5e7b5f357c0523b16d69eda16dd84d5a2ad60a167802e904b02c23782",
+          "offsetsBeforeNextGrid": {
+            "1 tick(s)": 1544
+          },
+          "uniform": true,
+          "evidenceClass": "SOURCE_ENCODING_PATTERN",
+          "admissibleAsEvidence": false,
+          "notice": "A uniform encoding pattern is machine-derived structure over a supporting source, not source-supported musical meaning (canonical/timing.mjs: never inferred from a statistical or quantization-looking pattern)."
+        }
+      ],
+      "windows_by_role": {
+        "Chord1": {
+          "count": 10,
+          "windows": [
+            {
+              "window_id": "release-window:Chord1:0",
+              "start": "2",
+              "end": "1679/480",
+              "count": 1
+            },
+            {
+              "window_id": "release-window:Chord1:1",
+              "start": "10",
+              "end": "5519/480",
+              "count": 1
+            },
+            {
+              "window_id": "release-window:Chord1:2",
+              "start": "18",
+              "end": "9119/480",
+              "count": 1
+            },
+            {
+              "window_id": "release-window:Chord1:3",
+              "start": "26",
+              "end": "12959/480",
+              "count": 1
+            },
+            {
+              "window_id": "release-window:Chord1:4",
+              "start": "34",
+              "end": "57119/480",
+              "count": 50
+            },
+            {
+              "window_id": "release-window:Chord1:5",
+              "start": "123",
+              "end": "118559/480",
+              "count": 61
+            },
+            {
+              "window_id": "release-window:Chord1:6",
+              "start": "251",
+              "end": "164399/480",
+              "count": 31
+            },
+            {
+              "window_id": "release-window:Chord1:7",
+              "start": "695/2",
+              "end": "179999/480",
+              "count": 12
+            },
+            {
+              "window_id": "release-window:Chord1:8",
+              "start": "379",
+              "end": "228959/480",
+              "count": 28
+            },
+            {
+              "window_id": "release-window:Chord1:9",
+              "start": "483",
+              "end": "260159/480",
+              "count": 23
+            }
+          ]
+        },
+        "Chord2": {
+          "count": 1,
+          "windows": [
+            {
+              "window_id": "release-window:Chord2:10",
+              "start": "2",
+              "end": "262079/480",
+              "count": 641
+            }
+          ]
+        },
+        "Chord3": {
+          "count": 21,
+          "windows": [
+            {
+              "window_id": "release-window:Chord3:11",
+              "start": "2",
+              "end": "1679/480",
+              "count": 1
+            },
+            {
+              "window_id": "release-window:Chord3:12",
+              "start": "10",
+              "end": "5519/480",
+              "count": 1
+            },
+            {
+              "window_id": "release-window:Chord3:13",
+              "start": "18",
+              "end": "9119/480",
+              "count": 1
+            },
+            {
+              "window_id": "release-window:Chord3:14",
+              "start": "26",
+              "end": "12959/480",
+              "count": 1
+            },
+            {
+              "window_id": "release-window:Chord3:15",
+              "start": "34",
+              "end": "57119/480",
+              "count": 23
+            },
+            {
+              "window_id": "release-window:Chord3:16",
+              "start": "123",
+              "end": "118559/480",
+              "count": 34
+            },
+            {
+              "window_id": "release-window:Chord3:17",
+              "start": "251",
+              "end": "139919/480",
+              "count": 12
+            },
+            {
+              "window_id": "release-window:Chord3:18",
+              "start": "298",
+              "end": "143759/480",
+              "count": 1
+            },
+            {
+              "window_id": "release-window:Chord3:19",
+              "start": "609/2",
+              "end": "147599/480",
+              "count": 2
+            },
+            {
+              "window_id": "release-window:Chord3:20",
+              "start": "314",
+              "end": "155279/480",
+              "count": 3
+            },
+            {
+              "window_id": "release-window:Chord3:21",
+              "start": "330",
+              "end": "162959/480",
+              "count": 3
+            },
+            {
+              "window_id": "release-window:Chord3:22",
+              "start": "354",
+              "end": "179999/480",
+              "count": 7
+            },
+            {
+              "window_id": "release-window:Chord3:23",
+              "start": "379",
+              "end": "198239/480",
+              "count": 11
+            },
+            {
+              "window_id": "release-window:Chord3:24",
+              "start": "418",
+              "end": "204719/480",
+              "count": 3
+            },
+            {
+              "window_id": "release-window:Chord3:25",
+              "start": "434",
+              "end": "220079/480",
+              "count": 8
+            },
+            {
+              "window_id": "release-window:Chord3:26",
+              "start": "466",
+              "end": "228959/480",
+              "count": 3
+            },
+            {
+              "window_id": "release-window:Chord3:27",
+              "start": "490",
+              "end": "235919/480",
+              "count": 1
+            },
+            {
+              "window_id": "release-window:Chord3:28",
+              "start": "498",
+              "end": "239759/480",
+              "count": 1
+            },
+            {
+              "window_id": "release-window:Chord3:29",
+              "start": "522",
+              "end": "251279/480",
+              "count": 1
+            },
+            {
+              "window_id": "release-window:Chord3:30",
+              "start": "530",
+              "end": "255119/480",
+              "count": 1
+            },
+            {
+              "window_id": "release-window:Chord3:31",
+              "start": "538",
+              "end": "262079/480",
+              "count": 1
+            }
+          ]
+        },
+        "Chord4": {
+          "count": 7,
+          "windows": [
+            {
+              "window_id": "release-window:Chord4:32",
+              "start": "179/2",
+              "end": "43919/480",
+              "count": 1
+            },
+            {
+              "window_id": "release-window:Chord4:33",
+              "start": "128",
+              "end": "61919/480",
+              "count": 1
+            },
+            {
+              "window_id": "release-window:Chord4:34",
+              "start": "154",
+              "end": "76799/480",
+              "count": 1
+            },
+            {
+              "window_id": "release-window:Chord4:35",
+              "start": "435/2",
+              "end": "105359/480",
+              "count": 1
+            },
+            {
+              "window_id": "release-window:Chord4:36",
+              "start": "256",
+              "end": "123359/480",
+              "count": 1
+            },
+            {
+              "window_id": "release-window:Chord4:37",
+              "start": "282",
+              "end": "138239/480",
+              "count": 1
+            },
+            {
+              "window_id": "release-window:Chord4:38",
+              "start": "384",
+              "end": "184799/480",
+              "count": 1
+            }
+          ]
+        },
+        "Melody": {
+          "count": 2,
+          "windows": [
+            {
+              "window_id": "release-window:Melody:39",
+              "start": "1/2",
+              "end": "244799/480",
+              "count": 534
+            },
+            {
+              "window_id": "release-window:Melody:40",
+              "start": "514",
+              "end": "262079/480",
+              "count": 34
+            }
+          ]
+        }
+      }
+    },
+    "mobile_profile": {
+      "status": "NOT_SUPPLIED",
+      "requiredFor": [
+        "register (pitchRange) adaptation per role",
+        "Mobile volume / prominence re-arbitration (defaultVolume, volumeDelta)"
+      ],
+      "notice": "No register or volume adaptation was attempted. A Mobile target profile must be supplied by a caller with its own reason and evidence; release representation does not depend on it."
+    },
+    "evidence": {
+      "registry": [
+        {
+          "ref": "ast_2ba293828d08c0c7e4b67240fb7dad28",
+          "origin": "asset",
+          "kind": "third-party-midi",
+          "sha256": "5819c9c5e7b5f357c0523b16d69eda16dd84d5a2ad60a167802e904b02c23782",
+          "bytes_held": true,
+          "primary": false,
+          "independent": true
+        },
+        {
+          "ref": "ast_477a6c594a7c4728ed06ee9a981ce1ad",
+          "origin": "asset",
+          "kind": "third-party-midi",
+          "sha256": "ed675fc9f3386990dd6b9798c98b59a2f12c3331709958358e280e3850ab67b4",
+          "bytes_held": true,
+          "primary": false,
+          "independent": true
+        },
+        {
+          "ref": "ast_6154754b4b22da998fc266ff5400b879",
+          "origin": "asset",
+          "kind": "original-audio",
+          "sha256": "35a05318c127248d9a391201847ee586e82df87b4755cdeb1ec33e4ceb98d061",
+          "bytes_held": true,
+          "primary": true,
+          "independent": true
+        },
+        {
+          "ref": "ast_62c0678854fc1b80138aa530e6776db5",
+          "origin": "asset",
+          "kind": "official-midi",
+          "sha256": "5819c9c5e7b5f357c0523b16d69eda16dd84d5a2ad60a167802e904b02c23782",
+          "bytes_held": true,
+          "primary": true,
+          "independent": false
+        },
+        {
+          "ref": "ast_bf887f2d0fa6409762fa60307f95774e",
+          "origin": "asset",
+          "kind": "original-audio",
+          "sha256": "35a05318c127248d9a391201847ee586e82df87b4755cdeb1ec33e4ceb98d061",
+          "bytes_held": true,
+          "primary": true,
+          "independent": true
+        },
+        {
+          "ref": "midi:sha256:5819c9c5e7b5f357c0523b16d69eda16dd84d5a2ad60a167802e904b02c23782",
+          "origin": "source",
+          "kind": "third-party-midi",
+          "sha256": "5819c9c5e7b5f357c0523b16d69eda16dd84d5a2ad60a167802e904b02c23782",
+          "bytes_held": true,
+          "primary": false,
+          "independent": true
+        }
+      ],
+      "requirement": {
+        "anyOf": [
+          {
+            "code": "ORIGINAL_AUDIO_ARTICULATION_REVIEW_REQUIRED",
+            "class": "primary-audio",
+            "availableRefs": [
+              "ast_6154754b4b22da998fc266ff5400b879",
+              "ast_bf887f2d0fa6409762fa60307f95774e"
+            ],
+            "notIndependentRefs": [],
+            "needed": "A direct review of the original recording at each listed release (locator in the recording) stating whether the note is held to the grid point or released before it. Alignment, envelope or onset metrics locate the place to look and do not answer it (SOURCE_POLICY §6)."
+          },
+          {
+            "code": "INDEPENDENT_SYMBOLIC_SOURCE_REQUIRED",
+            "class": "primary-symbolic",
+            "availableRefs": [],
+            "notIndependentRefs": [
+              "ast_62c0678854fc1b80138aa530e6776db5"
+            ],
+            "needed": "The project holds no independent official score or MIDI; an asset labelled official whose bytes equal a supporting file is a relabelled copy."
+          }
+        ],
+        "notice": "Any one item settles the releases it names. Who submits it is recorded and does not change its grade; third-party files, encoding patterns, metrics, tool output and bare assertions are recorded and never counted."
+      },
+      "audio_evidence_on_record": [
+        {
+          "report_sha256": "2816ea27e081fbfd03d1995e96cc469ac20613446f39ad261f05fa3c9b09330d",
+          "audio_sha256": "35a05318c127248d9a391201847ee586e82df87b4755cdeb1ec33e4ceb98d061",
+          "active": false,
+          "confidence": 0.4562876211764445,
+          "warnings": [
+            "LOW_ALIGNMENT_CONFIDENCE",
+            "LOW_SCORE_FRAME_COVERAGE"
+          ],
+          "submitted_by": null,
+          "basis": "alignment-locator",
+          "admissible_as_release_evidence": false,
+          "why": "SOURCE_POLICY §6: an alignment report locates windows in the recording; it states nothing about sustain or articulation there."
+        },
+        {
+          "report_sha256": "342aea7427781d37fe4c61d54aaabc4ed3062113b10a8ca1e51f62a7a85479da",
+          "audio_sha256": "35a05318c127248d9a391201847ee586e82df87b4755cdeb1ec33e4ceb98d061",
+          "active": true,
+          "confidence": 0.4562876211764445,
+          "warnings": [
+            "LOW_ALIGNMENT_CONFIDENCE",
+            "LOW_SCORE_FRAME_COVERAGE"
+          ],
+          "submitted_by": "agent:ChatGPT",
+          "basis": "alignment-locator",
+          "admissible_as_release_evidence": false,
+          "why": "SOURCE_POLICY §6: an alignment report locates windows in the recording; it states nothing about sustain or articulation there."
+        }
+      ],
+      "probes": [
+        {
+          "probe": "official_midi ast_62c0678854fc1b80138aa530e6776db5 read directly as primary-symbolic",
+          "admissible": false,
+          "reasons": [
+            "NO_ADMISSIBLE_EVIDENCE"
+          ],
+          "same_grade_for_every_submitter": true,
+          "items": [
+            {
+              "class": "primary-symbolic",
+              "ref": "ast_62c0678854fc1b80138aa530e6776db5",
+              "basis": "direct-source-review",
+              "kind": "official-midi",
+              "independent": false,
+              "reasons": [
+                "EVIDENCE_SOURCE_NOT_INDEPENDENT"
+              ]
+            }
+          ]
+        },
+        {
+          "probe": "third_party_midi ast_477a6c594a7c4728ed06ee9a981ce1ad as the only evidence",
+          "admissible": false,
+          "reasons": [
+            "NO_ADMISSIBLE_EVIDENCE"
+          ],
+          "same_grade_for_every_submitter": true,
+          "items": [
+            {
+              "class": "third-party",
+              "ref": "ast_477a6c594a7c4728ed06ee9a981ce1ad",
+              "basis": "direct-source-review",
+              "kind": "third-party-midi",
+              "independent": true,
+              "reasons": [
+                "EVIDENCE_CLASS_NOT_ADMISSIBLE"
+              ]
+            }
+          ]
+        },
+        {
+          "probe": "third_party_midi ast_2ba293828d08c0c7e4b67240fb7dad28 as the only evidence",
+          "admissible": false,
+          "reasons": [
+            "NO_ADMISSIBLE_EVIDENCE"
+          ],
+          "same_grade_for_every_submitter": true,
+          "items": [
+            {
+              "class": "third-party",
+              "ref": "ast_2ba293828d08c0c7e4b67240fb7dad28",
+              "basis": "direct-source-review",
+              "kind": "third-party-midi",
+              "independent": true,
+              "reasons": [
+                "EVIDENCE_CLASS_NOT_ADMISSIBLE"
+              ]
+            }
+          ]
+        },
+        {
+          "probe": "uniform one-tick encoding pattern of midi:sha256:5819c9c5e7b5f357c0523b16d69eda16dd84d5a2ad60a167802e904b02c23782",
+          "admissible": false,
+          "reasons": [
+            "NO_ADMISSIBLE_EVIDENCE"
+          ],
+          "same_grade_for_every_submitter": true,
+          "items": [
+            {
+              "class": "source-encoding-pattern",
+              "ref": "midi:sha256:5819c9c5e7b5f357c0523b16d69eda16dd84d5a2ad60a167802e904b02c23782",
+              "basis": "encoding-pattern",
+              "kind": "third-party-midi",
+              "independent": true,
+              "reasons": [
+                "EVIDENCE_CLASS_NOT_ADMISSIBLE",
+                "EVIDENCE_BASIS_IS_NOT_A_DIRECT_SOURCE_REVIEW"
+              ]
+            }
+          ]
+        },
+        {
+          "probe": "original_audio ast_6154754b4b22da998fc266ff5400b879 through the alignment report on record (a locator)",
+          "admissible": false,
+          "reasons": [
+            "NO_ADMISSIBLE_EVIDENCE"
+          ],
+          "same_grade_for_every_submitter": true,
+          "items": [
+            {
+              "class": "primary-audio",
+              "ref": "ast_6154754b4b22da998fc266ff5400b879",
+              "basis": "alignment-locator",
+              "kind": "original-audio",
+              "independent": true,
+              "reasons": [
+                "EVIDENCE_BASIS_IS_NOT_A_DIRECT_SOURCE_REVIEW"
+              ]
+            }
+          ]
+        },
+        {
+          "probe": "original_audio ast_6154754b4b22da998fc266ff5400b879 through an envelope/onset metric",
+          "admissible": false,
+          "reasons": [
+            "NO_ADMISSIBLE_EVIDENCE"
+          ],
+          "same_grade_for_every_submitter": true,
+          "items": [
+            {
+              "class": "primary-audio",
+              "ref": "ast_6154754b4b22da998fc266ff5400b879",
+              "basis": "machine-metric",
+              "kind": "original-audio",
+              "independent": true,
+              "reasons": [
+                "EVIDENCE_BASIS_IS_NOT_A_DIRECT_SOURCE_REVIEW"
+              ]
+            }
+          ]
+        },
+        {
+          "probe": "original_audio ast_6154754b4b22da998fc266ff5400b879 by a direct review of the recording (shape only; no such review is on record)",
+          "admissible": true,
+          "reasons": [],
+          "same_grade_for_every_submitter": true,
+          "items": [
+            {
+              "class": "primary-audio",
+              "ref": "ast_6154754b4b22da998fc266ff5400b879",
+              "basis": "direct-source-review",
+              "kind": "original-audio",
+              "independent": true,
+              "reasons": []
+            }
+          ]
+        },
+        {
+          "probe": "original_audio ast_bf887f2d0fa6409762fa60307f95774e through the alignment report on record (a locator)",
+          "admissible": false,
+          "reasons": [
+            "NO_ADMISSIBLE_EVIDENCE"
+          ],
+          "same_grade_for_every_submitter": true,
+          "items": [
+            {
+              "class": "primary-audio",
+              "ref": "ast_bf887f2d0fa6409762fa60307f95774e",
+              "basis": "alignment-locator",
+              "kind": "original-audio",
+              "independent": true,
+              "reasons": [
+                "EVIDENCE_BASIS_IS_NOT_A_DIRECT_SOURCE_REVIEW"
+              ]
+            }
+          ]
+        },
+        {
+          "probe": "original_audio ast_bf887f2d0fa6409762fa60307f95774e through an envelope/onset metric",
+          "admissible": false,
+          "reasons": [
+            "NO_ADMISSIBLE_EVIDENCE"
+          ],
+          "same_grade_for_every_submitter": true,
+          "items": [
+            {
+              "class": "primary-audio",
+              "ref": "ast_bf887f2d0fa6409762fa60307f95774e",
+              "basis": "machine-metric",
+              "kind": "original-audio",
+              "independent": true,
+              "reasons": [
+                "EVIDENCE_BASIS_IS_NOT_A_DIRECT_SOURCE_REVIEW"
+              ]
+            }
+          ]
+        },
+        {
+          "probe": "original_audio ast_bf887f2d0fa6409762fa60307f95774e by a direct review of the recording (shape only; no such review is on record)",
+          "admissible": true,
+          "reasons": [],
+          "same_grade_for_every_submitter": true,
+          "items": [
+            {
+              "class": "primary-audio",
+              "ref": "ast_bf887f2d0fa6409762fa60307f95774e",
+              "basis": "direct-source-review",
+              "kind": "original-audio",
+              "independent": true,
+              "reasons": []
+            }
+          ]
+        }
+      ]
+    },
+    "finalize": {
+      "operation": "blocked",
+      "artifact_id": null,
+      "mml_delivered": false,
+      "song_state": "CANDIDATE",
+      "blockers": [
+        "source",
+        "microTiming",
+        "core3Completeness",
+        "leadPromotion",
+        "originalAudio",
+        "playerReadback",
+        "mobileAdaptation",
+        "regression"
+      ]
+    },
+    "arbitration": {
+      "claim_under_review": "SOURCE_EVENT_SUSTAINS_TO_GRID_POINT (EXTEND_TO_NEXT_GRID) or SOURCE_EVENT_RELEASES_BY_PREVIOUS_GRID_POINT (TRUNCATE_TO_PREVIOUS_GRID)",
+      "targets": 1544,
+      "offset_before_next_grid_ticks": {
+        "1": 1544
+      },
+      "subsets": {
+        "following_shape": {
+          "rest-of-at-least-safe-grid": 257,
+          "role-end": 5,
+          "sub-grid-gap-to-next-onset": 1282
+        },
+        "same_pitch_repeated_attack": 331,
+        "effect_of_extend": {
+          "sub-grid-gap-to-next-onset": "closes a one-tick gap before the next attack of the same role; the attack stays an attack",
+          "rest-of-at-least-safe-grid": "shortens the following rest by one tick; the rest stays",
+          "role-end": "lengthens the last note of the role by one tick"
+        },
+        "evidence_need_differs_by_subset": false,
+        "why": "Every subset asks the same source question (is the note held to the grid point or released before it); only the Final effect differs, and none moves an onset, merges an attack or removes a rest."
+      },
+      "questions": {
+        "source_supported_intentional_articulation": "UNDETERMINED — no primary source finding about these releases is on record.",
+        "source_encoding_artifact_or_technical_micro_gap": "UNDETERMINED — the uniform one-tick pattern is an observation about the third-party file, not evidence; it is not read as meaningless for being uniform or for being one tick.",
+        "extend_justified": "NOT YET — EXTEND is the minimal valid option for every target arithmetically, but no admissible finding supports the claim it makes.",
+        "subset_differs": "NO — see subsets.why.",
+        "original_audio_available": "YES — independent original_audio ast_6154754b4b22da998fc266ff5400b879, ast_bf887f2d0fa6409762fa60307f95774e (1 distinct recording by SHA-256)",
+        "original_audio_evidence_on_record_sufficient": "NO — the only audio evidence on record is the alignment report 342aea742778… (confidence 0.4562876211764445, warnings LOW_ALIGNMENT_CONFIDENCE+LOW_SCORE_FRAME_COVERAGE), a locator; no direct review of the recording at these releases is recorded.",
+        "current_audio_evidence_can_support_claim": "NO — metrics and alignment locate; they do not state sustain or articulation (SOURCE_POLICY §6). The active alignment carries LOW_ALIGNMENT_CONFIDENCE+LOW_SCORE_FRAME_COVERAGE, so the recording-time locators of the release windows are themselves unreliable. In the isolated run, readiness gates still open: source, originalAudio.",
+        "independent_symbolic_source_exists": "NO — ast_62c0678854fc1b80138aa530e6776db5 labelled official is byte-identical to a supporting file (a relabelled copy).",
+        "accepted_prior_evidence_exists": "NO — no accepted previous version and no delivered Final exist in the project.",
+        "evidence_still_insufficient": true
+      },
+      "blocker": {
+        "code": "MICRO_TIMING_RELEASE_EVIDENCE_REQUIRED",
+        "any_of": [
+          {
+            "code": "ORIGINAL_AUDIO_ARTICULATION_REVIEW_REQUIRED",
+            "available_refs": [
+              "ast_6154754b4b22da998fc266ff5400b879",
+              "ast_bf887f2d0fa6409762fa60307f95774e"
+            ],
+            "not_independent_refs": []
+          },
+          {
+            "code": "INDEPENDENT_SYMBOLIC_SOURCE_REQUIRED",
+            "available_refs": [],
+            "not_independent_refs": [
+              "ast_62c0678854fc1b80138aa530e6776db5"
+            ]
+          }
+        ],
+        "submitter": "anyone — a person or a conversational AI able to review the recording or read a score; the submitter is recorded as provenance and does not change the grade",
+        "not_a_blocker": "who the submitter is"
+      }
+    },
+    "lead": {
+      "gate": {
+        "status": "PENDING",
+        "blockers": [
+          "LEAD_PROMOTION_EVIDENCE_REQUIRED"
+        ]
+      },
+      "promotion_reports": {
+        "total": 569,
+        "by_status": {
+          "PENDING": 569
+        },
+        "blocker_counts": {
+          "LEAD_EVIDENCE_EVENT_IDENTITY_MISMATCH": 569,
+          "LEAD_EVIDENCE_MISSING": 569
+        }
+      },
+      "stored_production_reviews": {
+        "source": "docs/evidence/kaiju-final-remediation-2026-09-22/lead-review-queue.json",
+        "reviews_sha256": "2646aab8136316c8af8ea41f78c8da6240155af8fd04d2f5dccb2105cac6ba23",
+        "melody_events": 569,
+        "without_any_review": 395,
+        "stored": 174,
+        "attested": 0,
+        "by_classification": {
+          "contradictory-evidence": 21,
+          "f0-or-pitch-class-only": 3,
+          "unresolved-missing-evidence": 395,
+          "weak-machine-evidence": 150
+        },
+        "audio_citation_kinds": {
+          "cqt-salience": 150,
+          "f0": 2,
+          "predominant-pitch-class": 22
+        },
+        "score_citation_available": {
+          "false": 171,
+          "true": 3
+        },
+        "carrying_a_project_reference": 0,
+        "note": "The stored reviews predate the `ref` field, so none names a project source; the queue omits citation text."
+      },
+      "evidence_probes": [
+        {
+          "probe": "original_audio ast_6154754b4b22da998fc266ff5400b879 classified from CQT/F0/pitch-class metrics (what the stored reviews rest on)",
+          "status": "PENDING",
+          "same_grade_for_every_submitter": true,
+          "blockers": [
+            "POSITIVE_LEAD_EVIDENCE_MISSING"
+          ],
+          "sources": {
+            "audio": {
+              "ref": "ast_6154754b4b22da998fc266ff5400b879",
+              "sourceAuthority": "primary",
+              "reason": null,
+              "sourceClass": "primary-audio",
+              "kind": "original-audio"
+            }
+          }
+        },
+        {
+          "probe": "original_audio ast_6154754b4b22da998fc266ff5400b879 by a direct review of the recording (shape only; no such review is on record)",
+          "status": "PASS",
+          "same_grade_for_every_submitter": true,
+          "blockers": [],
+          "sources": {
+            "audio": {
+              "ref": "ast_6154754b4b22da998fc266ff5400b879",
+              "sourceAuthority": "primary",
+              "reason": null,
+              "sourceClass": "primary-audio",
+              "kind": "original-audio"
+            }
+          }
+        },
+        {
+          "probe": "original_audio ast_bf887f2d0fa6409762fa60307f95774e classified from CQT/F0/pitch-class metrics (what the stored reviews rest on)",
+          "status": "PENDING",
+          "same_grade_for_every_submitter": true,
+          "blockers": [
+            "POSITIVE_LEAD_EVIDENCE_MISSING"
+          ],
+          "sources": {
+            "audio": {
+              "ref": "ast_bf887f2d0fa6409762fa60307f95774e",
+              "sourceAuthority": "primary",
+              "reason": null,
+              "sourceClass": "primary-audio",
+              "kind": "original-audio"
+            }
+          }
+        },
+        {
+          "probe": "original_audio ast_bf887f2d0fa6409762fa60307f95774e by a direct review of the recording (shape only; no such review is on record)",
+          "status": "PASS",
+          "same_grade_for_every_submitter": true,
+          "blockers": [],
+          "sources": {
+            "audio": {
+              "ref": "ast_bf887f2d0fa6409762fa60307f95774e",
+              "sourceAuthority": "primary",
+              "reason": null,
+              "sourceClass": "primary-audio",
+              "kind": "original-audio"
+            }
+          }
+        },
+        {
+          "probe": "third_party_midi ast_477a6c594a7c4728ed06ee9a981ce1ad top line as score-role evidence",
+          "status": "PENDING",
+          "same_grade_for_every_submitter": true,
+          "blockers": [
+            "POSITIVE_LEAD_EVIDENCE_MISSING"
+          ],
+          "sources": {
+            "score": {
+              "ref": "ast_477a6c594a7c4728ed06ee9a981ce1ad",
+              "sourceAuthority": "supporting",
+              "reason": "LEAD_EVIDENCE_SOURCE_SUPPORTING_ONLY",
+              "sourceClass": "supporting",
+              "kind": "third-party-midi"
+            }
+          }
+        },
+        {
+          "probe": "third_party_midi ast_2ba293828d08c0c7e4b67240fb7dad28 top line as score-role evidence",
+          "status": "PENDING",
+          "same_grade_for_every_submitter": true,
+          "blockers": [
+            "POSITIVE_LEAD_EVIDENCE_MISSING"
+          ],
+          "sources": {
+            "score": {
+              "ref": "ast_2ba293828d08c0c7e4b67240fb7dad28",
+              "sourceAuthority": "supporting",
+              "reason": "LEAD_EVIDENCE_SOURCE_SUPPORTING_ONLY",
+              "sourceClass": "supporting",
+              "kind": "third-party-midi"
+            }
+          }
+        },
+        {
+          "probe": "official_midi ast_62c0678854fc1b80138aa530e6776db5 as score-role evidence",
+          "status": "PENDING",
+          "same_grade_for_every_submitter": true,
+          "blockers": [
+            "POSITIVE_LEAD_EVIDENCE_MISSING"
+          ],
+          "sources": {
+            "score": {
+              "ref": "ast_62c0678854fc1b80138aa530e6776db5",
+              "sourceAuthority": "supporting",
+              "reason": "LEAD_EVIDENCE_SOURCE_NOT_INDEPENDENT",
+              "sourceClass": "not-independent",
+              "kind": "official-midi"
+            }
+          }
+        },
+        {
+          "probe": "a score citation with no project reference (the shape of every stored review)",
+          "status": "PENDING",
+          "same_grade_for_every_submitter": true,
+          "blockers": [
+            "POSITIVE_LEAD_EVIDENCE_MISSING"
+          ],
+          "sources": {
+            "score": {
+              "ref": null,
+              "sourceAuthority": "unresolved",
+              "reason": "LEAD_EVIDENCE_SOURCE_NOT_CITED",
+              "sourceClass": null,
+              "kind": null
+            }
+          }
+        }
+      ],
+      "determination": {
+        "category": "B_GENUINELY_MISSING_SOURCE_EVIDENCE",
+        "blocked_only_by_the_submitter_rule": 0,
+        "why": [
+          "395 Melody events have no Lead review at all.",
+          "174 stored reviews state no submitter and no method (unattested); under the old rule and the new one they are not graded.",
+          "Resubmitted with any attestation, they would still prove nothing: their audio classifications come from CQT salience, predominant pitch-class or F0 (metrics: locators, SOURCE_POLICY §6), and a score citation can only name the third-party MIDI (supporting, §1C) or its relabelled \"official\" copy (not independent); see evidence_probes.",
+          "The Lead events are the highest sounding pitch of a third-party piano MIDI; \"highest note ⇒ Lead\" is a forbidden shortcut (MASTER_RULES §4).",
+          "Caveat, stated rather than used: decision-time Lead citations (applyDecisions.leadEvidence) are still graded as free text on main, not resolved against the project sources, so that path would accept the same weak evidence from any submitter. It is a pre-existing, actor-neutral gap (actor-gate-audit.json, found_not_changed); using it would not make the evidence any stronger, and nothing here uses it."
+        ],
+        "would_resolve": "Per Melody section: positive Lead evidence from a primary source — a direct review of the original recording stating which line is foreground (citing the original_audio asset by reference), or an official score — plus a resolved section role, checked continuity and Core3, filed through reviewLeadEvidence, where the citation is resolved against the project sources, from any submitter."
+      }
+    },
+    "counterfactual": {
+      "label": "COUNTERFACTUAL_NOT_A_RESULT",
+      "hypothetical_inputs": [
+        "a direct review of the recording that does not exist (submitted here under an agent provenance to exercise that path)",
+        "a placeholder original_audio asset",
+        "Tempo T150 and a 2/4→4/4 meter map not present in the export"
+      ],
+      "plan_status": "PASS",
+      "release_changes": 1544,
+      "release_change_effects": {
+        "following-rest-shortened": 257,
+        "role-end-moves-later": 5,
+        "sub-grid-gap-closed": 1282
+      },
+      "unresolved_targets": 0,
+      "run_state_after": "awaiting_review",
+      "micro_timing_after": {
+        "status": "PASS",
+        "records": 1544,
+        "violations": 0
+      },
+      "lead_promotion_after": {
+        "status": "PENDING",
+        "blockers": [
+          "LEAD_PROMOTION_EVIDENCE_REQUIRED"
+        ]
+      },
+      "core3_completeness_after": {
+        "status": "PASS",
+        "blockers": []
+      },
+      "song_state_after": "CANDIDATE",
+      "serialization_check": {
+        "status": "PASS",
+        "per_role_characters": {
+          "Melody": 1096,
+          "Chord1": 816,
+          "Chord2": 1472,
+          "Chord3": 671,
+          "Chord4": 209,
+          "Chord5": 0
+        },
+        "round_trip": "PASS",
+        "diagnostics": [
+          "SILENCE_DERIVED_FROM_GAP",
+          "VOLUME_NOT_DECIDED"
+        ],
+        "mml_text_recorded": false
+      }
+    }
+  },
+  "deterministic_rerun": "Two independent runs of scripts/studio-release-timing-e2e.mjs at the committed script produced byte-identical receipts.",
+  "lead_actor_gate_rerun": "2026-09-23, after ff83bad (Lead evidence graded independently of the submitter): the E2E adds a 'lead' section (gate, 569 promotion reports, the 174 stored production reviews from the committed public queue, and evidence probes graded by the service's own preparation and the shared grader for two submitters). Every other section is byte-identical to the previous receipt."
+}

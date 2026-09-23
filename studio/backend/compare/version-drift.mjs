@@ -10,6 +10,14 @@ const restEvents = project => project.events.filter(event => event.kind === 'res
 const roleKey = event => event.role ?? 'UNASSIGNED';
 const structuralKey = event => `${roleKey(event)}|${event.start}|${event.pitch}|${event.end}`;
 const roleMoveKey = event => `${event.start}|${event.pitch}|${event.end}`;
+// The source note a recorded release representation says this note is: same
+// onset and pitch, and the *recorded source release*. Only a note carrying such a
+// record has this key; every other note is left to the passes above.
+const recordedReleaseKey = event => {
+  const record = event?.metadata?.releaseRepresentation;
+  const source = record && typeof record === 'object' ? record.source?.end : null;
+  return typeof source === 'string' && String(record.final?.end) === String(event.end) ? `${event.start}|${event.pitch}|${source}` : null;
+};
 const sameOnsetKey = event => `${roleKey(event)}|${event.start}`;
 const samePitchOnsetKey = event => `${roleKey(event)}|${event.start}|${event.pitch}`;
 const restKey = event => `${roleKey(event)}|${event.start}|${event.end}`;
@@ -35,6 +43,7 @@ function indexQueues(events, keyFn) {
 }
 
 function take(queueMap, key, used) {
+  if (key === null) return null;
   const queue = queueMap.get(key) ?? [];
   while (queue.length && used.has(queue[0].id)) queue.shift();
   const value = queue.shift() ?? null;
@@ -64,6 +73,14 @@ function alignNotes(beforeEvents, afterEvents) {
     { name: 'same-role-onset-pitch', beforeIndex: indexQueues(before, samePitchOnsetKey), key: samePitchOnsetKey },
     { name: 'same-role-onset', beforeIndex: indexQueues(before, sameOnsetKey), key: sameOnsetKey },
     { name: 'role-move', beforeIndex: indexQueues(before, roleMoveKey), key: roleMoveKey },
+    // Last, and only over what every pass above left unpaired: a note whose
+    // release a recorded Mobile release representation moved (and whose role may
+    // also have changed, e.g. a role-less source event assigned a role), paired
+    // with exactly the source note its record names. That keeps the release
+    // change traceable as a modification of that event instead of hiding it in an
+    // unrelated removal and addition. A note without such a record never pairs
+    // here, so every other comparison is unchanged.
+    { name: 'recorded-release-representation', beforeIndex: indexQueues(before, roleMoveKey), key: recordedReleaseKey },
   ];
 
   for (const pass of passes) {

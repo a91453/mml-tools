@@ -989,7 +989,7 @@ outside this stage.
 | C. derived candidate decision | event roles, derived duplicates | the revision's own content, from the parent by construction |
 | D. gate/readiness evidence | `sourceComplete`, `audioAlignmentEvidence`, `incompleteInputs`, `sourceFaithfulBaseline`, `g11d` | stripped from the candidate and reported (`PARENT_GATE_METADATA_NOT_INHERITED`); recomputed, replaced or absent |
 | E. historical/audit | previous `g11d` provenance, demoted decisions | replaced by the new revision's provenance; demoted decisions retained with an explicit non-current marker |
-| F. unknown project metadata | every other key | carried as descriptive data and named (`PARENT_METADATA_INHERITED`); no readiness gate reads any key outside class D |
+| F. unknown project metadata | every other key | carried as descriptive data and named (`PARENT_METADATA_INHERITED`); no readiness gate takes any key outside class D as a verdict (the micro-timing gate reads `mobileAdaptation.releaseRepresentation` only to re-verify recorded release representations) |
 
 **Arbitration decisions.** For each decision on the project being applied onto:
 every named event present with the same role and not duplicated → carried as it

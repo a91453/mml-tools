@@ -320,11 +320,11 @@ export function createApiRouter({ application, ownerOf, challenge = null, agentD
     }],
     ['POST', /^\/projects\/([^/]+)\/mobile-adaptation\/plan$/, async (m, request, owner) => {
       const body = await readJson(request);
-      return json(await application.planMobileAdaptation(owner, m[1], { candidateId: body.candidate_id, profile: body.profile }));
+      return json(await application.planMobileAdaptation(owner, m[1], { candidateId: body.candidate_id, profile: body.profile ?? null, releaseRepresentation: body.release_representation ?? null }));
     }],
     ['POST', /^\/projects\/([^/]+)\/mobile-adaptation\/apply$/, async (m, request, owner) => {
       const body = await readJson(request);
-      return json(await application.applyMobileAdaptation(owner, m[1], { candidateId: body.candidate_id, profile: body.profile, expectedPlanId: body.expected_plan_id, acceptedBy: body.accepted_by }));
+      return json(await application.applyMobileAdaptation(owner, m[1], { candidateId: body.candidate_id, profile: body.profile ?? null, releaseRepresentation: body.release_representation ?? null, expectedPlanId: body.expected_plan_id, acceptedBy: body.accepted_by }));
     }],
     // Gate 4's two questions, each on its own route, because each is a
     // different review axis and neither answers the other: one reviewed Core3

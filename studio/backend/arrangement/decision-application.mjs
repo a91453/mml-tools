@@ -61,6 +61,7 @@ import {
   createCanonicalRestEvent,
   createArbitrationDecision,
 } from '../canonical/index.mjs';
+import { contextReleaseOf } from '../canonical/release-timing.mjs';
 import { compareCanonicalVersions } from '../compare/version-drift.mjs';
 import {
   evaluateLeadDemotion,
@@ -371,7 +372,11 @@ export function leadContextDigestOf(project) {
       role: event.role,
       pitch: event.pitch,
       start: beatKey(event.start),
-      end: beatKey(event.end),
+      // A release a recorded EXTEND representation moved onto the Final grid is
+      // read at its source value: it created no silence and removed no rest, so
+      // the Lead picture is unchanged (canonical/release-timing.mjs). Events
+      // without such a record digest exactly as before.
+      end: beatKey(contextReleaseOf(event)),
       volume: event.volume ?? null,
     }))
     .sort((a, b) => cmpStr(a.id, b.id));
@@ -1497,11 +1502,14 @@ export function applyAcceptedArrangement({
   });
   // Every other key is carried as data and named here, so that a key a gate
   // starts reading later is visible as inherited rather than assumed fresh.
-  // No readiness gate reads any key outside the stripped list (see
-  // final/readiness.mjs); this is the representation limit, stated.
+  // No readiness gate takes a key outside the stripped list as a verdict (see
+  // final/readiness.mjs). One is read: the micro-timing gate reads the release
+  // representation decisions under `mobileAdaptation` to re-verify the
+  // per-event records against the baseline snapshot and the project's current
+  // evidence, never as a stored PASS. That is the representation limit, stated.
   if (inheritedMetadataKeys.length) note('PARENT_METADATA_INHERITED', {
     keys: Object.freeze(inheritedMetadataKeys),
-    notice: 'Project metadata outside the gate-evidence list is carried from the project being applied onto as descriptive data. It is not read as evidence by any readiness gate.',
+    notice: 'Project metadata outside the gate-evidence list is carried from the project being applied onto as descriptive data. No readiness gate takes it as a verdict; the micro-timing gate reads mobileAdaptation.releaseRepresentation only to re-verify recorded release representations against the baseline snapshot and the current evidence.',
   });
 
   // The snapshot readiness diffs against is the baseline itself, not an edited

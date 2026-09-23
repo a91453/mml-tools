@@ -370,3 +370,15 @@ Case 1 is the narrowest and most likely to matter in practice: it is the shape a
 MIDI ingest produces when a note-off lands a few ticks before the next note-on.
 That makes it worth raising with the project — as a question about which of the
 two routes above applies, never as a one-line implementer fix.
+
+**Update (2026-09-22).** Route 1 now exists, outside this layer: an evidence-gated
+release representation in Mobile Adaptation v1 (`canonical/release-timing.mjs`,
+`adaptation/index.mjs`; notes in
+`docs/MONSTER_SONG_MICROTIMING_FINAL_FLOW_2026-09-22.md`). It moves a release that
+no admitted Final token can express to an adjacent 1/64 grid point only under a
+decision whose evidence cites an independent primary source by a direct review
+of it (who submitted the decision is provenance, not authority; corrected
+2026-09-23 from a first version that required a human submitter), records the
+Source-Faithful release on the event, and produces a new
+candidate that the micro-timing gate re-verifies. This layer is unchanged: it
+still refuses the note-preceded case, because it holds no such evidence.

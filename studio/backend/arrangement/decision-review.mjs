@@ -27,6 +27,7 @@ import {
   LEAD_EVIDENCE_PROVENANCE_PAIR_AMBIGUOUS,
 } from '../arbitration/lead-demotion.mjs';
 import { analyzeCrossSourceHarmony } from '../arbitration/harmony.mjs';
+import { sourceIdentityOf } from '../canonical/release-timing.mjs';
 import { evaluateProjectReadiness } from '../final/index.mjs';
 import {
   ACCEPTED_DECISION_TYPES,
@@ -328,10 +329,19 @@ function promotionMovesOf(application) {
 // Does this candidate event still carry the musical identity the evidence was
 // graded against? Role is excluded deliberately: the role change *is* the move
 // the evidence argues for.
+//
+// The candidate event is read through its recorded release representation
+// (`sourceIdentityOf`): a release a Gate 8 decision moved onto the Final grid is
+// still the source event the citation names, because the record restores the
+// exact Source-Faithful release and re-verifies it against the baseline origin.
+// Only that recorded release is reversed. Any other change of pitch, onset,
+// release or volume is still a different musical identity.
 const MUSICAL_IDENTITY_KEYS = Object.freeze(['pitch', 'start', 'end', 'volume']);
 const idList = (event, key) => JSON.stringify([...(event?.[key] ?? [])].map(String).sort());
-function musicalIdentityMatches(a, b) {
-  if (!a || !b) return false;
+function musicalIdentityMatches(current, origin) {
+  if (!current || !origin) return false;
+  const a = sourceIdentityOf(current, origin);
+  const b = origin;
   for (const key of MUSICAL_IDENTITY_KEYS) {
     if (String(a[key] ?? '') !== String(b[key] ?? '')) return false;
   }
@@ -709,6 +719,7 @@ export function reviewAppliedCandidate({
   mobileAdaptation = 'PENDING',
   regressionReviewed = false,
   inGameAcceptance = 'PENDING',
+  releaseEvidenceRegistry = null,
 }) {
   const checked = applicationIntegrity(application, baseline);
   const integrity = checked.ok && checked.against !== 'baseline'
@@ -756,6 +767,7 @@ export function reviewAppliedCandidate({
     mobileAdaptation,
     regressionReviewed,
     inGameAcceptance,
+    releaseEvidenceRegistry,
   });
 
   return Object.freeze({

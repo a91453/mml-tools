@@ -230,7 +230,7 @@ export function createArrangementService({ canonical, projects, intake, store })
     loadCandidateLineage,
     baselineEvents,
 
-    async mobileAdaptation(owner, projectId, { candidateId, profile, expectedPlanId = null, acceptedBy = null, apply = false, inputFingerprint = null, effectAttemptId = null } = {}) {
+    async mobileAdaptation(owner, projectId, { candidateId, profile = null, releaseRepresentation = null, expectedPlanId = null, acceptedBy = null, apply = false, inputFingerprint = null, effectAttemptId = null } = {}) {
       const engines = await canonical.engines();
       const { record, baseline, project } = await intake.project(owner, projectId);
       const { application: parent } = loadCandidate(record, candidateId);
@@ -247,7 +247,12 @@ export function createArrangementService({ canonical, projects, intake, store })
         .map(report => report.eventId).filter(eventId => typeof eventId === 'string' && eventId);
       let result;
       try {
-        const input = { baseline: project, candidate: parent.candidate, profile, leadBoundEventIds };
+        // The evidence registry a release representation decision is graded
+        // against: this project's uploaded assets and the Canonical sources, each
+        // with its declared kind and bytes' digest. Nothing a caller writes into
+        // the decision can add an entry.
+        const evidenceSources = { assets: record.assets ?? [], sources: [...(project.sources ?? []), ...(parent.candidate.sources ?? [])] };
+        const input = { baseline: project, candidate: parent.candidate, profile, releaseRepresentation, evidenceSources, leadBoundEventIds };
         if (!apply) return { candidate_id: candidateId, baseline_id: baseline.baseline_id, plan: engines.adaptation.planMobileAdaptation(input) };
         result = engines.adaptation.applyMobileAdaptation({ ...input, parent, expectedPlanId, acceptedBy });
       } catch (error) { fail(ERROR_CODES.INVALID_REQUEST, error.message); }
@@ -256,7 +261,7 @@ export function createArrangementService({ canonical, projects, intake, store })
       store.putJson(applicationKey(record.project_id, adaptedId), result);
       projects.save({ ...record, candidates: [...record.candidates.filter(entry => entry.candidate_id !== adaptedId), {
         candidate_id: adaptedId, parent_candidate_id: candidateId, baseline_id: baseline.baseline_id,
-        revision_index: result.revision.index, created_at: now(), decision_count: result.plan.changes.length,
+        revision_index: result.revision.index, created_at: now(), decision_count: result.plan.changes.length + (result.plan.releaseRepresentation?.changes?.length ?? 0),
         decision_ids: [result.plan.id], accepted_by: [acceptedBy.trim()], stage: 'MOBILE_ADAPTATION_V1',
         input_fingerprint: inputFingerprint, effect_attempt_id: effectAttemptId,
       }] });

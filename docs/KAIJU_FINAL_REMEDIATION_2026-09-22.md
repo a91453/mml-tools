@@ -176,6 +176,16 @@ exactly like human listening and produced **174 PASS**. Fix (`f020b95c`):
 - The grader never counts a `machine-metric` audio classification as positive
   role evidence (SOURCE_POLICY §6); it can still raise a conflict.
 
+> **Superseded in part, 2026-09-23 (PR #66).** Keying authority on
+> `reviewer_kind: human` was an implementation rule, not a Published one:
+> SOURCE_POLICY grades sources and methods, and only ACCEPTANCE Gate 10 binds an
+> actor. Every attested review is now graded on its evidence, whoever submitted
+> it: each classified score/audio citation must resolve (`ref`) to an official
+> score or the original recording the project holds, independent of every
+> supporting file, and a `machine-metric` basis stays a locator. The unattested
+> 174 are still not graded. See
+> `docs/MONSTER_SONG_MICROTIMING_FINAL_FLOW_2026-09-22.md` §9.
+
 Proof on the real data: the byte-faithful reproduction with the 174 exported
 reviews seeded (Lead context digest identical to production) grades
 **PASS 174 / PENDING 395 on main's code** — exactly production — and
