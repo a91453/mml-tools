@@ -744,6 +744,10 @@ GET    /api/v1/jobs/:job_id
 GET    /api/v1/artifacts/:artifact_id
 POST   /api/v1/technical/validate
 POST   /api/v1/technical/overlaps
+POST   /api/v1/audio-prescreen
+POST   /api/v1/projects/:project_id/audio-prescreen
+GET    /api/v1/projects/:project_id/audio-prescreen/shadow
+POST   /api/v1/projects/:project_id/audio-prescreen/shadow
 ```
 
 Everything is behind the existing OAuth check, evaluated before any owner
@@ -770,6 +774,12 @@ operation, and it reaches it through the same `resumeRun` a manual caller uses.
 The two `GET`s are read-only and recompute the Agent Review verdict against what
 is stored now.
 
+The four `audio-prescreen` routes are the audio prescreen (音色 A/B 預篩,
+`docs/AUDIO_PRESCREEN.md`). Computing a prescreen is a POST because it takes a
+body; it writes nothing. Only the shadow POST writes, and only the project's
+shadow calibration record. A prescreen verdict is machine evidence: it sets no
+gate (not Gate 7, not player readback, not `in_game`) and selects nothing.
+
 The five `runs` routes are the One-Click Orchestrator (§9.1).
 `POST …/runs/plan` is a POST because it takes a body, not because it writes:
 it creates no run and writes nothing at all, and a regression digests the whole
@@ -791,7 +801,9 @@ The `studio_*` tools, plus the three original tools unchanged:
 `studio_run_plan`, `studio_run_start`, `studio_run_status`,
 `studio_run_resume`, `studio_proposal_targets`, `studio_proposal_submit`,
 `studio_proposal_status`, `studio_proposal_resolve`, `studio_job_status`,
-`studio_artifact_get`.
+`studio_artifact_get`, `studio_audio_prescreen` (read-only; with only
+`project_id`: the project's prescreen shadow record) and
+`studio_prescreen_shadow_record` (writes only that record).
 
 The four run tools are four rather than one for the same reason the reduction
 and adaptation previews are separate from their applies: `studio_run_plan` and
@@ -908,6 +920,10 @@ oracle over another owner's identifiers.
   storage.
 - Jobs run in-process; no queue service is introduced.
 - Tests make no network call and no paid API call.
+- The audio prescreen downloads one free, pinned GM sound bank (about 14.6 MB,
+  MIT) on first need and caches it on the existing `/data` volume; it is not
+  stored in the repository or the image, and no project data is sent.
+  Rendering runs in worker threads of the same process (`docs/AUDIO_PRESCREEN.md`).
 
 One build-time addition: the deployment image now installs the single runtime
 dependency already pinned in `package.json` (`fast-xml-parser@5.10.1`, exact,
@@ -918,7 +934,10 @@ with install scripts disabled). This is a build step, not a recurring charge.
 Uploaded project assets are processed by this service and the existing Studio
 backend only. The service reads no conversation history, fetches no unrelated
 repository file, sends no song to a third-party LLM API and sends no audio to an
-external analysis service.
+external analysis service. Its one outbound request is the audio prescreen's
+sound-bank download: a public file at a pinned URL, verified by SHA-256 and
+size, fetched without any project data (`MML_STUDIO_AUDIO_BANK_FETCH=0` turns
+it off; a pre-seeded cache file is then required).
 
 Bounds and checks: body size limits on JSON, uploads and MCP payloads; a media
 type allowlist; a per-project asset ceiling and a store quota; identifier shape
