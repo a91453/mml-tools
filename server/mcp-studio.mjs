@@ -51,6 +51,7 @@ const structuredPayload = description => ({ type: 'object', additionalProperties
 // the musical-completeness review is answered here, and neither is the other.
 import { LIMITS, PROPOSAL_KIND_NAMES, PROPOSAL_STATE_NAMES, RESOLUTION_NAMES } from '../studio/backend/application/index.mjs';
 import { PAGED_REPORT_TOOLS, REPORT_PAGE_SCHEMA, validateReportPage, readReportPage } from './report-page.mjs';
+import { compactStudioResponse } from './mcp-compaction.mjs';
 
 const CONFIRMATIONS_DESCRIPTION = 'source_complete／version_drift_reviewed／player_readback／mobile_adaptation_reviewed／regression_reviewed／core3_completeness_reviewed／original_audio_required／original_audio_reviewed，每項需 reason。'
   + 'mobile_adaptation_reviewed（Gate 8）、regression_reviewed（Gate 9）、core3_completeness_reviewed（Gate 4 Core3 musical completeness）與 original_audio_reviewed（Gate 7：角色／突出度／延音／奏法／錄音結構已對照原曲審查）這四項，value=true 時另需至少一筆 evidence：只有理由字串的審查會被拒絕。original_audio_reviewed 需要候選已有 active 音訊對位證據，並綁定該證據 revision；對位證據沒有警告也不會自動通過 Gate 7。'
@@ -547,10 +548,16 @@ export const STUDIO_MCP_TOOLS = [
   },
 ];
 
-// Preserve the full, existing response by default. Paging is a transport view
-// on these existing reads, never an additional operation or stored artifact.
+// Paging is a transport view on these existing reads, never an additional
+// operation or stored artifact. The bounded view of long lists
+// (mcp-compaction.mjs) is the other transport view, and every tool that can
+// return one, or that writes, says how to read past it and what a too-large
+// response after a write means.
+export const RESPONSE_SIZE_NOTE = ' 回應中的長清單會摘要成 {compacted, truncated, total, first, sha256, report_page 或 retrieve}；儲存的紀錄完整不變，完整清單請依 report_page（工具、參數與 JSON path）分頁讀取，或用 retrieve 指名的讀取。'
+  + 'Long lists are summarized; read them in full with report_page. If a call returns PAYLOAD_TOO_LARGE with details.operation_returned=true (for example operation="succeeded"), the operation already took effect: never retry it; read the state back through details.recovery_reads.';
 for (const tool of STUDIO_MCP_TOOLS) {
   if (PAGED_REPORT_TOOLS.has(tool.name)) tool.inputSchema.properties.report_page = REPORT_PAGE_SCHEMA;
+  if (tool.name !== 'studio_capabilities') tool.description += RESPONSE_SIZE_NOTE;
 }
 
 // The run input, as the Application Service already spells it.
@@ -598,7 +605,9 @@ const proposalFilter = args => pick(args, PROPOSAL_FILTER_FIELDS);
 export async function runStudioTool(name, args, { application, owner }) {
   const page = args.report_page === undefined ? null : validateReportPage(name, args);
   const result = await dispatchStudioTool(name, args, { application, owner });
-  return page ? readReportPage(result, page) : result;
+  // A page is read from the full result; any other response is the bounded
+  // view (mcp-compaction.mjs), whose summaries point back at those pages.
+  return page ? readReportPage(result, page) : compactStudioResponse(name, args, result);
 }
 
 async function dispatchStudioTool(name, args, { application, owner }) {
