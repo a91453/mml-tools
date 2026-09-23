@@ -111,3 +111,28 @@ test('RRA-4 a stale plan id is refused and a decision id cannot be applied twice
   const reuse = (await service.planMobileAdaptation(OWNER, projectId, { candidateId: secondApplied.adaptation.candidate_id, releaseRepresentation: first })).adaptation.plan;
   assert.deepEqual([...new Set(reuse.blockers.map(item => item.code))].sort(), ['RELEASE_DECISION_ID_ALREADY_APPLIED', 'RELEASE_EVENT_IS_NOT_A_REPRESENTATION_TARGET']);
 });
+
+test('RRA-5 review re-grades a recorded representation against the project\'s current evidence, not the stored citation', async () => {
+  const service = createStudioApplication();
+  const { projectId, candidateId, audioAssetId } = await candidateWithAudio(service);
+  const releaseRepresentation = { decisions: [listeningDecision(audioAssetId, ALL)] };
+  const { plan } = (await service.planMobileAdaptation(OWNER, projectId, { candidateId, releaseRepresentation })).adaptation;
+  const applied = await service.applyMobileAdaptation(OWNER, projectId, { candidateId, releaseRepresentation, expectedPlanId: plan.id, acceptedBy: 'user:listener' });
+  const adaptedId = applied.adaptation.candidate_id;
+  const before = (await service.reviewCandidate(OWNER, projectId, { candidateId: adaptedId })).review.readiness.gates.microTiming;
+  assert.equal(before.status, 'PASS');
+  assert.equal(before.releaseRepresentationRecords.registryChecked, true);
+
+  // The cited recording turns out to share its bytes with a supporting file:
+  // it is no longer independent, and the stored record still says it was.
+  await service.uploadAsset(OWNER, projectId, { kind: 'third_party_midi', filename: 'relabel.mid', mediaType: 'audio/midi', bytes: new TextEncoder().encode('synthetic audio bytes') });
+  const after = (await service.reviewCandidate(OWNER, projectId, { candidateId: adaptedId })).review.readiness.gates.microTiming;
+  assert.equal(after.status, 'FAIL');
+  assert.ok(after.blockers.includes('MICRO_TIMING_RELEASE_REPRESENTATION_RECORD_INVALID'));
+  assert.equal(after.releaseRepresentationRecords.violations.length, 8);
+  assert.ok(after.releaseRepresentationRecords.violations.every(item => item.code === 'RELEASE_RECORD_DECISION_EVIDENCE_NOT_ADMISSIBLE'));
+  const finalized = await service.finalize(OWNER, projectId, { candidateId: adaptedId });
+  assert.equal(finalized.artifact_id, null, 'nothing is delivered on a citation review refuses');
+  assert.ok(finalized.blockers.includes('microTiming'));
+  assert.equal(finalized.song_state, 'CANDIDATE');
+});

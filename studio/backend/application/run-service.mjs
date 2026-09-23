@@ -419,9 +419,11 @@ function normalizeRunInput(input, { label = 'run input', allowed = RUN_INPUT_KEY
     if (!hasProfile && !hasRelease) fail(ERROR_CODES.INVALID_REQUEST, 'mobile_adaptation requires a profile, release_representation, or both.');
     if (hasProfile) requirePlainObject(value.profile, 'mobile_adaptation.profile');
     if (hasRelease) requirePlainObject(value.release_representation, 'mobile_adaptation.release_representation');
+    // Keys appear only when supplied, so a profile-only input normalizes, and
+    // fingerprints, exactly as it did before release representation existed.
     return {
-      profile: hasProfile ? value.profile : null,
-      release_representation: hasRelease ? value.release_representation : null,
+      ...(hasProfile ? { profile: value.profile } : {}),
+      ...(hasRelease ? { release_representation: value.release_representation } : {}),
       expected_plan_id: requireString(value.expected_plan_id, 'mobile_adaptation.expected_plan_id', { max: 200 }),
       accepted_by: requireString(value.accepted_by, 'mobile_adaptation.accepted_by', { max: 120 }),
     };
@@ -1979,7 +1981,7 @@ export function createRunService({ canonical, projects, store, operations, seria
       const planned = await operations.planMobileAdaptation(owner, projectId, { candidateId, releaseRepresentation: { decisions: [] } });
       const plan = planned.adaptation?.plan;
       const summary = plan?.releaseRepresentation?.summary ?? null;
-      if (!summary) return null;
+      if (!summary) return { status: 'UNAVAILABLE', error: { code: 'RELEASE_TIMING_SUMMARY_MISSING', message: 'The read-only adaptation plan carried no release timing summary.' } };
       return {
         ...summary,
         encodingObservations: undefined,
@@ -1989,8 +1991,10 @@ export function createRunService({ canonical, projects, store, operations, seria
         admissible_evidence: ['primary-symbolic: an independent official score/MIDI asset, attested by a human reviewer', 'primary-audio: the original recording, attested by a human reviewer who listened (audio_basis: listening)'],
         how_to_supply: 'resumeRun.mobile_adaptation.release_representation.decisions (preview first with planMobileAdaptation to obtain expected_plan_id); agent, tool, third-party, encoding-pattern and audio-metric evidence are recorded but never counted',
       };
-    } catch {
-      return null;
+    } catch (error) {
+      // Still never a halt, but never silent: a summary that could not be
+      // computed says so, rather than reading like a song with nothing to fix.
+      return { status: 'UNAVAILABLE', error: { code: typeof error?.code === 'string' ? error.code : 'RELEASE_TIMING_ANALYSIS_FAILED', message: String(error?.message ?? error).slice(0, 500) } };
     }
   }
 
@@ -2035,8 +2039,8 @@ export function createRunService({ canonical, projects, store, operations, seria
       apply: async () => {
         const result = await operations.applyMobileAdaptation(owner, projectId, {
           candidateId: parent,
-          profile: normalized.mobile_adaptation.profile,
-          releaseRepresentation: normalized.mobile_adaptation.release_representation,
+          profile: normalized.mobile_adaptation.profile ?? null,
+          releaseRepresentation: normalized.mobile_adaptation.release_representation ?? null,
           expectedPlanId: normalized.mobile_adaptation.expected_plan_id,
           acceptedBy: normalized.mobile_adaptation.accepted_by,
           inputFingerprint: fingerprint,

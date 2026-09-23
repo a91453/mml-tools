@@ -224,7 +224,7 @@ function failedAnalysisReport(policy, error) {
  * Whether the emitted Final MML can represent an interval is a separate question
  * with its own mechanism, and the technical MML gate remains separately required.
  */
-export function enforceMicroGaps(project, { mobileSyntax } = {}) {
+export function enforceMicroGaps(project, { mobileSyntax, releaseEvidenceRegistry = null } = {}) {
   if (!project || typeof project !== 'object') throw Error('Canonical project is required');
   // Omitting the option reads the real contract via readMicroGapPolicy's own
   // default; passing an explicit null or a partial object fails closed there
@@ -278,7 +278,9 @@ export function enforceMicroGaps(project, { mobileSyntax } = {}) {
   let releaseRecords = { recordCount: 0, violations: [] };
   try {
     releaseAnalysis = analyzeReleaseTiming({ candidate: project, baseline: project?.metadata?.sourceFaithfulBaseline?.snapshot ?? null });
-    releaseRecords = verifyReleaseRepresentation(project);
+    // With the project's current evidence registry every stored citation is
+    // re-resolved; without one the stored grading is re-checked for shape only.
+    releaseRecords = verifyReleaseRepresentation(project, { registry: releaseEvidenceRegistry });
   } catch (error) {
     return failedAnalysisReport(policy, error);
   }
@@ -334,6 +336,7 @@ export function enforceMicroGaps(project, { mobileSyntax } = {}) {
     releaseTiming: summarizeReleaseTiming(releaseAnalysis),
     releaseRepresentationRecords: Object.freeze({
       recordCount: releaseRecords.recordCount,
+      registryChecked: releaseRecords.registryChecked === true,
       violations: Object.freeze([...releaseRecords.violations]),
     }),
     unsupportedBoundaries: releaseAnalysis.unsupportedBoundaries,

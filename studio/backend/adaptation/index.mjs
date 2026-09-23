@@ -26,6 +26,10 @@ import {
   summarizeReleaseTiming,
 } from '../canonical/release-timing.mjs';
 
+// The registry a recorded release representation is re-graded against. Exported
+// so every readiness caller builds it the same way the plan does.
+export { buildEvidenceRegistry } from '../canonical/release-timing.mjs';
+
 export const MOBILE_ADAPTATION_SCHEMA = 'mml-studio/mobile-adaptation-profile@1';
 const syntax = EFFECTIVE_RULESET.mobileSyntax;
 const plain = value => value && typeof value === 'object' && !Array.isArray(value);
@@ -87,6 +91,8 @@ const mergedRoleRecord = (priorRoles, roles, events) => {
   return merged;
 };
 
+const isPercussionNote = event => event.metadata?.channel === 9 || event.metadata?.percussion === true || event.tags?.includes('percussion') === true;
+
 /**
  * Read-only deterministic plan. PASS means executable, never Gate 8 PASS.
  *
@@ -128,8 +134,13 @@ export function planMobileAdaptation({ baseline, candidate = baseline, profile =
     const origin = resolveOrigin(event.id);
     origins.set(event.id, origin);
     if (!origin || contentDigest([event.sourceIds, event.sourceEventIds]) !== contentDigest([origin.sourceIds, origin.sourceEventIds])) blockers.push({ code: 'SOURCE_EVENT_NOT_TRACEABLE', eventId: event.id });
+    // Role and drum-face questions belong to a profile that moves pitch and
+    // volume per role. Without one they are asked only of the notes a release
+    // change touches, below, so an unmapped drum track elsewhere does not hold
+    // every other release hostage.
+    if (!normalized) continue;
     if (!ROLES.includes(event.role)) blockers.push({ code: 'ROLE_ASSIGNMENT_REQUIRED', eventId: event.id });
-    if (event.metadata?.channel === 9 || event.metadata?.percussion === true || event.tags?.includes('percussion')) blockers.push({ code: 'DRUM_FACE_MAPPING_REQUIRED', eventId: event.id });
+    if (isPercussionNote(event)) blockers.push({ code: 'DRUM_FACE_MAPPING_REQUIRED', eventId: event.id });
   }
   // Velocity is deliberately not interpreted as Mobile volume. A caller may
   // supply an evidence-backed default for undecided notes; it stays explicit.
@@ -200,6 +211,17 @@ export function planMobileAdaptation({ baseline, candidate = baseline, profile =
   }
   for (const decision of releasePlan.decisions) if (priorDecisionIds.has(decision.id)) blockers.push({ code: 'RELEASE_DECISION_ID_ALREADY_APPLIED', decisionId: decision.id });
   const releaseById = new Map(releasePlan.changes.map(change => [change.eventId, change]));
+  if (!normalized) {
+    const noteById = new Map(notes.map(event => [event.id, event]));
+    for (const change of releasePlan.changes) {
+      const event = noteById.get(change.eventId);
+      if (!event) continue;
+      if (!ROLES.includes(event.role)) blockers.push({ code: 'ROLE_ASSIGNMENT_REQUIRED', eventId: event.id });
+      // A percussion note is a drum face, not a pitched release; no evidence
+      // about a sustained pitch speaks for it until the face mapping exists.
+      if (isPercussionNote(event)) blockers.push({ code: 'DRUM_FACE_MAPPING_REQUIRED', eventId: event.id });
+    }
+  }
   const proposed = { ...candidate, events: candidate.events.map(event => {
     const edited = byId.has(event.id) ? { ...event, ...byId.get(event.id).after } : event;
     return releaseById.has(event.id) ? { ...edited, end: releaseById.get(event.id).after.end } : edited;

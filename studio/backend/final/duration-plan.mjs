@@ -363,7 +363,9 @@ export function planRestDuration(duration, defaultLength, lattice, state, perSeg
   if (chunks < 1n) return direct;
   const remainder = target.sub(new F(chunks, 1n).mul(wholeBeats));
   const tail = planDuration(remainder, defaultLength, lattice, state, perSegmentCost);
-  if (!tail.ok) return direct;
+  // An exhausted budget is the more specific answer: the chunking itself was
+  // sound, the search simply ran out, and the caller must see that.
+  if (!tail.ok) return tail.reason === PLAN_FAILURE.BUDGET_EXHAUSTED ? tail : direct;
   const spelled = spellDuration(wholeBeats, defaultLength, lattice);
   if (!spelled) return direct;
   const chunk = { suffix: spelled.suffix, cost: spelled.cost, denominator: whole.denominator, dots: 0, lengthClass: whole.lengthClass, onGrid: whole.onGrid };

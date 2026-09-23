@@ -132,6 +132,11 @@ export function createReviewService({ canonical, projects, intake, arrangement, 
    * constructors, never by mutating a stored object, so a project that would
    * not pass the Canonical IR constructors cannot be reviewed at all.
    */
+  const releaseEvidenceRegistryFor = (engines, record, baselineProject, project) => engines.adaptation.buildEvidenceRegistry({
+    assets: record.assets ?? [],
+    sources: [...(baselineProject?.sources ?? []), ...(project?.sources ?? [])],
+  });
+
   const reviewProject = (engines, candidate, { confirmations, audioReports }) => {
     let project = candidate;
     if (confirmations.source_complete?.value === true) {
@@ -278,7 +283,11 @@ export function createReviewService({ canonical, projects, intake, arrangement, 
     const loadedRulesSnapshot = engines.emitterContract.canonicalIdentity().rules_snapshot_sha;
 
     const leadEvidenceReviews = leadEvidenceReviewsFor(record, candidateId);
-    return { engines, record, baseline, baselineProject, entry, application, applicationLineage: arrangement.loadCandidateLineage(record, candidateId), core3Approvals: core3ApprovalsFor(record, candidateId), leadEvidenceReviews, gradedLeadEvidenceReviews: gradedLeadEvidenceReviews(leadEvidenceReviews), confirmations, staleConfirmations: stale, audioReports, audioErrors, project, parent, candidateRulesSnapshot, loadedRulesSnapshot };
+    // The evidence registry recorded release representations are re-graded
+    // against: this project's sources and assets as they are now, never the
+    // resolution stored with the record.
+    const releaseEvidenceRegistry = releaseEvidenceRegistryFor(engines, record, baselineProject, project);
+    return { engines, record, baseline, baselineProject, entry, application, applicationLineage: arrangement.loadCandidateLineage(record, candidateId), core3Approvals: core3ApprovalsFor(record, candidateId), leadEvidenceReviews, gradedLeadEvidenceReviews: gradedLeadEvidenceReviews(leadEvidenceReviews), confirmations, staleConfirmations: stale, audioReports, audioErrors, project, parent, candidateRulesSnapshot, loadedRulesSnapshot, releaseEvidenceRegistry };
   };
 
   /** Record an explicit confirmation. Each one needs a stated reason. */
@@ -734,6 +743,9 @@ export function createReviewService({ canonical, projects, intake, arrangement, 
         core3CompletenessReviewed: recorded.core3_completeness_reviewed?.value === true,
         // Never a parameter a caller can reach. See the header.
         inGameAcceptance: 'PENDING',
+        // Recorded release representations are re-graded against the project's
+        // sources and assets as they are now, not as they were when recorded.
+        releaseEvidenceRegistry: ctx.releaseEvidenceRegistry,
       };
 
       const applied = engines.arrangement.reviewAppliedCandidate({

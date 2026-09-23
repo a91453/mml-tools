@@ -373,8 +373,8 @@ function leadPromotionGate(reports, leadEventDiff = null) {
 // input data, never a verdict. Uncertainty never becomes PASS, and nothing here
 // mutates, quantizes, normalizes or deletes a source-supported interval to
 // reach PASS.
-function microTimingGate(project) {
-  const { status, blockers, ...details } = enforceMicroGaps(project);
+function microTimingGate(project, releaseEvidenceRegistry) {
+  const { status, blockers, ...details } = enforceMicroGaps(project, { releaseEvidenceRegistry });
   return gate(status, {
     ...(blockers.length ? { blockers } : {}),
     ...details,
@@ -448,6 +448,9 @@ export function evaluateProjectReadiness({
   mobileAdaptation = 'PENDING',
   regressionReviewed = false,
   inGameAcceptance = 'PENDING',
+  // The project's current release evidence registry. With it, recorded release
+  // representations are re-graded against today's sources and assets.
+  releaseEvidenceRegistry = null,
 }) {
   if (!project || typeof project !== 'object') throw Error('Canonical project is required');
 
@@ -479,7 +482,7 @@ export function evaluateProjectReadiness({
     // emitted MML is syntactically and technically valid; this one asks whether
     // sub-grid timing in the Canonical musical project has source-supported
     // meaning. Neither answer substitutes for the other.
-    microTiming: microTimingGate(project),
+    microTiming: microTimingGate(project, releaseEvidenceRegistry),
     // Retained under its historical name so existing callers and reports keep
     // reading the source-continuity verdict they always read.
     core3: gate(normalizeStatus(core3Report, 'NOT_RUN'), { blockers: core3Report?.blockers ?? [] }),

@@ -46,6 +46,16 @@
 // whose denominator does divide L (triplets, other caution lengths) are
 // representable in principle and are never adaptation targets here.
 //
+// Scope limit, stated rather than hidden. "Representable in principle" is judged
+// against the full admitted lattice, caution lengths included, while Finalize
+// runs the emitter without the caution opt-in. A release two 480-tpq ticks
+// before the grid (1/960 whole note; 960 divides L) is therefore
+// CAUTION_REPRESENTABLE here, is never a representation target, and still fails
+// closed at serialization under the preferred-only lattice. This module offers
+// no route for it: the one-tick encoding it was built for is exactly
+// NOT_FINAL_REPRESENTABLE, and widening the target set to caution positions is a
+// separate decision, not something to infer from the grid.
+//
 // Nothing in this module classifies a sub-grid interval as meaningful or
 // meaningless from its size, from a statistical or quantization-looking pattern,
 // from a source type, or from the fact that a tool produced it. A uniform
@@ -228,14 +238,39 @@ export function spanSeconds(tempoEvents, startBeat, endBeat) {
 
 const secondsText = value => (value === null ? null : (Math.round(value * 1e6) / 1e3).toFixed(3));
 
-function keepClaimEventIds(project) {
+// Events whose *release boundary* an open keep claim covers. A keep decision
+// names an interval (canonical/micro-timing.mjs), so it is about this release
+// only when that interval is the event's own duration or the gap that follows
+// it; a claim on the gap *before* the event says nothing about its release. An
+// accepted or pending keep is an open claim; a rejected one is not.
+function releaseKeepClaims(project) {
   const ids = new Set();
   for (const decision of project?.decisions ?? []) {
-    // Any status: a pending or rejected keep is still an open musical claim.
     if (decision?.action !== MICRO_TIMING_KEEP_ACTION) continue;
-    for (const id of decision.eventIds ?? []) ids.add(id);
+    if (decision.status !== 'accepted' && decision.status !== 'pending') continue;
+    const identity = decision.metadata?.intervalIdentity;
+    if (identity?.type === 'event-duration' && text(identity.eventId)) ids.add(identity.eventId);
+    else if (identity?.type === 'inter-event-gap' && text(identity.previousEventId)) ids.add(identity.previousEventId);
   }
   return ids;
+}
+
+// The Source-Faithful origin of a candidate event: the baseline event with the
+// same id, or — for a justified derived duplicate — the baseline event its
+// reversible `derivedFromEventId` chain leads to. Never matched by pitch or time.
+function originResolver(baselineEvents, candidateEvents) {
+  const baselineById = new Map((baselineEvents ?? []).map(event => [event.id, event]));
+  const candidateById = new Map((candidateEvents ?? []).map(event => [event.id, event]));
+  return id => {
+    const seen = new Set();
+    let current = id;
+    while (typeof current === 'string' && !seen.has(current)) {
+      if (baselineById.has(current)) return baselineById.get(current);
+      seen.add(current);
+      current = candidateById.get(current)?.metadata?.g11d?.derivedFromEventId ?? null;
+    }
+    return null;
+  };
 }
 
 function sourcesById(project) {
@@ -302,6 +337,8 @@ function roleStreams(project) {
   return new Map([...byRole.entries()].map(([role, spans]) => [role, indexStream(spans)]));
 }
 
+// Assigned notes per pitch, ordered by onset, with the longest duration so an
+// overlap query only walks back as far as any note could still be sounding.
 function notesByPitch(project) {
   const byPitch = new Map();
   for (const event of project?.events ?? []) {
@@ -309,8 +346,25 @@ function notesByPitch(project) {
     if (!byPitch.has(event.pitch)) byPitch.set(event.pitch, []);
     byPitch.get(event.pitch).push({ event, start: f(event.start), end: f(event.end) });
   }
-  return byPitch;
+  const index = new Map();
+  for (const [pitch, list] of byPitch) {
+    list.sort((a, b) => a.start.cmp(b.start));
+    const longest = list.reduce((max, item) => { const d = item.end.sub(item.start); return d.cmp(max) > 0 ? d : max; }, new F(0));
+    index.set(pitch, {
+      // Notes of this pitch sounding somewhere inside (lo, hi).
+      overlapping(lo, hi) {
+        let low = 0; let high = list.length;
+        while (low < high) { const mid = (low + high) >> 1; if (list[mid].start.cmp(hi) < 0) low = mid + 1; else high = mid; }
+        const found = [];
+        const floor = lo.sub(longest);
+        for (let i = low - 1; i >= 0 && list[i].start.cmp(floor) >= 0; i -= 1) if (list[i].end.cmp(lo) > 0) found.push(list[i]);
+        return found;
+      },
+    });
+  }
+  return index;
 }
+const NO_PITCH = Object.freeze({ overlapping: () => [] });
 
 function recordOf(event) {
   const record = event?.metadata?.[RELEASE_RECORD_KEY];
@@ -320,7 +374,7 @@ function recordOf(event) {
 // Evaluate one representation option for a release. Pure arithmetic over the
 // candidate; the result says what the option *would* change, never whether it is
 // musically right.
-function evaluateOption(kind, { event, stream, samePitch, release, floor, ceil, following, nextOnset }) {
+function evaluateOption(kind, { event, stream, samePitch, release, floor, ceil, following, nextOnset, restAtRelease = false }) {
   const start = f(event.start);
   const to = kind === REPRESENTATION.EXTEND_TO_NEXT_GRID ? ceil : floor;
   const delta = to.sub(release);
@@ -332,8 +386,7 @@ function evaluateOption(kind, { event, stream, samePitch, release, floor, ceil, 
     if (stream.restOverlaps(release, to)) reasons.push('EXTENSION_ENTERS_AN_EXPLICIT_REST');
     // A new same-pitch overlap with another role is a collision the source did not
     // have (MASTER_RULES §6 review signal); an option that creates one is not offered.
-    if (samePitch.some(peer => peer.event.id !== event.id && peer.event.role !== event.role
-      && peer.start.cmp(to) < 0 && peer.end.cmp(release) > 0
+    if (samePitch.overlapping(release, to).some(peer => peer.event.id !== event.id && peer.event.role !== event.role
       && !(peer.start.cmp(release) < 0 && peer.end.cmp(event.start) > 0))) reasons.push('EXTENSION_INTRODUCES_CROSS_ROLE_SAME_PITCH_OVERLAP');
     if (nextOnset) {
       const after = nextOnset.sub(to);
@@ -344,6 +397,14 @@ function evaluateOption(kind, { event, stream, samePitch, release, floor, ceil, 
     if (duration.cmp(0) <= 0) reasons.push('TRUNCATION_WOULD_DELETE_THE_ATTACK');
     else if (duration.cmp(SAFE_GRID) < 0) reasons.push('TRUNCATION_WOULD_LEAVE_A_SUB_GRID_NOTE');
     if (stream.restOverlaps(to, release)) reasons.push('TRUNCATION_ENTERS_AN_EXPLICIT_REST');
+    if (nextOnset) {
+      const after = nextOnset.sub(to);
+      if (after.cmp(0) > 0 && after.cmp(SAFE_GRID) < 0) reasons.push('FOLLOWING_SILENCE_WOULD_BECOME_SUB_GRID');
+    }
+    // An explicit rest that begins at this release keeps its unrepresentable
+    // start whichever way the note moves; that is a rest-boundary question
+    // (technical timing repair), not a release representation.
+    if (restAtRelease) reasons.push('RELEASE_ADJOINS_AN_EXPLICIT_REST');
   }
   const silenceBefore = following;
   let silenceAfter = null;
@@ -406,8 +467,8 @@ export function analyzeReleaseTiming({ candidate, baseline = null, windowGapBeat
   if (!candidate || !Array.isArray(candidate.events)) throw Error('release timing analysis requires a Canonical candidate');
   const streams = roleStreams(candidate);
   const byPitch = notesByPitch(candidate);
-  const baselineById = new Map((baseline?.events ?? []).map(event => [event.id, event]));
-  const keepClaims = keepClaimEventIds(candidate);
+  const resolveOrigin = originResolver(baseline?.events ?? [], candidate.events);
+  const keepClaims = releaseKeepClaims(candidate);
   const sources = sourcesById(candidate);
   const targets = [];
   const unsupportedBoundaries = [];
@@ -452,13 +513,14 @@ export function analyzeReleaseTiming({ candidate, baseline = null, windowGapBeat
       const next = nextEntry?.event ?? null;
       const nextOnset = nextEntry ? nextEntry.start : null;
       const following = nextOnset ? nextOnset.sub(release) : null;
+      const restAtRelease = Boolean(nextEntry && nextEntry.event.kind === 'rest' && nextEntry.start.cmp(release) === 0);
       const { floor, ceil } = gridNeighbours(release);
-      const context = { event: span, stream, samePitch: byPitch.get(span.pitch) ?? [], release, floor, ceil, following, nextOnset };
+      const context = { event: span, stream, samePitch: byPitch.get(span.pitch) ?? NO_PITCH, release, floor, ceil, following, nextOnset, restAtRelease };
       const options = covered
         ? []
         : [evaluateOption(REPRESENTATION.EXTEND_TO_NEXT_GRID, context), evaluateOption(REPRESENTATION.TRUNCATE_TO_PREVIOUS_GRID, context)];
       const { recommended, basis } = covered ? { recommended: null, basis: 'role-polyphony-at-release' } : recommend(options);
-      const origin = baselineById.get(span.id) ?? null;
+      const origin = resolveOrigin(span.id);
       const keepClaim = keepClaims.has(span.id);
       let status = TARGET_STATUS.REPRESENTATION_DECISION_REQUIRED;
       if (keepClaim) status = TARGET_STATUS.SOURCE_SUPPORTED_NOT_REPRESENTABLE;
@@ -496,7 +558,10 @@ export function analyzeReleaseTiming({ candidate, baseline = null, windowGapBeat
           offsetBeforeNextGridTicks: ticksOf(span, nearestOffset),
           offsetBeforeNextGridSeconds: secondsText(spanSeconds(candidate.tempoEvents, release, ceil)),
           followingSilence: following === null ? null : following.toString(),
-          followingShape: covered ? 'covered-by-same-role-span' : following === null ? 'role-end' : following.cmp(SAFE_GRID) < 0 ? 'sub-grid-gap-to-next-onset' : 'rest-of-at-least-safe-grid',
+          followingShape: covered ? 'covered-by-same-role-span'
+            : restAtRelease ? 'explicit-rest-at-release'
+              : following === null ? 'role-end'
+                : following.cmp(SAFE_GRID) < 0 ? 'sub-grid-gap-to-next-onset' : 'rest-of-at-least-safe-grid',
           nextEventId: next?.id ?? null,
           nextIsSamePitchRepeatedAttack: Boolean(next && next.kind === 'note' && next.pitch === span.pitch),
           analysisNoise: false,
@@ -567,7 +632,7 @@ export function analyzeReleaseTiming({ candidate, baseline = null, windowGapBeat
   // interval for: the release is followed by a rest of at least the safe grid, or
   // ends the role, and the note itself is not a sub-grid duration.
   const hidden = targets.filter(target => target.status !== TARGET_STATUS.SOURCE_SUPPORTED_NOT_REPRESENTABLE
-    && ['rest-of-at-least-safe-grid', 'role-end', 'covered-by-same-role-span'].includes(target.analysis.followingShape)
+    && ['rest-of-at-least-safe-grid', 'role-end', 'covered-by-same-role-span', 'explicit-rest-at-release'].includes(target.analysis.followingShape)
     && f(target.source.duration).cmp(SAFE_GRID) >= 0);
   return Object.freeze({
     schema: RELEASE_TIMING_SCHEMA,
@@ -732,7 +797,7 @@ function normalizeDecision(raw, index) {
   for (const key of Object.keys(raw)) if (!DECISION_KEYS.has(key)) throw Error(`releaseRepresentation.decisions[${index}].${key} is unsupported`);
   if (!text(raw.id) || raw.id.length > 200) throw Error(`releaseRepresentation.decisions[${index}].id is required`);
   if (!Array.isArray(raw.eventIds) || !raw.eventIds.length || raw.eventIds.some(id => !text(id))) throw Error(`releaseRepresentation.decisions[${index}].eventIds must name at least one event`);
-  if (new Set(raw.eventIds).size !== raw.eventIds.length) throw Error(`releaseRepresentation.decisions[${index}].eventIds must not repeat an event`);
+  if (new Set(raw.eventIds.map(id => id.trim())).size !== raw.eventIds.length) throw Error(`releaseRepresentation.decisions[${index}].eventIds must not repeat an event`);
   if (!Object.values(REPRESENTATION).includes(raw.representation)) throw Error(`releaseRepresentation.decisions[${index}].representation must be one of ${Object.values(REPRESENTATION).join(', ')}`);
   if (!text(raw.reason) || raw.reason.length > 2000) throw Error(`releaseRepresentation.decisions[${index}].reason is required`);
   if (!Array.isArray(raw.evidence) || raw.evidence.length > 50) throw Error(`releaseRepresentation.decisions[${index}].evidence must be an array of at most 50 items`);
@@ -845,40 +910,48 @@ export function releaseRecordFor(change) {
 
 // ─── verification of recorded representations ───────────────────────────────
 
-const RELEASE_ONLY_KEYS = ['end', 'metadata'];
+// Fields a represented event may legitimately differ from its origin in: the
+// release itself and its record, the role and volume other stages decide, an
+// octave-only pitch change (enforced by the adaptation invariant), tags, and the
+// id of a derived duplicate (resolved above through its reversible chain).
+const RELEASE_ONLY_KEYS = ['end', 'metadata', 'role', 'volume', 'pitch', 'tags', 'id'];
 function sameExceptRelease(event, origin) {
   for (const key of new Set([...Object.keys(event), ...Object.keys(origin)])) {
-    if (RELEASE_ONLY_KEYS.includes(key) || key === 'role' || key === 'volume' || key === 'pitch' || key === 'tags') continue;
+    if (RELEASE_ONLY_KEYS.includes(key)) continue;
     if (JSON.stringify(event[key]) !== JSON.stringify(origin[key])) return false;
   }
   return true;
 }
 
 /**
- * Re-establish, from the project alone, that every recorded release
- * representation is what it claims: the source release equals the baseline
- * event, the Final release equals the event, the move is a single sub-grid step
- * onto the safe grid from a release Final could not express, and the decision it
- * names is stored, names the event, and still grades admissible on its own
- * resolved evidence. Nothing recorded is trusted as a verdict.
+ * Re-establish that every recorded release representation is what it claims:
+ * the source release equals the baseline origin, the Final release equals the
+ * event, the move is a single sub-grid step onto the safe grid from a release
+ * Final could not express, no open keep claim covers the release, and the
+ * decision it names is stored, names the event (or its origin), and still grades
+ * admissible. Given the project's current evidence registry, every citation is
+ * resolved again against it; without one, the resolution stored with the
+ * decision is re-graded. Nothing recorded is taken as a verdict.
  */
-export function verifyReleaseRepresentation(project) {
+export function verifyReleaseRepresentation(project, { registry = null } = {}) {
   const events = (project?.events ?? []).filter(event => event?.kind === 'note' && recordOf(event));
   const decisionList = project?.metadata?.mobileAdaptation?.releaseRepresentation?.decisions;
   const decisions = new Map((Array.isArray(decisionList) ? decisionList : []).filter(item => text(item?.id)).map(item => [item.id, item]));
-  if (!events.length) return Object.freeze({ recordCount: 0, violations: Object.freeze([]) });
+  if (!events.length) return Object.freeze({ recordCount: 0, violations: Object.freeze([]), registryChecked: Boolean(registry) });
   const snapshot = project?.metadata?.sourceFaithfulBaseline?.snapshot;
   const violations = [];
   if (!snapshot || !Array.isArray(snapshot.events)) {
-    return Object.freeze({ recordCount: events.length, violations: Object.freeze(events.map(event => Object.freeze({ eventId: event.id, code: RECORD_VIOLATION.BASELINE_SNAPSHOT_MISSING }))) });
+    return Object.freeze({ recordCount: events.length, violations: Object.freeze(events.map(event => Object.freeze({ eventId: event.id, code: RECORD_VIOLATION.BASELINE_SNAPSHOT_MISSING }))), registryChecked: Boolean(registry) });
   }
-  const originById = new Map(snapshot.events.map(event => [event.id, event]));
-  const keepClaims = keepClaimEventIds(project);
+  const resolveOrigin = originResolver(snapshot.events, project.events);
+  const keepClaims = releaseKeepClaims(project);
   const graded = new Map();
   for (const event of events) {
     const record = recordOf(event);
     const push = code => violations.push(Object.freeze({ eventId: event.id, code }));
-    const origin = originById.get(event.id);
+    // The baseline event itself, or the one a justified derived duplicate's
+    // reversible chain leads to.
+    const origin = resolveOrigin(event.id);
     if (!origin) { push(RECORD_VIOLATION.ORIGIN_MISSING); continue; }
     let sourceEnd; let finalEnd;
     try { sourceEnd = f(record.source?.end); finalEnd = f(record.final?.end); } catch { push(RECORD_VIOLATION.SOURCE_RELEASE_MISMATCH); continue; }
@@ -889,15 +962,21 @@ export function verifyReleaseRepresentation(project) {
     if (delta.cmp(0) === 0 || absolute(delta).cmp(SAFE_GRID) >= 0) push(RECORD_VIOLATION.DELTA_OUT_OF_RANGE);
     if (classifyPosition(finalEnd) !== POSITION_CLASS.SAFE_GRID) push(RECORD_VIOLATION.FINAL_OFF_GRID);
     if (classifyPosition(sourceEnd) !== POSITION_CLASS.NOT_FINAL_REPRESENTABLE) push(RECORD_VIOLATION.SOURCE_REPRESENTABLE);
-    if (keepClaims.has(event.id)) push(RECORD_VIOLATION.KEEP_CLAIM_PRESENT);
+    if (keepClaims.has(event.id) || keepClaims.has(origin.id)) push(RECORD_VIOLATION.KEEP_CLAIM_PRESENT);
     const decision = decisions.get(record.decisionId);
     if (!decision) { push(RECORD_VIOLATION.DECISION_MISSING); continue; }
-    if (!(decision.eventIds ?? []).includes(event.id)) push(RECORD_VIOLATION.DECISION_DOES_NOT_NAME_EVENT);
+    // A duplicate derived after the representation carries its origin's record,
+    // and the decision names the origin.
+    const named = decision.eventIds ?? [];
+    if (!named.includes(event.id) && !named.includes(origin.id)) push(RECORD_VIOLATION.DECISION_DOES_NOT_NAME_EVENT);
     if (decision.representation !== record.representation) push(RECORD_VIOLATION.REPRESENTATION_MISMATCH);
-    if (!graded.has(decision.id)) graded.set(decision.id, gradeReleaseEvidence(decision, null));
+    // With the project's current evidence registry, every citation is resolved
+    // again (kind, independence, presence); without one, the resolution stored
+    // with the decision is re-graded.
+    if (!graded.has(decision.id)) graded.set(decision.id, gradeReleaseEvidence(decision, registry));
     if (!graded.get(decision.id).admissible) push(RECORD_VIOLATION.DECISION_NOT_ADMISSIBLE);
   }
-  return Object.freeze({ recordCount: events.length, violations: Object.freeze(violations) });
+  return Object.freeze({ recordCount: events.length, violations: Object.freeze(violations), registryChecked: Boolean(registry) });
 }
 
 /**

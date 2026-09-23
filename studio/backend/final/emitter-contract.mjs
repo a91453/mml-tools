@@ -179,6 +179,10 @@ export const DEFAULT_EMIT_OPTIONS = Object.freeze({
   // candidate, and that must be a caller's explicit decision rather than a
   // side effect of asking for MML.
   technicalTimingRepair: false,
+  // The project's current release evidence registry, when the caller has one.
+  // Recorded release representations are then re-graded against it rather than
+  // against their own stored citation shape.
+  releaseEvidenceRegistry: null,
 });
 
 export function normalizeEmitOptions(options = {}) {
@@ -195,6 +199,7 @@ export function normalizeEmitOptions(options = {}) {
     maxTieSegments,
     readiness: options.readiness ?? null,
     technicalTimingRepair: options.technicalTimingRepair === true,
+    releaseEvidenceRegistry: options.releaseEvidenceRegistry ?? null,
   });
 }
 

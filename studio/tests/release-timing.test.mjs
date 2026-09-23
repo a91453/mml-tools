@@ -17,7 +17,7 @@ import {
   createCanonicalProject,
   createArbitrationDecision,
 } from '../backend/canonical/index.mjs';
-import { MICRO_TIMING_KEEP_ACTION, analyzeProjectMicroTiming } from '../backend/canonical/micro-timing.mjs';
+import { MICRO_TIMING_KEEP_ACTION, analyzeProjectMicroTiming, createIntervalIdentity } from '../backend/canonical/micro-timing.mjs';
 import {
   FINAL_LENGTH_LCM,
   POSITION_CLASS,
@@ -39,6 +39,7 @@ import {
 } from '../backend/canonical/release-timing.mjs';
 import { MICRO_GAP_BLOCKERS, enforceMicroGaps } from '../backend/final/micro-gap-enforcement.mjs';
 import { planMobileAdaptation } from '../backend/adaptation/index.mjs';
+import { emitFinalMml } from '../backend/final/mml-emitter.mjs';
 import { compareCandidateLineage, compareCanonicalVersions } from '../backend/compare/version-drift.mjs';
 import { sixRoleBaseline } from './fixtures/application-fixtures.mjs';
 
@@ -166,7 +167,9 @@ test('RT-6 an explicit rest is never swallowed by an extension', () => {
 test('RT-7 a keep claim makes the release UNSUPPORTED in Final, never a representation target', () => {
   const a = note({ id: 'a', start: 0, end: tickBefore(1) });
   const b = note({ id: 'b', start: 1, end: 2 });
-  const keep = createArbitrationDecision({ id: 'keep', eventIds: ['a', 'b'], action: MICRO_TIMING_KEEP_ACTION, status: 'pending', reason: 'claimed articulation' });
+  // A pending keep on the gap that follows a: an open claim on a's release.
+  const keep = createArbitrationDecision({ id: 'keep', eventIds: ['a', 'b'], action: MICRO_TIMING_KEEP_ACTION, status: 'pending', reason: 'claimed articulation',
+    metadata: { intervalIdentity: createIntervalIdentity({ type: 'inter-event-gap', previousEventId: 'a', nextEventId: 'b', start: tickBefore(1), end: '1' }) } });
   const analysis = analyzeReleaseTiming({ candidate: project([a, b], { decisions: [keep] }) });
   const target = analysis.targets.find(item => item.eventId === 'a');
   assert.equal(target.status, TARGET_STATUS.SOURCE_SUPPORTED_NOT_REPRESENTABLE);
@@ -343,4 +346,106 @@ test('RT-15 the version diff pairs a moved release with its source note only thr
   // A record naming a different source release pairs nothing.
   const wrong = project([createCanonicalNoteEvent({ ...source, role: 'Melody', end: '1', metadata: { [RELEASE_RECORD_KEY]: releaseRecordFor({ ...change, before: { end: tickBefore('3/4') } }) } })]);
   assert.equal(compareCanonicalVersions(baseline, wrong).summary.noteModified, 0);
+});
+
+test('RT-16 a keep claim covers only the release it names, and a rejected claim is no claim', () => {
+  // Review reproduction: W → one-tick gap → X, then X is followed by a real rest.
+  // A keep on the W→X gap is about W's release, never X's.
+  const w = note({ id: 'w', start: 0, end: tickBefore(1) });
+  const x = note({ id: 'x', start: 1, end: tickBefore(2) });
+  const y = note({ id: 'y', start: 3, end: 4 });
+  const gap = createIntervalIdentity({ type: 'inter-event-gap', previousEventId: 'w', nextEventId: 'x', start: tickBefore(1), end: '1' });
+  const OFFICIAL = createSource({ id: 'official', label: 'official score', kind: 'official-musicxml', authority: 'primary-symbolic' });
+  const onOfficial = event => createCanonicalNoteEvent({ ...event, sourceIds: ['official'] });
+  const keep = status => createArbitrationDecision({ id: `keep-${status}`, eventIds: ['w', 'x'], action: MICRO_TIMING_KEEP_ACTION, status, reason: 'notated separation', evidence: ['official bar 1'], metadata: { intervalIdentity: gap, evidenceSourceIds: ['official'] } });
+  for (const status of ['accepted', 'rejected']) {
+    const candidate = project([w, x, y].map(onOfficial), { sources: [OFFICIAL], decisions: [keep(status)] });
+    const analysis = analyzeReleaseTiming({ candidate });
+    assert.equal(analysis.targets.find(item => item.eventId === 'x').status, TARGET_STATUS.REPRESENTATION_DECISION_REQUIRED, `${status}: X's own release is still a target`);
+    assert.equal(analysis.notVisibleToIntervalAnalyzerCount, 1);
+    assert.ok(enforceMicroGaps(candidate).blockers.includes(MICRO_GAP_BLOCKERS.RELEASE_NOT_FINAL_REPRESENTABLE), `${status}: X is never silenced`);
+    const wTarget = analysis.targets.find(item => item.eventId === 'w');
+    assert.equal(wTarget.status, status === 'accepted' ? TARGET_STATUS.SOURCE_SUPPORTED_NOT_REPRESENTABLE : TARGET_STATUS.REPRESENTATION_DECISION_REQUIRED);
+  }
+});
+
+test('RT-17 a release followed at once by an explicit rest is visible and never offered a move that keeps the rest off-grid', () => {
+  const x = note({ id: 'x', start: 0, end: tickBefore(1) });
+  const r = createCanonicalRestEvent({ id: 'r', start: tickBefore(1), end: 2, role: 'Melody', voice: 'Melody', sourceIds: ['third'] });
+  const y = note({ id: 'y', start: 2, end: 3 });
+  const candidate = project([x, r, y]);
+  const target = analyzeReleaseTiming({ candidate }).targets.find(item => item.eventId === 'x');
+  assert.equal(target.analysis.followingShape, 'explicit-rest-at-release');
+  assert.equal(target.status, TARGET_STATUS.NO_VALID_REPRESENTATION);
+  assert.ok(target.options.every(option => !option.valid));
+  const enforcement = enforceMicroGaps(candidate);
+  assert.equal(enforcement.status, 'PENDING');
+  assert.ok(enforcement.blockers.includes(MICRO_GAP_BLOCKERS.RELEASE_NOT_FINAL_REPRESENTABLE));
+});
+
+test('RT-18 a derived duplicate is traced to its origin, and its record re-verifies', () => {
+  const a = note({ id: 'a', start: 0, end: tickBefore(1) });
+  const dupe = createCanonicalNoteEvent({ ...a, id: 'a#dup', role: 'Chord1', metadata: { ticksPerQuarter: TPQ, g11d: { derivedFromEventId: 'a' } } });
+  const baseline = project([a]);
+  const analysis = analyzeReleaseTiming({ candidate: project([a, dupe]), baseline });
+  const target = analysis.targets.find(item => item.eventId === 'a#dup');
+  assert.equal(target.source.fromBaseline, true, 'origin found through the reversible chain');
+  const plan = planReleaseRepresentation({ analysis, registry: buildEvidenceRegistry({ assets: ASSETS }), input: { decisions: [humanAudioDecision(['a', 'a#dup'])] } });
+  assert.equal(plan.changes.length, 2);
+  const byId = new Map(plan.changes.map(change => [change.eventId, change]));
+  const events = [a, dupe].map(event => createCanonicalNoteEvent({ ...event, end: byId.get(event.id).after.end, metadata: { ...event.metadata, [RELEASE_RECORD_KEY]: releaseRecordFor(byId.get(event.id)) } }));
+  const represented = project(events, { metadata: { sourceFaithfulBaseline: { snapshot: baseline }, mobileAdaptation: { releaseRepresentation: { decisions: plan.decisions } } } });
+  assert.deepEqual(verifyReleaseRepresentation(represented).violations, []);
+  // A duplicate derived *after* the representation carries the origin's record;
+  // the decision names the origin, and that is enough.
+  const later = createCanonicalNoteEvent({ ...events[0], id: 'a#dup2', role: 'Chord2', metadata: { ...events[0].metadata, g11d: { derivedFromEventId: 'a' } } });
+  const withLater = project([...events, later], { metadata: represented.metadata });
+  assert.deepEqual(verifyReleaseRepresentation(withLater).violations, []);
+});
+
+test('RT-19 with the current evidence registry a record whose citation is no longer independent stops verifying', () => {
+  const a = note({ id: 'a', start: 0, end: tickBefore(1) });
+  const b = note({ id: 'b', start: 1, end: 2 });
+  const analysis = analyzeReleaseTiming({ candidate: project([a, b]) });
+  const official = { attestation: { reviewer: 'u', reviewer_kind: 'human', audio_basis: 'not-used' }, id: 'rr-score', eventIds: ['a'], representation: REPRESENTATION.EXTEND_TO_NEXT_GRID, reason: 'notated eighth',
+    evidence: [{ class: 'primary-symbolic', ref: 'ast_score', locator: 'bar 1', finding: 'Notated quarter, no staccato.' }] };
+  const plan = planReleaseRepresentation({ analysis, registry: buildEvidenceRegistry({ assets: ASSETS }), input: { decisions: [official] } });
+  const candidate = represented([a, b], plan.changes, plan.decisions);
+  assert.deepEqual(verifyReleaseRepresentation(candidate, { registry: buildEvidenceRegistry({ assets: ASSETS }) }).violations, []);
+  // Later, a supporting upload turns out to be byte-identical to the "official" score.
+  const later = buildEvidenceRegistry({ assets: [...ASSETS, { asset_id: 'ast_copy', kind: 'third_party_musicxml', sha256: 'd'.repeat(64) }] });
+  assert.deepEqual(verifyReleaseRepresentation(candidate, { registry: later }).violations.map(item => item.code), [RECORD_VIOLATION.DECISION_NOT_ADMISSIBLE]);
+  assert.equal(enforceMicroGaps(candidate, { releaseEvidenceRegistry: later }).status, 'FAIL');
+});
+
+test('RT-20 without a profile, role and drum-face questions are asked only of the notes a release change touches', () => {
+  const a = note({ id: 'a', start: 0, end: tickBefore(1) });
+  const b = note({ id: 'b', start: 1, end: 2 });
+  // An unmapped drum hit, one tick short like the rest, on a role of its own.
+  const kick = createCanonicalNoteEvent({ id: 'kick', pitch: 36, start: '0', end: tickBefore(1), role: 'Chord5', voice: 'drums', sourceIds: ['third'], sourceEventIds: ['third#kick'], metadata: { ticksPerQuarter: TPQ, channel: 9 } });
+  const candidate = project([a, b, kick]);
+  const evidenceSources = { assets: ASSETS, sources: [THIRD] };
+  const lead = planMobileAdaptation({ baseline: candidate, candidate, evidenceSources, releaseRepresentation: { decisions: [humanAudioDecision(['a'])] } });
+  assert.equal(lead.status, 'PASS', JSON.stringify(lead.blockers));
+  assert.deepEqual(lead.releaseRepresentation.changes.map(change => change.eventId), ['a']);
+  const drum = planMobileAdaptation({ baseline: candidate, candidate, evidenceSources, releaseRepresentation: { decisions: [humanAudioDecision(['kick'])] } });
+  assert.equal(drum.status, 'PENDING');
+  assert.deepEqual(drum.blockers.map(item => [item.code, item.eventId]), [['DRUM_FACE_MAPPING_REQUIRED', 'kick']]);
+  // With a profile the profile-era questions are asked of every note, as before.
+  const profiled = planMobileAdaptation({ baseline: candidate, candidate, evidenceSources, profile: { schema: 'mml-studio/mobile-adaptation-profile@1', id: 'fixture-profile', reason: 'fixture', evidence: ['fixture'], roles: { Melody: { volumeDelta: 0 } } } });
+  assert.ok(profiled.blockers.some(item => item.code === 'DRUM_FACE_MAPPING_REQUIRED' && item.eventId === 'kick'));
+});
+
+test('RT-21 scope limit: a caution-representable release is no target and still fails closed at preferred-only emission', () => {
+  // Two 480-tpq ticks before the beat is 1/960 of a whole note: reachable with
+  // caution lengths, so not NOT_FINAL_REPRESENTABLE, and no route is offered.
+  const twoTicks = f(1).sub(new F(2, TPQ)).toString();
+  const candidate = project([note({ id: 'a', start: 0, end: twoTicks }), note({ id: 'b', start: 2, end: 3 })]);
+  assert.equal(classifyPosition(twoTicks), POSITION_CLASS.CAUTION_REPRESENTABLE);
+  const analysis = analyzeReleaseTiming({ candidate });
+  assert.equal(analysis.targetCount, 0);
+  assert.equal(enforceMicroGaps(candidate).status, 'PASS', 'not a micro-timing target');
+  const emitted = emitFinalMml(candidate);
+  assert.equal(emitted.status, 'FAIL', 'the preferred-only lattice cannot write it, and nothing is approximated');
+  assert.ok(emitted.diagnostics.some(item => item.code === 'DURATION_SEARCH_POLICY_LIMIT'));
 });

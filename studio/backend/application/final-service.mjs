@@ -103,6 +103,12 @@ export function createFinalService({ canonical, projects, review, store }) {
     return { artifactId, entry };
   };
 
+  // What a filed Final claims, keyed on the song state readiness computed rather
+  // than on the fact that something was filed.
+  const acceptanceNotice = songState => (songState === 'VALIDATED'
+    ? 'This Final is VALIDATED: every required non-game gate passed under the loaded Published Canonical; the artifact itself certifies no gate. It never implies IN_GAME_ACCEPTED: listening feedback and in-game acceptance are later evidence that only the user or a controlled target-client test supplies.'
+    : `This Final was filed with song_state ${songState}, not VALIDATED: read readiness_summary.pre_game_blocking for what is still open. The artifact certifies no gate and never implies IN_GAME_ACCEPTED.`);
+
   return Object.freeze({
     /**
      * File one artifact against a project record.
@@ -222,6 +228,9 @@ export function createFinalService({ canonical, projects, review, store }) {
         mobileAdaptation: recorded.mobile_adaptation_reviewed?.value === true ? 'PASS' : 'PENDING',
         regressionReviewed: recorded.regression_reviewed?.value === true,
         inGameAcceptance: 'PENDING',
+        // The same registry review re-grades recorded release representations
+        // against, so Finalize cannot accept a citation review would refuse.
+        releaseEvidenceRegistry: ctx.releaseEvidenceRegistry,
       };
       const readiness = engines.final.evaluateProjectReadiness({ ...readinessInputs, mmlValidation: null });
 
@@ -236,7 +245,7 @@ export function createFinalService({ canonical, projects, review, store }) {
 
       // One call. The emitter owns micro-gap enforcement, the optional repair,
       // serialization and the round-trip readback, in that order.
-      const emitted = engines.final.emitFinalMml(project, { readiness, technicalTimingRepair });
+      const emitted = engines.final.emitFinalMml(project, { readiness, technicalTimingRepair, releaseEvidenceRegistry: ctx.releaseEvidenceRegistry });
       const emitStatus = emitted.status;
       const passed = emitStatus === engines.final.EMIT_STATUS.PASS;
 
@@ -333,9 +342,12 @@ export function createFinalService({ canonical, projects, review, store }) {
         // The identity of the exact paste-ready string, for readback binding and
         // for whoever pastes it later.
         mml_sha256: delivered ? emittedDigest : null,
-        // ACCEPTANCE_CRITERIA song state, computed by readiness from the gates.
-        // A delivered Final is VALIDATED by construction: delivery requires every
-        // required non-game gate PASS/N-A under the loaded Published Canonical.
+        // ACCEPTANCE_CRITERIA song state, computed by readiness from the gates
+        // and copied here, never derived from `delivered`. Under the loaded
+        // release delivery keys on the same pre-game blockers, so a delivered
+        // Final reads VALIDATED; a release whose machine-delivery projection is
+        // authoritative could deliver on a different gate set, and the state
+        // then says what readiness says rather than what delivery implies.
         song_state: finalReadiness.songState,
         delivery: {
           delivered,
@@ -372,7 +384,7 @@ export function createFinalService({ canonical, projects, review, store }) {
           .map(([name]) => name),
         canonical: provenance,
         emitter_notice: emitted.notice,
-        acceptance_notice: 'A Final artifact is filed only for a candidate whose required non-game gates all passed under the loaded Published Canonical, which is what song_state VALIDATED records; the artifact itself certifies no gate. It never implies IN_GAME_ACCEPTED: listening feedback and in-game acceptance are later evidence that only the user or a controlled target-client test supplies.',
+        acceptance_notice: acceptanceNotice(finalReadiness.songState),
       };
 
       // No artifact is filed unless the Final was actually delivered. A stored

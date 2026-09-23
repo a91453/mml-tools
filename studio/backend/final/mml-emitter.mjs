@@ -627,7 +627,7 @@ function evaluateGates(project, options) {
     status = EMIT_STATUS.PENDING;
   }
 
-  let microGap = enforceMicroGaps(project);
+  let microGap = enforceMicroGaps(project, { releaseEvidenceRegistry: options.releaseEvidenceRegistry });
   let candidate = project;
   const repair = { requested: options.technicalTimingRepair === true, applied: false, result: null };
 

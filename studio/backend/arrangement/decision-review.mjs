@@ -719,6 +719,7 @@ export function reviewAppliedCandidate({
   mobileAdaptation = 'PENDING',
   regressionReviewed = false,
   inGameAcceptance = 'PENDING',
+  releaseEvidenceRegistry = null,
 }) {
   const checked = applicationIntegrity(application, baseline);
   const integrity = checked.ok && checked.against !== 'baseline'
@@ -766,6 +767,7 @@ export function reviewAppliedCandidate({
     mobileAdaptation,
     regressionReviewed,
     inGameAcceptance,
+    releaseEvidenceRegistry,
   });
 
   return Object.freeze({

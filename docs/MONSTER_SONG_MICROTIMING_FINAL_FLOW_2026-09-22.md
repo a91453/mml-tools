@@ -185,6 +185,25 @@ primary evidence that does not exist. Nothing was fabricated to move them.
 - Human listening, in-game acceptance and every human review remain not provided.
 - The synthetic regressions prove the workflow, not the song.
 
+### Known limits (stated, not hidden)
+
+- **Caution-lattice positions are out of scope.** "Not Final-representable" is
+  proved against the full admitted lattice, caution lengths included, but
+  Finalize emits without the caution opt-in. A release two 480-tpq ticks before
+  the grid (1/960 whole note) is `CAUTION_REPRESENTABLE`, is not a representation
+  target, leaves micro-timing `PASS`, and fails closed at emission with
+  `DURATION_SEARCH_POLICY_LIMIT` (pinned by RT-21). The real song's releases are
+  all exactly one tick early and are not affected.
+- **Evidence is re-checked, not re-authenticated.** Review and Finalize rebuild
+  the evidence registry from the project's current sources and assets and
+  re-grade every recorded citation against it (RT-19, RRA-5): a cited asset that
+  becomes byte-identical to a supporting file, or disappears, turns the record
+  invalid and the gate `FAIL`. The human attestation itself is a reviewer
+  statement; nothing here can verify that the listening happened.
+- **Without a profile**, role-assignment and drum-face questions are asked only
+  of notes a release change touches (RT-20); a release change on a percussion
+  note is refused with `DRUM_FACE_MAPPING_REQUIRED`.
+
 ## 6. Canonical follow-up
 
 `NO_CANONICAL_CHANGE_NEEDED` for this work: MASTER_RULES §7 already permits
