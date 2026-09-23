@@ -15,6 +15,7 @@ server/*
 !server/mcp.mjs
 !server/mcp-studio.mjs
 !server/report-page.mjs
+!server/mcp-compaction.mjs
 !server/studio-web.mjs
 !server/api.mjs
 !server/studio-agent-driver.mjs
