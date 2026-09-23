@@ -17,13 +17,33 @@ export const WORKSPACE_ASSETS = Object.freeze([
 ]);
 const sha256 = bytes => createHash('sha256').update(bytes).digest('hex');
 
+// AbortSignal.timeout() runs on an unref'd timer, so it cannot hold the process
+// open. When a pending fetch holds no ref'd handle of its own, Node finds an
+// empty event loop under the top-level await and exits 13 before the abort or
+// the report's `finally` can run. These timers are ref'd; callers clear them.
+export function timeoutSignal(ms, timers) {
+  const controller = new AbortController();
+  timers.push(setTimeout(() => controller.abort(new DOMException('The operation was aborted due to timeout', 'TimeoutError')), ms));
+  return controller.signal;
+}
+
 // Dependency injection tests the assertions, not Docker or the real service.
 // A PASS from those tests must never be described as an image smoke PASS.
 export async function verifyService({ baseURL, expectedOrigin, expectedAssets, fetchImpl = fetch, timeoutMs = 10000 }) {
   const checked = [];
+  // Each timer also bounds its response body, so all are kept until the end.
+  const timers = [];
   const request = (path, method = 'GET') => fetchImpl(baseURL + path, {
-    method, redirect: 'manual', signal: AbortSignal.timeout(timeoutMs),
+    method, redirect: 'manual', signal: timeoutSignal(timeoutMs, timers),
   });
+  try {
+    return await verifyResponses({ request, checked, expectedOrigin, expectedAssets });
+  } finally {
+    timers.forEach(clearTimeout);
+  }
+}
+
+async function verifyResponses({ request, checked, expectedOrigin, expectedAssets }) {
   const health = await request('/healthz');
   assert.equal(health.status, 200, 'health HTTP status');
   assert.equal((await health.json()).status, 'ok', 'health payload');
@@ -112,7 +132,8 @@ export async function runContainerSmoke({ image, out }) {
     let ready = false;
     const deadline = Date.now() + 90000;
     while (Date.now() < deadline) {
-      try { if ((await fetch(baseURL + '/healthz', { signal: AbortSignal.timeout(2000) })).status === 200) { ready = true; break; } } catch {}
+      const timers = [];
+      try { if ((await fetch(baseURL + '/healthz', { signal: timeoutSignal(2000, timers) })).status === 200) { ready = true; break; } } catch {} finally { timers.forEach(clearTimeout); }
       if (docker(['inspect', '--format', '{{.State.Running}}', name]) !== 'true') throw Error('test container exited before readiness');
       await delay(500);
     }

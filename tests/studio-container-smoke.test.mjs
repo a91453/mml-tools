@@ -1,7 +1,9 @@
 // Assertion regressions only: these do NOT claim to execute Docker.
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { verifyService, WORKSPACE_ASSETS } from '../scripts/studio-container-smoke.mjs';
+import { spawnSync } from 'node:child_process';
+import { setTimeout as delay } from 'node:timers/promises';
+import { timeoutSignal, verifyService, WORKSPACE_ASSETS } from '../scripts/studio-container-smoke.mjs';
 
 const origin = 'https://studio-smoke.invalid';
 const baseURL = 'http://127.0.0.1:34567';
@@ -59,4 +61,31 @@ test('wrong OAuth issuer fails smoke', async () => {
 });
 test('unexpected workspace redirect fails smoke', async () => {
   await assert.rejects(verify(fixture(path => path === '/studio' && new Response(null, { status: 302, headers: { location: 'https://wrong.invalid/' } }))), /workspace redirect target/);
+});
+
+// A pending await whose only wake-up is the timeout: the smoke's shape when a
+// readiness fetch holds no ref'd handle. The unref'd timer ends Node with 13.
+const awaitAbort = signal => `await new Promise(resolve => (${signal}).addEventListener('abort', resolve)); console.log('settled');`;
+const runModule = source => spawnSync(process.execPath, ['--input-type=module', '-e', source], { encoding: 'utf8', timeout: 10000 });
+test('ref\'d smoke timeout keeps a pending top-level await alive until it aborts', () => {
+  const smoke = new URL('../scripts/studio-container-smoke.mjs', import.meta.url).href;
+  const ours = runModule(`import { timeoutSignal } from ${JSON.stringify(smoke)};\n${awaitAbort('timeoutSignal(50, [])')}`);
+  assert.equal(ours.status, 0, ours.stderr);
+  assert.equal(ours.stdout.trim(), 'settled');
+  const unref = runModule(awaitAbort('AbortSignal.timeout(50)'));
+  assert.equal(unref.status, 13, 'AbortSignal.timeout no longer reproduces the failure this guards against');
+});
+test('smoke timeout aborts with a TimeoutError', async () => {
+  const signal = timeoutSignal(10, []);
+  await new Promise(resolve => signal.addEventListener('abort', resolve));
+  assert.equal(signal.reason.name, 'TimeoutError');
+});
+test('verifier bounds every request and clears its timers when done', async () => {
+  const signals = [];
+  const fetchImpl = fixture();
+  await verifyService({ baseURL, expectedOrigin: origin, expectedAssets, timeoutMs: 20,
+    fetchImpl: (url, options) => { signals.push(options.signal); return fetchImpl(url, options); } });
+  assert.ok(signals.length > 0 && signals.every(signal => signal instanceof AbortSignal));
+  await delay(60);
+  assert.ok(signals.every(signal => !signal.aborted), 'timers outlived the verifier');
 });
