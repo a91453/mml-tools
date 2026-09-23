@@ -24,7 +24,13 @@ const put = async (path, text) => { await mkdir(dirname(resolve(out, path)), { r
 // browser. Nothing the Studio Web app loads imports it, so excluding it removes
 // no capability from the PWA — and shipping it would put Node imports into an
 // offline bundle that is asserted to have none.
-const SERVER_ONLY_MODULES = new Set(['studio/backend/application']);
+//
+// `audio/prescreen/` is the server's audio prescreen: it renders in Node
+// worker threads with the npm spessasynth_core package and caches a sound bank
+// on the service's disk. The browser has its own preview engine (vendored
+// below) and loads none of it. The shared instrument table beside it,
+// `audio/instruments.mjs`, is pure and ships.
+const SERVER_ONLY_MODULES = new Set(['studio/backend/application', 'studio/backend/audio/prescreen']);
 // Build-time-only backend modules, excluded for the same reason as the
 // directories above. `bootstrap/materialize.mjs` gives an Agent backend image
 // the published Git history its build context arrived without: it shells out to
