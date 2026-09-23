@@ -149,11 +149,27 @@ Examples (synthetic MML, generated in the tests):
   that differs is NEEDS_HUMAN (`METRIC_UNAVAILABLE`).
 
 `human_review` lists each NEEDS_HUMAN region with its bars, beats, reasons and
-the alternatives to A/B. Its `listen_link` field is `null`: the hook for a
-listen-link payload. The Studio Web listen-link format
-(`studio/web/listen-link.mjs`, `mml-studio/listen-link@1`: `mml`,
-`compare_mml`, `meter_text`, `start.bar`, `markers`) can carry exactly these
-fields; producing it from the prescreen is not wired in this build.
+the alternatives to A/B. Inside the report its `listen_link` field stays
+`null`: the report is what the machine computed, and `report_id` (and the
+shadow `prediction_id` derived from it) must not change with the deployment.
+
+Over MCP, `studio_audio_prescreen` returns the links beside the report, as
+`listen` (`mml-studio/prescreen-listen@1`, `server/prescreen-listen.mjs`). For
+each region it pairs the first alternative with each other one and builds a
+Studio Web listen link (`mml-studio/listen-link@1`):
+- `mml` is the first alternative and `compare_mml` the other;
+- `meter_text` is the report's meter;
+- `start.beat` is the region's first beat;
+- one `pending` marker spans the region.
+
+The response is bounded: at most 8 links and 128 KiB of URLs, and `withheld`
+counts the rest. Some pairs get no link:
+- a pair with a candidate alternative has no link (`NO_MML_FOR_ALTERNATIVE`),
+  because a candidate carries Canonical events, not MML;
+- without `STUDIO_WEB_ORIGIN` there are no links, and `status` says why.
+
+A link is a listening aid. It records nothing, and what the owner hears is
+listening feedback, never evidence or an acceptance.
 
 ## Shadow mode
 

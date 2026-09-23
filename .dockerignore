@@ -21,6 +21,7 @@ server/*
 !server/studio-agent-driver.mjs
 !server/studio-agent-codex.mjs
 !server/mcp-listen.mjs
+!server/prescreen-listen.mjs
 !server/listen/
 server/listen/*
 !server/listen/widget.mjs
