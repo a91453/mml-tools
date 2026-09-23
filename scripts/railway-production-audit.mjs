@@ -95,18 +95,22 @@ export async function railwayGraphQL({ token, query, variables = {}, fetchImpl =
   return payload.data;
 }
 
+// The repository is public, so the deployment target names Railway resources
+// and never carries their IDs; resolveProductionTarget looks the IDs up at run
+// time from the project token's own scope.
 export function expectedProductionConfig(serviceSettings, deploymentTarget) {
   assert.equal(serviceSettings?.plane, 'agent-control-plane');
   assert.equal(serviceSettings?.source?.repo, deploymentTarget?.githubSource);
   assert.equal(serviceSettings?.source?.branch, deploymentTarget?.githubBranch);
+  for (const field of ['projectName', 'environmentName', 'serviceName']) {
+    assert.ok(typeof deploymentTarget?.[field] === 'string' && deploymentTarget[field].length > 0, `deployment target ${field} required`);
+  }
   const watchPatterns = serviceSettings?.build?.watchPatterns;
   assert.ok(Array.isArray(watchPatterns) && watchPatterns.length > 0, 'desired watchPatterns required');
   assert.equal(new Set(watchPatterns).size, watchPatterns.length, 'desired watchPatterns must be unique');
   return {
-    projectId: deploymentTarget.projectId,
-    environmentId: deploymentTarget.environmentId,
-    serviceId: deploymentTarget.serviceId,
     projectName: deploymentTarget.projectName,
+    environmentName: deploymentTarget.environmentName,
     serviceName: deploymentTarget.serviceName,
     publicOrigin: deploymentTarget.publicOrigin,
     source: {
@@ -125,6 +129,56 @@ export function expectedProductionConfig(serviceSettings, deploymentTarget) {
       watchPatterns: sortStrings(watchPatterns),
     },
   };
+}
+
+// Code on every failed target check below, so a caller can tell a token for
+// the wrong project, environment or service (report it) from a failed read.
+export const TARGET_MISMATCH = 'RAILWAY_TARGET_MISMATCH';
+const assertTarget = (ok, message) => {
+  if (!ok) throw Object.assign(new assert.AssertionError({ message }), { code: TARGET_MISMATCH });
+};
+
+// Resolves the production IDs from names and fails closed on any mismatch. A
+// Railway project token is scoped to one project and one environment, so the
+// IDs come from the token itself and are then proven by name; nothing falls
+// back to an ID kept in the repository. Query shapes (Railway GraphQL v2):
+//   projectToken { projectId environmentId }
+//   project(id) { name services { edges { node { id name } } } }
+//   environment(id) { name }
+export async function resolveProductionTarget({ token, expected, fetchImpl = fetch, graphQL = railwayGraphQL }) {
+  for (const field of ['projectName', 'environmentName', 'serviceName']) {
+    assert.ok(typeof expected?.[field] === 'string' && expected[field].length > 0, `expected ${field} required`);
+  }
+  const scope = (await graphQL({
+    token,
+    fetchImpl,
+    query: `query RailwayTargetScope {
+      projectToken { projectId environmentId }
+    }`,
+  })).projectToken;
+  const { projectId, environmentId } = scope ?? {};
+  assertTarget(typeof projectId === 'string' && projectId.length > 0
+    && typeof environmentId === 'string' && environmentId.length > 0, 'Railway project token scope unavailable');
+  const data = await graphQL({
+    token,
+    fetchImpl,
+    variables: { projectId, environmentId },
+    query: `query RailwayTargetNames($projectId: String!, $environmentId: String!) {
+      project(id: $projectId) {
+        name
+        services { edges { node { id name } } }
+      }
+      environment(id: $environmentId) { name }
+    }`,
+  });
+  assertTarget(data.project?.name === expected.projectName, 'Railway project token belongs to a different project');
+  assertTarget(data.environment?.name === expected.environmentName, 'Railway project token belongs to a different environment');
+  const services = (data.project.services?.edges ?? []).map(edge => edge?.node)
+    .filter(node => node?.name === expected.serviceName);
+  assertTarget(services.length === 1, `expected exactly one Railway service named ${expected.serviceName}, found ${services.length}`);
+  const serviceId = services[0].id;
+  assertTarget(typeof serviceId === 'string' && serviceId.length > 0, 'Railway service id unavailable');
+  return { ...expected, projectId, environmentId, serviceId };
 }
 
 export function compareServiceInstance(expected, actual, availableFields = null) {
@@ -319,7 +373,18 @@ export async function runAuditGate({ token, expectedSha, fetchImpl = fetch,
     loadJson(resolve('railway/service-settings.json')),
     loadJson(resolve('railway/deployment-target.json')),
   ]);
-  const expected = expectedProductionConfig(serviceSettings, deploymentTarget);
+  let expected;
+  try {
+    expected = await resolveProductionTarget({
+      token, expected: expectedProductionConfig(serviceSettings, deploymentTarget), fetchImpl,
+    });
+  } catch (error) {
+    // A token for another project, environment or service is a scope problem
+    // for the audit job to report, like TOKEN_SCOPE_MISMATCH below; only a
+    // failed read propagates (and defers).
+    if (error?.code !== TARGET_MISMATCH) throw error;
+    return { action: 'AUDIT', reason: 'TARGET_MISMATCH', status: null, deployment_id: null };
+  }
   const state = await readProductionState({ token, expected, fetchImpl });
   if (state.missingSchemaFields.length) return { action: 'AUDIT', reason: 'SCHEMA_DRIFT', status: null, deployment_id: null };
   const scope = state.tokenScope;
@@ -387,18 +452,19 @@ export async function runProductionAudit({
     loadJson(resolve('railway/service-settings.json')),
     loadJson(resolve('railway/deployment-target.json')),
   ]);
-  const expected = expectedProductionConfig(serviceSettings, deploymentTarget);
+  const desired = expectedProductionConfig(serviceSettings, deploymentTarget);
   const report = {
     schema_version: 1,
     scope: 'Read-only Railway production control-plane plus HTTPS provenance; not song quality or in-game acceptance',
     observed_at: new Date().toISOString(),
     expected: {
-      project_id: expected.projectId,
-      environment_id: expected.environmentId,
-      service_id: expected.serviceId,
-      source_repo: expected.source.repo,
-      source_branch: expected.source.branch,
-      public_origin: expected.publicOrigin,
+      // Filled once resolveProductionTarget has proven the IDs by name.
+      project_id: null,
+      environment_id: null,
+      service_id: null,
+      source_repo: desired.source.repo,
+      source_branch: desired.source.branch,
+      public_origin: desired.publicOrigin,
       expected_sha: expectedSha,
       manifest_commit: manifestCommit,
     },
@@ -407,6 +473,10 @@ export async function runProductionAudit({
     status: 'FAIL',
   };
   try {
+    const expected = await resolveProductionTarget({ token, expected: desired, fetchImpl });
+    report.expected.project_id = expected.projectId;
+    report.expected.environment_id = expected.environmentId;
+    report.expected.service_id = expected.serviceId;
     const waited = await waitForExpectedDeployment({
       token, expected, expectedSha, fetchImpl, waitSeconds, pollSeconds,
     });
