@@ -750,3 +750,23 @@ test('a long silence between two notes is written exactly as consecutive rests; 
   const sustain = emit([note({ start: 0, end: 100 })]);
   assert.equal(sustain.status, 'FAIL', 'a sustain is still bounded by the tie-segment cap');
 });
+
+// ── long segments: `l1`/`l2` offered even when no single duration spells them ──
+
+test('a long rest or sustain may switch to l1 even though no event lasts exactly a whole note', () => {
+  // 30 beats of rest then a quarter note. No event lasts exactly 4 beats, so
+  // the occurrence rule alone never offered `l1`; the owner's MML 工房
+  // compressor showed that a whole-note segment default pays for itself here.
+  const result = emit([rest({ start: 0, end: 30 }), note({ start: 30, end: 31 }), note({ pitch: 64, start: 31, end: 45 })]);
+  assert.equal(result.status, 'PASS');
+  const mml = melody(result).mml;
+  assert.match(mml, /l1/);
+  // The occurrence-only candidate set produced this 31-character role.
+  assert.ok(mml.length < 't120r1r1r1r1r1r1r1.o4ce1&e1&e1.'.length, mml);
+  const track = readTrack(result);
+  assert.deepEqual(track.events, [
+    { pitch: 60, start: '30', end: '31', volume: 8 },
+    { pitch: 64, start: '31', end: '45', volume: 8 },
+  ]);
+  assert.equal(track.total, '45');
+});
