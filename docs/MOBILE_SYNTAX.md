@@ -1,6 +1,6 @@
 # Mobile Syntax Policy
 
-Version: 2026-09-13-v1
+Version: 2026-09-23-v2
 Status: PUBLISHED CANONICAL
 
 This file separates documented game limits from project output policy.

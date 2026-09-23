@@ -92,3 +92,50 @@ required axes in the fixture are explicit PASS/N/A placeholders for the
 scenario only, so migration completeness can be tested without inventing
 production evidence. The fixture does not assert Human listening, in-game
 evidence, or any new PASS for the real production project.
+
+## Change record for `2026-09-23-v2` (MASTER_RULES §12)
+
+The owner decided on 2026-09-23 to publish this candidate. The prose rule is in
+`ACCEPTANCE_CRITERIA.md` ("Machine delivery") and `MASTER_RULES.md` §9 and §11,
+and all six indexed documents declare `Version: 2026-09-23-v2`. The rule is
+still not published. The loaded release stays `2026-09-13-v1` until the Manifest
+points to a snapshot that contains this prose.
+
+1. **Rationale.** The owner's workflow is: AI through MCP, then Studio, then a
+   machine-checked MML first. Human listening and in-game reports come after
+   and drive further revisions. Under v1, player readback, Mobile review and
+   regression review block Final generation, so no MML exists to listen to.
+   This change keeps every source, Lead, Core3, harmony, micro-timing and
+   technical protection fail-closed. It moves only the evidence that grades a
+   delivered artifact after delivery, and it names the resulting state
+   separately from `VALIDATED`.
+2. **Evidence class.** Project-owner decision (MASTER_RULES §0, item 1). This is
+   a delivery policy only. It claims no engine behavior, no musical evidence and
+   no in-game result.
+3. **Regression impact.**
+   - Every existing gate, and every existing meaning of `VALIDATED` and
+     `IN_GAME_ACCEPTED`, is unchanged.
+   - The change adds one earlier state and changes which unresolved gates block
+     a machine delivery.
+   - Existing runs and artifacts are migrated lazily and without mutation;
+     unknown or missing gates block.
+   - Named historical regressions remain `FIXTURE_PENDING`.
+   - The local Studio Web keeps its v1 generation gating until it implements
+     this rule.
+4. **Executable changes, in order, each after the step before it merges.**
+   1. This prose. The owner reviews and accepts it.
+   2. The implementation.
+      - The Manifest loader accepts an optional `machine_delivery_schema` field
+        and passes it through the loaded metadata. Today the loader rejects any
+        field beyond the four it knows, so publishing without this change would
+        stop every loader with `CANONICAL_NOT_LOADED`.
+      - Implementations opt into `2026-09-23-v2` explicitly.
+      - Tests cover both points.
+   3. Publication, with explicit owner authorization.
+      - `CANONICAL_MANIFEST.md` points to the merge commit of step 2 as
+        `rules_snapshot_sha`. That commit contains this prose and its
+        implementation.
+      - The Manifest declares `machine_delivery_schema:
+        mabinogi-mobile-mml-studio/machine-delivery@1`.
+      - The full test suite and the Manifest verifier are run against that
+        snapshot.

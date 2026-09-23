@@ -1,6 +1,6 @@
 # Mabinogi Mobile MML — Canonical Master Rules
 
-Version: 2026-09-13-v1
+Version: 2026-09-23-v2
 Status: PUBLISHED CANONICAL
 
 This document is the human-readable authority for project policy. Executable contracts, parsers, validators, Studio code, legacy skills, community posts, websites, and historical outputs MUST NOT silently redefine it.
@@ -134,6 +134,8 @@ For verification previews:
 
 Midify is `N/A` by default and is not a Final Gate. `applied=true`, zero warnings, or website playback is not acceptance evidence.
 
+Under machine delivery (`ACCEPTANCE_CRITERIA.md`), player readback and human listening are post-delivery evidence: they do not block `AUTOMATED_VALIDATED` and are still required for `VALIDATED`.
+
 ## 10. Version drift / rollback
 
 A newer version is not automatically better. Increasing drift from the source-faithful baseline or accepted version is a review trigger, not a quality verdict.
@@ -151,6 +153,8 @@ Keep these separate:
 - `IN_GAME_ACCEPTED`
 
 No lower layer may impersonate a higher layer.
+
+`AUTOMATED_VALIDATED` is a song-level machine-delivery state (`ACCEPTANCE_CRITERIA.md`): every `BLOCKING` gate passed under the active Published Canonical. It is not `VALIDATED`, which also requires human review, and not `IN_GAME_ACCEPTED`. It sets none of the layers above.
 
 ## 12. Canonical change control and regression claims
 
