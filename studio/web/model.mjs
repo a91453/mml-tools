@@ -18,6 +18,7 @@ import { planMobileAdaptation, applyMobileAdaptation } from '../backend/adaptati
 import { planFinalReduction, applyFinalReduction } from '../backend/reduction/index.mjs';
 import { buildRollProjection } from './roll-model.mjs';
 import { compareReadback, normalizeCapture } from './preview/readback.mjs';
+import { sanitizeStoredNotes } from './listen-notes.mjs';
 
 export const WORKSPACE_SCHEMA = 'mml-studio-web/workspace@1';
 export const MAX_TEXT_BYTES = 4 * 1024 * 1024;
@@ -237,6 +238,11 @@ export function importWorkspace(raw) {
   // can re-check from the file. It is preserved and shown, never restored into
   // the live `finalReduction` slot, so the reduction has to be previewed and
   // accepted again against what is actually loaded.
+  // Listening notes (listen-ui.mjs) are the owner's plain-text remarks about an
+  // exact MML string, keyed by its sha256. They are not reviews or evidence and
+  // no analysis reads them, so they travel as data, cleaned note by note.
+  const listeningNotes = sanitizeStoredNotes(input.listeningNotes);
+  if (listeningNotes.length) clean.listeningNotes = listeningNotes;
   clean.importedHistory = { reviews: input.reviews, acceptance: input.acceptance, audio: input.audio, acceptedDecisions: input.acceptedDecisions, leadEvidence: input.leadEvidence, leadPromotionEvidence: input.leadPromotionEvidence, mobileAdaptation: input.mobileAdaptation, finalReduction: input.finalReduction, playerReadback: input.playerReadback };
   return clean;
 }

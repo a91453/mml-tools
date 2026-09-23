@@ -26,6 +26,11 @@
 //     review signal, not a deletion target) that link to their arbitration
 //     form; nothing is painted as "wrong";
 //   * time stays exact until the pixel; see roll-geometry.mjs.
+//
+// Listening sessions (listen-ui.mjs) mount the same roll over the song being
+// heard and add two display-only layers: highlighted regions (markers, notes,
+// changed bars) and a playhead. Neither makes a pixel into a time: regions and
+// the playhead arrive as beats, and a tap still resolves to an event ID.
 import {
   DEFAULT_ZOOM, GUTTER_W, HIT_RADIUS, OFFICIAL_PITCH_MAX, RULER_H, ROLL_ROLES, TAP_SLOP, WHEEL_STEP, ZOOM_H, ZOOM_W,
   barStarts, beatDivisions, beatNumber, beatToX, contentSize, eachEvent, hitTest, isBlackKey, laneTier, pinchAxis,
@@ -35,19 +40,19 @@ import {
 // View preferences survive re-renders of the page (every commit re-renders).
 const prefs = { w: DEFAULT_ZOOM.w, h: DEFAULT_ZOOM.h, visible: [true, true, true, true, true, true, true] };
 
-const TOKENS = ['bg', 'row-white', 'row-black', 'row-out', 'grid', 'beat', 'bar', 'ruler-bg', 'text', 'muted', 'lane-0', 'lane-1', 'lane-2', 'lane-3', 'lane-4', 'lane-5', 'lane-6', 'signal', 'signal-line', 'select'];
+const TOKENS = ['bg', 'row-white', 'row-black', 'row-out', 'grid', 'beat', 'bar', 'ruler-bg', 'text', 'muted', 'lane-0', 'lane-1', 'lane-2', 'lane-3', 'lane-4', 'lane-5', 'lane-6', 'signal', 'signal-line', 'select', 'region', 'region-focus', 'playhead'];
 function readTheme(element) {
   const style = getComputedStyle(element);
   return Object.fromEntries(TOKENS.map(name => [name, style.getPropertyValue(`--roll-${name}`).trim() || '#888']));
 }
 
-export function mountReviewRoll(root, source, { onSelect = () => {}, onSignal = () => {}, marked: initiallyMarked = [] } = {}) {
+export function mountReviewRoll(root, source, { onSelect = () => {}, onSignal = () => {}, marked: initiallyMarked = [], regions: initialRegions = [], label = null } = {}) {
   const projection = prepareProjection(source);
   root.innerHTML = '';
   const stage = document.createElement('div');
   stage.className = 'roll-stage';
   stage.tabIndex = 0;
-  stage.setAttribute('aria-label', '六角色審核捲軸（唯讀）。Ctrl＋滾輪縮放時間，Alt＋滾輪縮放音高。');
+  stage.setAttribute('aria-label', label ?? '六角色審核捲軸（唯讀）。Ctrl＋滾輪縮放時間，Alt＋滾輪縮放音高。');
   const canvas = document.createElement('canvas');
   canvas.className = 'roll-canvas';
   canvas.setAttribute('role', 'img');
@@ -67,6 +72,11 @@ export function mountReviewRoll(root, source, { onSelect = () => {}, onSignal = 
   let focusedSignal = null;
   // Events gathered by the Decision Composer: outlined, never edited here.
   let marked = new Set(initiallyMarked);
+  // Listening layers, display only: regions as beat spans, and a playhead.
+  const prepRegions = list => (list ?? []).map(region => ({ ...region, s: beatNumber(region.start), f: beatNumber(region.end ?? region.start) }));
+  let regions = prepRegions(initialRegions);
+  let focusedRegion = null;
+  let playhead = null;
   let drawing = false;
   const counts = projection.lanes.map(l => l.events.length);
   canvas.setAttribute('aria-label', `${ROLL_ROLES.map((r, i) => `${r} ${counts[i]}`).join('、')}、未指派 ${projection.unassigned.length} 個音符；${projection.signals.length} 個審核訊號。`);
@@ -121,9 +131,23 @@ export function mountReviewRoll(root, source, { onSelect = () => {}, onSignal = 
       g.fillRect(x0, RULER_H, x1 - x0, H - RULER_H);
     }
     g.globalAlpha = 1;
+    for (const region of regions) {
+      if (region.f < from || region.s > to) continue;
+      const focused = focusedRegion && region.s === focusedRegion.s && region.f === focusedRegion.f;
+      const x0 = Math.max(GUTTER_W, beatToX(v, region.s));
+      const x1 = Math.min(W, Math.max(x0 + 3, beatToX(v, region.f)));
+      g.fillStyle = focused ? C['region-focus'] : C.region;
+      g.globalAlpha = focused ? 0.35 : 0.14;
+      g.fillRect(x0, RULER_H, x1 - x0, H - RULER_H);
+    }
+    g.globalAlpha = 1;
 
     drawGrid(v, W, H, from, to);
     drawNotes(v, W, H, from, to);
+    if (playhead !== null && playhead >= from && playhead <= to) {
+      const x = Math.round(beatToX(v, playhead)) + 0.5;
+      if (x >= GUTTER_W) { g.strokeStyle = C.playhead; g.lineWidth = 2; g.beginPath(); g.moveTo(x, RULER_H); g.lineTo(x, H); g.stroke(); }
+    }
     drawKeyboard(v, H, rowTop, rowBottom);
     drawRuler(v, W, from, to);
   }
@@ -262,6 +286,16 @@ export function mountReviewRoll(root, source, { onSelect = () => {}, onSignal = 
       g.closePath(); g.fill();
     }
     g.globalAlpha = 1;
+    for (const region of regions) {
+      if (region.f < from || region.s > to) continue;
+      const x0 = Math.max(GUTTER_W, beatToX(v, region.s));
+      g.fillStyle = C['region-focus'];
+      g.fillRect(x0, RULER_H - 3, Math.max(3, Math.min(W, beatToX(v, region.f)) - x0), 3);
+    }
+    if (playhead !== null && playhead >= from && playhead <= to) {
+      const x = beatToX(v, playhead);
+      if (x >= GUTTER_W) { g.fillStyle = C.playhead; g.beginPath(); g.moveTo(x, RULER_H); g.lineTo(x + 5, RULER_H - 8); g.lineTo(x - 5, RULER_H - 8); g.closePath(); g.fill(); }
+    }
     g.fillStyle = C['ruler-bg'];
     g.fillRect(0, 0, GUTTER_W, RULER_H);
     g.fillStyle = C.muted;
@@ -418,6 +452,23 @@ export function mountReviewRoll(root, source, { onSelect = () => {}, onSignal = 
       if (!signal) return;
       stage.scrollLeft = Math.max(0, signal.s * prefs.w - (stage.clientWidth - GUTTER_W) / 3);
       focusSignal(signal);
+    },
+    setRegions(list) { regions = prepRegions(list); draw(); },
+    // Highlight one region and bring it into view (a third in from the left).
+    focusRegion(region) {
+      focusedRegion = region ? { s: beatNumber(region.start), f: beatNumber(region.end ?? region.start) } : null;
+      if (focusedRegion) stage.scrollLeft = Math.max(0, focusedRegion.s * prefs.w - (stage.clientWidth - GUTTER_W) / 3);
+      draw();
+    },
+    // `beat` is a display number; with `follow`, keep it on screen.
+    setPlayhead(beat, { follow = false } = {}) {
+      playhead = beat === null || beat === undefined ? null : Number(beat);
+      if (follow && playhead !== null) {
+        const x = playhead * prefs.w - stage.scrollLeft;
+        const span = stage.clientWidth - GUTTER_W;
+        if (x < 0 || x > span - 24) stage.scrollLeft = Math.max(0, playhead * prefs.w - span / 4);
+      }
+      draw();
     },
     get prefs() { return { w: prefs.w, h: prefs.h, visible: [...prefs.visible] }; },
     destroy() { observer?.disconnect(); root.innerHTML = ''; },

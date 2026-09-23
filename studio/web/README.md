@@ -276,6 +276,60 @@ exact timing, event identity and the evidence boundaries. See
   - **What it is not.** It never changes a Canonical rule. Applying it goes
     through the published Canonical process.
 
+## Listening sessions (試聽工作階段)
+
+Studio delivers a machine-checked Final first and flags what still needs a
+person's ear. A listening session is where the owner hears exactly those
+places, writes down what they heard and hands it to the next revision. It is a
+listening aid: it passes no gate and records no review, readback or acceptance.
+
+- **Opening one.** 「送到試聽」 next to the Final MML (section 06), the complete
+  MML@ (section 07) and any MML source card opens a new session for that exact
+  string, or open a listen link: `<studio-web-origin>/#listen=<payload>`
+  (`?listen=` also works; see `listen-link.mjs`). A session is stored in its own
+  IndexedDB database (`listen-store.mjs`), listed under 「試聽工作階段」 in the
+  sidebar and deletable there. Opening a link never creates, opens or
+  overwrites a project, never plays by itself, and removes the payload from
+  the address bar as soon as it is read.
+- **Listen links.** `payload` is base64url (no padding) of deflate-raw of the
+  UTF-8 JSON `mml-studio/listen-link@1` document: `mml` (required), `title`,
+  `meter_text`, `start` (`{bar}` or `{beat}`), up to 500 `markers` (`beat`,
+  `end_beat`, `role`, `kind` = `provisional-release | lead-unverified | pending
+  | changed | note`, `label`), `compare_mml` and display-only `source`. The
+  decoded JSON is capped at 256 KiB (reading stops at the cap), each MML at
+  40,000 characters; an unknown schema or any invalid field refuses the whole
+  link, unknown keys are dropped, and every string is shown as escaped text.
+  Golden vectors shared with the MCP side are in
+  `studio/tests/fixtures/listen-link-vectors.json`.
+- **Playing (L1).** Play from a bar, a time (m:ss) or a marker; a marker, a
+  note or a changed bar starts whole bars earlier (1 by default, 0/1/2/4
+  selectable). The current bar, beat and time are shown while playing. Stop
+  returns to the start point and 「重播」 plays the same range again. Every
+  role can be muted or soloed. Playback reuses the section 06 preview engine,
+  bank and scheduler; a ranged playback queues nothing past its end.
+- **Markers.** From the link, and for a verified local delivery from its
+  analysis: the unresolved-evidence ledger of the machine-delivery projection
+  (whole-song entries), Lead evidence still pending at its events, and
+  unresolved cross-source harmony. Clicking one plays it and highlights the
+  region on the session's roll.
+- **Changed bars (L2).** Against `compare_mml`, or another MML the project sent
+  along or another session: an exact event-level diff per role (pitch, onset,
+  duration, volume) plus tempo changes, read by the repository MML parser in
+  the Worker (`listen-model.mjs`, `listen-timeline.mjs`). Bars come from the
+  meter text; without one they are 4/4 and the session says 「4/4 假設」.
+  「只播放變更小節」 plays each changed region in order with its lead-in; the
+  A/B switch plays the same bars in the previous version, timed by its own
+  tempo map.
+- **Notes (L3).** A note has a position (the playing position snapped to its
+  beat, a bar, or a note picked on the roll), an optional role, a kind
+  (too-loud, wrong-note, timing, balance, other) and text. Notes are kept in
+  the session and, for a session opened from a project, on that project as
+  `listeningNotes` keyed by the MML's SHA-256 (no revision change; project
+  backups carry them). They reappear as markers when the session is reopened.
+  「複製給 AI」 copies plain text: the title, the MML's SHA-256, the meter, then
+  one line per note (`bar | beat-in-bar | quarter-beat position | time | role
+  | kind | text`). 「複製試聽連結」 makes a listen link for the session.
+
 ## Build and CI (developer / operator only)
 
 From a Git checkout with refreshed `origin/main` and the complete rules snapshot:

@@ -72,14 +72,18 @@ export async function createPreviewEngine(bank, context) {
   }
 }
 
-// `onEnd(capture)` receives the readback capture when the playback started
-// at the beginning and ran to the end, or null.
+// `onEnd(capture, { ranged })` receives the readback capture when the playback
+// started at the beginning and ran to the end, or null. A ranged playback
+// (`play(from, { until })`, used by listening sessions) ends at `until`; its
+// capture is marked incomplete (RANGE_LIMITED), so it can never be recorded.
 export function createTransport(engine, { onPosition = () => {}, onEnd = () => {} } = {}) {
   const { context, synth, out } = engine;
   let song = null;
   let program = engine.presets[0].program;
   const muted = [false, false, false, false, false, false];
   let events = [], duration = 0, index = 0, t0 = 0, timer = 0, frame = 0, playing = false, unmuteTimer = 0;
+  // The range being played, in song seconds. `until` is null for "to the end".
+  let from = 0, until = null;
   // Player readback capture: only for a playback that starts at 0. Anything
   // that makes it describe less than the whole song as loaded -- a seek, a
   // stop, a muted role, an instrument switch -- marks it incomplete.
@@ -128,10 +132,15 @@ export function createTransport(engine, { onPosition = () => {}, onEnd = () => {
     if (event.type === 'on') synth.noteOn(event.channel, event.pitch, event.velocity, { time });
     else synth.noteOff(event.channel, event.pitch, { time });
   }
+  // Nothing at or after `until` is ever queued, so a ranged playback cannot
+  // leak notes past its end: the worklet cannot withdraw a queued note.
+  const beyond = event => until !== null && event.time >= until;
   function tick() {
     const horizon = context.currentTime + LOOKAHEAD_SEC;
-    while (index < events.length && t0 + events[index].time <= horizon) send(events[index++]);
-    if (index >= events.length && context.currentTime > t0 + duration + 0.4) { const done = finishCapture(); halt(); onEnd(done); }
+    while (index < events.length && t0 + events[index].time <= horizon && !beyond(events[index])) send(events[index++]);
+    const drained = index >= events.length || beyond(events[index]);
+    const endAt = until === null ? duration + 0.4 : until;
+    if (drained && context.currentTime > t0 + endAt) { const ranged = until !== null; const done = finishCapture(); halt(); onEnd(done, { ranged }); }
   }
   function report() {
     if (!playing) return;
@@ -167,11 +176,11 @@ export function createTransport(engine, { onPosition = () => {}, onEnd = () => {
       if (muted[role]) incomplete('ROLE_MUTED');
       synth.midiChannels[role]?.setSystemParameter('isMuted', muted[role]);
     },
-    async play(from = 0) {
+    async play(position = 0, { until: stopAt = null } = {}) {
       if (!song) throw Error('沒有可試聽的 Final MML');
       halt();
       await context.resume();
-      const start = Math.min(Math.max(0, from), duration);
+      const start = Math.min(Math.max(0, position), duration);
       // Notes queued by the previous playback cannot be withdrawn. A capture
       // waits until they have passed, so it records only this playback.
       const settle = haltedAt + LOOKAHEAD_SEC + 0.1 - context.currentTime;
@@ -181,7 +190,10 @@ export function createTransport(engine, { onPosition = () => {}, onEnd = () => {
       out.gain.cancelScheduledValues(context.currentTime);
       out.gain.setValueAtTime(1, context.currentTime);
       t0 = context.currentTime + START_DELAY_SEC - start;
+      from = start;
+      until = typeof stopAt === 'number' && Number.isFinite(stopAt) && stopAt > start ? Math.min(stopAt, duration) : null;
       if (start === 0) beginCapture();
+      if (until !== null) incomplete('RANGE_LIMITED');
       applyProgram();
       index = indexAt(events, start);
       for (const held of soundingAt(events, start)) synth.noteOn(held.channel, held.pitch, held.velocity, { time: t0 + start });
@@ -193,6 +205,8 @@ export function createTransport(engine, { onPosition = () => {}, onEnd = () => {
     stop() { halt(); onPosition(0, duration); },
     get playing() { return playing; },
     get duration() { return duration; },
+    // What the scheduler is doing, in song seconds (for the page and its tests).
+    get state() { return { playing, from, until, duration, next: events[index]?.time ?? null }; },
     position: () => (playing ? Math.min(duration, Math.max(0, context.currentTime - t0)) : 0),
     destroy() { halt(); clearTimeout(unmuteTimer); synth.destroy?.(); context.close?.(); },
   });

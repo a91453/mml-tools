@@ -56,7 +56,7 @@ code.digest,.facts dd code,table code{font-family:ui-monospace,SFMono-Regular,Me
 .tk-caution{text-decoration:underline dotted #b7791f;text-decoration-thickness:2px;text-underline-offset:3px}
 #paste-counts .count-over{color:#b3261e;font-weight:700}
 /* Six-role review roll (studio/web/review-roll.mjs). The canvas reads these tokens once per mount. Lane colours identify roles and never change with state; Core3 is solid, Chord3-5 outlined, unassigned hatched, so role identity also survives without colour. */
-.roll-card{--roll-bg:#fbfcfb;--roll-row-white:#ffffff;--roll-row-black:#eef2ef;--roll-row-out:#f6e3df;--roll-grid:#edf1ee;--roll-beat:#dde5e0;--roll-bar:#aebdb5;--roll-ruler-bg:#f1f5f2;--roll-text:#17333a;--roll-muted:#6b7c85;--roll-lane-0:#c2410c;--roll-lane-1:#1d4ed8;--roll-lane-2:#047857;--roll-lane-3:#7c3aed;--roll-lane-4:#b45309;--roll-lane-5:#0e7490;--roll-lane-6:#6b7280;--roll-signal:#f59e0b;--roll-signal-line:#b45309;--roll-select:#111827}
+.roll-card,.listen-roll{--roll-region:#0e7490;--roll-region-focus:#0369a1;--roll-playhead:#dc2626;--roll-bg:#fbfcfb;--roll-row-white:#ffffff;--roll-row-black:#eef2ef;--roll-row-out:#f6e3df;--roll-grid:#edf1ee;--roll-beat:#dde5e0;--roll-bar:#aebdb5;--roll-ruler-bg:#f1f5f2;--roll-text:#17333a;--roll-muted:#6b7c85;--roll-lane-0:#c2410c;--roll-lane-1:#1d4ed8;--roll-lane-2:#047857;--roll-lane-3:#7c3aed;--roll-lane-4:#b45309;--roll-lane-5:#0e7490;--roll-lane-6:#6b7280;--roll-signal:#f59e0b;--roll-signal-line:#b45309;--roll-select:#111827}
 .roll-card .row{margin-bottom:4px}
 .roll-toolbar{display:flex;flex-wrap:wrap;gap:8px 16px;align-items:center;margin:10px 0}
 .roll-zoom{display:inline-flex;align-items:center;gap:4px}
@@ -105,3 +105,38 @@ code.digest,.facts dd code,table code{font-family:ui-monospace,SFMono-Regular,Me
 /* Phone sidebar: the service link gets its own row and the library buttons
    sit two per row, wrapping their labels instead of clipping them. */
 @media(max-width:720px){aside>.quiet{flex:1 1 calc(50% - 5px);min-width:0;white-space:normal;line-height:1.3;padding:10px 8px;text-align:center}aside>a.file-button{flex-basis:100%}aside>.save-state{flex-basis:100%;margin:0}}
+/* Listening sessions (studio/web/listen-ui.mjs). A separate panel above the project, never part of it. */
+.listening{margin:0 0 34px}
+.listening .card+.card{margin-top:14px}
+.listen-row{display:flex;flex-wrap:wrap;align-items:flex-end;gap:10px 12px}
+.listen-row .file-button{margin:0}
+.listen-grow{flex:1 1 220px;min-width:0}
+.listen-position{font-family:ui-monospace,SFMono-Regular,Consolas,monospace;font-size:17px;font-weight:700;margin:12px 0 4px;font-variant-numeric:tabular-nums}
+.listen-forms{display:flex;flex-wrap:wrap;gap:12px 18px;align-items:flex-end;margin-top:12px}
+.listen-inline{display:flex;flex-wrap:wrap;gap:8px;align-items:flex-end;margin:0}
+.listen-inline label{flex:1 1 150px;min-width:0}
+.listen-inline input{max-width:180px}
+.listen-inline-label{min-width:180px}
+.listen-roles{display:grid;grid-template-columns:repeat(auto-fill,minmax(210px,1fr));gap:8px 14px;margin-top:14px}
+.listen-role{display:flex;align-items:center;gap:6px}
+.listen-role-name{font-family:ui-monospace,SFMono-Regular,Consolas,monospace;font-size:13px;font-weight:700;min-width:62px}
+.listen-role button,.listen-ab button{min-height:40px;padding:6px 12px;font-size:13px}
+.listen-role button[aria-pressed="true"],.listen-ab button[aria-pressed="true"]{background:#dcebe2;border-color:#8fb7a0;color:#154f3e}
+.listen-ab{display:flex;flex-wrap:wrap;gap:8px;margin:10px 0}
+.listen-list{margin:10px 0 0;padding-left:0;list-style:none;display:grid;gap:6px}
+.listen-list li{display:flex;flex-wrap:wrap;align-items:center;gap:4px 10px;border-bottom:1px solid var(--line);padding:4px 0}
+.listen-list li>button{min-height:40px;padding:6px 12px;font-size:13px;text-align:left}
+.listen-label{font-size:12px;color:var(--muted);overflow-wrap:anywhere;min-width:0;flex:1 1 200px}
+.listen-kind-lead-unverified>button,.listen-kind-provisional-release>button{border-color:#d5ae6f}
+.listen-kind-note>button{border-color:#8fb7a0}
+.listen-notes-list li{align-items:flex-start;justify-content:space-between}
+.listen-note-text{font-size:13px;line-height:1.6;overflow-wrap:anywhere;flex:1 1 240px;min-width:0}
+.listen-note-actions{display:flex;gap:6px}
+.listen-note-actions button{min-height:40px;padding:6px 12px;font-size:13px}
+.listen-where{border:1px solid var(--line);border-radius:10px;padding:8px 14px;margin:0 0 12px;display:grid;gap:4px}
+.listen-where label{display:flex;flex-wrap:wrap;align-items:center;gap:8px;font-weight:500}
+.listen-where input[type=radio]{width:20px;height:20px;min-height:0;margin:0}
+.listen-where-bar input[type=number]{width:110px;margin:0}
+.listen-roll .roll-zoom button{min-height:36px;min-width:40px;padding:4px 10px;margin:0}
+.listen-paste summary{min-height:44px}
+@media(max-width:720px){.listen-inline input{max-width:none}.listen-roles{grid-template-columns:1fr 1fr;gap:8px}.listen-role{gap:4px}.listen-role-name{min-width:52px;font-size:12px}.listen-role button{padding:6px 8px}.listen-position{font-size:15px}}

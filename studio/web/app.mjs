@@ -7,6 +7,8 @@ import { buildRoles, diagnosticsFromValidation, renderHTML, roleCharacterCounts,
 import { mountReviewRoll } from './review-roll.mjs';
 import { PROBES, buildObservation, summarize } from './engine-probe.mjs';
 import { compareReadback, normalizeCapture } from './preview/readback.mjs';
+import { createListening } from './listen-ui.mjs';
+import { markersFromReport, sanitizeStoredNotes } from './listen-notes.mjs';
 // Request identity only. The MIDI decoder, the Canonical conversion and the
 // G11-B/G11-C derivation all live behind the Worker, so the main thread never
 // imports the backend and never parses a source file itself.
@@ -31,6 +33,8 @@ let workspace, report, identity, projects = [], audioFile = null, uploadControll
 let mobilePreview = null;
 let reductionPreview = null;
 let reductionDecisions = [];
+// Listening sessions (listen-ui.mjs); created once the page is wired below.
+let listening = null;
 // Decision Composer (section 04): the events gathered on the roll, the form
 // as typed, and the last dry run. A dry run is dropped on every commit and on
 // every edit, so 「接受」 only ever records the record that was just previewed.
@@ -140,7 +144,7 @@ function intakeCard(slot, title, hint) {
   // A Raw MIDI asset has no text representation, so its identity is stated as
   // the byte count and the digest of the bytes that were actually parsed.
   const source = asset?.source?.sha256 ? `<p class="meta">${bytesLabel(asset.source.byteLength)} · SMF ${esc(asset.midi?.smfFormat ?? '?')} · ${asset.midi?.trackCount ?? '?'} tracks<br><code class="digest">sha256 ${esc(asset.source.sha256.slice(0, 16))}…</code></p>` : '';
-  return `<div class="card"><h3>${title}</h3><p class="meta">${hint}</p>${asset ? `<p><strong>${esc(asset.name)}</strong></p><p class="meta">${esc(asset.format)} · ${asset.project.events.length} events</p>${source}${badge(asset.unsupported.length ? 'UNSUPPORTED' : 'PENDING')} <small>${asset.complete ? '解析完成，等待來源審核' : '來源未完整'}</small>${detail('來源 authority／warnings／unsupported', { sources: asset.project.sources, warnings: asset.warnings, errors: asset.errors, unsupported: asset.unsupported })}` : '<div class="empty">尚未加入來源<br>MusicXML · MML · MIDI · Canonical IR</div>'}<label class="file-button secondary">${asset ? '更換來源' : '選擇檔案'}<input type="file" data-intake="${slot}" accept=".xml,.musicxml,.mml,.txt,.json,.mid,.midi,application/xml,text/xml,text/plain,application/json,audio/midi,audio/x-midi" aria-label="${title}檔案"></label>${asset ? `<button class="quiet" data-download-ir="${slot}">匯出 IR</button>` : ''}</div>`;
+  return `<div class="card"><h3>${title}</h3><p class="meta">${hint}</p>${asset ? `<p><strong>${esc(asset.name)}</strong></p><p class="meta">${esc(asset.format)} · ${asset.project.events.length} events</p>${source}${badge(asset.unsupported.length ? 'UNSUPPORTED' : 'PENDING')} <small>${asset.complete ? '解析完成，等待來源審核' : '來源未完整'}</small>${detail('來源 authority／warnings／unsupported', { sources: asset.project.sources, warnings: asset.warnings, errors: asset.errors, unsupported: asset.unsupported })}` : '<div class="empty">尚未加入來源<br>MusicXML · MML · MIDI · Canonical IR</div>'}<label class="file-button secondary">${asset ? '更換來源' : '選擇檔案'}<input type="file" data-intake="${slot}" accept=".xml,.musicxml,.mml,.txt,.json,.mid,.midi,application/xml,text/xml,text/plain,application/json,audio/midi,audio/x-midi" aria-label="${title}檔案"></label>${asset ? `<button class="quiet" data-download-ir="${slot}">匯出 IR</button>` : ''}${asset?.format === 'MML' ? `<button class="quiet" data-listen-asset="${slot}">送到試聽</button>` : ''}</div>`;
 }
 // ─── Raw MIDI presentation ──────────────────────────────────────────────────
 //
@@ -425,7 +429,8 @@ function appliedDeliveryCard(attempt) {
     <p class="meta">此字串已通過目前的 MML 技術語法驗證，並與候選事件逐一讀回一致。複製與下載輸出的就是這個字串本身，不做任何整理、修補、壓縮或裁切。</p>
     <p class="note">這裡的 PASS 只代表這個字串<strong>目前通過交付驗證</strong>（相當於 <code>TECHNICAL_PASS</code> 層級）。它不是 <code>VALIDATED</code>，也不是 <code>IN_GAME_ACCEPTED</code>；整體專案狀態與實機接受紀錄在第 07 節。</p>
     <label for="final-mml">完整六軌 Final MML</label><div class="mml-hl">${mmlLayer(applied, technicalDiagnostics())}<textarea id="final-mml" class="code final" readonly spellcheck="false">${esc(applied)}</textarea></div>
-    <div class="actions"><button id="copy-final">複製完整 Final MML</button><button id="download-final" class="secondary">下載 Final MML</button></div>
+    <div class="actions"><button id="copy-final">複製完整 Final MML</button><button id="download-final" class="secondary">下載 Final MML</button><button id="listen-final" class="secondary">送到試聽</button></div>
+    <p class="meta">「送到試聽」會開一個獨立的試聽工作階段，可從指定小節、時間或待審標記播放並記下備註；不會改變這個專案或任何 Gate。</p>
     <p class="meta">逐角色內容如下。每個「複製」<strong>只會複製該角色的內容</strong>，不是可直接貼上的完整六軌樂譜。</p>
     ${(report.tracks ?? []).map((track, index) => `<div class="role-body"><div class="row"><label for="final-role-${index}">${roles[index]}${track ? '' : ' <small>（空軌）</small>'}</label><button data-copy-role="${index}" class="quiet" ${track ? '' : 'disabled'}>複製此角色內容</button></div><div class="mml-hl">${mmlLayer(track, roleDiagnostics(index))}<textarea id="final-role-${index}" class="code" readonly spellcheck="false">${esc(track)}</textarea></div></div>`).join('')}
   </div>`;
@@ -555,7 +560,7 @@ function render() {
     ${finalReductionSection()}
     ${mobileAdaptationSection()}
     ${finalDeliverySection()}
-    <section id="delivery"><div class="section-heading"><h2>07　Readiness 與實機接受</h2>${badge(r.state)}</div><div class="card"><p class="note">${r.state==='CANDIDATE'?'目前為 Candidate，尚有必要 Gate 未通過。複製內容仍屬候選版本。':r.state==='VALIDATED'?'必要非實機 Gate 已通過。等待使用者於目標遊戲 client 實際接受。':'已有本輪 exact-MML 實機接受紀錄。'}</p><p class="meta">本節記錄的是<strong>實機接受</strong>。產生與匯出 Final MML 在上方第 06 節。「下載六軌對照文字」是含角色標題的<strong>對照用</strong>文字檔，<strong>不是</strong>可直接貼上的樂譜；可貼上的完整字串請用「複製完整 MML@」或第 06 節的匯出。</p><div class="actions"><button id="copy-mml" ${r.rawMml?'':'disabled'}>複製完整 MML@</button><button id="export-mml" class="secondary" ${r.rawMml?'':'disabled'}>下載六軌對照文字</button><button id="export-report" class="quiet">下載分析報告</button></div>${r.tracks?`${r.tracks.map((track,i)=>`<div class="track"><div class="row"><label for="track-${i}">${roles[i]} <small>${track.length} / ${PUBLISHED_ROLE_CHARACTER_LIMIT} 字元</small></label><button data-copy-track="${i}" class="quiet">複製</button></div><div class="mml-hl">${mmlLayer(track, roleDiagnostics(i))}<textarea id="track-${i}" class="code" readonly spellcheck="false">${esc(track)}</textarea></div></div>`).join('')}<p class="note">${P1_LOCAL_NOTE}</p>`:'<p class="empty">需有通過 Final 技術語法且與候選事件一致的六軌 MML。MusicXML／IR 不會自動縮編或猜測角色；可在第 06 節產生，或附上對應的交付 MML 進行回讀。</p>'}<details><summary>記錄 In-game Accepted</summary><form id="acceptance"><div class="field-grid">${input('client','Client／地區／版本','')}${input('instrument','樂器與軌道配置','')}${input('evidence','實機結果／截圖或紀錄定位','')}</div><button ${r.state==='CANDIDATE'?'disabled':''}>此 exact-MML 已實機接受</button></form>${w.acceptance?json(w.acceptance):''}</details></div>${engineProbeCard()}</section>
+    <section id="delivery"><div class="section-heading"><h2>07　Readiness 與實機接受</h2>${badge(r.state)}</div><div class="card"><p class="note">${r.state==='CANDIDATE'?'目前為 Candidate，尚有必要 Gate 未通過。複製內容仍屬候選版本。':r.state==='VALIDATED'?'必要非實機 Gate 已通過。等待使用者於目標遊戲 client 實際接受。':'已有本輪 exact-MML 實機接受紀錄。'}</p><p class="meta">本節記錄的是<strong>實機接受</strong>。產生與匯出 Final MML 在上方第 06 節。「下載六軌對照文字」是含角色標題的<strong>對照用</strong>文字檔，<strong>不是</strong>可直接貼上的樂譜；可貼上的完整字串請用「複製完整 MML@」或第 06 節的匯出。</p><div class="actions"><button id="copy-mml" ${r.rawMml?'':'disabled'}>複製完整 MML@</button><button id="listen-mml" class="secondary" ${r.rawMml?'':'disabled'}>送到試聽</button><button id="export-mml" class="secondary" ${r.rawMml?'':'disabled'}>下載六軌對照文字</button><button id="export-report" class="quiet">下載分析報告</button></div>${r.tracks?`${r.tracks.map((track,i)=>`<div class="track"><div class="row"><label for="track-${i}">${roles[i]} <small>${track.length} / ${PUBLISHED_ROLE_CHARACTER_LIMIT} 字元</small></label><button data-copy-track="${i}" class="quiet">複製</button></div><div class="mml-hl">${mmlLayer(track, roleDiagnostics(i))}<textarea id="track-${i}" class="code" readonly spellcheck="false">${esc(track)}</textarea></div></div>`).join('')}<p class="note">${P1_LOCAL_NOTE}</p>`:'<p class="empty">需有通過 Final 技術語法且與候選事件一致的六軌 MML。MusicXML／IR 不會自動縮編或猜測角色；可在第 06 節產生，或附上對應的交付 MML 進行回讀。</p>'}<details><summary>記錄 In-game Accepted</summary><form id="acceptance"><div class="field-grid">${input('client','Client／地區／版本','')}${input('instrument','樂器與軌道配置','')}${input('evidence','實機結果／截圖或紀錄定位','')}</div><button ${r.state==='CANDIDATE'?'disabled':''}>此 exact-MML 已實機接受</button></form>${w.acceptance?json(w.acceptance):''}</details></div>${engineProbeCard()}</section>
     <details class="card"><summary>Published Canonical 與建置身分</summary><p class="meta">本機使用建置時由 Published main 取得並核驗的完整固定快照。離線模式不宣稱已確認最新 main。</p>${json(identity.metadata)}${identity.provenance?json(identity.provenance):''}${identity.documents.map(d=>`<details><summary>${esc(d.path)} · ${esc(d.authority)}</summary><a href="${esc(d.url)}" target="_blank" rel="noopener">GitHub 固定快照</a><pre>${esc(d.content)}</pre></details>`).join('')}</details>`;
   bind();
   // View-only bindings for freshly rendered DOM (highlight layers, review roll).
@@ -786,6 +791,20 @@ function bind() {
   $('#export-mml').onclick=()=>download('six-track-mml.txt',`${report.rawMml}\n\n${report.tracks.map((t,i)=>`${roles[i]}\n${t}`).join('\n\n')}`,'text/plain');
   $('#export-report').onclick=()=>download('studio-analysis.json',JSON.stringify({canonical:identity.metadata,provenance:identity.provenance,revision:workspace.revision,...report},null,2));
   $('#acceptance').onsubmit=event=>{event.preventDefault();const data=Object.fromEntries(new FormData(event.target));run(async()=>commit(await call('recordAcceptance',workspace,data)));};
+  // 送到試聽: a separate listening session for the MML on screen. Nothing in
+  // the project changes; the session only reads the string, its meter map and,
+  // for the verified delivery, the places this analysis says still need a
+  // person's ear.
+  const listenFinal=$('#listen-final');
+  if(listenFinal)listenFinal.onclick=()=>sendToListening(appliedDelivery(),'Final MML',{markers:true});
+  const listenMml=$('#listen-mml');
+  if(listenMml)listenMml.onclick=()=>sendToListening(report.rawMml,report.deliveryOrigin==='candidate-source'?'候選 MML':'完整 MML@',{markers:true});
+  document.querySelectorAll('[data-listen-asset]').forEach(button=>button.onclick=()=>{const slot=button.dataset.listenAsset;sendToListening(workspace.assets[slot]?.content,slotLabels[slot]??slot);});
+}
+function sendToListening(mml,label,{markers=false}={}){
+  if(!listening||typeof mml!=='string'||!mml.trim())return message('沒有可送到試聽的 MML');
+  const alternatives=[['Final MML',appliedDelivery()],['完整 MML@',report?.rawMml],...['candidate','baseline','previous'].map(slot=>[slotLabels[slot],workspace.assets[slot]?.format==='MML'?workspace.assets[slot].content:null])].filter(([,text])=>typeof text==='string'&&text.trim()).map(([name,text])=>({label:name,mml:text}));
+  listening.openFromProject({projectId:workspace.id,projectTitle:workspace.title,label,mml,meterText:workspace.settings?.meterText??'',markers:markers?markersFromReport(report):[],notes:workspace.listeningNotes??[],alternatives}).catch(error=>message(error.message,true));
 }
 
 $('#new-project').onclick=()=>run(async()=>{audioFile=null;await commit(await call('newWorkspace'));},{revisionBound:false,projectBound:false});
@@ -874,10 +893,10 @@ function bindEngineProbes() {
 // write is explicit: after a complete playback from the start, the user may
 // record the engine's processed events as the Gate 6 player readback, which
 // the Worker re-checks against the exact MML on every analysis.
-const preview = { voices: 0, bank: undefined, bankChecked: false, context: null, engine: null, transport: null, songKey: null, program: null, position: 0, muted: [false, false, false, false, false, false], busy: false, error: null, playBinding: null, lastCapture: null };
+const preview = { voices: 0, bank: undefined, bankChecked: false, context: null, engine: null, transport: null, songKey: null, program: null, position: 0, muted: [false, false, false, false, false, false], busy: false, error: null, playBinding: null, lastCapture: null, owner: 'final', listenHandlers: null };
 // Re-render only the preview card: a full render() would discard whatever the
 // user is typing in another form.
-function refreshPreview() { const card = $('#timbre-preview'); if (!card) return; card.outerHTML = timbrePreviewCard(); bindTimbrePreview(); }
+function refreshPreview() { listening?.refreshAudio(); const card = $('#timbre-preview'); if (!card) return; card.outerHTML = timbrePreviewCard(); bindTimbrePreview(); }
 const clock = seconds => `${Math.floor(seconds / 60)}:${String(Math.floor(seconds % 60)).padStart(2, '0')}`;
 // The capture of the last complete playback, while it still describes the
 // project, revision and exact string on screen.
@@ -921,77 +940,121 @@ function timbrePreviewCard() {
     ${ready ? '' : '<p class="empty">需先有通過驗證、且與候選一致的交付 MML，才能試聽。</p>'}
     <div class="preview-controls"><label>音色<select id="preview-program" ${programs.length ? '' : 'disabled'}>${programs.length ? programs.map(p => `<option value="${p.program}" ${p.program === preview.program ? 'selected' : ''}>${esc(String(p.program + 1).padStart(3, '0'))} ${esc(p.name)}</option>`).join('') : '<option>按播放後載入音色清單</option>'}</select></label>
       <button type="button" id="preview-play" ${ready && bank ? '' : 'disabled'}>${preview.busy ? '載入中…' : '▶ 播放'}</button><button type="button" id="preview-stop" class="secondary" ${preview.transport?.playing ? '' : 'disabled'}>■ 停止</button>
-      <input type="range" id="preview-seek" min="0" max="1000" value="0" aria-label="播放位置" ${ready && bank ? '' : 'disabled'}><span class="meta" id="preview-time">${clock(preview.position)} / ${clock(preview.transport?.duration ?? 0)}</span></div>
+      <input type="range" id="preview-seek" min="0" max="1000" value="0" aria-label="播放位置" ${ready && bank ? '' : 'disabled'}><span class="meta" id="preview-time">${clock(preview.owner === 'final' ? preview.position : 0)} / ${clock(preview.owner === 'final' ? preview.transport?.duration ?? 0 : 0)}</span></div>
     <div class="preview-roles" role="group" aria-label="試聽角色">${roles.map((role, i) => `<label><input type="checkbox" data-preview-role="${i}" ${preview.muted[i] ? '' : 'checked'}> ${role}</label>`).join('')}</div>
     ${preview.error ? `<p class="note">${esc(preview.error)}</p>` : ''}
     ${ready ? readbackBlock() : ''}</div>`;
 }
+// The engine and its one transport are shared by the Final preview (this card)
+// and listening sessions (listen-ui.mjs). `preview.owner` says whose playback
+// the transport is running, so position and end reports reach that player
+// only; a player that takes the transport tells the other one it stopped.
+function previewTimeText() { const el = $('#preview-time'); if (el) el.textContent = `${clock(preview.owner === 'final' ? preview.position : 0)} / ${clock(preview.owner === 'final' ? preview.transport?.duration ?? 0 : 0)}${preview.owner === 'final' && preview.transport?.playing ? ` · 發聲 ${preview.voices}` : ''}`; }
+function previewSeekSync() { const el = $('#preview-seek'); if (el && preview.transport?.duration) el.value = String(Math.round((preview.position / preview.transport.duration) * 1000)); }
+function claimTransport(owner, handlers = null) {
+  if (preview.owner === 'listen' && (owner !== 'listen' || handlers !== preview.listenHandlers)) preview.listenHandlers?.onPreempt?.();
+  preview.owner = owner;
+  preview.listenHandlers = owner === 'listen' ? handlers : null;
+}
+// Created and resumed before the first await: iOS Safari only unlocks audio
+// inside the user's gesture.
+function startAudioContext() {
+  if (!preview.context) {
+    const AudioContextClass = globalThis.AudioContext ?? globalThis.webkitAudioContext;
+    if (!AudioContextClass) throw Error('此瀏覽器不支援 Web Audio，無法試聽音色');
+    preview.context = new AudioContextClass({ latencyHint: 'interactive' });
+  }
+  preview.context.resume?.();
+}
+async function ensurePreviewEngine() {
+  if (preview.transport) return;
+  const { loadBank } = await import('./preview/soundbank-store.mjs');
+  const { createPreviewEngine, createTransport } = await import('./preview/player.mjs');
+  const bank = await loadBank();
+  if (!bank) throw Error('尚未選擇音色庫');
+  try { preview.engine = await createPreviewEngine(bank, preview.context); }
+  catch (error) { preview.engine = null; preview.context = null; throw error; }
+  preview.transport = createTransport(preview.engine, {
+    onPosition: (position, duration, voices = 0) => {
+      if (preview.owner === 'listen') return preview.listenHandlers?.onPosition?.(position, duration, voices);
+      preview.position = position; preview.voices = voices; previewTimeText(); previewSeekSync();
+    },
+    onEnd: (capture, info) => {
+      if (preview.owner === 'listen') return preview.listenHandlers?.onEnd?.(capture, info);
+      preview.position = 0;
+      const binding = preview.playBinding;
+      preview.playBinding = null;
+      if (capture && binding) {
+        try { preview.lastCapture = { binding, capture, comparison: compareReadback(report.technical.song, normalizeCapture(capture)) }; }
+        catch (error) { preview.lastCapture = null; preview.error = `回讀無法使用：${error.message}`; }
+      }
+      refreshPreview();
+    },
+  });
+  const lute = preview.engine.presets.find(p => /lute/i.test(p.name));
+  preview.program ??= (lute ?? preview.engine.presets[0]).program;
+  preview.transport.setProgram(preview.program);
+  preview.muted.forEach((value, role) => preview.transport.setMuted(role, value));
+  preview.songKey = null;
+}
+// The listening sessions' view of the shared engine (listen-ui.mjs).
+const listenAudio = {
+  status: () => ({ bank: preview.bank, busy: preview.busy }),
+  async play({ key, song, from, until, muted, handlers }) {
+    startAudioContext();
+    claimTransport('listen', handlers);
+    await ensurePreviewEngine();
+    if (preview.owner !== 'listen' || preview.listenHandlers !== handlers) return;
+    if (preview.songKey !== key) { preview.transport.load(song); preview.songKey = key; }
+    muted.forEach((value, role) => preview.transport.setMuted(role, value));
+    await preview.transport.play(from, { until });
+    refreshPreview();
+  },
+  stop() { if (preview.owner === 'listen') { preview.listenHandlers = null; preview.transport?.stop(); refreshPreview(); } },
+  setMuted(role, value) { if (preview.owner === 'listen') preview.transport?.setMuted(role, value); },
+  state: () => (preview.owner === 'listen' ? preview.transport?.state ?? null : null),
+  async pickBank(file) {
+    const { storeBank } = await import('./preview/soundbank-store.mjs');
+    resetPreviewEngine();
+    preview.bank = await storeBank(file);
+    preview.error = null;
+    message(`已載入音色庫 ${file.name}；只保存在這台裝置。`);
+    refreshPreview();
+  },
+};
 function bindTimbrePreview() {
   const card = $('#timbre-preview');
   if (!card) return;
   if (!preview.bankChecked) loadStoredBankInfo();
   const song = report?.technical?.ok ? report.technical.song : null;
   const songKey = song ? report.rawMml : null;
-  const time = () => { const el = $('#preview-time'); if (el) el.textContent = `${clock(preview.position)} / ${clock(preview.transport?.duration ?? 0)}${preview.transport?.playing ? ` · 發聲 ${preview.voices}` : ''}`; };
-  if (preview.transport && songKey !== preview.songKey) {
+  // A listening session that is playing keeps the transport; this card loads
+  // its own song again when it next plays.
+  if (preview.transport && songKey !== preview.songKey && !(preview.owner === 'listen' && preview.transport.playing)) {
+    claimTransport('final');
     preview.transport.load(song);
     preview.songKey = songKey;
     preview.position = 0;
-    time();
+    previewTimeText();
   }
-  const seek = () => { const el = $('#preview-seek'); if (el && preview.transport?.duration) el.value = String(Math.round((preview.position / preview.transport.duration) * 1000)); };
   const fail = error => { preview.error = error.message; preview.busy = false; message(error.message, true); refreshPreview(); };
-  const ensureEngine = async () => {
-    if (preview.transport) return;
-    const { loadBank } = await import('./preview/soundbank-store.mjs');
-    const { createPreviewEngine, createTransport } = await import('./preview/player.mjs');
-    const bank = await loadBank();
-    if (!bank) throw Error('尚未選擇音色庫');
-    preview.engine = await createPreviewEngine(bank, preview.context);
-    preview.transport = createTransport(preview.engine, {
-      onPosition: (position, duration, voices = 0) => { preview.position = position; preview.voices = voices; time(); seek(); },
-      onEnd: capture => {
-        preview.position = 0;
-        const binding = preview.playBinding;
-        preview.playBinding = null;
-        if (capture && binding) {
-          try { preview.lastCapture = { binding, capture, comparison: compareReadback(report.technical.song, normalizeCapture(capture)) }; }
-          catch (error) { preview.lastCapture = null; preview.error = `回讀無法使用：${error.message}`; }
-        }
-        refreshPreview();
-      },
-    });
-    const lute = preview.engine.presets.find(p => /lute/i.test(p.name));
-    preview.program ??= (lute ?? preview.engine.presets[0]).program;
-    preview.transport.setProgram(preview.program);
-    preview.muted.forEach((value, role) => preview.transport.setMuted(role, value));
-    preview.songKey = null;
-  };
   $('#preview-play').onclick = async () => {
     if (!song) return;
     try {
-      // Created and resumed before the first await: iOS Safari only unlocks
-      // audio inside the user's gesture.
-      if (!preview.context) {
-        const AudioContextClass = globalThis.AudioContext ?? globalThis.webkitAudioContext;
-        if (!AudioContextClass) throw Error('此瀏覽器不支援 Web Audio，無法試聽音色');
-        preview.context = new AudioContextClass({ latencyHint: 'interactive' });
-      }
-      preview.context.resume?.();
+      startAudioContext();
+      claimTransport('final');
       preview.busy = true; preview.error = null; refreshPreview();
-      await ensureEngine();
-      if (preview.songKey !== songKey) { preview.transport.load(song); preview.songKey = songKey; }
+      await ensurePreviewEngine();
+      if (preview.songKey !== songKey) { preview.transport.load(song); preview.songKey = songKey; preview.position = 0; }
+      // A listening session may have left its own mutes on the shared transport.
+      preview.muted.forEach((value, role) => preview.transport.setMuted(role, value));
       preview.busy = false;
       preview.playBinding = preview.position === 0 ? { workspaceId: workspace.id, revision: workspace.revision, exactMml: songKey } : null;
       await preview.transport.play(preview.position);
       refreshPreview();
-    } catch (error) {
-      // A failed engine start closed its context; the next attempt starts over.
-      if (!preview.transport) { preview.engine = null; preview.context = null; }
-      fail(error);
-    }
+    } catch (error) { fail(error); }
   };
-  $('#preview-stop').onclick = () => { preview.transport?.stop(); preview.position = 0; preview.playBinding = null; refreshPreview(); };
+  $('#preview-stop').onclick = () => { claimTransport('final'); preview.transport?.stop(); preview.position = 0; preview.playBinding = null; refreshPreview(); };
   const record = $('#record-readback');
   if (record) record.onclick = () => {
     const last = currentCapture();
@@ -1006,31 +1069,22 @@ function bindTimbrePreview() {
   const clearReadback = $('#clear-readback');
   if (clearReadback) clearReadback.onclick = () => run(async () => { await commit(await call('clearPlayerReadback', workspace)); message('已移除播放器回讀紀錄。'); });
   $('#preview-seek').onchange = event => {
-    const duration = preview.transport?.duration ?? 0;
+    const duration = preview.owner === 'final' ? preview.transport?.duration ?? 0 : 0;
     preview.position = (Number(event.target.value) / 1000) * duration;
-    time();
-    if (preview.transport?.playing) preview.transport.play(preview.position).catch(fail);
+    previewTimeText();
+    if (preview.owner === 'final' && preview.transport?.playing) preview.transport.play(preview.position).catch(fail);
   };
   $('#preview-program').onchange = event => { preview.program = Number(event.target.value); preview.transport?.setProgram(preview.program); };
   card.querySelectorAll('[data-preview-role]').forEach(box => box.onchange = () => {
     const role = Number(box.dataset.previewRole);
     preview.muted[role] = !box.checked;
-    preview.transport?.setMuted(role, preview.muted[role]);
+    if (preview.owner === 'final') preview.transport?.setMuted(role, preview.muted[role]);
   });
   $('#bank-file').onchange = event => {
     const file = event.target.files?.[0];
     event.target.value = '';
     if (!file) return;
-    (async () => {
-      try {
-        const { storeBank } = await import('./preview/soundbank-store.mjs');
-        resetPreviewEngine();
-        preview.bank = await storeBank(file);
-        preview.error = null;
-        message(`已載入音色庫 ${file.name}；只保存在這台裝置。`);
-        refreshPreview();
-      } catch (error) { fail(error); }
-    })();
+    listenAudio.pickBank(file).catch(fail);
   };
   const clear = $('#bank-clear');
   if (clear) clear.onclick = async () => {
@@ -1042,6 +1096,7 @@ function bindTimbrePreview() {
   };
 }
 function resetPreviewEngine() {
+  claimTransport('final');
   preview.transport?.destroy();
   preview.transport = null; preview.engine = null; preview.context = null; preview.songKey = null; preview.position = 0;
 }
@@ -1361,6 +1416,25 @@ async function restoreZip(file){
 async function buildAudit(){ try{ const r=await fetch('./build.json'); if(!r.ok) return null; return (await r.json()).audit??null; } catch { return null; } }
 function network(){ $('#network').textContent=navigator.onLine?'本地執行 · Online':'本地執行 · Offline'; }
 addEventListener('online',network);addEventListener('offline',network);network();
+// ─── Listening sessions ─────────────────────────────────────────────────────
+// A listen link (#listen=…) opens its own session beside whatever project is
+// open, never plays by itself, and is removed from the address bar once read.
+// Notes taken on a session that came from a project are mirrored onto that
+// project as plain data (`listeningNotes`), without a revision change: they
+// are not evidence and move no gate.
+function mirrorListeningNote(projectId,op){
+  if(updateFlow?.stale||applyingUpdate)return Promise.reject(Error('Studio 需要重新載入後才能同步備註到專案'));
+  return new Promise((resolve,reject)=>{run(async()=>{try{
+    const apply=list=>{const notes=sanitizeStoredNotes(list);return op.type==='delete'?notes.filter(note=>note.id!==op.id):[...notes.filter(note=>note.id!==op.note.id),op.note];};
+    if(workspace?.id===projectId){workspace=await saveProject({...workspace,listeningNotes:apply(workspace.listeningNotes)});showSaveState();}
+    else{const stored=await loadProject(projectId);await saveProject({...stored,listeningNotes:apply(stored.listeningNotes)});}
+    resolve();
+  }catch(error){reject(error);}},{revisionBound:false,projectBound:false});});
+}
+listening=createListening({root:$('#listening'),call,message,copyText,audio:listenAudio,saveProjectNote:mirrorListeningNote});
+$('#open-listening').onclick=()=>listening.showSessions().catch(error=>message(error.message,true));
+listening.importFromLocation().catch(error=>message(error.message,true));
+addEventListener('hashchange',()=>listening.importFromLocation().catch(error=>message(error.message,true)));
 try {
   identity=await call('identity');
   identity={...identity,provenance:await buildAudit()};
