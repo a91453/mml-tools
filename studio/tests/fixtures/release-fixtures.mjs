@@ -1,6 +1,6 @@
 // Shared synthetic fixture for the release representation regressions.
 //
-// The shape is the one the real 《怪獸之歌》 third-party MIDI has — a role-less
+// The shape is the one the captured real song's third-party MIDI has — a role-less
 // Source-Faithful Baseline whose every note-off is one 480-tpq tick before the
 // 1/64 grid, Melody reached by Lead promotions — but everything here is
 // synthetic and proves nothing about that song. Nothing here fabricates a gate:

@@ -1,5 +1,7 @@
 # PR #1-#46 regression audit - 2026-09-20
 
+> Railway resource IDs are kept out of this public repository and appear as `<redacted-id-N>` (the same N is the same resource). Read them from the Railway dashboard.
+
 Status: IMPLEMENTATION AUDIT, not Canonical policy or song acceptance.
 
 ## Scope and identity
@@ -148,7 +150,7 @@ repaired by later merged code were not reintroduced or counted as new fixes.
 | #29 | M6 parallel Bootstrap | Full-suite isolation stress rerun; no shared-ref mutation. |
 | #30 | safe.directory / M6 guards | Existing trusted Git invocation checks retained. |
 | #31 | Revision/evidence integrity | Later code already closes foreign Lead identity and evidence carry-forward findings; do not count them as newly fixed. |
-| #32 | Mabataki reference package | Source package is not a real-song Final or in-game PASS. |
+| #32 | Song reference package (removed from the public tree since) | Source package is not a real-song Final or in-game PASS. |
 | #33 | OSS export | Applicable clean-export CI included for expanded source changes. |
 | #34 | Technical timing repair | Explicit opt-in and source-aware guards retained; no unsupported note-release extensions. |
 | #35 | Application API/MCP | R01/R02 storage bugs and R08 dependency packaging repaired. |
@@ -192,7 +194,7 @@ their actual status. G14 per-token caution granularity is already
 ## Deployment and merge boundary
 
 The initial #46 changed live watchPatterns deliberately and refreshed the
-observed successful deployment to `8f375cb5-4640-4b4c-a15f-662d66cae6e6` at
+observed successful deployment to `<redacted-id-1>` at
 `bbb8534245c78041573fd93af88c8fc7fd3e89bd`. This expanded audit did not change
 Railway settings, secrets, volumes, source data or deployment state.
 

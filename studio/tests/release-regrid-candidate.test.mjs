@@ -49,7 +49,7 @@ const OTHER = createSource({ id: 'other', label: 'Second MIDI', kind: 'third-par
 
 let counter = 0;
 const nextId = prefix => `${prefix}-${++counter}`;
-// A note whose release is one source tick before `nominalEnd` (the Kaiju shape).
+// A note whose release is one source tick before `nominalEnd` (the captured real-song shape).
 const short = ({ pitch = 60, start, nominalEnd, role = 'Melody', sourceId = 'midi', id = nextId('n'), ticks = 480 }) => createCanonicalNoteEvent({
   id, pitch, start: String(start), end: f(nominalEnd).sub(new F(1, ticks)).toString(), role, voice: role,
   sourceIds: [sourceId], sourceEventIds: [`${id}/on`, `${id}/off`], metadata: { ticksPerQuarter: ticks },

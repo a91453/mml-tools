@@ -27,17 +27,17 @@
       "image": "ghcr.io/railwayapp/function-bun:1.4.0"
     },
     "volumeMounts": {
-      "fba8d8a3-0c88-4f9b-b2a4-54a772217388": {
+      "<redacted-id-4>": {
         "mountPath": "/studio-cache"
       }
     }
   },
   "environment": {
-    "id": "00c16c1a-f210-44a0-944f-9722c4b1a0f4",
+    "id": "<redacted-id-22>",
     "name": "production"
   },
   "service": {
-    "id": "311e2f06-bad4-415c-b020-d52e1a6bf064",
+    "id": "<redacted-id-2>",
     "name": "studio-web-permanent"
   },
   "staged": null,

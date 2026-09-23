@@ -1,6 +1,6 @@
 {
-  "productionDeploymentId": "9ddaad2c-fc64-4822-a011-3924e3aae629",
-  "volumeId": "fba8d8a3-0c88-4f9b-b2a4-54a772217388",
+  "productionDeploymentId": "<redacted-id-11>",
+  "volumeId": "<redacted-id-4>",
   "historicalReadyExactMatch": true,
   "historicalBuildJsonExactMatch": true,
   "inspections": [
@@ -8,7 +8,7 @@
       "args": {
         "limit": 200,
         "path": "/studio-cache",
-        "serviceId": "311e2f06-bad4-415c-b020-d52e1a6bf064"
+        "serviceId": "<redacted-id-2>"
       },
       "isError": false,
       "result": {
@@ -46,7 +46,7 @@
     {
       "args": {
         "path": "/studio-cache/.ready",
-        "serviceId": "311e2f06-bad4-415c-b020-d52e1a6bf064"
+        "serviceId": "<redacted-id-2>"
       },
       "isError": false,
       "result": {
@@ -59,7 +59,7 @@
     {
       "args": {
         "path": "/studio-cache/artifact/build.json",
-        "serviceId": "311e2f06-bad4-415c-b020-d52e1a6bf064"
+        "serviceId": "<redacted-id-2>"
       },
       "isError": false,
       "result": {

@@ -1,5 +1,7 @@
 # 正式站端到端驗收
 
+> Railway resource IDs are kept out of this public repository and appear as `<redacted-id-N>` (the same N is the same resource). Read them from the Railway dashboard.
+
 Status: IMPLEMENTATION NOTES — **完整正式站驗收仍為 PENDING**。
 這是服務傳輸驗收，不新增 Canonical 或接受政策。
 
@@ -117,7 +119,7 @@ CI 使用獨立 local store 與既有 synthetic OAuth fixture；不用正式 cre
   Server 宣告支援 run / proposal，但本對話可呼叫的 connector 清單缺少八個
   `studio_run_*` / `studio_proposal_*` 工具。需重新掃描／更新 app 的工具清單後，
   才能驗證 ChatGPT 對同一 browser run 的呼叫；僅此兩個成功 read 不算 connector E2E。
-- Railway 控制台獨立確認 deployment `8f375cb5-4640-4b4c-a15f-662d66cae6e6` 為 SUCCESS、
+- Railway 控制台獨立確認 deployment `<redacted-id-1>` 為 SUCCESS、
   source commit 為 `bbb8534`、branch main、wait-for-CI 開啟、`/data` 掛載。
 - live watch patterns 確認仍缺 `/server/report-page.mjs`、`/server/studio-web.mjs`、
   `/studio/web/service/**`；repository 參考設定已有，線上設定尚未補上。本分支未變更它。
@@ -137,7 +139,7 @@ PASS 與 `git diff --check`。完整 Node 套件、三種 browser profile 與 Do
 本輪**未**重跑公開 probe：此工作環境的 egress 政策對
 `mml-tools-production.up.railway.app` 回 403，CONNECT 遭拒。沒有執行任何探測，也
 沒有為了讓檢查通過而放寬預期值。改以 Railway control plane 獨立確認部署仍是
-`8f375cb5-4640-4b4c-a15f-662d66cae6e6`、SUCCESS、source commit `bbb8534`、branch
+`<redacted-id-1>`、SUCCESS、source commit `bbb8534`、branch
 main、wait-for-CI 開啟、`/data` 掛載，與先前紀錄一致且期間沒有重新部署，因此
 [public-probe.json](evidence/production-e2e-2026-09-20/public-probe.json) 的 PASS
 仍對應現行部署。live watch patterns 仍缺三個 path，未變更任何線上設定。

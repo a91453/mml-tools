@@ -124,8 +124,8 @@ test('a published v2 loads end to end and activates AUTOMATED_VALIDATED only on 
   assert.deepEqual(defect.blocking.map(x => x.gate), ['core3Completeness']);
 
   // The captured real-song scenario still blocks on source, micro-timing and Lead.
-  const kaiju = JSON.parse(readFileSync(new URL('./fixtures/kaiju-production-machine-delivery.json', import.meta.url), 'utf8'));
-  const real = evaluateMachineDelivery(kaiju.gates, { canonical: loaded.metadata, requireCompleteGateMap: true });
+  const captured = JSON.parse(readFileSync(new URL('./fixtures/real-song-production-machine-delivery.json', import.meta.url), 'utf8'));
+  const real = evaluateMachineDelivery(captured.gates, { canonical: loaded.metadata, requireCompleteGateMap: true });
   assert.equal(real.ready, false);
   assert.deepEqual(real.blocking.map(x => x.gate), ['source', 'microTiming', 'leadPromotion']);
 });

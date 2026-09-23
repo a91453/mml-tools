@@ -58,7 +58,7 @@
     "notice": "Capability calls used the existing authenticated connector. A browser OAuth session/token was not available to the local driver. Missing tools concern this conversation's callable connector surface; server discovery has not been refreshed."
   },
   "railway": {
-    "deployment_id": "8f375cb5-4640-4b4c-a15f-662d66cae6e6",
+    "deployment_id": "<redacted-id-1>",
     "status": "SUCCESS",
     "commit": "bbb8534245c78041573fd93af88c8fc7fd3e89bd",
     "branch": "main",
@@ -88,7 +88,7 @@
       "/studio/web/service/**"
     ],
     "volume_mounts": {
-      "e90e0f81-854e-467c-9ab0-5be246118708": {
+      "<redacted-id-10>": {
         "mountPath": "/data"
       }
     },

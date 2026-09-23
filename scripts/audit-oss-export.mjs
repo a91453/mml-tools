@@ -14,8 +14,8 @@ const FORBIDDEN_PREFIXES = Object.freeze([
 const FORBIDDEN_EXACT = new Set([
   '.env',
   'dist/workbench-source.zip',
-  // Polices imports/, which is never exported, and names a private song
-  // package while doing so. The source repository keeps and runs it.
+  // Polices imports/, which is never exported. The source repository keeps
+  // and runs it.
   'studio/tests/song-reference-packages.test.mjs',
 ]);
 

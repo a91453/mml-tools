@@ -30,8 +30,12 @@ const commitExists = sha => {
   catch { return false; }
 };
 
-test('at least the imported back number Mabataki package is present', () => {
-  assert.ok(packageDirs.some(dir => dir.endsWith('back-number-mabataki')));
+// Real-song packages are kept out of the public repository, so the store may
+// be empty; any package placed here is still held to every check below.
+test('the song-reference store holds only package directories and its README', () => {
+  if (!existsSync(packagesRoot)) return;
+  const loose = readdirSync(packagesRoot, { withFileTypes: true }).filter(entry => !entry.isDirectory()).map(entry => entry.name);
+  assert.deepEqual(loose, ['README.md']);
 });
 
 for (const dir of packageDirs) {

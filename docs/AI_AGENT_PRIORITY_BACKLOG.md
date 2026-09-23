@@ -5,7 +5,7 @@ Status: IMPLEMENTATION NOTES。不改 Canonical 或 Phase 2 接受政策。
 | 優先級 | 工作 | 狀態／驗收條件 |
 | --- | --- | --- |
 | P0 | 附件上傳與同一個遠端 project/run 的外部 agent 操作 | `65b90d6` 已加入既有 CLI 的遠端 HTTP/MCP 模式；同一 OAuth owner、agent policy、分頁雜湊檢查與恢復規則。需營運者提供既有服務 origin/token 才能操作該部署。 |
-| P0，與程式並行 | 《怪獸之歌》真實歌曲 Final | 9/21 已從最新 main 重跑完整 store 副本的來源診斷、G12、review、finalize，仍 `FINALIZATION_BLOCKED`。使用者確認M4A為準，鋼琴單人完整可演奏／多人增加音色。新增18段原音審查頁與固定速度對齊診斷；Lead／角色、可靠對齊與實際Mobile證據仍待補。已在獨立新run採用orphan NoteOff修正來源，保留1,545音符，7聲部／18段試聽頁可用；原run revision12保留。新run revision6仍待角色證據，使用者確認沒有現成角色依據。見[接續紀錄](KAIJU_CONTINUATION_2026-09-21.md)。見 [本輪驗收](KAIJU_FINAL_MOBILE_REVIEW_2026-09-21.md)及 [bug紀錄](KAIJU_FINAL_BUG_LOG_2026-09-21.md)。 |
+| P0，與程式並行 | 真實歌曲 Final | 9/21 已從最新 main 重跑完整 store 副本的來源診斷、G12、review、finalize，仍 `FINALIZATION_BLOCKED`。使用者確認M4A為準，鋼琴單人完整可演奏／多人增加音色。新增18段原音審查頁與固定速度對齊診斷；Lead／角色、可靠對齊與實際Mobile證據仍待補。已在獨立新run採用orphan NoteOff修正來源，保留1,545音符，7聲部／18段試聽頁可用；原run revision12保留。新run revision6仍待角色證據，使用者確認沒有現成角色依據。歌曲專屬的接續、驗收與 bug 紀錄不放在公開 repository。 |
 | P1 | PWA 接 Application Service | 已加入 `/studio/` 服務工作區及 PWA 入口連結：OAuth、來源上傳、run/status、proposal 回讀、review、Final 下載。真實 MIDI 在 desktop Chromium、iPhone／iPad WebKit 全部完成 UI 啟動並由同 owner MCP 讀到同一 run；既有本機專案保留。程式與本機驗證完成，未部署正式站。 |
 | P1 | Mobile profile 的必要輸入路徑 | 9/21 已接入 `/studio/` 既有 reviewer 路徑：逐角色實際 profile → 預覽 → 接受並 resume 同一 run → 新候選 Gate 8 review。無預填音域／音量；檢查 candidate、revision、staleness 與 evidence。三種 browser profile 驗證通過。Phase 2 policy 不變；真實歌曲尚缺實際輸入，正式站尚未部署此改動。 |
 | P2 | 外部 agent dispatch／continuation | 已提供 UI 複製真實 service origin、project_id、run_id、revision 的接續資訊，與提案回到畫面的路徑。本分支已實作選配Codex runner及網頁啟動／審查後續跑；三種瀏覽器與真實Codex分別驗證。含idempotency、停止、重啟停止及未知結果核對；正式站未啟用。見[操作說明](STUDIO_AGENT_CONTINUATION.md)。 |
@@ -30,5 +30,5 @@ browser regression、新服務合成 regression、真實 MIDI 服務測試各三
 音訊引擎未變，未重跑 Python suite。操作、歌曲限制與證據見
 [服務工作區](STUDIO_SERVICE_WORKSPACE.md)。
 
-9/21接續分支最新完整suite為1,831 PASS／0 FAIL；新驗證與尚缺歌曲角色證據見
-[接續紀錄](KAIJU_CONTINUATION_2026-09-21.md)。
+9/21接續分支最新完整suite為1,831 PASS／0 FAIL；歌曲專屬的驗證與尚缺角色證據
+不放在公開 repository。

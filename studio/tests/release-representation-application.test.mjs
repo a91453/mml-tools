@@ -1,7 +1,7 @@
 // Release representation through the Studio Application Service.
 //
-// Synthetic fixture (fixtures/release-fixtures.mjs) with the real 《怪獸之歌》
-// one-tick shape; it proves nothing about that song. What it pins is the path:
+// Synthetic fixture (fixtures/release-fixtures.mjs) with the captured real
+// song's one-tick shape; it proves nothing about that song. What it pins is the path:
 // evidence decides, the source release survives, and nothing else about the
 // music moves.
 import test from 'node:test';

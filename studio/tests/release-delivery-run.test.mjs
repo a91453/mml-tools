@@ -1,6 +1,6 @@
 // From release evidence to a delivered, VALIDATED Final — through the one run.
 //
-// Synthetic fixture with the real 《怪獸之歌》 one-tick release shape
+// Synthetic fixture with the captured real song's one-tick release shape
 // (fixtures/release-fixtures.mjs). It proves the workflow, not the song:
 //
 //   run start (decisions)        → deterministic intake, suggestion, G11-D, review
@@ -184,7 +184,8 @@ test('RDR-5 no executable module carries a song-specific identifier or bypass', 
       const path = join(dir, name);
       if (statSync(path).isDirectory()) { if (name !== 'node_modules') walk(path); continue; }
       if (!/\.(mjs|js)$/.test(name)) continue;
-      if (/kaiju|怪獸|怪獣|hanauta|prj_a808b53c|5819c9c5e7b5/i.test(readFileSync(path, 'utf8'))) offenders.push(path);
+      // The captured real song's project and source identifiers.
+      if (/prj_a808b53c|5819c9c5e7b5/i.test(readFileSync(path, 'utf8'))) offenders.push(path);
     }
   };
   roots.forEach(walk);

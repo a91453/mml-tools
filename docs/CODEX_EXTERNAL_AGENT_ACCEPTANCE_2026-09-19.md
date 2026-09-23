@@ -2,7 +2,7 @@
 
 Status: **INCOMPLETE — REAL_SONG_REVIEW_REQUIRED**。
 
-使用者於 9/20 提供《怪獣の花唄》的鋼琴 MIDI ZIP 與 MV M4A 後，本輪已實際執行
+使用者於 9/20 提供一首真實歌曲的鋼琴 MIDI ZIP 與 MV M4A 後，本輪已實際執行
 intake、suggestion、proposal 提交與 agent 接受、保留來源的 candidate、G12 分析、
 音訊對齊、candidate review 及 finalize 嘗試。**Final 被既有 gates 阻擋，沒有
 歌曲 MML；音樂品質、聽驗與實機均未通過。** 不是端到端完成聲明。
@@ -19,18 +19,18 @@ intake、suggestion、proposal 提交與 agent 接受、保留來源的 candidat
 - Manifest `2026-09-13-v1-manifest1`；manifest commit `5e7666b850a37f1c85ee2dd8cd0f4fac037a9e14`。
 - rules snapshot `0a172900a01fdf39c2e9e84cf176961320b779ea`；已讀快照中的四份規則、inventory 與 supporting evidence。
 - 已核對 run/proposal/review/final service、MCP dispatcher 與相關 tests 的實際行為。
-- 起初 repository／本機 Git 可見歷史無 MIDI。《瞬き》參考包明示 MIDI binary 未匯出，未改動該已接受歌曲。
+- 起初 repository／本機 Git 可見歷史無 MIDI。既有已接受歌曲的參考包明示 MIDI binary 未匯出，未改動該已接受歌曲。
 - 沒有連接中的 Studio MCP tool；使用現有本機 Application Service。PWA 是獨立 Web Worker plane，未改部署。
 
 ## 真實素材
 
 | 素材 | 實際內容 |
 | --- | --- |
-| ZIP | 使用者提供 `1-Kaiju_no_Hanauta__Vaundy_Piano.zip` |
-| MIDI | `Kaiju_no_Hanauta__Vaundy_Piano.mid`，11,506 bytes；ZIP 另有 AppleDouble metadata，未當成 MIDI |
+| ZIP | 使用者提供的鋼琴 MIDI ZIP（檔名不記錄） |
+| MIDI | 11,506 bytes；ZIP 另有 AppleDouble metadata，未當成 MIDI |
 | MIDI SHA-256 | `58619209f743416fa2150471b079cc14796e92911000793fce98384603c18487` |
 | MIDI asset | `ast_7d249fe5676954dd204b236b50399333`，`third_party_midi` |
-| 音訊 | 使用者提供 `2-怪獣の花唄-Vaundy-MUSIC-VIDEO.m4a`，3,766,598 bytes |
+| 音訊 | 使用者提供的 MV M4A（檔名不記錄），3,766,598 bytes |
 | 音訊 SHA-256 | `35a05318c127248d9a391201847ee586e82df87b4755cdeb1ec33e4ceb98d061` |
 | 音訊 asset | `ast_6a227cb940566e71be6f0ce51b45e665`，`original_audio`；這是用途分類，非檔名自證官方版本 |
 
@@ -80,7 +80,7 @@ technical/player readback 為 NOT_RUN。
 
 ## 音訊證據的限度
 
-實際 audio worker report 保存在 `.studio-agent/kaiju-alignment.json`：
+實際 audio worker report 保存在本機 `.studio-agent/`（未提交）：
 trim range 約 0.093～229.738 秒，mean chroma similarity 約 0.714。
 但 median local tempo drift 為 +115.33%，p95 absolute drift 為 761.33%；
 beat 545 被映射至約 115.22 秒，beat 546 卻跳至 172.57 秒。
@@ -146,12 +146,11 @@ node scripts/studio-agent.mjs --data-dir .studio-agent/real-song --actor agent:c
 ```
 
 完整可恢復 state 在 `.studio-agent/real-song/store/`，逐次呼叫在 `receipts/`。
-本機分析另有 `kaiju-suggestion.json`、`lane-events.json`、`kaiju-reduction.json`、
-`kaiju-review.json`、`kaiju-alignment.json`、`kaiju-finalize-result.json`。
+本機另有 suggestion、lane events、reduction、review、alignment 與 finalize 結果的
+分析檔（未提交）。
 尚無歌曲 `.mml`，export 會如實拒絕。
 
-分支內的 [project record snapshot](evidence/codex-external-agent-2026-09-19/project-record.json)
-保存 run/proposal/asset/candidate 的 audit metadata，SHA-256：
+當時分支內的 project record snapshot（為了不公開歌曲身分，已自目前的 repository 移除）保存 run/proposal/asset/candidate 的 audit metadata，SHA-256：
 `abb3d886dead6d5577254adeda91dcda82e2d3bd7385b704c57efcd4c7a821df`。
 **它不是獨立可恢復的完整備份**；跨機器恢復必須連同本機 `store/` 的 blobs。
 MIDI、M4A、完整 note payload 與本機依賴未提交 Git。不要把 metadata-only snapshot

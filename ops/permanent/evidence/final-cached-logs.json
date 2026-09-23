@@ -1,5 +1,5 @@
 {
-  "deploymentId": "055831dd-85ec-48ab-a4ef-994746267a43",
+  "deploymentId": "<redacted-id-17>",
   "logs": {
     "deploy": [
       {
@@ -9,7 +9,7 @@
             "value": "\"info\""
           }
         ],
-        "message": "Mounting volume on: /var/lib/containers/railwayapp/bind-mounts/61698c16-20f5-4ccc-9734-d29a2d6e1977/vol_ph61rwe5mb6rp77i",
+        "message": "Mounting volume on: /var/lib/containers/railwayapp/bind-mounts/<redacted-id-21>/vol_ph61rwe5mb6rp77i",
         "severity": "info",
         "timestamp": "2026-09-14T01:08:01.704798071Z"
       },
@@ -266,9 +266,9 @@
         "timestamp": "2026-09-14T01:08:02.900266681Z"
       }
     ],
-    "deploymentId": "055831dd-85ec-48ab-a4ef-994746267a43",
-    "environmentId": "00c16c1a-f210-44a0-944f-9722c4b1a0f4",
-    "serviceId": "2343a428-d442-4c3d-99cc-a3c2d690578d",
+    "deploymentId": "<redacted-id-17>",
+    "environmentId": "<redacted-id-22>",
+    "serviceId": "<redacted-id-6>",
     "status": "SUCCESS"
   }
 }

@@ -16,8 +16,7 @@ Date: 2026-09-23
 
 | 欄位 | 值 |
 | --- | --- |
-| 檔案 | `frontend-complete-2026-09-14-debranded.zip`（任務附件） |
-| SHA-256 | `f1b7024fff24dba35adf85b500fbe5b4ac624bdb5150d69880b93ff899baad9a` |
+| 檔案 | 前端擷取包（任務附件；檔名與雜湊不記錄於公開 repository） |
 | 內容 | 公開前端擷取 v1.1.0，112 個檔案：72 個站方 JS 模組、CSS、4 語系 shell／manifest、公開說明頁、vendor 函式庫、音色庫與 `.def` |
 | 自述 | 「Third-party. Not Canonical. Do not copy into studio/.」 |
 | 不含 | ASP.NET／C#／資料庫、`/api/*` 回應、登入頁、使用者分享樂譜 |
@@ -47,7 +46,7 @@ Date: 2026-09-23
 | `vendor/spessasynth_lib.js` | 與 `spessasynth_lib@4.3.12` 在忽略空白後 diff 為 0 | Apache-2.0 | 同上 |
 | `vendor/lamejs.js` | 與 `@breezystack/lamejs` 1.2.5–1.2.7 相同 | LGPL-3.0 | 拒絕：WAV 已足夠 |
 | `vendor/fontawesome/*` | 檔頭寫明 Free 7.3.1 | 圖示 CC BY 4.0、字型 SIL OFL 1.1、程式 MIT | 不需要 |
-| 音色庫（`.dls`／`.def`） | 已於 `TIMBRE_PROFILE_RESEARCH.md` 研究 | 檔內標示不允許重製 | 不提交；不能當證據；只用本機上傳（§13） |
+| 音色庫（`.dls`／`.def`） | 已於 `TIMBRE_PROFILE_RESEARCH.md` 研究 | 第三方素材，不在本 repo 授權範圍 | 不提交；不能當證據；只用本機上傳（§13） |
 
 **方法。** 七份唯讀平行分析：MML 核心、匯入轉換、音訊與混音、鋼琴捲軸、瀑布與影片、App
 殼層／儲存／分享、repo 現況。每一項都以 A／B／C／D 分類：
@@ -568,7 +567,7 @@ Date: 2026-09-23
 授權之後，擷取包可以在測試環境中當作**比較對象**直接執行。它仍然不是權威，結果只用來找出 repo 的改進空間：
 
 1. **字數最佳化：`mml-compress.js` vs `final/mml-emitter.mjs`。**
-   - 對 `imports/song-reference/`、Kaiju fixture 與合成曲，把兩邊的輸出都用 repo 的 `parser.mjs` 回讀，比對事件是否完全相等；
+   - 對真實歌曲參考資料與合成曲，把兩邊的輸出都用 repo 的 `parser.mjs` 回讀，比對事件是否完全相等；
    - 找出「對方較短，且事件仍完全相等」的案例，再把對應的技巧改寫進 `duration-plan.mjs` 或 emitter 的 DP；
    - 對方有損的選項（`OPT_RULES`、Nxx 省字、`@n` 剝除）一律關閉，否則不列入比較。
 2. **攝入診斷：`midi-in.js`／`musicxml-in.js` vs repo intake。**
@@ -583,7 +582,7 @@ Date: 2026-09-23
 ### 11.4 移植程序
 
 1. 每個移植進來的檔案，開頭加上 provenance 註解：
-   - 來源檔名、擷取包 SHA-256（§0）；
+   - 來源擷取包（§0；檔名與雜湊只留在本機紀錄）；
    - 「repo 擁有者授權，2026-09-23」。
 2. 去除 canary 字元；Chinese 設計註解保留重點，或改寫成摘要。
 3. 移植的同一個 PR 內，必須補上 repo 自己的測試。對方的測試沒有包含在擷取包內，不能依賴它。

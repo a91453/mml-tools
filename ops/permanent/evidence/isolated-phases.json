@@ -1,23 +1,23 @@
 {
   "scope": "isolated Railway service only",
-  "projectId": "8382ec4b-8da6-4f27-947b-b325ea5aadfa",
-  "environmentId": "00c16c1a-f210-44a0-944f-9722c4b1a0f4",
-  "serviceId": "2343a428-d442-4c3d-99cc-a3c2d690578d",
-  "volumeId": "a75fd368-2dcc-4e4f-8637-f242d3c2738d",
+  "projectId": "<redacted-id-18>",
+  "environmentId": "<redacted-id-22>",
+  "serviceId": "<redacted-id-6>",
+  "volumeId": "<redacted-id-7>",
   "initialVolumeEntries": [
     "lost+found/"
   ],
-  "bucketId": "e3ff79a7-f493-4436-894d-b166dfb97ab9",
+  "bucketId": "<redacted-id-5>",
   "bootstrapSourceSha256": "5017a2e2035bc67799dfe662a23ca1a109c3192dc742c8515f90032b8cc750cb",
   "phases": [
     {
       "name": "final-cold-logs",
-      "deploymentId": "25caeae1-17dd-44fd-b1c4-9ed33b466859",
+      "deploymentId": "<redacted-id-13>",
       "status": "SUCCESS",
       "logs": [
         {
           "timestamp": "2026-09-14T00:58:18.617850465Z",
-          "message": "Mounting volume on: /var/lib/containers/railwayapp/bind-mounts/2e9c124d-27a1-4ed3-9b70-d4b554a95292/vol_ph61rwe5mb6rp77i",
+          "message": "Mounting volume on: /var/lib/containers/railwayapp/bind-mounts/<redacted-id-23>/vol_ph61rwe5mb6rp77i",
           "level": "info"
         },
         {
@@ -144,7 +144,7 @@
     },
     {
       "name": "cached-start-logs",
-      "deploymentId": "ed6f76e1-850d-4131-a0ce-699e3d7b88ff",
+      "deploymentId": "<redacted-id-14>",
       "status": "SUCCESS",
       "logs": [
         {
@@ -213,7 +213,7 @@
         },
         {
           "timestamp": "2026-09-14T01:00:27.462681923Z",
-          "message": "Mounting volume on: /var/lib/containers/railwayapp/bind-mounts/d1b8c015-b9b5-4c2b-bc80-3a14cd20f569/vol_ph61rwe5mb6rp77i",
+          "message": "Mounting volume on: /var/lib/containers/railwayapp/bind-mounts/<redacted-id-24>/vol_ph61rwe5mb6rp77i",
           "level": "info"
         },
         {
@@ -259,12 +259,12 @@
     },
     {
       "name": "corrupt-logs",
-      "deploymentId": "228033e5-9b58-45ea-bebd-7b8f4dfb91b4",
+      "deploymentId": "<redacted-id-15>",
       "status": "FAILED",
       "logs": [
         {
           "timestamp": "2026-09-14T01:01:34.721793828Z",
-          "message": "Mounting volume on: /var/lib/containers/railwayapp/bind-mounts/8d416e85-e49b-4b2d-a832-8ccb65140edf/vol_ph61rwe5mb6rp77i",
+          "message": "Mounting volume on: /var/lib/containers/railwayapp/bind-mounts/<redacted-id-25>/vol_ph61rwe5mb6rp77i",
           "level": "info"
         },
         {
@@ -323,7 +323,7 @@
           "message": "",
           "level": "info",
           "event": "CORRUPTION_INJECTED",
-          "serviceId": "2343a428-d442-4c3d-99cc-a3c2d690578d",
+          "serviceId": "<redacted-id-6>",
           "asset": "studio/web/app.mjs"
         },
         {
@@ -345,12 +345,12 @@
     },
     {
       "name": "recovery-logs",
-      "deploymentId": "cec4e4a2-71ac-4a48-bd38-1192c8596434",
+      "deploymentId": "<redacted-id-16>",
       "status": "SUCCESS",
       "logs": [
         {
           "timestamp": "2026-09-14T01:03:29.477191141Z",
-          "message": "Mounting volume on: /var/lib/containers/railwayapp/bind-mounts/746d5a70-ee86-4b34-aa56-4c5bcf421255/vol_ph61rwe5mb6rp77i",
+          "message": "Mounting volume on: /var/lib/containers/railwayapp/bind-mounts/<redacted-id-26>/vol_ph61rwe5mb6rp77i",
           "level": "info"
         },
         {
@@ -377,7 +377,7 @@
           "level": "info",
           "event": "CORRUPT_CACHE_QUARANTINED",
           "time": "2026-09-14T01:03:30.316Z",
-          "quarantine": "/studio-cache/final-proof/durable-v1/34c67a4a1284eee1243ee51858096660c16cbf22cf0347e139abb15f2dc3e258.quarantine-189d308a-02da-469d-80b4-441f88db90fe"
+          "quarantine": "/studio-cache/final-proof/durable-v1/34c67a4a1284eee1243ee51858096660c16cbf22cf0347e139abb15f2dc3e258.quarantine-<redacted-id-27>"
         },
         {
           "timestamp": "2026-09-14T01:03:31.531297818Z",

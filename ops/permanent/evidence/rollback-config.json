@@ -1,9 +1,9 @@
 {
-  "projectId": "8382ec4b-8da6-4f27-947b-b325ea5aadfa",
-  "environmentId": "00c16c1a-f210-44a0-944f-9722c4b1a0f4",
-  "serviceId": "311e2f06-bad4-415c-b020-d52e1a6bf064",
-  "deploymentId": "f9a9bd99-4809-4a3b-8612-07b96c196d4a",
-  "volumeId": "fba8d8a3-0c88-4f9b-b2a4-54a772217388",
+  "projectId": "<redacted-id-18>",
+  "environmentId": "<redacted-id-22>",
+  "serviceId": "<redacted-id-2>",
+  "deploymentId": "<redacted-id-3>",
+  "volumeId": "<redacted-id-4>",
   "config": {
     "build": {
       "buildEnvironment": "V3",
@@ -31,7 +31,7 @@
       "image": "ghcr.io/railwayapp/function-bun:1.4.0"
     },
     "volumeMounts": {
-      "fba8d8a3-0c88-4f9b-b2a4-54a772217388": {
+      "<redacted-id-4>": {
         "mountPath": "/studio-cache"
       }
     }

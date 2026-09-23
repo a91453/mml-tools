@@ -87,7 +87,7 @@ Publication is intentionally two-phase:
 
 ## Acceptance scenario
 
-`怪獸之歌` project `prj_a808b53c7cafadaf4c6bf5f0fe4c370a` is represented
+A real-song project, `prj_a808b53c7cafadaf4c6bf5f0fe4c370a`, is represented
 as a captured acceptance scenario, not as fabricated production evidence.
 `source`, `microTiming`, and `leadPromotion` remain BLOCKING.
 `core3Completeness` carries reviewer residue only

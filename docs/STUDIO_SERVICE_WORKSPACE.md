@@ -45,7 +45,7 @@ step 或已產生結案報告的 run 不開放這些提交。網路結果不明�
 
 這是既有 reviewer 流程的 UI，不增加 agent proposal 的 gate 權限；不能把任意
 Gate 8 request 改成 `MOBILE_ADAPTATION_BLOCKED` 來接受 profile proposal。
-完整驗證與真實歌曲現況見 [9/21 紀錄](KAIJU_FINAL_MOBILE_REVIEW_2026-09-21.md)。
+真實歌曲的驗證紀錄不放在公開 repository。
 
 ## 重複操作
 
@@ -92,13 +92,13 @@ allowlist 沒有納入該檔案；repository checkout 可以跑測試，依 allo
 
 ```powershell
 # 若 openssl 已在 PATH，可省略這行；Windows Git 的實際安裝位置可能不同。
-$env:STUDIO_TEST_OPENSSL='C:\Users\11407\AppData\Local\Programs\Git\usr\bin\openssl.exe'
+$env:STUDIO_TEST_OPENSSL='C:\Program Files\Git\usr\bin\openssl.exe'
 
 # 合成 regression；含另一個獨立 fixture 的 review / Final MML 下載。
 node studio/browser-tests/service-workspace.mjs --out .studio-agent/service-browser-regression
 
 # 真實素材；不會替它填 confirmations 或產生假的 completed run。
-node studio/browser-tests/service-workspace.mjs --midi .studio-agent/real-song/source/Kaiju_no_Hanauta__Vaundy_Piano.mid --out .studio-agent/service-browser-real-midi
+node studio/browser-tests/service-workspace.mjs --midi .studio-agent/real-song/source/song.mid --out .studio-agent/service-browser-real-midi
 ```
 
 兩個命令均測 desktop Chromium、iPhone WebKit、iPad WebKit。可加 `--desktop`
