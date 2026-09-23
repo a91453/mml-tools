@@ -45,7 +45,7 @@
 set -u
 
 ROOT="${1:-/app}"
-SNAPSHOT="${MML_RULES_SNAPSHOT_SHA:-1c84c95133990e3882a5770077c3d2d39b1a6b04}"
+SNAPSHOT="${MML_RULES_SNAPSHOT_SHA:-ff1a9df054f5ca1ae42571067fc95feb274755ef}"
 say() { echo "[canonical-bootstrap] $*"; }
 
 cd "$ROOT" || { say "image root $ROOT is not readable"; exit 1; }

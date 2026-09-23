@@ -10,9 +10,11 @@ machine_delivery_schema: mabinogi-mobile-mml-studio/machine-delivery@1
 # Machine-delivery Canonical candidate
 
 This document is the design and change record for `2026-09-23-v2`, and the
-change record for its refinement `2026-09-23-v3` (last section). It is not a
-rule source and its metadata activates nothing. The metadata above describes
-the `2026-09-23-v2` candidate only. The release is published only
+change record for its refinement `2026-09-23-v3` (last section, rules
+snapshot `ff1a9df054f5ca1ae42571067fc95feb274755ef`), which is published the
+same way, by its own Manifest revision. It is not a rule source and its
+metadata activates nothing. The metadata above describes the `2026-09-23-v2`
+candidate only. The release is published only
 through `docs/CANONICAL_MANIFEST.md`: its revision that names
 `2026-09-23-v2`, rules snapshot `1c84c95133990e3882a5770077c3d2d39b1a6b04` and
 the schema above becomes the Published Canonical when it is merged into `main`.
@@ -176,9 +178,13 @@ and accepted the rule text before any implementation (MASTER_RULES §12, item 4)
 The prose rule is in `ACCEPTANCE_CRITERIA.md` ("Machine delivery", "Delivered
 first, flagged for listening"), `MASTER_RULES.md` §4, §7 and §11, and
 `MOBILE_SYNTAX.md` §4, §7 and §11. All six indexed documents declare
-`Version: 2026-09-23-v3`. The rule is not published by this change.
-Publication happens in a later Manifest commit. Until then the Published
-Canonical stays `2026-09-23-v2` at rules snapshot
+`Version: 2026-09-23-v3`. The prose and its implementation are in rules
+snapshot `ff1a9df054f5ca1ae42571067fc95feb274755ef`. The release is published
+only through `docs/CANONICAL_MANIFEST.md`: its revision that names
+`2026-09-23-v3`, that rules snapshot and
+`machine_delivery_schema: mabinogi-mobile-mml-studio/machine-delivery@2`
+becomes the Published Canonical when it is merged into `main`. Until then the
+Published Canonical stays `2026-09-23-v2` at rules snapshot
 `1c84c95133990e3882a5770077c3d2d39b1a6b04`, with
 `machine_delivery_schema: mabinogi-mobile-mml-studio/machine-delivery@1`.
 
@@ -260,8 +266,8 @@ Canonical stays `2026-09-23-v2` at rules snapshot
    - The local Studio Web keeps its v1 generation gating, as it did for v2.
 4. **Executable changes, in order.**
    1. This prose. The owner accepted it before implementation.
-   2. The implementation, in the same change set as this prose and still
-      unpublished.
+   2. The implementation, in the same change set as this prose. Its merge
+      commit is rules snapshot `ff1a9df054f5ca1ae42571067fc95feb274755ef`.
       - Implementations opt into `2026-09-23-v3` explicitly.
       - The evaluator classifies by the schema of the Canonical identity it is
         evaluated under: `@1` as in v2, `@2` with the two rules above. It
@@ -278,7 +284,8 @@ Canonical stays `2026-09-23-v2` at rules snapshot
    3. Publication, in a later Manifest commit and with explicit owner
       authorization.
       - `CANONICAL_MANIFEST.md` points `rules_snapshot_sha` to the merge commit
-        that carries this prose and its implementation.
+        that carries this prose and its implementation:
+        `ff1a9df054f5ca1ae42571067fc95feb274755ef`.
       - The Manifest declares `canonical_version: 2026-09-23-v3` and
         `machine_delivery_schema: mabinogi-mobile-mml-studio/machine-delivery@2`.
       - The full test suite and the Manifest verifier are run against that

@@ -7,7 +7,7 @@ import { resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { EFFECTIVE_RULESET } from '../backend/rules/index.mjs';
 import { parseCanonicalManifest } from '../backend/bootstrap/index.mjs';
-import { MACHINE_DELIVERY_SCHEMA_V1 } from '../backend/final/delivery-evaluator.mjs';
+import { MACHINE_DELIVERY_SCHEMA_V2 } from '../backend/final/delivery-evaluator.mjs';
 
 const root = fileURLToPath(new URL('../../', import.meta.url));
 const manifestPath = 'docs/CANONICAL_MANIFEST.md';
@@ -28,13 +28,13 @@ const expectedAuthority = new Map([
 const metadata = text => parseCanonicalManifest(text).metadata;
 const authorityRows = text => parseCanonicalManifest(text).entries;
 
-test('Manifest pins the published v2 release and stores no dynamic Git identities', () => {
+test('Manifest pins the published v3 release and stores no dynamic Git identities', () => {
   assert.deepEqual(metadata(manifest), {
-    canonical_version: '2026-09-23-v2',
+    canonical_version: '2026-09-23-v3',
     canonical_status: 'PUBLISHED',
-    manifest_version: '2026-09-23-v2-manifest1',
-    rules_snapshot_sha: '1c84c95133990e3882a5770077c3d2d39b1a6b04',
-    machine_delivery_schema: MACHINE_DELIVERY_SCHEMA_V1,
+    manifest_version: '2026-09-23-v3-manifest1',
+    rules_snapshot_sha: 'ff1a9df054f5ca1ae42571067fc95feb274755ef',
+    machine_delivery_schema: MACHINE_DELIVERY_SCHEMA_V2,
   });
 });
 
