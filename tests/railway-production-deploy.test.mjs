@@ -9,6 +9,10 @@ import {
 
 const sha = 'a'.repeat(40);
 const old = 'b'.repeat(40);
+// Obviously fake Railway IDs, returned by the mocked target resolution below.
+const PROJECT_ID = '11111111-1111-4111-8111-111111111111';
+const ENVIRONMENT_ID = '22222222-2222-4222-8222-222222222222';
+const SERVICE_ID = '33333333-3333-4333-8333-333333333333';
 const expectedJson = path => path.endsWith('service-settings.json')
   ? {
       plane: 'agent-control-plane',
@@ -26,14 +30,31 @@ const expectedJson = path => path.endsWith('service-settings.json')
       port: 3000,
     }
   : {
-      projectId: 'project',
-      environmentId: 'environment',
-      serviceId: 'service',
+      projectName: 'mml-tools-allen',
+      environmentName: 'production',
+      serviceName: 'mml-tools',
       githubSource: 'a91453/mml-tools',
       githubBranch: 'main',
       publicOrigin: 'https://example.invalid',
-      volumeId: 'volume',
     };
+
+// Railway GraphQL mock: answers the two target-resolution reads by name and
+// hands anything else (the deploy mutation) to onMutation.
+function railway({ projectName = 'mml-tools-allen', onMutation = () => { throw Error('unexpected Railway call'); } } = {}) {
+  return async input => {
+    if (input.query.includes('RailwayTargetScope')) {
+      return { projectToken: { projectId: PROJECT_ID, environmentId: ENVIRONMENT_ID } };
+    }
+    if (input.query.includes('RailwayTargetNames')) {
+      assert.deepEqual(input.variables, { projectId: PROJECT_ID, environmentId: ENVIRONMENT_ID });
+      return {
+        project: { name: projectName, services: { edges: [{ node: { id: SERVICE_ID, name: 'mml-tools' } }] } },
+        environment: { name: 'production' },
+      };
+    }
+    return onMutation(input);
+  };
+}
 
 const fields = new Set([
   'source','branch','rootDirectory','builder','dockerfilePath','watchPatterns',
@@ -45,7 +66,7 @@ function state(existing = null) {
   return {
     availableFields: fields,
     missingSchemaFields: [],
-    tokenScope: { projectId: 'project', environmentId: 'environment' },
+    tokenScope: { projectId: PROJECT_ID, environmentId: ENVIRONMENT_ID },
     instance: {
       source: { repo: 'a91453/mml-tools' },
       branch: 'main',
@@ -88,15 +109,17 @@ test('skipped exact-main deployment is recovered with commit-bound deployV2', as
     expectedSha: sha,
     loadJson: async path => expectedJson(String(path)),
     readState: async () => state(skipped),
-    graphQL: async input => {
+    graphQL: railway({ onMutation: async input => {
       mutation = input;
       return { serviceInstanceDeployV2: 'new-deploy' };
-    },
+    } }),
   });
   assert.equal(result.status, 'REQUESTED');
   assert.equal(result.deployment_id, 'new-deploy');
   assert.equal(result.recovered_from, 'SKIPPED');
   assert.equal(mutation.variables.commitSha, sha);
+  assert.equal(mutation.variables.serviceId, SERVICE_ID, 'deploys the service resolved by name');
+  assert.equal(mutation.variables.environmentId, ENVIRONMENT_ID);
   assert.match(mutation.query, /serviceInstanceDeployV2/);
 });
 
@@ -108,10 +131,24 @@ test('active success for exact main is a no-op', async () => {
     expectedSha: sha,
     loadJson: async path => expectedJson(String(path)),
     readState: async () => state(success),
-    graphQL: async () => { called = true; return {}; },
+    graphQL: railway({ onMutation: async () => { called = true; return {}; } }),
   });
   assert.equal(result.status, 'NOOP');
   assert.equal(called, false);
+});
+
+test('a token for another project fails closed before any state read or deploy', async () => {
+  let read = false;
+  let deployed = false;
+  await assert.rejects(deployExactCurrentMain({
+    token: 'test-token',
+    expectedSha: sha,
+    loadJson: async path => expectedJson(String(path)),
+    readState: async () => { read = true; return state(); },
+    graphQL: railway({ projectName: 'someone-elses-project', onMutation: async () => { deployed = true; return {}; } }),
+  }), /belongs to a different project/);
+  assert.equal(read, false);
+  assert.equal(deployed, false);
 });
 
 

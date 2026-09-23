@@ -10,6 +10,7 @@ import { parseArgs } from 'node:util';
 import {
   expectedProductionConfig,
   railwayGraphQL,
+  resolveProductionTarget,
   saveAudit,
 } from './railway-production-audit.mjs';
 
@@ -57,7 +58,9 @@ export async function collectDeploymentDiagnostics({
     loadJson(resolve('railway/service-settings.json')),
     loadJson(resolve('railway/deployment-target.json')),
   ]);
-  const expected = expectedProductionConfig(serviceSettings, deploymentTarget);
+  const expected = await resolveProductionTarget({
+    token, expected: expectedProductionConfig(serviceSettings, deploymentTarget), fetchImpl,
+  });
   const membership = await railwayGraphQL({
     token,
     fetchImpl,

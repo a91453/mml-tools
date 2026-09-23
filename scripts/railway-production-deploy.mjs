@@ -13,6 +13,7 @@ import {
   findExpectedDeployment,
   railwayGraphQL,
   readProductionState,
+  resolveProductionTarget,
   saveAudit,
 } from './railway-production-audit.mjs';
 
@@ -46,7 +47,9 @@ export async function deployExactCurrentMain({
     loadJson(resolve('railway/service-settings.json')),
     loadJson(resolve('railway/deployment-target.json')),
   ]);
-  const expected = expectedProductionConfig(serviceSettings, deploymentTarget);
+  const expected = await resolveProductionTarget({
+    token, expected: expectedProductionConfig(serviceSettings, deploymentTarget), graphQL,
+  });
   const state = await readState({ token, expected });
 
   assert.deepEqual(state.missingSchemaFields, [], 'Railway schema drift blocks production deploy');
