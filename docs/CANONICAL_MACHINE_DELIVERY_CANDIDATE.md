@@ -2,23 +2,25 @@
 canonical_version: 2026-09-22-v2-candidate
 canonical_status: CANDIDATE
 based_on_rules_snapshot_sha: 0a172900a01fdf39c2e9e84cf176961320b779ea
-candidate_snapshot_status: UNPUBLISHED
-candidate_snapshot_sha: null
+candidate_snapshot_status: PUBLISHED_AS_2026-09-23-v2
+candidate_snapshot_sha: 1c84c95133990e3882a5770077c3d2d39b1a6b04
 machine_delivery_schema: mabinogi-mobile-mml-studio/machine-delivery@1
 ---
 
 # Machine-delivery Canonical candidate
 
-This document is an unpublished candidate. Its metadata is descriptive proposal
-data, not Canonical activation. Until a later reviewed rules snapshot is
-published through `docs/CANONICAL_MANIFEST.md`, the sole Published Canonical
-remains `2026-09-13-v1` at
+This document is the design and change record for `2026-09-23-v2`. It is not a
+rule source and its metadata activates nothing. The release is published only
+through `docs/CANONICAL_MANIFEST.md`: its revision that names
+`2026-09-23-v2`, rules snapshot `1c84c95133990e3882a5770077c3d2d39b1a6b04` and
+the schema above becomes the Published Canonical when it is merged into `main`.
+Until then the sole Published Canonical remains `2026-09-13-v1` at
 `0a172900a01fdf39c2e9e84cf176961320b779ea`.
 
-In particular, the `machine_delivery_schema` value above does **not** activate
-runtime authority. Activation requires the loaded Canonical identity itself to
-be `PUBLISHED`, to carry a valid immutable `rules_snapshot_sha`, and to
-declare this exact schema.
+The `machine_delivery_schema` value above does **not** activate runtime
+authority. Activation requires the loaded Canonical identity itself to be
+`PUBLISHED`, to carry a valid immutable `rules_snapshot_sha`, and to declare
+this exact schema.
 
 ## Delivery model
 
@@ -87,9 +89,12 @@ Publication is intentionally two-phase:
 
 `怪獸之歌` project `prj_a808b53c7cafadaf4c6bf5f0fe4c370a` is represented
 as a captured acceptance scenario, not as fabricated production evidence.
-`source`, `microTiming`, `core3Completeness`, and `leadPromotion` remain
-BLOCKING; `originalAudio`, `mobileAdaptation`, and `regression` remain
-NON_BLOCKING_PENDING; `playerReadback` remains POST_DELIVERY. All other
+`source`, `microTiming`, and `leadPromotion` remain BLOCKING.
+`core3Completeness` carries reviewer residue only
+(`CORE3_COMPLETENESS_UNRESOLVED`), so under the refinement in the change record
+it is NON_BLOCKING_PENDING together with `originalAudio`, `mobileAdaptation`,
+and `regression`; `playerReadback` remains POST_DELIVERY. The scenario still
+blocks. All other
 required axes in the fixture are explicit PASS/N/A placeholders for the
 scenario only, so migration completeness can be tested without inventing
 production evidence. The fixture does not assert Human listening, in-game

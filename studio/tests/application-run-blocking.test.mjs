@@ -28,6 +28,7 @@ import { createStudioApplication, ERROR_CODES, RUN_STATE, RUN_STEP, RUN_STEP_STA
 import { enginesWith } from './support/real-engines.mjs';
 import { baselineWithOverflowLane, baselineWithPercussion, baselineWithoutLead, leadEvidenceFor, FIXTURE_SOURCE_ID } from './fixtures/g12-fixtures.mjs';
 import { FIXTURE_CONFIRMATIONS, RUN_REVIEWER, mobileProfile, projectWithSymbolicAsset, runDecisionsFor, sixRoleBaseline } from './fixtures/run-fixtures.mjs';
+import { MACHINE_DELIVERY_ACTIVE, assertRunHeldOrDeliveredUnresolved } from './support/loaded-release.mjs';
 
 const OWNER = 'owner:run-blocking';
 
@@ -370,7 +371,7 @@ test('a run cannot adapt an event a Lead evidence record still binds', async () 
 
 // ─── missing evidence stops the run, it is never filled in ──────────────────
 
-test('a missing audio report, player readback, Gate 8 or Gate 9 each stop the run on their own', async () => {
+test('a missing audio report, player readback, Gate 8 or Gate 9 each stay unresolved on their own, and v1 stops the run', async () => {
   const app = createStudioApplication({});
   const fixture = await projectWithSymbolicAsset(app, OWNER, { project: sixRoleBaseline() });
   await app.analyzeSources(OWNER, fixture.projectId, { assetIds: [fixture.assetId] });
@@ -378,12 +379,12 @@ test('a missing audio report, player readback, Gate 8 or Gate 9 each stop the ru
 
   // Each case withholds exactly one of the reviewer's answers.
   const cases = [
-    ['original_audio_required', 'originalAudio', 'AUDIO_ALIGNMENT_EVIDENCE_MISSING'],
-    ['player_readback', 'playerReadback', null],
-    ['mobile_adaptation_reviewed', 'mobileAdaptation', 'MOBILE_ADAPTATION_REVIEW_REQUIRED'],
-    ['regression_reviewed', 'regression', 'REGRESSION_REVIEW_REQUIRED'],
+    ['original_audio_required', 'originalAudio', 'AUDIO_ALIGNMENT_EVIDENCE_MISSING', 'non_blocking_pending'],
+    ['player_readback', 'playerReadback', null, 'post_delivery'],
+    ['mobile_adaptation_reviewed', 'mobileAdaptation', 'MOBILE_ADAPTATION_REVIEW_REQUIRED', 'non_blocking_pending'],
+    ['regression_reviewed', 'regression', 'REGRESSION_REVIEW_REQUIRED', 'non_blocking_pending'],
   ];
-  for (const [withheld, gate, blocker] of cases) {
+  for (const [withheld, gate, blocker, phase] of cases) {
     const isolated = createStudioApplication({});
     const own = await projectWithSymbolicAsset(isolated, OWNER, { project: sixRoleBaseline() });
     await isolated.analyzeSources(OWNER, own.projectId, { assetIds: [own.assetId] });
@@ -391,8 +392,13 @@ test('a missing audio report, player readback, Gate 8 or Gate 9 each stop the ru
     const { [withheld]: _dropped, ...rest } = FIXTURE_CONFIRMATIONS;
 
     const started = await isolated.startRun(OWNER, own.projectId, { target_candidate_id: candidate, confirmations: rest });
-    assert.notEqual(started.run.state, RUN_STATE.COMPLETED, `withholding ${withheld} must not complete the run`);
-    assert.equal(started.run.final_artifact_id, null, `withholding ${withheld} must produce no Final`);
+    assertRunHeldOrDeliveredUnresolved(started.run, [[gate, phase]]);
+    if (MACHINE_DELIVERY_ACTIVE) {
+      // Delivered for listening first: the answer is still missing, never filled in.
+      const entry = started.run.machine_delivery[phase].find(item => item.gate === gate);
+      if (blocker) assert.ok(entry.blockers.includes(blocker), `${gate}: ${JSON.stringify(entry.blockers)}`);
+      continue;
+    }
     const request = gateRequest(started.run, gate);
     assert.ok(request, `withholding ${withheld} must report the ${gate} gate; got ${JSON.stringify(started.run.review_requests.map(entry => entry.gate))}`);
     if (blocker) assert.ok(request.blockers.some(entry => (entry.code ?? entry) === blocker), `${gate}: ${JSON.stringify(request.blockers)}`);

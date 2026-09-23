@@ -10,9 +10,10 @@ import { PUBLISHED_CANONICAL } from '../backend/rules/index.mjs';
 import { SUPPORTED_CANONICAL_VERSIONS } from '../backend/rules/supported-releases.mjs';
 import { MACHINE_DELIVERY_GATE_NAMES, MACHINE_DELIVERY_SCHEMA, evaluateMachineDelivery } from '../backend/final/delivery-evaluator.mjs';
 
-// Step 2 of publishing 2026-09-23-v2 (docs/CANONICAL_MACHINE_DELIVERY_CANDIDATE.md):
-// everything the publication commit will rely on, proven against a real Git
-// history before the published Manifest moves.
+// Publishing 2026-09-23-v2 (docs/CANONICAL_MACHINE_DELIVERY_CANDIDATE.md):
+// everything the publication relies on, proven against a real Git history. The
+// loaded release comes from the published Manifest on origin/main, so it is v1
+// while the publication is still a PR and v2 once it is merged; both hold here.
 
 const root = fileURLToPath(new URL('../../', import.meta.url));
 const git = (cwd, ...args) => execFileSync('git', args, { cwd, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] }).trim();
@@ -23,7 +24,8 @@ const commit = cwd => {
   return git(cwd, 'rev-parse', 'HEAD');
 };
 const notLoaded = error => error.code === 'CANONICAL_NOT_LOADED';
-const V1 = PUBLISHED_CANONICAL.metadata;
+const LOADED = PUBLISHED_CANONICAL.metadata;
+const workingManifest = parseCanonicalManifest(readFileSync(resolve(root, BOOTSTRAP_CONTRACT.entryPoint), 'utf8')).metadata;
 const proseVersion = readFileSync(resolve(root, 'docs/MASTER_RULES.md'), 'utf8').match(/^Version: (\S+)$/m)[1];
 
 const v2Header = snapshot => [
@@ -48,7 +50,7 @@ function v2Repository(t) {
     else put(cwd, entry.path, entry.path.startsWith('docs/') ? readFileSync(resolve(root, entry.path), 'utf8') : 'Implementation fixture only\n');
   }
   const snapshot = commit(cwd);
-  const manifest = withHeader(PUBLISHED_CANONICAL.manifest.replaceAll(V1.rules_snapshot_sha, snapshot), v2Header(snapshot));
+  const manifest = withHeader(PUBLISHED_CANONICAL.manifest.replaceAll(LOADED.rules_snapshot_sha, snapshot), v2Header(snapshot));
   put(cwd, BOOTSTRAP_CONTRACT.entryPoint, manifest);
   git(cwd, 'update-ref', BOOTSTRAP_CONTRACT.publishedRef, commit(cwd));
   return { cwd, snapshot };
@@ -63,20 +65,33 @@ test('the implementation opts into exactly the published v1 and the release the 
   for (const path of ['docs/MASTER_RULES.md', 'docs/SOURCE_POLICY.md', 'docs/MOBILE_SYNTAX.md', 'docs/ACCEPTANCE_CRITERIA.md', 'docs/PENDING.md', 'docs/OFFICIAL_EVIDENCE.md']) {
     assert.ok(readFileSync(resolve(root, path), 'utf8').split('\n').includes(`Version: ${proseVersion}`), path);
   }
-  // Nothing is published yet: the loaded release is still v1, without the schema.
-  assert.equal(V1.canonical_version, '2026-09-13-v1');
-  assert.equal(Object.hasOwn(V1, 'machine_delivery_schema'), false);
+});
+
+test('the Manifest publishes the prose release with the machine-delivery schema, and the loaded release is consistent with it', () => {
+  assert.equal(workingManifest.canonical_version, proseVersion);
+  assert.equal(workingManifest.machine_delivery_schema, MACHINE_DELIVERY_SCHEMA);
+  const probe = evaluateMachineDelivery(completeGates(), { canonical: LOADED, requireCompleteGateMap: true });
+  if (LOADED.canonical_version === proseVersion) {
+    // Published: main loads exactly this Manifest, and machine delivery is authoritative.
+    assert.deepEqual(LOADED, workingManifest);
+    assert.equal(probe.authoritative, true);
+  } else {
+    // Still a PR: main loads v1, which has no schema and no machine-delivery authority.
+    assert.equal(LOADED.canonical_version, '2026-09-13-v1');
+    assert.equal(Object.hasOwn(LOADED, 'machine_delivery_schema'), false);
+    assert.equal(probe.authoritative, false);
+  }
 });
 
 test('the Manifest may declare the machine-delivery schema, and nothing else beyond the four fields', () => {
-  const manifest = withHeader(PUBLISHED_CANONICAL.manifest, v2Header(V1.rules_snapshot_sha));
+  const manifest = withHeader(PUBLISHED_CANONICAL.manifest, v2Header(LOADED.rules_snapshot_sha));
   assert.equal(parseCanonicalManifest(manifest).metadata.machine_delivery_schema, MACHINE_DELIVERY_SCHEMA);
-  const bad = extra => withHeader(PUBLISHED_CANONICAL.manifest, v2Header(V1.rules_snapshot_sha).replace('\n---', `\n${extra}\n---`));
+  const bad = extra => withHeader(PUBLISHED_CANONICAL.manifest, v2Header(LOADED.rules_snapshot_sha).replace('\n---', `\n${extra}\n---`));
   assert.throws(() => parseCanonicalManifest(bad('delivery_policy: open')), notLoaded, 'an unknown field is refused');
   assert.throws(() => parseCanonicalManifest(bad(`machine_delivery_schema: ${MACHINE_DELIVERY_SCHEMA}`)), notLoaded, 'a duplicate is refused');
-  const malformed = withHeader(PUBLISHED_CANONICAL.manifest, v2Header(V1.rules_snapshot_sha).replace(MACHINE_DELIVERY_SCHEMA, 'machine delivery'));
+  const malformed = withHeader(PUBLISHED_CANONICAL.manifest, v2Header(LOADED.rules_snapshot_sha).replace(MACHINE_DELIVERY_SCHEMA, 'machine delivery'));
   assert.throws(() => parseCanonicalManifest(malformed), notLoaded, 'a malformed schema value is refused');
-  const missing = withHeader(PUBLISHED_CANONICAL.manifest, v2Header(V1.rules_snapshot_sha).replace(/^manifest_version: .*\n/m, ''));
+  const missing = withHeader(PUBLISHED_CANONICAL.manifest, v2Header(LOADED.rules_snapshot_sha).replace(/^manifest_version: .*\n/m, ''));
   assert.throws(() => parseCanonicalManifest(missing), notLoaded, 'a required field is still required');
 });
 

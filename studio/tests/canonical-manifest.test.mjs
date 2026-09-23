@@ -7,6 +7,7 @@ import { resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { EFFECTIVE_RULESET } from '../backend/rules/index.mjs';
 import { parseCanonicalManifest } from '../backend/bootstrap/index.mjs';
+import { MACHINE_DELIVERY_SCHEMA } from '../backend/final/delivery-evaluator.mjs';
 
 const root = fileURLToPath(new URL('../../', import.meta.url));
 const manifestPath = 'docs/CANONICAL_MANIFEST.md';
@@ -27,24 +28,34 @@ const expectedAuthority = new Map([
 const metadata = text => parseCanonicalManifest(text).metadata;
 const authorityRows = text => parseCanonicalManifest(text).entries;
 
-test('Manifest pins the published v1 release and stores no dynamic Git identities', () => {
+test('Manifest pins the published v2 release and stores no dynamic Git identities', () => {
   assert.deepEqual(metadata(manifest), {
-    canonical_version: '2026-09-13-v1',
+    canonical_version: '2026-09-23-v2',
     canonical_status: 'PUBLISHED',
-    manifest_version: '2026-09-13-v1-manifest1',
-    rules_snapshot_sha: '0a172900a01fdf39c2e9e84cf176961320b779ea',
+    manifest_version: '2026-09-23-v2-manifest1',
+    rules_snapshot_sha: '1c84c95133990e3882a5770077c3d2d39b1a6b04',
+    machine_delivery_schema: MACHINE_DELIVERY_SCHEMA,
   });
 });
 
 test('snapshot is an existing full commit that predates the Manifest, not a self-reference', () => {
-  const { rules_snapshot_sha: snapshot } = metadata(manifest);
+  const { rules_snapshot_sha: snapshot, canonical_version: version } = metadata(manifest);
   assert.match(snapshot, /^[0-9a-f]{40}$/);
   assert.equal(git(['cat-file', '-t', snapshot]), 'commit', 'Fetch snapshot history; do not substitute HEAD');
   assert.equal(git(['rev-parse', '--verify', `${snapshot}^{commit}`]), snapshot);
+  // A later release's snapshot carries the previous Manifest revision; it must
+  // never carry this one.
   const snapshotPaths = git(['ls-tree', '-r', '--name-only', snapshot]).split('\n');
-  assert.ok(!snapshotPaths.includes(manifestPath), 'Rules snapshot must predate this Manifest');
+  if (snapshotPaths.includes(manifestPath)) {
+    const earlier = metadata(git(['show', `${snapshot}:${manifestPath}`]));
+    assert.notEqual(earlier.canonical_version, version, 'Rules snapshot must predate this Manifest');
+    assert.notEqual(earlier.rules_snapshot_sha, snapshot);
+  }
   const manifestCommit = git(['log', '-1', '--format=%H', 'HEAD', '--', manifestPath]);
-  if (manifestCommit) assert.notEqual(snapshot, manifestCommit);
+  if (manifestCommit && git(['show', `${manifestCommit}:${manifestPath}`]) === manifest) {
+    assert.notEqual(snapshot, manifestCommit);
+    git(['merge-base', '--is-ancestor', snapshot, manifestCommit]);
+  }
 });
 
 test('all indexed files/directories exist at the pinned snapshot and links use that snapshot', () => {

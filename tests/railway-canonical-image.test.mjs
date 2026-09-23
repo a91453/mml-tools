@@ -128,7 +128,7 @@ test('the allowlisted image can import the server and serve its browser workspac
   assert.match(result.stdout, /SERVER_IMPORT_OK/);
 });
 
-test('the image build reaches CANONICAL_LOADED from a source tree that carries no .git', t => {
+test('the image build reaches CANONICAL_LOADED from a source tree that carries no .git', async t => {
   const image = imageWithoutGitMetadata(t);
   const published = publishedSource(t);
 
@@ -147,10 +147,11 @@ test('the image build reaches CANONICAL_LOADED from a source tree that carries n
 
   const reported = probeLines(probe.stdout);
   assert.equal(reported.status, 'CANONICAL_LOADED');
-  assert.equal(reported.canonical_version, '2026-09-13-v1');
+  const { PUBLISHED_CANONICAL } = await import('../studio/backend/rules/index.mjs');
+  assert.equal(reported.canonical_version, PUBLISHED_CANONICAL.metadata.canonical_version);
   assert.equal(reported.canonical_status, 'PUBLISHED');
-  assert.equal(reported.manifest_version, '2026-09-13-v1-manifest1');
-  assert.equal(reported.rules_snapshot_sha, '0a172900a01fdf39c2e9e84cf176961320b779ea');
+  assert.equal(reported.manifest_version, PUBLISHED_CANONICAL.metadata.manifest_version);
+  assert.equal(reported.rules_snapshot_sha, PUBLISHED_CANONICAL.metadata.rules_snapshot_sha);
   assert.match(reported.manifest_commit, /^[0-9a-f]{40}$/);
   assert.equal(reported.published_main_head, published.head);
   assert.equal(reported.repository_head, published.head);
@@ -355,7 +356,8 @@ test('the running service drops the build credential and never hands it to a chi
 
 test('the build probe is a gate, not a warning', () => {
   const probe = read('railway/canonical-probe.sh');
-  assert.ok(probe.includes('0a172900a01fdf39c2e9e84cf176961320b779ea'), 'the probe must check the pinned rules snapshot');
+  const manifestSnapshot = read('docs/CANONICAL_MANIFEST.md').match(/^rules_snapshot_sha: ([0-9a-f]{40})$/m)[1];
+  assert.ok(probe.includes(`MML_RULES_SNAPSHOT_SHA:-${manifestSnapshot}`), 'the probe must check the pinned rules snapshot');
   assert.match(probe, /exit 1/, 'the probe must be able to fail the build');
   // The two failures stay distinct: published rules unavailable is not the same
   // defect as an engine module that will not import.

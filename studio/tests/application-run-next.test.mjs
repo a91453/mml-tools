@@ -6,6 +6,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { createStudioApplication, ERROR_CODES, RUN_STEP } from '../backend/application/index.mjs';
 import { FIXTURE_CONFIRMATIONS, projectWithSymbolicAsset, runDecisionsFor } from './fixtures/run-fixtures.mjs';
+import { MACHINE_DELIVERY_ACTIVE } from './support/loaded-release.mjs';
 
 const OWNER = 'owner:continuation';
 const rejected = (promise, code) => assert.rejects(promise, error => error.code === code);
@@ -57,7 +58,8 @@ test('next is byte-and-mtime read-only, repeatable, detached, and uses the exist
     assert.equal(first.gate_snapshot.current_binding_verified, false);
     assert.deepEqual(first.delivery_state, first.progress.machine_delivery);
     assert.equal(first.delivery_state.lifecycle, 'CANDIDATE');
-    assert.equal(first.delivery_state.authoritative, false);
+    // Authority follows the loaded release; an incomplete gate map is not ready under either.
+    assert.equal(first.delivery_state.authoritative, MACHINE_DELIVERY_ACTIVE);
     first.review_requests[0].missing.push('client mutation');
     first.canonical.rules_snapshot_sha = 'forged';
     assert.deepEqual(snapshots(directory), before);

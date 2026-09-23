@@ -36,6 +36,7 @@ import { evaluateCore3Completeness, CORE3_COMPLETENESS_BLOCKERS } from '../backe
 import { evaluateProjectReadiness } from '../backend/final/readiness.mjs';
 import { ERROR_CODES, createStudioApplication } from '../backend/application/index.mjs';
 import { canonicalProjectBytes, sixRoleBaseline } from './fixtures/application-fixtures.mjs';
+import { MACHINE_DELIVERY_ACTIVE, assertUnresolved } from './support/loaded-release.mjs';
 
 const OFFICIAL = createSource({ id: 'official', label: 'Official MusicXML', kind: 'official-musicxml', authority: 'primary-symbolic' });
 const note = ({ id, pitch, start, end, role }) => createCanonicalNoteEvent({
@@ -435,7 +436,7 @@ test('Finalize reads the recorded Core3 approvals rather than passing none', asy
   assert.equal(after.readiness.gates.core3.status, 'PASS');
 });
 
-test('the Gate 4 completeness gate blocks Finalize and is cleared only by its own review', async () => {
+test('the Gate 4 completeness gate stays unresolved at Finalize and is cleared only by its own review', async () => {
   const service = createStudioApplication();
   const fixture = sixRoleBaseline();
   const created = (await service.createProject(OWNER, { title: 'Gate 4 at finalize' })).project;
@@ -467,8 +468,15 @@ test('the Gate 4 completeness gate blocks Finalize and is cleared only by its ow
   assert.ok(review.blockers.includes('core3Completeness'));
 
   const blocked = await service.finalize(OWNER, created.project_id, { candidateId });
-  assert.equal(blocked.mml, null);
-  assert.ok(blocked.blockers.includes('core3Completeness'), 'a clean continuity audit cannot carry emission on its own');
+  assert.equal(blocked.mml, null, 'source completeness is still unanswered');
+  // A clean continuity audit cannot resolve Gate 4 on its own. Under v1 it
+  // blocks emission; under v2 residue only a reviewer can speak to is carried
+  // as NON_BLOCKING_PENDING, with its code, until that review.
+  assertUnresolved(blocked, 'core3Completeness', 'non_blocking_pending');
+  if (MACHINE_DELIVERY_ACTIVE) {
+    const residue = blocked.machine_delivery.non_blocking_pending.find(entry => entry.gate === 'core3Completeness');
+    assert.deepEqual([...residue.blockers], [CORE3_COMPLETENESS_BLOCKERS.UNRESOLVED]);
+  }
 
   // Only the Gate 4 review clears it, and it is candidate-bound.
   await service.recordConfirmations(OWNER, created.project_id, {
@@ -577,7 +585,7 @@ test('a refused reason-only confirmation leaves the Core3 completeness gate PEND
   assert.equal(after.core3_completeness.reviewed, false);
   assert.equal(after.core3_completeness.status, 'PENDING');
   assert.ok(after.blockers.includes('core3Completeness'));
-  assert.ok((await service.finalize(OWNER, projectId, { candidateId })).blockers.includes('core3Completeness'));
+  assertUnresolved(await service.finalize(OWNER, projectId, { candidateId }), 'core3Completeness', 'non_blocking_pending');
 });
 
 test('an evidence-backed candidate-bound review clears the reviewable residue and nothing else', async () => {
@@ -628,7 +636,8 @@ test('an absent Lead stays FAIL however much review evidence is recorded', async
     },
   });
 
-  // ...and the gate still FAILs, because a reviewer cannot supply a Lead by
+  // ...and the gate still FAILs, and still blocks under every release, because
+  // a reviewer cannot supply a Lead by
   // confirming one. This is a statement about the arrangement, not a gap in the
   // evidence.
   const after = (await service.reviewCandidate(OWNER, projectId, { candidateId })).review;

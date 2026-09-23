@@ -16,6 +16,7 @@ import { verifyStudioArtifact } from '../../scripts/verify-studio-artifact.mjs';
 import { computeCacheId, readServiceWorkerTemplate, renderServiceWorker } from '../../scripts/studio-artifact-identity.mjs';
 import { verifyCanonicalPackage } from '../web/canonical-package.mjs';
 import { MANIFEST_PATH, PUBLISHED_REF, isolatedRepository, observePublishedRef } from './support/isolated-repository.mjs';
+import { PUBLISHED_CANONICAL } from '../backend/rules/index.mjs';
 
 const root = fileURLToPath(new URL('../../', import.meta.url));
 // Sibling test processes bootstrap from the shared checkout's discovery ref
@@ -106,7 +107,7 @@ test('an unsupported Canonical release fails closed instead of silently reusing 
   const source = repo.git('show', `${repo.published}:${MANIFEST_PATH}`);
 
   repo.publish(repo.republishManifest(
-    source.replace('canonical_version: 2026-09-13-v1', 'canonical_version: 2999-01-01-v9').replace('manifest_version: 2026-09-13-v1-manifest1', 'manifest_version: 2999-01-01-v9-manifest1'),
+    source.replace(/^canonical_version: \S+$/m, 'canonical_version: 2999-01-01-v9').replace(/^manifest_version: \S+$/m, 'manifest_version: 2999-01-01-v9-manifest1'),
     'probe: unsupported Canonical version'));
   assert.match(buildFails(repo) ?? '', /CANONICAL_NOT_LOADED/);
 
@@ -182,7 +183,7 @@ test('repeating a build reproduces the same buildId and byte-identical hashed as
   }
   const verified = await verifyStudioArtifact(second.out, {
     buildId: first.summary.buildId,
-    canonical_version: '2026-09-13-v1',
+    canonical_version: PUBLISHED_CANONICAL.metadata.canonical_version,
     rules_snapshot_sha: first.manifest.release.rules_snapshot_sha,
   });
   assert.equal(verified.assetCount, first.manifest.files.length);
@@ -318,7 +319,7 @@ test('the verifier rejects a Canonical payload the browser would refuse to boot'
   // Shipped Canonical identity disagreeing with the declared release identity.
   const relabelled = await copyOf();
   const drifted = JSON.parse(await readPayload(relabelled));
-  drifted.metadata.manifest_version = '2026-09-13-v1-manifest99';
+  drifted.metadata.manifest_version = `${drifted.metadata.canonical_version}-manifest99`;
   const driftedJson = JSON.stringify(drifted);
   await writePublished(relabelled, driftedJson);
   await writeBootstrap(relabelled, driftedJson);
@@ -328,7 +329,7 @@ test('the verifier rejects a Canonical payload the browser would refuse to boot'
   // Only one of the two embedded copies swapped, everything else re-signed.
   const divergent = await copyOf();
   const second = JSON.parse(await readPayload(divergent));
-  second.metadata.manifest_version = '2026-09-13-v1-manifest99';
+  second.metadata.manifest_version = `${second.metadata.canonical_version}-manifest99`;
   await writeBootstrap(divergent, JSON.stringify(second));
   await resign(divergent);
   await rejects(divergent, /Embedded Canonical bundles disagree/);
@@ -337,7 +338,7 @@ test('the verifier rejects a Canonical payload the browser would refuse to boot'
 test('a verified artifact also satisfies the browser Canonical package contract', async t => {
   const { out, manifest } = await build(t);
   const verified = await verifyStudioArtifact(out, {
-    canonical_version: '2026-09-13-v1',
+    canonical_version: PUBLISHED_CANONICAL.metadata.canonical_version,
     rules_snapshot_sha: manifest.release.rules_snapshot_sha,
   });
   assert.equal(verified.buildId, manifest.buildId);

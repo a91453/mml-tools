@@ -30,6 +30,7 @@ import {
   createSource, createCanonicalNoteEvent, createCanonicalTempoEvent, createCanonicalMeterEvent, createCanonicalProject,
 } from '../backend/canonical/index.mjs';
 import { evaluateProjectReadiness } from '../backend/final/index.mjs';
+import { PUBLISHED_CANONICAL } from '../backend/rules/index.mjs';
 
 const OFFICIAL = createSource({ id: 'official', label: 'Official MusicXML', kind: 'official-musicxml', authority: 'primary-symbolic' });
 const note = ({ id, pitch = 60, start, end, role = 'Melody', volume = 8 }) => createCanonicalNoteEvent({
@@ -307,8 +308,8 @@ test('emitter diagnostics reach the caller with the emitter\'s own structure, an
   assert.ok(miss.message.includes('search'));
   // The emitter's Canonical identity is carried, so the UI can state which
   // published release produced the verdict.
-  assert.equal(result.canonical.canonical_version, '2026-09-13-v1');
-  assert.equal(result.canonical.rules_snapshot_sha, '0a172900a01fdf39c2e9e84cf176961320b779ea');
+  assert.equal(result.canonical.canonical_version, PUBLISHED_CANONICAL.metadata.canonical_version);
+  assert.equal(result.canonical.rules_snapshot_sha, PUBLISHED_CANONICAL.metadata.rules_snapshot_sha);
 
   const next = applyFinalDelivery(w, result);
   assert.equal(next.deliveryMml, undefined, 'a refusal never writes a delivery');

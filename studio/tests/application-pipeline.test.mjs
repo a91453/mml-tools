@@ -20,6 +20,7 @@ import {
   keepEveryRole,
   sixRoleBaseline,
 } from './fixtures/application-fixtures.mjs';
+import { MACHINE_DELIVERY_ACTIVE, assertFinalWithheldOrDeliveredUnresolved } from './support/loaded-release.mjs';
 
 const OWNER = 'owner:alice';
 const app = (options = {}) => createStudioApplication(options);
@@ -516,11 +517,18 @@ test('a technical PASS never produces a source, audio, player or in-game PASS', 
     },
   });
 
-  // Player readback is a required pre-emission gate, so nothing is emitted and
-  // the technical axis cannot be claimed either.
-  assert.equal(result.operation, 'blocked');
-  assert.ok(result.blockers.includes('playerReadback'));
-  assert.notEqual(result.gates.technical, 'PASS');
+  // Under v1 player readback is a required pre-emission gate, so nothing is
+  // emitted and the technical axis cannot be claimed either. Under v2 it is
+  // post-delivery evidence: the Final is emitted and technically graded, and
+  // that technical PASS still sets no player PASS.
+  assertFinalWithheldOrDeliveredUnresolved(result, [['playerReadback', 'post_delivery']]);
+  if (MACHINE_DELIVERY_ACTIVE) {
+    assert.equal(result.gates.technical, 'PASS');
+    assert.notEqual(result.gates.player_readback, 'PASS');
+    assert.equal(result.gates.in_game, 'PENDING');
+  } else {
+    assert.notEqual(result.gates.technical, 'PASS');
+  }
 
   const passing = await service.finalize(OWNER, run.projectId, { candidateId: run.candidateId, confirmations: fullConfirmations });
   assert.equal(passing.gates.technical, 'PASS');
@@ -535,7 +543,7 @@ test('a technical PASS never produces a source, audio, player or in-game PASS', 
   assert.ok(artifact.remaining_pending_gates.includes('in_game'));
 });
 
-test('Gate 8 blocks Final until an evidence-backed candidate review is recorded', async () => {
+test('Gate 8 stays unresolved, and v1 withholds Final, until an evidence-backed candidate review is recorded', async () => {
   const service = app();
   const run = await applyKeepOnlyCandidate(service, OWNER);
   const withoutAdaptation = {
@@ -548,11 +556,8 @@ test('Gate 8 blocks Final until an evidence-backed candidate review is recorded'
     candidateId: run.candidateId,
     confirmations: withoutAdaptation,
   });
-  assert.equal(blocked.operation, 'blocked');
   assert.equal(blocked.gates.mobile_adaptation, 'PENDING');
-  assert.ok(blocked.blockers.includes('mobileAdaptation'));
-  assert.equal(blocked.mml, null);
-  assert.equal(blocked.artifact_id, null);
+  assertFinalWithheldOrDeliveredUnresolved(blocked, [['mobileAdaptation', 'non_blocking_pending']]);
 
   await rejects(service.finalize(OWNER, run.projectId, {
     candidateId: run.candidateId,
@@ -569,7 +574,7 @@ test('Gate 8 blocks Final until an evidence-backed candidate review is recorded'
   assert.equal(passed.gates.mobile_adaptation, 'PASS');
 });
 
-test('Gate 9 blocks Final until an evidence-backed candidate regression review is recorded', async () => {
+test('Gate 9 stays unresolved, and v1 withholds Final, until an evidence-backed candidate regression review is recorded', async () => {
   const service = app();
   const run = await applyKeepOnlyCandidate(service, OWNER);
   const withoutRegression = {
@@ -582,11 +587,8 @@ test('Gate 9 blocks Final until an evidence-backed candidate regression review i
     candidateId: run.candidateId,
     confirmations: withoutRegression,
   });
-  assert.equal(blocked.operation, 'blocked');
   assert.equal(blocked.gates.regression, 'PENDING');
-  assert.ok(blocked.blockers.includes('regression'));
-  assert.equal(blocked.mml, null);
-  assert.equal(blocked.artifact_id, null);
+  assertFinalWithheldOrDeliveredUnresolved(blocked, [['regression', 'non_blocking_pending']]);
 
   await rejects(service.finalize(OWNER, run.projectId, {
     candidateId: run.candidateId,

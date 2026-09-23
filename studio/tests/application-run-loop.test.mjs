@@ -26,6 +26,7 @@ import { summarizeLegacyMergeDiagnostics } from '../backend/application/run-serv
 import { LIMITS } from '../backend/application/contracts.mjs';
 import { baselineWithUnassignedRole, FIXTURE_SOURCE_ID } from './fixtures/g12-fixtures.mjs';
 import { FIXTURE_CONFIRMATIONS, RUN_REVIEWER, mobileProfile, projectWithSymbolicAsset, runDecisionsFor, sixRoleBaseline } from './fixtures/run-fixtures.mjs';
+import { MACHINE_DELIVERY_ACTIVE, assertRunHeldOrDeliveredUnresolved, assertUnresolved } from './support/loaded-release.mjs';
 
 const OWNER = 'owner:run-loop';
 
@@ -295,7 +296,7 @@ test('a run can start from a prepared candidate without re-running intake or min
 
 // ─── D. applied is not reviewed ─────────────────────────────────────────────
 
-test('an applied Mobile adaptation leaves the run awaiting review, with the gates it touched re-opened', async () => {
+test('an applied Mobile adaptation is not a reviewed one: the gates it touched re-open, and v1 holds the run', async () => {
   const app = createStudioApplication({});
   const fixture = await projectWithSymbolicAsset(app, OWNER);
   await app.analyzeSources(OWNER, fixture.projectId, { assetIds: [fixture.assetId] });
@@ -317,11 +318,19 @@ test('an applied Mobile adaptation leaves the run awaiting review, with the gate
   // The adaptation really applied.
   assert.equal(statusOf(run, RUN_STEP.MOBILE_ADAPTATION), RUN_STEP_STATUS.COMPLETED);
   assert.notEqual(run.candidate_id, prepared);
-  // And the run is still waiting, because applying is not reviewing.
+  // Applying is not reviewing: Gate 8 is re-opened for the new revision.
+  assert.equal(run.gates.mobile_adaptation, 'PENDING');
+  assertRunHeldOrDeliveredUnresolved(run, [['mobileAdaptation', 'non_blocking_pending']]);
+  if (MACHINE_DELIVERY_ACTIVE) {
+    // Delivered for listening first; the review is still owed and still names its code.
+    const owed = run.machine_delivery.non_blocking_pending.find(entry => entry.gate === 'mobileAdaptation');
+    assert.deepEqual(owed.blockers, ['MOBILE_ADAPTATION_REVIEW_REQUIRED']);
+    assert.equal(run.gates.in_game, 'PENDING');
+    return;
+  }
+  // Under v1 the run is still waiting.
   assert.equal(run.state, RUN_STATE.AWAITING_REVIEW);
   assert.equal(run.halt.reason, 'AWAITING_REVIEW_EVIDENCE');
-  assert.equal(run.gates.mobile_adaptation, 'PENDING');
-  assert.equal(run.final_artifact_id, null);
   const gate8 = run.review_requests.find(entry => entry.gate === 'mobileAdaptation');
   assert.ok(gate8, JSON.stringify(run.review_requests.map(entry => entry.gate)));
   assert.deepEqual(gate8.blockers, ['MOBILE_ADAPTATION_REVIEW_REQUIRED']);
@@ -347,14 +356,15 @@ test('a run given no confirmations leaves player readback NOT_RUN and original a
   });
   const run = started.run;
 
+  // Source completeness blocks under every supported release.
   assert.equal(run.state, RUN_STATE.AWAITING_REVIEW);
   // Nothing was assumed: no data is not `N/A`, and no data is not `false`.
   assert.equal(run.gates.player_readback, 'NOT_RUN');
   assert.equal(run.gates.audio, 'PENDING');
   assert.equal(run.gates.source, 'PENDING');
-  const gates = run.review_requests.map(entry => entry.gate);
-  for (const gate of ['source', 'originalAudio', 'playerReadback', 'mobileAdaptation', 'regression']) {
-    assert.ok(gates.includes(gate), `${gate} must be reported as blocking, got ${JSON.stringify(gates)}`);
+  assert.ok(run.review_requests.some(entry => entry.gate === 'source'), JSON.stringify(run.review_requests.map(entry => entry.gate)));
+  for (const [gate, phase] of [['source', 'blocking'], ['originalAudio', 'non_blocking_pending'], ['playerReadback', 'post_delivery'], ['mobileAdaptation', 'non_blocking_pending'], ['regression', 'non_blocking_pending']]) {
+    assertUnresolved(run, gate, phase);
   }
   // Every one of them names the operation that answers it, and none of them was
   // answered by the run.

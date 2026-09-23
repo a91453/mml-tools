@@ -20,6 +20,7 @@ import {
 } from '../backend/application/index.mjs';
 import { SOURCE_KINDS } from '../backend/canonical/index.mjs';
 import { canonicalProjectBytes, sixRoleBaseline } from './fixtures/application-fixtures.mjs';
+import { PUBLISHED_CANONICAL } from '../backend/rules/index.mjs';
 
 const OWNER = 'owner:alice';
 const OTHER = 'owner:bob';
@@ -183,8 +184,10 @@ test('Canonical provenance keeps its five identities apart', async () => {
   const caps = await app().capabilities();
   const canonical = caps.canonical;
   assert.equal(canonical.status, 'CANONICAL_LOADED');
-  assert.equal(canonical.canonical_version, '2026-09-13-v1');
+  assert.equal(canonical.canonical_version, PUBLISHED_CANONICAL.metadata.canonical_version);
   assert.equal(canonical.canonical_status, 'PUBLISHED');
+  // Carried so stored runs and artifacts re-derive machine-delivery authority.
+  assert.equal(canonical.machine_delivery_schema, PUBLISHED_CANONICAL.metadata.machine_delivery_schema ?? null);
   assert.match(canonical.rules_snapshot_sha, /^[0-9a-f]{40}$/);
   assert.match(canonical.manifest_commit, /^[0-9a-f]{40}$/);
   assert.match(canonical.published_main_head, /^[0-9a-f]{40}$/);

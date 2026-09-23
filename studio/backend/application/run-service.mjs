@@ -72,6 +72,7 @@ import {
 } from './contracts.mjs';
 import { PRE_EMISSION_EXEMPT_GATES } from './final-service.mjs';
 import { migrateMachineDeliveryState } from './machine-delivery-migration.mjs';
+import { deliveryBlockingGates } from '../final/delivery-evaluator.mjs';
 import { ID_PREFIX, newId, sha256Of } from './store.mjs';
 import { requestKeyOf } from './proposal-contracts.mjs';
 import {
@@ -1469,6 +1470,7 @@ export function createRunService({ canonical, projects, store, operations, seria
       canonical_status: canonicalProvenance.canonical_status,
       manifest_version: canonicalProvenance.manifest_version,
       rules_snapshot_sha: canonicalProvenance.rules_snapshot_sha,
+      machine_delivery_schema: canonicalProvenance.machine_delivery_schema ?? null,
       manifest_commit: canonicalProvenance.manifest_commit,
       published_main_head: canonicalProvenance.published_main_head,
       repository_head: canonicalProvenance.repository_head,
@@ -2132,13 +2134,10 @@ export function createRunService({ canonical, projects, store, operations, seria
         const result = await operations.reviewCandidate(owner, projectId, { candidateId, confirmations: normalized.confirmations });
         const reviewed = result.review;
         const readiness = reviewed.readiness;
-        const blocking = readiness?.preGameBlocking ?? [];
-        // Published v1 remains authoritative until a Published Canonical
-        // identity explicitly activates the machine-delivery schema. Before
-        // that publication the new result is an informational projection only.
-        const authoritativeBlocking = readiness?.machineDelivery?.authoritative === true
-          ? readiness.machineDelivery.blocking.map(entry => entry.gate)
-          : blocking;
+        // The loaded release's delivery blockers: the pre-game blockers until a
+        // Published Canonical activates the machine-delivery schema, then the
+        // ledger's BLOCKING phase (final/delivery-evaluator.mjs).
+        const authoritativeBlocking = deliveryBlockingGates(readiness);
         // `technical` is exempt only before emission, where requiring it would
         // be circular: no MML exists for the gate to grade. The exemption list
         // is the Final service's own `PRE_EMISSION_EXEMPT_GATES`, imported

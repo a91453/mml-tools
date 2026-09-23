@@ -14,17 +14,18 @@ import { chownSync, readdirSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { loadPublishedCanonical } from '../backend/bootstrap/index.mjs';
 import { PUBLISHED_CANONICAL } from '../backend/rules/index.mjs';
+import { SUPPORTED_CANONICAL_VERSIONS } from '../backend/rules/supported-releases.mjs';
 import { MANIFEST_PATH, PUBLISHED_REF, isolatedRepository, observePublishedRef, repositoryRoot } from './support/isolated-repository.mjs';
 
-const SUPPORTED = '2026-09-13-v1';
+const SUPPORTED = SUPPORTED_CANONICAL_VERSIONS;
 const notLoaded = pattern => error => error.code === 'CANONICAL_NOT_LOADED' && pattern.test(error.message);
 
 // The two probe Manifests that web-build-reproducibility publishes to prove
 // the build fails closed. Published on the *shared* checkout's discovery ref,
 // even briefly, they were read by sibling test processes: that was M6.
 const unsupportedVersion = text => text
-  .replace('canonical_version: 2026-09-13-v1', 'canonical_version: 2999-01-01-v9')
-  .replace('manifest_version: 2026-09-13-v1-manifest1', 'manifest_version: 2999-01-01-v9-manifest1');
+  .replace(/^canonical_version: \S+$/m, 'canonical_version: 2999-01-01-v9')
+  .replace(/^manifest_version: \S+$/m, 'manifest_version: 2999-01-01-v9-manifest1');
 const unavailableSnapshot = text => text.replace(/rules_snapshot_sha: [0-9a-f]{40}/, `rules_snapshot_sha: ${'0'.repeat(40)}`);
 
 test('M6 signature: both observed messages are the loader refusing a probe Manifest on the discovery ref', t => {

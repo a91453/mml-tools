@@ -118,7 +118,7 @@ for (const [name, options] of [
   ['malformed Manifest', { transformManifest: () => '# Invalid Manifest\n' }],
   ['unpublished status', { transformManifest: text => text.replace('canonical_status: PUBLISHED', 'canonical_status: CANDIDATE') }],
   ['missing snapshot document', { omitPath: 'docs/SOURCE_POLICY.md' }],
-  ['document version mismatch', { transformDocument: text => text.replace('Version: 2026-09-13-v1', 'Version: outdated') }],
+  ['document version mismatch', { transformDocument: text => text.replace(/^Version: \S+$/m, 'Version: outdated') }],
   ['document status mismatch', { transformDocument: text => text.replace('Status: PUBLISHED CANONICAL', 'Status: DRAFT') }],
   ['unknown snapshot commit', { transformManifest: text => text.replaceAll(text.match(/rules_snapshot_sha: ([0-9a-f]{40})/)[1], 'a'.repeat(40)) }],
   ['unversioned resource link', { transformManifest: text => text.replace(/\/blob\/[0-9a-f]{40}\//, '/blob/main/') }],
@@ -166,8 +166,14 @@ test('real Studio imports and Bootstrap CLI stop when published discovery is una
   assert.equal(JSON.parse(cli.stderr).legacyFallbackAllowed, false);
 });
 
+// The migration these two tests guard moved the rules into the first published
+// release, so they compare against that release's snapshot. Later releases
+// change no policy value (2026-09-23-v2 changes delivery only), which the first
+// test also keeps true.
+const FIRST_RULES_SNAPSHOT = '0a172900a01fdf39c2e9e84cf176961320b779ea';
+
 test('migration changes no non-authority executable policy values', async () => {
-  const original = git(root, 'show', `${PUBLISHED_CANONICAL.metadata.rules_snapshot_sha}:studio/backend/rules/index.mjs`);
+  const original = git(root, 'show', `${FIRST_RULES_SNAPSHOT}:studio/backend/rules/index.mjs`);
   const moduleText = original.replace("from '../../../dist/core.js'", `from '${new URL('../../dist/core.js', import.meta.url).href}'`);
   const baseline = await import(`data:text/javascript,${encodeURIComponent(moduleText)}`);
   const { authority: oldAuthority, ...oldPolicy } = baseline.EFFECTIVE_RULESET;
@@ -178,7 +184,7 @@ test('migration changes no non-authority executable policy values', async () => 
 test('Lead Role historical evidence is preserved byte-for-byte outside the live Skill', () => {
   for (const [directory, name] of [['patches', '2026-09-10-lead-role.md'], ['references', '2026-09-10-lead-role-master-rules.md']]) {
     const oldPath = `skills/mabinogi-mobile-mml/${directory}/${name}`;
-    const original = execFileSync('git', ['show', `${PUBLISHED_CANONICAL.metadata.rules_snapshot_sha}:${oldPath}`], { cwd: root });
+    const original = execFileSync('git', ['show', `${FIRST_RULES_SNAPSHOT}:${oldPath}`], { cwd: root });
     assert.deepEqual(readFileSync(resolve(root, 'docs/history/lead-role-2026-09-10', name)), original);
     assert.equal(existsSync(resolve(root, oldPath)), false);
   }

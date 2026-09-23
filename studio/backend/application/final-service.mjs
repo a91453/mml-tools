@@ -31,6 +31,7 @@ import { ERROR_CODES, GATE_STATUS, OPERATION_STATUS, fail, requireString } from 
 import { sha256Of } from './store.mjs';
 import { gatesFrom } from './review-service.mjs';
 import { migrateMachineDeliveryState } from './machine-delivery-migration.mjs';
+import { deliveryBlockingGates } from '../final/delivery-evaluator.mjs';
 
 const now = () => new Date().toISOString();
 const encoder = new TextEncoder();
@@ -162,6 +163,10 @@ export function createFinalService({ canonical, projects, review, store }) {
         technical_timing_repair: { requested: technicalTimingRepair, applied: false },
         final_bar: barInputs,
         blockers,
+        // The same ledger a delivered result carries, so a refusal also says
+        // which unresolved gates block and which would be delivered for
+        // listening first under the loaded release.
+        machine_delivery: extra?.readiness?.machineDelivery ?? null,
         ...extra,
         notice,
       });
@@ -234,10 +239,7 @@ export function createFinalService({ canonical, projects, review, store }) {
       };
       const readiness = engines.final.evaluateProjectReadiness({ ...readinessInputs, mmlValidation: null });
 
-      const machineProjection = readiness.machineDelivery;
-      const blocked = machineProjection?.authoritative === true
-        ? machineProjection.blocking.map(entry => entry.gate).filter(name => !PRE_EMISSION_EXEMPT_GATES.includes(name))
-        : readiness.preGameBlocking.filter(name => !PRE_EMISSION_EXEMPT_GATES.includes(name));
+      const blocked = deliveryBlockingGates(readiness).filter(name => !PRE_EMISSION_EXEMPT_GATES.includes(name));
 
       if (blocked.length) {
         return refused(blocked, { gates: gatesFrom(readiness), readiness }, 'Nothing was emitted. Required Canonical gates are not satisfied, and the Final emitter was not run.');
@@ -319,9 +321,9 @@ export function createFinalService({ canonical, projects, review, store }) {
       // emitted string is known — and a Final that readiness calls not ready
       // is not delivered whichever gate said so.
       const machineDelivery = finalReadiness.machineDelivery;
-      const gatesSatisfied = machineDelivery?.authoritative === true
-        ? machineDelivery.ready
-        : finalReadiness.preGameBlocking.length === 0;
+      const deliveryBlockers = deliveryBlockingGates(finalReadiness);
+      const gatesSatisfied = deliveryBlockers.length === 0
+        && (machineDelivery?.authoritative !== true || machineDelivery.ready);
       const delivered = passed && technicalSatisfied && gatesSatisfied;
 
       // Why the two are still reported separately below rather than reconciled:
@@ -420,9 +422,7 @@ export function createFinalService({ canonical, projects, review, store }) {
         // would be circular. Past that point there is an emitted string the
         // parser has graded, so it is an ordinary blocking gate again and
         // filtering it out here would hide the one blocker that matters.
-        blockers: machineDelivery?.authoritative === true
-          ? machineDelivery.blocking.map(entry => entry.gate)
-          : [...finalReadiness.preGameBlocking],
+        blockers: [...deliveryBlockers],
         // Carried in the response, not only in the artifact, because a blocked
         // finalize files no artifact and the contradiction still has to be
         // readable from what the caller was handed.

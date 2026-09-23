@@ -98,6 +98,8 @@ test('legacy Final artifact reads add a lazy machine-delivery projection without
   assert.ok(legacy.machine_delivery, 'new artifacts carry the projection before the legacy simulation');
   delete legacy.machine_delivery;
   if (legacy.readiness_summary) delete legacy.readiness_summary.machine_delivery;
+  // A legacy artifact was made under a release that declared no schema.
+  delete legacy.canonical.machine_delivery_schema;
   store.putJson(key, legacy);
   const before = structuredClone(store.getJson(key));
 

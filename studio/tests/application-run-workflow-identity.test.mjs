@@ -336,8 +336,9 @@ test('a new candidate inside a live run drops every result bound to the old one'
 
   // A live run: reviewed against candidate1 — so it holds a review receipt and
   // a gate snapshot bound to it — and stopped before a Final because one of the
-  // reviewer's own answers is withheld.
-  const { regression_reviewed: _withheld, ...partial } = FIXTURE_CONFIRMATIONS;
+  // reviewer's own answers is withheld. Source completeness blocks under every
+  // supported release.
+  const { source_complete: _withheld, ...partial } = FIXTURE_CONFIRMATIONS;
   const started = await app.startRun(OWNER, fixture.projectId, { target_candidate_id: candidate1, confirmations: partial });
   assert.notEqual(started.run.state, RUN_STATE.COMPLETED);
   assert.equal(started.run.final_artifact_id, null);
