@@ -607,11 +607,15 @@ report as unresolved again — the safe direction.
 
 ## Studio Web integration
 
-`studio/web/arrangement-decisions.mjs` is the whole Web surface. There is no
-Arrangement Editor UI in this change: decisions are recorded through the model
-API (`recordAcceptedDecision`, `clearAcceptedDecisions`), and the acceptance
-bindings are computed by `acceptedDecisionBindings()` from the project and lanes
-that are loaded, never supplied by a caller.
+`studio/web/arrangement-decisions.mjs` is the whole Web surface. Decisions are
+recorded through the model API (`recordAcceptedDecision`,
+`clearAcceptedDecisions`), and the acceptance bindings are computed by
+`acceptedDecisionBindings()` from the project and lanes that are loaded, never
+supplied by a caller. (Update 2026-09-23: the page now has a Decision Composer
+on the review roll. It calls `previewAcceptedDecision`, a read-only dry run
+that fills the bindings and id in the Worker, and `acceptPreviewedDecision`,
+which records only the previewed record digest through
+`recordAcceptedDecision`. See `studio/web/README.md`.)
 
 * Decision **records** are persisted. The applied candidate is not: it is
   re-derived on every analysis from the re-validated source project and freshly
@@ -1049,8 +1053,10 @@ state dropped; carry-forward history dropped). 25 mutations total, 25 caught.
 
 ## Known limitations
 
-* No Arrangement Editor UI, piano roll, drag-and-drop editing or verification
-  player. Decisions are recorded through the model API.
+* No drag-and-drop arrangement editing. (Update 2026-09-23: decisions can be
+  composed on the Studio Web review roll and recorded after a Worker-side dry
+  run; the Web preview player can record a Gate 6 readback. Neither edits
+  events directly.)
 * Lane targeting requires the G11-C suggestion the decision was accepted against.
   A lane whose events are not all present in the project being applied onto fails
   closed rather than shrinking to the survivors.

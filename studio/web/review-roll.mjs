@@ -41,7 +41,7 @@ function readTheme(element) {
   return Object.fromEntries(TOKENS.map(name => [name, style.getPropertyValue(`--roll-${name}`).trim() || '#888']));
 }
 
-export function mountReviewRoll(root, source, { onSelect = () => {}, onSignal = () => {} } = {}) {
+export function mountReviewRoll(root, source, { onSelect = () => {}, onSignal = () => {}, marked: initiallyMarked = [] } = {}) {
   const projection = prepareProjection(source);
   root.innerHTML = '';
   const stage = document.createElement('div');
@@ -65,6 +65,8 @@ export function mountReviewRoll(root, source, { onSelect = () => {}, onSignal = 
   for (const signal of projection.signals) for (const id of signal.eventIds) signalsByEvent.set(id, [...(signalsByEvent.get(id) ?? []), signal]);
   let selected = null;
   let focusedSignal = null;
+  // Events gathered by the Decision Composer: outlined, never edited here.
+  let marked = new Set(initiallyMarked);
   let drawing = false;
   const counts = projection.lanes.map(l => l.events.length);
   canvas.setAttribute('aria-label', `${ROLL_ROLES.map((r, i) => `${r} ${counts[i]}`).join('、')}、未指派 ${projection.unassigned.length} 個音符；${projection.signals.length} 個審核訊號。`);
@@ -196,6 +198,10 @@ export function mountReviewRoll(root, source, { onSelect = () => {}, onSignal = 
         if (selected && selected.id === event.id) {
           g.strokeStyle = C.select; g.lineWidth = 2;
           g.strokeRect(r.x - 2.5, r.y - 2.5, r.w + 5, r.h + 5);
+        } else if (marked.has(event.id)) {
+          g.setLineDash([3, 2]); g.strokeStyle = C.select; g.lineWidth = 1.5;
+          g.strokeRect(r.x - 2, r.y - 2, r.w + 4, r.h + 4);
+          g.setLineDash([]);
         }
       }
     }
@@ -406,6 +412,7 @@ export function mountReviewRoll(root, source, { onSelect = () => {}, onSignal = 
     draw,
     zoom: (axis, dir) => stepZoom(axis, dir),
     setLaneVisible(lane, visible) { prefs.visible[lane] = visible; draw(); },
+    setMarked(ids) { marked = new Set(ids); draw(); },
     focusSignal(index) {
       const signal = projection.signals.find(s => s.index === index);
       if (!signal) return;

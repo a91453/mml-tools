@@ -42,6 +42,14 @@ tokens to avoid silently overwriting each other. Export backups regularly: Safar
 can evict local data. Backup imports preserve old reviews as history and require
 new review; they cannot import a ready-made acceptance claim.
 
+The sidebar says whether the open project is saved, how much of the browser's
+quota Studio uses, and whether the browser has agreed to keep the data.
+「保留離線資料」 asks for persistent storage only when pressed (Safari may
+ignore it). 「匯出全部專案（ZIP）」 writes every project as its usual backup
+JSON into one ZIP; choosing a ZIP under 「匯入專案備份」 imports each entry
+as a new project through the same restore path as a single backup. The ZIP
+reader verifies each entry's CRC-32 and limits entry count and size.
+
 Files and review actions are serialized in FIFO order, including during boot.
 Pending evidence stays bound to its project and revision; choosing a different
 project cannot transfer queued reviews or source files to it.
@@ -120,6 +128,21 @@ analysis just re-derived, never onto a stored or imported parent. Each record is
 tamper-evident (a digest over the whole record) but not authenticated: nothing
 proves who accepted it, and the code says so. A suggestion never becomes an
 acceptance, and an accepted application never moves a workspace to `VALIDATED`.
+
+The **Decision Composer** (section 04, under the review roll) records these
+decisions from the page. You gather events on the roll (one by one, or a whole
+G11-C voice), choose the move (assign, move, omit, duplicate with evidence, or
+keep), and write the reason. 「預覽」 is a dry run in the Worker: it fills
+the acceptance bindings itself (the page never supplies them, nor an id),
+re-derives the whole chain with the new record appended, writes nothing, and
+can show the result on the roll, labelled 「決策預覽（尚未接受）」.
+「接受此決策」 records only the record whose digest was previewed, and only a
+PASS preview; any edit drops the preview. A move's source role comes from the
+verified head, never from the page. Moves into or out of Melody still need
+Lead evidence the composer does not collect, so they preview as not PASS. The
+roll can then show the accepted head, labelled as such; gates and reviews still
+read the analysed candidate. The composer is closed when a Final reduction or
+Mobile adaptation is applied, or when the recorded chain does not fully apply.
 Lead evidence recorded through the two pre-G11-D forms is built behind the
 Worker; a form never supplies a source identity. Demotion evidence is keyed to
 the exact baseline Melody event and bound to it by the Lead Demotion Gate itself.
@@ -184,7 +207,8 @@ exact timing, event identity and the evidence boundaries. See
     paste box shows per-role counts with the P1 disclaimer.
 - **Timbre preview** (section 06; `preview/player.mjs`, `preview/schedule.mjs`,
   `preview/soundbank-store.mjs`).
-  - **What it plays.** The applied Final MML, played through SpessaSynth with a
+  - **What it plays.** The current delivery MML (generated, pasted, or a
+    candidate that is itself valid MML), played through SpessaSynth with a
     DLS/SF2/SF3 bank you pick on your device.
   - **Where the bank lives.** In its own IndexedDB database on that device. It
     is never uploaded, never in a project backup, and never in the build.
@@ -196,8 +220,34 @@ exact timing, event identity and the evidence boundaries. See
     and only the resulting times become floats. Volume and channel mapping
     follow the owner's MML 工房 player. Per-role mute and live instrument
     switching are supported.
-  - **What it is not.** It is a listening aid, not in-game acceptance, and it
-    does not satisfy the player-readback gate.
+  - **What it is not.** It is a listening aid, not in-game acceptance.
+    Playing it passes no gate.
+- **Player readback** (Gate 6; `preview/readback.mjs`).
+  - **What is captured.** A playback that starts at the beginning records every
+    note and program event the SpessaSynth worklet reports as processed, with
+    the worklet's own audio clock. A seek, a stop, a muted role or an
+    instrument switch makes the capture incomplete, and an incomplete capture
+    cannot be recorded.
+  - **Recording.** Only on 「記錄為播放器實際回讀」, only when the project
+    declares that a verification player was used, and only for the project,
+    revision and exact delivery string that were playing. It is stored with
+    the bank name and SHA-256, the program, the engine versions and
+    `scope: processed_engine_events_not_hardware_audio`,
+    `gameTimbreEquivalent: false`.
+  - **Verdict.** Every analysis parses the exact delivery string again and
+    compares, per channel, the order, pitch and velocity of every note on and
+    off exactly, and the timing within 25 ms of the exact tempo-map time. The
+    expected events are derived without the preview scheduler, so a scheduling
+    fault is a mismatch. A stored verdict is never read.
+  - **Gate.** PASS needs a matching readback and a current Tempo review. The
+    N/A path is unchanged (no player declared, Tempo reviewed). Anything else,
+    including a mismatch, is PENDING. A new revision, a new delivery string or
+    an import drops the readback (an import keeps it as history only).
+  - **What it is not.** It is not a hardware recording, not a proof that
+    anyone listened, not the game's timbre and not in-game acceptance.
+  - **Order of work.** Gate 6 blocks Final generation, so with a player
+    declared the readback is of a pasted delivery, or of a candidate that is
+    itself valid MML.
 - **Release updates** (`pwa-update.mjs`, `sw.js`).
   - **Download.** Install fetches bypass the HTTP cache, so a new release can
     never be stored with an older module.
@@ -208,6 +258,23 @@ exact timing, event identity and the evidence boundaries. See
     after queued actions and refuses an unsaved project.
   - **Other tabs.** A tab that another tab updated is marked stale and must
     reload before doing more work, so old and new modules never mix.
+- **Project library v2** (`storage.mjs`, `backup-zip.mjs`).
+  - **List records.** The database keeps a small list record per project
+    (ID, title, save time, revision) next to the full workspace, written in
+    the same transaction. The project picker reads only those records; a
+    project is loaded in full when opened.
+  - **Upgrade.** Opening a v1 database derives the list records from the
+    stored workspaces. The workspaces themselves are not rewritten.
+- **In-game probe kit** (section 07; `engine-probe.mjs`,
+  `engine-probe-store.mjs`).
+  - **What it is.** Fixed test strings for open engine questions (Nxx
+    octave, tie/length order) that you paste into the game, with the outcomes
+    you can observe.
+  - **What a record is.** Class E evidence for the exact client, version and
+    instrument you name, bound to the SHA-256 of the pasted string. It is kept
+    on this device, outside project backups, and exported explicitly as JSON.
+  - **What it is not.** It never changes a Canonical rule. Applying it goes
+    through the published Canonical process.
 
 ## Build and CI (developer / operator only)
 
@@ -291,9 +358,11 @@ persistence, scope and remaining work.
   pitch 107 remain source evidence but cannot pass Final delivery while unverified.
 - The built-in Core3 continuity report is only a source-relative diagnostic.
   Musical Core3/Lead/Full6 completeness requires separate explicit review.
-- This v1 does not implement a verification player. If one was used, the actual
-  readback gate remains PENDING. Only explicitly declaring that no preview/player
-  was used, with the Tempo review, makes that conditional gate N/A.
+- The verification player is the section 06 preview. If one was used, the
+  readback gate stays PENDING until a complete playback of the exact delivery
+  string is recorded and matches, with the Tempo review current. Declaring
+  that no preview/player was used, with the Tempo review, still makes that
+  conditional gate N/A.
 - Named historical-song regressions without reproducible fixtures remain
   `FIXTURE_PENDING`. Synthetic tests never certify those songs.
 

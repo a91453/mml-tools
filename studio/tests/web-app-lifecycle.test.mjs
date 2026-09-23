@@ -43,6 +43,9 @@ function controller() {
     FormData: class { constructor(form) { return Object.entries(form.fields); } },
     setTimeout: () => 0, clearTimeout() {}, navigator: {},
     listProjects: async () => [...stored.values()],
+    listProjectSummaries: async () => [...stored.values()].map(({ id, title, savedAt, revision }) => ({ id, title, savedAt, revision })),
+    loadProject: async id => stored.get(id),
+    storageHealth: async () => ({ usage: null, quota: null, persisted: null }),
     saveProject: async w => { const result = { ...w, savedAt: 'new-save' }; stored.set(w.id, result); saved.push(result); return result; },
     render() {},
   });

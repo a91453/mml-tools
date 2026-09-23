@@ -1,9 +1,12 @@
-import { listProjects, saveProject } from './storage.mjs';
+import { listProjectSummaries, loadProject, requestPersistence, saveProject, storageHealth } from './storage.mjs';
+import { unzipFiles, zipFiles } from './backup-zip.mjs';
 import { createWorkerClient } from './worker-client.mjs';
 import { createTaskQueue } from './task-queue.mjs';
 import { createUpdateFlow } from './pwa-update.mjs';
 import { buildRoles, diagnosticsFromValidation, renderHTML, roleCharacterCounts, segmentRoles } from './mml-highlight.mjs';
 import { mountReviewRoll } from './review-roll.mjs';
+import { PROBES, buildObservation, summarize } from './engine-probe.mjs';
+import { compareReadback, normalizeCapture } from './preview/readback.mjs';
 // Request identity only. The MIDI decoder, the Canonical conversion and the
 // G11-B/G11-C derivation all live behind the Worker, so the main thread never
 // imports the backend and never parses a source file itself.
@@ -28,6 +31,10 @@ let workspace, report, identity, projects = [], audioFile = null, uploadControll
 let mobilePreview = null;
 let reductionPreview = null;
 let reductionDecisions = [];
+// Decision Composer (section 04): the events gathered on the roll, the form
+// as typed, and the last dry run. A dry run is dropped on every commit and on
+// every edit, so 「接受」 only ever records the record that was just previewed.
+const composer = { eventIds: [], view: 'source', draft: { type: 'ASSIGN_ROLE', toRole: 'Chord1', toRoles: [], reason: '', evidence: '', note: '' }, preview: null, previewDraft: null };
 const queued = createTaskQueue();
 // Service Worker release handling (pwa-update.mjs). A stale tab kept running
 // the previous release after another tab applied a new one; it must reload
@@ -86,13 +93,26 @@ function download(name, value, type = 'application/json') {
   setTimeout(() => URL.revokeObjectURL(url), 10000);
 }
 async function refreshProjects() {
-  projects = await listProjects();
+  projects = await listProjectSummaries();
   $('#projects').innerHTML = options(projects.map(p => [p.id, p.title]), workspace?.id);
+  showSaveState();
+}
+async function showSaveState() {
+  const pill = $('#save-state');
+  if (!pill) return;
+  const saved = workspace?.savedAt ? `已儲存 ${new Date(workspace.savedAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}` : workspace ? '尚未儲存：請匯出備份' : '';
+  pill.textContent = saved;
+  pill.className = `save-state ${workspace?.savedAt ? 'ok' : 'warn'}`;
+  const health = await storageHealth().catch(() => null);
+  const detail = $('#storage-detail');
+  if (detail && health) detail.textContent = [health.usage !== null && health.quota ? `已用 ${bytesLabel(health.usage)}／${bytesLabel(health.quota)}` : null, health.persisted === true ? '已保留離線資料' : health.persisted === false ? '瀏覽器可能清除本機資料' : null].filter(Boolean).join(' · ');
 }
 async function commit(next) {
   mobilePreview = null;
   reductionPreview = null;
   reductionDecisions = [];
+  composer.preview = null; composer.previewDraft = null;
+  if (composer.view === 'preview') composer.view = 'source';
   markBusy(true);
   try {
     const canonicalKey=JSON.stringify(identity.metadata);
@@ -515,7 +535,7 @@ function render() {
   $('#app').innerHTML = `
     <div class="hero"><p class="eyebrow">LOCAL-FIRST / STUDIO V1</p><div class="hero-line"><h1>${esc(w.title)}</h1>${badge(r.state)}</div><p>保留來源、看見差異，再決定如何演奏。你的符號樂譜與審核紀錄在本機處理。</p><div class="state-path"><span class="${r.state === 'CANDIDATE' ? 'current' : ''}">01　Candidate</span><span class="${r.state === 'VALIDATED' ? 'current' : ''}">02　Validated</span><span class="${r.state === 'IN_GAME_ACCEPTED' ? 'current' : ''}">03　In-game Accepted</span></div><p class="meta">${w.savedAt ? `本機已保存 ${esc(new Date(w.savedAt).toLocaleString())}` : '尚未儲存'} · Revision ${w.revision}</p></div>
     <section id="intake"><div class="section-heading"><h2>01　專案與來源</h2><small>裝置本地處理</small></div>
-      <div class="card"><form id="settings"><div class="field-grid">${input('title', '專案／歌曲名稱', w.title)}${input('recording', '錄音版本（專輯／MV／Live 等）', s.recording)}${input('offset', '有效音樂起點（秒）', s.offset, 'type="number" min="0" step="any"')}${input('end', '有效音樂終點（秒）', s.end, 'type="number" min="0" step="any"')}<label>來源確認的拍號圖<textarea name="meterText" placeholder="例如：0 4/4&#10;32 3/4">${esc(s.meterText)}</textarea></label><div><label>原曲音訊是否為來源集的一部分？<select name="audioRequired">${options([['unknown','尚未確認'],['yes','是，需要 Audio evidence'],['no','否，本專案沒有原曲音訊']],s.audioRequired)}</select></label><label>本次是否使用驗證播放器？<select name="preview">${options([['unknown','尚未確認'],['none','本次未使用播放器／preview'],['used','有使用，需要實際回讀（v1 尚待支援）']],s.preview)}</select></label></div></div><div class="actions"><button>儲存專案設定</button></div><p class="meta">來源、設定或候選內容變更後，先前審核與實機接受將失效。</p></form></div>
+      <div class="card"><form id="settings"><div class="field-grid">${input('title', '專案／歌曲名稱', w.title)}${input('recording', '錄音版本（專輯／MV／Live 等）', s.recording)}${input('offset', '有效音樂起點（秒）', s.offset, 'type="number" min="0" step="any"')}${input('end', '有效音樂終點（秒）', s.end, 'type="number" min="0" step="any"')}<label>來源確認的拍號圖<textarea name="meterText" placeholder="例如：0 4/4&#10;32 3/4">${esc(s.meterText)}</textarea></label><div><label>原曲音訊是否為來源集的一部分？<select name="audioRequired">${options([['unknown','尚未確認'],['yes','是，需要 Audio evidence'],['no','否，本專案沒有原曲音訊']],s.audioRequired)}</select></label><label>本次是否使用驗證播放器？<select name="preview">${options([['unknown','尚未確認'],['none','本次未使用播放器／preview'],['used','有使用，需要播放器實際回讀（06 試聽整首後記錄）']],s.preview)}</select></label></div></div><div class="actions"><button>儲存專案設定</button></div><p class="meta">來源、設定或候選內容變更後，先前審核與實機接受將失效。</p></form></div>
       <div class="row"><p class="meta">MusicXML 與 MIDI 預設為第三方 supporting。只有已確認的官方譜／官方 MIDI 可選 primary symbolic；這只改變來源紀錄，不會讓不完整的來源變完整。</p><select id="authority" aria-label="MusicXML／MIDI 來源權威"><option value="supporting">第三方／未確認</option><option value="primary-symbolic">已確認官方 symbolic</option></select></div>
       <div class="grid intake-grid">${intakeCard('candidate','目前候選','這次要審核的版本')}${intakeCard('baseline','Source-Faithful Baseline','編修之前、可逐事件比對的來源基準')}${intakeCard('previous','已接受的前一版','有歷史版本時，用於回歸比較')}</div>
       <details class="card"><summary>貼上 MML／Canonical IR，或附上交付 MML</summary><form id="paste"><div class="field-grid"><label>用途<select name="slot">${options([['candidate','目前候選'],['baseline','來源基準'],['previous','已接受前版'],['delivery','IR 候選對應的交付 MML']],'candidate')}</select></label>${input('name','檔名','pasted.mml')}</div><label for="paste-content">完整文字</label><div class="mml-hl"><pre class="mml-hl-layer" id="paste-layer" aria-hidden="true"></pre><textarea id="paste-content" name="content" class="code" required spellcheck="false" placeholder="MML@…,…,…,…,…,…;"></textarea></div><p class="meta" id="paste-counts" aria-live="polite"></p><div class="actions"><button>在本機載入</button></div></form></details>
@@ -535,13 +555,14 @@ function render() {
     ${finalReductionSection()}
     ${mobileAdaptationSection()}
     ${finalDeliverySection()}
-    <section id="delivery"><div class="section-heading"><h2>07　Readiness 與實機接受</h2>${badge(r.state)}</div><div class="card"><p class="note">${r.state==='CANDIDATE'?'目前為 Candidate，尚有必要 Gate 未通過。複製內容仍屬候選版本。':r.state==='VALIDATED'?'必要非實機 Gate 已通過。等待使用者於目標遊戲 client 實際接受。':'已有本輪 exact-MML 實機接受紀錄。'}</p><p class="meta">本節記錄的是<strong>實機接受</strong>。產生與匯出 Final MML 在上方第 06 節。「下載六軌對照文字」是含角色標題的<strong>對照用</strong>文字檔，<strong>不是</strong>可直接貼上的樂譜；可貼上的完整字串請用「複製完整 MML@」或第 06 節的匯出。</p><div class="actions"><button id="copy-mml" ${r.rawMml?'':'disabled'}>複製完整 MML@</button><button id="export-mml" class="secondary" ${r.rawMml?'':'disabled'}>下載六軌對照文字</button><button id="export-report" class="quiet">下載分析報告</button></div>${r.tracks?`${r.tracks.map((track,i)=>`<div class="track"><div class="row"><label for="track-${i}">${roles[i]} <small>${track.length} / ${PUBLISHED_ROLE_CHARACTER_LIMIT} 字元</small></label><button data-copy-track="${i}" class="quiet">複製</button></div><div class="mml-hl">${mmlLayer(track, roleDiagnostics(i))}<textarea id="track-${i}" class="code" readonly spellcheck="false">${esc(track)}</textarea></div></div>`).join('')}<p class="note">${P1_LOCAL_NOTE}</p>`:'<p class="empty">需有通過 Final 技術語法且與候選事件一致的六軌 MML。MusicXML／IR 不會自動縮編或猜測角色；可在第 06 節產生，或附上對應的交付 MML 進行回讀。</p>'}<details><summary>記錄 In-game Accepted</summary><form id="acceptance"><div class="field-grid">${input('client','Client／地區／版本','')}${input('instrument','樂器與軌道配置','')}${input('evidence','實機結果／截圖或紀錄定位','')}</div><button ${r.state==='CANDIDATE'?'disabled':''}>此 exact-MML 已實機接受</button></form>${w.acceptance?json(w.acceptance):''}</details></div></section>
+    <section id="delivery"><div class="section-heading"><h2>07　Readiness 與實機接受</h2>${badge(r.state)}</div><div class="card"><p class="note">${r.state==='CANDIDATE'?'目前為 Candidate，尚有必要 Gate 未通過。複製內容仍屬候選版本。':r.state==='VALIDATED'?'必要非實機 Gate 已通過。等待使用者於目標遊戲 client 實際接受。':'已有本輪 exact-MML 實機接受紀錄。'}</p><p class="meta">本節記錄的是<strong>實機接受</strong>。產生與匯出 Final MML 在上方第 06 節。「下載六軌對照文字」是含角色標題的<strong>對照用</strong>文字檔，<strong>不是</strong>可直接貼上的樂譜；可貼上的完整字串請用「複製完整 MML@」或第 06 節的匯出。</p><div class="actions"><button id="copy-mml" ${r.rawMml?'':'disabled'}>複製完整 MML@</button><button id="export-mml" class="secondary" ${r.rawMml?'':'disabled'}>下載六軌對照文字</button><button id="export-report" class="quiet">下載分析報告</button></div>${r.tracks?`${r.tracks.map((track,i)=>`<div class="track"><div class="row"><label for="track-${i}">${roles[i]} <small>${track.length} / ${PUBLISHED_ROLE_CHARACTER_LIMIT} 字元</small></label><button data-copy-track="${i}" class="quiet">複製</button></div><div class="mml-hl">${mmlLayer(track, roleDiagnostics(i))}<textarea id="track-${i}" class="code" readonly spellcheck="false">${esc(track)}</textarea></div></div>`).join('')}<p class="note">${P1_LOCAL_NOTE}</p>`:'<p class="empty">需有通過 Final 技術語法且與候選事件一致的六軌 MML。MusicXML／IR 不會自動縮編或猜測角色；可在第 06 節產生，或附上對應的交付 MML 進行回讀。</p>'}<details><summary>記錄 In-game Accepted</summary><form id="acceptance"><div class="field-grid">${input('client','Client／地區／版本','')}${input('instrument','樂器與軌道配置','')}${input('evidence','實機結果／截圖或紀錄定位','')}</div><button ${r.state==='CANDIDATE'?'disabled':''}>此 exact-MML 已實機接受</button></form>${w.acceptance?json(w.acceptance):''}</details></div>${engineProbeCard()}</section>
     <details class="card"><summary>Published Canonical 與建置身分</summary><p class="meta">本機使用建置時由 Published main 取得並核驗的完整固定快照。離線模式不宣稱已確認最新 main。</p>${json(identity.metadata)}${identity.provenance?json(identity.provenance):''}${identity.documents.map(d=>`<details><summary>${esc(d.path)} · ${esc(d.authority)}</summary><a href="${esc(d.url)}" target="_blank" rel="noopener">GitHub 固定快照</a><pre>${esc(d.content)}</pre></details>`).join('')}</details>`;
   bind();
   // View-only bindings for freshly rendered DOM (highlight layers, review roll).
   bindHighlightLayers();
   bindReviewRoll();
   bindTimbrePreview();
+  bindEngineProbes();
 }
 async function putSource(slot, name, content, authority = 'supporting') {
   if (slot === 'delivery') { const next = await call('invalidate',workspace); next.deliveryMml = content; await commit(next); return; }
@@ -768,34 +789,142 @@ function bind() {
 }
 
 $('#new-project').onclick=()=>run(async()=>{audioFile=null;await commit(await call('newWorkspace'));},{revisionBound:false,projectBound:false});
-$('#projects').onchange=()=>{const id=$('#projects').value;run(async()=>{const selected=projects.find(p=>p.id===id);if(!selected)throw Error('找不到選取的專案，請重新開啟');audioFile=null;await commit(selected);},{revisionBound:false,projectBound:false});};
+$('#projects').onchange=()=>{const id=$('#projects').value;run(async()=>{if(!projects.some(p=>p.id===id))throw Error('找不到選取的專案，請重新開啟');const selected=await loadProject(id);audioFile=null;await commit(selected);},{revisionBound:false,projectBound:false});};
 $('#export-project').onclick=()=>{if(workspace)download('mml-studio-project.json',JSON.stringify({...workspace,canonical:identity.metadata},null,2));};
-$('#restore-project').onchange=()=>{const file=$('#restore-project').files[0];if(file)run(async()=>{if(file.size>16*1048576)throw Error(`Project backup is ${(file.size/1048576).toFixed(1)} MiB; the restore limit is 16 MiB. Export the sources separately if a MIDI project exceeds it.`);audioFile=null;await commit(await call('importWorkspace',await file.text()));message('已匯入；先前審核保留為歷史，本輪需要重新審核。');},{revisionBound:false,projectBound:false});};
+$('#restore-project').onchange=()=>{const file=$('#restore-project').files[0];if(file&&/\.zip$/i.test(file.name))return run(()=>restoreZip(file),{revisionBound:false,projectBound:false});if(file)run(async()=>{if(file.size>16*1048576)throw Error(`Project backup is ${(file.size/1048576).toFixed(1)} MiB; the restore limit is 16 MiB. Export the sources separately if a MIDI project exceeds it.`);audioFile=null;await commit(await call('importWorkspace',await file.text()));message('已匯入；先前審核保留為歷史，本輪需要重新審核。');},{revisionBound:false,projectBound:false});};
+// ─── In-game probe kit ──────────────────────────────────────────────────────
+// Fixed test strings for open engine questions and a place to record what the
+// game actually did. Observations stay on this device (engine-probe-store.mjs),
+// are exported explicitly, and change no Canonical rule by themselves.
+const probeState = { loaded: false, observations: [], error: null };
+function engineProbeCard() {
+  const summary = summarize(probeState.observations);
+  const probeBlock = probe => {
+    const own = probeState.observations.filter(o => o.probeId === probe.id);
+    const state = summary.find(s => s.probeId === probe.id);
+    return `<div class="probe" data-probe="${esc(probe.id)}"><div class="row"><strong>${esc(probe.title)}</strong><span class="badge">PENDING ${esc(probe.pending)}</span></div>
+      <p class="meta">${esc(probe.question)}</p>
+      <label>貼進遊戲的測試字串<textarea class="code" readonly spellcheck="false" data-probe-mml>${esc(probe.mml)}</textarea></label>
+      <div class="actions"><button type="button" class="secondary" data-probe-copy="${esc(probe.id)}">複製測試字串</button></div>
+      <p class="meta">${esc(probe.listen)}</p>
+      <form data-probe-form="${esc(probe.id)}"><fieldset class="probe-outcomes"><legend>在遊戲中觀察到的結果</legend>${probe.outcomes.map(o => `<label><input type="radio" name="outcome" value="${esc(o.id)}" required> ${esc(o.label)}</label>`).join('')}</fieldset>
+        <div class="field-grid">${input('client', '遊戲 client／地區', '')}${input('version', '版本', '')}${input('instrument', '樂器', '')}${input('notes', '備註（選填）', '')}</div>
+        <div class="actions"><button>記錄這次實機觀察</button></div></form>
+      ${own.length ? `<p class="meta">已記錄 ${own.length} 筆${state.consistent ? '' : '，<strong>結果不一致</strong>，需要再確認'}：</p><ul class="probe-log">${own.map(o => `<li>${esc(o.outcomeLabel)} · ${esc(o.client)} ${esc(o.version)} · ${esc(o.instrument)} · ${esc(o.observedAt.slice(0, 10))} <button type="button" class="quiet" data-probe-delete="${o.id}">刪除</button></li>`).join('')}</ul>` : ''}</div>`;
+  };
+  return `<details class="card engine-probes" id="engine-probes"><summary>引擎實機測試（PENDING 項目）</summary>
+    <p class="note">把測試字串貼進遊戲、實際聽過之後再記錄。紀錄是這個 client／版本／樂器與這個確切字串的 <strong>class E 實機證據</strong>，只存在這台裝置；不會自動改變任何 Canonical 規則，要改規則需走發布流程。</p>
+    ${PROBES.map(probeBlock).join('<div class="divider"></div>')}
+    <div class="actions"><button type="button" class="secondary" id="probe-export" ${probeState.observations.length ? '' : 'disabled'}>匯出實機紀錄 JSON</button></div>
+    ${probeState.error ? `<p class="note">${esc(probeState.error)}</p>` : ''}</details>`;
+}
+function refreshProbes() {
+  const card = $('#engine-probes');
+  if (!card) return;
+  const open = card.open;
+  card.outerHTML = engineProbeCard();
+  if (open) $('#engine-probes').open = true;
+  bindEngineProbes();
+}
+async function loadProbeObservations() {
+  probeState.loaded = true;
+  try {
+    const { listObservations } = await import('./engine-probe-store.mjs');
+    probeState.observations = await listObservations();
+  } catch (error) { probeState.error = `實機紀錄讀取失敗：${error.message}`; }
+  refreshProbes();
+}
+function bindEngineProbes() {
+  const card = $('#engine-probes');
+  if (!card) return;
+  if (!probeState.loaded) loadProbeObservations();
+  card.querySelectorAll('[data-probe-copy]').forEach(button => button.onclick = () => {
+    const probe = PROBES.find(p => p.id === button.dataset.probeCopy);
+    copyText(probe.mml, button.closest('.probe').querySelector('[data-probe-mml]'));
+  });
+  card.querySelectorAll('[data-probe-form]').forEach(form => form.onsubmit = async event => {
+    event.preventDefault();
+    try {
+      const probe = PROBES.find(p => p.id === form.dataset.probeForm);
+      const digest = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(probe.mml));
+      const mmlSha256 = [...new Uint8Array(digest)].map(b => b.toString(16).padStart(2, '0')).join('');
+      const observation = buildObservation(probe, Object.fromEntries(new FormData(form)), { mmlSha256 });
+      const { addObservation, listObservations } = await import('./engine-probe-store.mjs');
+      await addObservation(observation);
+      probeState.observations = await listObservations();
+      probeState.error = null;
+      message('已記錄這次實機觀察；只保存在這台裝置。');
+    } catch (error) { probeState.error = error.message; }
+    refreshProbes();
+  });
+  card.querySelectorAll('[data-probe-delete]').forEach(button => button.onclick = async () => {
+    const { deleteObservation, listObservations } = await import('./engine-probe-store.mjs');
+    await deleteObservation(Number(button.dataset.probeDelete));
+    probeState.observations = await listObservations();
+    refreshProbes();
+  });
+  const exporter = $('#probe-export');
+  if (exporter) exporter.onclick = () => download('in-game-probe-observations.json', JSON.stringify({ kind: 'in-game-probe-observations', note: 'Class E in-game evidence for the stated client/version/instrument and exact test string. Changes no Canonical rule by itself.', exportedAt: new Date().toISOString(), observations: probeState.observations }, null, 2));
+}
 // ─── Timbre preview ─────────────────────────────────────────────────────────
-// Plays the applied Final MML through SpessaSynth with a sound bank the user
-// picks (studio/web/preview/). The engine and bank live across re-renders; the
-// markup is re-bound after each render. Listening aid only: it never touches a
-// gate, a review or the workspace, and the bank never leaves this browser.
-const preview = { voices: 0, bank: undefined, bankChecked: false, context: null, engine: null, transport: null, songKey: null, program: null, position: 0, muted: [false, false, false, false, false, false], busy: false, error: null };
+// Plays the delivery MML through SpessaSynth with a sound bank the user picks
+// (studio/web/preview/). The engine and bank live across re-renders; the
+// markup is re-bound after each render. Listening never touches a gate, a
+// review or the workspace, and the bank never leaves this browser. The one
+// write is explicit: after a complete playback from the start, the user may
+// record the engine's processed events as the Gate 6 player readback, which
+// the Worker re-checks against the exact MML on every analysis.
+const preview = { voices: 0, bank: undefined, bankChecked: false, context: null, engine: null, transport: null, songKey: null, program: null, position: 0, muted: [false, false, false, false, false, false], busy: false, error: null, playBinding: null, lastCapture: null };
 // Re-render only the preview card: a full render() would discard whatever the
 // user is typing in another form.
 function refreshPreview() { const card = $('#timbre-preview'); if (!card) return; card.outerHTML = timbrePreviewCard(); bindTimbrePreview(); }
 const clock = seconds => `${Math.floor(seconds / 60)}:${String(Math.floor(seconds % 60)).padStart(2, '0')}`;
+// The capture of the last complete playback, while it still describes the
+// project, revision and exact string on screen.
+function currentCapture() {
+  const last = preview.lastCapture;
+  if (!last || last.binding.workspaceId !== workspace?.id || last.binding.revision !== workspace?.revision || last.binding.exactMml !== report?.rawMml) return null;
+  return last;
+}
+function readbackBlock() {
+  const gate = report?.gates?.playerReadback;
+  const stored = report?.playerReadback;
+  const used = workspace?.settings?.preview === 'used';
+  const last = currentCapture();
+  const rows = [];
+  if (stored) {
+    const c = stored.comparison;
+    rows.push(`<p class="meta">已記錄 ${esc(new Date(stored.recordedAt).toLocaleString())} · ${esc(stored.bank.name)} <code class="digest">sha256 ${esc(stored.bank.sha256.slice(0, 12))}…</code> · ${esc(String(stored.program.program + 1).padStart(3, '0'))} ${esc(stored.program.name)} · ${esc(stored.engine.lib)} / ${esc(stored.engine.core)}<br>引擎處理 ${c.processedNotes}／${c.expectedNotes} 個音符 · 最大時間偏差 ${c.maxDriftMs} ms（容許 ${c.toleranceMs} ms）</p>`);
+    if (!c.ok) rows.push(`<ul class="codes">${c.errors.map(error => `<li><code>${esc(error)}</code></li>`).join('')}</ul>`);
+  }
+  if (last) {
+    const c = last.comparison;
+    rows.push(`<p class="${c.ok ? 'meta' : 'note'}">剛才的整首播放：引擎處理 ${c.processedNotes}／${c.expectedNotes} 個音符 · 最大偏差 ${c.maxDriftMs} ms · ${c.ok ? '與目前的 exact MML 一致' : `不一致：${esc(c.errors.join(' · '))}`}</p>`);
+    if (last.capture.complete) rows.push(`<div class="actions"><button type="button" id="record-readback" ${used ? '' : 'disabled'}>記錄為播放器實際回讀</button></div>`);
+    else rows.push('<p class="meta">這次播放沒有涵蓋整首（靜音、跳轉或換音色），不能記錄；請從頭完整播放一次。</p>');
+  } else if (report?.rawMml) rows.push('<p class="meta">從頭完整播放一次（不靜音、不跳轉、不換音色），結束後可記錄回讀。</p>');
+  if (!used) rows.push('<p class="note">Gate 6 只在專案設定「本次是否使用驗證播放器？」選「有使用」時採用回讀。變更設定會讓 revision 前進，之後需要重新完整播放。</p>');
+  if (workspace?.playerReadback) rows.push('<div class="actions"><button type="button" id="clear-readback" class="quiet">移除回讀紀錄</button></div>');
+  return `<div class="readback" id="player-readback"><div class="attempt-head"><h4>播放器實際回讀（Gate 6）</h4>${gate ? badge(gate.status) : ''}</div>
+    ${gate?.reason ? `<p class="meta"><code>${esc(gate.reason)}</code></p>` : ''}${rows.join('')}
+    <p class="meta">回讀只證明這個播放器載入並處理了這份 exact MML 的每個音符（範圍：${esc('processed_engine_events_not_hardware_audio')}）。它不是硬體錄音，不代表遊戲音色，也不是實機接受。</p></div>`;
+}
 function timbrePreviewCard() {
   const song = report?.technical?.ok ? report.technical.song : null;
-  const ready = Boolean(appliedDelivery() && song);
+  const ready = Boolean(report?.rawMml && song);
   const bank = preview.bank;
   const bankLine = bank === undefined ? '讀取音色庫中…' : bank ? `${esc(bank.name)} · ${bytesLabel(bank.size)} · <code class="digest">sha256 ${esc(bank.sha256.slice(0, 16))}…</code>` : '尚未選擇音色庫';
   const programs = preview.engine?.presets ?? [];
   return `<div class="card preview-card" id="timbre-preview"><div class="attempt-head"><h3>遊戲音色試聽</h3><span class="badge na">模擬試聽</span></div>
-    <p class="note">用你在這台裝置選取的音色庫播放目前套用的 Final MML。這是<strong>聆聽輔助</strong>：不是實機驗收，也不會通過「播放器實際回讀」Gate。音色庫只存在這台裝置的瀏覽器，不會上傳，也不會進入專案備份。</p>
+    <p class="note">用你在這台裝置選取的音色庫播放目前的交付 MML。這是<strong>聆聽輔助</strong>，不是實機驗收；光是播放不會通過任何 Gate。音色庫只存在這台裝置的瀏覽器，不會上傳，也不會進入專案備份。</p>
     <div class="preview-bank"><span class="meta" id="bank-status">${bankLine}</span><label class="file-button secondary">${bank ? '更換音色庫' : '選擇音色庫'}<input type="file" id="bank-file" accept=".dls,.sf2,.sf3" aria-label="選擇音色庫檔案"></label>${bank ? '<button type="button" id="bank-clear" class="quiet">移除音色庫</button>' : ''}</div>
-    ${ready ? '' : '<p class="empty">需先有通過驗證並已套用的 Final MML，才能試聽。</p>'}
+    ${ready ? '' : '<p class="empty">需先有通過驗證、且與候選一致的交付 MML，才能試聽。</p>'}
     <div class="preview-controls"><label>音色<select id="preview-program" ${programs.length ? '' : 'disabled'}>${programs.length ? programs.map(p => `<option value="${p.program}" ${p.program === preview.program ? 'selected' : ''}>${esc(String(p.program + 1).padStart(3, '0'))} ${esc(p.name)}</option>`).join('') : '<option>按播放後載入音色清單</option>'}</select></label>
       <button type="button" id="preview-play" ${ready && bank ? '' : 'disabled'}>${preview.busy ? '載入中…' : '▶ 播放'}</button><button type="button" id="preview-stop" class="secondary" ${preview.transport?.playing ? '' : 'disabled'}>■ 停止</button>
       <input type="range" id="preview-seek" min="0" max="1000" value="0" aria-label="播放位置" ${ready && bank ? '' : 'disabled'}><span class="meta" id="preview-time">${clock(preview.position)} / ${clock(preview.transport?.duration ?? 0)}</span></div>
     <div class="preview-roles" role="group" aria-label="試聽角色">${roles.map((role, i) => `<label><input type="checkbox" data-preview-role="${i}" ${preview.muted[i] ? '' : 'checked'}> ${role}</label>`).join('')}</div>
-    ${preview.error ? `<p class="note">${esc(preview.error)}</p>` : ''}</div>`;
+    ${preview.error ? `<p class="note">${esc(preview.error)}</p>` : ''}
+    ${ready ? readbackBlock() : ''}</div>`;
 }
 function bindTimbrePreview() {
   const card = $('#timbre-preview');
@@ -803,12 +932,13 @@ function bindTimbrePreview() {
   if (!preview.bankChecked) loadStoredBankInfo();
   const song = report?.technical?.ok ? report.technical.song : null;
   const songKey = song ? report.rawMml : null;
+  const time = () => { const el = $('#preview-time'); if (el) el.textContent = `${clock(preview.position)} / ${clock(preview.transport?.duration ?? 0)}${preview.transport?.playing ? ` · 發聲 ${preview.voices}` : ''}`; };
   if (preview.transport && songKey !== preview.songKey) {
     preview.transport.load(song);
     preview.songKey = songKey;
     preview.position = 0;
+    time();
   }
-  const time = () => { const el = $('#preview-time'); if (el) el.textContent = `${clock(preview.position)} / ${clock(preview.transport?.duration ?? 0)}${preview.transport?.playing ? ` · 發聲 ${preview.voices}` : ''}`; };
   const seek = () => { const el = $('#preview-seek'); if (el && preview.transport?.duration) el.value = String(Math.round((preview.position / preview.transport.duration) * 1000)); };
   const fail = error => { preview.error = error.message; preview.busy = false; message(error.message, true); refreshPreview(); };
   const ensureEngine = async () => {
@@ -820,7 +950,16 @@ function bindTimbrePreview() {
     preview.engine = await createPreviewEngine(bank, preview.context);
     preview.transport = createTransport(preview.engine, {
       onPosition: (position, duration, voices = 0) => { preview.position = position; preview.voices = voices; time(); seek(); },
-      onEnd: () => { preview.position = 0; refreshPreview(); },
+      onEnd: capture => {
+        preview.position = 0;
+        const binding = preview.playBinding;
+        preview.playBinding = null;
+        if (capture && binding) {
+          try { preview.lastCapture = { binding, capture, comparison: compareReadback(report.technical.song, normalizeCapture(capture)) }; }
+          catch (error) { preview.lastCapture = null; preview.error = `回讀無法使用：${error.message}`; }
+        }
+        refreshPreview();
+      },
     });
     const lute = preview.engine.presets.find(p => /lute/i.test(p.name));
     preview.program ??= (lute ?? preview.engine.presets[0]).program;
@@ -843,6 +982,7 @@ function bindTimbrePreview() {
       await ensureEngine();
       if (preview.songKey !== songKey) { preview.transport.load(song); preview.songKey = songKey; }
       preview.busy = false;
+      preview.playBinding = preview.position === 0 ? { workspaceId: workspace.id, revision: workspace.revision, exactMml: songKey } : null;
       await preview.transport.play(preview.position);
       refreshPreview();
     } catch (error) {
@@ -851,7 +991,20 @@ function bindTimbrePreview() {
       fail(error);
     }
   };
-  $('#preview-stop').onclick = () => { preview.transport?.stop(); preview.position = 0; refreshPreview(); };
+  $('#preview-stop').onclick = () => { preview.transport?.stop(); preview.position = 0; preview.playBinding = null; refreshPreview(); };
+  const record = $('#record-readback');
+  if (record) record.onclick = () => {
+    const last = currentCapture();
+    if (!last) return message('回讀已不是目前的內容，請重新完整播放一次', true);
+    run(async () => {
+      await commit(await call('recordPlayerReadback', workspace, last.capture, last.binding));
+      preview.lastCapture = null;
+      refreshPreview();
+      message(report.gates.playerReadback?.status === 'PASS' ? '已記錄播放器實際回讀；Gate 6 通過。' : `已記錄播放器實際回讀；Gate 6 仍待處理：${report.gates.playerReadback?.reason ?? ''}`);
+    });
+  };
+  const clearReadback = $('#clear-readback');
+  if (clearReadback) clearReadback.onclick = () => run(async () => { await commit(await call('clearPlayerReadback', workspace)); message('已移除播放器回讀紀錄。'); });
   $('#preview-seek').onchange = event => {
     const duration = preview.transport?.duration ?? 0;
     preview.position = (Number(event.target.value) / 1000) * duration;
@@ -902,19 +1055,37 @@ async function loadStoredBankInfo() {
   refreshPreview();
 }
 // ─── Six-role review roll ───────────────────────────────────────────────────
-// A read-only view of the analysed candidate (review-roll.mjs). It locates
-// events and review signals; it never edits, accepts or reviews anything.
-// Selecting an event only describes it and links to the existing forms.
+// A read-only view (review-roll.mjs). It locates events and review signals and
+// never edits, accepts or reviews anything. Selecting an event describes it,
+// links to the existing forms, and can add it to the Decision Composer's
+// selection. Three projections can be shown, always labelled: the analysed
+// candidate (default), the verified G11-D head, and the composer's dry run.
 const ROLL_LANES = [...roles, '未指派'];
-function reviewRollCard() {
-  const roll = report?.roll;
+const ROLL_VIEWS = { source: '分析候選', accepted: '已接受編排（G11-D）', preview: '決策預覽（尚未接受）' };
+const composerPreviewCurrent = () => Boolean(composer.preview && composer.preview.projectId === workspace?.id && composer.preview.revision === workspace?.revision);
+function rollFor(view) {
+  if (view === 'accepted' && report?.acceptedRoll) return report.acceptedRoll;
+  if (view === 'preview' && composerPreviewCurrent() && composer.preview.roll) return composer.preview.roll;
+  return null;
+}
+function activeRoll() {
+  const roll = rollFor(composer.view);
+  if (!roll) composer.view = 'source';
+  return roll ?? report?.roll;
+}
+function reviewRollCard() { return rollCard() + decisionComposerCard(); }
+function rollCard() {
+  const roll = activeRoll();
   if (!roll) return '<div class="card roll-card"><h3>六角色審核捲軸</h3><div class="empty">加入候選來源並完成分析後，這裡會以捲軸顯示六個角色。</div></div>';
   const counts = [...roll.lanes.map(l => l.events.length), roll.unassigned.length];
   const kinds = { harmony: 0, overlap: 0, crowding: 0 };
   for (const signal of roll.signals) kinds[signal.kind] += 1;
   const unresolved = roll.signals.filter(signal => signal.kind === 'harmony' && !signal.resolved).length;
+  const views = Object.keys(ROLL_VIEWS).filter(view => view === 'source' || rollFor(view));
   return `<div class="card roll-card"><div class="row"><h3>六角色審核捲軸</h3><span class="meta roll-counts">跨來源和聲 ${kinds.harmony}${unresolved ? `（${unresolved} 待審）` : ''} · 同音重疊 ${kinds.overlap} · 低音擁擠 ${kinds.crowding}</span></div>
     <p class="note">僅供審核定位的視覺化：不是來源、聽感或實機證據。點選只會標出事件並連到既有表單，不會修改或接受任何內容。時間以精確拍數計算，只在畫面上換算成像素。</p>
+    ${views.length > 1 ? `<div class="roll-views" role="group" aria-label="捲軸內容">${views.map(view => `<button type="button" class="${view === composer.view ? 'secondary' : 'quiet'}" data-roll-view="${view}" aria-pressed="${view === composer.view}">${ROLL_VIEWS[view]}</button>`).join('')}</div>` : ''}
+    ${composer.view === 'accepted' ? '<p class="meta">目前顯示 G11-D 已接受決策鏈的結果投影。Gate 與審核仍以分析候選為準；這不是 VALIDATED。</p>' : composer.view === 'preview' ? '<p class="note">目前顯示的是<strong>決策預覽</strong>：尚未接受，也沒有寫入任何內容。</p>' : ''}
     <div class="roll-toolbar" role="group" aria-label="捲軸顯示">
       <span class="roll-zoom"><span class="meta">時間</span><button type="button" class="quiet" data-roll-zoom="w:-1" aria-label="時間縮小">−</button><button type="button" class="quiet" data-roll-zoom="w:1" aria-label="時間放大">＋</button></span>
       <span class="roll-zoom"><span class="meta">音高</span><button type="button" class="quiet" data-roll-zoom="h:-1" aria-label="音高縮小">−</button><button type="button" class="quiet" data-roll-zoom="h:1" aria-label="音高放大">＋</button></span>
@@ -924,11 +1095,13 @@ function reviewRollCard() {
     <p id="roll-info" class="meta roll-info" aria-live="polite">點選音符查看事件 ID 與精確拍數。尺上的標記：▼ 跨來源和聲、◆ 同音重疊、■ 低音擁擠。</p></div>`;
 }
 let reviewRoll = null;
-function bindReviewRoll() {
+function bindReviewRoll() { bindRoll(); bindDecisionComposer(); }
+function bindRoll() {
   reviewRoll?.destroy?.();
   reviewRoll = null;
   const root = $('#review-roll');
-  if (!root || !report?.roll) return;
+  const roll = activeRoll();
+  if (!root || !roll) return;
   const info = $('#roll-info');
   // Only a cross-source harmony conflict has an arbitration form. Overlap and
   // crowding signals come from the Full6 15-pair review and are described, not
@@ -942,11 +1115,24 @@ function bindReviewRoll() {
     form.scrollIntoView({ block: 'center' });
     form.querySelector('select, input, button')?.focus({ preventScroll: true });
   });
-  reviewRoll = mountReviewRoll(root, report.roll, {
+  const pick = event => {
+    const button = info.querySelector('[data-compose-toggle]');
+    if (!button) return;
+    button.onclick = () => {
+      const at = composer.eventIds.indexOf(event.id);
+      if (at >= 0) composer.eventIds.splice(at, 1); else composer.eventIds.push(event.id);
+      composerEdited();
+      button.textContent = at >= 0 ? '加入決策選取' : '從決策選取移除';
+    };
+  };
+  reviewRoll = mountReviewRoll(root, roll, {
+    marked: composer.eventIds,
     onSelect: event => {
       if (!event) { info.textContent = '未選取事件。'; return; }
-      info.innerHTML = `<strong>${esc(event.role ?? '未指派')}</strong> · ${esc(event.pitchName)}（pitch ${event.pitch}）· 拍 <code>${esc(event.start)}</code>–<code>${esc(event.end)}</code><br><code class="digest">${esc(event.id)}</code>${event.signals.length ? `<br>${event.signals.map(signalButton).join(' ')}` : ''}`;
+      const composable = composerEntry() && !event.id.includes('#g11d-dup:');
+      info.innerHTML = `<strong>${esc(event.role ?? '未指派')}</strong> · ${esc(event.pitchName)}（pitch ${event.pitch}）· 拍 <code>${esc(event.start)}</code>–<code>${esc(event.end)}</code><br><code class="digest">${esc(event.id)}</code>${event.signals.length ? `<br>${event.signals.map(signalButton).join(' ')}` : ''}${composable ? `<br><button type="button" class="quiet" data-compose-toggle>${composer.eventIds.includes(event.id) ? '從決策選取移除' : '加入決策選取'}</button>` : ''}`;
       wire();
+      if (composable) pick(event);
     },
     onSignal: signal => { info.innerHTML = `審核訊號 · 拍 <code>${esc(signal.start)}</code>–<code>${esc(signal.end)}</code><br>${signalButton(signal)}`; wire(); },
   });
@@ -955,6 +1141,138 @@ function bindReviewRoll() {
     box.checked = reviewRoll.prefs.visible[Number(box.dataset.rollLane)];
     box.onchange = () => reviewRoll?.setLaneVisible(Number(box.dataset.rollLane), box.checked);
   });
+  document.querySelectorAll('.roll-card [data-roll-view]').forEach(button => button.onclick = () => { composer.view = button.dataset.rollView; refreshRoll(); });
+}
+// Re-render the roll card only; a full render() would discard what the user
+// is typing in other forms, the composer included.
+function refreshRoll() {
+  const card = document.querySelector('.roll-card');
+  if (!card) return;
+  card.outerHTML = rollCard();
+  bindRoll();
+}
+
+// ─── G11-D Decision Composer ────────────────────────────────────────────────
+// Composes one accepted arrangement decision from events gathered on the roll.
+// The page sends only the move (type, events, roles, reason, evidence): the
+// Worker fills the acceptance bindings from what is loaded, previews without
+// writing, and records only the exact record that was previewed. Shown only
+// for a verified Raw MIDI candidate with no reduction or adaptation applied.
+const DECISION_TYPES = { ASSIGN_ROLE: '指派角色（未指派 → 角色）', MOVE_ROLE: '移動角色', OMIT_FROM_SIX: '不放入六軌（省略）', DUPLICATE_WITH_JUSTIFICATION: '複製到其他角色（需證據）', KEEP: '保持原樣（記錄已審核）' };
+function composerEntry() {
+  const entry = report?.rawMidi?.find(item => item.slot === 'candidate');
+  if (!entry || !entry.integrity?.verified || !entry.arrangement || entry.error) return null;
+  if (workspace?.finalReduction || workspace?.mobileAdaptation) return null;
+  return entry;
+}
+// Any edit drops the dry run. `structural` edits (selection, decision type)
+// redraw the form; typing only removes the stale preview, so focus stays put.
+function composerEdited({ structural = true } = {}) {
+  const hadPreview = composer.preview !== null;
+  composer.preview = null; composer.previewDraft = null;
+  reviewRoll?.setMarked(composer.eventIds);
+  if (hadPreview && composer.view === 'preview') { composer.view = 'source'; refreshRoll(); }
+  if (structural) refreshComposer();
+  else document.querySelector('#decision-composer .composer-preview')?.remove();
+}
+function refreshComposer() {
+  const card = $('#decision-composer');
+  if (!card) return;
+  card.outerHTML = decisionComposerCard();
+  bindDecisionComposer();
+}
+function decisionComposerCard() {
+  const entry = composerEntry();
+  if (!entry) return '';
+  const chain = entry.acceptedArrangement;
+  const records = workspace.acceptedDecisions ?? [];
+  const recorded = records.length ? `<ul class="codes">${records.map(record => { const d = record.decision; return `<li><code>${esc(d.id)}</code> · ${esc(DECISION_TYPES[d.type] ?? d.type)} · ${d.target?.eventIds?.length ?? 0} 個事件${d.fromRole ? ` · ${esc(d.fromRole)}` : ''}${d.toRole ? ` → ${esc(d.toRole)}` : ''}${d.toRoles?.length ? ` → ${esc(d.toRoles.join('、'))}` : ''} · ${esc(d.reason)}</li>`; }).join('')}</ul>` : '<p class="meta">尚未記錄任何編排決策；G11-C 角色候選仍只是建議。</p>';
+  const head = `<div class="attempt-head"><h3>編排決策（G11-D）</h3>${badge(chain?.status === 'NOT_REQUESTED' ? 'PENDING' : chain?.status ?? 'PENDING')}</div>
+    <p class="meta">在捲軸上選取事件，寫下理由，先預覽再接受。接受的決策只改變 G11-D 編排，不認證任何 Gate，也不是 VALIDATED。</p>${recorded}
+    ${records.length ? '<div class="actions"><button type="button" id="clear-decisions" class="quiet">清除所有編排決策</button></div>' : ''}`;
+  if (chain && !['NOT_REQUESTED', 'PASS'].includes(chain.status)) return `<div class="card composer-card" id="decision-composer">${head}<p class="note">目前的決策鏈沒有完整套用（${esc(chain.status)}）。請清除決策後依目前來源重新編排。</p></div>`;
+  const d = composer.draft;
+  const lanes = entry.arrangement.candidate?.lanes ?? [];
+  const current = composerPreviewCurrent() ? composer.preview : null;
+  const result = current ? `<div class="composer-preview"><div class="attempt-head"><h4>預覽結果</h4>${badge(current.status)}</div>
+      ${current.applied.length ? `<p class="meta">${current.applied.map(item => `${item.events.length} 個事件：${[...new Set(item.events.map(e => `${e.fromRole ?? '未指派'} → ${e.toRole ?? '省略'}`))].map(esc).join('、')}`).join('；')}</p>` : ''}
+      ${current.diffFromBaseline ? `<p class="meta">相對來源基準：角色移動 ${current.diffFromBaseline.roleMoved ?? 0} · 新增 ${current.diffFromBaseline.noteAdded ?? 0} · 移除 ${current.diffFromBaseline.noteRemoved ?? 0}${current.omitted ? ` · 省略 ${current.omitted}` : ''}</p>` : ''}
+      ${[...current.rejected, ...current.conflicts, ...current.diagnostics].length ? `<ul class="codes">${[...current.rejected, ...current.conflicts, ...current.diagnostics].map(item => `<li><code>${esc(item.code ?? item.kind ?? 'NOTE')}</code>${item.message ? ` · ${esc(item.message)}` : ''}${item.eventId ? ` · ${esc(item.eventId)}` : ''}</li>`).join('')}</ul>` : ''}
+      <p class="meta">決策 <code>${esc(current.decision.id)}</code> · 審核基準 ${esc(current.reviewedRevisionId ?? 'Source-Faithful Baseline')} · record <code class="digest">${esc(String(current.recordDigest).slice(0, 16))}…</code></p>
+      <div class="actions"><button type="button" id="accept-decision" ${current.status === 'PASS' ? '' : 'disabled'}>接受此決策</button>${current.roll ? '<button type="button" class="quiet" data-roll-view="preview">在捲軸上看預覽</button>' : ''}</div></div>` : '';
+  return `<div class="card composer-card" id="decision-composer">${head}
+    <div class="divider"></div>
+    <p><strong>已選取 ${composer.eventIds.length} 個事件</strong>${composer.eventIds.length ? ' <button type="button" class="quiet" id="compose-clear-selection">清除選取</button>' : ''}</p>
+    ${lanes.length ? `<label>加入整條 G11-C 聲部<select id="compose-lane"><option value="">選擇聲部…</option>${lanes.map(lane => `<option value="${esc(lane.id)}">${esc(lane.id)} · 建議 ${esc(lane.candidateRole ?? '未定')} · ${lane.eventIds?.length ?? 0} 音</option>`).join('')}</select></label>` : ''}
+    <form id="compose-form"><div class="field-grid">
+      <label>決策<select name="type">${options(Object.entries(DECISION_TYPES), d.type)}</select></label>
+      ${d.type === 'ASSIGN_ROLE' || d.type === 'MOVE_ROLE' ? `<label>目標角色<select name="toRole">${options(roles.map(role => [role, role]), d.toRole)}</select></label>` : ''}
+      ${d.type === 'DUPLICATE_WITH_JUSTIFICATION' ? `<fieldset class="compose-roles"><legend>複製到</legend>${roles.map(role => `<label><input type="checkbox" name="toRoles" value="${role}" ${d.toRoles.includes(role) ? 'checked' : ''}> ${role}</label>`).join('')}</fieldset>` : ''}
+      <label class="wide">理由（必填）<textarea name="reason" required>${esc(d.reason)}</textarea></label>
+      <label>證據（每行一筆${d.type === 'DUPLICATE_WITH_JUSTIFICATION' ? '，必填' : ''}）<textarea name="evidence">${esc(d.evidence)}</textarea></label>
+      <label>備註（選填）<input name="note" value="${esc(d.note)}"></label>
+    </div><div class="actions"><button type="submit" ${composer.eventIds.length ? '' : 'disabled'}>預覽（不會寫入）</button></div></form>
+    ${result}</div>`;
+}
+function composeDraft() {
+  const d = composer.draft;
+  const draft = { type: d.type, eventIds: [...composer.eventIds], reason: d.reason, evidence: d.evidence };
+  if (d.type === 'ASSIGN_ROLE' || d.type === 'MOVE_ROLE') draft.toRole = d.toRole;
+  if (d.type === 'DUPLICATE_WITH_JUSTIFICATION') draft.toRoles = [...d.toRoles];
+  if (d.note.trim()) draft.note = d.note;
+  return draft;
+}
+function bindDecisionComposer() {
+  const card = $('#decision-composer');
+  if (!card) return;
+  const form = $('#compose-form');
+  if (form) {
+    form.oninput = form.onchange = event => {
+      const d = composer.draft;
+      const typeChanged = event.target.name === 'type' && event.target.value !== d.type;
+      d.type = form.elements.type.value;
+      if (form.elements.toRole) d.toRole = form.elements.toRole.value;
+      d.toRoles = [...form.querySelectorAll('[name="toRoles"]:checked')].map(box => box.value);
+      d.reason = form.elements.reason.value; d.evidence = form.elements.evidence.value; d.note = form.elements.note.value;
+      if (typeChanged) composerEdited();
+      else if (composer.preview) composerEdited({ structural: false });
+    };
+    form.onsubmit = event => {
+      event.preventDefault();
+      const draft = composeDraft();
+      run(async () => {
+        const preview = await call('previewAcceptedDecision', workspace, draft);
+        composer.preview = preview; composer.previewDraft = draft;
+        if (preview.roll) composer.view = 'preview';
+        refreshRoll(); refreshComposer();
+        message(preview.status === 'PASS' ? '預覽完成：尚未寫入。確認後按「接受此決策」。' : `預覽結果為 ${preview.status}，不能接受；原因列在預覽中。`, preview.status !== 'PASS');
+      }, { revisionBound: true });
+    };
+  }
+  const lane = $('#compose-lane');
+  if (lane) lane.onchange = () => {
+    const picked = composerEntry()?.arrangement.candidate?.lanes?.find(item => item.id === lane.value);
+    if (!picked) return;
+    for (const id of picked.eventIds ?? []) if (!composer.eventIds.includes(id)) composer.eventIds.push(id);
+    composerEdited();
+  };
+  const clearSelection = $('#compose-clear-selection');
+  if (clearSelection) clearSelection.onclick = () => { composer.eventIds = []; composerEdited(); };
+  card.querySelectorAll('[data-roll-view]').forEach(button => button.onclick = () => { composer.view = button.dataset.rollView; refreshRoll(); });
+  const accept = $('#accept-decision');
+  if (accept) accept.onclick = () => {
+    if (!composerPreviewCurrent() || !composer.previewDraft) return message('預覽已不是目前的內容，請重新預覽', true);
+    const draft = composer.previewDraft, digest = composer.preview.recordDigest;
+    run(async () => {
+      await commit(await call('acceptPreviewedDecision', workspace, draft, { expectedRecordDigest: digest }));
+      composer.eventIds = [];
+      composer.view = report.acceptedRoll ? 'accepted' : 'source';
+      refreshRoll(); refreshComposer();
+      message('已接受並記錄此編排決策；它不認證任何 Gate。');
+    });
+  };
+  const clearAll = $('#clear-decisions');
+  if (clearAll) clearAll.onclick = () => run(async () => { await commit(await call('clearAcceptedDecisions', workspace)); message('已清除所有編排決策。'); });
 }
 // Keep every highlight layer scrolled with its textarea, and repaint the paste
 // box as the user types. The paste box is highlighted only once it holds a
@@ -1006,6 +1324,37 @@ function registerServiceWorker(){
     document.addEventListener('visibilitychange',()=>{if(document.visibilityState==='visible')updateFlow.check();});
   }).catch(()=>message('離線資源尚未安裝，請保持連線並重試。',true));
 }
+// ─── Local library: save state, persistence and whole-library backup ────────
+// The sidebar always says whether the open project is saved, how much of the
+// browser's quota Studio uses, and whether storage is persistent; persistence
+// is requested only when the user asks (Safari may ignore it). "Export all"
+// writes every project as its usual backup JSON into one ZIP; restoring a ZIP
+// imports each entry through importWorkspace, like a single backup.
+$('#persist-storage').onclick=async()=>{const granted=await requestPersistence().catch(()=>null);message(granted===true?'瀏覽器已同意保留本機資料。':granted===false?'瀏覽器沒有同意；請定期匯出備份。':'此瀏覽器不支援保留本機資料；請定期匯出備份。',granted!==true);showSaveState();};
+const safeName=value=>String(value||'project').replace(/[\\/:*?"<>|\u0000-\u001f]+/g,'_').slice(0,60);
+$('#export-all').onclick=()=>run(async()=>{
+  const summaries = await listProjectSummaries();
+  const files = [];
+  for (const summary of summaries) {
+    const full = await loadProject(summary.id);
+    files.push({ name: `projects/${safeName(full.title)}-${full.id.slice(0, 8)}.json`, data: new TextEncoder().encode(JSON.stringify({ ...full, canonical: identity.metadata }, null, 2)) });
+  }
+  if (!files.length) throw Error('沒有可匯出的專案');
+  download(`mml-studio-projects-${new Date().toISOString().slice(0, 10)}.zip`, await zipFiles(files), 'application/zip');
+  message(`已匯出 ${files.length} 個專案。`);
+},{revisionBound:false,projectBound:false});
+async function restoreZip(file){
+  const entries = (await unzipFiles(await file.arrayBuffer())).filter(entry => entry.name.toLowerCase().endsWith('.json'));
+  if (!entries.length) throw Error('ZIP 內沒有專案備份');
+  let restored = 0;
+  for (const entry of entries) {
+    audioFile = null;
+    try { await commit(await call('importWorkspace', new TextDecoder().decode(entry.data))); }
+    catch (error) { throw Error(`${entry.name}：${error.message}（此前已匯入 ${restored} 個）`); }
+    restored += 1;
+  }
+  message(`已從 ZIP 匯入 ${restored} 個專案；先前審核保留為歷史，本輪需要重新審核。`);
+}
 // Build/Git provenance is audit metadata served by build.json, deliberately
 // outside the hashed runtime bundle. Display-only: its absence never relaxes
 // Canonical verification, which already ran fail-closed inside the worker.
@@ -1015,8 +1364,9 @@ addEventListener('online',network);addEventListener('offline',network);network()
 try {
   identity=await call('identity');
   identity={...identity,provenance:await buildAudit()};
-  try { projects=await listProjects(); } catch(error){message(error.message,true);}
-  workspace=projects[0]??await call('newWorkspace');
+  try { projects=await listProjectSummaries(); } catch(error){message(error.message,true);}
+  try { workspace=projects[0]?await loadProject(projects[0].id):null; } catch(error){message(error.message,true);workspace=null;}
+  workspace??=await call('newWorkspace');
   $('#boot').hidden=true;$('#app').hidden=false;await run(()=>commit(workspace),{revisionBound:false});
   if('serviceWorker' in navigator) registerServiceWorker();
 } catch(error){$('#boot').textContent=error.message;$('#boot').className='boot-error';$('#boot').hidden=false;$('#app').hidden=true;}

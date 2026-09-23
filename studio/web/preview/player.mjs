@@ -13,10 +13,12 @@
 //     (Apache-2.0; license text in the header of vendor/spessasynth/lib.js); nothing comes from a CDN;
 //   * the bank comes from a user-picked file kept in this browser
 //     (soundbank-store.mjs) — never uploaded, never part of a project;
-//   * this is a listening aid. It does not capture what the engine loaded, so
-//     it cannot satisfy the player-readback gate, and it is never source,
-//     original-audio or in-game evidence.
+//   * this is a listening aid, never source, original-audio or in-game
+//     evidence. A playback from the start also captures the events the engine
+//     actually processed, which the page can record as a player readback
+//     (readback.mjs); that capture is about this engine, not the game.
 import { buildSchedule, indexAt, soundingAt } from './schedule.mjs';
+import { MAX_CAPTURED_EVENTS, READBACK_KIND, READBACK_SCOPE } from './readback.mjs';
 
 export const LOOKAHEAD_SEC = 0.3;
 export const TICK_MS = 25;
@@ -25,6 +27,9 @@ export const START_DELAY_SEC = 0.12;
 // field is full; neither is an instrument.
 const PLACEHOLDER = /^\(Not Used/i;
 const VENDOR = new URL('../../../vendor/spessasynth/', import.meta.url);
+// The vendored engine (scripts/build-studio-web.mjs); a build test holds these
+// to the versions named in vendor/spessasynth/lib.js.
+export const ENGINE_VERSIONS = Object.freeze({ lib: 'spessasynth_lib@4.3.12', core: 'spessasynth_core@4.3.16' });
 
 // `context` must be created and resumed by the caller synchronously inside the
 // user's click (iOS Safari only unlocks audio within the gesture, before any
@@ -36,6 +41,17 @@ export async function createPreviewEngine(bank, context) {
     await context.audioWorklet.addModule(new URL('processor.js', VENDOR));
     const { WorkletSynthesizer } = await import(new URL('lib.js', VENDOR).href);
     const synth = new WorkletSynthesizer(context);
+    // Processed-event tap for the player readback. The worklet posts every
+    // engine event together with its own audio clock (`currentTime`); the
+    // public event handler drops that time, so the tap reads each message
+    // before it is dispatched. A message without a numeric time is passed on
+    // as such, and a capture containing one cannot become a readback.
+    const listeners = new Set();
+    const dispatch = synth.handleMessage.bind(synth);
+    synth.handleMessage = message => {
+      if (message?.type === 'eventCall' && listeners.size) for (const listener of listeners) listener(message.data?.type, message.data?.data, message.currentTime);
+      return dispatch(message);
+    };
     const out = context.createGain();
     synth.connect(out);
     out.connect(context.destination);
@@ -48,19 +64,57 @@ export async function createPreviewEngine(bank, context) {
       .map(preset => ({ program: preset.program, bankMSB: preset.bankMSB ?? 0, bankLSB: preset.bankLSB ?? 0, name: preset.name }))
       .sort((a, b) => a.program - b.program);
     if (!presets.length) throw Error('音色庫沒有可用的音色');
-    return { context, synth, out, presets, bank: { name: bank.name, sha256: bank.sha256 } };
+    const listen = listener => { listeners.add(listener); return () => listeners.delete(listener); };
+    return { context, synth, out, presets, listen, bank: { name: bank.name, sha256: bank.sha256 } };
   } catch (error) {
     context.close?.();
     throw error;
   }
 }
 
+// `onEnd(capture)` receives the readback capture when the playback started
+// at the beginning and ran to the end, or null.
 export function createTransport(engine, { onPosition = () => {}, onEnd = () => {} } = {}) {
   const { context, synth, out } = engine;
   let song = null;
   let program = engine.presets[0].program;
   const muted = [false, false, false, false, false, false];
   let events = [], duration = 0, index = 0, t0 = 0, timer = 0, frame = 0, playing = false, unmuteTimer = 0;
+  // Player readback capture: only for a playback that starts at 0. Anything
+  // that makes it describe less than the whole song as loaded -- a seek, a
+  // stop, a muted role, an instrument switch -- marks it incomplete.
+  let capture = null, haltedAt = -Infinity;
+  engine.listen?.((type, data, time) => {
+    if (!capture) return;
+    if (typeof time !== 'number' || !Number.isFinite(time)) { capture.timeSource = 'unknown'; return; }
+    const at = Math.round((time - t0) * 1e6) / 1e6;
+    if (type === 'programChange') capture.programs.push([at, data.channel, data.program, data.bankMSB ?? 0]);
+    else if (type !== 'noteOn' && type !== 'noteOff') return;
+    // The reset before the start (stopAll, program load) is not the song.
+    else if (at < -0.01) return;
+    else if (capture.events.length >= MAX_CAPTURED_EVENTS) incomplete('TOO_MANY_EVENTS');
+    else capture.events.push(type === 'noteOn' ? [at, 1, data.channel, data.midiNote, data.velocity] : [at, 0, data.channel, data.midiNote, 0]);
+  });
+  function incomplete(reason) { if (capture && !capture.incomplete.includes(reason)) capture.incomplete.push(reason); }
+  function beginCapture() {
+    const preset = engine.presets.find(p => p.program === program) ?? { program, bankMSB: 0, name: '' };
+    capture = {
+      kind: READBACK_KIND, scope: READBACK_SCOPE, gameTimbreEquivalent: false, timeSource: 'engine',
+      sessionId: crypto.randomUUID(), capturedAt: new Date().toISOString(),
+      bank: { ...engine.bank }, engine: { ...ENGINE_VERSIONS },
+      program: { program: preset.program, bankMSB: preset.bankMSB ?? 0, name: preset.name },
+      audioContextState: context.state ?? 'unknown', muted: [...muted], complete: false, incomplete: [],
+      from: 0, duration, events: [], programs: [],
+    };
+    if (muted.some(Boolean)) incomplete('ROLE_MUTED');
+  }
+  function finishCapture() {
+    const done = capture;
+    capture = null;
+    if (!done) return null;
+    done.complete = done.incomplete.length === 0 && done.timeSource === 'engine';
+    return done;
+  }
 
   function applyProgram() {
     for (let channel = 0; channel < 6; channel++) {
@@ -77,7 +131,7 @@ export function createTransport(engine, { onPosition = () => {}, onEnd = () => {
   function tick() {
     const horizon = context.currentTime + LOOKAHEAD_SEC;
     while (index < events.length && t0 + events[index].time <= horizon) send(events[index++]);
-    if (index >= events.length && context.currentTime > t0 + duration + 0.4) { halt(); onEnd(); }
+    if (index >= events.length && context.currentTime > t0 + duration + 0.4) { const done = finishCapture(); halt(); onEnd(done); }
   }
   function report() {
     if (!playing) return;
@@ -99,28 +153,36 @@ export function createTransport(engine, { onPosition = () => {}, onEnd = () => {
   function halt() {
     clearInterval(timer); cancelAnimationFrame(frame);
     timer = 0; frame = 0;
-    if (playing) silenceQueued();
+    // A capture still open here was cut short: it is dropped, never kept.
+    capture = null;
+    if (playing) { silenceQueued(); haltedAt = context.currentTime; }
     playing = false;
   }
 
   return Object.freeze({
     load(nextSong) { halt(); song = nextSong; ({ events, duration } = buildSchedule(song)); return duration; },
-    setProgram(value) { program = Number(value); if (playing) applyProgram(); },
+    setProgram(value) { program = Number(value); if (playing) { incomplete('PROGRAM_CHANGED'); applyProgram(); } },
     setMuted(role, value) {
       muted[role] = Boolean(value);
+      if (muted[role]) incomplete('ROLE_MUTED');
       synth.midiChannels[role]?.setSystemParameter('isMuted', muted[role]);
     },
     async play(from = 0) {
       if (!song) throw Error('沒有可試聽的 Final MML');
       halt();
       await context.resume();
+      const start = Math.min(Math.max(0, from), duration);
+      // Notes queued by the previous playback cannot be withdrawn. A capture
+      // waits until they have passed, so it records only this playback.
+      const settle = haltedAt + LOOKAHEAD_SEC + 0.1 - context.currentTime;
+      if (start === 0 && settle > 0) await new Promise(resolve => setTimeout(resolve, settle * 1000));
       clearTimeout(unmuteTimer);
       synth.stopAll(true);
       out.gain.cancelScheduledValues(context.currentTime);
       out.gain.setValueAtTime(1, context.currentTime);
-      applyProgram();
-      const start = Math.min(Math.max(0, from), duration);
       t0 = context.currentTime + START_DELAY_SEC - start;
+      if (start === 0) beginCapture();
+      applyProgram();
       index = indexAt(events, start);
       for (const held of soundingAt(events, start)) synth.noteOn(held.channel, held.pitch, held.velocity, { time: t0 + start });
       playing = true;
