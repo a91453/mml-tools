@@ -4,6 +4,7 @@ import { createTaskQueue } from './task-queue.mjs';
 import { createUpdateFlow } from './pwa-update.mjs';
 import { buildRoles, diagnosticsFromValidation, renderHTML, roleCharacterCounts, segmentRoles } from './mml-highlight.mjs';
 import { mountReviewRoll } from './review-roll.mjs';
+import { PROBES, buildObservation, summarize } from './engine-probe.mjs';
 // Request identity only. The MIDI decoder, the Canonical conversion and the
 // G11-B/G11-C derivation all live behind the Worker, so the main thread never
 // imports the backend and never parses a source file itself.
@@ -535,13 +536,14 @@ function render() {
     ${finalReductionSection()}
     ${mobileAdaptationSection()}
     ${finalDeliverySection()}
-    <section id="delivery"><div class="section-heading"><h2>07　Readiness 與實機接受</h2>${badge(r.state)}</div><div class="card"><p class="note">${r.state==='CANDIDATE'?'目前為 Candidate，尚有必要 Gate 未通過。複製內容仍屬候選版本。':r.state==='VALIDATED'?'必要非實機 Gate 已通過。等待使用者於目標遊戲 client 實際接受。':'已有本輪 exact-MML 實機接受紀錄。'}</p><p class="meta">本節記錄的是<strong>實機接受</strong>。產生與匯出 Final MML 在上方第 06 節。「下載六軌對照文字」是含角色標題的<strong>對照用</strong>文字檔，<strong>不是</strong>可直接貼上的樂譜；可貼上的完整字串請用「複製完整 MML@」或第 06 節的匯出。</p><div class="actions"><button id="copy-mml" ${r.rawMml?'':'disabled'}>複製完整 MML@</button><button id="export-mml" class="secondary" ${r.rawMml?'':'disabled'}>下載六軌對照文字</button><button id="export-report" class="quiet">下載分析報告</button></div>${r.tracks?`${r.tracks.map((track,i)=>`<div class="track"><div class="row"><label for="track-${i}">${roles[i]} <small>${track.length} / ${PUBLISHED_ROLE_CHARACTER_LIMIT} 字元</small></label><button data-copy-track="${i}" class="quiet">複製</button></div><div class="mml-hl">${mmlLayer(track, roleDiagnostics(i))}<textarea id="track-${i}" class="code" readonly spellcheck="false">${esc(track)}</textarea></div></div>`).join('')}<p class="note">${P1_LOCAL_NOTE}</p>`:'<p class="empty">需有通過 Final 技術語法且與候選事件一致的六軌 MML。MusicXML／IR 不會自動縮編或猜測角色；可在第 06 節產生，或附上對應的交付 MML 進行回讀。</p>'}<details><summary>記錄 In-game Accepted</summary><form id="acceptance"><div class="field-grid">${input('client','Client／地區／版本','')}${input('instrument','樂器與軌道配置','')}${input('evidence','實機結果／截圖或紀錄定位','')}</div><button ${r.state==='CANDIDATE'?'disabled':''}>此 exact-MML 已實機接受</button></form>${w.acceptance?json(w.acceptance):''}</details></div></section>
+    <section id="delivery"><div class="section-heading"><h2>07　Readiness 與實機接受</h2>${badge(r.state)}</div><div class="card"><p class="note">${r.state==='CANDIDATE'?'目前為 Candidate，尚有必要 Gate 未通過。複製內容仍屬候選版本。':r.state==='VALIDATED'?'必要非實機 Gate 已通過。等待使用者於目標遊戲 client 實際接受。':'已有本輪 exact-MML 實機接受紀錄。'}</p><p class="meta">本節記錄的是<strong>實機接受</strong>。產生與匯出 Final MML 在上方第 06 節。「下載六軌對照文字」是含角色標題的<strong>對照用</strong>文字檔，<strong>不是</strong>可直接貼上的樂譜；可貼上的完整字串請用「複製完整 MML@」或第 06 節的匯出。</p><div class="actions"><button id="copy-mml" ${r.rawMml?'':'disabled'}>複製完整 MML@</button><button id="export-mml" class="secondary" ${r.rawMml?'':'disabled'}>下載六軌對照文字</button><button id="export-report" class="quiet">下載分析報告</button></div>${r.tracks?`${r.tracks.map((track,i)=>`<div class="track"><div class="row"><label for="track-${i}">${roles[i]} <small>${track.length} / ${PUBLISHED_ROLE_CHARACTER_LIMIT} 字元</small></label><button data-copy-track="${i}" class="quiet">複製</button></div><div class="mml-hl">${mmlLayer(track, roleDiagnostics(i))}<textarea id="track-${i}" class="code" readonly spellcheck="false">${esc(track)}</textarea></div></div>`).join('')}<p class="note">${P1_LOCAL_NOTE}</p>`:'<p class="empty">需有通過 Final 技術語法且與候選事件一致的六軌 MML。MusicXML／IR 不會自動縮編或猜測角色；可在第 06 節產生，或附上對應的交付 MML 進行回讀。</p>'}<details><summary>記錄 In-game Accepted</summary><form id="acceptance"><div class="field-grid">${input('client','Client／地區／版本','')}${input('instrument','樂器與軌道配置','')}${input('evidence','實機結果／截圖或紀錄定位','')}</div><button ${r.state==='CANDIDATE'?'disabled':''}>此 exact-MML 已實機接受</button></form>${w.acceptance?json(w.acceptance):''}</details></div>${engineProbeCard()}</section>
     <details class="card"><summary>Published Canonical 與建置身分</summary><p class="meta">本機使用建置時由 Published main 取得並核驗的完整固定快照。離線模式不宣稱已確認最新 main。</p>${json(identity.metadata)}${identity.provenance?json(identity.provenance):''}${identity.documents.map(d=>`<details><summary>${esc(d.path)} · ${esc(d.authority)}</summary><a href="${esc(d.url)}" target="_blank" rel="noopener">GitHub 固定快照</a><pre>${esc(d.content)}</pre></details>`).join('')}</details>`;
   bind();
   // View-only bindings for freshly rendered DOM (highlight layers, review roll).
   bindHighlightLayers();
   bindReviewRoll();
   bindTimbrePreview();
+  bindEngineProbes();
 }
 async function putSource(slot, name, content, authority = 'supporting') {
   if (slot === 'delivery') { const next = await call('invalidate',workspace); next.deliveryMml = content; await commit(next); return; }
@@ -771,6 +773,80 @@ $('#new-project').onclick=()=>run(async()=>{audioFile=null;await commit(await ca
 $('#projects').onchange=()=>{const id=$('#projects').value;run(async()=>{const selected=projects.find(p=>p.id===id);if(!selected)throw Error('找不到選取的專案，請重新開啟');audioFile=null;await commit(selected);},{revisionBound:false,projectBound:false});};
 $('#export-project').onclick=()=>{if(workspace)download('mml-studio-project.json',JSON.stringify({...workspace,canonical:identity.metadata},null,2));};
 $('#restore-project').onchange=()=>{const file=$('#restore-project').files[0];if(file)run(async()=>{if(file.size>16*1048576)throw Error(`Project backup is ${(file.size/1048576).toFixed(1)} MiB; the restore limit is 16 MiB. Export the sources separately if a MIDI project exceeds it.`);audioFile=null;await commit(await call('importWorkspace',await file.text()));message('已匯入；先前審核保留為歷史，本輪需要重新審核。');},{revisionBound:false,projectBound:false});};
+// ─── In-game probe kit ──────────────────────────────────────────────────────
+// Fixed test strings for open engine questions and a place to record what the
+// game actually did. Observations stay on this device (engine-probe-store.mjs),
+// are exported explicitly, and change no Canonical rule by themselves.
+const probeState = { loaded: false, observations: [], error: null };
+function engineProbeCard() {
+  const summary = summarize(probeState.observations);
+  const probeBlock = probe => {
+    const own = probeState.observations.filter(o => o.probeId === probe.id);
+    const state = summary.find(s => s.probeId === probe.id);
+    return `<div class="probe" data-probe="${esc(probe.id)}"><div class="row"><strong>${esc(probe.title)}</strong><span class="badge">PENDING ${esc(probe.pending)}</span></div>
+      <p class="meta">${esc(probe.question)}</p>
+      <label>貼進遊戲的測試字串<textarea class="code" readonly spellcheck="false" data-probe-mml>${esc(probe.mml)}</textarea></label>
+      <div class="actions"><button type="button" class="secondary" data-probe-copy="${esc(probe.id)}">複製測試字串</button></div>
+      <p class="meta">${esc(probe.listen)}</p>
+      <form data-probe-form="${esc(probe.id)}"><fieldset class="probe-outcomes"><legend>在遊戲中觀察到的結果</legend>${probe.outcomes.map(o => `<label><input type="radio" name="outcome" value="${esc(o.id)}" required> ${esc(o.label)}</label>`).join('')}</fieldset>
+        <div class="field-grid">${input('client', '遊戲 client／地區', '')}${input('version', '版本', '')}${input('instrument', '樂器', '')}${input('notes', '備註（選填）', '')}</div>
+        <div class="actions"><button>記錄這次實機觀察</button></div></form>
+      ${own.length ? `<p class="meta">已記錄 ${own.length} 筆${state.consistent ? '' : '，<strong>結果不一致</strong>，需要再確認'}：</p><ul class="probe-log">${own.map(o => `<li>${esc(o.outcomeLabel)} · ${esc(o.client)} ${esc(o.version)} · ${esc(o.instrument)} · ${esc(o.observedAt.slice(0, 10))} <button type="button" class="quiet" data-probe-delete="${o.id}">刪除</button></li>`).join('')}</ul>` : ''}</div>`;
+  };
+  return `<details class="card engine-probes" id="engine-probes"><summary>引擎實機測試（PENDING 項目）</summary>
+    <p class="note">把測試字串貼進遊戲、實際聽過之後再記錄。紀錄是這個 client／版本／樂器與這個確切字串的 <strong>class E 實機證據</strong>，只存在這台裝置；不會自動改變任何 Canonical 規則，要改規則需走發布流程。</p>
+    ${PROBES.map(probeBlock).join('<div class="divider"></div>')}
+    <div class="actions"><button type="button" class="secondary" id="probe-export" ${probeState.observations.length ? '' : 'disabled'}>匯出實機紀錄 JSON</button></div>
+    ${probeState.error ? `<p class="note">${esc(probeState.error)}</p>` : ''}</details>`;
+}
+function refreshProbes() {
+  const card = $('#engine-probes');
+  if (!card) return;
+  const open = card.open;
+  card.outerHTML = engineProbeCard();
+  if (open) $('#engine-probes').open = true;
+  bindEngineProbes();
+}
+async function loadProbeObservations() {
+  probeState.loaded = true;
+  try {
+    const { listObservations } = await import('./engine-probe-store.mjs');
+    probeState.observations = await listObservations();
+  } catch (error) { probeState.error = `實機紀錄讀取失敗：${error.message}`; }
+  refreshProbes();
+}
+function bindEngineProbes() {
+  const card = $('#engine-probes');
+  if (!card) return;
+  if (!probeState.loaded) loadProbeObservations();
+  card.querySelectorAll('[data-probe-copy]').forEach(button => button.onclick = () => {
+    const probe = PROBES.find(p => p.id === button.dataset.probeCopy);
+    copyText(probe.mml, button.closest('.probe').querySelector('[data-probe-mml]'));
+  });
+  card.querySelectorAll('[data-probe-form]').forEach(form => form.onsubmit = async event => {
+    event.preventDefault();
+    try {
+      const probe = PROBES.find(p => p.id === form.dataset.probeForm);
+      const digest = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(probe.mml));
+      const mmlSha256 = [...new Uint8Array(digest)].map(b => b.toString(16).padStart(2, '0')).join('');
+      const observation = buildObservation(probe, Object.fromEntries(new FormData(form)), { mmlSha256 });
+      const { addObservation, listObservations } = await import('./engine-probe-store.mjs');
+      await addObservation(observation);
+      probeState.observations = await listObservations();
+      probeState.error = null;
+      message('已記錄這次實機觀察；只保存在這台裝置。');
+    } catch (error) { probeState.error = error.message; }
+    refreshProbes();
+  });
+  card.querySelectorAll('[data-probe-delete]').forEach(button => button.onclick = async () => {
+    const { deleteObservation, listObservations } = await import('./engine-probe-store.mjs');
+    await deleteObservation(Number(button.dataset.probeDelete));
+    probeState.observations = await listObservations();
+    refreshProbes();
+  });
+  const exporter = $('#probe-export');
+  if (exporter) exporter.onclick = () => download('in-game-probe-observations.json', JSON.stringify({ kind: 'in-game-probe-observations', note: 'Class E in-game evidence for the stated client/version/instrument and exact test string. Changes no Canonical rule by itself.', exportedAt: new Date().toISOString(), observations: probeState.observations }, null, 2));
+}
 // ─── Timbre preview ─────────────────────────────────────────────────────────
 // Plays the applied Final MML through SpessaSynth with a sound bank the user
 // picks (studio/web/preview/). The engine and bank live across re-renders; the
