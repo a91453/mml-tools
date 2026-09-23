@@ -821,10 +821,16 @@ function result(fields) {
  * unrepaired, and never returns `PASS` without the authoritative enforcement
  * pass agreeing about the repaired candidate.
  */
-export function repairTechnicalTiming(project, { mobileSyntax, enforcement } = {}) {
+export function repairTechnicalTiming(project, { mobileSyntax, enforcement, releaseEvidenceRegistry = null } = {}) {
   if (!project || typeof project !== 'object') throw Error('Canonical project is required');
 
-  const options = mobileSyntax === undefined ? {} : { mobileSyntax };
+  // The same enforcement inputs the caller graded with, so the supplied report
+  // and the fresh one describe the same question — including recorded release
+  // representations re-graded against the project's current evidence.
+  const options = {
+    ...(mobileSyntax === undefined ? {} : { mobileSyntax }),
+    ...(releaseEvidenceRegistry ? { releaseEvidenceRegistry } : {}),
+  };
   const fresh = enforceMicroGaps(project, options);
   const diagnostics = [];
 

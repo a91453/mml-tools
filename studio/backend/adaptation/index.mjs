@@ -245,6 +245,10 @@ export function planMobileAdaptation({ baseline, candidate = baseline, profile =
   const introduced = afterRisks.filter(risk => !existing.has(overlapRiskKey(risk)));
   for (const risk of introduced) blockers.push({ code: 'NEW_COLLISION_REQUIRES_REVIEW', ...risk });
   if (beforeRisks.length) warnings.push({ code: 'EXISTING_COLLISIONS_REQUIRE_REVIEW', count: beforeRisks.length });
+  // A profile-only plan keeps the identity it had before release representation
+  // existed: the release summary is reported beside it, not hashed into it. With
+  // release decisions supplied, they and their summary are part of the plan.
+  const releaseInputSupplied = releaseRepresentation !== null && releaseRepresentation !== undefined;
   const releaseBody = {
     summary: summarizeReleaseTiming(releaseAnalysis),
     analysisDigest: contentDigest(releaseAnalysis.targets),
@@ -253,9 +257,10 @@ export function planMobileAdaptation({ baseline, candidate = baseline, profile =
     pending: releasePlan.pending,
     unresolvedTargetCount: releasePlan.unresolvedTargetCount,
   };
-  const body = { schema: 'mml-studio/mobile-adaptation-plan@1', baselineIdentity, inputDigest, profileDigest, profile: normalized, canonicalIdentity: canonicalIdentity(), leadBoundEventIds: [...leadBound].sort(compareStrings), rolePlans, changes, releaseRepresentation: releaseBody, blockers, warnings, collisions: { before: beforeRisks, after: afterRisks, introduced, scanLimited }, status: blockers.length ? 'PENDING' : 'PASS' };
+  const body = { schema: 'mml-studio/mobile-adaptation-plan@1', baselineIdentity, inputDigest, profileDigest, profile: normalized, canonicalIdentity: canonicalIdentity(), leadBoundEventIds: [...leadBound].sort(compareStrings), rolePlans, changes, ...(releaseInputSupplied ? { releaseRepresentation: releaseBody } : {}), blockers, warnings, collisions: { before: beforeRisks, after: afterRisks, introduced, scanLimited }, status: blockers.length ? 'PENDING' : 'PASS' };
   return {
     ...body,
+    releaseRepresentation: releaseBody,
     id: `mobile:plan:${contentDigest(body)}`,
     // The full per-release analysis (Layer A/B) for a reviewer. It is derived
     // from the candidate and is not part of the plan identity or of any stored
@@ -270,7 +275,9 @@ export function planMobileAdaptation({ baseline, candidate = baseline, profile =
     certifiesGates: [],
     // What would settle the releases that still need a decision, from the sources
     // this project holds. Not part of the plan identity.
-    releaseEvidenceRequirement: releasePlan.unresolvedTargetCount > 0 ? releaseEvidenceRequirement(registry) : null,
+    // Only releases a decision can still settle count: a keep-claimed release or
+    // one with no valid representation is not answered by more evidence.
+    releaseEvidenceRequirement: releasePlan.openDecisionRequiredCount > 0 ? releaseEvidenceRequirement(registry) : null,
     notice: 'An executable adaptation plan, not a Mobile acceptance verdict. Evidence references are caller-supplied; the service verifies each cited source against the project (presence, kind, independence) but cannot verify the act of review. Release representation evidence counts when it cites an independent primary source by a direct review of it, for a claim that source class can support; who submitted it is recorded and never graded.',
   };
 }

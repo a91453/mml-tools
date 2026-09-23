@@ -142,7 +142,7 @@ function evidenceProbe(assets, sources, audioEvidence) {
     probes.push(probe(`original_audio ${ref} by a direct review of the recording (shape only; no such review is on record)`, [cite('primary-audio', ref, EVIDENCE_BASIS.DIRECT_SOURCE_REVIEW)]));
   }
   return {
-    registry: registry.entries.map(({ ref, origin, kind, sha256, primary, independent }) => ({ ref, origin, kind, sha256, primary, independent })),
+    registry: registry.entries.map(({ ref, origin, kind, sha256, bytesHeld, primary, independent }) => ({ ref, origin, kind, sha256, bytes_held: bytesHeld, primary, independent })),
     requirement: releaseEvidenceRequirement(registry),
     audio_evidence_on_record: (audioEvidence ?? []).map(entry => ({ report_sha256: entry.report_sha256, audio_sha256: entry.audio_sha256, active: entry.active, confidence: entry.confidence, warnings: entry.warnings, submitted_by: entry.submitted_by ?? null, basis: EVIDENCE_BASIS.ALIGNMENT_LOCATOR, admissible_as_release_evidence: false, why: 'SOURCE_POLICY §6: an alignment report locates windows in the recording; it states nothing about sustain or articulation there.' })),
     probes,
@@ -152,13 +152,17 @@ function evidenceProbe(assets, sources, audioEvidence) {
 // The questions a release arbitration has to answer, from the analysis and the
 // graded evidence. Nothing here decides musical meaning from the size of the
 // offset or from the uniformity of the encoding.
-function arbitration(analysis, evidence, { project }) {
+function arbitration(analysis, evidence, { project, gates }) {
   const shapes = {}; for (const target of analysis.targets) bump(shapes, target.analysis.followingShape);
   const offsets = {}; for (const target of analysis.targets) bump(offsets, String(target.analysis.offsetBeforeNextGridTicks));
   const anyDirectReview = evidence.probes.some(item => item.admissible && !/shape only/.test(item.probe));
   const audioAvailable = evidence.requirement?.anyOf.find(item => item.class === 'primary-audio')?.availableRefs ?? [];
   const symbolicAvailable = evidence.requirement?.anyOf.find(item => item.class === 'primary-symbolic')?.availableRefs ?? [];
   const activeAlignment = evidence.audio_evidence_on_record.find(entry => entry.active) ?? null;
+  const shaOf = ref => evidence.registry.find(entry => entry.ref === ref)?.sha256 ?? null;
+  const recordings = new Set(audioAvailable.map(shaOf).filter(Boolean)).size;
+  const relabelledSymbolic = evidence.requirement?.anyOf.find(item => item.class === 'primary-symbolic')?.notIndependentRefs ?? [];
+  const openGates = ['source', 'originalAudio'].filter(name => gates?.[name] && gates[name].status !== 'PASS' && gates[name].status !== 'N/A');
   return {
     claim_under_review: 'SOURCE_EVENT_SUSTAINS_TO_GRID_POINT (EXTEND_TO_NEXT_GRID) or SOURCE_EVENT_RELEASES_BY_PREVIOUS_GRID_POINT (TRUNCATE_TO_PREVIOUS_GRID)',
     targets: analysis.targetCount,
@@ -179,12 +183,12 @@ function arbitration(analysis, evidence, { project }) {
       source_encoding_artifact_or_technical_micro_gap: 'UNDETERMINED — the uniform one-tick pattern is an observation about the third-party file, not evidence; it is not read as meaningless for being uniform or for being one tick.',
       extend_justified: anyDirectReview ? 'YES for the releases an admissible decision names' : 'NOT YET — EXTEND is the minimal valid option for every target arithmetically, but no admissible finding supports the claim it makes.',
       subset_differs: 'NO — see subsets.why.',
-      original_audio_available: audioAvailable.length ? `YES — independent original_audio ${audioAvailable.join(', ')} (one recording: the ids share one SHA-256)` : 'NO',
+      original_audio_available: audioAvailable.length ? `YES — independent original_audio ${audioAvailable.join(', ')} (${recordings} distinct recording${recordings === 1 ? '' : 's'} by SHA-256)` : 'NO',
       original_audio_evidence_on_record_sufficient: activeAlignment
         ? `NO — the only audio evidence on record is the alignment report ${activeAlignment.report_sha256.slice(0, 12)}… (confidence ${activeAlignment.confidence}, warnings ${activeAlignment.warnings.join('+')}), a locator; no direct review of the recording at these releases is recorded.`
         : 'NO — no audio evidence is on record.',
-      current_audio_evidence_can_support_claim: 'NO — metrics and alignment locate; they do not state sustain or articulation (SOURCE_POLICY §6). The low-confidence alignment also leaves the recording-time locators of the release windows unreliable (Gate 0 recording version and Gate 7 remain open).',
-      independent_symbolic_source_exists: symbolicAvailable.length ? `YES — ${symbolicAvailable.join(', ')}` : 'NO — the asset labelled official_midi is byte-identical to the third-party MIDI (a relabelled copy).',
+      current_audio_evidence_can_support_claim: `NO — metrics and alignment locate; they do not state sustain or articulation (SOURCE_POLICY §6).${activeAlignment?.warnings?.length ? ` The active alignment carries ${activeAlignment.warnings.join('+')}, so the recording-time locators of the release windows are themselves unreliable.` : ''}${openGates.length ? ` In the isolated run, readiness gates still open: ${openGates.join(', ')}.` : ''}`,
+      independent_symbolic_source_exists: symbolicAvailable.length ? `YES — ${symbolicAvailable.join(', ')}` : relabelledSymbolic.length ? `NO — ${relabelledSymbolic.join(', ')} labelled official ${relabelledSymbolic.length === 1 ? 'is' : 'are'} byte-identical to a supporting file (a relabelled copy).` : 'NO — no official score or MIDI asset is held.',
       accepted_prior_evidence_exists: project ? (project.artifacts?.length ? 'SEE project.artifacts' : 'NO — no accepted previous version and no delivered Final exist in the project.') : 'UNKNOWN — no project export supplied.',
       evidence_still_insufficient: !anyDirectReview,
     },
@@ -267,7 +271,7 @@ export async function releaseTimingE2E({ workDir, eventPaths, decisionsPath, ass
     finalize: { operation: finalize.operation, artifact_id: finalize.artifact_id, mml_delivered: finalize.mml !== null, song_state: finalize.song_state, blockers: finalize.blockers },
   };
 
-  receipt.arbitration = arbitration(plan.releaseTiming, receipt.evidence, { project: productionProject });
+  receipt.arbitration = arbitration(plan.releaseTiming, receipt.evidence, { project: productionProject, gates: review.readiness.gates });
   if (counterfactual) receipt.counterfactual = await counterfactualEvaluation({ app, projectId, runId: run.run_id, candidateId, plan, workDir });
   return receipt;
 }

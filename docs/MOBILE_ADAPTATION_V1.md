@@ -86,8 +86,10 @@ plan accepts `releaseRepresentation.decisions` (MCP/HTTP/run:
 required for the audit trail, and it never changes the grade — the same citation
 grades the same whether a person, a conversational AI or a tool submits it. An
 item counts when it cites an independent primary source the project holds
-(`primary-symbolic`: an official score/MIDI asset whose bytes are not a copy of a
-supporting asset; `primary-audio`: the original recording), with basis
+the bytes of (`primary-symbolic`: an official score/MIDI asset whose bytes are not
+a copy of a supporting asset; `primary-audio`: the original recording; a Canonical
+source counts only when its SHA-256 matches an uploaded asset, so a source an
+imported IR merely declares is `EVIDENCE_REFERENCE_NOT_BACKED_BY_PROJECT_BYTES`), with basis
 `direct-source-review` (the finding was read from that source itself), a locator
 and a finding, for a claim that source class can support under SOURCE_POLICY §1
 (both classes can support a release's sustain or written duration). Metrics and

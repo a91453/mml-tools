@@ -45,6 +45,8 @@ import {
 import { MICRO_GAP_BLOCKERS, enforceMicroGaps } from '../backend/final/micro-gap-enforcement.mjs';
 import { planMobileAdaptation } from '../backend/adaptation/index.mjs';
 import { emitFinalMml } from '../backend/final/mml-emitter.mjs';
+import { REPAIR_DIAGNOSTICS, repairTechnicalTiming } from '../backend/final/technical-timing-repair.mjs';
+import { contentDigest } from '../backend/arrangement/decision-application.mjs';
 import { compareCandidateLineage, compareCanonicalVersions } from '../backend/compare/version-drift.mjs';
 import { sixRoleBaseline } from './fixtures/application-fixtures.mjs';
 
@@ -560,4 +562,68 @@ test('RT-21 scope limit: a caution-representable release is no target and still 
   const emitted = emitFinalMml(candidate);
   assert.equal(emitted.status, 'FAIL', 'the preferred-only lattice cannot write it, and nothing is approximated');
   assert.ok(emitted.diagnostics.some(item => item.code === 'DURATION_SEARCH_POLICY_LIMIT'));
+});
+
+test('RT-9c evidence must resolve to bytes the project holds: a source an imported IR merely declares is never evidence', () => {
+  const declared = [
+    createSource({ id: 'claimed:recording', label: 'declared, no bytes', kind: 'original-audio', authority: 'primary-audio', sha256: null }),
+    createSource({ id: 'claimed:score', label: 'declared, digest nothing uploaded matches', kind: 'official-musicxml', authority: 'primary-symbolic', sha256: 'f'.repeat(64) }),
+    createSource({ id: 'held:recording', label: 'backed by the uploaded recording', kind: 'original-audio', authority: 'primary-audio', sha256: 'e'.repeat(64) }),
+  ];
+  const registry = buildEvidenceRegistry({ assets: ASSETS, sources: [THIRD, ...declared] });
+  assert.equal(registry.get('claimed:recording').bytesHeld, false);
+  assert.equal(registry.get('claimed:recording').independent, false, 'unknown bytes cannot be shown independent');
+  assert.equal(registry.get('claimed:score').bytesHeld, false);
+  assert.equal(registry.get('held:recording').bytesHeld, true);
+  for (const attestation of [HUMAN, AGENT]) {
+    assert.deepEqual(gradeReleaseEvidence(audioDecision(['a'], { attestation, ref: 'claimed:recording' }), registry).items[0].reasons, [EVIDENCE_REFUSAL.REF_HOLDS_NO_BYTES]);
+    assert.deepEqual(gradeReleaseEvidence(scoreDecision(['a'], { attestation, ref: 'claimed:score' }), registry).items[0].reasons, [EVIDENCE_REFUSAL.REF_HOLDS_NO_BYTES]);
+    assert.equal(gradeReleaseEvidence(audioDecision(['a'], { attestation, ref: 'held:recording' }), registry).admissible, true);
+  }
+  // Only held bytes are offered as a way to settle an open release.
+  const requirement = releaseEvidenceRequirement(buildEvidenceRegistry({ assets: [ASSETS[0]], sources: [THIRD, ...declared.slice(0, 2)] }));
+  assert.deepEqual(requirement.anyOf.map(item => [item.code, [...item.availableRefs]]), [
+    [RELEASE_EVIDENCE_REQUIREMENT.ORIGINAL_AUDIO_SOURCE_REQUIRED, []],
+    [RELEASE_EVIDENCE_REQUIREMENT.SYMBOLIC_SOURCE_REQUIRED, []],
+  ]);
+});
+
+test('RT-9d a stored resolution is re-checked, not believed: every fact it omits counts against it', () => {
+  const a = note({ id: 'a', start: 0, end: tickBefore(1) });
+  const b = note({ id: 'b', start: 1, end: 2 });
+  const analysis = analyzeReleaseTiming({ candidate: project([a, b]) });
+  const registry = buildEvidenceRegistry({ assets: ASSETS, sources: [THIRD] });
+  const plan = planReleaseRepresentation({ analysis, registry, input: { decisions: [audioDecision(['a'])] } });
+  const codes = (decisions, options) => verifyReleaseRepresentation(represented([a, b], plan.changes, decisions), options).violations.map(item => item.code);
+  assert.deepEqual(codes(plan.decisions), []);
+  // A third-party citation dressed with a resolution it never had.
+  const dressed = plan.decisions.map(decision => ({ ...decision, evidence: decision.evidence.map(item => ({ ...item, ref: 'ast_third', resolved: { ref: 'ast_third', kind: 'original-audio' } })) }));
+  assert.deepEqual(codes(dressed), [RECORD_VIOLATION.DECISION_NOT_ADMISSIBLE], 'without a registry, an omitted fact is not assumed');
+  assert.deepEqual(codes(dressed, { registry }), [RECORD_VIOLATION.DECISION_NOT_ADMISSIBLE], 'with one, the ref is resolved again');
+  // A claim with no source class behind it is refused, whatever is cited.
+  assert.ok(gradeReleaseEvidence({ ...audioDecision(['a']), representation: 'QUANTIZE' }, registry).items[0].reasons.includes(EVIDENCE_REFUSAL.CLAIM_NOT_SUPPORTED));
+});
+
+test('RT-22 a profile-only plan keeps its identity, and technical repair grades with the same evidence registry', () => {
+  // The plan body a profile-only plan hashes is the one it hashed before release
+  // representation existed; the release summary is reported beside it.
+  const candidate = sixRoleBaseline();
+  const profile = { schema: 'mml-studio/mobile-adaptation-profile@1', id: 'fixture-profile', reason: 'fixture', evidence: ['fixture'], roles: { Melody: { volumeDelta: 0 } } };
+  const plan = planMobileAdaptation({ baseline: candidate, candidate, profile });
+  const keys = ['schema', 'baselineIdentity', 'inputDigest', 'profileDigest', 'profile', 'canonicalIdentity', 'leadBoundEventIds', 'rolePlans', 'changes', 'blockers', 'warnings', 'collisions', 'status'];
+  assert.equal(plan.id, `mobile:plan:${contentDigest(Object.fromEntries(keys.map(key => [key, plan[key]])))}`);
+  assert.ok(plan.releaseRepresentation, 'still reported');
+  const withRelease = planMobileAdaptation({ baseline: candidate, candidate, profile, releaseRepresentation: { decisions: [] } });
+  assert.notEqual(withRelease.id, plan.id, 'supplied release decisions are part of the plan');
+
+  const a = note({ id: 'a', start: 0, end: tickBefore(1) });
+  const oneTick = project([a, note({ id: 'b', start: 1, end: 2 })]);
+  const registry = buildEvidenceRegistry({ assets: ASSETS, sources: [THIRD] });
+  const enforcement = enforceMicroGaps(oneTick, { releaseEvidenceRegistry: registry });
+  const repaired = repairTechnicalTiming(oneTick, { enforcement, releaseEvidenceRegistry: registry });
+  assert.equal(repaired.diagnostics.some(item => item.code === REPAIR_DIAGNOSTICS.ENFORCEMENT_STALE), false);
+  // The repair's own re-grade uses the registry the caller graded with, so a
+  // recorded representation cannot pass there on its stored citation alone.
+  assert.equal(repaired.verification.releaseRepresentationRecords.registryChecked, true);
+  assert.equal(repaired.verification.releaseEvidenceRequirement.anyOf[0].code, RELEASE_EVIDENCE_REQUIREMENT.ORIGINAL_AUDIO_REVIEW_REQUIRED);
 });

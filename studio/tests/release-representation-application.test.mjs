@@ -9,7 +9,8 @@ import assert from 'node:assert/strict';
 
 import { createStudioApplication } from '../backend/application/index.mjs';
 import { f } from '../backend/mml/index.mjs';
-import { OWNER, TICK, ALL_RELEASE_EVENTS as ALL, HUMAN_SUBMITTER, candidateWithAudio, audioReviewDecision } from './fixtures/release-fixtures.mjs';
+import { createCanonicalProject, createSource } from '../backend/canonical/index.mjs';
+import { OWNER, TICK, ALL_RELEASE_EVENTS as ALL, HUMAN_SUBMITTER, candidateWithAudio, audioReviewDecision, oneTickEarlyBaseline, roleDecisions } from './fixtures/release-fixtures.mjs';
 
 test('RRA-1 the read-only plan reports every non-representable release and what still needs a profile', async () => {
   const service = createStudioApplication();
@@ -148,4 +149,30 @@ test('RRA-5 review re-grades a recorded representation against the project\'s cu
   assert.equal(finalized.artifact_id, null, 'nothing is delivered on a citation review refuses');
   assert.ok(finalized.blockers.includes('microTiming'));
   assert.equal(finalized.song_state, 'CANDIDATE');
+});
+
+test('RRA-6 a recording or score an uploaded IR only declares, with no bytes in the project, is never evidence', async () => {
+  const service = createStudioApplication();
+  const baseline = oneTickEarlyBaseline();
+  const declared = createCanonicalProject({ ...baseline, sources: [...baseline.sources,
+    createSource({ id: 'claimed:original-audio', label: 'declared recording', kind: 'original-audio', authority: 'primary-audio', sha256: null }),
+    createSource({ id: 'claimed:official-score', label: 'declared score', kind: 'official-midi', authority: 'primary-symbolic', sha256: 'f'.repeat(64) }),
+  ] });
+  const { project } = await service.createProject(OWNER, { title: 'declared sources' });
+  await service.uploadAsset(OWNER, project.project_id, { kind: 'canonical_project', filename: 'b.json', mediaType: 'application/json', bytes: new TextEncoder().encode(JSON.stringify(declared)) });
+  await service.analyzeSources(OWNER, project.project_id);
+  const candidateId = (await service.applyDecisions(OWNER, project.project_id, { decisions: roleDecisions() })).decisions.candidate_id;
+  for (const submitter of [HUMAN_SUBMITTER, undefined]) {
+    for (const ref of ['claimed:original-audio', 'claimed:official-score']) {
+      const decision = audioReviewDecision(ref, ALL, { submitter });
+      if (ref.includes('score')) decision.evidence = decision.evidence.map(item => ({ ...item, class: 'primary-symbolic' }));
+      const { plan } = (await service.planMobileAdaptation(OWNER, project.project_id, { candidateId, releaseRepresentation: { decisions: [decision] } })).adaptation;
+      assert.equal(plan.status, 'PENDING', ref);
+      assert.equal(plan.releaseRepresentation.changes.length, 0);
+      assert.deepEqual([...plan.releaseRepresentation.pending[0].items[0].reasons], ['EVIDENCE_REFERENCE_NOT_BACKED_BY_PROJECT_BYTES']);
+    }
+  }
+  // Nor are they offered as a way to settle the releases.
+  const review = (await service.reviewCandidate(OWNER, project.project_id, { candidateId })).review;
+  assert.deepEqual(review.readiness.gates.microTiming.releaseEvidenceRequirement.anyOf.map(item => [item.code, item.availableRefs]), [['ORIGINAL_AUDIO_SOURCE_REQUIRED', []], ['INDEPENDENT_SYMBOLIC_SOURCE_REQUIRED', []]]);
 });

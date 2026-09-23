@@ -195,11 +195,15 @@ export const READINESS_GATE_OPERATIONS = freeze({
   source: freeze(['analyzeSources', 'recordConfirmations.source_complete']),
   baseline: freeze(['analyzeSources']),
   technical: freeze(['finalize']),
-  // A release no Final token can express is answered by an evidence-backed
-  // release representation decision in the Mobile adaptation stage. The
-  // finalize-time technical timing repair is not listed: finalize refuses a
-  // blocked micro-timing gate before the emitter (and its opt-in repair) runs,
-  // so naming it here would send a caller to an operation that cannot answer.
+  // A release no Final token can express — and the sub-grid gap it leaves
+  // before the next attack — is answered by an evidence-backed release
+  // representation decision in the Mobile adaptation stage. The finalize-time
+  // technical timing repair is not listed: finalize refuses a blocked
+  // micro-timing gate before the emitter (and its opt-in repair) runs, so naming
+  // it here would send a caller to an operation that cannot answer. A sub-grid
+  // interval with no non-representable release behind it (a sub-grid note, or
+  // a gap after a release Final can express) has no application operation in
+  // this build; it is answered in the Canonical source itself.
   microTiming: freeze(['planMobileAdaptation', 'applyMobileAdaptation.release_representation']),
   core3: freeze(['approveCore3SourceChange']),
   core3Completeness: freeze(['recordConfirmations.core3_completeness_reviewed']),

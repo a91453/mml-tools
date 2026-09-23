@@ -37,7 +37,7 @@
   "reproduction_fidelity": {
     "unknown_intervals_value_sha256": "23f2390773229fa55aea99497f099c67bfd1025da9360436577711101b5d3cd3",
     "matches_production_unknown_intervals": true,
-    "differences_from_first_receipt": "run.review_requests[microTiming].blockers and readiness.gates.microTiming.blockers add MICRO_TIMING_RELEASE_EVIDENCE_REQUIRED; micro_timing adds release_evidence_requirement_isolated_store; the counterfactual's hypothetical_inputs wording. exports, release_analysis, mobile_profile and finalize are byte-identical."
+    "differences_from_first_receipt": "run.review_requests[microTiming].blockers and readiness.gates.microTiming.blockers add MICRO_TIMING_RELEASE_EVIDENCE_REQUIRED; micro_timing adds release_evidence_requirement_isolated_store; evidence adds requirement, audio_evidence_on_record, bytes_held and per-submitter probes; arbitration is new; the counterfactual's hypothetical_inputs wording. exports, release_analysis, mobile_profile and finalize are byte-identical."
   },
   "e2e": {
     "schema": "mml-studio/release-timing-e2e@1",
@@ -715,6 +715,7 @@
           "origin": "asset",
           "kind": "third-party-midi",
           "sha256": "5819c9c5e7b5f357c0523b16d69eda16dd84d5a2ad60a167802e904b02c23782",
+          "bytes_held": true,
           "primary": false,
           "independent": true
         },
@@ -723,6 +724,7 @@
           "origin": "asset",
           "kind": "third-party-midi",
           "sha256": "ed675fc9f3386990dd6b9798c98b59a2f12c3331709958358e280e3850ab67b4",
+          "bytes_held": true,
           "primary": false,
           "independent": true
         },
@@ -731,6 +733,7 @@
           "origin": "asset",
           "kind": "original-audio",
           "sha256": "35a05318c127248d9a391201847ee586e82df87b4755cdeb1ec33e4ceb98d061",
+          "bytes_held": true,
           "primary": true,
           "independent": true
         },
@@ -739,6 +742,7 @@
           "origin": "asset",
           "kind": "official-midi",
           "sha256": "5819c9c5e7b5f357c0523b16d69eda16dd84d5a2ad60a167802e904b02c23782",
+          "bytes_held": true,
           "primary": true,
           "independent": false
         },
@@ -747,6 +751,7 @@
           "origin": "asset",
           "kind": "original-audio",
           "sha256": "35a05318c127248d9a391201847ee586e82df87b4755cdeb1ec33e4ceb98d061",
+          "bytes_held": true,
           "primary": true,
           "independent": true
         },
@@ -755,6 +760,7 @@
           "origin": "source",
           "kind": "third-party-midi",
           "sha256": "5819c9c5e7b5f357c0523b16d69eda16dd84d5a2ad60a167802e904b02c23782",
+          "bytes_held": true,
           "primary": false,
           "independent": true
         }
@@ -1051,10 +1057,10 @@
         "source_encoding_artifact_or_technical_micro_gap": "UNDETERMINED — the uniform one-tick pattern is an observation about the third-party file, not evidence; it is not read as meaningless for being uniform or for being one tick.",
         "extend_justified": "NOT YET — EXTEND is the minimal valid option for every target arithmetically, but no admissible finding supports the claim it makes.",
         "subset_differs": "NO — see subsets.why.",
-        "original_audio_available": "YES — independent original_audio ast_6154754b4b22da998fc266ff5400b879, ast_bf887f2d0fa6409762fa60307f95774e (one recording: the ids share one SHA-256)",
+        "original_audio_available": "YES — independent original_audio ast_6154754b4b22da998fc266ff5400b879, ast_bf887f2d0fa6409762fa60307f95774e (1 distinct recording by SHA-256)",
         "original_audio_evidence_on_record_sufficient": "NO — the only audio evidence on record is the alignment report 342aea742778… (confidence 0.4562876211764445, warnings LOW_ALIGNMENT_CONFIDENCE+LOW_SCORE_FRAME_COVERAGE), a locator; no direct review of the recording at these releases is recorded.",
-        "current_audio_evidence_can_support_claim": "NO — metrics and alignment locate; they do not state sustain or articulation (SOURCE_POLICY §6). The low-confidence alignment also leaves the recording-time locators of the release windows unreliable (Gate 0 recording version and Gate 7 remain open).",
-        "independent_symbolic_source_exists": "NO — the asset labelled official_midi is byte-identical to the third-party MIDI (a relabelled copy).",
+        "current_audio_evidence_can_support_claim": "NO — metrics and alignment locate; they do not state sustain or articulation (SOURCE_POLICY §6). The active alignment carries LOW_ALIGNMENT_CONFIDENCE+LOW_SCORE_FRAME_COVERAGE, so the recording-time locators of the release windows are themselves unreliable. In the isolated run, readiness gates still open: source, originalAudio.",
+        "independent_symbolic_source_exists": "NO — ast_62c0678854fc1b80138aa530e6776db5 labelled official is byte-identical to a supporting file (a relabelled copy).",
         "accepted_prior_evidence_exists": "NO — no accepted previous version and no delivered Final exist in the project.",
         "evidence_still_insufficient": true
       },
@@ -1131,5 +1137,6 @@
         "mml_text_recorded": false
       }
     }
-  }
+  },
+  "deterministic_rerun": "Two independent runs of scripts/studio-release-timing-e2e.mjs at the committed script produced byte-identical receipts."
 }

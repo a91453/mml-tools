@@ -261,7 +261,7 @@ expressed as "not listening", as if only human ears could read a recording.
 | Concept | Field | Effect on the grade |
 | --- | --- | --- |
 | Provenance — who submitted | `attestation: { reviewer, reviewer_kind: human \| agent \| tool \| mcp-client \| imported }` | none; recorded and required for the audit trail (`DECISION_PROVENANCE_MISSING` if absent, for anyone) |
-| Source — what is cited | `evidence[].class` + `ref`, resolved in the project's registry | primary-symbolic / primary-audio only; kind must match; must be independent of every supporting file |
+| Source — what is cited | `evidence[].class` + `ref`, resolved in the project's registry | primary-symbolic / primary-audio only; kind must match; the project must hold the bytes (an uploaded asset, or a Canonical source whose SHA-256 matches one); must be independent of every supporting file |
 | Basis — how the finding was derived | `evidence[].basis` | only `direct-source-review` establishes a finding; `machine-metric`, `alignment-locator` (SOURCE_POLICY §6), `encoding-pattern`, `imported-assertion` are recorded and never counted |
 | Claim — what the representation asserts | derived: EXTEND → `SOURCE_EVENT_SUSTAINS_TO_GRID_POINT`, TRUNCATE → `SOURCE_EVENT_RELEASES_BY_PREVIOUS_GRID_POINT` | the cited class must be one SOURCE_POLICY lets support it (§1A onset/duration, §1B sustain/articulation: both do) |
 
@@ -334,10 +334,32 @@ review, submitted under an *agent* provenance) behaves as before: 1,544 records
 re-verified, micro-timing and Gate 4 completeness `PASS`, six roles serialise
 with an exact round trip (1,096 / 816 / 1,472 / 671 / 209 / 0), still `CANDIDATE`.
 
+### Adversarial review of this follow-up (fixed in the next commit)
+
+- **Declared sources counted as evidence.** An uploaded Canonical IR could
+  declare a `primary-audio` / `primary-symbolic` source with no bytes (or a digest
+  nothing uploaded matches) and cite it; it graded admissible. Now evidence must
+  resolve to bytes the project holds (RT-9c, RRA-6).
+- **A stored resolution was believed where it omitted a fact.** Without a
+  registry, a stored `resolved` lacking `independent` passed; every fact is now
+  required (RT-9d). Technical Timing Repair re-grades with the caller's registry
+  (RT-22). Server review and finalize always pass the registry.
+- The plan names the evidence requirement only for releases a decision can still
+  settle; a profile-only plan id is again byte-identical to main's (RT-22); the
+  claim check is exercised (RT-9d); the E2E wording is derived from the data.
+
 ### Found, not changed here
 
 `application/lead-review-authority.mjs` (on main since `f020b95`) applies the same
 pattern to Lead evidence reviews: only a `human` attestation reaches the Lead
 grader. It predates this PR and governs a different gate; changing it is a
 separate decision. For Kaiju it changes nothing today — no Lead evidence of any
-kind has been submitted.
+kind has been submitted. Relatedly, `proposal-contracts.mjs` refuses
+agent-authored Lead citations on the ground that the grader cannot check that
+anybody read the source; the release path now accepts a submitter-declared
+`direct-source-review` from any submitter, so the two policies differ and need
+an owner decision. Mobile adaptation *proposals* carry only a profile, so an AI
+client submits a release decision through `resumeRun.mobile_adaptation` or the
+MCP/HTTP adaptation operations, not through a proposal. Admissibility also does
+not check the cited recording's version (SOURCE_POLICY §7) or its Gate 7
+alignment; those remain separate required gates before `VALIDATED`.

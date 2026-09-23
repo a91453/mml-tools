@@ -636,7 +636,7 @@ function evaluateGates(project, options) {
   // `microGap` keeps the original verdict and the gates below refuse exactly as
   // they did before this layer existed.
   if (repair.requested && microGap.rejectedIntervalKeys.length) {
-    repair.result = repairTechnicalTiming(project, { enforcement: microGap });
+    repair.result = repairTechnicalTiming(project, { enforcement: microGap, releaseEvidenceRegistry: options.releaseEvidenceRegistry });
     if (repair.result.status === REPAIR_STATUS.PASS
       && repair.result.finalEmissionEligible
       && repair.result.repairedProject) {

@@ -194,6 +194,7 @@ export const EVIDENCE_REFUSAL = Object.freeze({
   PROVENANCE_MISSING: 'DECISION_PROVENANCE_MISSING',
   CLASS_NOT_ADMISSIBLE: 'EVIDENCE_CLASS_NOT_ADMISSIBLE',
   REF_UNKNOWN: 'EVIDENCE_REFERENCE_NOT_IN_PROJECT',
+  REF_HOLDS_NO_BYTES: 'EVIDENCE_REFERENCE_NOT_BACKED_BY_PROJECT_BYTES',
   KIND_MISMATCH: 'EVIDENCE_REFERENCE_KIND_DOES_NOT_MATCH_CLASS',
   NOT_INDEPENDENT: 'EVIDENCE_SOURCE_NOT_INDEPENDENT',
   LOCATOR_MISSING: 'EVIDENCE_LOCATOR_MISSING',
@@ -772,17 +773,26 @@ const normalizeKind = kind => (typeof kind === 'string' ? kind.trim().toLowerCas
 
 /**
  * The project's evidence registry: uploaded assets and Canonical sources, each
- * with the kind it was declared as and its bytes' SHA-256. A primary entry whose
- * bytes are identical to a supporting entry is a relabelled copy, not an
- * independent source (for example a third-party MIDI uploaded a second time as
- * `official_midi`), and it never counts as primary evidence.
+ * with the kind it was declared as and its bytes' SHA-256.
+ *
+ * Evidence must resolve to bytes the project really holds. An uploaded asset
+ * holds its own bytes. A Canonical source only names bytes: it holds them when
+ * its SHA-256 equals an uploaded asset's, so a source an imported IR merely
+ * declares (no digest, or a digest nothing uploaded matches) is never evidence.
+ * A primary entry whose bytes are identical to a supporting entry is a
+ * relabelled copy, not an independent source (for example a third-party MIDI
+ * uploaded a second time as `official_midi`), and an entry whose bytes are
+ * unknown cannot be shown independent either.
  */
 export function buildEvidenceRegistry({ assets = [], sources = [] } = {}) {
   const entries = [];
+  const digest = value => (typeof value === 'string' && /^[0-9a-f]{64}$/i.test(value) ? value.toLowerCase() : null);
   for (const asset of assets) {
     if (!text(asset?.asset_id)) continue;
-    entries.push({ ref: asset.asset_id, origin: 'asset', kind: normalizeKind(asset.kind), sha256: typeof asset.sha256 === 'string' ? asset.sha256.toLowerCase() : null });
+    const sha256 = digest(asset.sha256);
+    entries.push({ ref: asset.asset_id, origin: 'asset', kind: normalizeKind(asset.kind), sha256, bytesHeld: sha256 !== null });
   }
+  const assetShas = new Set(entries.map(entry => entry.sha256).filter(Boolean));
   for (const source of sources) {
     if (!text(source?.id)) continue;
     const authority = typeof source.authority === 'string' ? source.authority : null;
@@ -790,18 +800,19 @@ export function buildEvidenceRegistry({ assets = [], sources = [] } = {}) {
     // imported authority string cannot promote a supporting record.
     let kind = normalizeKind(source.kind);
     if ((PRIMARY_SYMBOLIC_KINDS.has(kind) && authority !== 'primary-symbolic') || (PRIMARY_AUDIO_KINDS.has(kind) && authority !== 'primary-audio')) kind = 'derived';
-    entries.push({ ref: source.id, origin: 'source', kind, sha256: typeof source.sha256 === 'string' ? source.sha256.toLowerCase() : null });
+    const sha256 = digest(source.sha256);
+    entries.push({ ref: source.id, origin: 'source', kind, sha256, bytesHeld: sha256 !== null && assetShas.has(sha256) });
   }
   const supportingShas = new Set(entries.filter(entry => SUPPORTING_KINDS.has(entry.kind) && entry.sha256).map(entry => entry.sha256));
   const byRef = new Map();
   for (const entry of entries) {
     const primary = PRIMARY_SYMBOLIC_KINDS.has(entry.kind) || PRIMARY_AUDIO_KINDS.has(entry.kind);
-    const independent = !(primary && entry.sha256 && supportingShas.has(entry.sha256));
+    const independent = primary ? entry.sha256 !== null && !supportingShas.has(entry.sha256) : true;
     byRef.set(entry.ref, Object.freeze({ ...entry, primary, independent }));
   }
   return Object.freeze({
     entries: Object.freeze([...byRef.values()].sort((a, b) => cmpStr(a.ref, b.ref))),
-    get: ref => byRef.get(ref) ?? null,
+    get: ref => (typeof ref === 'string' ? byRef.get(ref) ?? null : null),
   });
 }
 
@@ -861,7 +872,10 @@ export function gradeReleaseEvidence(decision, registry) {
     else if (!resolved) reasons.push(EVIDENCE_REFUSAL.REF_UNKNOWN);
     else if (evidenceClass === EVIDENCE_CLASS.PRIMARY_SYMBOLIC && !PRIMARY_SYMBOLIC_KINDS.has(resolved.kind)) reasons.push(EVIDENCE_REFUSAL.KIND_MISMATCH);
     else if (evidenceClass === EVIDENCE_CLASS.PRIMARY_AUDIO && !PRIMARY_AUDIO_KINDS.has(resolved.kind)) reasons.push(EVIDENCE_REFUSAL.KIND_MISMATCH);
-    else if (resolved.independent === false) reasons.push(EVIDENCE_REFUSAL.NOT_INDEPENDENT);
+    // Checked as `=== true`: a stored resolution (re-graded without a registry)
+    // that omits either fact has not shown it.
+    else if (resolved.bytesHeld !== true) reasons.push(EVIDENCE_REFUSAL.REF_HOLDS_NO_BYTES);
+    else if (resolved.independent !== true) reasons.push(EVIDENCE_REFUSAL.NOT_INDEPENDENT);
     if (Object.values(EVIDENCE_CLASS).includes(evidenceClass) && !own(authority, evidenceClass)) reasons.push(EVIDENCE_REFUSAL.CLAIM_NOT_SUPPORTED);
     if (!basis) reasons.push(EVIDENCE_REFUSAL.BASIS_MISSING);
     else if (basis !== EVIDENCE_BASIS.DIRECT_SOURCE_REVIEW) reasons.push(EVIDENCE_REFUSAL.BASIS_NOT_SOURCE_REVIEW);
@@ -873,7 +887,7 @@ export function gradeReleaseEvidence(decision, registry) {
       basis: basis ? basis.slice(0, 64) : null,
       locator: text(item.locator) ? item.locator.trim().slice(0, 500) : null,
       finding: text(item.finding) ? item.finding.trim().slice(0, 2000) : null,
-      resolved: resolved ? Object.freeze({ ref: resolved.ref, origin: resolved.origin, kind: resolved.kind, sha256: resolved.sha256, primary: resolved.primary, independent: resolved.independent }) : null,
+      resolved: resolved ? Object.freeze({ ref: resolved.ref, origin: resolved.origin, kind: resolved.kind, sha256: resolved.sha256, bytesHeld: resolved.bytesHeld, primary: resolved.primary, independent: resolved.independent }) : null,
       claimAuthority: own(authority, evidenceClass),
       nonAdmissibleClassNotice: own(NON_ADMISSIBLE_EVIDENCE_CLASSES, evidenceClass),
       nonAdmissibleBasisNotice: own(NON_ADMISSIBLE_EVIDENCE_BASES, basis),
@@ -904,7 +918,7 @@ export function gradeReleaseEvidence(decision, registry) {
 export function releaseEvidenceRequirement(registry) {
   if (!registry) return null;
   const entries = registry.entries ?? [];
-  const refsOf = (kinds, independent) => entries.filter(entry => kinds.has(entry.kind) && entry.independent === independent).map(entry => entry.ref);
+  const refsOf = (kinds, independent) => entries.filter(entry => kinds.has(entry.kind) && entry.bytesHeld === true && entry.independent === independent).map(entry => entry.ref);
   const symbolic = refsOf(PRIMARY_SYMBOLIC_KINDS, true);
   const audio = refsOf(PRIMARY_AUDIO_KINDS, true);
   return Object.freeze({
@@ -1015,12 +1029,15 @@ export function planReleaseRepresentation({ analysis, input, registry }) {
   changes.sort((a, b) => cmpStr(a.eventId, b.eventId));
   const changedIds = new Set(changes.map(change => change.eventId));
   const unresolved = analysis.targets.filter(target => !changedIds.has(target.eventId)).map(target => target.eventId);
+  const openDecisionRequired = analysis.targets.filter(target => target.status === TARGET_STATUS.REPRESENTATION_DECISION_REQUIRED && !changedIds.has(target.eventId)).length;
   return Object.freeze({
     decisions: Object.freeze(decisions.sort((a, b) => cmpStr(a.id, b.id))),
     changes: Object.freeze(changes),
     pending: Object.freeze(pending),
     blockers: Object.freeze(blockers),
     unresolvedTargetCount: unresolved.length,
+    // Of those, the releases a representation decision could still settle.
+    openDecisionRequiredCount: openDecisionRequired,
     unresolvedTargetEventIds: Object.freeze(unresolved),
   });
 }
