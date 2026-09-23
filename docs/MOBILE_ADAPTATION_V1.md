@@ -64,6 +64,35 @@ This is an implementation budget, not a game limit or a musical verdict. The
 before/after risk sweep is bounded by that same budget rather than by every pair
 of notes in the song.
 
+## Release representation (no profile required)
+
+A note release that no admitted Final token sequence can express (for example a
+MIDI note-off one 480-tpq tick before a 1/64 grid point) is reported per event by
+`canonical/release-timing.mjs`: the Source-Faithful release, the exact offset, the
+following shape, and the two adjacent 1/64-safe options with their effects. The
+plan accepts `releaseRepresentation.decisions` (MCP/HTTP/run:
+`release_representation`) alongside or instead of a profile:
+
+```json
+{ "decisions": [{
+  "id": "rr:verse-1", "eventIds": ["…"], "representation": "EXTEND_TO_NEXT_GRID",
+  "reason": "…",
+  "attestation": { "reviewer": "…", "reviewer_kind": "human", "audio_basis": "listening" },
+  "evidence": [{ "class": "primary-audio", "ref": "<original_audio asset id>", "locator": "0:12-0:20", "finding": "…" }]
+}] }
+```
+
+Only a human reviewer attesting an independent primary source counts
+(`primary-symbolic`: an official score/MIDI asset whose bytes are not a copy of a
+supporting asset; `primary-audio`: the original recording, by listening). Other
+evidence is recorded and never counted; a decision set with no admissible
+evidence is refused with `RELEASE_DECISION_EVIDENCE_NOT_ADMISSIBLE`. Applying moves
+only the planned releases, writes a per-event record (source release, Final
+release, decision, reversal) that the micro-timing gate re-verifies, and never
+moves an onset, adds a tie, merges a repeated attack or removes a rest. It does
+not certify Gate 8. Without a profile, register and volume adaptation are not
+attempted and the plan says what still needs one (`profileRequirement`).
+
 ## Agent / HTTP workflow
 
 1. Build the Source-Faithful Baseline and use existing arrangement operations to

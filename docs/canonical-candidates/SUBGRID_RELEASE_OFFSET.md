@@ -167,3 +167,20 @@ It never overrides a keep decision or a primary source.
 The alternative, no-rule-change route remains open: a primary symbolic source
 (official score/MIDI) for the song that states the nominal durations would make
 the durations source-supported under the existing rules.
+
+## 9. Status note — the Published-v1 evidence route now exists (2026-09-22)
+
+This candidate is **unchanged, still unpublished and still inactive**
+(`activeInCanonicalVersions: []`). It is no longer the only way forward for the
+note-preceded case: the "alternative, no-rule-change route" above is now
+implemented under Published v1 as an evidence-gated **release representation**
+in Mobile Adaptation v1 (`canonical/release-timing.mjs`,
+`docs/MONSTER_SONG_MICROTIMING_FINAL_FLOW_2026-09-22.md`). There, a release no
+admitted Final token can express moves to an adjacent 1/64 grid point only under a
+reviewer decision whose evidence a human attests from an independent primary
+source (an official score, or the original recording by listening); the
+uniform-encoding observation this candidate rests on is reported but is not
+admissible evidence there. The difference that remains is exactly the one this
+candidate proposes to change: whether the machine-derived pattern alone may
+classify and normalize the releases without that per-window evidence. Publishing
+it is not required for the evidence route and is not proposed by that work.

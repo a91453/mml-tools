@@ -16,8 +16,9 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { createHash } from 'node:crypto';
-import { readdirSync, readFileSync, statSync } from 'node:fs';
+import { existsSync, readdirSync, readFileSync, statSync } from 'node:fs';
 import { join } from 'node:path';
+import { fileURLToPath } from 'node:url';
 
 import { createStudioApplication, RUN_STATE, RUN_STEP, RUN_STEP_STATUS } from '../backend/application/index.mjs';
 import { splitMML, parseTrack } from '../backend/mml/parser.mjs';
@@ -168,7 +169,11 @@ test('RDR-4 no parser, emitter, run or reviewer statement can set in-game accept
 });
 
 test('RDR-5 no executable module carries a song-specific identifier or bypass', () => {
-  const roots = ['studio/backend', 'server', 'railway'].map(dir => join(process.cwd(), dir));
+  // Resolved from this file, so the check holds in the repository and in the
+  // public export alike; a root the checkout does not carry has nothing to scan.
+  const repository = fileURLToPath(new URL('../../', import.meta.url));
+  const roots = ['studio/backend', 'server', 'railway'].map(dir => join(repository, dir)).filter(existsSync);
+  assert.ok(roots.length >= 2, 'the backend and server sources are present');
   const offenders = [];
   const walk = dir => {
     for (const name of readdirSync(dir)) {

@@ -38,6 +38,8 @@ import {
   sourceIdentityOf,
 } from '../backend/canonical/release-timing.mjs';
 import { MICRO_GAP_BLOCKERS, enforceMicroGaps } from '../backend/final/micro-gap-enforcement.mjs';
+import { planMobileAdaptation } from '../backend/adaptation/index.mjs';
+import { compareCandidateLineage } from '../backend/compare/version-drift.mjs';
 import { sixRoleBaseline } from './fixtures/application-fixtures.mjs';
 
 const TPQ = 480;
@@ -295,4 +297,31 @@ test('RT-12 the source identity of a represented note is its source release, and
   assert.equal(sourceIdentityOf(tampered, a).end, '2');
   // A pitch change is never reversed by a release record.
   assert.equal(sourceIdentityOf({ ...adapted, pitch: 72 }, a).pitch, 72);
+});
+
+test('RT-13 no release representation without a Source-Faithful Baseline, and nothing is invented without input', () => {
+  const a = note({ id: 'a', start: 0, end: tickBefore(1) });
+  const candidate = project([a, note({ id: 'b', start: 1, end: 2 })]);
+  assert.throws(() => planMobileAdaptation({ baseline: null, candidate, releaseRepresentation: { decisions: [] } }), /Source-Faithful Baseline/);
+  assert.throws(() => planMobileAdaptation({ baseline: candidate, candidate }), /profile, release representation decisions, or both/);
+  const plan = planMobileAdaptation({ baseline: candidate, candidate, releaseRepresentation: { decisions: [] } });
+  assert.equal(plan.profile, null, 'no profile is invented');
+  assert.equal(plan.profileRequirement.status, 'NOT_SUPPLIED');
+  assert.deepEqual(plan.changes, []);
+});
+
+test('RT-14 an accepted previous version stays comparable, and the comparison shows only the recorded release moves', () => {
+  const a = note({ id: 'a', start: 0, end: tickBefore(1) });
+  const b = note({ id: 'b', start: 1, end: tickBefore(2) });
+  const source = project([a, b]);
+  const analysis = analyzeReleaseTiming({ candidate: source });
+  const plan = planReleaseRepresentation({ analysis, registry: buildEvidenceRegistry({ assets: ASSETS }), input: { decisions: [humanAudioDecision(['a', 'b'])] } });
+  const candidate = represented([a, b], plan.changes, plan.decisions);
+  // An accepted previous version that already carried a on the grid.
+  const previous = project([note({ id: 'a', start: 0, end: 1 }), b]);
+  const lineage = compareCandidateLineage({ sourceBaseline: source, acceptedPrevious: previous, candidate });
+  assert.equal(lineage.sourceToCandidate.summary.noteModified, 2);
+  assert.equal(lineage.previousToCandidate.summary.noteModified, 1, 'only b differs from the accepted previous version');
+  assert.deepEqual(lineage.previousToCandidate.notes.modified.map(pair => [pair.before.id, pair.changes.end]), [['b', { before: '959/480', after: '2' }]]);
+  assert.equal(lineage.sourceToCandidate.summary.noteAdded + lineage.sourceToCandidate.summary.noteRemoved, 0);
 });
