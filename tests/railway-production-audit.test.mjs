@@ -254,6 +254,48 @@ test('watch pattern matching treats exact files and /** directories as productio
   ]);
 });
 
+test('a deployment Railway put to sleep is the live deployment, not a failure', () => {
+  // App Sleeping (deploy.sleepApplication) turns the successful deployment's
+  // status into SLEEPING while it idles; the image still answers the next
+  // request. Observed 2026-09-23 on main f4629169: the audit dispatched after
+  // the drift fix reported DEPLOYMENT_SLEEPING with zero drift.
+  const expected = resolved();
+  const asleep = { id: 'wanted', status: 'SLEEPING', createdAt: '2026-09-23T23:24:06Z', meta: { commitHash: SHA, branch: 'main', reason: 'deploy' } };
+  const fields = new Set([
+    'startCommand', 'healthcheckPath', 'healthcheckTimeout', 'restartPolicyType',
+    'restartPolicyMaxRetries', 'numReplicas', 'rootDirectory', 'dockerfilePath', 'watchPatterns',
+  ]);
+  const binding = resolveDeploymentBinding({
+    expected, expectedSha: SHA, state: { instance: { ...live(), latestDeployment: asleep } }, targetDeployment: asleep,
+  });
+  assert.equal(binding.reason, null);
+  assert.equal(binding.activeDeployment.id, 'wanted');
+  const result = buildControlPlaneResult({
+    expected,
+    expectedSha: SHA,
+    state: { availableFields: fields, instance: { ...live(), latestDeployment: asleep }, tokenScope: { projectId: expected.projectId, environmentId: expected.environmentId } },
+    deployment: asleep,
+    reason: null,
+  });
+  assert.equal(result.status, 'PASS');
+  assert.equal(result.failure_reason, null);
+  assert.equal(result.deployment.status, 'SLEEPING');
+  // Waking does not change the verdict: the same deployment reported SUCCESS
+  // by the state read and SLEEPING by the list, or the reverse, still matches.
+  const awake = { ...asleep, status: 'SUCCESS' };
+  assert.equal(resolveDeploymentBinding({ expected, expectedSha: SHA, state: { instance: { ...live(), latestDeployment: awake } }, targetDeployment: asleep }).reason, null);
+  assert.equal(resolveDeploymentBinding({ expected, expectedSha: SHA, state: { instance: { ...live(), latestDeployment: asleep } }, targetDeployment: awake }).reason, null);
+  // A SKIPPED commit may reuse a sleeping deployment exactly as a woken one.
+  const skipped = { id: 'skip-1', status: 'SKIPPED', meta: { commitHash: 'c'.repeat(40), branch: 'main' } };
+  const reuse = resolveDeploymentBinding({ expected, expectedSha: 'c'.repeat(40), state: { instance: { ...live(), latestDeployment: asleep } }, targetDeployment: skipped, changedPaths: ['docs/ops.md'] });
+  assert.equal(reuse.reason, null);
+  assert.equal(reuse.effectiveSha, SHA);
+  // Asleep or not, a superseded, failed or crashed deployment is not live.
+  for (const status of ['REMOVED', 'FAILED', 'CRASHED']) {
+    assert.equal(resolveDeploymentBinding({ expected, expectedSha: SHA, state: { instance: live() }, targetDeployment: { ...asleep, status } }).reason, 'DEPLOYMENT_' + status, status);
+  }
+});
+
 test('a SKIPPED main commit may reuse the active successful deployment only when no watched path changed', () => {
   const expected = resolved();
   const deployedSha = 'b'.repeat(40);

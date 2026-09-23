@@ -39,6 +39,10 @@ scrubBuildCredentialVariables();
 // records by it, so a future deployment with real multi-user identity changes
 // this line and nothing below it.
 export const SERVICE_OWNER = 'owner:service';
+// One deployment-log line per MCP request the transport turns away: status,
+// reason, the protocol-version header and the user agent, never a body. The
+// platform HTTP log shows the 400 but not why (see handleMcp).
+export const mcpRejectLog = entry => console.warn(JSON.stringify({ event: 'MCP_REQUEST_REJECTED', ...entry }));
 
 // The connector hosts whose exact HTTPS callbacks Dynamic Client Registration
 // accepts by default: the ChatGPT and Claude web connectors. Native clients use
@@ -191,7 +195,7 @@ export function createApplication(options) {
         // Only locally issued, audience-bound OAuth access tokens authorize this
         // standalone service. Sites identity headers have no authority here.
         if (!auth.authenticated(request)) return auth.unauthorized();
-        return handleMcp(request, { application: exposedStudio, owner: SERVICE_OWNER, allowedOrigins: auth.allowedOrigins, listen });
+        return handleMcp(request, { application: exposedStudio, owner: SERVICE_OWNER, allowedOrigins: auth.allowedOrigins, listen, rejectLog: mcpRejectLog });
       }
       // The Application HTTP surface, behind the same OAuth check. The router
       // is told whether the request is authenticated rather than deciding it:

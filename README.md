@@ -56,7 +56,7 @@ Permanent Studio Web 的釘選發布與驗證機制記錄於 [ops/permanent/](op
 
 Sites 版本依賴 Sites 的私人存取閘道。Worker 僅在閘道提供可信身分標頭後接受 MCP 呼叫；不可將 Worker 直接放到會接受任意身分標頭的公開主機。Railway 版本則使用 `railway/server.mjs` 與自己的 OAuth，不信任 Sites 身分標頭。兩者的正式 MCP URL 與 OAuth resource 不可混用；本機路由測試不能證明使用者 OAuth 連接已完成。
 
-傳輸支援 2025-03-26、2025-06-18、2025-11-25 協定版本的此服務所需子集：initialize、ping、tools/list、tools/call、初始化與取消通知。不宣告資源、提示詞、工作排程、通知串流或工作階段能力。GET /mcp 回應 405 是預期行為；需 POST 才能進行協定測試。
+傳輸支援 2025-03-26、2025-06-18、2025-11-25 協定版本的此服務所需子集：initialize、ping、tools/list、tools/call、初始化與取消通知。不宣告資源、提示詞、工作排程、通知串流或工作階段能力。GET /mcp 回應 405 是預期行為；需 POST 才能進行協定測試。MCP SDK 2.x 的預設連線策略會先以 2026-07-28 送出 `server/discover` 探測，本服務以 400 與 -32022（附 `supported` 清單）拒絕後，用戶端改走 initialize 交握；因此 Railway HTTP 記錄裡每次 Claude／ChatGPT 連線開頭的一筆 400 是預期的協定回退，服務端會以 `MCP_REQUEST_REJECTED` 記錄原因。
 
 ## 使用
 

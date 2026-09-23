@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { handleMcp, MCP_TOOLS, MCP_VERSIONS, MAX_BODY_BYTES } from '../server/mcp.mjs';
+import { handleMcp, MCP_TOOLS, MCP_VERSIONS, MAX_BODY_BYTES, UNSUPPORTED_PROTOCOL_VERSION } from '../server/mcp.mjs';
 import { createWorker } from '../server/worker.mjs';
 import { DEMO, validateMML } from '../dist/core.js';
 
@@ -74,6 +74,38 @@ test('protocol errors, notifications, and method handling are explicit', async (
   assert.equal((await handleMcp(req('{}', { accept: 'application/json' }))).status, 406);
   assert.equal((await handleMcp(req('{}', { 'mcp-protocol-version': 'bogus' }))).status, 400);
   assert.equal((await handleMcp(req('{}', { origin: 'https://evil.example' }))).status, 403);
+});
+test('a request at a protocol version this server does not speak is refused with the versions it does', async () => {
+  // The MCP SDK's default connect policy probes server/discover at its newest
+  // version (2026-07-28) before anything else. The refusal names the versions
+  // this server speaks, in the -32022 shape that client reads, so it falls
+  // back to the initialize handshake; the refusal is logged with what the
+  // platform HTTP log cannot show, and never with a body.
+  const rejected = [];
+  const rejectLog = entry => rejected.push(entry);
+  const probe = { jsonrpc: '2.0', id: 1, method: 'server/discover', params: { _meta: { 'io.modelcontextprotocol/protocolVersion': '2026-07-28' } } };
+  const response = await handleMcp(req(probe, { 'mcp-protocol-version': '2026-07-28', 'user-agent': 'python-httpx2/2.13.1' }), { rejectLog });
+  assert.equal(response.status, 400);
+  assert.deepEqual(await response.json(), {
+    jsonrpc: '2.0', id: 1,
+    error: { code: UNSUPPORTED_PROTOCOL_VERSION, message: 'Unsupported MCP protocol version', data: { supported: MCP_VERSIONS, requested: '2026-07-28' } },
+  });
+  assert.deepEqual(rejected, [{ status: 400, reason: 'Unsupported MCP protocol version', method: 'server/discover', protocol_version_header: '2026-07-28', user_agent: 'python-httpx2/2.13.1' }]);
+  // The fallback handshake that follows carries no header and negotiates.
+  const init = await handleMcp(req({ jsonrpc: '2.0', id: 2, method: 'initialize', params: { protocolVersion: MCP_VERSIONS[0], capabilities: {}, clientInfo: { name: 'mcp', version: '2' } } }), { rejectLog });
+  assert.equal(init.status, 200);
+  assert.equal((await init.json()).result.protocolVersion, MCP_VERSIONS[0]);
+  // A notification at an unsupported version is refused the same way, with a
+  // null id; a supported header is not logged; other refusals are.
+  const note = await handleMcp(req({ jsonrpc: '2.0', method: 'notifications/initialized' }, { 'mcp-protocol-version': '2099-01-01' }), { rejectLog });
+  assert.equal(note.status, 400);
+  assert.equal((await note.json()).id, null);
+  assert.equal((await handleMcp(req({ jsonrpc: '2.0', id: 3, method: 'ping' }, { 'mcp-protocol-version': MCP_VERSIONS[1] }), { rejectLog })).status, 200);
+  assert.equal(rejected.length, 2);
+  await handleMcp(req('{', { 'user-agent': 'Broken' }), { rejectLog });
+  assert.deepEqual(rejected.at(-1), { status: 400, reason: 'Invalid JSON', method: null, protocol_version_header: null, user_agent: 'Broken' });
+  // A logger that throws never turns a refusal into a crash.
+  assert.equal((await handleMcp(req('{'), { rejectLog: () => { throw Error('log sink down'); } })).status, 400);
 });
 test('content-length and streaming byte limits both enforced', async () => {
   assert.equal((await handleMcp(req('{}', { 'content-length': String(MAX_BODY_BYTES + 1) }))).status, 413);

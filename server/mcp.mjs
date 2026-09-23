@@ -63,8 +63,8 @@ export const MCP_TOOLS = [
 function mcpReply(body, status = 200, headers = {}) {
   return new Response(JSON.stringify(body), { status, headers: { 'content-type': 'application/json; charset=utf-8', 'cache-control': 'no-store', 'x-content-type-options': 'nosniff', ...headers } });
 }
-function mcpRpcError(id, code, message, status = 200) {
-  return mcpReply({ jsonrpc: '2.0', id, error: { code, message } }, status);
+function mcpRpcError(id, code, message, status = 200, data = undefined) {
+  return mcpReply({ jsonrpc: '2.0', id, error: data === undefined ? { code, message } : { code, message, data } }, status);
 }
 // Shared with the local file-output adapter; network response bounds below
 // remain unchanged. There is one tool-input schema checker on both paths.
@@ -256,26 +256,52 @@ async function mcpReadBody(request) {
 // and keeps the ChatGPT-only default it always had.
 export const DEFAULT_MCP_ORIGINS = Object.freeze(['https://chatgpt.com']);
 
-export async function handleMcp(request, { application = null, owner = null, allowedOrigins = DEFAULT_MCP_ORIGINS, listen = DEFAULT_LISTEN_CONFIG } = {}) {
+// The JSON-RPC error a 2026-07-28 client expects when it names a protocol
+// version this server does not speak: the versions it does speak, so the
+// client picks one and retries. The MCP SDK's default connect policy probes
+// `server/discover` at its newest version before anything else and falls back
+// to the `initialize` handshake on this answer; every Claude and ChatGPT
+// connector session therefore opens with one refused request, which is the
+// 400-then-200 pair the production HTTP log shows, and not a failure.
+export const UNSUPPORTED_PROTOCOL_VERSION = -32022;
+
+// `rejectLog`, when given, receives one record per request this transport
+// refuses before it reaches a JSON-RPC method (the status, the reason, the
+// method, the protocol-version header and the user agent; never the body).
+// The deployed server logs it so a client that is turned away is diagnosable
+// from the deployment log alone: the platform's HTTP log records the status
+// but not why.
+export async function handleMcp(request, { application = null, owner = null, allowedOrigins = DEFAULT_MCP_ORIGINS, listen = DEFAULT_LISTEN_CONFIG, rejectLog = null } = {}) {
   const context = { application, owner };
-  const origin = request.headers.get('origin');
-  if (origin && origin !== new URL(request.url).origin && !allowedOrigins.includes(origin)) return mcpRpcError(null, -32000, 'Origin not allowed', 403);
-  if (request.method !== 'POST') return new Response(null, { status: 405, headers: { allow: 'POST', 'cache-control': 'no-store' } });
-  if (!/^application\/json(?:\s*;|$)/i.test(request.headers.get('content-type') ?? '')) return mcpRpcError(null, -32600, 'Content-Type must be application/json', 415);
-  const accept = (request.headers.get('accept') ?? '').split(',').map(s => s.trim().split(';')[0]);
-  if (!accept.includes('application/json') || !accept.includes('text/event-stream')) return mcpRpcError(null, -32600, 'Accept must include application/json and text/event-stream', 406);
   const protocol = request.headers.get('mcp-protocol-version');
-  if (protocol && !MCP_VERSIONS.includes(protocol)) return mcpRpcError(null, -32600, 'Unsupported MCP protocol version', 400);
+  const reject = (code, message, status, method = null, id = null, data = undefined) => {
+    if (typeof rejectLog === 'function') {
+      try { rejectLog({ status, reason: message, method, protocol_version_header: protocol ?? null, user_agent: request.headers.get('user-agent') ?? null }); } catch {}
+    }
+    return mcpRpcError(id, code, message, status, data);
+  };
+  const origin = request.headers.get('origin');
+  if (origin && origin !== new URL(request.url).origin && !allowedOrigins.includes(origin)) return reject(-32000, 'Origin not allowed', 403);
+  if (request.method !== 'POST') return new Response(null, { status: 405, headers: { allow: 'POST', 'cache-control': 'no-store' } });
+  if (!/^application\/json(?:\s*;|$)/i.test(request.headers.get('content-type') ?? '')) return reject(-32600, 'Content-Type must be application/json', 415);
+  const accept = (request.headers.get('accept') ?? '').split(',').map(s => s.trim().split(';')[0]);
+  if (!accept.includes('application/json') || !accept.includes('text/event-stream')) return reject(-32600, 'Accept must include application/json and text/event-stream', 406);
   let message;
   try { message = JSON.parse(await mcpReadBody(request)); }
-  catch (error) { return mcpRpcError(null, error.message === 'BODY_TOO_LARGE' ? -32600 : -32700, error.message === 'BODY_TOO_LARGE' ? 'Request body too large' : 'Invalid JSON', error.message === 'BODY_TOO_LARGE' ? 413 : 400); }
-  if (!message || typeof message !== 'object' || Array.isArray(message) || message.jsonrpc !== '2.0' || typeof message.method !== 'string') return mcpRpcError(null, -32600, 'Invalid JSON-RPC request', 400);
+  catch (error) { return reject(error.message === 'BODY_TOO_LARGE' ? -32600 : -32700, error.message === 'BODY_TOO_LARGE' ? 'Request body too large' : 'Invalid JSON', error.message === 'BODY_TOO_LARGE' ? 413 : 400); }
+  if (!message || typeof message !== 'object' || Array.isArray(message) || message.jsonrpc !== '2.0' || typeof message.method !== 'string') return reject(-32600, 'Invalid JSON-RPC request', 400);
   const hasId = Object.hasOwn(message, 'id');
-  if (hasId && typeof message.id !== 'string' && !Number.isSafeInteger(message.id)) return mcpRpcError(null, -32600, 'Invalid request id', 400);
+  if (hasId && typeof message.id !== 'string' && !Number.isSafeInteger(message.id)) return reject(-32600, 'Invalid request id', 400, message.method);
+  // A request naming a protocol version this server does not speak is refused
+  // with 400, as the Streamable HTTP transport requires, and the refusal names
+  // the versions it does speak so a newer client falls back to one of them.
+  if (protocol && !MCP_VERSIONS.includes(protocol)) {
+    return reject(UNSUPPORTED_PROTOCOL_VERSION, 'Unsupported MCP protocol version', 400, message.method, hasId ? message.id : null, { supported: MCP_VERSIONS, requested: protocol });
+  }
   if (!hasId) {
     // Notifications must never invoke tools. Stateless initialized/cancelled
     // notifications are accepted without producing a JSON-RPC response.
-    if (!['notifications/initialized', 'notifications/cancelled'].includes(message.method)) return mcpRpcError(null, -32600, 'Unsupported notification', 400);
+    if (!['notifications/initialized', 'notifications/cancelled'].includes(message.method)) return reject(-32600, 'Unsupported notification', 400, message.method);
     return new Response(null, { status: 202, headers: { 'cache-control': 'no-store' } });
   }
   const id = message.id, params = message.params;

@@ -13,6 +13,14 @@ import { loadProbeInputs, probeProduction } from './studio-production-probe.mjs'
 
 export const RAILWAY_GRAPHQL_ENDPOINT = 'https://backboard.railway.com/graphql/v2';
 export const TERMINAL_DEPLOYMENT_STATES = new Set(['SUCCESS', 'FAILED', 'CRASHED', 'REMOVED', 'SLEEPING', 'SKIPPED']);
+// A deployment Railway has put to sleep (App Sleeping, deploy.sleepApplication)
+// is still the live deployment: it succeeded, its image answers the next
+// request, and Railway reports it as SLEEPING instead of SUCCESS until traffic
+// wakes it. The production service sleeps between uses, so an audit that
+// accepted only SUCCESS failed on every healthy idle service (observed
+// 2026-09-23 for main f4629169: control_plane FAIL, DEPLOYMENT_SLEEPING, no
+// drift). The public probe that follows wakes the service by requesting it.
+export const LIVE_DEPLOYMENT_STATES = new Set(['SUCCESS', 'SLEEPING']);
 // Railway holds a deployment in these states before it builds: WAITING is the
 // "Wait for CI" hold (every GitHub Actions workflow on the commit must finish
 // first) and NEEDS_APPROVAL waits for a person. An audit that polls such a
@@ -296,9 +304,9 @@ export function resolveDeploymentBinding({ expected, expectedSha, state, targetD
     skippedChanges: [],
     watchedSkippedChanges: [],
   };
-  if (targetDeployment.status === 'SUCCESS') {
+  if (LIVE_DEPLOYMENT_STATES.has(targetDeployment.status)) {
     const active = state?.instance?.latestDeployment;
-    const activeMatches = active?.id === targetDeployment.id && active?.status === 'SUCCESS';
+    const activeMatches = active?.id === targetDeployment.id && LIVE_DEPLOYMENT_STATES.has(active?.status);
     return {
       activeDeployment: targetDeployment,
       effectiveSha: expectedSha,
@@ -317,7 +325,7 @@ export function resolveDeploymentBinding({ expected, expectedSha, state, targetD
   const active = state?.instance?.latestDeployment;
   const activeSha = active?.meta?.commitHash;
   const activeBranch = active?.meta?.branch;
-  if (active?.status !== 'SUCCESS' || !/^[0-9a-f]{40}$/.test(activeSha ?? '') || activeBranch !== expected.source.branch) {
+  if (!LIVE_DEPLOYMENT_STATES.has(active?.status) || !/^[0-9a-f]{40}$/.test(activeSha ?? '') || activeBranch !== expected.source.branch) {
     return {
       activeDeployment: active ?? null,
       effectiveSha: activeSha ?? expectedSha,
@@ -413,7 +421,7 @@ export function buildControlPlaneResult({
       actual: state.tokenScope,
     });
   }
-  const deploymentOk = deployment?.status === 'SUCCESS' && deployment?.meta?.commitHash === effectiveSha
+  const deploymentOk = LIVE_DEPLOYMENT_STATES.has(deployment?.status) && deployment?.meta?.commitHash === effectiveSha
     && deployment?.meta?.branch === expected.source.branch;
   const requestedOk = requestedDeployment?.status === 'SKIPPED'
     ? effectiveSha !== expectedSha && watchedSkippedChanges.length === 0

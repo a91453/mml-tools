@@ -82,7 +82,7 @@ function state(existing = null) {
       numReplicas: 1,
       serviceDomains: { 'example.invalid': { port: 3000 } },
       volumeMounts: { volume: { mountPath: '/data' } },
-      latestDeployment: existing?.status === 'SUCCESS' ? existing : {
+      latestDeployment: ['SUCCESS', 'SLEEPING'].includes(existing?.status) ? existing : {
         id: 'old-deploy', status: 'SUCCESS', meta: { commitHash: old, branch: 'main' },
       },
     },
@@ -131,6 +131,22 @@ test('active success for exact main is a no-op', async () => {
     expectedSha: sha,
     loadJson: async path => expectedJson(String(path)),
     readState: async () => state(success),
+    graphQL: railway({ onMutation: async () => { called = true; return {}; } }),
+  });
+  assert.equal(result.status, 'NOOP');
+  assert.equal(called, false);
+});
+
+test('the exact main deployment Railway put to sleep is a no-op, not a duplicate deploy', async () => {
+  // App Sleeping reports the live deployment as SLEEPING; deploying again
+  // would rebuild an image that is already serving.
+  const asleep = { id: 'active', status: 'SLEEPING', meta: { commitHash: sha, branch: 'main' } };
+  let called = false;
+  const result = await deployExactCurrentMain({
+    token: 'test-token',
+    expectedSha: sha,
+    loadJson: async path => expectedJson(String(path)),
+    readState: async () => state(asleep),
     graphQL: railway({ onMutation: async () => { called = true; return {}; } }),
   });
   assert.equal(result.status, 'NOOP');
