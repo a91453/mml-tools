@@ -1,0 +1,73 @@
+name: Studio durable release mirror
+
+# Copies the pinned durable release ZIPs from their GitHub Release into the
+# private Railway bucket at the lock's objectKeys. Run on demand only, after
+# the release is published. Never overwrites: an existing object is only read
+# back and must already match its pin. The bucket credentials are repository
+# secrets for the duration of the transfer; delete them afterwards.
+
+on:
+  workflow_dispatch:
+
+concurrency:
+  group: studio-durable-release-mirror
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  mirror:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Download and verify the pinned release assets
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          lock=ops/permanent/release-lock.json
+          mkdir -p /tmp/mirror
+          gh release download "$(jq -r .tag "$lock")" -R "$GITHUB_REPOSITORY" -D /tmp/mirror \
+            -p "$(jq -r .artifact.filename "$lock")" -p "$(jq -r .trust.filename "$lock")"
+          for section in artifact trust; do
+            file="/tmp/mirror/$(jq -r ".$section.filename" "$lock")"
+            test "$(sha256sum "$file" | cut -d' ' -f1)" = "$(jq -r ".$section.sha256" "$lock")"
+            test "$(stat -c %s "$file")" = "$(jq -r ".$section.bytes" "$lock")"
+          done
+      - name: Mirror into the durable bucket without overwriting, then read back
+        env:
+          AWS_ACCESS_KEY_ID: ${{ secrets.RELEASE_S3_ACCESS_KEY_ID }}
+          AWS_SECRET_ACCESS_KEY: ${{ secrets.RELEASE_S3_SECRET_ACCESS_KEY }}
+          AWS_DEFAULT_REGION: ${{ secrets.RELEASE_S3_REGION }}
+          ENDPOINT: ${{ secrets.RELEASE_S3_ENDPOINT }}
+          BUCKET: ${{ secrets.RELEASE_S3_BUCKET }}
+          AWS_REQUEST_CHECKSUM_CALCULATION: when_required
+          AWS_RESPONSE_CHECKSUM_VALIDATION: when_required
+        shell: bash
+        run: |
+          set -euo pipefail
+          for name in AWS_ACCESS_KEY_ID AWS_SECRET_ACCESS_KEY AWS_DEFAULT_REGION ENDPOINT BUCKET; do
+            test -n "${!name}" || { echo "Missing bucket secret for $name"; exit 1; }
+          done
+          # The production bootstrap reads the bucket with Bun.S3Client's
+          # default path-style addressing; use the same here.
+          aws configure set default.s3.addressing_style path
+          lock=ops/permanent/release-lock.json
+          for section in artifact trust; do
+            file="/tmp/mirror/$(jq -r ".$section.filename" "$lock")"
+            sha="$(jq -r ".$section.sha256" "$lock")"
+            bytes="$(jq -r ".$section.bytes" "$lock")"
+            key="$(jq -r ".$section.objectKey" "$lock")"
+            if aws s3api head-object --bucket "$BUCKET" --key "$key" --endpoint-url "$ENDPOINT" > /dev/null 2>&1; then
+              uploaded=false
+            else
+              aws s3api put-object --bucket "$BUCKET" --key "$key" --body "$file" --content-type application/zip --endpoint-url "$ENDPOINT" > /dev/null
+              uploaded=true
+            fi
+            aws s3api get-object --bucket "$BUCKET" --key "$key" --endpoint-url "$ENDPOINT" "$file.readback" > /dev/null
+            test "$(sha256sum "$file.readback" | cut -d' ' -f1)" = "$sha"
+            test "$(stat -c %s "$file.readback")" = "$bytes"
+            echo "{\"status\":\"DURABLE_MIRROR_VERIFIED\",\"objectKey\":\"$key\",\"sha256\":\"$sha\",\"bytes\":$bytes,\"uploaded\":$uploaded}"
+          done

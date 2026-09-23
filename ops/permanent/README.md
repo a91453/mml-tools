@@ -68,7 +68,12 @@ one file. Set the flag back to `0` after recovery.
 3. If the bucket is lost, create a replacement private bucket. Upload the exact
    ZIPs under the lock's object keys, then read them back and verify their hashes.
    `upload-mirror.mjs` is a temporary authenticated transfer helper; it is not a
-   runtime source and must not remain the production bootstrap.
+   runtime source and must not remain the production bootstrap. Alternatively,
+   `.github/workflows/studio-durable-mirror.yml` (manual dispatch) downloads the
+   Release assets, checks them against the lock, uploads any missing object and
+   reads every object back. It needs the five `RELEASE_S3_*` values as
+   repository secrets for the transfer only; delete them afterwards. It never
+   overwrites an existing key.
 4. Render the function:
 
    ```sh
