@@ -16,6 +16,7 @@ import { arrangementBinding, deriveArrangement, ingestMidiSource, isRawMidiAsset
 import { acceptedArrangementBinding, acceptedDecisionBindings, acceptedRevisionHead, buildAcceptedDecisionRecord, deriveAcceptedArrangement } from './arrangement-decisions.mjs';
 import { planMobileAdaptation, applyMobileAdaptation } from '../backend/adaptation/index.mjs';
 import { planFinalReduction, applyFinalReduction } from '../backend/reduction/index.mjs';
+import { buildRollProjection } from './roll-model.mjs';
 
 export const WORKSPACE_SCHEMA = 'mml-studio-web/workspace@1';
 export const MAX_TEXT_BYTES = 4 * 1024 * 1024;
@@ -727,7 +728,9 @@ function analysisContext(w) {
     tracks: technical?.ok && deliveryMatches ? splitMML(rawMml) : null, rawMml: technical?.ok && deliveryMatches ? rawMml.trim() : null, deliveryOrigin,
     mobileAdaptation: mobileAdaptation ? { plan: mobileAdaptation.plan, diffFromBaseline: mobileAdaptation.diffFromBaseline, diffFromParent: mobileAdaptation.diffFromParent } : null,
     finalReduction: finalReduction ? { plan: finalReduction.plan, accounting: finalReduction.accounting, diffFromBaseline: finalReduction.diffFromBaseline, diffFromParent: finalReduction.diffFromParent } : null,
-    historicalRegression: 'FIXTURE_PENDING', audioError, importedDecisions: candidate.decisions };
+    historicalRegression: 'FIXTURE_PENDING', audioError, importedDecisions: candidate.decisions,
+    // Display projection for the review roll; carries no gate or review meaning.
+    roll: buildRollProjection(candidate, { harmony }) };
   return { asset, candidate, project, readiness, gates, report };
 }
 

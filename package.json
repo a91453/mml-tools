@@ -4,7 +4,9 @@
   "version": "0.2.0",
   "type": "module",
   "dependencies": {
-    "fast-xml-parser": "5.10.1"
+    "fast-xml-parser": "5.10.1",
+    "spessasynth_core": "4.3.16",
+    "spessasynth_lib": "4.3.12"
   },
   "scripts": {
     "test": "node --test tests/*.test.mjs studio/tests/*.test.mjs",

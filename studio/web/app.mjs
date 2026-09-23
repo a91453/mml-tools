@@ -1,6 +1,9 @@
 import { listProjects, saveProject } from './storage.mjs';
 import { createWorkerClient } from './worker-client.mjs';
 import { createTaskQueue } from './task-queue.mjs';
+import { createUpdateFlow } from './pwa-update.mjs';
+import { buildRoles, diagnosticsFromValidation, renderHTML, roleCharacterCounts, segmentRoles } from './mml-highlight.mjs';
+import { mountReviewRoll } from './review-roll.mjs';
 // Request identity only. The MIDI decoder, the Canonical conversion and the
 // G11-B/G11-C derivation all live behind the Worker, so the main thread never
 // imports the backend and never parses a source file itself.
@@ -13,6 +16,12 @@ const badge = status => `<span class="badge ${status === 'N/A' ? 'na' : esc(stat
 const detail = (label, value) => `<details><summary>${esc(label)}</summary>${json(value)}</details>`;
 const options = (values, selected) => values.map(([value, label]) => `<option value="${esc(value)}" ${value === selected ? 'selected' : ''}>${esc(label)}</option>`).join('');
 const roles = ['Melody', 'Chord1', 'Chord2', 'Chord3', 'Chord4', 'Chord5'];
+// Syntax-highlight layer (mml-highlight.mjs) painted behind a transparent
+// textarea. The textarea keeps the exact string for selection and copy; the
+// layer adds colour and the parser's own error/caution positions, nothing else.
+const technicalDiagnostics = () => diagnosticsFromValidation(report?.technical, roles);
+const roleDiagnostics = index => technicalDiagnostics().filter(d => d.role === index).map(d => ({ ...d, role: 0 }));
+const mmlLayer = (value, diagnostics = []) => `<pre class="mml-hl-layer" aria-hidden="true">${renderHTML(value ?? '', buildRoles(value ?? '', { diagnostics }))}</pre>`;
 const reviewLabels = { source: '來源完整與可追溯', version: 'Version Drift／已接受版本', lead: 'Lead 樂句、休止與接棒', core3: 'Core3 單人完整性', full6: 'Full6 和聲、重疊與密度', tempo: 'Tempo、拍號與時間範圍', audio: '原曲音訊證據', adaptation: 'Mobile 最小適配', regression: '回歸與已接受優點' };
 const gateLabels = { finalReductionIntegrity: 'Final 六角色收斂完整性', mobileAdaptationIntegrity: 'Mobile 適配完整性', implementation: '分析模組', source: '來源完整性', baseline: '來源基準', technical: 'MML 技術語法', microTiming: '來源感知微時值（1/64 以下）', core3: 'Core3 來源連續性', core3Completeness: 'Core3 單人完整性（Gate 4）', leadDemotion: 'Lead 降級證據', leadPromotion: 'Lead 升級證據', crossSourceHarmony: '跨來源和聲', versionDrift: '版本差異', originalAudio: '原曲音訊', playerReadback: '播放器實際回讀', pendingDecisions: '待決仲裁', intake: '版本／音樂範圍', lead: 'Lead 審核', full6: 'Full6 審核', tempo: 'Tempo／時值審核', adaptation: 'Mobile 適配', regression: '回歸審核', deliveryIdentity: '交付事件一致性' };
 let workspace, report, identity, projects = [], audioFile = null, uploadController = null, busy = 0;
@@ -20,6 +29,11 @@ let mobilePreview = null;
 let reductionPreview = null;
 let reductionDecisions = [];
 const queued = createTaskQueue();
+// Service Worker release handling (pwa-update.mjs). A stale tab kept running
+// the previous release after another tab applied a new one; it must reload
+// before doing more work so it never drives new modules with old ones.
+let updateFlow = null;
+let applyingUpdate = false;
 const midiRequests = createSourceRequestLedger();
 const MAX_SOURCE_BYTES = 4194304;
 const { call } = createWorkerClient({ spawn: () => new Worker(new URL('./worker.mjs', import.meta.url), { type: 'module' }) });
@@ -49,6 +63,8 @@ function markBusy(active) {
 // revisions of the same project. Only explicit project navigation is unbound
 // from the project ID; equal revision numbers never identify equal projects.
 function run(fn, { revisionBound = true, projectBound = true } = {}) {
+  if (updateFlow?.stale) return message('Studio 已在其他分頁套用新版；此分頁仍是舊版模組，請重新載入後再操作。', true);
+  if (applyingUpdate) return message('正在套用新版並重新載入…', true);
   const task = { fn, revisionBound, projectBound, projectId: workspace?.id, revision: workspace?.revision };
   if (!busy) return drain(task);
   queued.enqueue(task);
@@ -388,10 +404,10 @@ function appliedDeliveryCard(attempt) {
     ${supersededNote}
     <p class="meta">此字串已通過目前的 MML 技術語法驗證，並與候選事件逐一讀回一致。複製與下載輸出的就是這個字串本身，不做任何整理、修補、壓縮或裁切。</p>
     <p class="note">這裡的 PASS 只代表這個字串<strong>目前通過交付驗證</strong>（相當於 <code>TECHNICAL_PASS</code> 層級）。它不是 <code>VALIDATED</code>，也不是 <code>IN_GAME_ACCEPTED</code>；整體專案狀態與實機接受紀錄在第 07 節。</p>
-    <label for="final-mml">完整六軌 Final MML<textarea id="final-mml" class="code final" readonly spellcheck="false">${esc(applied)}</textarea></label>
+    <label for="final-mml">完整六軌 Final MML</label><div class="mml-hl">${mmlLayer(applied, technicalDiagnostics())}<textarea id="final-mml" class="code final" readonly spellcheck="false">${esc(applied)}</textarea></div>
     <div class="actions"><button id="copy-final">複製完整 Final MML</button><button id="download-final" class="secondary">下載 Final MML</button></div>
     <p class="meta">逐角色內容如下。每個「複製」<strong>只會複製該角色的內容</strong>，不是可直接貼上的完整六軌樂譜。</p>
-    ${(report.tracks ?? []).map((track, index) => `<div class="role-body"><div class="row"><label for="final-role-${index}">${roles[index]}${track ? '' : ' <small>（空軌）</small>'}</label><button data-copy-role="${index}" class="quiet" ${track ? '' : 'disabled'}>複製此角色內容</button></div><textarea id="final-role-${index}" class="code" readonly spellcheck="false">${esc(track)}</textarea></div>`).join('')}
+    ${(report.tracks ?? []).map((track, index) => `<div class="role-body"><div class="row"><label for="final-role-${index}">${roles[index]}${track ? '' : ' <small>（空軌）</small>'}</label><button data-copy-role="${index}" class="quiet" ${track ? '' : 'disabled'}>複製此角色內容</button></div><div class="mml-hl">${mmlLayer(track, roleDiagnostics(index))}<textarea id="final-role-${index}" class="code" readonly spellcheck="false">${esc(track)}</textarea></div></div>`).join('')}
   </div>`;
 }
 
@@ -490,6 +506,7 @@ function finalDeliverySection() {
     </div>
     ${generationAttemptCard(attempt)}
     ${appliedDeliveryCard(attempt)}
+    ${timbrePreviewCard()}
   </section>`;
 }
 function render() {
@@ -501,11 +518,11 @@ function render() {
       <div class="card"><form id="settings"><div class="field-grid">${input('title', '專案／歌曲名稱', w.title)}${input('recording', '錄音版本（專輯／MV／Live 等）', s.recording)}${input('offset', '有效音樂起點（秒）', s.offset, 'type="number" min="0" step="any"')}${input('end', '有效音樂終點（秒）', s.end, 'type="number" min="0" step="any"')}<label>來源確認的拍號圖<textarea name="meterText" placeholder="例如：0 4/4&#10;32 3/4">${esc(s.meterText)}</textarea></label><div><label>原曲音訊是否為來源集的一部分？<select name="audioRequired">${options([['unknown','尚未確認'],['yes','是，需要 Audio evidence'],['no','否，本專案沒有原曲音訊']],s.audioRequired)}</select></label><label>本次是否使用驗證播放器？<select name="preview">${options([['unknown','尚未確認'],['none','本次未使用播放器／preview'],['used','有使用，需要實際回讀（v1 尚待支援）']],s.preview)}</select></label></div></div><div class="actions"><button>儲存專案設定</button></div><p class="meta">來源、設定或候選內容變更後，先前審核與實機接受將失效。</p></form></div>
       <div class="row"><p class="meta">MusicXML 與 MIDI 預設為第三方 supporting。只有已確認的官方譜／官方 MIDI 可選 primary symbolic；這只改變來源紀錄，不會讓不完整的來源變完整。</p><select id="authority" aria-label="MusicXML／MIDI 來源權威"><option value="supporting">第三方／未確認</option><option value="primary-symbolic">已確認官方 symbolic</option></select></div>
       <div class="grid intake-grid">${intakeCard('candidate','目前候選','這次要審核的版本')}${intakeCard('baseline','Source-Faithful Baseline','編修之前、可逐事件比對的來源基準')}${intakeCard('previous','已接受的前一版','有歷史版本時，用於回歸比較')}</div>
-      <details class="card"><summary>貼上 MML／Canonical IR，或附上交付 MML</summary><form id="paste"><div class="field-grid"><label>用途<select name="slot">${options([['candidate','目前候選'],['baseline','來源基準'],['previous','已接受前版'],['delivery','IR 候選對應的交付 MML']],'candidate')}</select></label>${input('name','檔名','pasted.mml')}</div><label>完整文字<textarea name="content" class="code" required spellcheck="false" placeholder="MML@…,…,…,…,…,…;"></textarea></label><div class="actions"><button>在本機載入</button></div></form></details>
+      <details class="card"><summary>貼上 MML／Canonical IR，或附上交付 MML</summary><form id="paste"><div class="field-grid"><label>用途<select name="slot">${options([['candidate','目前候選'],['baseline','來源基準'],['previous','已接受前版'],['delivery','IR 候選對應的交付 MML']],'candidate')}</select></label>${input('name','檔名','pasted.mml')}</div><label for="paste-content">完整文字</label><div class="mml-hl"><pre class="mml-hl-layer" id="paste-layer" aria-hidden="true"></pre><textarea id="paste-content" name="content" class="code" required spellcheck="false" placeholder="MML@…,…,…,…,…,…;"></textarea></div><p class="meta" id="paste-counts" aria-live="polite"></p><div class="actions"><button>在本機載入</button></div></form></details>
     </section>
     ${rawMidiSection(r.rawMidi)}
     <section id="gates"><div class="section-heading"><h2>03　Analysis Gate</h2><span class="ready-count">${r.blockers?.length ?? 0} 項待處理</span></div><div class="gate-grid">${gates.map(([name,g])=>`<div class="gate"><strong>${esc(gateLabels[name] ?? name)}</strong>${badge(g.status)}<p>${esc(g.reason ?? g.blockers?.join(' · ') ?? '')}</p>${detail('檢查內容',g)}</div>`).join('')}</div><p class="note">技術語法通過只代表 TECHNICAL_PASS。未審核、未知與 unsupported 均不會被升級為 PASS。</p></section>
-    <section id="review"><div class="section-heading"><h2>04　比對與審核</h2><small>先看證據，再記錄決策</small></div>
+    <section id="review"><div class="section-heading"><h2>04　比對與審核</h2><small>先看證據，再記錄決策</small></div>${reviewRollCard()}
       <div class="card"><h3>Version Drift</h3><p class="review-subtitle">來源基準 → 目前候選。變動數量是診斷資訊。</p>${diffTable(r.lineage?.sourceToCandidate)}<details><summary>已接受前版 → 目前候選</summary>${diffTable(r.lineage?.previousToCandidate)}</details></div>
       <div class="grid"><div class="card"><h3>Lead / Core3</h3><p class="meta">前三軌的 Lead、核心和聲、必要低音／內聲部需能獨立成立。</p>${r.core3 ? detail('連續性、缺口、音域與角色報告',r.core3) : '<p class="empty">等待來源基準</p>'}${detail('Lead 降級證據結果',r.leadReports ?? [])}${detail('Lead 升級證據結果',r.leadPromotionReports ?? [])}<div id="core3-changes">${(r.core3?.unapproved ?? []).map((change,index)=>`<form class="conflict" data-core3="${index}"><p class="meta">${esc(change.type)} · ${esc(change.eventId)}</p>${input('reason','保留此變動的正面理由','')}${input('evidence','來源／段落證據','')}<button class="secondary">記錄此變動審核</button></form>`).join('')}</div></div><div class="card"><h3>六軌重疊與密度</h3><p class="meta">全部 15 組跨軌持續同音、低中音摩擦及同步起音皆供審核；不自動刪音。</p>${detail('跨軌檢查',r.technical?.song?.review ?? {status:'PENDING'})}<p class="note">Rashisa 等具名歷史回歸：FIXTURE_PENDING。通用測試成功不代表這些歌曲已通過。</p></div></div>
       <div class="card"><h3>Harmony arbitration</h3><p class="meta">${r.harmony?.unresolvedCount ?? '—'} 項跨來源衝突待審核。保留須有理由及證據；其他方案先記為 PENDING，待候選實際修改後重新比對。</p>${(r.harmony?.conflicts ?? []).map((c,index)=>`<form class="conflict" data-harmony="${index}"><div class="row"><strong>${esc(c.intervalName)} · ${esc(c.leftRole)} / ${esc(c.rightRole)}</strong>${badge(c.resolved?'PASS':'PENDING')}</div><p class="meta">拍 ${esc(c.start)}–${esc(c.end)} · pitch ${c.leftPitch} / ${c.rightPitch}<br>${esc(c.leftEventId)}<br>${esc(c.rightEventId)}</p>${c.resolved?json(c.decision):`<div class="field-grid"><label>決策<select name="action">${options([['pending','仍待審核'],['keep','保留，已核對'],['omit','建議省略'],['move-role','建議移動角色'],['octave','建議改八度'],['redistribute','建議重新分配']],'pending')}</select></label>${input('reason','音樂／角色理由','')}${input('evidence','來源及段落／event 證據','')}</div><button class="secondary">記錄仲裁</button>`}</form>`).join('') || '<p class="empty">目前沒有跨來源衝突報告。Full6 人工審核仍然需要。</p>'}</div>
@@ -518,9 +535,13 @@ function render() {
     ${finalReductionSection()}
     ${mobileAdaptationSection()}
     ${finalDeliverySection()}
-    <section id="delivery"><div class="section-heading"><h2>07　Readiness 與實機接受</h2>${badge(r.state)}</div><div class="card"><p class="note">${r.state==='CANDIDATE'?'目前為 Candidate，尚有必要 Gate 未通過。複製內容仍屬候選版本。':r.state==='VALIDATED'?'必要非實機 Gate 已通過。等待使用者於目標遊戲 client 實際接受。':'已有本輪 exact-MML 實機接受紀錄。'}</p><p class="meta">本節記錄的是<strong>實機接受</strong>。產生與匯出 Final MML 在上方第 06 節。「下載六軌對照文字」是含角色標題的<strong>對照用</strong>文字檔，<strong>不是</strong>可直接貼上的樂譜；可貼上的完整字串請用「複製完整 MML@」或第 06 節的匯出。</p><div class="actions"><button id="copy-mml" ${r.rawMml?'':'disabled'}>複製完整 MML@</button><button id="export-mml" class="secondary" ${r.rawMml?'':'disabled'}>下載六軌對照文字</button><button id="export-report" class="quiet">下載分析報告</button></div>${r.tracks?`${r.tracks.map((track,i)=>`<div class="track"><div class="row"><label for="track-${i}">${roles[i]} <small>${track.length} / ${PUBLISHED_ROLE_CHARACTER_LIMIT} 字元</small></label><button data-copy-track="${i}" class="quiet">複製</button></div><textarea id="track-${i}" class="code" readonly spellcheck="false">${esc(track)}</textarea></div>`).join('')}<p class="note">${P1_LOCAL_NOTE}</p>`:'<p class="empty">需有通過 Final 技術語法且與候選事件一致的六軌 MML。MusicXML／IR 不會自動縮編或猜測角色；可在第 06 節產生，或附上對應的交付 MML 進行回讀。</p>'}<details><summary>記錄 In-game Accepted</summary><form id="acceptance"><div class="field-grid">${input('client','Client／地區／版本','')}${input('instrument','樂器與軌道配置','')}${input('evidence','實機結果／截圖或紀錄定位','')}</div><button ${r.state==='CANDIDATE'?'disabled':''}>此 exact-MML 已實機接受</button></form>${w.acceptance?json(w.acceptance):''}</details></div></section>
+    <section id="delivery"><div class="section-heading"><h2>07　Readiness 與實機接受</h2>${badge(r.state)}</div><div class="card"><p class="note">${r.state==='CANDIDATE'?'目前為 Candidate，尚有必要 Gate 未通過。複製內容仍屬候選版本。':r.state==='VALIDATED'?'必要非實機 Gate 已通過。等待使用者於目標遊戲 client 實際接受。':'已有本輪 exact-MML 實機接受紀錄。'}</p><p class="meta">本節記錄的是<strong>實機接受</strong>。產生與匯出 Final MML 在上方第 06 節。「下載六軌對照文字」是含角色標題的<strong>對照用</strong>文字檔，<strong>不是</strong>可直接貼上的樂譜；可貼上的完整字串請用「複製完整 MML@」或第 06 節的匯出。</p><div class="actions"><button id="copy-mml" ${r.rawMml?'':'disabled'}>複製完整 MML@</button><button id="export-mml" class="secondary" ${r.rawMml?'':'disabled'}>下載六軌對照文字</button><button id="export-report" class="quiet">下載分析報告</button></div>${r.tracks?`${r.tracks.map((track,i)=>`<div class="track"><div class="row"><label for="track-${i}">${roles[i]} <small>${track.length} / ${PUBLISHED_ROLE_CHARACTER_LIMIT} 字元</small></label><button data-copy-track="${i}" class="quiet">複製</button></div><div class="mml-hl">${mmlLayer(track, roleDiagnostics(i))}<textarea id="track-${i}" class="code" readonly spellcheck="false">${esc(track)}</textarea></div></div>`).join('')}<p class="note">${P1_LOCAL_NOTE}</p>`:'<p class="empty">需有通過 Final 技術語法且與候選事件一致的六軌 MML。MusicXML／IR 不會自動縮編或猜測角色；可在第 06 節產生，或附上對應的交付 MML 進行回讀。</p>'}<details><summary>記錄 In-game Accepted</summary><form id="acceptance"><div class="field-grid">${input('client','Client／地區／版本','')}${input('instrument','樂器與軌道配置','')}${input('evidence','實機結果／截圖或紀錄定位','')}</div><button ${r.state==='CANDIDATE'?'disabled':''}>此 exact-MML 已實機接受</button></form>${w.acceptance?json(w.acceptance):''}</details></div></section>
     <details class="card"><summary>Published Canonical 與建置身分</summary><p class="meta">本機使用建置時由 Published main 取得並核驗的完整固定快照。離線模式不宣稱已確認最新 main。</p>${json(identity.metadata)}${identity.provenance?json(identity.provenance):''}${identity.documents.map(d=>`<details><summary>${esc(d.path)} · ${esc(d.authority)}</summary><a href="${esc(d.url)}" target="_blank" rel="noopener">GitHub 固定快照</a><pre>${esc(d.content)}</pre></details>`).join('')}</details>`;
   bind();
+  // View-only bindings for freshly rendered DOM (highlight layers, review roll).
+  bindHighlightLayers();
+  bindReviewRoll();
+  bindTimbrePreview();
 }
 async function putSource(slot, name, content, authority = 'supporting') {
   if (slot === 'delivery') { const next = await call('invalidate',workspace); next.deliveryMml = content; await commit(next); return; }
@@ -750,6 +771,241 @@ $('#new-project').onclick=()=>run(async()=>{audioFile=null;await commit(await ca
 $('#projects').onchange=()=>{const id=$('#projects').value;run(async()=>{const selected=projects.find(p=>p.id===id);if(!selected)throw Error('找不到選取的專案，請重新開啟');audioFile=null;await commit(selected);},{revisionBound:false,projectBound:false});};
 $('#export-project').onclick=()=>{if(workspace)download('mml-studio-project.json',JSON.stringify({...workspace,canonical:identity.metadata},null,2));};
 $('#restore-project').onchange=()=>{const file=$('#restore-project').files[0];if(file)run(async()=>{if(file.size>16*1048576)throw Error(`Project backup is ${(file.size/1048576).toFixed(1)} MiB; the restore limit is 16 MiB. Export the sources separately if a MIDI project exceeds it.`);audioFile=null;await commit(await call('importWorkspace',await file.text()));message('已匯入；先前審核保留為歷史，本輪需要重新審核。');},{revisionBound:false,projectBound:false});};
+// ─── Timbre preview ─────────────────────────────────────────────────────────
+// Plays the applied Final MML through SpessaSynth with a sound bank the user
+// picks (studio/web/preview/). The engine and bank live across re-renders; the
+// markup is re-bound after each render. Listening aid only: it never touches a
+// gate, a review or the workspace, and the bank never leaves this browser.
+const preview = { voices: 0, bank: undefined, bankChecked: false, context: null, engine: null, transport: null, songKey: null, program: null, position: 0, muted: [false, false, false, false, false, false], busy: false, error: null };
+// Re-render only the preview card: a full render() would discard whatever the
+// user is typing in another form.
+function refreshPreview() { const card = $('#timbre-preview'); if (!card) return; card.outerHTML = timbrePreviewCard(); bindTimbrePreview(); }
+const clock = seconds => `${Math.floor(seconds / 60)}:${String(Math.floor(seconds % 60)).padStart(2, '0')}`;
+function timbrePreviewCard() {
+  const song = report?.technical?.ok ? report.technical.song : null;
+  const ready = Boolean(appliedDelivery() && song);
+  const bank = preview.bank;
+  const bankLine = bank === undefined ? '讀取音色庫中…' : bank ? `${esc(bank.name)} · ${bytesLabel(bank.size)} · <code class="digest">sha256 ${esc(bank.sha256.slice(0, 16))}…</code>` : '尚未選擇音色庫';
+  const programs = preview.engine?.presets ?? [];
+  return `<div class="card preview-card" id="timbre-preview"><div class="attempt-head"><h3>遊戲音色試聽</h3><span class="badge na">模擬試聽</span></div>
+    <p class="note">用你在這台裝置選取的音色庫播放目前套用的 Final MML。這是<strong>聆聽輔助</strong>：不是實機驗收，也不會通過「播放器實際回讀」Gate。音色庫只存在這台裝置的瀏覽器，不會上傳，也不會進入專案備份。</p>
+    <div class="preview-bank"><span class="meta" id="bank-status">${bankLine}</span><label class="file-button secondary">${bank ? '更換音色庫' : '選擇音色庫'}<input type="file" id="bank-file" accept=".dls,.sf2,.sf3" aria-label="選擇音色庫檔案"></label>${bank ? '<button type="button" id="bank-clear" class="quiet">移除音色庫</button>' : ''}</div>
+    ${ready ? '' : '<p class="empty">需先有通過驗證並已套用的 Final MML，才能試聽。</p>'}
+    <div class="preview-controls"><label>音色<select id="preview-program" ${programs.length ? '' : 'disabled'}>${programs.length ? programs.map(p => `<option value="${p.program}" ${p.program === preview.program ? 'selected' : ''}>${esc(String(p.program + 1).padStart(3, '0'))} ${esc(p.name)}</option>`).join('') : '<option>按播放後載入音色清單</option>'}</select></label>
+      <button type="button" id="preview-play" ${ready && bank ? '' : 'disabled'}>${preview.busy ? '載入中…' : '▶ 播放'}</button><button type="button" id="preview-stop" class="secondary" ${preview.transport?.playing ? '' : 'disabled'}>■ 停止</button>
+      <input type="range" id="preview-seek" min="0" max="1000" value="0" aria-label="播放位置" ${ready && bank ? '' : 'disabled'}><span class="meta" id="preview-time">${clock(preview.position)} / ${clock(preview.transport?.duration ?? 0)}</span></div>
+    <div class="preview-roles" role="group" aria-label="試聽角色">${roles.map((role, i) => `<label><input type="checkbox" data-preview-role="${i}" ${preview.muted[i] ? '' : 'checked'}> ${role}</label>`).join('')}</div>
+    ${preview.error ? `<p class="note">${esc(preview.error)}</p>` : ''}</div>`;
+}
+function bindTimbrePreview() {
+  const card = $('#timbre-preview');
+  if (!card) return;
+  if (!preview.bankChecked) loadStoredBankInfo();
+  const song = report?.technical?.ok ? report.technical.song : null;
+  const songKey = song ? report.rawMml : null;
+  if (preview.transport && songKey !== preview.songKey) {
+    preview.transport.load(song);
+    preview.songKey = songKey;
+    preview.position = 0;
+  }
+  const time = () => { const el = $('#preview-time'); if (el) el.textContent = `${clock(preview.position)} / ${clock(preview.transport?.duration ?? 0)}${preview.transport?.playing ? ` · 發聲 ${preview.voices}` : ''}`; };
+  const seek = () => { const el = $('#preview-seek'); if (el && preview.transport?.duration) el.value = String(Math.round((preview.position / preview.transport.duration) * 1000)); };
+  const fail = error => { preview.error = error.message; preview.busy = false; message(error.message, true); refreshPreview(); };
+  const ensureEngine = async () => {
+    if (preview.transport) return;
+    const { loadBank } = await import('./preview/soundbank-store.mjs');
+    const { createPreviewEngine, createTransport } = await import('./preview/player.mjs');
+    const bank = await loadBank();
+    if (!bank) throw Error('尚未選擇音色庫');
+    preview.engine = await createPreviewEngine(bank, preview.context);
+    preview.transport = createTransport(preview.engine, {
+      onPosition: (position, duration, voices = 0) => { preview.position = position; preview.voices = voices; time(); seek(); },
+      onEnd: () => { preview.position = 0; refreshPreview(); },
+    });
+    const lute = preview.engine.presets.find(p => /lute/i.test(p.name));
+    preview.program ??= (lute ?? preview.engine.presets[0]).program;
+    preview.transport.setProgram(preview.program);
+    preview.muted.forEach((value, role) => preview.transport.setMuted(role, value));
+    preview.songKey = null;
+  };
+  $('#preview-play').onclick = async () => {
+    if (!song) return;
+    try {
+      // Created and resumed before the first await: iOS Safari only unlocks
+      // audio inside the user's gesture.
+      if (!preview.context) {
+        const AudioContextClass = globalThis.AudioContext ?? globalThis.webkitAudioContext;
+        if (!AudioContextClass) throw Error('此瀏覽器不支援 Web Audio，無法試聽音色');
+        preview.context = new AudioContextClass({ latencyHint: 'interactive' });
+      }
+      preview.context.resume?.();
+      preview.busy = true; preview.error = null; refreshPreview();
+      await ensureEngine();
+      if (preview.songKey !== songKey) { preview.transport.load(song); preview.songKey = songKey; }
+      preview.busy = false;
+      await preview.transport.play(preview.position);
+      refreshPreview();
+    } catch (error) {
+      // A failed engine start closed its context; the next attempt starts over.
+      if (!preview.transport) { preview.engine = null; preview.context = null; }
+      fail(error);
+    }
+  };
+  $('#preview-stop').onclick = () => { preview.transport?.stop(); preview.position = 0; refreshPreview(); };
+  $('#preview-seek').onchange = event => {
+    const duration = preview.transport?.duration ?? 0;
+    preview.position = (Number(event.target.value) / 1000) * duration;
+    time();
+    if (preview.transport?.playing) preview.transport.play(preview.position).catch(fail);
+  };
+  $('#preview-program').onchange = event => { preview.program = Number(event.target.value); preview.transport?.setProgram(preview.program); };
+  card.querySelectorAll('[data-preview-role]').forEach(box => box.onchange = () => {
+    const role = Number(box.dataset.previewRole);
+    preview.muted[role] = !box.checked;
+    preview.transport?.setMuted(role, preview.muted[role]);
+  });
+  $('#bank-file').onchange = event => {
+    const file = event.target.files?.[0];
+    event.target.value = '';
+    if (!file) return;
+    (async () => {
+      try {
+        const { storeBank } = await import('./preview/soundbank-store.mjs');
+        resetPreviewEngine();
+        preview.bank = await storeBank(file);
+        preview.error = null;
+        message(`已載入音色庫 ${file.name}；只保存在這台裝置。`);
+        refreshPreview();
+      } catch (error) { fail(error); }
+    })();
+  };
+  const clear = $('#bank-clear');
+  if (clear) clear.onclick = async () => {
+    const { clearBank } = await import('./preview/soundbank-store.mjs');
+    resetPreviewEngine();
+    await clearBank().catch(error => message(error.message, true));
+    preview.bank = null;
+    refreshPreview();
+  };
+}
+function resetPreviewEngine() {
+  preview.transport?.destroy();
+  preview.transport = null; preview.engine = null; preview.context = null; preview.songKey = null; preview.position = 0;
+}
+async function loadStoredBankInfo() {
+  preview.bankChecked = true;
+  try {
+    const { loadBank, describe } = await import('./preview/soundbank-store.mjs');
+    const stored = await loadBank();
+    preview.bank = stored ? describe(stored) : null;
+  } catch (error) { preview.bank = null; preview.error = `音色庫讀取失敗：${error.message}`; }
+  refreshPreview();
+}
+// ─── Six-role review roll ───────────────────────────────────────────────────
+// A read-only view of the analysed candidate (review-roll.mjs). It locates
+// events and review signals; it never edits, accepts or reviews anything.
+// Selecting an event only describes it and links to the existing forms.
+const ROLL_LANES = [...roles, '未指派'];
+function reviewRollCard() {
+  const roll = report?.roll;
+  if (!roll) return '<div class="card roll-card"><h3>六角色審核捲軸</h3><div class="empty">加入候選來源並完成分析後，這裡會以捲軸顯示六個角色。</div></div>';
+  const counts = [...roll.lanes.map(l => l.events.length), roll.unassigned.length];
+  const kinds = { harmony: 0, overlap: 0, crowding: 0 };
+  for (const signal of roll.signals) kinds[signal.kind] += 1;
+  const unresolved = roll.signals.filter(signal => signal.kind === 'harmony' && !signal.resolved).length;
+  return `<div class="card roll-card"><div class="row"><h3>六角色審核捲軸</h3><span class="meta roll-counts">跨來源和聲 ${kinds.harmony}${unresolved ? `（${unresolved} 待審）` : ''} · 同音重疊 ${kinds.overlap} · 低音擁擠 ${kinds.crowding}</span></div>
+    <p class="note">僅供審核定位的視覺化：不是來源、聽感或實機證據。點選只會標出事件並連到既有表單，不會修改或接受任何內容。時間以精確拍數計算，只在畫面上換算成像素。</p>
+    <div class="roll-toolbar" role="group" aria-label="捲軸顯示">
+      <span class="roll-zoom"><span class="meta">時間</span><button type="button" class="quiet" data-roll-zoom="w:-1" aria-label="時間縮小">−</button><button type="button" class="quiet" data-roll-zoom="w:1" aria-label="時間放大">＋</button></span>
+      <span class="roll-zoom"><span class="meta">音高</span><button type="button" class="quiet" data-roll-zoom="h:-1" aria-label="音高縮小">−</button><button type="button" class="quiet" data-roll-zoom="h:1" aria-label="音高放大">＋</button></span>
+      <span class="roll-lanes">${ROLL_LANES.map((name, i) => `<label class="roll-lane lane-${i}"><input type="checkbox" data-roll-lane="${i}" checked><i aria-hidden="true"></i>${esc(name)} <small>${counts[i]}</small></label>`).join('')}</span>
+    </div>
+    <div id="review-roll" class="roll-root"></div>
+    <p id="roll-info" class="meta roll-info" aria-live="polite">點選音符查看事件 ID 與精確拍數。尺上的標記：▼ 跨來源和聲、◆ 同音重疊、■ 低音擁擠。</p></div>`;
+}
+let reviewRoll = null;
+function bindReviewRoll() {
+  reviewRoll?.destroy?.();
+  reviewRoll = null;
+  const root = $('#review-roll');
+  if (!root || !report?.roll) return;
+  const info = $('#roll-info');
+  // Only a cross-source harmony conflict has an arbitration form. Overlap and
+  // crowding signals come from the Full6 15-pair review and are described, not
+  // linked: they are reviewed in the Full6 review record, not decided here.
+  const signalButton = signal => signal.kind === 'harmony'
+    ? `<button type="button" class="quiet" data-open-harmony="${signal.form}">開啟仲裁表單：${esc(signal.label)}${signal.resolved ? '（已記錄）' : ''}</button>`
+    : `<span class="roll-signal-note">${esc(signal.label)}（Full6 審核訊號）</span>`;
+  const wire = () => info.querySelectorAll('[data-open-harmony]').forEach(button => button.onclick = () => {
+    const form = document.querySelector(`form[data-harmony="${button.dataset.openHarmony}"]`);
+    if (!form) return;
+    form.scrollIntoView({ block: 'center' });
+    form.querySelector('select, input, button')?.focus({ preventScroll: true });
+  });
+  reviewRoll = mountReviewRoll(root, report.roll, {
+    onSelect: event => {
+      if (!event) { info.textContent = '未選取事件。'; return; }
+      info.innerHTML = `<strong>${esc(event.role ?? '未指派')}</strong> · ${esc(event.pitchName)}（pitch ${event.pitch}）· 拍 <code>${esc(event.start)}</code>–<code>${esc(event.end)}</code><br><code class="digest">${esc(event.id)}</code>${event.signals.length ? `<br>${event.signals.map(signalButton).join(' ')}` : ''}`;
+      wire();
+    },
+    onSignal: signal => { info.innerHTML = `審核訊號 · 拍 <code>${esc(signal.start)}</code>–<code>${esc(signal.end)}</code><br>${signalButton(signal)}`; wire(); },
+  });
+  document.querySelectorAll('[data-roll-zoom]').forEach(button => button.onclick = () => { const [axis, dir] = button.dataset.rollZoom.split(':'); reviewRoll?.zoom(axis, Number(dir)); });
+  document.querySelectorAll('[data-roll-lane]').forEach(box => {
+    box.checked = reviewRoll.prefs.visible[Number(box.dataset.rollLane)];
+    box.onchange = () => reviewRoll?.setLaneVisible(Number(box.dataset.rollLane), box.checked);
+  });
+}
+// Keep every highlight layer scrolled with its textarea, and repaint the paste
+// box as the user types. The paste box is highlighted only once it holds a
+// complete MML@…; string; Canonical IR JSON stays plain. Its per-role counts
+// are what the parser will count, shown with the P1 disclaimer, never enforced
+// here: truncating or rejecting is the validator's job.
+function bindHighlightLayers() {
+  document.querySelectorAll('.mml-hl textarea').forEach(area => {
+    const layer = area.previousElementSibling;
+    area.addEventListener('scroll', () => { layer.scrollTop = area.scrollTop; layer.scrollLeft = area.scrollLeft; });
+  });
+  const area = $('#paste-content'), layer = $('#paste-layer'), counts = $('#paste-counts');
+  if (!area) return;
+  let frame = 0;
+  const paint = () => {
+    frame = 0;
+    const value = area.value;
+    const wrapped = segmentRoles(value).wrapped;
+    layer.innerHTML = wrapped ? renderHTML(value, buildRoles(value)) : renderHTML(value, new Uint8Array(value.length));
+    layer.scrollTop = area.scrollTop;
+    if (!wrapped) { counts.textContent = ''; return; }
+    const perRole = roleCharacterCounts(value);
+    counts.innerHTML = perRole.length === 6
+      ? `${perRole.map((n, i) => `<span class="${n > PUBLISHED_ROLE_CHARACTER_LIMIT ? 'count-over' : ''}">${roles[i]} ${n}／${PUBLISHED_ROLE_CHARACTER_LIMIT}</span>`).join(' · ')}<br>${P1_CHARACTER_NOTE}`
+      : `目前為 ${perRole.length} 個角色；完整字串需要六個固定軌位。`;
+  };
+  area.addEventListener('input', () => { if (!frame) frame = requestAnimationFrame(paint); });
+  paint();
+}
+// A waiting release is applied only on request, after every queued action has
+// run (run() serializes it behind them) and only while the project is saved:
+// the reload that follows discards anything that exists only in this tab.
+$('#apply-update').onclick=()=>run(async()=>{
+  if(workspace&&!workspace.savedAt)throw Error('目前專案尚未儲存。請先匯出專案備份，或排除儲存錯誤後再套用新版。');
+  if(!updateFlow?.apply())throw Error('沒有等待套用的新版。');
+  applyingUpdate=true;$('#apply-update').disabled=true;message('正在套用新版並重新載入…',true);
+},{revisionBound:false,projectBound:false});
+function registerServiceWorker(){
+  updateFlow=createUpdateFlow({
+    serviceWorker:navigator.serviceWorker,
+    reload:()=>location.reload(),
+    onDownloading:()=>message('新版離線資源下載中…'),
+    onOffer:()=>{$('#apply-update').hidden=false;message('新版已下載。目前步驟完成且專案已儲存後，可按「套用新版」重新載入。',true);},
+    onStale:()=>{$('#apply-update').hidden=true;message('Studio 已在其他分頁套用新版；此分頁仍是舊版模組，請重新載入後再操作。',true);},
+  });
+  navigator.serviceWorker.register('./sw.js',{scope:'./'}).then(reg=>{
+    updateFlow.attach(reg);
+    addEventListener('focus',()=>updateFlow.check());
+    document.addEventListener('visibilitychange',()=>{if(document.visibilityState==='visible')updateFlow.check();});
+  }).catch(()=>message('離線資源尚未安裝，請保持連線並重試。',true));
+}
 // Build/Git provenance is audit metadata served by build.json, deliberately
 // outside the hashed runtime bundle. Display-only: its absence never relaxes
 // Canonical verification, which already ran fail-closed inside the worker.
@@ -762,5 +1018,5 @@ try {
   try { projects=await listProjects(); } catch(error){message(error.message,true);}
   workspace=projects[0]??await call('newWorkspace');
   $('#boot').hidden=true;$('#app').hidden=false;await run(()=>commit(workspace),{revisionBound:false});
-  if('serviceWorker' in navigator) navigator.serviceWorker.register('./sw.js',{scope:'./'}).then(reg=>{reg.addEventListener('updatefound',()=>message('新版離線資源下載中；關閉所有 Studio 分頁後再開啟可套用。'));}).catch(()=>message('離線資源尚未安裝，請保持連線並重試。',true));
+  if('serviceWorker' in navigator) registerServiceWorker();
 } catch(error){$('#boot').textContent=error.message;$('#boot').className='boot-error';$('#boot').hidden=false;$('#app').hidden=true;}

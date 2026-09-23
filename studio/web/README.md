@@ -144,6 +144,71 @@ restore ceiling. See the
 [Raw MIDI integration record](../../docs/STUDIO_WEB_RAW_MIDI.md) for implementation
 details and scope.
 
+## Review roll, MML highlighting and release updates
+
+These three surfaces were ported from the repository owner's MML 工房 editor
+(owner authorization 2026-09-23) and merged with Studio's rules. The owner's
+code supplied the viewport, rendering and gesture handling. Studio supplied
+exact timing, event identity and the evidence boundaries. See
+[the fusion analysis](../../docs/FRONTEND_FUSION_ANALYSIS_2026-09-23.md) §11–§12.
+
+- **Six-role review roll** (section 04, `review-roll.mjs`, `roll-geometry.mjs`,
+  `roll-model.mjs`).
+  - **Layout.** A read-only, virtualised canvas of the analysed candidate.
+    Core3 is solid, Chord3–Chord5 are outlined, and unassigned pitched
+    material is hatched.
+  - **Review signals.** Cross-source harmony conflicts link to their existing
+    arbitration form. Same-pitch overlaps and low-register m2/M7 crowding come
+    from the same `reviewSong()` 15-pair review the technical validator uses.
+  - **Zoom and touch.** Ctrl/⌘+wheel or two-finger pinch zooms one axis at a
+    time. One finger pans, and a tap selects the nearest note.
+  - **Read-only.** The roll never edits, accepts or reviews anything. Selecting
+    a note reports its event ID, role, pitch and exact start/end beats.
+  - **Exact timing.** Beats stay exact rationals until the pixel step. Bar
+    lines come from the source meter map, and without one only beat lines are
+    drawn; 4/4 is never assumed. Pitches are never folded.
+  - **Not evidence.** It is a visualisation, not source, listening or in-game
+    evidence.
+- **MML highlighting** (`mml-highlight.mjs`).
+  - **Where.** Final MML, per-role and section 07 text boxes, plus the paste
+    box as you type.
+  - **How it works.** The textarea keeps the exact string for selection and
+    copy, and a layer painted behind it carries the colour.
+  - **Same rules as the parser.** Tokens follow `parser.mjs`, and a test holds
+    the two together on thousands of generated inputs. MML 工房 dialect extras
+    (`h`, `p`, `@n`, `[ ]`, comments) and whitespace inside a role are shown as
+    errors, because Studio rejects them.
+  - **Parser findings.** Errors and cautions from the Worker's validation mark
+    their tokens.
+  - **Per-role counts.** Characters beyond 2,400 are banded, never removed. The
+    paste box shows per-role counts with the P1 disclaimer.
+- **Timbre preview** (section 06; `preview/player.mjs`, `preview/schedule.mjs`,
+  `preview/soundbank-store.mjs`).
+  - **What it plays.** The applied Final MML, played through SpessaSynth with a
+    DLS/SF2/SF3 bank you pick on your device.
+  - **Where the bank lives.** In its own IndexedDB database on that device. It
+    is never uploaded, never in a project backup, and never in the build.
+  - **How the engine is loaded.** Vendored at build time from the pinned npm
+    packages (Apache-2.0; license text in the header of `vendor/spessasynth/lib.js`) and only when you press
+    play. The CSP adds `'wasm-unsafe-eval'` for its bundled WebAssembly decoder;
+    no JavaScript eval is allowed.
+  - **Scheduling.** Beats are converted to seconds through the exact tempo map,
+    and only the resulting times become floats. Volume and channel mapping
+    follow the owner's MML 工房 player. Per-role mute and live instrument
+    switching are supported.
+  - **What it is not.** It is a listening aid, not in-game acceptance, and it
+    does not satisfy the player-readback gate.
+- **Release updates** (`pwa-update.mjs`, `sw.js`).
+  - **Download.** Install fetches bypass the HTTP cache, so a new release can
+    never be stored with an older module.
+  - **Detection.** A waiting or still-installing release is detected even if
+    the browser found it before the page listened. The page checks again on
+    focus and when it becomes visible, at most once an hour.
+  - **Apply.** 「套用新版」 appears only when a release is waiting. It runs
+    after queued actions and refuses an unsaved project.
+  - **Other tabs.** A tab that another tab updated is marked stale and must
+    reload before doing more work, so old and new modules never mix.
+
 ## Build and CI (developer / operator only)
 
 From a Git checkout with refreshed `origin/main` and the complete rules snapshot:
