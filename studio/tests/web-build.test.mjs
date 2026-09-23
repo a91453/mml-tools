@@ -67,9 +67,22 @@ test('the timbre preview engine is vendored from npm, self-contained, licensed a
   for (const path of ['vendor/spessasynth/lib.js', 'vendor/spessasynth/core.js', 'vendor/spessasynth/processor.js', 'studio/web/preview/player.mjs', 'studio/web/preview/readback.mjs', 'studio/web/preview/worklet-console.mjs']) {
     assert.ok(sw.includes(`./${path}`), `offline asset missing: ${path}`);
   }
-  // No sound bank ships in the build: the bank is a user-picked local file.
+  // No sound bank is in the build, the manifest or the precache list: the
+  // free default bank is downloaded from its upstream by the browser that
+  // first needs it and kept only there, and a bank the user picks never ships.
   const build = JSON.parse(await read('build.json'));
-  assert.ok(build.files.every(([path]) => !/\.(dls|sf2|sf3)$/i.test(path)));
+  const paths = build.files.map(([path]) => path);
+  assert.ok(paths.every(path => !/\.(dls|sf2|sf3)$/i.test(path) && !path.startsWith('vendor/soundbank/') && !path.startsWith('studio/web/default-bank/')), 'no bank file ships');
+  assert.doesNotMatch(sw, /\.(dls|sf2|sf3)['"]|vendor\/soundbank|default-bank\.json|default-bank\//i, 'the Service Worker precaches no bank');
+  // Nor inside another file: no RIFF sound-bank header, raw or base64.
+  const bankHeader = /RIFF[\s\S]{4}(sfbk|DLS )|UklGR[A-Za-z0-9+/]{7}(ZmJr|TFMg)/;
+  for (const path of paths) assert.doesNotMatch((await readFile(new URL(`../web-build/${path}`, import.meta.url))).toString('latin1'), bankHeader, `${path} carries no sound bank`);
+  const { DEFAULT_BANK_UPSTREAM } = await import('../web/preview/default-bank.mjs');
+  assert.match(await read('studio/web/preview/default-bank.mjs'), new RegExp(DEFAULT_BANK_UPSTREAM.sha256), 'the browser pins the upstream digest');
+  for (const path of ['studio/web/preview/default-bank.mjs', 'studio/web/preview/default-bank-trim.mjs', 'studio/web/preview/default-bank-worker.mjs', 'studio/web/preview/instruments.mjs']) {
+    assert.ok(sw.includes(`./${path}`), `offline asset missing: ${path}`);
+  }
+  assert.match(await read('studio/web/preview/default-bank-worker.mjs'), /from '\.\.\/\.\.\/\.\.\/vendor\/spessasynth\/core\.js'/, 'the subset is made with the vendored engine, nothing else');
   // Every precached file must have a type the static hosts serve, or the
   // whole Service Worker install fails and the app never works offline.
   const servable = new Set(['.html', '.mjs', '.js', '.css', '.json', '.webmanifest', '.svg', '.png']);

@@ -6,7 +6,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { execFileSync } from 'node:child_process';
-import { readFile, writeFile, mkdtemp, rm, cp, appendFile } from 'node:fs/promises';
+import { readFile, writeFile, mkdtemp, mkdir, rm, cp, appendFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -17,6 +17,7 @@ import { computeCacheId, readServiceWorkerTemplate, renderServiceWorker } from '
 import { verifyCanonicalPackage } from '../web/canonical-package.mjs';
 import { MANIFEST_PATH, PUBLISHED_REF, isolatedRepository, observePublishedRef } from './support/isolated-repository.mjs';
 import { PUBLISHED_CANONICAL } from '../backend/rules/index.mjs';
+import { syntheticUpstreamBank } from './support/synthetic-soundbank.mjs';
 
 const root = fileURLToPath(new URL('../../', import.meta.url));
 // Sibling test processes bootstrap from the shared checkout's discovery ref
@@ -416,6 +417,34 @@ test('the shipped Service Worker is exactly the trusted template rendered with t
     () => verifyStudioArtifact(out, {}, { serviceWorkerTemplate: `// forged\n${HOSTILE}` }),
     /release\.cacheId does not match the trusted Service Worker template/,
   );
+});
+
+// --- No sound bank ships. The free default preview bank is fetched from its
+// --- upstream by each browser, so an artifact carrying one, as a file or
+// --- inside one, is refused even when it has been re-signed.
+
+test('the verifier refuses an artifact that carries a sound bank, even re-signed', async t => {
+  const { out } = await build(t);
+  const copyOf = async () => {
+    const dir = await scratch();
+    t.after(() => rm(dir, { recursive: true, force: true }));
+    await cp(out, dir, { recursive: true });
+    return dir;
+  };
+  const bank = Buffer.from(syntheticUpstreamBank());
+  const variants = [
+    ['vendor/soundbank/default-bank.json', JSON.stringify({ schema: 'mml-studio-web/default-bank@1', data: bank.toString('base64') })],
+    ['studio/web/preview/bank-data.js', Buffer.concat([Buffer.from('export const bank = `'), bank, Buffer.from('`;\n')])],
+    ['vendor/soundbank/user.sf2', 'refused by its extension alone'],
+  ];
+  for (const [path, content] of variants) {
+    const dir = await copyOf();
+    await mkdir(resolve(dir, path, '..'), { recursive: true });
+    await writeFile(resolve(dir, path), content);
+    await resign(dir);
+    await rejects(dir, new RegExp(`Artifact carries a sound bank: ${path.replaceAll('.', '\\.')}`));
+  }
+  await assert.doesNotReject(() => verifyStudioArtifact(out));
 });
 
 test('this file never wrote the shared published discovery ref (M6)', () => {

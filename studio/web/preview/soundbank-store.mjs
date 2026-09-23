@@ -3,7 +3,8 @@
 // A separate IndexedDB database from projects (storage.mjs), so the bank is
 // never part of a project, a backup export or an import, and never travels
 // with a workspace. Nothing here makes a network request: the bytes come from
-// a file the user picks and stay in this browser.
+// a file the user picks and stay in this browser. The free default bank's
+// verified subset (default-bank.mjs) is kept here too, under its own key.
 const DB = 'mml-studio-soundbank';
 const STORE = 'banks';
 const KEY = 'current';
@@ -58,5 +59,21 @@ export async function loadBank() {
 }
 export async function clearBank() {
   await transact('readwrite', store => request(store.delete(KEY)));
+}
+// The default bank's subset, keyed by its SHA-256 so a later pin never reads
+// an older subset. Removing the user's bank leaves it; clearDefaultSubsets
+// removes every cached subset.
+const SUBSET_PREFIX = 'default-subset:';
+export async function loadDefaultSubset(sha256) {
+  return (await transact('readonly', store => request(store.get(`${SUBSET_PREFIX}${sha256}`)))) ?? null;
+}
+export async function hasDefaultSubset(sha256) {
+  return (await transact('readonly', store => request(store.count(`${SUBSET_PREFIX}${sha256}`)))) > 0;
+}
+export async function storeDefaultSubset(record) {
+  await transact('readwrite', store => request(store.put(record, `${SUBSET_PREFIX}${record.sha256}`)));
+}
+export async function clearDefaultSubsets() {
+  await transact('readwrite', store => request(store.delete(IDBKeyRange.bound(SUBSET_PREFIX, `${SUBSET_PREFIX}\uffff`))));
 }
 export const describe = record => ({ name: record.name, size: record.size, sha256: record.sha256, format: record.format, savedAt: record.savedAt });

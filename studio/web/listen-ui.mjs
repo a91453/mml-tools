@@ -310,15 +310,20 @@ export function createListening({ root, call, message, copyText, audio, saveProj
   function bankLine() {
     const info = audio.status();
     if (info.bank === undefined) return '讀取音色庫中…';
-    if (info.bank) return `音色庫：${esc(info.bank.name)}（只保存在這台裝置）`;
-    return info.fallback ? esc(info.fallback) : '尚未選擇音色庫。選擇後才能試聽；音色庫只保存在這台裝置，不會上傳。';
+    if (info.bank) return `音色庫：${esc(info.bank.name)}（你選擇的音色庫，只保存在這台裝置）`;
+    // The free default bank: whether it is on this device, or what the first
+    // playback will download, and that download's progress (app.mjs).
+    return info.fallback ? `音色庫：<strong>${esc(info.fallback)}</strong>${info.fallbackNote ? `<br><span data-default-bank-note>${esc(info.fallbackNote)}</span>` : ''}` : '尚未選擇音色庫。選擇後才能試聽；音色庫只保存在這台裝置，不會上傳。';
   }
+  const instruments = () => audio.instruments?.() ?? { options: [], choices: [], defaultBank: false };
   function playerCard() {
     const info = audio.status();
     const ready = Boolean(info.bank || info.fallback) && playable(state.version);
-    const roles = ROLES.map((role, i) => `<div class="listen-role"><span class="listen-role-name">${role}</span><button type="button" class="quiet" data-listen-mute="${i}" aria-pressed="${state.muted[i]}" aria-label="${role} 靜音">靜音</button><button type="button" class="quiet" data-listen-solo="${i}" aria-pressed="${state.solo[i]}" aria-label="${role} 獨奏">獨奏</button></div>`).join('');
-    return `<div class="card" id="listen-player" data-ready="${Boolean(info.bank || info.fallback)}"><h3>播放</h3>
-      <div class="listen-row"><span class="meta" id="listen-bank">${bankLine()}</span>${info.bank || info.fallback ? '' : '<label class="file-button secondary">選擇音色庫<input type="file" id="listen-bank-file" accept=".dls,.sf2,.sf3" aria-label="選擇音色庫檔案"></label>'}</div>
+    const inst = instruments();
+    const instrument = i => `<select data-listen-instrument="${i}" aria-label="${ROLES[i]} 音色" ${inst.options.length ? '' : 'disabled'}>${inst.options.length ? inst.options.map(o => `<option value="${esc(o.value)}" ${o.value === inst.choices[i] ? 'selected' : ''}>${esc(o.label)}</option>`).join('') : '<option>按播放後載入音色清單</option>'}</select>`;
+    const roles = ROLES.map((role, i) => `<div class="listen-role"><span class="listen-role-name">${role}</span>${instrument(i)}<button type="button" class="quiet" data-listen-mute="${i}" aria-pressed="${state.muted[i]}" aria-label="${role} 靜音">靜音</button><button type="button" class="quiet" data-listen-solo="${i}" aria-pressed="${state.solo[i]}" aria-label="${role} 獨奏">獨奏</button></div>`).join('');
+    return `<div class="card" id="listen-player" data-ready="${Boolean(info.bank || info.fallback)}" data-default-cached="${Boolean(info.defaultCached)}" data-instruments="${esc(inst.options.map(o => o.value).join(','))}"><h3>播放</h3>
+      <div class="listen-row"><span class="meta" id="listen-bank">${bankLine()}</span><label class="file-button quiet">${info.bank ? '更換音色庫' : '選擇自己的音色庫'}<input type="file" id="listen-bank-file" accept=".dls,.sf2,.sf3" aria-label="選擇音色庫檔案"></label>${info.defaultCached ? '<button type="button" class="quiet" id="listen-default-bank-clear">刪除這台裝置上的免費音色</button>' : ''}</div>
       <p class="listen-position" id="listen-position" aria-live="off"></p>
       <div class="actions listen-transport" id="listen-transport"></div>
       <p class="meta" id="listen-cue"></p>
@@ -327,7 +332,8 @@ export function createListening({ root, call, message, copyText, audio, saveProj
         <form id="listen-from-time" class="listen-inline"><label>從時間（分:秒）<input name="time" inputmode="decimal" placeholder="1:23" autocomplete="off" required></label><button ${ready ? '' : 'disabled'}>▶ 從此時間播放</button></form>
         <label class="listen-inline-label">標記與變更的前導<select id="listen-preroll">${PRE_ROLL_CHOICES.map(n => `<option value="${n}" ${n === (state.session.preRollBars ?? 1) ? 'selected' : ''}>${n ? `${n} 小節` : '不加前導'}</option>`).join('')}</select></label>
       </div>
-      <div class="listen-roles" role="group" aria-label="角色靜音與獨奏">${roles}</div>
+      <div class="listen-roles" role="group" aria-label="角色音色、靜音與獨奏">${roles}</div>
+      ${inst.defaultBank ? `<p class="meta">音色為${esc(info.fallback ?? '')}：以 GM 音色近似遊戲樂器名稱，只供聆聽。</p>` : ''}
       <p class="meta" id="listen-status" role="status" aria-live="polite"></p></div>`;
   }
   function transportButtons() {
@@ -514,6 +520,8 @@ export function createListening({ root, call, message, copyText, audio, saveProj
     renderPosition(); renderTransport();
     const bankFile = root.querySelector('#listen-bank-file');
     if (bankFile) bankFile.onchange = () => { const file = bankFile.files?.[0]; bankFile.value = ''; if (file) Promise.resolve(audio.pickBank(file)).then(() => render(), error => message(error.message, true)); };
+    const clearDefault = root.querySelector('#listen-default-bank-clear');
+    if (clearDefault) clearDefault.onclick = () => { stop({ quiet: true }); Promise.resolve(audio.clearDefaultBank?.()).then(() => render(), error => message(error.message, true)); };
     root.querySelector('#listen-from-bar').onsubmit = event => {
       event.preventDefault();
       try {
@@ -541,6 +549,7 @@ export function createListening({ root, call, message, copyText, audio, saveProj
       if (card) { card.outerHTML = changesCard(); bindChanges(); }
       refreshMarkers();
     };
+    root.querySelectorAll('[data-listen-instrument]').forEach(select => select.onchange = () => audio.setInstrument?.(Number(select.dataset.listenInstrument), select.value));
     root.querySelectorAll('[data-listen-mute]').forEach(button => button.onclick = () => {
       const i = Number(button.dataset.listenMute);
       state.muted[i] = !state.muted[i];
@@ -711,8 +720,13 @@ export function createListening({ root, call, message, copyText, audio, saveProj
       const info = audio.status();
       const ready = Boolean(info.bank || info.fallback);
       const card = root.querySelector('#listen-player');
-      if (card && card.dataset.ready !== String(ready)) { card.outerHTML = playerCard(); bind(); }
-      else { const line = root.querySelector('#listen-bank'); if (line) line.innerHTML = bankLine(); renderTransport(); }
+      const inst = instruments();
+      if (card && (card.dataset.ready !== String(ready) || card.dataset.defaultCached !== String(Boolean(info.defaultCached)) || card.dataset.instruments !== inst.options.map(o => o.value).join(','))) { card.outerHTML = playerCard(); bind(); }
+      else {
+        const line = root.querySelector('#listen-bank'); if (line) line.innerHTML = bankLine();
+        root.querySelectorAll('[data-listen-instrument]').forEach(select => { const value = inst.choices[Number(select.dataset.listenInstrument)]; if (value !== undefined && select.value !== value) select.value = value; });
+        renderTransport();
+      }
     },
     get state() { return state; },
     exportText,

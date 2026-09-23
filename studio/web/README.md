@@ -206,12 +206,39 @@ exact timing, event identity and the evidence boundaries. See
   - **Per-role counts.** Characters beyond 2,400 are banded, never removed. The
     paste box shows per-role counts with the P1 disclaimer.
 - **Timbre preview** (section 06; `preview/player.mjs`, `preview/schedule.mjs`,
-  `preview/soundbank-store.mjs`).
+  `preview/soundbank-store.mjs`, `preview/default-bank.mjs`).
   - **What it plays.** The current delivery MML (generated, pasted, or a
     candidate that is itself valid MML), played through SpessaSynth with a
-    DLS/SF2/SF3 bank you pick on your device.
-  - **Where the bank lives.** In its own IndexedDB database on that device. It
-    is never uploaded, never in a project backup, and never in the build.
+    DLS/SF2/SF3 bank you pick on your device, or, until you pick one, the
+    free default bank.
+  - **Where your bank lives.** In its own IndexedDB database on that device. It
+    is never uploaded, never in a project backup, and never in the build, and
+    it always takes precedence over the default bank.
+  - **The default bank.** A General MIDI subset of FluidR3Mono_GM.sf3 (MIT).
+    It is not in this repository and not in the build: the upstream file asks
+    not to be redistributed. Nothing is downloaded when the page loads. The
+    first time you press play without a bank of your own, the page says
+    「第一次使用免費音色：將從 MuseScore 官方來源下載約 14.6 MB，只存在這台裝置」,
+    downloads the pinned upstream file from MuseScore's repository with
+    progress, and refuses it unless its SHA-256 matches. A Worker trims it
+    with the vendored spessasynth_core (`preview/default-bank-trim.mjs`, the
+    same operations `scripts/build-default-soundbank.mjs` runs in Node), and
+    the subset is refused unless its SHA-256 matches too. Both digests are
+    pinned in `preview/default-bank.mjs` and `default-bank/provenance.json`.
+    Only the subset (about 1.6 MB) is kept, in the same IndexedDB database as
+    your bank, under its digest; later sessions use it offline, and
+    「刪除這台裝置上的免費音色」 removes it. If the download fails (offline,
+    blocked, altered), playback says so and suggests picking your own bank;
+    nothing else changes. Everywhere it is active it is labelled
+    「免費通用音色（近似），不是遊戲音色」. Each role can pick one of eleven
+    game instrument names mapped to GM (`preview/instruments.mjs`): 魯特琴
+    Lute→24, 曼陀林 Mandolin→25, 夏盧莫管 Chalumeau→71, 木琴 Xylophone→13,
+    長笛 Flute→73, 小提琴 Violin→40, 鋼琴 Piano→0, 豎琴 Harp→46, 音樂盒 Music
+    Box→10 (0-based programs), 大鼓 BassDrum→drum-kit note 35 (36 also kept),
+    鈸 Cymbals→drum-kit note 49 (57 also kept). With your own bank the picker
+    lists that bank's presets. Per-role instruments or a drum kit make a
+    playback's capture incomplete, so Gate 6 readback still needs one program
+    on every role.
   - **How the engine is loaded.** Vendored at build time from the pinned npm
     packages (Apache-2.0; license text in the header of `vendor/spessasynth/lib.js`) and only when you press
     play. The CSP adds `'wasm-unsafe-eval'` for its bundled WebAssembly decoder;
@@ -425,3 +452,14 @@ historical implementation record. Current Raw MIDI behavior is documented in
 [Studio Web Raw MIDI](../../docs/STUDIO_WEB_RAW_MIDI.md), and the current repository
 status/readiness baseline is recorded in
 [Studio Status / Readiness Snapshot — 2026-09-15](../../docs/STUDIO_STATUS_READINESS_2026-09-15.md).
+
+## Credits
+
+- Timbre preview engine: SpessaSynth (`spessasynth_lib`, `spessasynth_core`),
+  Apache License 2.0, vendored at build time.
+- Default preview bank: a subset of FluidR3Mono_GM.sf3 2.312 — Fluid (R3)
+  SoundFont by Frank Wen, mono version by Michael Cowgill, with Temple Blocks
+  by Ethan Winer and Drumline Percussion by Michael Schorsch — MIT License, as
+  distributed with MuseScore 2.3.2. Not redistributed: each browser downloads
+  it from that source at first use. Licence text and acknowledgements:
+  [`default-bank/LICENSE.md`](default-bank/LICENSE.md).

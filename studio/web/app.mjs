@@ -7,6 +7,8 @@ import { buildRoles, diagnosticsFromValidation, renderHTML, roleCharacterCounts,
 import { mountReviewRoll } from './review-roll.mjs';
 import { PROBES, buildObservation, summarize } from './engine-probe.mjs';
 import { compareReadback, normalizeCapture } from './preview/readback.mjs';
+import { DEFAULT_BANK_LABEL, DEFAULT_BANK_NAME, DEFAULT_INSTRUMENT, instrumentOptions, resolveRoleVoices, uniformProgram } from './preview/instruments.mjs';
+import { DEFAULT_BANK_DOWNLOAD_NOTICE, DEFAULT_BANK_SUBSET, loadDefaultBank } from './preview/default-bank.mjs';
 import { createListening } from './listen-ui.mjs';
 import { markersFromReport, sanitizeStoredNotes } from './listen-notes.mjs';
 // Request identity only. The MIDI decoder, the Canonical conversion and the
@@ -887,13 +889,15 @@ function bindEngineProbes() {
 }
 // ─── Timbre preview ─────────────────────────────────────────────────────────
 // Plays the delivery MML through SpessaSynth with a sound bank the user picks
-// (studio/web/preview/). The engine and bank live across re-renders; the
-// markup is re-bound after each render. Listening never touches a gate, a
-// review or the workspace, and the bank never leaves this browser. The one
-// write is explicit: after a complete playback from the start, the user may
-// record the engine's processed events as the Gate 6 player readback, which
-// the Worker re-checks against the exact MML on every analysis.
-const preview = { voices: 0, bank: undefined, bankChecked: false, context: null, engine: null, transport: null, songKey: null, program: null, position: 0, muted: [false, false, false, false, false, false], busy: false, error: null, playBinding: null, lastCapture: null, owner: 'final', listenHandlers: null };
+// or, without one, the free default bank, which is downloaded from its
+// upstream only when a playback first needs it (studio/web/preview/). The
+// engine and bank live across re-renders; the markup is re-bound after each
+// render. Listening never touches a gate, a review or the workspace, and no
+// bank ever leaves this browser. The one write is explicit: after a complete
+// playback from the start, the user may record the engine's processed events
+// as the Gate 6 player readback, which the Worker re-checks against the exact
+// MML on every analysis.
+const preview = { voices: 0, bank: undefined, bankChecked: false, defaultCached: undefined, download: null, context: null, engine: null, engineLoading: null, engineToken: 0, transport: null, songKey: null, choices: null, choicesKind: null, position: 0, muted: [false, false, false, false, false, false], busy: false, error: null, playBinding: null, lastCapture: null, owner: 'final', listenHandlers: null };
 // Re-render only the preview card: a full render() would discard whatever the
 // user is typing in another form.
 function refreshPreview() { listening?.refreshAudio(); const card = $('#timbre-preview'); if (!card) return; card.outerHTML = timbrePreviewCard(); bindTimbrePreview(); }
@@ -932,16 +936,22 @@ function timbrePreviewCard() {
   const song = report?.technical?.ok ? report.technical.song : null;
   const ready = Boolean(report?.rawMml && song);
   const bank = preview.bank;
-  const bankLine = bank === undefined ? '讀取音色庫中…' : bank ? `${esc(bank.name)} · ${bytesLabel(bank.size)} · <code class="digest">sha256 ${esc(bank.sha256.slice(0, 16))}…</code>` : '尚未選擇音色庫';
-  const programs = preview.engine?.presets ?? [];
+  // No bank of the user's own: the free default bank plays, always labelled.
+  const bankLine = bank === undefined ? '讀取音色庫中…' : bank ? `${esc(bank.name)} · ${bytesLabel(bank.size)} · <code class="digest">sha256 ${esc(bank.sha256.slice(0, 16))}…</code> · 你選擇的音色庫（優先於預設音色）` : `${esc(DEFAULT_BANK_NAME)} · <strong>${esc(DEFAULT_BANK_LABEL)}</strong>`;
+  const defaultNote = bank === null ? defaultBankNote() : '';
+  const playable = ready && bank !== undefined;
+  const { options: choices, all } = instrumentPicker();
+  const select = (attrs, value, label) => `<select ${attrs} ${choices.length ? '' : 'disabled'}>${choices.length ? `${value === '' ? '<option value="" selected>（逐角色不同）</option>' : ''}${choices.map(o => `<option value="${esc(o.value)}" ${o.value === value ? 'selected' : ''}>${esc(o.label)}</option>`).join('')}` : `<option>${label}</option>`}</select>`;
   return `<div class="card preview-card" id="timbre-preview"><div class="attempt-head"><h3>遊戲音色試聽</h3><span class="badge na">模擬試聽</span></div>
-    <p class="note">用你在這台裝置選取的音色庫播放目前的交付 MML。這是<strong>聆聽輔助</strong>，不是實機驗收；光是播放不會通過任何 Gate。音色庫只存在這台裝置的瀏覽器，不會上傳，也不會進入專案備份。</p>
-    <div class="preview-bank"><span class="meta" id="bank-status">${bankLine}</span><label class="file-button secondary">${bank ? '更換音色庫' : '選擇音色庫'}<input type="file" id="bank-file" accept=".dls,.sf2,.sf3" aria-label="選擇音色庫檔案"></label>${bank ? '<button type="button" id="bank-clear" class="quiet">移除音色庫</button>' : ''}</div>
+    <p class="note">用這台裝置上的音色庫播放目前的交付 MML：你選擇的音色庫優先；沒有選擇時使用<strong>${esc(DEFAULT_BANK_LABEL)}</strong>，第一次播放時才從 MuseScore 官方來源下載並核對 SHA-256。這是<strong>聆聽輔助</strong>，不是實機驗收；光是播放不會通過任何 Gate。音色庫只存在這台裝置的瀏覽器，不會上傳，也不會進入專案備份。</p>
+    <div class="preview-bank"><span class="meta" id="bank-status">${bankLine}</span><label class="file-button secondary">${bank ? '更換音色庫' : '選擇自己的音色庫'}<input type="file" id="bank-file" accept=".dls,.sf2,.sf3" aria-label="選擇音色庫檔案"></label>${bank ? '<button type="button" id="bank-clear" class="quiet">移除音色庫（改用預設音色）</button>' : ''}${preview.defaultCached ? '<button type="button" id="default-bank-clear" class="quiet">刪除這台裝置上的免費音色</button>' : ''}</div>
+    ${defaultNote ? `<p class="meta" id="default-bank-note" data-default-bank-note>${esc(defaultNote)}</p>` : ''}
     ${ready ? '' : '<p class="empty">需先有通過驗證、且與候選一致的交付 MML，才能試聽。</p>'}
-    <div class="preview-controls"><label>音色<select id="preview-program" ${programs.length ? '' : 'disabled'}>${programs.length ? programs.map(p => `<option value="${p.program}" ${p.program === preview.program ? 'selected' : ''}>${esc(String(p.program + 1).padStart(3, '0'))} ${esc(p.name)}</option>`).join('') : '<option>按播放後載入音色清單</option>'}</select></label>
-      <button type="button" id="preview-play" ${ready && bank ? '' : 'disabled'}>${preview.busy ? '載入中…' : '▶ 播放'}</button><button type="button" id="preview-stop" class="secondary" ${preview.transport?.playing ? '' : 'disabled'}>■ 停止</button>
-      <input type="range" id="preview-seek" min="0" max="1000" value="0" aria-label="播放位置" ${ready && bank ? '' : 'disabled'}><span class="meta" id="preview-time">${clock(preview.owner === 'final' ? preview.position : 0)} / ${clock(preview.owner === 'final' ? preview.transport?.duration ?? 0 : 0)}</span></div>
+    <div class="preview-controls"><label>全部角色音色${select('id="preview-program"', all, '按播放後載入音色清單')}</label>
+      <button type="button" id="preview-play" ${playable ? '' : 'disabled'}>${preview.busy ? '載入中…' : '▶ 播放'}</button><button type="button" id="preview-stop" class="secondary" ${preview.transport?.playing ? '' : 'disabled'}>■ 停止</button>
+      <input type="range" id="preview-seek" min="0" max="1000" value="0" aria-label="播放位置" ${playable ? '' : 'disabled'}><span class="meta" id="preview-time">${clock(preview.owner === 'final' ? preview.position : 0)} / ${clock(preview.owner === 'final' ? preview.transport?.duration ?? 0 : 0)}</span></div>
     <div class="preview-roles" role="group" aria-label="試聽角色">${roles.map((role, i) => `<label><input type="checkbox" data-preview-role="${i}" ${preview.muted[i] ? '' : 'checked'}> ${role}</label>`).join('')}</div>
+    <details class="preview-instruments"><summary>逐角色音色${bank === null ? `（${esc(DEFAULT_BANK_LABEL)}）` : ''}</summary><div class="preview-instrument-grid">${roles.map((role, i) => `<label>${role}${select(`data-preview-instrument="${i}"`, preview.choices?.[i] ?? '', '按播放後載入音色清單')}</label>`).join('')}</div><p class="meta">每個角色可選不同音色；大鼓與鈸使用 GM 鼓組音。逐角色不同音色或使用鼓組時，這次播放不能記錄為播放器回讀。</p></details>
     ${preview.error ? `<p class="note">${esc(preview.error)}</p>` : ''}
     ${ready ? readbackBlock() : ''}</div>`;
 }
@@ -966,13 +976,23 @@ function startAudioContext() {
   }
   preview.context.resume?.();
 }
-async function ensurePreviewEngine() {
-  if (preview.transport) return;
+// Both players may ask at once (a first download takes a while), so one
+// load is shared; a bank change while it runs discards its result.
+function ensurePreviewEngine() {
+  if (preview.transport) return Promise.resolve();
+  if (!preview.engineLoading) {
+    const loading = buildPreviewEngine(preview.engineToken).finally(() => { if (preview.engineLoading === loading) preview.engineLoading = null; });
+    preview.engineLoading = loading;
+  }
+  return preview.engineLoading;
+}
+async function buildPreviewEngine(token) {
   const { loadBank } = await import('./preview/soundbank-store.mjs');
   const { createPreviewEngine, createTransport } = await import('./preview/player.mjs');
-  const bank = await loadBank();
-  if (!bank) throw Error('尚未選擇音色庫');
-  try { preview.engine = await createPreviewEngine(bank, preview.context); }
+  // The user's own bank takes precedence; without one, the free default bank.
+  const bank = await loadBank() ?? await loadDefaultPreviewBank();
+  if (token !== preview.engineToken) throw Error('音色庫已更換，請再按一次播放。');
+  try { preview.engine = await createPreviewEngine(bank, preview.context); preview.engine.isDefault = Boolean(bank.isDefault); }
   catch (error) { preview.engine = null; preview.context = null; throw error; }
   preview.transport = createTransport(preview.engine, {
     onPosition: (position, duration, voices = 0) => {
@@ -991,15 +1011,88 @@ async function ensurePreviewEngine() {
       refreshPreview();
     },
   });
-  const lute = preview.engine.presets.find(p => /lute/i.test(p.name));
-  preview.program ??= (lute ?? preview.engine.presets[0]).program;
-  preview.transport.setProgram(preview.program);
+  ensureChoices();
+  preview.transport.setVoices(resolveRoleVoices(preview.choices));
   preview.muted.forEach((value, role) => preview.transport.setMuted(role, value));
   preview.songKey = null;
 }
+// The default bank from this browser's cache or, the first time, from its
+// upstream (default-bank.mjs), with the download's progress on both players.
+async function loadDefaultPreviewBank() {
+  try {
+    const bank = await loadDefaultBank({
+      onProgress: progress => {
+        const phaseChanged = preview.download?.phase !== progress.phase;
+        preview.download = progress.phase === 'done' ? null : progress;
+        if (phaseChanged) refreshPreview(); else showDefaultBankNote();
+      },
+    });
+    preview.defaultCached = bank.stored !== false;
+    if (bank.downloaded) message(bank.stored === false ? '已下載並核對免費音色，但這台裝置無法保存它；下次播放會再下載。' : '已下載並核對免費音色，只存在這台裝置；之後可離線使用。');
+    return bank;
+  } finally {
+    preview.download = null;
+    refreshPreview();
+  }
+}
+function defaultBankNote() {
+  const download = preview.download;
+  if (download?.phase === 'download') {
+    const mb = bytes => (bytes / 1e6).toFixed(1);
+    return `${DEFAULT_BANK_DOWNLOAD_NOTICE}。下載中 ${Math.floor((download.received / download.total) * 100)}%（${mb(download.received)}／${mb(download.total)} MB）`;
+  }
+  if (download?.phase === 'trim') return '已核對下載檔的 SHA-256，正在這台裝置產生免費音色子集並核對…';
+  if (preview.defaultCached) return '免費音色已存在這台裝置（已核對 SHA-256），可離線使用。';
+  if (preview.defaultCached === false) return `${DEFAULT_BANK_DOWNLOAD_NOTICE}。按播放後才會下載。`;
+  return '';
+}
+// Progress only rewrites the note text, so a download does not re-render the
+// cards (and close what the user has open) on every chunk.
+function showDefaultBankNote() {
+  const note = defaultBankNote();
+  for (const element of document.querySelectorAll('[data-default-bank-note]')) if (element.textContent !== note) element.textContent = note;
+}
+async function clearDefaultPreviewBank() {
+  const { clearDefaultSubsets } = await import('./preview/soundbank-store.mjs');
+  if (preview.engine?.isDefault || preview.engineLoading) resetPreviewEngine();
+  await clearDefaultSubsets();
+  preview.defaultCached = false;
+  message('已刪除這台裝置上的免費音色；下次播放時會再從 MuseScore 官方來源下載。');
+  refreshPreview();
+}
+// Instrument choices, one per role, shared by both players: a game instrument
+// id with the default bank, `p:<program>` with the user's own bank (whose
+// presets are known once its engine has loaded).
+function ensureChoices() {
+  const kind = preview.bank === null || preview.engine?.isDefault ? 'default' : preview.engine ? 'user' : null;
+  if (!kind || preview.choicesKind === kind) return;
+  if (kind === 'default') preview.choices = Array(6).fill(DEFAULT_INSTRUMENT);
+  else {
+    const presets = preview.engine.presets;
+    const first = presets.find(p => /lute/i.test(p.name)) ?? presets.find(p => !p.drums) ?? presets[0];
+    preview.choices = Array(6).fill(`p:${first.program}`);
+  }
+  preview.choicesKind = kind;
+}
+function instrumentPicker() {
+  ensureChoices();
+  const defaultBank = preview.choicesKind === 'default' && (preview.bank === null || preview.engine?.isDefault);
+  const options = defaultBank ? instrumentOptions({ defaultBank: true }) : preview.engine && !preview.engine.isDefault ? instrumentOptions({ defaultBank: false, presets: preview.engine.presets }) : [];
+  const values = preview.choices ?? [];
+  return { options, all: values.length && values.every(value => value === values[0]) ? values[0] : '', defaultBank };
+}
+function setInstrument(role, value) {
+  ensureChoices();
+  if (!preview.choices) return;
+  if (role === null) preview.choices = Array(6).fill(value); else preview.choices[role] = value;
+  preview.transport?.setVoices(resolveRoleVoices(preview.choices));
+  refreshPreview();
+}
 // The listening sessions' view of the shared engine (listen-ui.mjs).
 const listenAudio = {
-  status: () => ({ bank: preview.bank, busy: preview.busy }),
+  status: () => ({ bank: preview.bank, busy: preview.busy, fallback: preview.bank === null ? `${DEFAULT_BANK_NAME} · ${DEFAULT_BANK_LABEL}` : null, fallbackNote: preview.bank === null ? defaultBankNote() : '', defaultCached: Boolean(preview.defaultCached) }),
+  instruments: () => { const picker = instrumentPicker(); return { options: picker.options, choices: [...(preview.choices ?? [])], defaultBank: picker.defaultBank, uniform: uniformProgram(resolveRoleVoices(preview.choices)) !== null }; },
+  setInstrument,
   async play({ key, song, from, until, muted, handlers }) {
     startAudioContext();
     claimTransport('listen', handlers);
@@ -1021,6 +1114,7 @@ const listenAudio = {
     message(`已載入音色庫 ${file.name}；只保存在這台裝置。`);
     refreshPreview();
   },
+  clearDefaultBank: () => clearDefaultPreviewBank(),
 };
 function bindTimbrePreview() {
   const card = $('#timbre-preview');
@@ -1074,7 +1168,8 @@ function bindTimbrePreview() {
     previewTimeText();
     if (preview.owner === 'final' && preview.transport?.playing) preview.transport.play(preview.position).catch(fail);
   };
-  $('#preview-program').onchange = event => { preview.program = Number(event.target.value); preview.transport?.setProgram(preview.program); };
+  $('#preview-program').onchange = event => { if (event.target.value) setInstrument(null, event.target.value); };
+  card.querySelectorAll('[data-preview-instrument]').forEach(select => select.onchange = () => setInstrument(Number(select.dataset.previewInstrument), select.value));
   card.querySelectorAll('[data-preview-role]').forEach(box => box.onchange = () => {
     const role = Number(box.dataset.previewRole);
     preview.muted[role] = !box.checked;
@@ -1094,18 +1189,23 @@ function bindTimbrePreview() {
     preview.bank = null;
     refreshPreview();
   };
+  const clearDefault = $('#default-bank-clear');
+  if (clearDefault) clearDefault.onclick = () => clearDefaultPreviewBank().catch(error => message(error.message, true));
 }
 function resetPreviewEngine() {
   claimTransport('final');
   preview.transport?.destroy();
   preview.transport = null; preview.engine = null; preview.context = null; preview.songKey = null; preview.position = 0;
+  preview.engineLoading = null; preview.engineToken += 1;
 }
+// Reads only what is stored; nothing is downloaded until a playback needs it.
 async function loadStoredBankInfo() {
   preview.bankChecked = true;
   try {
-    const { loadBank, describe } = await import('./preview/soundbank-store.mjs');
+    const { loadBank, describe, hasDefaultSubset } = await import('./preview/soundbank-store.mjs');
     const stored = await loadBank();
     preview.bank = stored ? describe(stored) : null;
+    preview.defaultCached = await hasDefaultSubset(DEFAULT_BANK_SUBSET.sha256).catch(() => false);
   } catch (error) { preview.bank = null; preview.error = `音色庫讀取失敗：${error.message}`; }
   refreshPreview();
 }

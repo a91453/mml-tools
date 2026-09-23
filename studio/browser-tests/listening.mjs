@@ -29,6 +29,7 @@ export async function runListeningChecks({ page, base }) {
   await page.goto(`${base}/?listen=${payload}`);
   await page.locator('#listen-head').waitFor();
   await page.locator('#app h1').waitFor();
+  await page.waitForFunction(() => document.querySelector('#app')?.getAttribute('aria-busy') === 'false' && document.querySelectorAll('#projects option').length > 0);
   // The link is gone from the address bar, a session exists, no project was made.
   assert.equal(await page.evaluate(() => location.search + location.hash), '', 'the listen payload is cleared from the address bar');
   assert.deepEqual(await page.locator('#projects option').allTextContents(), projectsBefore, 'opening a link neither creates nor replaces a project');
@@ -50,6 +51,10 @@ export async function runListeningChecks({ page, base }) {
   assert.equal(await page.locator('#listening img').count(), 0);
   assert.ok((await page.locator('#listen-markers').textContent()).includes('Lead <b>待確認</b>'));
   assert.equal(await page.locator('#listen-markers b').count(), 0);
+  // A bank of the user's own (stored by the readback checks) takes precedence
+  // over the default bank, and the picker lists its own presets.
+  await page.locator('#listen-bank').filter({ hasText: 'saw.sf2' }).waitFor();
+  assert.equal((await page.locator('#listen-bank').textContent()).includes('免費通用音色'), false);
   // The link's start point is the cue: bar 2 is two seconds in.
   assert.ok((await page.locator('#listen-cue').textContent()).includes('第 2 小節'));
   assert.equal(await position.getAttribute('data-seconds'), '2');
@@ -66,6 +71,8 @@ export async function runListeningChecks({ page, base }) {
   assert.equal(await position.getAttribute('data-bar'), '3');
   assert.match(await position.textContent(), /^第 3 小節 · 第 \d 拍 · 0:0[45]\.\d \/ 0:11\.0$/);
   assert.equal(await page.evaluate(() => window.__audioContexts), 1, 'the gesture created the one AudioContext');
+  const presets = await page.locator('[data-listen-instrument="0"] option').allTextContents();
+  assert.ok(presets.length >= 1 && presets.every(text => /^\d{3} /.test(text)), `the user bank's own presets are offered: ${presets}`);
   // Stop returns to the same point; replay starts from it again.
   await page.locator('#listen-stop').click();
   await page.waitForFunction(() => document.querySelector('#listen-position')?.dataset.state === 'stopped');

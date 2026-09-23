@@ -12,13 +12,16 @@
 //     built out of the npm packages spessasynth_lib / spessasynth_core
 //     (Apache-2.0; license text in the header of vendor/spessasynth/lib.js); nothing comes from a CDN;
 //   * the bank comes from a user-picked file kept in this browser
-//     (soundbank-store.mjs) — never uploaded, never part of a project;
+//     (soundbank-store.mjs) — never uploaded, never part of a project — or,
+//     without one, from the free default bank this browser downloads from its
+//     upstream at first use and keeps (default-bank.mjs);
 //   * this is a listening aid, never source, original-audio or in-game
 //     evidence. A playback from the start also captures the events the engine
 //     actually processed, which the page can record as a player readback
 //     (readback.mjs); that capture is about this engine, not the game.
 import { buildSchedule, indexAt, soundingAt } from './schedule.mjs';
 import { MAX_CAPTURED_EVENTS, READBACK_KIND, READBACK_SCOPE } from './readback.mjs';
+import { uniformProgram } from './instruments.mjs';
 
 export const LOOKAHEAD_SEC = 0.3;
 export const TICK_MS = 25;
@@ -61,7 +64,7 @@ export async function createPreviewEngine(bank, context) {
     const list = await Promise.race([listed, new Promise(resolve => setTimeout(() => resolve(synth.presetList), 4000))]);
     const presets = (list ?? [])
       .filter(preset => preset?.name && !PLACEHOLDER.test(preset.name))
-      .map(preset => ({ program: preset.program, bankMSB: preset.bankMSB ?? 0, bankLSB: preset.bankLSB ?? 0, name: preset.name }))
+      .map(preset => ({ program: preset.program, bankMSB: preset.bankMSB ?? 0, bankLSB: preset.bankLSB ?? 0, name: preset.name, drums: Boolean(preset.isAnyDrums ?? preset.isGMGSDrum) }))
       .sort((a, b) => a.program - b.program);
     if (!presets.length) throw Error('音色庫沒有可用的音色');
     const listen = listener => { listeners.add(listener); return () => listeners.delete(listener); };
@@ -79,7 +82,11 @@ export async function createPreviewEngine(bank, context) {
 export function createTransport(engine, { onPosition = () => {}, onEnd = () => {} } = {}) {
   const { context, synth, out } = engine;
   let song = null;
-  let program = engine.presets[0].program;
+  // One voice per role: a program, and a drum-kit note for a drum instrument
+  // (preview/instruments.mjs). Every role plays the same program by default.
+  const melodic = voice => ({ program: Number(voice?.program ?? 0), drumNote: Number.isInteger(voice?.drumNote) ? voice.drumNote : null });
+  let voices = Array.from({ length: 6 }, () => melodic({ program: engine.presets[0].program }));
+  const pitchFor = event => voices[event.role]?.drumNote ?? event.pitch;
   const muted = [false, false, false, false, false, false];
   let events = [], duration = 0, index = 0, t0 = 0, timer = 0, frame = 0, playing = false, unmuteTimer = 0;
   // The range being played, in song seconds. `until` is null for "to the end".
@@ -99,9 +106,17 @@ export function createTransport(engine, { onPosition = () => {}, onEnd = () => {
     else if (capture.events.length >= MAX_CAPTURED_EVENTS) incomplete('TOO_MANY_EVENTS');
     else capture.events.push(type === 'noteOn' ? [at, 1, data.channel, data.midiNote, data.velocity] : [at, 0, data.channel, data.midiNote, 0]);
   });
+  function setVoices(list) {
+    voices = Array.from({ length: 6 }, (_, role) => melodic(list?.[role]));
+    if (playing) { incomplete('PROGRAM_CHANGED'); applyProgram(); }
+  }
   function incomplete(reason) { if (capture && !capture.incomplete.includes(reason)) capture.incomplete.push(reason); }
   function beginCapture() {
-    const preset = engine.presets.find(p => p.program === program) ?? { program, bankMSB: 0, name: '' };
+    // A readback describes one program on every channel. Per-role
+    // instruments or a drum kit make the capture incomplete, never recordable.
+    const uniform = uniformProgram(voices);
+    const program = uniform ?? voices[0].program;
+    const preset = engine.presets.find(p => p.program === program && !p.drums) ?? engine.presets.find(p => p.program === program) ?? { program, bankMSB: 0, name: '' };
     capture = {
       kind: READBACK_KIND, scope: READBACK_SCOPE, gameTimbreEquivalent: false, timeSource: 'engine',
       sessionId: crypto.randomUUID(), capturedAt: new Date().toISOString(),
@@ -111,6 +126,7 @@ export function createTransport(engine, { onPosition = () => {}, onEnd = () => {
       from: 0, duration, events: [], programs: [],
     };
     if (muted.some(Boolean)) incomplete('ROLE_MUTED');
+    if (uniform === null) incomplete('PER_ROLE_INSTRUMENTS');
   }
   function finishCapture() {
     const done = capture;
@@ -123,14 +139,15 @@ export function createTransport(engine, { onPosition = () => {}, onEnd = () => {
   function applyProgram() {
     for (let channel = 0; channel < 6; channel++) {
       synth.controllerChange(channel, 0, 0);
-      synth.programChange(channel, program);
+      synth.midiChannels[channel]?.setDrums?.(voices[channel].drumNote !== null);
+      synth.programChange(channel, voices[channel].program);
       synth.midiChannels[channel]?.setSystemParameter('isMuted', muted[channel]);
     }
   }
   function send(event) {
     const time = t0 + event.time;
-    if (event.type === 'on') synth.noteOn(event.channel, event.pitch, event.velocity, { time });
-    else synth.noteOff(event.channel, event.pitch, { time });
+    if (event.type === 'on') synth.noteOn(event.channel, pitchFor(event), event.velocity, { time });
+    else synth.noteOff(event.channel, pitchFor(event), { time });
   }
   // Nothing at or after `until` is ever queued, so a ranged playback cannot
   // leak notes past its end: the worklet cannot withdraw a queued note.
@@ -170,7 +187,10 @@ export function createTransport(engine, { onPosition = () => {}, onEnd = () => {
 
   return Object.freeze({
     load(nextSong) { halt(); song = nextSong; ({ events, duration } = buildSchedule(song)); return duration; },
-    setProgram(value) { program = Number(value); if (playing) { incomplete('PROGRAM_CHANGED'); applyProgram(); } },
+    setProgram(value) { setVoices(Array.from({ length: 6 }, () => ({ program: Number(value) }))); },
+    // Six voices, one per role, as preview/instruments.mjs resolves them.
+    setVoices,
+    get voices() { return voices.map(voice => ({ ...voice })); },
     setMuted(role, value) {
       muted[role] = Boolean(value);
       if (muted[role]) incomplete('ROLE_MUTED');
@@ -196,7 +216,7 @@ export function createTransport(engine, { onPosition = () => {}, onEnd = () => {
       if (until !== null) incomplete('RANGE_LIMITED');
       applyProgram();
       index = indexAt(events, start);
-      for (const held of soundingAt(events, start)) synth.noteOn(held.channel, held.pitch, held.velocity, { time: t0 + start });
+      for (const held of soundingAt(events, start)) synth.noteOn(held.channel, pitchFor(held), held.velocity, { time: t0 + start });
       playing = true;
       timer = setInterval(tick, TICK_MS);
       tick();
