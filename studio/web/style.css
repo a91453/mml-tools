@@ -97,3 +97,8 @@ code.digest,.facts dd code,table code{font-family:ui-monospace,SFMono-Regular,Me
 /* Player readback block (preview/readback.mjs). */
 .readback{border-top:1px solid var(--line,#d9ddd5);margin-top:14px;padding-top:12px}
 .readback h4{margin:0;font-size:14px}
+/* Decision Composer (G11-D) and roll views. */
+.roll-views{display:flex;gap:8px;flex-wrap:wrap;margin:0 0 10px}.roll-views button{min-height:36px;padding:6px 12px;font-size:13px}
+.composer-card h4{margin:0;font-size:14px}.composer-preview{border-top:1px solid var(--line);margin-top:14px;padding-top:12px}
+.compose-roles{border:1px solid var(--line);border-radius:8px;padding:8px 12px;display:flex;gap:12px;flex-wrap:wrap}.compose-roles label{display:flex;gap:6px;align-items:center;font-family:ui-monospace,monospace}.compose-roles input{width:18px;height:18px;min-height:0;margin:0}
+#roll-info button{min-height:34px;padding:4px 10px;font-size:12px;margin-top:6px}

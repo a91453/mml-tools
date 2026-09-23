@@ -295,6 +295,93 @@ export function clearAcceptedDecisions(workspace) {
 
 export { acceptedDecisionBindings };
 
+// ─── G11-D Decision Composer ────────────────────────────────────────────────
+//
+// The page composes one decision on the review roll; everything that makes it
+// an acceptance happens on this side. The page never supplies an acceptance
+// block, a binding or an id: `previewAcceptedDecision` fills the bindings from
+// what is loaded, builds the record exactly as recording would, and
+// re-derives the whole chain with that record appended, writing nothing.
+// `acceptPreviewedDecision` rebuilds the same record and records it only if
+// its digest is the one the reviewer was shown, so an acceptance always names
+// the dry run that was actually previewed -- the same shape as the reduction
+// and Mobile adaptation preview/apply pairs.
+const COMPOSER_DRAFT_KEYS = Object.freeze(['type', 'eventIds', 'toRole', 'toRoles', 'reason', 'evidence', 'note']);
+const COMPOSER_TYPES = Object.freeze(['ASSIGN_ROLE', 'MOVE_ROLE', 'OMIT_FROM_SIX', 'DUPLICATE_WITH_JUSTIFICATION', 'KEEP']);
+export const COMPOSER_ACCEPTED_BY = 'local-workspace-user';
+
+function composerContext(workspace) {
+  if (workspace.finalReduction || workspace.mobileAdaptation) throw Error('UNSUPPORTED: Final 收斂或 Mobile 適配已套用；先移除它們，才能記錄編排決策');
+  const asset = workspace.assets?.candidate;
+  if (!isRawMidiAsset(asset)) throw Error('UNSUPPORTED: accepted arrangement decisions need a raw MIDI candidate source');
+  const project = readCanonical(asset.project);
+  const integrity = verifyStoredProject(asset, project);
+  if (!integrity.verified) throw Error(`SOURCE_INTEGRITY_UNVERIFIED: ${integrity.reasons.join(', ')}`);
+  const arrangement = deriveArrangement(project, { sourceSha256: asset.source?.sha256 });
+  const current = deriveAcceptedArrangement({ project, suggestion: arrangement.candidate, records: workspace.acceptedDecisions, revision: workspace.revision, sourceSha256: asset.source?.sha256 });
+  if (!['NOT_REQUESTED', 'PASS'].includes(current.status)) throw Error(`STALE_ACCEPTED_DECISION: 目前的決策鏈未通過（${current.status}）；請先清除決策再重新編排`);
+  // Roles as the next decision will find them: the verified head, or the
+  // Source-Faithful Baseline before any decision.
+  const roles = new Map((current.status === 'PASS' ? current.application.candidate : project).events.filter(e => e.kind === 'note').map(e => [e.id, e.role ?? null]));
+  return { asset, project, arrangement, current, head: acceptedRevisionHead(current), roles };
+}
+
+function composeDecision(workspace, context, draft) {
+  if (!draft || typeof draft !== 'object' || Array.isArray(draft)) throw Error('decision draft must be an object');
+  for (const key of Object.keys(draft)) if (!COMPOSER_DRAFT_KEYS.includes(key)) throw Error(`decision draft may not carry ${key}`);
+  if (!COMPOSER_TYPES.includes(draft.type)) throw Error(`unsupported decision type: ${draft.type}`);
+  const eventIds = Array.isArray(draft.eventIds) ? [...new Set(draft.eventIds)] : [];
+  if (!eventIds.length || eventIds.some(id => typeof id !== 'string')) throw Error('請先在捲軸上選取至少一個事件');
+  const missing = eventIds.filter(id => !context.roles.has(id));
+  if (missing.length) throw Error(`選取的事件不在目前的來源中：${missing.slice(0, 3).join(', ')}`);
+  const before = [...new Set(eventIds.map(id => context.roles.get(id)))];
+  const fromRole = before.length === 1 ? before[0] : undefined;
+  if (['MOVE_ROLE', 'DUPLICATE_WITH_JUSTIFICATION'].includes(draft.type) && (fromRole === undefined || fromRole === null)) throw Error('這個決策需要選取的事件目前同屬一個角色');
+  const evidence = (Array.isArray(draft.evidence) ? draft.evidence : String(draft.evidence ?? '').split('\n')).map(item => String(item).trim()).filter(Boolean);
+  const decision = {
+    id: `web:g11d:${workspace.revision}:${(workspace.acceptedDecisions?.length ?? 0) + 1}`,
+    type: draft.type,
+    target: { eventIds: [...eventIds].sort() },
+    reason: String(draft.reason ?? '').trim(),
+    evidence,
+    acceptance: { ...acceptedDecisionBindings({ project: context.project, suggestion: context.arrangement.candidate, reviewedRevisionId: context.head }), acceptedBy: COMPOSER_ACCEPTED_BY, ...(text(draft.note) ? { note: draft.note.trim() } : {}) },
+  };
+  if (draft.type === 'MOVE_ROLE' || draft.type === 'DUPLICATE_WITH_JUSTIFICATION') decision.fromRole = fromRole;
+  if (draft.type === 'ASSIGN_ROLE' || draft.type === 'MOVE_ROLE') decision.toRole = draft.toRole;
+  if (draft.type === 'DUPLICATE_WITH_JUSTIFICATION') decision.toRoles = draft.toRoles;
+  return decision;
+}
+
+// Read-only dry run of one composed decision on top of the recorded chain.
+export function previewAcceptedDecision(workspace, draft) {
+  const context = composerContext(workspace);
+  const decision = composeDecision(workspace, context, draft);
+  const record = buildAcceptedDecisionRecord({ project: context.project, suggestion: context.arrangement.candidate, revision: workspace.revision, reviewedRevisionId: context.head, decision });
+  const derived = deriveAcceptedArrangement({ project: context.project, suggestion: context.arrangement.candidate, records: [...(workspace.acceptedDecisions ?? []), record], revision: workspace.revision, sourceSha256: context.asset.source?.sha256 });
+  const application = derived.application;
+  return copy({
+    projectId: workspace.id, revision: workspace.revision, reviewedRevisionId: context.head,
+    recordDigest: record.recordDigest, decision: record.decision,
+    status: derived.status,
+    applied: (application?.applied ?? []).map(item => ({ decisionId: item.decisionId, type: item.type, events: item.events.map(e => ({ eventId: e.eventId, fromRole: e.fromRole, toRole: e.toRole })) })),
+    rejected: application?.rejected ?? [], conflicts: application?.conflicts ?? [], stale: application?.stale ?? [],
+    diagnostics: application?.diagnostics ?? [], omitted: application?.omitted?.length ?? 0,
+    diffFromBaseline: application?.diffFromBaseline?.summary ?? null,
+    chain: derived.chain,
+    // What the roll would show if this were accepted; a projection, never stored.
+    roll: derived.status === 'PASS' ? buildRollProjection(application.candidate) : null,
+  });
+}
+
+// Record the previewed decision, and only that one.
+export function acceptPreviewedDecision(workspace, draft, { expectedRecordDigest } = {}) {
+  const preview = previewAcceptedDecision(workspace, draft);
+  if (preview.recordDigest !== expectedRecordDigest) throw Error('STALE_ACCEPTED_DECISION: 目前的內容與預覽時不同，請重新預覽');
+  if (preview.status !== 'PASS') throw Error(`預覽結果為 ${preview.status}，不能接受；請依預覽列出的原因修改決策`);
+  const context = composerContext(workspace);
+  return recordAcceptedDecision(workspace, composeDecision(workspace, context, draft), { reviewedRevisionId: context.head });
+}
+
 // Record the Lead Demotion Gate evidence for one baseline Melody event.
 //
 // The pre-G11-D Lead path. The page used to build this record itself, reaching
@@ -787,8 +874,16 @@ function analysisContext(w) {
     playerReadback: playerReadback.summary,
     historicalRegression: 'FIXTURE_PENDING', audioError, importedDecisions: candidate.decisions,
     // Display projection for the review roll; carries no gate or review meaning.
-    roll: buildRollProjection(candidate, { harmony }) };
+    roll: buildRollProjection(candidate, { harmony }),
+    // The same projection over the verified G11-D head, when every recorded
+    // decision applied. Display only: it is not the analysed candidate.
+    acceptedRoll: acceptedRollOf(rawMidi) };
   return { asset, candidate, project, readiness, gates, report };
+}
+
+function acceptedRollOf(rawMidi) {
+  const accepted = rawMidi.find(item => item.slot === 'candidate')?.acceptedArrangement;
+  return accepted?.status === 'PASS' && accepted.application?.candidate ? buildRollProjection(accepted.application.candidate) : null;
 }
 
 export function analyzeWorkspace(w) {

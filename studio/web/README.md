@@ -128,6 +128,21 @@ analysis just re-derived, never onto a stored or imported parent. Each record is
 tamper-evident (a digest over the whole record) but not authenticated: nothing
 proves who accepted it, and the code says so. A suggestion never becomes an
 acceptance, and an accepted application never moves a workspace to `VALIDATED`.
+
+The **Decision Composer** (section 04, under the review roll) records these
+decisions from the page. You gather events on the roll (one by one, or a whole
+G11-C voice), choose the move (assign, move, omit, duplicate with evidence, or
+keep), and write the reason. 「預覽」 is a dry run in the Worker: it fills
+the acceptance bindings itself (the page never supplies them, nor an id),
+re-derives the whole chain with the new record appended, writes nothing, and
+can show the result on the roll, labelled 「決策預覽（尚未接受）」.
+「接受此決策」 records only the record whose digest was previewed, and only a
+PASS preview; any edit drops the preview. A move's source role comes from the
+verified head, never from the page. Moves into or out of Melody still need
+Lead evidence the composer does not collect, so they preview as not PASS. The
+roll can then show the accepted head, labelled as such; gates and reviews still
+read the analysed candidate. The composer is closed when a Final reduction or
+Mobile adaptation is applied, or when the recorded chain does not fully apply.
 Lead evidence recorded through the two pre-G11-D forms is built behind the
 Worker; a form never supplies a source identity. Demotion evidence is keyed to
 the exact baseline Melody event and bound to it by the Lead Demotion Gate itself.

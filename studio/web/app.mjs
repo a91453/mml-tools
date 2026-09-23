@@ -31,6 +31,10 @@ let workspace, report, identity, projects = [], audioFile = null, uploadControll
 let mobilePreview = null;
 let reductionPreview = null;
 let reductionDecisions = [];
+// Decision Composer (section 04): the events gathered on the roll, the form
+// as typed, and the last dry run. A dry run is dropped on every commit and on
+// every edit, so 「接受」 only ever records the record that was just previewed.
+const composer = { eventIds: [], view: 'source', draft: { type: 'ASSIGN_ROLE', toRole: 'Chord1', toRoles: [], reason: '', evidence: '', note: '' }, preview: null, previewDraft: null };
 const queued = createTaskQueue();
 // Service Worker release handling (pwa-update.mjs). A stale tab kept running
 // the previous release after another tab applied a new one; it must reload
@@ -107,6 +111,8 @@ async function commit(next) {
   mobilePreview = null;
   reductionPreview = null;
   reductionDecisions = [];
+  composer.preview = null; composer.previewDraft = null;
+  if (composer.view === 'preview') composer.view = 'source';
   markBusy(true);
   try {
     const canonicalKey=JSON.stringify(identity.metadata);
@@ -1049,19 +1055,37 @@ async function loadStoredBankInfo() {
   refreshPreview();
 }
 // ─── Six-role review roll ───────────────────────────────────────────────────
-// A read-only view of the analysed candidate (review-roll.mjs). It locates
-// events and review signals; it never edits, accepts or reviews anything.
-// Selecting an event only describes it and links to the existing forms.
+// A read-only view (review-roll.mjs). It locates events and review signals and
+// never edits, accepts or reviews anything. Selecting an event describes it,
+// links to the existing forms, and can add it to the Decision Composer's
+// selection. Three projections can be shown, always labelled: the analysed
+// candidate (default), the verified G11-D head, and the composer's dry run.
 const ROLL_LANES = [...roles, '未指派'];
-function reviewRollCard() {
-  const roll = report?.roll;
+const ROLL_VIEWS = { source: '分析候選', accepted: '已接受編排（G11-D）', preview: '決策預覽（尚未接受）' };
+const composerPreviewCurrent = () => Boolean(composer.preview && composer.preview.projectId === workspace?.id && composer.preview.revision === workspace?.revision);
+function rollFor(view) {
+  if (view === 'accepted' && report?.acceptedRoll) return report.acceptedRoll;
+  if (view === 'preview' && composerPreviewCurrent() && composer.preview.roll) return composer.preview.roll;
+  return null;
+}
+function activeRoll() {
+  const roll = rollFor(composer.view);
+  if (!roll) composer.view = 'source';
+  return roll ?? report?.roll;
+}
+function reviewRollCard() { return rollCard() + decisionComposerCard(); }
+function rollCard() {
+  const roll = activeRoll();
   if (!roll) return '<div class="card roll-card"><h3>六角色審核捲軸</h3><div class="empty">加入候選來源並完成分析後，這裡會以捲軸顯示六個角色。</div></div>';
   const counts = [...roll.lanes.map(l => l.events.length), roll.unassigned.length];
   const kinds = { harmony: 0, overlap: 0, crowding: 0 };
   for (const signal of roll.signals) kinds[signal.kind] += 1;
   const unresolved = roll.signals.filter(signal => signal.kind === 'harmony' && !signal.resolved).length;
+  const views = Object.keys(ROLL_VIEWS).filter(view => view === 'source' || rollFor(view));
   return `<div class="card roll-card"><div class="row"><h3>六角色審核捲軸</h3><span class="meta roll-counts">跨來源和聲 ${kinds.harmony}${unresolved ? `（${unresolved} 待審）` : ''} · 同音重疊 ${kinds.overlap} · 低音擁擠 ${kinds.crowding}</span></div>
     <p class="note">僅供審核定位的視覺化：不是來源、聽感或實機證據。點選只會標出事件並連到既有表單，不會修改或接受任何內容。時間以精確拍數計算，只在畫面上換算成像素。</p>
+    ${views.length > 1 ? `<div class="roll-views" role="group" aria-label="捲軸內容">${views.map(view => `<button type="button" class="${view === composer.view ? 'secondary' : 'quiet'}" data-roll-view="${view}" aria-pressed="${view === composer.view}">${ROLL_VIEWS[view]}</button>`).join('')}</div>` : ''}
+    ${composer.view === 'accepted' ? '<p class="meta">目前顯示 G11-D 已接受決策鏈的結果投影。Gate 與審核仍以分析候選為準；這不是 VALIDATED。</p>' : composer.view === 'preview' ? '<p class="note">目前顯示的是<strong>決策預覽</strong>：尚未接受，也沒有寫入任何內容。</p>' : ''}
     <div class="roll-toolbar" role="group" aria-label="捲軸顯示">
       <span class="roll-zoom"><span class="meta">時間</span><button type="button" class="quiet" data-roll-zoom="w:-1" aria-label="時間縮小">−</button><button type="button" class="quiet" data-roll-zoom="w:1" aria-label="時間放大">＋</button></span>
       <span class="roll-zoom"><span class="meta">音高</span><button type="button" class="quiet" data-roll-zoom="h:-1" aria-label="音高縮小">−</button><button type="button" class="quiet" data-roll-zoom="h:1" aria-label="音高放大">＋</button></span>
@@ -1071,11 +1095,13 @@ function reviewRollCard() {
     <p id="roll-info" class="meta roll-info" aria-live="polite">點選音符查看事件 ID 與精確拍數。尺上的標記：▼ 跨來源和聲、◆ 同音重疊、■ 低音擁擠。</p></div>`;
 }
 let reviewRoll = null;
-function bindReviewRoll() {
+function bindReviewRoll() { bindRoll(); bindDecisionComposer(); }
+function bindRoll() {
   reviewRoll?.destroy?.();
   reviewRoll = null;
   const root = $('#review-roll');
-  if (!root || !report?.roll) return;
+  const roll = activeRoll();
+  if (!root || !roll) return;
   const info = $('#roll-info');
   // Only a cross-source harmony conflict has an arbitration form. Overlap and
   // crowding signals come from the Full6 15-pair review and are described, not
@@ -1089,11 +1115,24 @@ function bindReviewRoll() {
     form.scrollIntoView({ block: 'center' });
     form.querySelector('select, input, button')?.focus({ preventScroll: true });
   });
-  reviewRoll = mountReviewRoll(root, report.roll, {
+  const pick = event => {
+    const button = info.querySelector('[data-compose-toggle]');
+    if (!button) return;
+    button.onclick = () => {
+      const at = composer.eventIds.indexOf(event.id);
+      if (at >= 0) composer.eventIds.splice(at, 1); else composer.eventIds.push(event.id);
+      composerEdited();
+      button.textContent = at >= 0 ? '加入決策選取' : '從決策選取移除';
+    };
+  };
+  reviewRoll = mountReviewRoll(root, roll, {
+    marked: composer.eventIds,
     onSelect: event => {
       if (!event) { info.textContent = '未選取事件。'; return; }
-      info.innerHTML = `<strong>${esc(event.role ?? '未指派')}</strong> · ${esc(event.pitchName)}（pitch ${event.pitch}）· 拍 <code>${esc(event.start)}</code>–<code>${esc(event.end)}</code><br><code class="digest">${esc(event.id)}</code>${event.signals.length ? `<br>${event.signals.map(signalButton).join(' ')}` : ''}`;
+      const composable = composerEntry() && !event.id.includes('#g11d-dup:');
+      info.innerHTML = `<strong>${esc(event.role ?? '未指派')}</strong> · ${esc(event.pitchName)}（pitch ${event.pitch}）· 拍 <code>${esc(event.start)}</code>–<code>${esc(event.end)}</code><br><code class="digest">${esc(event.id)}</code>${event.signals.length ? `<br>${event.signals.map(signalButton).join(' ')}` : ''}${composable ? `<br><button type="button" class="quiet" data-compose-toggle>${composer.eventIds.includes(event.id) ? '從決策選取移除' : '加入決策選取'}</button>` : ''}`;
       wire();
+      if (composable) pick(event);
     },
     onSignal: signal => { info.innerHTML = `審核訊號 · 拍 <code>${esc(signal.start)}</code>–<code>${esc(signal.end)}</code><br>${signalButton(signal)}`; wire(); },
   });
@@ -1102,6 +1141,138 @@ function bindReviewRoll() {
     box.checked = reviewRoll.prefs.visible[Number(box.dataset.rollLane)];
     box.onchange = () => reviewRoll?.setLaneVisible(Number(box.dataset.rollLane), box.checked);
   });
+  document.querySelectorAll('.roll-card [data-roll-view]').forEach(button => button.onclick = () => { composer.view = button.dataset.rollView; refreshRoll(); });
+}
+// Re-render the roll card only; a full render() would discard what the user
+// is typing in other forms, the composer included.
+function refreshRoll() {
+  const card = document.querySelector('.roll-card');
+  if (!card) return;
+  card.outerHTML = rollCard();
+  bindRoll();
+}
+
+// ─── G11-D Decision Composer ────────────────────────────────────────────────
+// Composes one accepted arrangement decision from events gathered on the roll.
+// The page sends only the move (type, events, roles, reason, evidence): the
+// Worker fills the acceptance bindings from what is loaded, previews without
+// writing, and records only the exact record that was previewed. Shown only
+// for a verified Raw MIDI candidate with no reduction or adaptation applied.
+const DECISION_TYPES = { ASSIGN_ROLE: '指派角色（未指派 → 角色）', MOVE_ROLE: '移動角色', OMIT_FROM_SIX: '不放入六軌（省略）', DUPLICATE_WITH_JUSTIFICATION: '複製到其他角色（需證據）', KEEP: '保持原樣（記錄已審核）' };
+function composerEntry() {
+  const entry = report?.rawMidi?.find(item => item.slot === 'candidate');
+  if (!entry || !entry.integrity?.verified || !entry.arrangement || entry.error) return null;
+  if (workspace?.finalReduction || workspace?.mobileAdaptation) return null;
+  return entry;
+}
+// Any edit drops the dry run. `structural` edits (selection, decision type)
+// redraw the form; typing only removes the stale preview, so focus stays put.
+function composerEdited({ structural = true } = {}) {
+  const hadPreview = composer.preview !== null;
+  composer.preview = null; composer.previewDraft = null;
+  reviewRoll?.setMarked(composer.eventIds);
+  if (hadPreview && composer.view === 'preview') { composer.view = 'source'; refreshRoll(); }
+  if (structural) refreshComposer();
+  else document.querySelector('#decision-composer .composer-preview')?.remove();
+}
+function refreshComposer() {
+  const card = $('#decision-composer');
+  if (!card) return;
+  card.outerHTML = decisionComposerCard();
+  bindDecisionComposer();
+}
+function decisionComposerCard() {
+  const entry = composerEntry();
+  if (!entry) return '';
+  const chain = entry.acceptedArrangement;
+  const records = workspace.acceptedDecisions ?? [];
+  const recorded = records.length ? `<ul class="codes">${records.map(record => { const d = record.decision; return `<li><code>${esc(d.id)}</code> · ${esc(DECISION_TYPES[d.type] ?? d.type)} · ${d.target?.eventIds?.length ?? 0} 個事件${d.fromRole ? ` · ${esc(d.fromRole)}` : ''}${d.toRole ? ` → ${esc(d.toRole)}` : ''}${d.toRoles?.length ? ` → ${esc(d.toRoles.join('、'))}` : ''} · ${esc(d.reason)}</li>`; }).join('')}</ul>` : '<p class="meta">尚未記錄任何編排決策；G11-C 角色候選仍只是建議。</p>';
+  const head = `<div class="attempt-head"><h3>編排決策（G11-D）</h3>${badge(chain?.status === 'NOT_REQUESTED' ? 'PENDING' : chain?.status ?? 'PENDING')}</div>
+    <p class="meta">在捲軸上選取事件，寫下理由，先預覽再接受。接受的決策只改變 G11-D 編排，不認證任何 Gate，也不是 VALIDATED。</p>${recorded}
+    ${records.length ? '<div class="actions"><button type="button" id="clear-decisions" class="quiet">清除所有編排決策</button></div>' : ''}`;
+  if (chain && !['NOT_REQUESTED', 'PASS'].includes(chain.status)) return `<div class="card composer-card" id="decision-composer">${head}<p class="note">目前的決策鏈沒有完整套用（${esc(chain.status)}）。請清除決策後依目前來源重新編排。</p></div>`;
+  const d = composer.draft;
+  const lanes = entry.arrangement.candidate?.lanes ?? [];
+  const current = composerPreviewCurrent() ? composer.preview : null;
+  const result = current ? `<div class="composer-preview"><div class="attempt-head"><h4>預覽結果</h4>${badge(current.status)}</div>
+      ${current.applied.length ? `<p class="meta">${current.applied.map(item => `${item.events.length} 個事件：${[...new Set(item.events.map(e => `${e.fromRole ?? '未指派'} → ${e.toRole ?? '省略'}`))].map(esc).join('、')}`).join('；')}</p>` : ''}
+      ${current.diffFromBaseline ? `<p class="meta">相對來源基準：角色移動 ${current.diffFromBaseline.roleMoved ?? 0} · 新增 ${current.diffFromBaseline.noteAdded ?? 0} · 移除 ${current.diffFromBaseline.noteRemoved ?? 0}${current.omitted ? ` · 省略 ${current.omitted}` : ''}</p>` : ''}
+      ${[...current.rejected, ...current.conflicts, ...current.diagnostics].length ? `<ul class="codes">${[...current.rejected, ...current.conflicts, ...current.diagnostics].map(item => `<li><code>${esc(item.code ?? item.kind ?? 'NOTE')}</code>${item.message ? ` · ${esc(item.message)}` : ''}${item.eventId ? ` · ${esc(item.eventId)}` : ''}</li>`).join('')}</ul>` : ''}
+      <p class="meta">決策 <code>${esc(current.decision.id)}</code> · 審核基準 ${esc(current.reviewedRevisionId ?? 'Source-Faithful Baseline')} · record <code class="digest">${esc(String(current.recordDigest).slice(0, 16))}…</code></p>
+      <div class="actions"><button type="button" id="accept-decision" ${current.status === 'PASS' ? '' : 'disabled'}>接受此決策</button>${current.roll ? '<button type="button" class="quiet" data-roll-view="preview">在捲軸上看預覽</button>' : ''}</div></div>` : '';
+  return `<div class="card composer-card" id="decision-composer">${head}
+    <div class="divider"></div>
+    <p><strong>已選取 ${composer.eventIds.length} 個事件</strong>${composer.eventIds.length ? ' <button type="button" class="quiet" id="compose-clear-selection">清除選取</button>' : ''}</p>
+    ${lanes.length ? `<label>加入整條 G11-C 聲部<select id="compose-lane"><option value="">選擇聲部…</option>${lanes.map(lane => `<option value="${esc(lane.id)}">${esc(lane.id)} · 建議 ${esc(lane.candidateRole ?? '未定')} · ${lane.eventIds?.length ?? 0} 音</option>`).join('')}</select></label>` : ''}
+    <form id="compose-form"><div class="field-grid">
+      <label>決策<select name="type">${options(Object.entries(DECISION_TYPES), d.type)}</select></label>
+      ${d.type === 'ASSIGN_ROLE' || d.type === 'MOVE_ROLE' ? `<label>目標角色<select name="toRole">${options(roles.map(role => [role, role]), d.toRole)}</select></label>` : ''}
+      ${d.type === 'DUPLICATE_WITH_JUSTIFICATION' ? `<fieldset class="compose-roles"><legend>複製到</legend>${roles.map(role => `<label><input type="checkbox" name="toRoles" value="${role}" ${d.toRoles.includes(role) ? 'checked' : ''}> ${role}</label>`).join('')}</fieldset>` : ''}
+      <label class="wide">理由（必填）<textarea name="reason" required>${esc(d.reason)}</textarea></label>
+      <label>證據（每行一筆${d.type === 'DUPLICATE_WITH_JUSTIFICATION' ? '，必填' : ''}）<textarea name="evidence">${esc(d.evidence)}</textarea></label>
+      <label>備註（選填）<input name="note" value="${esc(d.note)}"></label>
+    </div><div class="actions"><button type="submit" ${composer.eventIds.length ? '' : 'disabled'}>預覽（不會寫入）</button></div></form>
+    ${result}</div>`;
+}
+function composeDraft() {
+  const d = composer.draft;
+  const draft = { type: d.type, eventIds: [...composer.eventIds], reason: d.reason, evidence: d.evidence };
+  if (d.type === 'ASSIGN_ROLE' || d.type === 'MOVE_ROLE') draft.toRole = d.toRole;
+  if (d.type === 'DUPLICATE_WITH_JUSTIFICATION') draft.toRoles = [...d.toRoles];
+  if (d.note.trim()) draft.note = d.note;
+  return draft;
+}
+function bindDecisionComposer() {
+  const card = $('#decision-composer');
+  if (!card) return;
+  const form = $('#compose-form');
+  if (form) {
+    form.oninput = form.onchange = event => {
+      const d = composer.draft;
+      const typeChanged = event.target.name === 'type' && event.target.value !== d.type;
+      d.type = form.elements.type.value;
+      if (form.elements.toRole) d.toRole = form.elements.toRole.value;
+      d.toRoles = [...form.querySelectorAll('[name="toRoles"]:checked')].map(box => box.value);
+      d.reason = form.elements.reason.value; d.evidence = form.elements.evidence.value; d.note = form.elements.note.value;
+      if (typeChanged) composerEdited();
+      else if (composer.preview) composerEdited({ structural: false });
+    };
+    form.onsubmit = event => {
+      event.preventDefault();
+      const draft = composeDraft();
+      run(async () => {
+        const preview = await call('previewAcceptedDecision', workspace, draft);
+        composer.preview = preview; composer.previewDraft = draft;
+        if (preview.roll) composer.view = 'preview';
+        refreshRoll(); refreshComposer();
+        message(preview.status === 'PASS' ? '預覽完成：尚未寫入。確認後按「接受此決策」。' : `預覽結果為 ${preview.status}，不能接受；原因列在預覽中。`, preview.status !== 'PASS');
+      }, { revisionBound: true });
+    };
+  }
+  const lane = $('#compose-lane');
+  if (lane) lane.onchange = () => {
+    const picked = composerEntry()?.arrangement.candidate?.lanes?.find(item => item.id === lane.value);
+    if (!picked) return;
+    for (const id of picked.eventIds ?? []) if (!composer.eventIds.includes(id)) composer.eventIds.push(id);
+    composerEdited();
+  };
+  const clearSelection = $('#compose-clear-selection');
+  if (clearSelection) clearSelection.onclick = () => { composer.eventIds = []; composerEdited(); };
+  card.querySelectorAll('[data-roll-view]').forEach(button => button.onclick = () => { composer.view = button.dataset.rollView; refreshRoll(); });
+  const accept = $('#accept-decision');
+  if (accept) accept.onclick = () => {
+    if (!composerPreviewCurrent() || !composer.previewDraft) return message('預覽已不是目前的內容，請重新預覽', true);
+    const draft = composer.previewDraft, digest = composer.preview.recordDigest;
+    run(async () => {
+      await commit(await call('acceptPreviewedDecision', workspace, draft, { expectedRecordDigest: digest }));
+      composer.eventIds = [];
+      composer.view = report.acceptedRoll ? 'accepted' : 'source';
+      refreshRoll(); refreshComposer();
+      message('已接受並記錄此編排決策；它不認證任何 Gate。');
+    });
+  };
+  const clearAll = $('#clear-decisions');
+  if (clearAll) clearAll.onclick = () => run(async () => { await commit(await call('clearAcceptedDecisions', workspace)); message('已清除所有編排決策。'); });
 }
 // Keep every highlight layer scrolled with its textarea, and repaint the paste
 // box as the user types. The paste box is highlighted only once it holds a
