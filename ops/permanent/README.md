@@ -1,7 +1,10 @@
 # Studio v1 durable deployment
 
-Production migration passed. See [MIGRATION_RESULT.md](MIGRATION_RESULT.md) for
-the deployed identity, Railway deployment IDs, HTTP verification and rollback proof.
+Current release: main `66e9244f89e2`, deployed 2026-09-23. See
+[RELEASE_2026-09-23.md](RELEASE_2026-09-23.md) for its identity, runs, startup
+log and rollback. The original migration (main `5769e76849e5`) is recorded in
+[MIGRATION_RESULT.md](MIGRATION_RESULT.md); the sections below keep describing
+that historical release where they name its pins.
 
 This is deployment operations material, not Canonical policy or a Studio feature release.
 Published Canonical remains `2026-09-13-v1` / `PUBLISHED`, with Manifest revision
