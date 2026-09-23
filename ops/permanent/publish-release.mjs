@@ -17,7 +17,7 @@ async function api(path, method = 'GET', data = null) {
 }
 let release = await api(`/releases/tags/${lock.tag}`);
 const notes = `Reviewed Studio v1 artifact rebuilt from merged main ${lock.sourceSha}.\n\nCanonical: ${lock.canonical.canonical_version} / PUBLISHED\nRules snapshot: ${lock.canonical.rules_snapshot_sha}\nManifest commit: ${lock.manifestCommit}\n\nbuildId: ${lock.buildId}\ncacheId: ${lock.cacheId}\nArtifact ZIP SHA256: ${lock.artifact.sha256}\nTrusted verifier/template source: ${lock.trust.sourceSha}\nTrusted ZIP SHA256: ${lock.trust.sha256}\n\nRuntime artifact and trust bundle are separate. Deployment pins the checksums independently. No temporary preview is a release source. No historical release identity is overwritten.\n`;
-if (!release) release = await api('/releases', 'POST', { tag_name: lock.tag, target_commitish: lock.sourceSha, name: 'Studio v1 durable release — 5769e76849e5', body: notes, draft: true, prerelease: false, make_latest: 'false' });
+if (!release) release = await api('/releases', 'POST', { tag_name: lock.tag, target_commitish: lock.sourceSha, name: `Studio v1 durable release — ${lock.sourceSha.slice(0, 12)}`, body: notes, draft: true, prerelease: false, make_latest: 'false' });
 if (release.target_commitish !== lock.sourceSha) throw Error('Existing release target is different');
 const names = (await readdir(dir)).sort();
 if (names.join(',') !== [lock.artifact.filename, lock.trust.filename, 'release-lock.json', 'SHA256SUMS'].sort().join(',')) throw Error('Unexpected release contents');
