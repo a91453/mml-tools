@@ -6,12 +6,12 @@ import subprocess
 import sys
 import zipfile
 
-SOURCE_SHA = "45c5a2963b1e2e55fb6d28cf21aeb6af2f6e7614"
-BUILD_ID = "dd273beedc0ce16485bd837cf6074171d63eda262fe0b4599f312961ca3b9e97"
-CACHE_ID = "c76deb21ba7848c261d6c1f7100e95fe4ac7874c3b4e4f6f05c61b04c1b8a05f"
+SOURCE_SHA = "e8d7a998d926744450d477402a544ca03e9c044a"
+BUILD_ID = "8d45514dee668a3b8f3dfbfd9d0f858fc865802c7975539baac37fae9a5ced36"
+CACHE_ID = "2842150c8192a7bdc7d66aa2d4b1bdcb53c838147ef6508eb9fd42bc23916f5c"
 TRUSTED = ["scripts/verify-studio-artifact.mjs", "scripts/studio-artifact-identity.mjs",
            "studio/web/canonical-contract.mjs", "studio/web/sw.js"]
-TAG = "studio-v1-durable-45c5a2963b1e"
+TAG = "studio-v1-durable-e8d7a998d926"
 
 def digest(data):
     return hashlib.sha256(data).hexdigest()
@@ -37,12 +37,12 @@ def main():
     assert build["audit"]["source_sha"] == SOURCE_SHA
     assert build["audit"]["repository_head"] == SOURCE_SHA
     assert build["audit"]["published_main_head"] == SOURCE_SHA
-    assert build["audit"]["manifest_commit"] == "c0800845dd8970c2cbd2256bb9d3eb650c5d69e0"
+    assert build["audit"]["manifest_commit"] == "44f3f0082cf5c30328edf1c251398b844488ad0a"
     assert build["release"]["canonical"] == {
-        "canonical_version": "2026-09-23-v2", "canonical_status": "PUBLISHED",
-        "manifest_version": "2026-09-23-v2-manifest1",
-        "rules_snapshot_sha": "1c84c95133990e3882a5770077c3d2d39b1a6b04",
-        "machine_delivery_schema": "mabinogi-mobile-mml-studio/machine-delivery@1"}
+        "canonical_version": "2026-09-23-v3", "canonical_status": "PUBLISHED",
+        "manifest_version": "2026-09-23-v3-manifest1",
+        "rules_snapshot_sha": "ff1a9df054f5ca1ae42571067fc95feb274755ef",
+        "machine_delivery_schema": "mabinogi-mobile-mml-studio/machine-delivery@2"}
     files = {p.relative_to(artifact).as_posix(): p.read_bytes() for p in artifact.rglob("*") if p.is_file()}
     expected = dict(build["files"])
     assert set(files) == set(expected) | {"build.json"}
