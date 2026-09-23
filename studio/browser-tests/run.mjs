@@ -203,4 +203,10 @@ try {
 } finally {if(server?.listening){server.closeAllConnections();server.close();}}
 await writeFile(new URL('results.json',out),JSON.stringify(results,null,2));
 console.log(JSON.stringify(results,null,2));
+// The JSON above runs to hundreds of lines; name what did not pass last.
+for(const r of results.filter(r=>r.status!=='PASS')){
+  const message=String(r.error??r.reason??'').split('\n')[0];
+  console.log(`${r.status} ${r.profile}: ${message}`);
+  if(r.status==='FAIL'&&process.env.GITHUB_ACTIONS==='true')console.log(`::error title=Browser profile ${r.profile} failed::${message.replace(/%/g,'%25')}`);
+}
 if(failed)process.exitCode=1;
