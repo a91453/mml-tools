@@ -1,7 +1,7 @@
 // Timbre preview: plays the validated Final MML through SpessaSynth with a
 // DLS/SF2/SF3 sound bank the user selects on their own device.
 //
-// Architecture from the owner's MML 工房 player: one AudioContext, the
+// Architecture from the owner's earlier frontend player: one AudioContext, the
 // SpessaSynth AudioWorklet synthesizer, an output gain node, and a look-ahead
 // scheduler (25 ms tick, 0.3 s horizon, 0.12 s start delay). SpessaSynth has no
 // way to cancel events it has already queued, so stop mutes the output for the

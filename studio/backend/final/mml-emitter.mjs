@@ -335,7 +335,7 @@ function serializeItems(role, items, lattice, facts, options) {
   // --- default-length candidates ------------------------------------------
   // Lengths that some duration in this role spells as one token, the parser's
   // own starting default, and the long segment lengths `l1`/`l2`. The last pair
-  // is the lesson from the owner's MML 工房 compressor, found by the
+  // is the lesson from the owner's earlier frontend compressor, found by the
   // differential harness (scripts/fusion-emitter-diff.mjs): a default that no
   // single duration spells can still pay for itself as a tie or rest SEGMENT
   // length — `l1` turns `r1r1r1.` into `l1r.r.r2.` — and the occurrence rule

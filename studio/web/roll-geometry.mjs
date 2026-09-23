@@ -1,10 +1,10 @@
 // Pure geometry for the Studio review roll (review-roll.mjs). No DOM.
 //
-// Viewport, zoom and gesture math ported from the owner's MML 工房
+// Viewport, zoom and gesture math ported from the owner's earlier frontend
 // `pianoroll.js` / `config.js` (frontend capture f1b7024f…baad9a, owner
 // authorization 2026-09-23). Where the two models disagree, Studio's wins:
 //
-//   * MML 工房 stores time as integer ticks (PPQ 480) on a 1/32 grid. Studio's
+//   * The earlier frontend stores time as integer ticks (PPQ 480) on a 1/32 grid. Studio's
 //     data is exact rational beats, so nothing here snaps or rounds data. A beat
 //     becomes a float only at the last step, a pixel coordinate, and a pixel
 //     never flows back: a click resolves to an event ID, never to a time.
@@ -14,7 +14,7 @@
 //   * The pitch axis spans the song's own range. Nothing is folded into a
 //     keyboard range; a pitch outside 0–107 stays where it is and is flagged.
 //
-// Kept from MML 工房: discrete zoom steps with an anchor measured in content
+// Kept from the earlier frontend: discrete zoom steps with an anchor measured in content
 // units (so repeated zooming never drifts), the one-axis pinch decision, the
 // pinch step ratio, wheel normalisation, and grid thinning by line spacing.
 

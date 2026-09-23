@@ -169,7 +169,7 @@ details and scope.
 
 ## Review roll, MML highlighting and release updates
 
-These three surfaces were ported from the repository owner's MML 工房 editor
+These three surfaces were ported from the repository owner's earlier frontend editor
 (owner authorization 2026-09-23) and merged with Studio's rules. The owner's
 code supplied the viewport, rendering and gesture handling. Studio supplied
 exact timing, event identity and the evidence boundaries. See
@@ -198,7 +198,7 @@ exact timing, event identity and the evidence boundaries. See
   - **How it works.** The textarea keeps the exact string for selection and
     copy, and a layer painted behind it carries the colour.
   - **Same rules as the parser.** Tokens follow `parser.mjs`, and a test holds
-    the two together on thousands of generated inputs. MML 工房 dialect extras
+    the two together on thousands of generated inputs. The earlier frontend dialect extras
     (`h`, `p`, `@n`, `[ ]`, comments) and whitespace inside a role are shown as
     errors, because Studio rejects them.
   - **Parser findings.** Errors and cautions from the Worker's validation mark
@@ -245,7 +245,7 @@ exact timing, event identity and the evidence boundaries. See
     no JavaScript eval is allowed.
   - **Scheduling.** Beats are converted to seconds through the exact tempo map,
     and only the resulting times become floats. Volume and channel mapping
-    follow the owner's MML 工房 player. Per-role mute and live instrument
+    follow the owner's earlier frontend player. Per-role mute and live instrument
     switching are supported.
   - **What it is not.** It is a listening aid, not in-game acceptance.
     Playing it passes no gate.
@@ -356,6 +356,44 @@ listening aid: it passes no gate and records no review, readback or acceptance.
   「複製給 AI」 copies plain text: the title, the MML's SHA-256, the meter, then
   one line per note (`bar | beat-in-bar | quarter-beat position | time | role
   | kind | text`). 「複製試聽連結」 makes a listen link for the session.
+
+## Workshop (工作坊) — the MML editor, outside the verified pipeline
+
+`studio/web/workshop/index.html` (sidebar: 「工作坊 · MML 編輯器」) is the owner's
+earlier MML editor, ported into Studio Web (owner-authorized port). Studio is its
+upgraded version: the editor works as before, and Studio adds the checks.
+
+- **What it does.** Up to 15 tracks; text editing with syntax colour; a piano roll
+  (select, move, resize, draw, delete, marquee, touch nudge pad); undo/redo; per-track
+  instruments; a local song library (IndexedDB `studio-workshop-library`) and autosave
+  (`studio-workshop/…` keys); MIDI, MusicXML, MML and 3MLE `.mml` / `.mmi` import and
+  export, including the bzip2 extension block; playback; offline WAV export; the piano
+  waterfall video (WebCodecs H.264 + AAC, MP4). 繁中／English／日本語／한국어 and a
+  dark/light theme applied before first paint (`boot.js`).
+- **Not evidence.** Everything edited there is labelled
+  「工作坊編輯（未經 Studio 驗證）」. It never marks anything VALIDATED or accepted.
+- **「在工作坊開啟（副本）」 / 「從 Studio 開啟」.** Opens a *copy* of a project's
+  Final/delivery MML, or of an MML candidate, baseline or previous version. The project
+  is read from Studio's own IndexedDB and is not changed.
+- **「送回 Studio 驗證」.** Sends the six game tracks back
+  (`workshop-link.mjs`, one localStorage record, read once). Studio shows it for
+  confirmation and imports it through its ordinary intake as a derived candidate:
+  technical validation runs again and every review restarts.
+- **Nxx.** The Workshop reads `nN` as MIDI N+12 and Studio reads it as MIDI N (LG-1,
+  still unverified in game), so the hand-off rewrites `n` values to keep the pitch.
+  Workshop-only spellings (`h`, `p`, `#`, `@n`) are rewritten for Studio.
+- **Sound.** Studio's vendored SpessaSynth and the bank you keep in Studio's local bank
+  store (shared with the timbre preview; never uploaded, never built in). The eleven
+  Mabinogi Mobile instruments map to General MIDI: Lute 24, Mandolin 25, Chalumeau 71,
+  Xylophone 13, Flute 73, Violin 40, Piano 0, Harp 46, Music Box 10; BassDrum and
+  Cymbals play the percussion kit on keys 35/36 and 49/57 (below o4c the first).
+  A loaded bank's own presets stay selectable. It is a listening approximation.
+- **Audio export.** WAV only (16-bit, gain only ever lowered). MP3 is not offered:
+  the LGPL-3.0 encoder the earlier editor used is not shipped with this MIT-exported
+  tree.
+- **Loading.** The page loads only its own modules; the WAV and video exporters and
+  the render worker load on first use. No fonts, icon font, analytics or network calls.
+- **Tests.** `studio/tests/workshop-*.test.mjs` and `studio/browser-tests/workshop.mjs`.
 
 ## Build and CI (developer / operator only)
 

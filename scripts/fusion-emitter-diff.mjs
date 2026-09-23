@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-// Differential harness: "MML 工房" lossless compressor vs the repo Final emitter.
+// Differential harness: the owner's earlier frontend's lossless compressor vs the repo Final emitter.
 //
 // Status: diagnostic tool. It is not a Canonical rule source, not a gate, and
 // its findings change nothing by themselves. Context:
@@ -858,7 +858,7 @@ const code = text => `\`${String(text).replaceAll('`', 'ˋ').replaceAll('|', '¦
 
 export function renderMarkdown(report) {
   const out = [];
-  out.push('# Fusion emitter diff — MML 工房 lossless compressor vs repo Final emitter', '');
+  out.push('# Fusion emitter diff — earlier frontend lossless compressor vs repo Final emitter', '');
   out.push(`Workshop bundle: \`${report.workshop.dir}\``);
   for (const [file, sha] of Object.entries(report.workshop.provenance)) out.push(`- ${file} sha256 \`${sha}\``);
   out.push('', 'Judge: repo `parser.mjs` (final mode), exact rationals. Δ = third-party − repo (negative = third-party shorter).', '');
@@ -921,7 +921,7 @@ async function main() {
   });
   const located = resolveWorkshop();
   if (!located.ok) {
-    process.stdout.write(`SKIPPED: ${located.reason}. Set ${WORKSHOP_ENV} to the MML 工房 bundle directory (the one containing js/mml-compress.js). A skipped run is not a pass.\n`);
+    process.stdout.write(`SKIPPED: ${located.reason}. Set ${WORKSHOP_ENV} to the earlier frontend bundle directory (the one containing js/mml-compress.js). A skipped run is not a pass.\n`);
     process.exitCode = values.strict ? 2 : 0;
     return;
   }

@@ -1,6 +1,6 @@
 // Fusion emitter diff harness (scripts/fusion-emitter-diff.mjs).
 //
-// Needs the owner-authorized third-party bundle ("MML 工房"), which is never
+// Needs the owner's earlier frontend bundle (owner-authorized), which is never
 // committed: set MML_WORKSHOP_FE to the directory that contains
 // js/mml-compress.js. Without it every test here is reported as SKIPPED — a
 // skipped run proves nothing and is not a pass

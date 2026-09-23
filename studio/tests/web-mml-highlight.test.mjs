@@ -131,7 +131,7 @@ test('the role array is exactly as long as the text, including wrapper, commas a
   assert.equal(html.replace(/<[^>]+>/g, '').replace(/&amp;/g, '&').replace(/&lt;/g, '<').replace(/&gt;/g, '>'), `${src}\n `);
 });
 
-test('Studio treats MML 工房 dialect extras and inner whitespace as errors', () => {
+test('Studio treats the earlier frontend dialect extras and inner whitespace as errors', () => {
   const src = 'o4h8 p4@1[ceg]';
   const keys = buildRoles(src);
   for (const ch of ['h', ' ', 'p', '@', '[', ']']) assert.equal(keys[src.indexOf(ch)] & 15, ROLE.bad, ch);

@@ -1,6 +1,6 @@
 const CACHE = '__CACHE_NAME__';
 const ASSETS = __PRECACHE__;
-// cache:'reload' bypasses the browser HTTP cache (lesson from MML 工房's sw.js).
+// cache:'reload' bypasses the browser HTTP cache (lesson from the earlier frontend's sw.js).
 // A plain addAll may be answered from an HTTP cache that still holds the previous
 // release, which would store old modules under this release's cache name.
 self.addEventListener('install', event => event.waitUntil(caches.open(CACHE).then(cache => cache.addAll(ASSETS.map(path => new Request(path, { cache: 'reload' }))))));

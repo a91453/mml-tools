@@ -1,10 +1,10 @@
 // Service Worker update flow for Studio Web.
 //
-// Ported from the owner's MML 工房 `pwa.js` (frontend capture
+// Ported from the owner's earlier frontend `pwa.js` (frontend capture
 // f1b7024f…baad9a, owner authorization 2026-09-23) and merged with Studio's own
 // invariant. The two designs disagree on one point and the merge keeps Studio's:
 //
-//   * MML 工房 serves its own code network-first, so an online page is already
+//   * The earlier frontend serves its own code network-first, so an online page is already
 //     running the new release and "update" only refreshes the offline snapshot.
 //     It can therefore hide the update behind a quiet button.
 //   * Studio serves every module cache-first from ONE versioned cache so a live
@@ -12,7 +12,7 @@
 //     running its release until it reloads, so a waiting release must be
 //     announced, and applying it must never strand another tab on a mixed graph.
 //
-// Taken from MML 工房:
+// Taken from the earlier frontend:
 //   * three detection entry points — `reg.waiting` (a tab closed before
 //     applying), `reg.installing` (the browser started fetching before this code
 //     listened; missing it was a real race that hid updates in standalone

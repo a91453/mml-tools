@@ -1,7 +1,7 @@
 // Six-role review roll: a read-only, virtualised canvas view of the analysed
 // candidate.
 //
-// Rendering and input are ported from the owner's MML 工房 `pianoroll.js`
+// Rendering and input are ported from the owner's earlier frontend `pianoroll.js`
 // (frontend capture f1b7024f…baad9a, owner authorization 2026-09-23):
 //   * one viewport-sized canvas, `position: sticky` inside a native scroll
 //     container, with an empty spacer sized to the whole song. A song-sized
@@ -16,7 +16,7 @@
 //   * theme colours read from CSS custom properties once per mount, because a
 //     canvas cannot see CSS variables.
 //
-// Deliberately different from MML 工房, because this is a review surface:
+// Deliberately different from the earlier frontend, because this is a review surface:
 //   * nothing here edits. A click selects an EVENT ID and reports it; there is
 //     no draw, move, resize, delete, paste or nudge, and no implicit commit;
 //   * lanes are the six Canonical roles: Core3 (Melody, Chord1, Chord2) solid,

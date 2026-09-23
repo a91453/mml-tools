@@ -1,7 +1,7 @@
 const DATABASE = 'mml-studio-web-v1';
 // v2 adds `projectMeta`: one small record per project so the project list can
 // be drawn without loading every workspace, some of which carry megabytes of
-// Raw MIDI. (Lesson from the owner's MML 工房 song library, which keeps list
+// Raw MIDI. (Lesson from the owner's earlier frontend song library, which keeps list
 // metadata and song data in separate stores written in one transaction.)
 // `projects` keeps the full workspaces exactly as v1 stored them.
 const VERSION = 2;

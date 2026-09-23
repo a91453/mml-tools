@@ -1,6 +1,6 @@
 // ZIP container for "back up every project at once" (Safari may evict local
 // data; one file is easier to keep than one per project). The idea comes from
-// the owner's MML 工房 batch download; the code is written here and adds the
+// the owner's earlier frontend batch download; the code is written here and adds the
 // reader Studio needs for restore.
 //
 // Writer: deflate-raw through CompressionStream when available, stored
