@@ -1,6 +1,6 @@
 # Acceptance Criteria
 
-Version: 2026-09-13-v1
+Version: 2026-09-23-v2
 Status: PUBLISHED CANONICAL
 
 A Mabinogi Mobile MML candidate becomes final only by passing layered gates. Passing one layer does not imply the next.
@@ -91,6 +91,8 @@ When preview/verification assets are used:
 
 `applied=true` or website playback does not pass this gate.
 
+Under machine delivery (below), the loaded-player readback and human listening of this gate are `POST_DELIVERY`: they do not block `AUTOMATED_VALIDATED`, and they are still required for `VALIDATED`.
+
 ## Gate 7 — Original-audio evidence
 
 Required when official audio is part of the source set:
@@ -132,6 +134,27 @@ Record when possible:
 - audible issue and section;
 - accepted/rejected outcome.
 
+## Machine delivery (`AUTOMATED_VALIDATED`)
+
+Studio may deliver a Final MML before human listening and in-game testing when, and only when, every gate classified `BLOCKING` below is `PASS` or `N/A` under this published release. The song state is then `AUTOMATED_VALIDATED`.
+
+Every result that is not `PASS` or `N/A` stays in an unresolved evidence ledger, in exactly one phase:
+
+| Phase | Gates | Effect |
+| --- | --- | --- |
+| `BLOCKING` | Source traceability and completeness (Gate 2); Source-Faithful Baseline integrity; technical legality and character limits (Gate 1); Final round-trip; source-aware micro-timing; Core3 source continuity (Gate 4); a Core3 completeness defect the evaluator determines, or a completeness evaluation that did not run (Gate 4); Lead demotion and promotion evidence (Gate 3); cross-source harmony (Gate 5); unresolved arbitration decisions; any unknown or future gate; any destructive or unsupported edit | Prevents machine delivery. |
+| `NON_BLOCKING_PENDING` | Core3 completeness residue that the evaluator reports as needing a reviewer (Gate 4); version-drift review (MASTER_RULES §10); original-audio evidence (Gate 7); candidate-specific Mobile adaptation review (Gate 8); regression review (Gate 9) | Recorded as unresolved, never rewritten as `PASS` or `N/A`. Machine delivery may proceed; `VALIDATED` still requires them. |
+| `POST_DELIVERY` | Loaded-player readback and human listening (Gate 6); in-game acceptance (Gate 10) | Evaluated only after an artifact exists; never inferred from emitter success. |
+
+The dividing line: what a machine can determine blocks; what needs a person's judgment is delivered for listening first and stays unresolved until that person decides.
+
+Rules:
+- Studio computes the phases. A conversation-hosted AI may submit sources, evidence and explicitly authorized decisions; it cannot submit or override `AUTOMATED_VALIDATED`, a human review, or `IN_GAME_ACCEPTED`.
+- Missing evidence is never `PASS` or `N/A`, and an unknown gate is `BLOCKING`.
+- Without an evidence-backed instrument profile, delivery uses the generic Mobile delivery of `MOBILE_SYNTAX.md` (syntax, range, character limits and round-trip), with the Mobile review left unresolved.
+- A new candidate revision re-evaluates every phase; an earlier machine delivery does not carry over.
+- Existing runs and Final artifacts receive a lazy, non-mutating projection from their stored gate data; a missing or incomplete gate map is `BLOCKING` and creates no `PASS`.
+
 ## Final state vocabulary
 
 Allowed final report states:
@@ -143,7 +166,8 @@ Allowed final report states:
 
 For the song as a whole, distinguish at least:
 - `CANDIDATE`
+- `AUTOMATED_VALIDATED` (every `BLOCKING` machine-delivery gate passed; not human-reviewed, not in-game)
 - `VALIDATED` (all required non-game gates passed)
 - `IN_GAME_ACCEPTED` (user/controlled client accepted)
 
-Never infer `IN_GAME_ACCEPTED` from parser or player success.
+Never infer `IN_GAME_ACCEPTED` from parser or player success, and never infer `VALIDATED` from `AUTOMATED_VALIDATED`.
