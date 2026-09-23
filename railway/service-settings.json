@@ -18,6 +18,7 @@
       "/server/studio-agent-driver.mjs",
       "/server/studio-agent-codex.mjs",
       "/server/mcp-listen.mjs",
+      "/server/prescreen-listen.mjs",
       "/server/listen/**",
       "/studio/web/listen-link.mjs",
       "/studio/web/service/**",

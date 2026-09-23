@@ -318,7 +318,7 @@ export async function handleMcp(request, { application = null, owner = null, all
       // UI. Every other tool's text content stays the serialized report.
       let data, text = null;
       if (tool.name === LISTEN_TOOL_NAME) ({ structuredContent: data, text } = await runListenTool(args, { ...context, listen }));
-      else data = await mcpRunTool(tool.name, args, context);
+      else data = await mcpRunTool(tool.name, args, { ...context, listen });
       const serialized = JSON.stringify(data);
       // A deliberate, caller-actionable refusal rather than a fault, so it is
       // raised in the structured form that survives the sanitizer below.

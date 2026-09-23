@@ -15,6 +15,9 @@ import { GAME_INSTRUMENT_IDS } from '../studio/backend/audio/instruments.mjs';
 import { applyKeepOnlyCandidate } from '../studio/tests/fixtures/application-fixtures.mjs';
 import { syntheticSoundBank } from '../studio/tests/support/synthetic-render-bank.mjs';
 import { syntheticSongMml, SYNTHETIC_METER } from '../studio/tests/support/prescreen-fixtures.mjs';
+import { createListenConfig, NODE_LISTEN_CODEC } from '../server/mcp-listen.mjs';
+import { PRESCREEN_LISTEN_LIMITS, PRESCREEN_LISTEN_SCHEMA, prescreenListenLinks } from '../server/prescreen-listen.mjs';
+import { decodeListenLink, listenPayloadFromUrl } from '../studio/web/listen-link.mjs';
 
 const OWNER = 'owner:prescreen-transport';
 const ORIGIN = 'https://mml.example';
@@ -165,4 +168,56 @@ test('APT-6 capability discovery states the prescreen as a fact and automatic se
   assert.equal(capabilities.audio_prescreen.sound_bank.is_game_timbre, false);
   assert.equal(capabilities.audio_prescreen.sound_bank.stored_in_repository_or_image, false);
   assert.deepEqual(capabilities.audio_prescreen.never_sets, ['audio (Gate 7)', 'player_readback (Gate 6)', 'in_game']);
+});
+
+// ── listen links for human_review regions (server/prescreen-listen.mjs) ─────
+
+async function rpcWith(listen, name, args) {
+  const response = await handleMcp(new Request(`${ORIGIN}/mcp`, {
+    method: 'POST', headers: { 'content-type': 'application/json', accept: 'application/json, text/event-stream' },
+    body: JSON.stringify({ jsonrpc: '2.0', id: 1, method: 'tools/call', params: { name, arguments: args } }),
+  }), { application, owner: OWNER, listen });
+  return JSON.parse(await response.text()).result.structuredContent;
+}
+
+test('APT-L1 each human_review region gets an A/B listen link beside the report, and report_id does not move', async () => {
+  const base = syntheticSongMml({ bars: 4 }), crunch = syntheticSongMml({ bars: 4, variant: 'crunch' });
+  const request = { alternatives: [{ label: 'A', mml: base }, { label: 'B', mml: crunch }], meter_text: SYNTHETIC_METER };
+  const withOrigin = await rpcWith(createListenConfig({ studioWebOrigin: 'https://studio.example' }), 'studio_audio_prescreen', request);
+  const without = await rpcWith(createListenConfig(), 'studio_audio_prescreen', request);
+  assert.ok(withOrigin.prescreen.human_review.length > 0, 'the fixture has regions for a person to hear');
+  assert.equal(withOrigin.prescreen.report_id, without.prescreen.report_id, 'the links are not part of the report');
+  assert.ok(withOrigin.prescreen.human_review.every(region => region.listen_link === null));
+  assert.equal(withOrigin.listen.schema, PRESCREEN_LISTEN_SCHEMA);
+  assert.equal(withOrigin.listen.status, 'OK');
+  assert.equal(withOrigin.listen.links.length, withOrigin.prescreen.human_review.length);
+  for (const [index, link] of withOrigin.listen.links.entries()) {
+    const region = withOrigin.prescreen.human_review[index];
+    assert.equal(link.status, 'OK');
+    assert.ok(link.url.startsWith('https://studio.example/#listen='));
+    const document = await decodeListenLink(listenPayloadFromUrl(link.url).payload, NODE_LISTEN_CODEC);
+    assert.equal(document.mml, base);
+    assert.equal(document.compare_mml, crunch);
+    assert.equal(document.meter_text, SYNTHETIC_METER);
+    assert.deepEqual(document.start, { beat: region.beats[0] });
+    assert.deepEqual(document.markers.map(marker => [marker.beat, marker.end_beat, marker.kind]), [[region.beats[0], region.beats[1], 'pending']]);
+  }
+  assert.equal(without.listen.status, 'ORIGIN_NOT_CONFIGURED');
+  assert.deepEqual(without.listen.links, []);
+});
+
+test('APT-L2 a candidate has no MML to link, and the link count is bounded', async () => {
+  const region = n => ({ region_id: `bars-${n}-${n}`, bars: [n, n], beats: [String(4 * (n - 1)), String(4 * n)], alternatives: ['A', 'B', 'C'], reasons: ['MARGIN_TOO_SMALL'], listen_link: null });
+  const report = { inputs: { meter: '0 4/4' }, human_review: Array.from({ length: 6 }, (_, i) => region(i + 1)) };
+  const mml = 'MML@t120o4c1,,,,,;';
+  const listen = createListenConfig({ studioWebOrigin: 'https://studio.example' });
+  const result = await prescreenListenLinks(report, { listen, mmlOf: label => (label === 'C' ? null : mml) });
+  const ok = result.links.filter(link => link.status === 'OK');
+  assert.equal(ok.length, 6, 'A against B in each region');
+  assert.ok(result.links.filter(link => link.compare_label === 'C').every(link => link.status === 'NO_MML_FOR_ALTERNATIVE' && link.url === null));
+  const many = await prescreenListenLinks({ ...report, human_review: Array.from({ length: 12 }, (_, i) => region(i + 1)) }, { listen, mmlOf: () => mml });
+  assert.equal(many.links.filter(link => link.url).length, PRESCREEN_LISTEN_LIMITS.maxLinks);
+  assert.equal(many.withheld, 24 - PRESCREEN_LISTEN_LIMITS.maxLinks);
+  const none = await prescreenListenLinks({ human_review: [] }, { listen, mmlOf: () => mml });
+  assert.equal(none.status, 'NO_HUMAN_REVIEW');
 });

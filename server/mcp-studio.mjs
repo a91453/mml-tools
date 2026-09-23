@@ -53,6 +53,7 @@ import { LIMITS, PROPOSAL_KIND_NAMES, PROPOSAL_STATE_NAMES, RESOLUTION_NAMES } f
 import { GAME_INSTRUMENTS, GAME_INSTRUMENT_IDS } from '../studio/backend/audio/instruments.mjs';
 import { PAGED_REPORT_TOOLS, REPORT_PAGE_SCHEMA, validateReportPage, readReportPage } from './report-page.mjs';
 import { compactStudioResponse } from './mcp-compaction.mjs';
+import { prescreenListenLinks } from './prescreen-listen.mjs';
 
 const CONFIRMATIONS_DESCRIPTION = 'source_complete／version_drift_reviewed／player_readback／mobile_adaptation_reviewed／regression_reviewed／core3_completeness_reviewed／original_audio_required／original_audio_reviewed，每項需 reason。'
   + 'mobile_adaptation_reviewed（Gate 8）、regression_reviewed（Gate 9）、core3_completeness_reviewed（Gate 4 Core3 musical completeness）與 original_audio_reviewed（Gate 7：角色／突出度／延音／奏法／錄音結構已對照原曲審查）這四項，value=true 時另需至少一筆 evidence：只有理由字串的審查會被拒絕。original_audio_reviewed 需要候選已有 active 音訊對位證據，並綁定該證據 revision；對位證據沒有警告也不會自動通過 Gate 7。'
@@ -563,7 +564,7 @@ export const STUDIO_MCP_TOOLS = [
     name: 'studio_audio_prescreen',
     title: '音色 A/B 預篩（唯讀）',
     description: '把 2–4 個替代版本（MML 原文，或本專案的候選／Final artifact）以同一套免費 GM 音色渲染，逐小節比較：低中音粗糙度（感官不協和，指出是哪一對音，例如某個低音小二度；來源本來就有的不協和只回報、不計入勝差）、角色遮蔽／可聽度、衰減拖尾、削波／峰值，以及專案有原曲音訊且有 active 對位證據時與原曲的相似度（目前只讀 WAV／PCM，其他格式回報 ORIGINAL_AUDIO_METRIC_UNAVAILABLE）。'
-      + '只有每一項適用指標都指向同一個勝者、各自勝差超過門檻、勝者在其他指標上不比最好的差超過容許值、而且勝者離來源不比其他版本遠時，該小節才是 OBVIOUS；否則是 NEEDS_HUMAN 並附理由（METRICS_CONFLICT／MARGIN_TOO_SMALL／METRIC_UNAVAILABLE／SOURCE_FIDELITY_TRADEOFF／SOURCE_FIDELITY_UNAVAILABLE），human_review 列出要 A/B 試聽的小節與版本（listen_link 目前為 null）。'
+      + '只有每一項適用指標都指向同一個勝者、各自勝差超過門檻、勝者在其他指標上不比最好的差超過容許值、而且勝者離來源不比其他版本遠時，該小節才是 OBVIOUS；否則是 NEEDS_HUMAN 並附理由（METRICS_CONFLICT／MARGIN_TOO_SMALL／METRIC_UNAVAILABLE／SOURCE_FIDELITY_TRADEOFF／SOURCE_FIDELITY_UNAVAILABLE），human_review 列出要 A/B 試聽的小節與版本；回應另附 listen（不在報告內、不改 report_id）：部署設定了 Studio Web 時，每個區段一條只開那幾小節的 A/B 試聽連結（候選版本沒有 MML，無連結）。試聽連結只是聽的輔助，不記錄任何東西。'
       + '報告含每個版本的 MML SHA-256、音色庫與渲染器身分、門檻 id 與 report_id；相同輸入得到相同報告。不寫入任何專案紀錄。'
       + '只帶 project_id、不帶其他欄位時，改為回傳本專案的 shadow 校準紀錄與逐指標／逐類別一致率。'
       + PRESCREEN_NOTICE_TEXT,
@@ -673,12 +674,32 @@ const proposalFilter = args => pick(args, PROPOSAL_FILTER_FIELDS);
  * a second path, and no place a verdict could be recomputed: whatever the
  * Application Service returns is what the model sees.
  */
-export async function runStudioTool(name, args, { application, owner }) {
+export async function runStudioTool(name, args, { application, owner, listen = null }) {
   const page = args.report_page === undefined ? null : validateReportPage(name, args);
-  const result = await dispatchStudioTool(name, args, { application, owner });
+  let result = await dispatchStudioTool(name, args, { application, owner });
+  // The one addition to a result: listen links for the prescreen's
+  // human_review regions, beside the report and never inside it
+  // (server/prescreen-listen.mjs). A page read is of the report itself.
+  if (name === 'studio_audio_prescreen' && !page && result?.prescreen?.human_review) {
+    result = { ...result, listen: await prescreenListenLinks(result.prescreen, { listen, mmlOf: prescreenMmlOf(args, { application, owner }) }) };
+  }
   // A page is read from the full result; any other response is the bounded
   // view (mcp-compaction.mjs), whose summaries point back at those pages.
   return page ? readReportPage(result, page) : compactStudioResponse(name, args, result);
+}
+
+// The MML an alternative label names: the text it was given, or the Final
+// artifact's delivered MML. A candidate alternative has none.
+function prescreenMmlOf(args, { application, owner }) {
+  return async label => {
+    const entry = (args.alternatives ?? []).find(item => item.label === label);
+    if (typeof entry?.mml === 'string') return entry.mml;
+    if (typeof entry?.artifact_id === 'string') {
+      const { artifact } = await application.getArtifact(owner, entry.artifact_id);
+      return typeof artifact?.mml === 'string' ? artifact.mml : null;
+    }
+    return null;
+  };
 }
 
 async function dispatchStudioTool(name, args, { application, owner }) {
