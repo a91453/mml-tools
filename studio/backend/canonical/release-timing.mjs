@@ -808,12 +808,38 @@ export function buildEvidenceRegistry({ assets = [], sources = [] } = {}) {
   for (const entry of entries) {
     const primary = PRIMARY_SYMBOLIC_KINDS.has(entry.kind) || PRIMARY_AUDIO_KINDS.has(entry.kind);
     const independent = primary ? entry.sha256 !== null && !supportingShas.has(entry.sha256) : true;
-    byRef.set(entry.ref, Object.freeze({ ...entry, primary, independent }));
+    const resolved = { ...entry, primary, independent };
+    byRef.set(entry.ref, Object.freeze({ ...resolved, sourceClass: evidenceSourceClassOf(resolved) }));
   }
   return Object.freeze({
     entries: Object.freeze([...byRef.values()].sort((a, b) => cmpStr(a.ref, b.ref))),
     get: ref => (typeof ref === 'string' ? byRef.get(ref) ?? null : null),
   });
+}
+
+/**
+ * What SOURCE_POLICY §1 class a resolved registry entry belongs to, for any
+ * evidence path that cites a project source by reference (release
+ * representation here, Lead evidence reviews in the application layer):
+ *
+ *   'primary-symbolic'  an official score/MIDI whose bytes the project holds and
+ *                       that is not a copy of a supporting file (§1A);
+ *   'primary-audio'     the original recording, held and independent (§1B);
+ *   'not-independent'   a primary label on bytes a supporting file also has;
+ *   'bytes-not-held'    declared, but no bytes the project holds back it;
+ *   'supporting'        anything else: third-party, derived, current/historical
+ *                       MML (§1C, §1D2).
+ *
+ * Returns null for an unknown reference. Who cited it plays no part.
+ */
+export function evidenceSourceClassOf(entry) {
+  if (!entry) return null;
+  if (entry.bytesHeld !== true) return 'bytes-not-held';
+  const symbolic = PRIMARY_SYMBOLIC_KINDS.has(entry.kind);
+  const audio = PRIMARY_AUDIO_KINDS.has(entry.kind);
+  if (!symbolic && !audio) return 'supporting';
+  if (entry.independent !== true) return 'not-independent';
+  return symbolic ? 'primary-symbolic' : 'primary-audio';
 }
 
 // Who submitted the decision. `attestation` keeps its name from the first

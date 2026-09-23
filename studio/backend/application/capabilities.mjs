@@ -239,7 +239,7 @@ export function buildCapabilities({ canonical, storage, jobs, transports = [] })
         'applying anything on submission: storing a proposal mints no candidate, takes no revision, records no confirmation, moves no gate and does not advance the run',
         'accepting a proposal on any verdict but REQUIRES_EXPLICIT_ACCEPTANCE, which is a single value rather than a list',
         'reusing the agent\'s proposed_by as an acceptance, or letting a proposed decision name its own acceptedBy',
-        'letting a proposal author a reviewer\'s own evidence record: a decision may not carry leadEvidence, because the shared Lead grader can check that a citation binds to a real baseline source identity but not that anybody read the source, so an agent-authored one would move Gate 3 on its own assertion',
+        'letting a proposal carry a review record: a proposed decision may not carry leadEvidence. A proposal is a suggestion that an explicit acceptance turns into a decision, and a Lead citation is a candidate-bound review record: it is filed through reviewLeadEvidence, where it is graded on its cited source, method and finding whoever submits it (the grader checks that a citation binds to a real baseline source identity and resolves to a source the project holds; it cannot check that anybody read the source)',
         'answering a readiness gate, a blocked finalize, a changed input or an interrupted step with anything but a description of what is missing',
         'recording source_complete, player_readback, the Gate 4 / 8 / 9 reviews, a Core3 approval, a Lead citation or in_game',
         'resolving a PENDING, converting a suggestion into an acceptance, or treating an absence of evidence as N/A or not-required',

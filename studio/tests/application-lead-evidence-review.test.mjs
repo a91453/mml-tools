@@ -31,17 +31,22 @@ import { canonicalProjectBytes, sixRoleBaseline } from './fixtures/application-f
 
 const OWNER = 'owner:alice';
 const SOURCE_ID = 'fixture:official-midi';
-// A review names who made it and how its audio classification was established.
-// These fixtures model a human reviewer who listened; the authority rules for
-// agent/tool and unattested reviews are pinned in lead-review-authority.test.mjs.
-const HUMAN_REVIEWER = Object.freeze({ reviewer: 'human:fixture-reviewer', reviewer_kind: 'human', audio_basis: 'listening' });
+// A review names who submitted it and how its audio classification was
+// established; who submitted it does not change its grade (the rules are pinned
+// in lead-review-authority.test.mjs). These fixtures cite a directly reviewed
+// official score and recording the project holds.
+const REVIEWER = Object.freeze({ reviewer: 'reviewer:fixture', reviewer_kind: 'agent', audio_basis: 'direct-source-review' });
+
+// The project sources a review cites, uploaded by `project()`. A citation names
+// one by reference so the grader can resolve what it may prove.
+const CITED = { score: null, audio: null };
 
 /** A complete, correctly-scoped promotion citation for one baseline event. */
 const promotionEvidence = (eventId, over = {}) => ({
   sourceIdentity: { sourceId: SOURCE_ID, sourceEventId: `${SOURCE_ID}#${eventId}` },
   sectionRole: 'instrumental',
-  scoreEvidence: { availability: 'available', classification: 'lead', citation: 'fixture:score top line bar 1' },
-  audioEvidence: { availability: 'available', classification: 'foreground', citation: 'fixture:audio 0:00 foreground' },
+  scoreEvidence: { availability: 'available', classification: 'lead', citation: 'fixture:score top line bar 1', ref: CITED.score },
+  audioEvidence: { availability: 'available', classification: 'foreground', citation: 'fixture:audio 0:00 foreground', ref: CITED.audio },
   continuity: { checked: true, createsLeadGap: false, replacementEventIds: [] },
   core3: { checked: true, status: 'PASS' },
   positiveReason: 'The score places this attack on the top staff and the mix carries it in front.',
@@ -50,8 +55,8 @@ const promotionEvidence = (eventId, over = {}) => ({
 
 /** The same, arguing the other way: this event is inner material. */
 const demotionEvidence = (eventId, over = {}) => promotionEvidence(eventId, {
-  scoreEvidence: { availability: 'available', classification: 'inner', citation: 'fixture:score inner staff' },
-  audioEvidence: { availability: 'available', classification: 'background', citation: 'fixture:audio 0:00 behind the lead' },
+  scoreEvidence: { availability: 'available', classification: 'inner', citation: 'fixture:score inner staff', ref: CITED.score },
+  audioEvidence: { availability: 'available', classification: 'background', citation: 'fixture:audio 0:00 behind the lead', ref: CITED.audio },
   positiveReason: 'The score places this attack on the inner staff and the mix keeps it behind the lead.',
   ...over,
 });
@@ -63,6 +68,9 @@ async function project(title) {
     kind: 'canonical_project', filename: 'baseline.json', mediaType: 'application/json', bytes: canonicalProjectBytes(sixRoleBaseline()),
   });
   await service.analyzeSources(OWNER, created.project_id);
+  // Held after intake, so they stay evidence and are not parsed into the baseline.
+  CITED.score = (await service.uploadAsset(OWNER, created.project_id, { kind: 'official_musicxml', filename: 'score.musicxml', mediaType: 'application/xml', bytes: new TextEncoder().encode(`fixture official score for ${title}`) })).asset.asset_id;
+  CITED.audio = (await service.uploadAsset(OWNER, created.project_id, { kind: 'original_audio', filename: 'song.m4a', mediaType: 'audio/mp4', bytes: new TextEncoder().encode(`fixture recording for ${title}`) })).asset.asset_id;
   return { service, projectId: created.project_id };
 }
 
@@ -106,7 +114,7 @@ test('a promotion sent back to PENDING by a later Lead move is answerable by a f
   const recorded = await service.reviewLeadEvidence(OWNER, projectId, {
     candidateId,
     review: {
-      attestation: HUMAN_REVIEWER,
+      attestation: REVIEWER,
       event_id: 'chord3-1', axis: 'promotion',
       reason: 'Re-reviewed against the Lead picture as it now stands; the top line is unchanged.',
       evidence: ['fixture:score top line bar 1', 'fixture:audio 0:00'],
@@ -149,7 +157,7 @@ test('a demotion sent back to PENDING by a later Lead move is answerable the sam
   await service.reviewLeadEvidence(OWNER, projectId, {
     candidateId,
     review: {
-      attestation: HUMAN_REVIEWER,
+      attestation: REVIEWER,
       event_id: 'melody-1', axis: 'demotion',
       reason: 'Re-reviewed: still inner material against the Lead picture as it now stands.',
       evidence: ['fixture:score inner staff'],
@@ -177,7 +185,7 @@ test('a fresh review does not answer the next candidate once the Lead context ch
   await service.reviewLeadEvidence(OWNER, projectId, {
     candidateId: reviewed,
     review: {
-      attestation: HUMAN_REVIEWER,
+      attestation: REVIEWER,
       event_id: 'chord3-1', axis: 'promotion', reason: 'Re-reviewed against this candidate.',
       evidence: ['fixture:score top line'], lead_evidence: promotionEvidence('chord3-1'),
     },
@@ -201,7 +209,7 @@ test('a fresh review does not answer the next candidate once the Lead context ch
   await service.reviewLeadEvidence(OWNER, projectId, {
     candidateId: third.decisions.candidate_id,
     review: {
-      attestation: HUMAN_REVIEWER,
+      attestation: REVIEWER,
       event_id: 'chord3-1', axis: 'promotion', reason: 'Re-reviewed again, against the current Lead picture.',
       evidence: ['fixture:score top line'], lead_evidence: promotionEvidence('chord3-1'),
     },
@@ -220,7 +228,7 @@ test('a Lead evidence review is refused unless it binds to this move, this axis 
   });
   const candidateId = second.decisions.candidate_id;
   const base = {
-    attestation: HUMAN_REVIEWER,
+    attestation: REVIEWER,
     event_id: 'chord3-1', axis: 'promotion', reason: 'Re-reviewed.',
     evidence: ['fixture:score top line'], lead_evidence: promotionEvidence('chord3-1'),
   };
@@ -307,7 +315,7 @@ test('a duplicate promoted into Melody is re-reviewed under its derived id and g
     () => service.reviewLeadEvidence(OWNER, projectId, {
       candidateId,
       review: {
-        attestation: HUMAN_REVIEWER,
+        attestation: REVIEWER,
         event_id: derivedId, axis: 'promotion', reason: 'Re-reviewed.', evidence: ['fixture:score doubling'],
         lead_evidence: promotionEvidence('chord3-1', { sourceIdentity: { sourceId: SOURCE_ID, sourceEventId: `${SOURCE_ID}#${derivedId}` } }),
       },
@@ -322,7 +330,7 @@ test('a duplicate promoted into Melody is re-reviewed under its derived id and g
   const recorded = await service.reviewLeadEvidence(OWNER, projectId, {
     candidateId,
     review: {
-      attestation: HUMAN_REVIEWER,
+      attestation: REVIEWER,
       event_id: derivedId, axis: 'promotion',
       reason: 'Re-reviewed: the doubled line still reads as the lead against the current picture.',
       evidence: ['fixture:score doubling bar 1'], lead_evidence: promotionEvidence('chord3-1'),
@@ -399,7 +407,7 @@ test('finalize grades the re-reviewed evidence review grades, not a separate one
   await service.reviewLeadEvidence(OWNER, projectId, {
     candidateId,
     review: {
-      attestation: HUMAN_REVIEWER,
+      attestation: REVIEWER,
       event_id: 'chord3-1', axis: 'promotion', reason: 'Re-reviewed against this candidate.',
       evidence: ['fixture:score top line'], lead_evidence: promotionEvidence('chord3-1'),
     },
@@ -446,7 +454,7 @@ test('a demotion whose destination moved on again is still answerable', async ()
   await service.reviewLeadEvidence(OWNER, projectId, {
     candidateId,
     review: {
-      attestation: HUMAN_REVIEWER,
+      attestation: REVIEWER,
       event_id: 'melody-1', axis: 'demotion',
       reason: 'Re-reviewed: inner material, and enrichment is where it sits now.',
       evidence: ['fixture:score inner staff'],
@@ -471,7 +479,7 @@ test('a citation that turns out to be wrong can be retracted, and the gate retur
   });
   const candidateId = second.decisions.candidate_id;
   const base = {
-    attestation: HUMAN_REVIEWER,
+    attestation: REVIEWER,
     event_id: 'chord3-1', axis: 'promotion', reason: 'Re-reviewed against this candidate.',
     evidence: ['fixture:score top line'], lead_evidence: promotionEvidence('chord3-1'),
   };
@@ -491,7 +499,7 @@ test('a citation that turns out to be wrong can be retracted, and the gate retur
   const retracted = await service.reviewLeadEvidence(OWNER, projectId, {
     candidateId,
     review: {
-      attestation: HUMAN_REVIEWER,
+      attestation: REVIEWER,
       ...base,
       reason: 'Re-listened: the top line is doubled, and this is the inner half.',
       supersede_reason: 'The earlier citation read the wrong staff.',

@@ -282,7 +282,7 @@ export const STUDIO_MCP_TOOLS = [
       properties: {
         project_id: projectId,
         candidate_id: candidateId,
-        review: structuredPayload('event_id（readiness 使用的事件 id；衍生複製請用候選中的衍生 id）、axis（promotion 或 demotion，兩者互不代替）、reason、至少一筆 evidence，以及 lead_evidence：精確 sourceIdentity、sectionRole、scoreEvidence／audioEvidence、continuity.checked、core3.checked/status 與正面的目的角色理由。sourceIdentity 請用 studio_baseline_events 取得，不可猜測；綁不到該 move 的 baseline 來源事件會被拒絕。必填 attestation：{ reviewer（誰做的審查）, reviewer_kind: human|agent|tool, audio_basis: listening|machine-metric|not-used }。只有 human 的審查會被 Lead grader 採計；agent/tool 審查只留作稽核紀錄、不移動 gate。audio_basis 為 machine-metric（F0、CQT、chroma 等）時，該音訊分類不算正面角色證據（SOURCE_POLICY §6）。AI 代理不得把自己的判斷標成 human。'),
+        review: structuredPayload('event_id（readiness 使用的事件 id；衍生複製請用候選中的衍生 id）、axis（promotion 或 demotion，兩者互不代替）、reason、至少一筆 evidence，以及 lead_evidence：精確 sourceIdentity、sectionRole、scoreEvidence／audioEvidence、continuity.checked、core3.checked/status 與正面的目的角色理由。sourceIdentity 請用 studio_baseline_events 取得，不可猜測；綁不到該 move 的 baseline 來源事件會被拒絕。必填 attestation：{ reviewer（誰提交）, reviewer_kind: human|agent|tool|mcp-client|imported, audio_basis: listening|direct-source-review|machine-metric|not-used }。attestation 只是 provenance（稽核紀錄），不影響評分：人類、對話式 AI、工具提交同一份證據，結果完全相同。scoreEvidence／audioEvidence 有分類時請附 ref（本專案的 asset_id 或 source id）：只有本專案持有位元組、且與第三方檔案不同的官方譜／官方 MIDI（score）或原曲錄音（audio）能當正面角色證據；第三方檔案只是輔助（SOURCE_POLICY §1C），沒有 ref 或 ref 對不到專案來源的引用不算。audio_basis 為 machine-metric（F0、CQT、chroma 等）時，該音訊分類只是定位，不算正面角色證據（SOURCE_POLICY §6）。只有實際直接審閱過來源時才可標 listening／direct-source-review。'),
       },
       required: ['project_id', 'candidate_id', 'review'],
       additionalProperties: false,

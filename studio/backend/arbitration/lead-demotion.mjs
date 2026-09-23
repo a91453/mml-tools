@@ -19,6 +19,16 @@ const SECTION_ROLES = Object.freeze(['vocal-active', 'vocal-rest', 'instrumental
 // is never positive role evidence. Absent basis keeps the historical behaviour.
 export const AUDIO_EVIDENCE_BASES = Object.freeze(['listening', 'machine-metric']);
 export const AUDIO_METRIC_NOT_ROLE_EVIDENCE = 'AUDIO_METRIC_IS_A_LOCATOR_NOT_ROLE_EVIDENCE';
+// What the cited source is allowed to prove, when a caller resolved the citation
+// against the project's sources (SOURCE_POLICY §1): `primary` is an official
+// score (§1A) or the original recording (§1B) the project holds and that is not
+// a copy of a supporting file; `supporting` is third-party or derived material
+// (§1C, §1D2); `unresolved` is a citation that names nothing the project holds.
+// Only primary evidence is positive role evidence. Any classified evidence may
+// still raise a conflict, which fails closed toward the Source-Faithful Lead.
+// Absent, the historical behaviour is kept for callers that do not resolve.
+export const EVIDENCE_SOURCE_AUTHORITIES = Object.freeze(['primary', 'supporting', 'unresolved']);
+export const LEAD_EVIDENCE_SOURCE_NOT_AUTHORITATIVE = 'LEAD_EVIDENCE_SOURCE_NOT_AUTHORITATIVE';
 
 function nonEmpty(value) {
   return typeof value === 'string' && Boolean(value.trim());
@@ -34,15 +44,28 @@ function normalizeEvidenceItem(item, kind) {
   const classification = item.classification ?? 'unknown';
   if (!allowed.includes(classification)) throw Error(`${kind}.classification is invalid`);
   if (classification !== 'unknown' && !nonEmpty(item.citation)) throw Error(`${kind} classified evidence requires a citation/source reference`);
+  const normalized = { availability, classification, citation: item.citation?.trim() ?? null };
   if (kind === 'audio' && item.basis !== undefined && item.basis !== null) {
     if (!AUDIO_EVIDENCE_BASES.includes(item.basis)) throw Error('audio.basis must be listening or machine-metric');
-    return Object.freeze({ availability, classification, citation: item.citation?.trim() ?? null, basis: item.basis });
+    normalized.basis = item.basis;
   }
-  return Object.freeze({ availability, classification, citation: item.citation?.trim() ?? null });
+  if (item.sourceAuthority !== undefined && item.sourceAuthority !== null) {
+    if (!EVIDENCE_SOURCE_AUTHORITIES.includes(item.sourceAuthority)) throw Error(`${kind}.sourceAuthority must be one of ${EVIDENCE_SOURCE_AUTHORITIES.join(', ')}`);
+    normalized.sourceAuthority = item.sourceAuthority;
+  }
+  return Object.freeze(normalized);
 }
 
-// Available audio evidence that may count as *positive* role evidence.
-const audioIsPositiveEvidence = audio => audio.availability === 'available' && audio.basis !== 'machine-metric';
+// Evidence from a source that may prove a role: not a supporting or unresolved
+// citation, when the caller resolved it.
+const sourceMayProveRole = item => item.sourceAuthority === undefined || item.sourceAuthority === 'primary';
+// Available score evidence that may count as *positive* role evidence.
+const scoreIsPositiveEvidence = score => score.availability === 'available' && sourceMayProveRole(score);
+// Available audio evidence that may count as *positive* role evidence: a metric
+// is a locator (SOURCE_POLICY §6), whatever source it was computed from.
+const audioIsPositiveEvidence = audio => audio.availability === 'available' && audio.basis !== 'machine-metric' && sourceMayProveRole(audio);
+const sourceAuthorityWarnings = (score, audio) => ([score, audio].some(item => item.availability === 'available' && item.classification !== 'unknown' && item.sourceAuthority !== undefined && item.sourceAuthority !== 'primary')
+  ? [LEAD_EVIDENCE_SOURCE_NOT_AUTHORITATIVE] : []);
 
 
 // ─── Lead evidence identity binding ─────────────────────────────────────────
@@ -209,7 +232,7 @@ export function evaluateLeadDemotion({
   if (!core3?.checked) blockers.push('CORE3_NOT_CHECKED');
   else if (core3.status !== 'PASS') blockers.push(core3.status === 'FAIL' ? 'CORE3_FAILED' : 'CORE3_UNRESOLVED');
 
-  const scoreSupportsDemotion = score.availability === 'available' && ['accompaniment', 'inner', 'counter', 'duplicate'].includes(score.classification);
+  const scoreSupportsDemotion = scoreIsPositiveEvidence(score) && ['accompaniment', 'inner', 'counter', 'duplicate'].includes(score.classification);
   const audioSupportsDemotion = audioIsPositiveEvidence(audio) && audio.classification === 'background';
   const scoreSupportsLead = score.availability === 'available' && score.classification === 'lead';
   // Any available audio classification can raise a conflict, including a metric.
@@ -218,6 +241,7 @@ export function evaluateLeadDemotion({
   if (!scoreSupportsDemotion && !audioSupportsDemotion) blockers.push('POSITIVE_ROLE_EVIDENCE_MISSING');
   if (scoreSupportsLead || audioSupportsLead) blockers.push('SOURCE_ROLE_EVIDENCE_CONFLICT');
   if (audio.basis === 'machine-metric' && audio.classification !== 'unknown') warnings.push(AUDIO_METRIC_NOT_ROLE_EVIDENCE);
+  warnings.push(...sourceAuthorityWarnings(score, audio));
 
   if (score.availability === 'unavailable') warnings.push('SCORE_ROLE_EVIDENCE_UNAVAILABLE');
   if (audio.availability === 'unavailable') warnings.push('AUDIO_ROLE_EVIDENCE_UNAVAILABLE');
@@ -291,7 +315,7 @@ export function evaluateLeadPromotion({
   if (!core3?.checked) blockers.push('CORE3_NOT_CHECKED');
   else if (core3.status !== 'PASS') blockers.push(core3.status === 'FAIL' ? 'CORE3_FAILED' : 'CORE3_UNRESOLVED');
 
-  const scoreSupportsLead = score.availability === 'available' && score.classification === 'lead';
+  const scoreSupportsLead = scoreIsPositiveEvidence(score) && score.classification === 'lead';
   const audioSupportsLead = audioIsPositiveEvidence(audio) && audio.classification === 'foreground';
   const scoreSupportsNonLead = score.availability === 'available' && ['accompaniment', 'inner', 'counter', 'duplicate'].includes(score.classification);
   // Any available audio classification can raise a conflict, including a metric.
@@ -303,6 +327,7 @@ export function evaluateLeadPromotion({
     blockers.push('SOURCE_ROLE_EVIDENCE_CONFLICT');
   }
   if (audio.basis === 'machine-metric' && audio.classification !== 'unknown') warnings.push(AUDIO_METRIC_NOT_ROLE_EVIDENCE);
+  warnings.push(...sourceAuthorityWarnings(score, audio));
 
   if (score.availability === 'unavailable') warnings.push('SCORE_ROLE_EVIDENCE_UNAVAILABLE');
   if (audio.availability === 'unavailable') warnings.push('AUDIO_ROLE_EVIDENCE_UNAVAILABLE');

@@ -1,4 +1,4 @@
-// Deterministic Lead evidence audit and human review queue for one candidate.
+// Deterministic Lead evidence audit and review queue for one candidate.
 // Implementation notes, not Canonical policy.
 //
 // Inputs are service READ exports only (no network, no service write):
@@ -25,7 +25,7 @@ import { splitProjectSourceVoices } from '../studio/backend/arrangement/voice-sp
 import { reconstructFromExports } from './studio-microtiming-audit.mjs';
 import { leadReviewAuthorityOf, LEAD_REVIEW_AUTHORITY } from '../studio/backend/application/lead-review-authority.mjs';
 
-const HELP = `Lead evidence audit + human review queue (no network, no service write)
+const HELP = `Lead evidence audit + review queue (no network, no service write)
   node scripts/studio-lead-review-queue.mjs --work-dir NEW_DIR --events p1.json[,p2.json...] --decisions proposal.json
        [--reviews lead_evidence_reviews.json] [--public] [--out queue.json]
 --public   committable form: no raw citation text, shortened event ids.
@@ -36,13 +36,16 @@ export const CLASSIFICATION = Object.freeze({
   WEAK_MACHINE: 'weak-machine-evidence',
   F0_PITCH_CLASS_ONLY: 'f0-or-pitch-class-only',
   AUDIO_LOCATOR_ONLY: 'audio-locator-only',
-  HUMAN_CONFIRMED: 'human-confirmed',
+  // A stored review states a direct review of the recording, by whoever made
+  // it. Whether it proves the role is the grader's question: its citations
+  // must still resolve to an official score or the recording the project holds.
+  DIRECT_REVIEW_ON_RECORD: 'direct-review-on-record',
   MISSING: 'unresolved-missing-evidence',
   CONTRADICTORY: 'contradictory-evidence',
 });
 
 export const ALLOWED_DISPOSITIONS = Object.freeze([
-  'KEEP_LEAD (positive Lead evidence: human listening or a primary source, cited)',
+  'KEEP_LEAD (positive Lead evidence: a direct review of the original recording or an official score, cited by project reference)',
   'DEMOTE_WITH_POSITIVE_EVIDENCE (names the destination role and the positive evidence; "not proven Vocal" is not evidence)',
   'MOVE (to another role, with the same positive-evidence requirement)',
   'PENDING (conflicting or incomplete evidence: the Source-Faithful Lead event stays in Melody)',
@@ -104,7 +107,7 @@ export function classifyLeadDecision({ event, review }) {
     && audio.classification === 'foreground';
 
   let classification;
-  if (authority === LEAD_REVIEW_AUTHORITY.HUMAN_ATTESTED && review.attestation?.audio_basis === 'listening') classification = CLASSIFICATION.HUMAN_CONFIRMED;
+  if (authority === LEAD_REVIEW_AUTHORITY.GRADED_ON_EVIDENCE && review.attestation?.audio_basis === 'listening') classification = CLASSIFICATION.DIRECT_REVIEW_ON_RECORD;
   else if (registerMismatch || scoreConflicts) classification = CLASSIFICATION.CONTRADICTORY;
   else if (audioKind === 'f0' || audioKind === 'predominant-pitch-class') classification = CLASSIFICATION.F0_PITCH_CLASS_ONLY;
   else if (audioKind === 'cqt-salience' || audioKind === 'unspecified') classification = CLASSIFICATION.WEAK_MACHINE;
@@ -212,7 +215,7 @@ export async function buildLeadReviewQueue({ workDir, eventPaths, decisionsPath,
 
   const count = (list, key) => list.reduce((acc, item) => { acc[item[key]] = (acc[item[key]] ?? 0) + 1; return acc; }, {});
 
-  // The human-facing entry point: one row per accepted Melody decision section,
+  // The reader-facing entry point: one row per accepted Melody decision section,
   // with every event id still listed and the class mix shown, never averaged.
   const sections = [];
   for (const item of items) {
@@ -228,12 +231,12 @@ export async function buildLeadReviewQueue({ workDir, eventPaths, decisionsPath,
   }
   sections.sort((a, b) => f(a.firstOnsetBeat).cmp(b.firstOnsetBeat));
   const why = {
-    [CLASSIFICATION.MISSING]: 'No stored review. The only symbolic source is a third-party MIDI (SOURCE_POLICY §1 C); top-line position is not Lead evidence; no human listening or primary score is on record.',
-    [CLASSIFICATION.F0_PITCH_CLASS_ONLY]: 'The stored review rests on an F0/predominant-pitch or pitch-class match. SOURCE_POLICY §6: a metric is a locator and cannot alone prove role, Vocal identity, exact pitch or octave. Not attested by a human.',
-    [CLASSIFICATION.WEAK_MACHINE]: 'The stored review rests on CQT salience or an unspecified machine reading with no reproducible method. Not attested by a human.',
-    [CLASSIFICATION.AUDIO_LOCATOR_ONLY]: 'The stored review cites only a time/alignment locator. Not attested by a human.',
+    [CLASSIFICATION.MISSING]: 'No stored review. The only symbolic source is a third-party MIDI (SOURCE_POLICY §1 C); top-line position is not Lead evidence; no direct review of the recording and no official score is on record.',
+    [CLASSIFICATION.F0_PITCH_CLASS_ONLY]: 'The stored review rests on an F0/predominant-pitch or pitch-class match. SOURCE_POLICY §6: a metric is a locator and cannot alone prove role, Vocal identity, exact pitch or octave, whoever submits it.',
+    [CLASSIFICATION.WEAK_MACHINE]: 'The stored review rests on CQT salience or an unspecified machine reading with no reproducible method. A metric is a locator whoever submits it (SOURCE_POLICY §6).',
+    [CLASSIFICATION.AUDIO_LOCATOR_ONLY]: 'The stored review cites only a time/alignment locator; a locator is not a finding.',
     [CLASSIFICATION.CONTRADICTORY]: 'The stored review\'s own measured pitch lies two or more octaves below the event (bass/low-register content), so its "foreground" claim contradicts itself; or score and audio disagree. Conflicting evidence stays PENDING (SOURCE_POLICY §4).',
-    [CLASSIFICATION.HUMAN_CONFIRMED]: 'Human-attested listening review on record.',
+    [CLASSIFICATION.DIRECT_REVIEW_ON_RECORD]: 'A review stating a direct review of the recording is on record; the grader decides from its cited sources whether it proves the role.',
   };
   return {
     schema: 'mml-studio/lead-review-queue@1',
