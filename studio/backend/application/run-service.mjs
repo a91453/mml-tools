@@ -693,6 +693,36 @@ export function createRunService({ canonical, projects, store, operations, seria
     return reasons;
   };
 
+  /**
+   * Refuse a named candidate that was derived under another rules snapshot.
+   *
+   * The reduction and adaptation operations already refuse such a candidate,
+   * but a run reached them only after it had been created on it and had
+   * reported every earlier step satisfied. `stalenessOf` cannot see the case: it
+   * compares the run's OWN recorded snapshot with the loaded one, and a run
+   * started now records the loaded one whatever candidate it names. So the
+   * candidate is checked where it is named — by the plan, the start and an
+   * adoption alike, with the arrangement service's own answer — before any run
+   * is created on it or moved onto it.
+   *
+   * A stored candidate that records no snapshot is not treated as matching.
+   * With no Published Canonical loaded there is nothing to compare against, and
+   * the run's own `CANONICAL_NOT_LOADED` halt answers instead.
+   */
+  const refuseCandidateFromAnotherSnapshot = (record, candidateId, canonicalProvenance, field) => {
+    if (canonicalProvenance?.status !== 'CANONICAL_LOADED') return;
+    const candidateSnapshot = operations.candidateRulesSnapshot(record, candidateId);
+    const loadedSnapshot = canonicalProvenance.rules_snapshot_sha ?? null;
+    if (candidateSnapshot !== null && candidateSnapshot === loadedSnapshot) return;
+    fail(ERROR_CODES.INVALID_REQUEST, 'The candidate belongs to a different Canonical snapshot.', {
+      candidate_id: candidateId,
+      reason: 'CANDIDATE_RULES_SNAPSHOT_DIFFERS',
+      candidate_rules_snapshot_sha: candidateSnapshot,
+      loaded_rules_snapshot_sha: loadedSnapshot,
+      remedy: `Supply the arrangement decisions again without ${field}, so that a candidate is derived under the loaded Published Canonical, or name a candidate that was derived under it.`,
+    });
+  };
+
   // ── step expectations and reconciliation ──────────────────────────────────
   //
   // Before a mutating effect the run records what that effect will look like.
@@ -2905,7 +2935,7 @@ export function createRunService({ canonical, projects, store, operations, seria
     return null;
   };
 
-  function resumeChanges(owner, record, run, normalized) {
+  function resumeChanges(owner, record, run, normalized, canonicalProvenance) {
     refuseWorkOnAuditClosedRun(owner, record, run, normalized);
     const inputs = { ...run.inputs };
     // The selected assets and the bytes they hold are ONE identity. Recording
@@ -3033,11 +3063,13 @@ export function createRunService({ canonical, projects, store, operations, seria
     }
 
     // A candidate produced outside this run is adopted only when it is named,
-    // and only when its lineage and its baseline check out. Never by timestamp,
-    // and never because it is the newest thing in the project.
+    // and only when its rules snapshot, its baseline and its lineage check out.
+    // Never by timestamp, and never because it is the newest thing in the
+    // project.
     if (normalized.adopt_candidate_id !== null) {
       const adopted = record.candidates.find(entry => entry.candidate_id === normalized.adopt_candidate_id);
       if (!adopted) fail(ERROR_CODES.CANDIDATE_NOT_FOUND, 'Unknown candidate', { candidate_id: normalized.adopt_candidate_id, project_id: record.project_id });
+      refuseCandidateFromAnotherSnapshot(record, adopted.candidate_id, canonicalProvenance, 'adopt_candidate_id');
       if (run.baseline_id && adopted.baseline_id !== run.baseline_id) {
         fail(ERROR_CODES.INVALID_REQUEST, 'The candidate to adopt was derived from a different Source-Faithful Baseline than this run is bound to.', {
           candidate_id: adopted.candidate_id, run_baseline_id: run.baseline_id, candidate_baseline_id: adopted.baseline_id,
@@ -3165,6 +3197,9 @@ export function createRunService({ canonical, projects, store, operations, seria
       if (normalized.target_candidate_id !== null && targetEntry === null) {
         fail(ERROR_CODES.CANDIDATE_NOT_FOUND, 'Unknown candidate', { candidate_id: normalized.target_candidate_id, project_id: record.project_id });
       }
+      // The start this plan describes refuses the candidate, so the plan does
+      // too, rather than reporting it as a satisfied result.
+      if (targetEntry !== null) refuseCandidateFromAnotherSnapshot(record, targetEntry.candidate_id, provenance, 'target_candidate_id');
       // Only a candidate the caller NAMED. `startRun` adopts exactly
       // `target_candidate_id` and nothing else, so a plan that fell back to the
       // newest candidate would describe a run that will not happen — and it
@@ -3316,6 +3351,9 @@ export function createRunService({ canonical, projects, store, operations, seria
         if (normalized.target_candidate_id !== null && !record.candidates.some(entry => entry.candidate_id === normalized.target_candidate_id)) {
           fail(ERROR_CODES.CANDIDATE_NOT_FOUND, 'Unknown candidate', { candidate_id: normalized.target_candidate_id, project_id: record.project_id });
         }
+        // Before the run exists: the reduction step would refuse this candidate
+        // anyway, after the run had been created on it.
+        if (normalized.target_candidate_id !== null) refuseCandidateFromAnotherSnapshot(record, normalized.target_candidate_id, provenance, 'target_candidate_id');
         const selection = assetSelection(record, normalized.asset_ids);
         const run = newRun(owner, record, normalized, { canonicalProvenance: provenance, fingerprint, selection });
         return { run: putRun(owner, projectId, run), replayed: false };
@@ -3336,6 +3374,7 @@ export function createRunService({ canonical, projects, store, operations, seria
     async resume(owner, projectId, runId, input = {}) {
       const normalized = normalizeRunInput(input, { label: 'resume input', allowed: RESUME_INPUT_KEYS });
       const fingerprint = requestFingerprintOf(normalized);
+      const provenance = await canonical.provenance();
 
       const prepared = await serialize(String(projectId), async () => {
         const record = projects.load(owner, projectId);
@@ -3391,7 +3430,7 @@ export function createRunService({ canonical, projects, store, operations, seria
           }
           return { run, replayed: false, settled: true };
         }
-        return { run: bumpRun(owner, projectId, run, resumeChanges(owner, record, run, normalized)), replayed: false };
+        return { run: bumpRun(owner, projectId, run, resumeChanges(owner, record, run, normalized, provenance)), replayed: false };
       });
 
       if (prepared.settled) {
