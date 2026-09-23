@@ -15,6 +15,10 @@ import { markersFromReport, sanitizeStoredNotes } from './listen-notes.mjs';
 // G11-B/G11-C derivation all live behind the Worker, so the main thread never
 // imports the backend and never parses a source file itself.
 import { createSourceRequestLedger } from './source-requests.mjs';
+// The Workshop editor (studio/web/workshop/) is outside the Canonical
+// pipeline. This small adapter only opens a copy there and brings an edit back
+// through the ordinary intake below; see workshop-link.mjs.
+import { UNVERIFIED_LABEL, parseReturnHash, returnFileName, takeReturn, workshopUrl } from './workshop-link.mjs';
 
 const $ = selector => document.querySelector(selector);
 const esc = value => String(value ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
@@ -146,7 +150,8 @@ function intakeCard(slot, title, hint) {
   // A Raw MIDI asset has no text representation, so its identity is stated as
   // the byte count and the digest of the bytes that were actually parsed.
   const source = asset?.source?.sha256 ? `<p class="meta">${bytesLabel(asset.source.byteLength)} · SMF ${esc(asset.midi?.smfFormat ?? '?')} · ${asset.midi?.trackCount ?? '?'} tracks<br><code class="digest">sha256 ${esc(asset.source.sha256.slice(0, 16))}…</code></p>` : '';
-  return `<div class="card"><h3>${title}</h3><p class="meta">${hint}</p>${asset ? `<p><strong>${esc(asset.name)}</strong></p><p class="meta">${esc(asset.format)} · ${asset.project.events.length} events</p>${source}${badge(asset.unsupported.length ? 'UNSUPPORTED' : 'PENDING')} <small>${asset.complete ? '解析完成，等待來源審核' : '來源未完整'}</small>${detail('來源 authority／warnings／unsupported', { sources: asset.project.sources, warnings: asset.warnings, errors: asset.errors, unsupported: asset.unsupported })}` : '<div class="empty">尚未加入來源<br>MusicXML · MML · MIDI · Canonical IR</div>'}<label class="file-button secondary">${asset ? '更換來源' : '選擇檔案'}<input type="file" data-intake="${slot}" accept=".xml,.musicxml,.mxl,.mml,.txt,.json,.mid,.midi,application/xml,text/xml,application/vnd.recordare.musicxml,text/plain,application/json,audio/midi,audio/x-midi" aria-label="${title}檔案"></label>${asset ? `<button class="quiet" data-download-ir="${slot}">匯出 IR</button>` : ''}${asset?.format === 'MML' ? `<button class="quiet" data-listen-asset="${slot}">送到試聽</button>` : ''}</div>`;
+  const workshop = asset?.format === 'MML' && /MML@/i.test(asset.content ?? '') ? `<p><a class="file-button quiet workshop-link" href="${esc(workshopUrl(workspace.id, slot))}">在工作坊開啟（副本）</a></p>` : '';
+  return `<div class="card"><h3>${title}</h3><p class="meta">${hint}</p>${asset ? `<p><strong>${esc(asset.name)}</strong></p><p class="meta">${esc(asset.format)} · ${asset.project.events.length} events</p>${source}${workshop}${badge(asset.unsupported.length ? 'UNSUPPORTED' : 'PENDING')} <small>${asset.complete ? '解析完成，等待來源審核' : '來源未完整'}</small>${detail('來源 authority／warnings／unsupported', { sources: asset.project.sources, warnings: asset.warnings, errors: asset.errors, unsupported: asset.unsupported })}` : '<div class="empty">尚未加入來源<br>MusicXML · MML · MIDI · Canonical IR</div>'}<label class="file-button secondary">${asset ? '更換來源' : '選擇檔案'}<input type="file" data-intake="${slot}" accept=".xml,.musicxml,.mxl,.mml,.txt,.json,.mid,.midi,application/xml,text/xml,application/vnd.recordare.musicxml,text/plain,application/json,audio/midi,audio/x-midi" aria-label="${title}檔案"></label>${asset ? `<button class="quiet" data-download-ir="${slot}">匯出 IR</button>` : ''}${asset?.format === 'MML' ? `<button class="quiet" data-listen-asset="${slot}">送到試聽</button>` : ''}</div>`;
 }
 // ─── Raw MIDI presentation ──────────────────────────────────────────────────
 //
@@ -431,8 +436,9 @@ function appliedDeliveryCard(attempt) {
     <p class="meta">此字串已通過目前的 MML 技術語法驗證，並與候選事件逐一讀回一致。複製與下載輸出的就是這個字串本身，不做任何整理、修補、壓縮或裁切。</p>
     <p class="note">這裡的 PASS 只代表這個字串<strong>目前通過交付驗證</strong>（相當於 <code>TECHNICAL_PASS</code> 層級）。它不是 <code>VALIDATED</code>，也不是 <code>IN_GAME_ACCEPTED</code>；整體專案狀態與實機接受紀錄在第 07 節。</p>
     <label for="final-mml">完整六軌 Final MML</label><div class="mml-hl">${mmlLayer(applied, technicalDiagnostics())}<textarea id="final-mml" class="code final" readonly spellcheck="false">${esc(applied)}</textarea></div>
-    <div class="actions"><button id="copy-final">複製完整 Final MML</button><button id="download-final" class="secondary">下載 Final MML</button><button id="listen-final" class="secondary">送到試聽</button></div>
+    <div class="actions"><button id="copy-final">複製完整 Final MML</button><button id="download-final" class="secondary">下載 Final MML</button><button id="listen-final" class="secondary">送到試聽</button><a class="file-button quiet workshop-link" id="open-final-workshop" href="${esc(workshopUrl(workspace.id, 'delivery'))}">在工作坊開啟（副本）</a></div>
     <p class="meta">「送到試聽」會開一個獨立的試聽工作階段，可從指定小節、時間或待審標記播放並記下備註；不會改變這個專案或任何 Gate。</p>
+    <p class="meta">工作坊是 MML 編輯器，不在 Canonical 驗證流程內；在那裡改過的內容標為「${esc(UNVERIFIED_LABEL)}」，只能經由「送回 Studio 驗證」以衍生候選重新進入本頁。</p>
     <p class="meta">逐角色內容如下。每個「複製」<strong>只會複製該角色的內容</strong>，不是可直接貼上的完整六軌樂譜。</p>
     ${(report.tracks ?? []).map((track, index) => `<div class="role-body"><div class="row"><label for="final-role-${index}">${roles[index]}${track ? '' : ' <small>（空軌）</small>'}</label><button data-copy-role="${index}" class="quiet" ${track ? '' : 'disabled'}>複製此角色內容</button></div><div class="mml-hl">${mmlLayer(track, roleDiagnostics(index))}<textarea id="final-role-${index}" class="code" readonly spellcheck="false">${esc(track)}</textarea></div></div>`).join('')}
   </div>`;
@@ -1526,6 +1532,45 @@ async function restoreZip(file){
 // Build/Git provenance is audit metadata served by build.json, deliberately
 // outside the hashed runtime bundle. Display-only: its absence never relaxes
 // Canonical verification, which already ran fail-closed inside the worker.
+// ─── Workshop return ────────────────────────────────────────────────────────
+// A Workshop edit arrives as one localStorage record named in the URL hash.
+// It is shown for confirmation and then imported through putSource() as the
+// candidate: the usual intake, invalidation and technical validation run on
+// it, every review restarts, and nothing here passes a gate.
+function workshopReturnPanel(record, target) {
+  const roles = record.mml.slice(4, -1).split(',');
+  const origin = record.origin?.title ? `來源：Studio「${esc(record.origin.title)}」· ${esc(record.origin.label ?? record.origin.slot ?? '')}（副本）` : '來源：工作坊（非 Studio 副本）';
+  return `<div class="card workshop-return"><div class="section-heading"><h2>${esc(UNVERIFIED_LABEL)}</h2>${badge('PENDING')}</div>
+    <p class="note">這份六軌 MML 在工作坊編輯，<strong>尚未經 Studio 驗證</strong>。匯入後成為衍生候選（derived），由本頁重新做 MML 技術驗證；先前的審核與接受不會沿用，匯入本身不讓任何 Gate 通過。</p>
+    <p class="meta">${origin} · ${record.mml.length} 字元 · ${roles.filter(Boolean).length} 個非空角色</p>
+    ${record.warnings.length ? `<ul class="meta">${record.warnings.map(w => `<li>${esc(w)}</li>`).join('')}</ul>` : ''}
+    <label for="workshop-return-mml">工作坊送回的 MML</label><textarea id="workshop-return-mml" class="code" readonly spellcheck="false">${esc(record.mml)}</textarea>
+    <div class="actions"><button id="workshop-import">匯入為「${esc(target?.title ?? '目前專案')}」的候選</button><button id="workshop-import-new" class="secondary">新增專案並匯入</button><button id="workshop-discard" class="quiet">捨棄</button></div></div>`;
+}
+function offerWorkshopReturn() {
+  const id = parseReturnHash(location.hash);
+  if (!id) return;
+  history.replaceState(null, '', location.pathname + location.search);
+  const record = takeReturn(id);
+  if (!record) return message('工作坊送回的內容已過期或無法讀取；請回到工作坊再送一次。', true);
+  const panel = $('#workshop-return');
+  const targetId = projects.some(p => p.id === record.origin?.projectId) ? record.origin.projectId : workspace.id;
+  const target = projects.find(p => p.id === targetId) ?? { id: workspace.id, title: workspace.title };
+  panel.innerHTML = workshopReturnPanel(record, target);
+  panel.hidden = false;
+  const close = () => { panel.hidden = true; panel.innerHTML = ''; };
+  const importInto = project => run(async () => {
+    if (project && project.id !== workspace.id) { audioFile = null; await commit(await loadProject(project.id)); }
+    else if (!project) { audioFile = null; const fresh = await call('newWorkspace'); fresh.title = record.name || '工作坊編輯'; await commit(fresh); }
+    await putSource('candidate', returnFileName(record), record.mml, 'supporting');
+    close();
+    message(`已匯入為候選（${UNVERIFIED_LABEL}）；請依本頁的技術驗證與審核重新確認。`, true);
+  }, { revisionBound: false, projectBound: false });
+  $('#workshop-import').onclick = () => importInto(target);
+  $('#workshop-import-new').onclick = () => importInto(null);
+  $('#workshop-discard').onclick = () => { close(); message('已捨棄工作坊送回的內容。'); };
+  panel.scrollIntoView?.({ block: 'start' });
+}
 async function buildAudit(){ try{ const r=await fetch('./build.json'); if(!r.ok) return null; return (await r.json()).audit??null; } catch { return null; } }
 function network(){ $('#network').textContent=navigator.onLine?'本地執行 · Online':'本地執行 · Offline'; }
 addEventListener('online',network);addEventListener('offline',network);network();
@@ -1555,5 +1600,6 @@ try {
   try { workspace=projects[0]?await loadProject(projects[0].id):null; } catch(error){message(error.message,true);workspace=null;}
   workspace??=await call('newWorkspace');
   $('#boot').hidden=true;$('#app').hidden=false;await run(()=>commit(workspace),{revisionBound:false});
+  offerWorkshopReturn();
   if('serviceWorker' in navigator) registerServiceWorker();
 } catch(error){$('#boot').textContent=error.message;$('#boot').className='boot-error';$('#boot').hidden=false;$('#app').hidden=true;}
