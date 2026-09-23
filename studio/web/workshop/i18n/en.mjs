@@ -681,7 +681,7 @@ export default {
   "html.fileBox.0.1.2": "“Create New” starts a brand new file: <b>track count, instruments and the file name all go back to default</b>; key signature and line-wrap settings are kept. Ctrl+Z undoes it.",
   "html.fileBox.0.2.0": "Import",
   "html.fileBox.0.2.1~0": "Choose a file",
-  "html.fileBox.0.2.1.0": ".mid · .mml · .mmi · .musicxml, or drop a file into this box",
+  "html.fileBox.0.2.1.0": ".mid · .mml · .mmi · .musicxml · .mxl, or drop a file into this box",
   "html.fileBox.0.2.3": "Voices in the file that contain notes are listed for you to tick, up to 15 tracks. Importing <b>replaces the contents of every tab</b>, including the aux tracks.",
   "html.fileBox.0.3.0": "Export",
   "html.expName@aria-label": "Export file name",

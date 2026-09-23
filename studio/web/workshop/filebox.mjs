@@ -158,6 +158,10 @@ async function read(file) {
   if (buf.length >= 4 && buf[0] === 0x4d && buf[1] === 0x54 && buf[2] === 0x68 && buf[3] === 0x64)
     return readMidi(buf, file.name);
 
+  // Compressed MusicXML (.mxl) is a ZIP archive, whatever the file is called.
+  if (buf.length >= 4 && buf[0] === 0x50 && buf[1] === 0x4b && buf[2] === 0x03 && buf[3] === 0x04)
+    return readMxl(buf, file.name);
+
   const head = new TextDecoder("utf-8").decode(buf.subarray(0, 2048));
   if (/<score-(partwise|timewise)\b/.test(head) || /\.(musicxml|xml)$/i.test(file.name ?? ""))
     return readXml(buf, file.name);
@@ -225,6 +229,20 @@ function readText(buf, name) {
 }
 
 // Local MusicXML (uncompressed score-partwise), read in this browser only.
+// The same container reader Studio's intake uses finds the score inside; it is
+// loaded only when an archive is picked. The score then reads like a .musicxml.
+async function readMxl(buf, name) {
+  let xml;
+  try {
+    const { extractMusicXmlFromMxl } = await import("../../backend/score/mxl.mjs");
+    xml = extractMusicXmlFromMxl(buf).xml;
+  } catch (err) {
+    showErr(i18n.t("fileBox.readFailed", { msg: err.message }));
+    return;
+  }
+  return readXml(new TextEncoder().encode(xml), name);
+}
+
 function readXml(buf, name) {
   let smf, list;
   try {

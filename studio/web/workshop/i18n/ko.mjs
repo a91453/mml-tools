@@ -681,7 +681,7 @@ export default {
   "html.fileBox.0.1.2": "'새로 만들기'는 완전히 새 파일을 시작합니다: <b>트랙 수와 악기, 파일 이름이 모두 기본값으로 돌아갑니다</b>. 조표와 줄바꿈 설정은 유지됩니다. Ctrl+Z로 되돌릴 수 있습니다.",
   "html.fileBox.0.2.0": "가져오기",
   "html.fileBox.0.2.1~0": "파일 선택",
-  "html.fileBox.0.2.1.0": ".mid · .mml · .mmi · .musicxml, 또는 이 칸에 파일을 끌어다 놓으세요",
+  "html.fileBox.0.2.1.0": ".mid · .mml · .mmi · .musicxml · .mxl, 또는 이 칸에 파일을 끌어다 놓으세요",
   "html.fileBox.0.2.3": "파일 안에서 음표가 있는 성부를 최대 15개 트랙까지 골라 쓸 수 있게 보여줍니다. 가져오면 <b>모든 탭의 내용이 바뀝니다</b>. 보조 트랙도 포함됩니다.",
   "html.fileBox.0.3.0": "내보내기",
   "html.expName@aria-label": "내보낼 파일 이름",

@@ -681,7 +681,7 @@ export default {
   "html.fileBox.0.1.2": "「新規作成」は新しいファイルを始めます：<b>トラック数・楽器・ファイル名がすべて既定に戻ります</b>。調号と改行設定は保持されます。Ctrl+Z で元に戻せます。",
   "html.fileBox.0.2.0": "読み込み",
   "html.fileBox.0.2.1~0": "ファイルを選択",
-  "html.fileBox.0.2.1.0": ".mid · .mml · .mmi · .musicxml、またはこの枠にファイルをドロップ",
+  "html.fileBox.0.2.1.0": ".mid · .mml · .mmi · .musicxml · .mxl、またはこの枠にファイルをドロップ",
   "html.fileBox.0.2.3": "ファイル内の音符がある声部を一覧にして選べるようにします（最大 15 トラック）。読み込むと<b>すべてのタブの内容が置き換わります</b>。補助トラックも含みます。",
   "html.fileBox.0.3.0": "書き出し",
   "html.expName@aria-label": "書き出すファイル名",

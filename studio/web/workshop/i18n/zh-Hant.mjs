@@ -681,7 +681,7 @@ export default {
   "html.fileBox.0.1.2": "「新增」會開一份全新的檔案：<b>軌數、樂器與檔名全部回到預設</b>，調號與換行設定保留。按 Ctrl+Z 可以復原。",
   "html.fileBox.0.2.0": "匯入",
   "html.fileBox.0.2.1~0": "選擇檔案",
-  "html.fileBox.0.2.1.0": ".mid · .mml · .mmi · .musicxml，或把檔案拖到這個框裡",
+  "html.fileBox.0.2.1.0": ".mid · .mml · .mmi · .musicxml · .mxl，或把檔案拖到這個框裡",
   "html.fileBox.0.2.3": "會列出檔案裡有音符的聲部讓你勾選，最多 15 軌。匯入會<b>取代所有分頁的內容</b>，包括輔助軌。",
   "html.fileBox.0.3.0": "匯出",
   "html.expName@aria-label": "匯出的檔名",
