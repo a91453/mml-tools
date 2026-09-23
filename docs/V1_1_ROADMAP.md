@@ -12,16 +12,25 @@ for the Published Canonical rule sources. Rule discovery starts only at
 
 | Identity | Value |
 | --- | --- |
-| `canonical_version` | `2026-09-13-v1` |
+| `canonical_version` | `2026-09-23-v3` |
 | `canonical_status` | `PUBLISHED` |
-| `manifest_version` | `2026-09-13-v1-manifest1` |
-| `rules_snapshot_sha` | `0a172900a01fdf39c2e9e84cf176961320b779ea` |
-| Manifest commit | `5e7666b850a37f1c85ee2dd8cd0f4fac037a9e14` |
-| Published main at reconstruction | `4487aac598bb5d0eb0907f71856fe99a6e28fa21` |
+| `manifest_version` | `2026-09-23-v3-manifest1` |
+| `rules_snapshot_sha` | `ff1a9df054f5ca1ae42571067fc95feb274755ef` |
+| `machine_delivery_schema` | `mabinogi-mobile-mml-studio/machine-delivery@2` |
+| Manifest commit | `44f3f0082cf5c30328edf1c251398b844488ad0a` |
+| Published main at this update | `96af74e60ec99cec910ab7dcf4b0d83c57d06ed0` |
 
-All six indexed documents were loaded from the exact snapshot and their
-version/publication headers verified. No local Skill, Master, memory, audit
-document or implementation behaviour was used as a rule substitute.
+Loaded with `npm run canonical:bootstrap -- --summary` from that published main
+(`CANONICAL_LOADED`). No local Skill, Master, memory, audit document or
+implementation behaviour was used as a rule substitute.
+
+The register was first reconstructed under `2026-09-13-v1`
+(`2026-09-13-v1-manifest1`, snapshot `0a172900a01fdf39c2e9e84cf176961320b779ea`,
+Manifest commit `5e7666b850a37f1c85ee2dd8cd0f4fac037a9e14`, published main
+`4487aac598bb5d0eb0907f71856fe99a6e28fa21`). The `2026-09-23-v2` and
+`2026-09-23-v3` releases changed machine delivery only (see the Manifest's
+release history); no status below was re-graded by that change. Rule
+references in G1–G16 cite section numbers as reconstructed under `v1`.
 
 ## Classification vocabulary
 
@@ -342,12 +351,16 @@ pairs. Both are stated in the code as data.
 ### G12 — Stale legacy `workbench-source.zip` · `OPEN`
 
 **Evidence.** `dist/workbench-source.zip` is tracked (`.gitignore` excludes only
-`dist/server/` and `dist/.openai/`). It was last committed in `8c755f5`
-(2026-09-09). `scripts/build.mjs:13` regenerates it from 23 explicitly listed
-inputs; since that commit, `README.md` has changed in 5 commits, `package.json`
-in 3 and `.gitignore` in 2, so the tracked artifact no longer matches its
-declared inputs. It is user-visible: `dist/index.html:32` offers it for download
-and `scripts/build.mjs:15` base64-embeds it into the legacy Worker bundle.
+`dist/server/` and `dist/.openai/`). `scripts/build.mjs:12-14` regenerates it
+from explicitly listed inputs, 26 of them as of `96af74e`; the tracked copy
+still has 23 entries and lacks
+`studio/backend/application/contracts.mjs`,
+`studio/backend/application/technical-service.mjs` and
+`scripts/bundle-sites-worker.mjs`, so it no longer matches its declared inputs.
+Its latest change, `d8d5307` (2026-09-23), replaced one entry inside the
+archive to remove Railway IDs and deliberately left the rest as it was. It is
+user-visible: `dist/index.html:32` offers it for download and
+`scripts/build.mjs:16-19` base64-embeds it into the legacy Worker bundle.
 
 **Mitigating fact.** Studio CI runs `npm run build` on main, which rebuilds the
 zip, so deployments do not serve the stale committed bytes. The drift is in the
@@ -653,7 +666,8 @@ content-checked and unaffected.
 
 ## Listening-loop register
 
-Scheduled for the release after `2026-09-23-v2`. Under that release a delivery
+Scheduled for, and delivered with, the release after `2026-09-23-v2`
+(`2026-09-23-v3`). Under that release a delivery
 the machine could fully determine is handed over for listening while the
 reviewer residue stays unresolved; these items shorten the loop between that
 listening and the next AI revision. They are Web workspace features: none of
@@ -662,9 +676,9 @@ leaves the gate model exactly as published.
 
 | ID | Subject | Status | Blocker class | Canonical impact |
 | --- | --- | --- | --- | --- |
-| L1 | Jump from the unresolved ledger to the flagged bars | `OPEN` | `IMPLEMENTATION_WORK` | `NONE` |
-| L2 | Play only the bars changed since the previous version | `OPEN` | `IMPLEMENTATION_WORK` | `NONE` |
-| L3 | Mark issues on the review roll as AI revision targets | `OPEN` | `DESIGN_REQUIRED` | `NONE` |
+| L1 | Jump from the unresolved ledger to the flagged bars | `RESOLVED` in PR #82 | — | `NONE` |
+| L2 | Play only the bars changed since the previous version | `RESOLVED` in PR #82 | — | `NONE` |
+| L3 | Mark issues on the review roll as AI revision targets | `RESOLVED` in PR #82 (design point settled locally; see below) | — | `NONE` |
 
 - **L1.** Each `NON_BLOCKING_PENDING` entry that names events or bars becomes a
   link that seeks the preview player and scrolls the review roll to that span.
@@ -680,8 +694,31 @@ leaves the gate model exactly as published.
   review flows. Open design point: whether marks travel to the service over MCP
   as proposal targets or stay local until exported.
 
+**As delivered** (PR #82, commit `83fccbd`; user-facing description in
+`studio/web/README.md`, 試聽工作階段):
+
+- **L1.** Listening sessions play from a bar, a time or a marker with a
+  whole-bar lead-in. Markers come from a listen link or, for a verified local
+  delivery, from the machine-delivery unresolved-evidence ledger, pending Lead
+  evidence at its events and unresolved cross-source harmony; clicking one
+  plays it and highlights the region on the session's roll.
+- **L2.** An exact event-level diff per role plus tempo changes drives
+  「只播放變更小節」 and A/B against the previous version. Ranged playback marks
+  any capture `RANGE_LIMITED`, so Gate 6 readback semantics are unchanged.
+- **L3.** Implemented as listening notes (position, role, kind, text). Two
+  points differ from the plan above and are recorded here rather than
+  reopened: a note is keyed to the MML's SHA-256 (stored as the project's
+  `listeningNotes`, no revision change), not to a workspace revision; and the
+  open design point was settled on the local side — notes stay in the browser
+  and leave as 「複製給 AI」 plain text or a listen link, not as MCP proposal
+  targets. A note is still a request, never a decision, evidence or a review.
+
+The MCP side can hand a Final to the listener with `studio_listen` (PR #84),
+whose markers use the same listen-link format.
+
 Follow-ups after L1–L3: accepting several reviewed decisions in one step, and
-A/B listening between two candidate variants.
+A/B listening between two candidate variants (A/B against the previous version
+exists; between two arbitrary candidates it does not).
 
 ## Dependencies
 

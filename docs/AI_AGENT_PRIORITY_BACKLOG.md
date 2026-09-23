@@ -11,7 +11,7 @@ Status: IMPLEMENTATION NOTES。不改 Canonical 或 Phase 2 接受政策。
 | P2 | 外部 agent dispatch／continuation | 已提供 UI 複製真實 service origin、project_id、run_id、revision 的接續資訊，與提案回到畫面的路徑。本分支已實作選配Codex runner及網頁啟動／審查後續跑；三種瀏覽器與真實Codex分別驗證。含idempotency、停止、重啟停止及未知結果核對；正式站未啟用。見[操作說明](STUDIO_AGENT_CONTINUATION.md)。 |
 | P2 | 完整歌曲輸出與驗收 | 真實 source→decisions→G12→Mobile→review→finalize→MML，再驗證技術與事件回讀；音樂品質、聽驗、實機接受分開記錄。尚未完成。 |
 | P3 | 大型唯讀報告效能 | 分頁已可完整回讀，但每頁重算。先使用 path 讀必要區段；若量測證明需要，再評估既有 store 上可失效的報告快照，不先建背景佇列／新資料庫。 |
-| P3 | Legacy Worker build | 本機缺 zip；與現有 Studio Railway HTTP/MCP 入口分開處理，尚無該 bundle 建置／部署驗收。 |
+| P3 | Legacy Worker build | zip 不缺：`dist/workbench-source.zip` 已在 repo 追蹤，`npm run build` 會重新產生並嵌入 Worker bundle；Studio CI 每次都跑這個 build，`tests/sites-build.test.mjs` 驗證打包結果。追蹤中的 zip 與 build 輸入不一致，見 [roadmap G12](V1_1_ROADMAP.md)。仍與現有 Studio Railway HTTP/MCP 入口分開處理，尚無該 bundle 的部署驗收。 |
 
 遠端模式測試使用獨立 OAuth consent／PKCE／bearer 與實際 loopback HTTP server，
 不是對正式部署登入。CLI regression 驗證合成 MIDI 上傳、run 重開、完整報告、
