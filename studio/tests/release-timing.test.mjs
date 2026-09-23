@@ -39,7 +39,7 @@ import {
 } from '../backend/canonical/release-timing.mjs';
 import { MICRO_GAP_BLOCKERS, enforceMicroGaps } from '../backend/final/micro-gap-enforcement.mjs';
 import { planMobileAdaptation } from '../backend/adaptation/index.mjs';
-import { compareCandidateLineage } from '../backend/compare/version-drift.mjs';
+import { compareCandidateLineage, compareCanonicalVersions } from '../backend/compare/version-drift.mjs';
 import { sixRoleBaseline } from './fixtures/application-fixtures.mjs';
 
 const TPQ = 480;
@@ -324,4 +324,23 @@ test('RT-14 an accepted previous version stays comparable, and the comparison sh
   assert.equal(lineage.previousToCandidate.summary.noteModified, 1, 'only b differs from the accepted previous version');
   assert.deepEqual(lineage.previousToCandidate.notes.modified.map(pair => [pair.before.id, pair.changes.end]), [['b', { before: '959/480', after: '2' }]]);
   assert.equal(lineage.sourceToCandidate.summary.noteAdded + lineage.sourceToCandidate.summary.noteRemoved, 0);
+});
+
+test('RT-15 the version diff pairs a moved release with its source note only through a recorded representation', () => {
+  const source = createCanonicalNoteEvent({ id: 'a', pitch: 60, start: '0', end: tickBefore(1), role: null, sourceIds: ['third'], metadata: {} });
+  const baseline = project([source]);
+  // Same onset and pitch, new role and a different release, but no record: an
+  // unrelated removal and addition, exactly as before this pass existed.
+  const unrecorded = project([createCanonicalNoteEvent({ ...source, role: 'Melody', end: '1' })]);
+  const plain = compareCanonicalVersions(baseline, unrecorded);
+  assert.deepEqual([plain.summary.noteRemoved, plain.summary.noteAdded, plain.summary.noteModified], [1, 1, 0]);
+  // With the record naming that exact source release, it is one modified note.
+  const change = { eventId: 'a', before: { end: source.end }, after: { end: '1' }, delta: '1/480', deltaTicks: 1, representation: REPRESENTATION.EXTEND_TO_NEXT_GRID, effect: 'role-end-moves-later', decisionId: 'rr' };
+  const recorded = project([createCanonicalNoteEvent({ ...source, role: 'Melody', end: '1', metadata: { [RELEASE_RECORD_KEY]: releaseRecordFor(change) } })]);
+  const traced = compareCanonicalVersions(baseline, recorded);
+  assert.deepEqual([traced.summary.noteRemoved, traced.summary.noteAdded, traced.summary.noteModified], [0, 0, 1]);
+  assert.deepEqual(traced.notes.modified[0].changes.end, { before: source.end, after: '1' });
+  // A record naming a different source release pairs nothing.
+  const wrong = project([createCanonicalNoteEvent({ ...source, role: 'Melody', end: '1', metadata: { [RELEASE_RECORD_KEY]: releaseRecordFor({ ...change, before: { end: tickBefore('3/4') } }) } })]);
+  assert.equal(compareCanonicalVersions(baseline, wrong).summary.noteModified, 0);
 });
