@@ -64,6 +64,9 @@ function studio({ intercept = null } = {}) {
     FormData: class { constructor(form) { return Object.entries(form.fields); } },
     setTimeout: () => 0, clearTimeout() {}, navigator: {},
     listProjects: async () => [...stored.values()],
+    listProjectSummaries: async () => [...stored.values()].map(({ id, title, savedAt, revision }) => ({ id, title, savedAt, revision })),
+    loadProject: async id => stored.get(id),
+    storageHealth: async () => ({ usage: null, quota: null, persisted: null }),
     saveProject: async workspace => { const saved = { ...workspace, savedAt: 'saved' }; stored.set(workspace.id, saved); return saved; },
     render() {},
   });

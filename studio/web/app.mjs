@@ -1,4 +1,5 @@
-import { listProjects, saveProject } from './storage.mjs';
+import { listProjectSummaries, loadProject, requestPersistence, saveProject, storageHealth } from './storage.mjs';
+import { unzipFiles, zipFiles } from './backup-zip.mjs';
 import { createWorkerClient } from './worker-client.mjs';
 import { createTaskQueue } from './task-queue.mjs';
 import { createUpdateFlow } from './pwa-update.mjs';
@@ -87,8 +88,19 @@ function download(name, value, type = 'application/json') {
   setTimeout(() => URL.revokeObjectURL(url), 10000);
 }
 async function refreshProjects() {
-  projects = await listProjects();
+  projects = await listProjectSummaries();
   $('#projects').innerHTML = options(projects.map(p => [p.id, p.title]), workspace?.id);
+  showSaveState();
+}
+async function showSaveState() {
+  const pill = $('#save-state');
+  if (!pill) return;
+  const saved = workspace?.savedAt ? `已儲存 ${new Date(workspace.savedAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}` : workspace ? '尚未儲存：請匯出備份' : '';
+  pill.textContent = saved;
+  pill.className = `save-state ${workspace?.savedAt ? 'ok' : 'warn'}`;
+  const health = await storageHealth().catch(() => null);
+  const detail = $('#storage-detail');
+  if (detail && health) detail.textContent = [health.usage !== null && health.quota ? `已用 ${bytesLabel(health.usage)}／${bytesLabel(health.quota)}` : null, health.persisted === true ? '已保留離線資料' : health.persisted === false ? '瀏覽器可能清除本機資料' : null].filter(Boolean).join(' · ');
 }
 async function commit(next) {
   mobilePreview = null;
@@ -770,9 +782,9 @@ function bind() {
 }
 
 $('#new-project').onclick=()=>run(async()=>{audioFile=null;await commit(await call('newWorkspace'));},{revisionBound:false,projectBound:false});
-$('#projects').onchange=()=>{const id=$('#projects').value;run(async()=>{const selected=projects.find(p=>p.id===id);if(!selected)throw Error('找不到選取的專案，請重新開啟');audioFile=null;await commit(selected);},{revisionBound:false,projectBound:false});};
+$('#projects').onchange=()=>{const id=$('#projects').value;run(async()=>{if(!projects.some(p=>p.id===id))throw Error('找不到選取的專案，請重新開啟');const selected=await loadProject(id);audioFile=null;await commit(selected);},{revisionBound:false,projectBound:false});};
 $('#export-project').onclick=()=>{if(workspace)download('mml-studio-project.json',JSON.stringify({...workspace,canonical:identity.metadata},null,2));};
-$('#restore-project').onchange=()=>{const file=$('#restore-project').files[0];if(file)run(async()=>{if(file.size>16*1048576)throw Error(`Project backup is ${(file.size/1048576).toFixed(1)} MiB; the restore limit is 16 MiB. Export the sources separately if a MIDI project exceeds it.`);audioFile=null;await commit(await call('importWorkspace',await file.text()));message('已匯入；先前審核保留為歷史，本輪需要重新審核。');},{revisionBound:false,projectBound:false});};
+$('#restore-project').onchange=()=>{const file=$('#restore-project').files[0];if(file&&/\.zip$/i.test(file.name))return run(()=>restoreZip(file),{revisionBound:false,projectBound:false});if(file)run(async()=>{if(file.size>16*1048576)throw Error(`Project backup is ${(file.size/1048576).toFixed(1)} MiB; the restore limit is 16 MiB. Export the sources separately if a MIDI project exceeds it.`);audioFile=null;await commit(await call('importWorkspace',await file.text()));message('已匯入；先前審核保留為歷史，本輪需要重新審核。');},{revisionBound:false,projectBound:false});};
 // ─── In-game probe kit ──────────────────────────────────────────────────────
 // Fixed test strings for open engine questions and a place to record what the
 // game actually did. Observations stay on this device (engine-probe-store.mjs),
@@ -1082,6 +1094,37 @@ function registerServiceWorker(){
     document.addEventListener('visibilitychange',()=>{if(document.visibilityState==='visible')updateFlow.check();});
   }).catch(()=>message('離線資源尚未安裝，請保持連線並重試。',true));
 }
+// ─── Local library: save state, persistence and whole-library backup ────────
+// The sidebar always says whether the open project is saved, how much of the
+// browser's quota Studio uses, and whether storage is persistent; persistence
+// is requested only when the user asks (Safari may ignore it). "Export all"
+// writes every project as its usual backup JSON into one ZIP; restoring a ZIP
+// imports each entry through importWorkspace, like a single backup.
+$('#persist-storage').onclick=async()=>{const granted=await requestPersistence().catch(()=>null);message(granted===true?'瀏覽器已同意保留本機資料。':granted===false?'瀏覽器沒有同意；請定期匯出備份。':'此瀏覽器不支援保留本機資料；請定期匯出備份。',granted!==true);showSaveState();};
+const safeName=value=>String(value||'project').replace(/[\\/:*?"<>|\u0000-\u001f]+/g,'_').slice(0,60);
+$('#export-all').onclick=()=>run(async()=>{
+  const summaries = await listProjectSummaries();
+  const files = [];
+  for (const summary of summaries) {
+    const full = await loadProject(summary.id);
+    files.push({ name: `projects/${safeName(full.title)}-${full.id.slice(0, 8)}.json`, data: new TextEncoder().encode(JSON.stringify({ ...full, canonical: identity.metadata }, null, 2)) });
+  }
+  if (!files.length) throw Error('沒有可匯出的專案');
+  download(`mml-studio-projects-${new Date().toISOString().slice(0, 10)}.zip`, await zipFiles(files), 'application/zip');
+  message(`已匯出 ${files.length} 個專案。`);
+},{revisionBound:false,projectBound:false});
+async function restoreZip(file){
+  const entries = (await unzipFiles(await file.arrayBuffer())).filter(entry => entry.name.toLowerCase().endsWith('.json'));
+  if (!entries.length) throw Error('ZIP 內沒有專案備份');
+  let restored = 0;
+  for (const entry of entries) {
+    audioFile = null;
+    try { await commit(await call('importWorkspace', new TextDecoder().decode(entry.data))); }
+    catch (error) { throw Error(`${entry.name}：${error.message}（此前已匯入 ${restored} 個）`); }
+    restored += 1;
+  }
+  message(`已從 ZIP 匯入 ${restored} 個專案；先前審核保留為歷史，本輪需要重新審核。`);
+}
 // Build/Git provenance is audit metadata served by build.json, deliberately
 // outside the hashed runtime bundle. Display-only: its absence never relaxes
 // Canonical verification, which already ran fail-closed inside the worker.
@@ -1091,8 +1134,9 @@ addEventListener('online',network);addEventListener('offline',network);network()
 try {
   identity=await call('identity');
   identity={...identity,provenance:await buildAudit()};
-  try { projects=await listProjects(); } catch(error){message(error.message,true);}
-  workspace=projects[0]??await call('newWorkspace');
+  try { projects=await listProjectSummaries(); } catch(error){message(error.message,true);}
+  try { workspace=projects[0]?await loadProject(projects[0].id):null; } catch(error){message(error.message,true);workspace=null;}
+  workspace??=await call('newWorkspace');
   $('#boot').hidden=true;$('#app').hidden=false;await run(()=>commit(workspace),{revisionBound:false});
   if('serviceWorker' in navigator) registerServiceWorker();
 } catch(error){$('#boot').textContent=error.message;$('#boot').className='boot-error';$('#boot').hidden=false;$('#app').hidden=true;}

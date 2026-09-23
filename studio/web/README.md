@@ -42,6 +42,14 @@ tokens to avoid silently overwriting each other. Export backups regularly: Safar
 can evict local data. Backup imports preserve old reviews as history and require
 new review; they cannot import a ready-made acceptance claim.
 
+The sidebar says whether the open project is saved, how much of the browser's
+quota Studio uses, and whether the browser has agreed to keep the data.
+「保留離線資料」 asks for persistent storage only when pressed (Safari may
+ignore it). 「匯出全部專案（ZIP）」 writes every project as its usual backup
+JSON into one ZIP; choosing a ZIP under 「匯入專案備份」 imports each entry
+as a new project through the same restore path as a single backup. The ZIP
+reader verifies each entry's CRC-32 and limits entry count and size.
+
 Files and review actions are serialized in FIFO order, including during boot.
 Pending evidence stays bound to its project and revision; choosing a different
 project cannot transfer queued reviews or source files to it.
@@ -208,6 +216,23 @@ exact timing, event identity and the evidence boundaries. See
     after queued actions and refuses an unsaved project.
   - **Other tabs.** A tab that another tab updated is marked stale and must
     reload before doing more work, so old and new modules never mix.
+- **Project library v2** (`storage.mjs`, `backup-zip.mjs`).
+  - **List records.** The database keeps a small list record per project
+    (ID, title, save time, revision) next to the full workspace, written in
+    the same transaction. The project picker reads only those records; a
+    project is loaded in full when opened.
+  - **Upgrade.** Opening a v1 database derives the list records from the
+    stored workspaces. The workspaces themselves are not rewritten.
+- **In-game probe kit** (section 07; `engine-probe.mjs`,
+  `engine-probe-store.mjs`).
+  - **What it is.** Fixed test strings for open engine questions (Nxx
+    octave, tie/length order) that you paste into the game, with the outcomes
+    you can observe.
+  - **What a record is.** Class E evidence for the exact client, version and
+    instrument you name, bound to the SHA-256 of the pasted string. It is kept
+    on this device, outside project backups, and exported explicitly as JSON.
+  - **What it is not.** It never changes a Canonical rule. Applying it goes
+    through the published Canonical process.
 
 ## Build and CI (developer / operator only)
 
