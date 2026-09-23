@@ -11,7 +11,7 @@ on:
   workflow_dispatch:
 
 concurrency:
-  group: studio-durable-release-5769e76849e5
+  group: studio-durable-release-66e9244f89e2
   cancel-in-progress: false
 
 permissions:
@@ -30,14 +30,14 @@ jobs:
       - name: Check published main and build the pinned merged source
         shell: bash
         run: |
-          test "$(git rev-parse origin/main)" = 5769e76849e5ef8dad03b4080050cafcf1c2eabe
-          git worktree add --detach /tmp/studio-release-source 5769e76849e5ef8dad03b4080050cafcf1c2eabe
+          test "$(git rev-parse origin/main)" = 66e9244f89e2f8d597e3df16d028fd79e932f6c6
+          git worktree add --detach /tmp/studio-release-source 66e9244f89e2f8d597e3df16d028fd79e932f6c6
           cd /tmp/studio-release-source
           npm install --ignore-scripts --package-lock=false
           node scripts/bootstrap-canonical.mjs --summary
           node scripts/build.mjs
           node scripts/build-studio-web.mjs
-          node scripts/verify-studio-artifact.mjs studio/web-build --buildId=34c67a4a1284eee1243ee51858096660c16cbf22cf0347e139abb15f2dc3e258 --sourceSha=5769e76849e5ef8dad03b4080050cafcf1c2eabe --canonical_version=2026-09-13-v1 --canonical_status=PUBLISHED --manifest_version=2026-09-13-v1-manifest1 --rules_snapshot_sha=0a172900a01fdf39c2e9e84cf176961320b779ea
+          node scripts/verify-studio-artifact.mjs studio/web-build --buildId=cd91784865d5a2069a67979f5cca523b918611f22fa86471baa26ddde0bd8012 --sourceSha=66e9244f89e2f8d597e3df16d028fd79e932f6c6 --canonical_version=2026-09-13-v1 --canonical_status=PUBLISHED --manifest_version=2026-09-13-v1-manifest1 --rules_snapshot_sha=0a172900a01fdf39c2e9e84cf176961320b779ea
       - name: Package deterministic runtime and separately pinned trust bundles
         run: |
           python ops/permanent/package_release.py /tmp/studio-release-source /tmp/studio-release-source/studio/web-build /tmp/studio-release-assets
