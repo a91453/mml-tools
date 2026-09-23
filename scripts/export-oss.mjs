@@ -16,7 +16,9 @@ const blockedPathFragments = [
   '/ops/', '/railway/', '/.openai/', '/docs/history/', '/dist/workbench-source.zip',
   '/node_modules/', '/studio/web-build/', '/studio/browser-results/', '/.git/',
 ];
-const blockedExtensions = new Set(['.m4a', '.mp3', '.flac', '.wav', '.mid', '.midi', '.musicxml', '.mxl', '.pdf', '.zip', '.sqlite', '.db']);
+// Sound banks too: the free default preview bank is fetched from its upstream
+// by each browser and never redistributed.
+const blockedExtensions = new Set(['.m4a', '.mp3', '.flac', '.wav', '.mid', '.midi', '.musicxml', '.mxl', '.pdf', '.zip', '.sqlite', '.db', '.sf2', '.sf3', '.dls']);
 
 function normalized(path) {
   return `/${relative(root, path).split(sep).join('/')}`;
@@ -91,6 +93,7 @@ for (const path of [
   'scripts/studio-artifact-identity.mjs',
   'scripts/verify-studio-artifact.mjs',
   'scripts/audit-oss-export.mjs',
+  'scripts/build-default-soundbank.mjs',
 ]) await copyFile(path);
 
 // Implementation documents that a shipped regression opens by path. The export

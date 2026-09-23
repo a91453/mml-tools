@@ -27,6 +27,12 @@ const EMBEDDED = Object.freeze([
 ]);
 const SHA256 = /^[a-f0-9]{64}$/;
 const SHA1 = /^[a-f0-9]{40}$/;
+// No sound bank ships, as a file or inside one (a RIFF SoundFont/DLS header,
+// raw or base64): the free default preview bank is fetched from its upstream
+// by each browser and never redistributed, and a bank the user picks never
+// leaves their browser.
+const SOUND_BANK_PATH = /\.(?:dls|sf2|sf3)$/i;
+const SOUND_BANK_BYTES = /RIFF[\s\S]{4}(?:sfbk|DLS )|UklGR[A-Za-z0-9+/]{7}(?:ZmJr|TFMg)/;
 
 export class ArtifactNotVerifiedError extends Error {
   constructor(reason) {
@@ -95,8 +101,9 @@ export async function verifyStudioArtifact(dir, expected = {}, { serviceWorkerTe
   need(present.size === 0, `Unexpected file not covered by the asset manifest: ${[...present].sort()[0]}`);
 
   for (const [path, hash] of manifest) {
-    const actual = digest(await readFile(resolve(dir, path)));
-    need(actual === hash, `Asset hash mismatch: ${path}`);
+    const bytes = await readFile(resolve(dir, path));
+    need(digest(bytes) === hash, `Asset hash mismatch: ${path}`);
+    need(!SOUND_BANK_PATH.test(path) && !SOUND_BANK_BYTES.test(bytes.toString('latin1')), `Artifact carries a sound bank: ${path}`);
   }
 
   // Hash self-consistency only proves the artifact matches its own manifest. A

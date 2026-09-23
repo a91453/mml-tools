@@ -78,6 +78,10 @@ const spessaBanner = `/*! SpessaSynth — vendored from npm: ${spessaVersions.jo
 await put('vendor/spessasynth/lib.js', `${spessaBanner}\n${spessaLicense}\n*/\n${stripMap(spessaLib.replaceAll('from "spessasynth_core"', 'from "./core.js"'))}`);
 await put('vendor/spessasynth/core.js', `${spessaBanner} * Full license text: the header of vendor/spessasynth/lib.js.\n */\n${stripMap(await readFile(resolve(coreDist, 'index.js'), 'utf8'))}`);
 await put('vendor/spessasynth/processor.js', `${spessaBanner} * Full license text: the header of vendor/spessasynth/lib.js.\n */\n${stripMap(await readFile(resolve(libDist, 'spessasynth_processor.min.js'), 'utf8'))}`);
+// No sound bank is part of the build. The free default preview bank is
+// downloaded from its upstream by the browser that first needs it and kept
+// only there (studio/web/preview/default-bank.mjs); a bank the user picks
+// stays in their browser too.
 const xmlPath = 'studio/backend/score/musicxml.mjs';
 await put(xmlPath, (await readFile(resolve(root, xmlPath), 'utf8')).replace("from 'fast-xml-parser'", "from '../../../vendor/xml.mjs'"));
 for (const name of ['index.html', 'style.css', 'manifest.webmanifest', 'icon.svg', 'apple-touch-icon.png']) {

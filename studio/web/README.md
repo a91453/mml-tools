@@ -206,12 +206,39 @@ exact timing, event identity and the evidence boundaries. See
   - **Per-role counts.** Characters beyond 2,400 are banded, never removed. The
     paste box shows per-role counts with the P1 disclaimer.
 - **Timbre preview** (section 06; `preview/player.mjs`, `preview/schedule.mjs`,
-  `preview/soundbank-store.mjs`).
+  `preview/soundbank-store.mjs`, `preview/default-bank.mjs`).
   - **What it plays.** The current delivery MML (generated, pasted, or a
     candidate that is itself valid MML), played through SpessaSynth with a
-    DLS/SF2/SF3 bank you pick on your device.
-  - **Where the bank lives.** In its own IndexedDB database on that device. It
-    is never uploaded, never in a project backup, and never in the build.
+    DLS/SF2/SF3 bank you pick on your device, or, until you pick one, the
+    free default bank.
+  - **Where your bank lives.** In its own IndexedDB database on that device. It
+    is never uploaded, never in a project backup, and never in the build, and
+    it always takes precedence over the default bank.
+  - **The default bank.** A General MIDI subset of FluidR3Mono_GM.sf3 (MIT).
+    It is not in this repository and not in the build: the upstream file asks
+    not to be redistributed. Nothing is downloaded when the page loads. The
+    first time you press play without a bank of your own, the page says
+    「第一次使用免費音色：將從 MuseScore 官方來源下載約 14.6 MB，只存在這台裝置」,
+    downloads the pinned upstream file from MuseScore's repository with
+    progress, and refuses it unless its SHA-256 matches. A Worker trims it
+    with the vendored spessasynth_core (`preview/default-bank-trim.mjs`, the
+    same operations `scripts/build-default-soundbank.mjs` runs in Node), and
+    the subset is refused unless its SHA-256 matches too. Both digests are
+    pinned in `preview/default-bank.mjs` and `default-bank/provenance.json`.
+    Only the subset (about 1.6 MB) is kept, in the same IndexedDB database as
+    your bank, under its digest; later sessions use it offline, and
+    「刪除這台裝置上的免費音色」 removes it. If the download fails (offline,
+    blocked, altered), playback says so and suggests picking your own bank;
+    nothing else changes. Everywhere it is active it is labelled
+    「免費通用音色（近似），不是遊戲音色」. Each role can pick one of eleven
+    game instrument names mapped to GM (`preview/instruments.mjs`): 魯特琴
+    Lute→24, 曼陀林 Mandolin→25, 夏盧莫管 Chalumeau→71, 木琴 Xylophone→13,
+    長笛 Flute→73, 小提琴 Violin→40, 鋼琴 Piano→0, 豎琴 Harp→46, 音樂盒 Music
+    Box→10 (0-based programs), 大鼓 BassDrum→drum-kit note 35 (36 also kept),
+    鈸 Cymbals→drum-kit note 49 (57 also kept). With your own bank the picker
+    lists that bank's presets. Per-role instruments or a drum kit make a
+    playback's capture incomplete, so Gate 6 readback still needs one program
+    on every role.
   - **How the engine is loaded.** Vendored at build time from the pinned npm
     packages (Apache-2.0; license text in the header of `vendor/spessasynth/lib.js`) and only when you press
     play. The CSP adds `'wasm-unsafe-eval'` for its bundled WebAssembly decoder;
@@ -275,6 +302,60 @@ exact timing, event identity and the evidence boundaries. See
     on this device, outside project backups, and exported explicitly as JSON.
   - **What it is not.** It never changes a Canonical rule. Applying it goes
     through the published Canonical process.
+
+## Listening sessions (試聽工作階段)
+
+Studio delivers a machine-checked Final first and flags what still needs a
+person's ear. A listening session is where the owner hears exactly those
+places, writes down what they heard and hands it to the next revision. It is a
+listening aid: it passes no gate and records no review, readback or acceptance.
+
+- **Opening one.** 「送到試聽」 next to the Final MML (section 06), the complete
+  MML@ (section 07) and any MML source card opens a new session for that exact
+  string, or open a listen link: `<studio-web-origin>/#listen=<payload>`
+  (`?listen=` also works; see `listen-link.mjs`). A session is stored in its own
+  IndexedDB database (`listen-store.mjs`), listed under 「試聽工作階段」 in the
+  sidebar and deletable there. Opening a link never creates, opens or
+  overwrites a project, never plays by itself, and removes the payload from
+  the address bar as soon as it is read.
+- **Listen links.** `payload` is base64url (no padding) of deflate-raw of the
+  UTF-8 JSON `mml-studio/listen-link@1` document: `mml` (required), `title`,
+  `meter_text`, `start` (`{bar}` or `{beat}`), up to 500 `markers` (`beat`,
+  `end_beat`, `role`, `kind` = `provisional-release | lead-unverified | pending
+  | changed | note`, `label`), `compare_mml` and display-only `source`. The
+  decoded JSON is capped at 256 KiB (reading stops at the cap), each MML at
+  40,000 characters; an unknown schema or any invalid field refuses the whole
+  link, unknown keys are dropped, and every string is shown as escaped text.
+  Golden vectors shared with the MCP side are in
+  `studio/tests/fixtures/listen-link-vectors.json`.
+- **Playing (L1).** Play from a bar, a time (m:ss) or a marker; a marker, a
+  note or a changed bar starts whole bars earlier (1 by default, 0/1/2/4
+  selectable). The current bar, beat and time are shown while playing. Stop
+  returns to the start point and 「重播」 plays the same range again. Every
+  role can be muted or soloed. Playback reuses the section 06 preview engine,
+  bank and scheduler; a ranged playback queues nothing past its end.
+- **Markers.** From the link, and for a verified local delivery from its
+  analysis: the unresolved-evidence ledger of the machine-delivery projection
+  (whole-song entries), Lead evidence still pending at its events, and
+  unresolved cross-source harmony. Clicking one plays it and highlights the
+  region on the session's roll.
+- **Changed bars (L2).** Against `compare_mml`, or another MML the project sent
+  along or another session: an exact event-level diff per role (pitch, onset,
+  duration, volume) plus tempo changes, read by the repository MML parser in
+  the Worker (`listen-model.mjs`, `listen-timeline.mjs`). Bars come from the
+  meter text; without one they are 4/4 and the session says 「4/4 假設」.
+  「只播放變更小節」 plays each changed region in order with its lead-in; the
+  A/B switch plays the same bars in the previous version, timed by its own
+  tempo map.
+- **Notes (L3).** A note has a position (the playing position snapped to its
+  beat, a bar, or a note picked on the roll), an optional role, a kind
+  (too-loud, wrong-note, timing, balance, other) and text. Notes are kept in
+  the session and, for a session opened from a project, on that project as
+  `listeningNotes` keyed by the MML's SHA-256 (no revision change; project
+  backups carry them). They reappear as markers when the session is reopened.
+  「複製給 AI」 copies plain text: the title, the MML's SHA-256, the meter, then
+  one line per note (`bar | beat-in-bar | quarter-beat position | time | role
+  | kind | text`). 「複製試聽連結」 makes a listen link for the session.
 
 ## Build and CI (developer / operator only)
 
@@ -371,3 +452,14 @@ historical implementation record. Current Raw MIDI behavior is documented in
 [Studio Web Raw MIDI](../../docs/STUDIO_WEB_RAW_MIDI.md), and the current repository
 status/readiness baseline is recorded in
 [Studio Status / Readiness Snapshot — 2026-09-15](../../docs/STUDIO_STATUS_READINESS_2026-09-15.md).
+
+## Credits
+
+- Timbre preview engine: SpessaSynth (`spessasynth_lib`, `spessasynth_core`),
+  Apache License 2.0, vendored at build time.
+- Default preview bank: a subset of FluidR3Mono_GM.sf3 2.312 — Fluid (R3)
+  SoundFont by Frank Wen, mono version by Michael Cowgill, with Temple Blocks
+  by Ethan Winer and Drumline Percussion by Michael Schorsch — MIT License, as
+  distributed with MuseScore 2.3.2. Not redistributed: each browser downloads
+  it from that source at first use. Licence text and acknowledgements:
+  [`default-bank/LICENSE.md`](default-bank/LICENSE.md).

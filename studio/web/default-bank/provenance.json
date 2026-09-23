@@ -1,0 +1,99 @@
+{
+  "schema": "mml-studio-web/default-bank-provenance@2",
+  "name": "FluidR3Mono GM（Studio 子集）",
+  "label": "免費通用音色（近似），不是遊戲音色",
+  "license": "MIT",
+  "license_file": "studio/web/default-bank/LICENSE.md",
+  "distribution": "Not redistributed: neither the upstream file nor the subset is stored in this repository or shipped in the Studio Web build. The first time a playback needs the default bank, the browser downloads upstream.url, checks upstream.sha256, derives the subset with tool.module in a Worker and checks output.sha256; only the subset is kept, in that browser.",
+  "upstream": {
+    "file": "FluidR3Mono_GM.sf3",
+    "version": "2.312 (5 December 2016)",
+    "distribution": "MuseScore 2.3.2, share/sound/",
+    "url": "https://raw.githubusercontent.com/musescore/MuseScore/v2.3.2/share/sound/FluidR3Mono_GM.sf3",
+    "license_url": "https://raw.githubusercontent.com/musescore/MuseScore/v2.3.2/share/sound/FluidR3Mono_License.md",
+    "sha256": "cfcd66d89e8386823400eca64934b14fbea7bf48ba1f00d21189af1262794ec2",
+    "bytes": 14563174,
+    "license_sha256": "09926f9451f751408abd65162c99343f840234d2a708584808fd46427633063f"
+  },
+  "tool": {
+    "module": "studio/web/preview/default-bank-trim.mjs",
+    "browser_worker": "studio/web/preview/default-bank-worker.mjs",
+    "script": "scripts/build-default-soundbank.mjs",
+    "spessasynth_core": "4.3.16",
+    "creation_date": "2016-12-05T00:00:00Z"
+  },
+  "output": {
+    "sha256": "f41a3077bd83b81b1c64e2bc3eb1d9a30ff1907e674ab805da3fcb805354a633",
+    "bytes": 1628214,
+    "programs": [
+      0,
+      10,
+      13,
+      24,
+      25,
+      40,
+      46,
+      71,
+      73
+    ],
+    "drum_notes": [
+      35,
+      36,
+      49,
+      57
+    ],
+    "samples": 113,
+    "presets": [
+      {
+        "program": 0,
+        "drums": false,
+        "name": "Yamaha Grand Piano"
+      },
+      {
+        "program": 10,
+        "drums": false,
+        "name": "Music Box"
+      },
+      {
+        "program": 13,
+        "drums": false,
+        "name": "Xylophone"
+      },
+      {
+        "program": 24,
+        "drums": false,
+        "name": "Nylon String Guitar"
+      },
+      {
+        "program": 25,
+        "drums": false,
+        "name": "Steel String Guitar"
+      },
+      {
+        "program": 40,
+        "drums": false,
+        "name": "Violin"
+      },
+      {
+        "program": 46,
+        "drums": false,
+        "name": "Harp"
+      },
+      {
+        "program": 71,
+        "drums": false,
+        "name": "Clarinet"
+      },
+      {
+        "program": 73,
+        "drums": false,
+        "name": "Flute"
+      },
+      {
+        "program": 0,
+        "drums": true,
+        "name": "Standard"
+      }
+    ]
+  }
+}

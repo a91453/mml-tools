@@ -19,8 +19,11 @@ const FORBIDDEN_EXACT = new Set([
   'studio/tests/song-reference-packages.test.mjs',
 ]);
 
+// Sound banks included: the free default preview bank is fetched from its
+// upstream by each browser and never redistributed.
 const FORBIDDEN_EXTENSIONS = new Set([
   '.mid', '.midi', '.m4a', '.mp3', '.wav', '.flac', '.pdf', '.zip', '.mxl', '.sqlite', '.db',
+  '.sf2', '.sf3', '.dls',
 ]);
 
 // The six Manifest-indexed documents and the Manifest itself appear in shipped

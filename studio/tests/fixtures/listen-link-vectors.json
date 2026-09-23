@@ -1,0 +1,64 @@
+{
+  "note": "Golden vectors for the listen-link contract (studio/web/listen-link.mjs). payload = base64url (no padding) of deflate-raw (Node zlib.deflateRawSync, default options) of the UTF-8 bytes of json_text. json_text is JSON.stringify(json) with keys in contract order. Any conforming deflate-raw encoder may produce different bytes; every payload must decode to json. Synthetic MML only.",
+  "schema": "mml-studio/listen-link@1",
+  "vectors": [
+    {
+      "name": "minimal",
+      "json": {
+        "schema": "mml-studio/listen-link@1",
+        "mml": "MML@t120o4l4cdec,t120o3l2eg,,,,;"
+      },
+      "json_text": "{\"schema\":\"mml-studio/listen-link@1\",\"mml\":\"MML@t120o4l4cdec,t120o3l2eg,,,,;\"}",
+      "payload": "q1YqTs5IzU1UslLKzc3RLS4pTcnM18_JLC5JzdPNyczLdjBU0gFJKVkp-fr6OJQYGhnkm-SYJKekJuuAOcY5RqnpOjo6OtZKtQA"
+    },
+    {
+      "name": "full",
+      "json": {
+        "schema": "mml-studio/listen-link@1",
+        "mml": "MML@t96o4l8cdefgab>c4<g4e4c4,t96o3l2ceg4r4,t96o2l1cc,,,;",
+        "title": "合成測試曲 · 第二版",
+        "meter_text": "0 2/4\n2 4/4",
+        "start": {
+          "bar": 2
+        },
+        "markers": [
+          {
+            "beat": "2",
+            "end_beat": "6",
+            "role": "Melody",
+            "kind": "lead-unverified",
+            "label": "主旋律待確認"
+          },
+          {
+            "beat": "9/2",
+            "kind": "provisional-release",
+            "label": "暫定收尾"
+          },
+          {
+            "beat": "6",
+            "end_beat": "10",
+            "role": "Chord1",
+            "kind": "pending"
+          },
+          {
+            "beat": "8",
+            "kind": "changed"
+          },
+          {
+            "beat": "0",
+            "role": "Chord2",
+            "kind": "note",
+            "label": "這裡太吵"
+          }
+        ],
+        "compare_mml": "MML@t96o4l8cdefgab>c4<g4e4<b4,t96o3l2ceg4r4,t96o2l1cc,,,;",
+        "source": {
+          "project_id": "prj_synthetic01",
+          "artifact_id": "art_synthetic01"
+        }
+      },
+      "json_text": "{\"schema\":\"mml-studio/listen-link@1\",\"mml\":\"MML@t96o4l8cdefgab>c4<g4e4c4,t96o3l2ceg4r4,t96o2l1cc,,,;\",\"title\":\"合成測試曲 · 第二版\",\"meter_text\":\"0 2/4\\n2 4/4\",\"start\":{\"bar\":2},\"markers\":[{\"beat\":\"2\",\"end_beat\":\"6\",\"role\":\"Melody\",\"kind\":\"lead-unverified\",\"label\":\"主旋律待確認\"},{\"beat\":\"9/2\",\"kind\":\"provisional-release\",\"label\":\"暫定收尾\"},{\"beat\":\"6\",\"end_beat\":\"10\",\"role\":\"Chord1\",\"kind\":\"pending\"},{\"beat\":\"8\",\"kind\":\"changed\"},{\"beat\":\"0\",\"role\":\"Chord2\",\"kind\":\"note\",\"label\":\"這裡太吵\"}],\"compare_mml\":\"MML@t96o4l8cdefgab>c4<g4e4<b4,t96o3l2ceg4r4,t96o2l1cc,,,;\",\"source\":{\"project_id\":\"prj_synthetic01\",\"artifact_id\":\"art_synthetic01\"}}",
+      "payload": "hZHfShtBFMZfJZzrCUnWIehWiuBt8wS2LLMzJ5sxszNhZiJKWOhNIcUWclEotVetUqgNIoJ_UMiFz-Ju0reQrbVZe-Pl4cf5vu-cbwSO9zBlEEKaqrrzQyFNQ0nnUdeV1P2NFpASQQidzqsNv9Y2VK1ygd2ExS85XU8oUk5JCVZUwDGh9mEKVItzQsgLIOClVwgh5JNxMZ4UV9PFzx_F17Pa7WVtPp3eXX-Yvx-XPujRRh53PYTQrAUN-loHNdqgQMB5Zj2EI4iZhTDICKTM9tE6CLdGECMrdwIggFpEf8c2ELDmj3MHlRF7QKAvtYAQFDJRH-odtLIrUQABxWIsz7y7uik-7-ez_Xz2bv79enH8ETLyz2GtESxFBtbsSCeNZqpuUSFzWBEqDn7lJwfFp4v8dFaVaD8N2WouU272jBWtigFqIXVS3V5dUt5jOkFRpf9rVcJq46vpfr_9sjj8lh8d55NzyN4Q4CYdMIvRc2Wvx8-17czQciy7GlizjdxH8uFb25Hb076HXvJmeSWzXnbZI2fWP-FZdg8"
+    }
+  ]
+}
