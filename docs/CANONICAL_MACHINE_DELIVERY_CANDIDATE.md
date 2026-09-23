@@ -35,6 +35,8 @@ exactly one phase:
   Final round-trip, micro-timing, Core3 continuity/completeness, Lead evidence,
   harmony, version drift, unresolved decisions, unknown future gates, and any
   destructive or unsupported edit remain fail-closed.
+  (Refined on 2026-09-23 for Core3 completeness residue and version drift; see
+  the change record below.)
 * **NON_BLOCKING_PENDING** is a candidate-policy classification for evidence that
   may remain unresolved after a technically safe machine artifact exists.
   Original-audio alignment, candidate-specific Mobile review and named
@@ -122,7 +124,24 @@ points to a snapshot that contains this prose.
    - Named historical regressions remain `FIXTURE_PENDING`.
    - The local Studio Web keeps its v1 generation gating until it implements
      this rule.
-4. **Executable changes, in order, each after the step before it merges.**
+4. **Refinement decided with this change (owner, 2026-09-23).** The dividing
+   line is: what a machine can determine blocks; what needs a person's judgment
+   is delivered for listening first. This refines the candidate's classification
+   in two places. Both stay unresolved until a person decides, and both still
+   block `VALIDATED`.
+   - **Core3 completeness.** A defect the evaluator determines, such as no
+     Lead or a Core3 that depends on Chord3–Chord5, stays `BLOCKING`. So does
+     an evaluation that did not run. Residue the evaluator can only hand to a
+     reviewer (it cannot tell material the source never carried from material
+     cleanup dropped) becomes `NON_BLOCKING_PENDING`.
+   - **Version drift.** Its only unresolved state is a review request when
+     divergence increased (MASTER_RULES §10 calls it a review trigger, not a
+     verdict). It becomes `NON_BLOCKING_PENDING`.
+
+   The implementation step classifies these by the evaluator's own status and
+   blocker codes, never by caller input. It updates the machine-delivery tests
+   and the captured acceptance scenario to match.
+5. **Executable changes, in order, each after the step before it merges.**
    1. This prose. The owner reviews and accepts it.
    2. The implementation.
       - The Manifest loader accepts an optional `machine_delivery_schema` field
