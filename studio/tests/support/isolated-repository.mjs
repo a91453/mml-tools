@@ -12,10 +12,11 @@
 // reads the shared object store through alternates and writes its own objects
 // only into itself.
 import { execFileSync } from 'node:child_process';
-import { cpSync, mkdtempSync, rmSync, statSync, symlinkSync, writeFileSync } from 'node:fs';
+import { cpSync, mkdtempSync, statSync, symlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { removeRepository } from './remove-repository.mjs';
 
 export const repositoryRoot = fileURLToPath(new URL('../../../', import.meta.url));
 export const PUBLISHED_REF = 'refs/remotes/origin/main';
@@ -58,7 +59,7 @@ const DEFAULT_SOURCES = ['scripts', 'studio/backend', 'studio/web', 'dist/core.j
 
 export function isolatedRepository(t, { sources = DEFAULT_SOURCES } = {}) {
   const dir = mkdtempSync(resolve(tmpdir(), 'mml-isolated-'));
-  t.after(() => rmSync(dir, { recursive: true, force: true }));
+  t.after(() => removeRepository(dir));
   const head = gitIn(repositoryRoot, ['rev-parse', '--verify', '--end-of-options', 'HEAD^{commit}']);
   const published = gitIn(repositoryRoot, ['rev-parse', '--verify', '--end-of-options', `${PUBLISHED_REF}^{commit}`]);
   gitIn(repositoryRoot, ['clone', '--quiet', '--shared', '--no-checkout', repositoryRoot, dir]);
