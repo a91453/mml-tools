@@ -41,6 +41,7 @@ import { enforceMicroGaps, MICRO_GAP_BLOCKERS } from '../backend/final/micro-gap
 import { emitFinalMml } from '../backend/final/mml-emitter.mjs';
 import { verifyFinalReadback } from '../backend/final/round-trip.mjs';
 import { EFFECTIVE_RULESET } from '../backend/rules/index.mjs';
+import { SUPPORTED_CANONICAL_VERSIONS } from '../backend/rules/supported-releases.mjs';
 
 const TICK = new F(1, 480);
 const SRC = createSource({ id: 'midi', label: 'Third-party MIDI', kind: 'third-party-midi', authority: 'supporting' });
@@ -73,8 +74,9 @@ const stripMarkers = p => createCanonicalProject({
 test('RRC-1 the candidate is unpublished and inactive for the loaded Published release', () => {
   assert.equal(RELEASE_REGRID_CANDIDATE.status, 'UNPUBLISHED_CANONICAL_CANDIDATE');
   assert.deepEqual([...RELEASE_REGRID_CANDIDATE.activeInCanonicalVersions], []);
-  assert.equal(EFFECTIVE_RULESET.canonical.canonical_version, '2026-09-13-v1');
   assert.equal(isReleaseRegridCandidateActive(EFFECTIVE_RULESET.canonical.canonical_version), false);
+  // No release this implementation supports activates it, v2 included.
+  for (const version of SUPPORTED_CANONICAL_VERSIONS) assert.equal(isReleaseRegridCandidateActive(version), false, version);
 });
 
 test('RRC-2 a one-tick note-preceded gap closes by extending the release exactly one tick; attacks untouched', () => {

@@ -25,6 +25,7 @@ import { splitMML, parseTrack } from '../backend/mml/parser.mjs';
 import { ROLES } from '../backend/mml/index.mjs';
 import { RELEASE_REGRID_CANDIDATE } from '../backend/canonical/release-regrid-candidate.mjs';
 import { OWNER, AGENT_SUBMITTER, HUMAN_SUBMITTER, audioReviewDecision, oneTickEarlyBaseline, roleDecisions, ALL_RELEASE_EVENTS } from './fixtures/release-fixtures.mjs';
+import { PUBLISHED_CANONICAL } from '../backend/rules/index.mjs';
 
 const statusOf = (run, step) => run.steps.find(entry => entry.step === step)?.status ?? null;
 const receiptOf = (run, step) => [...run.steps].reverse().find(entry => entry.step === step) ?? null;
@@ -115,7 +116,7 @@ test('RDR-2 evidence and reviewer statements take the same run to a VALIDATED pa
   assert.equal(artifact.candidate_id, finalCandidate);
   assert.equal(artifact.song_state, 'VALIDATED');
   assert.equal(artifact.delivery.delivered, true);
-  assert.equal(artifact.delivery.validated_under.rules_snapshot_sha, '0a172900a01fdf39c2e9e84cf176961320b779ea');
+  assert.equal(artifact.delivery.validated_under.rules_snapshot_sha, PUBLISHED_CANONICAL.metadata.rules_snapshot_sha);
   assert.deepEqual(artifact.delivery.post_delivery_evidence.map(item => [item.axis, item.status, item.blocks_delivery]), [['listening_feedback', 'NOT_YET_PROVIDED', false], ['in_game', 'PENDING', false]]);
   assert.equal(artifact.gates.in_game, 'PENDING', 'missing in-game acceptance did not block delivery and was not invented');
   assert.equal(artifact.mml_sha256, createHash('sha256').update(artifact.mml, 'utf8').digest('hex'));

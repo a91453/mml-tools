@@ -17,6 +17,7 @@ import { createHash } from 'node:crypto';
 import { ERROR_CODES, createStudioApplication } from '../backend/application/index.mjs';
 import { createCanonicalProject } from '../backend/canonical/index.mjs';
 import { applyKeepOnlyCandidate, canonicalProjectBytes, keepEveryRole, sixRoleBaseline } from './fixtures/application-fixtures.mjs';
+import { assertFinalWithheldOrDeliveredUnresolved } from './support/loaded-release.mjs';
 
 const OWNER = 'owner:alice';
 const app = () => createStudioApplication({});
@@ -71,16 +72,15 @@ test('a player readback recorded for one candidate does not pass a different can
   assert.notEqual(second, run.candidateId);
   const result = await service.finalize(OWNER, run.projectId, { candidateId: second });
 
-  // Nobody read the second candidate back and nobody reviewed its drift.
-  assert.equal(result.operation, 'blocked', 'a PASS recorded for another candidate must not deliver this one');
-  assert.equal(result.artifact_id, null);
-  assert.equal(result.mml, null);
+  // Nobody read the second candidate back and nobody reviewed its drift. A PASS
+  // recorded for another candidate never counts for this one, whichever
+  // release decides what the missing answers hold back.
   assert.notEqual(result.gates.player_readback, 'PASS');
   assert.notEqual(result.gates.mobile_adaptation, 'PASS');
   assert.notEqual(result.gates.regression, 'PASS');
-  assert.ok(result.blockers.includes('playerReadback'), JSON.stringify(result.blockers));
-  assert.ok(result.blockers.includes('mobileAdaptation'), JSON.stringify(result.blockers));
-  assert.ok(result.blockers.includes('regression'), JSON.stringify(result.blockers));
+  assertFinalWithheldOrDeliveredUnresolved(result, [
+    ['playerReadback', 'post_delivery'], ['mobileAdaptation', 'non_blocking_pending'], ['regression', 'non_blocking_pending'],
+  ]);
 
   const review = (await service.reviewCandidate(OWNER, run.projectId, { candidateId: second })).review;
   assert.equal(review.confirmations.player_readback, undefined, 'a stale confirmation is not an effective one');
@@ -180,11 +180,12 @@ test('a player readback PASS that names an MML digest only counts for that exact
     candidateId: run.candidateId,
     confirmations: { player_readback: { value: 'PASS', reason: 'Read back a different string.', mml_sha256: 'f'.repeat(64) } },
   });
-  assert.equal(wrong.operation, 'blocked', 'a readback of some other MML is not a readback of this one');
-  assert.equal(wrong.artifact_id, null);
-  assert.equal(wrong.mml, null);
+  // A readback of some other MML is not a readback of this one: the gate falls
+  // back to NOT_RUN. Under v1 that withholds the Final; under v2 readback is
+  // post-delivery evidence, so the Final is delivered with it still unresolved.
   assert.notEqual(wrong.gates.player_readback, 'PASS');
   assert.equal(wrong.player_readback_binding.matched, false);
+  assertFinalWithheldOrDeliveredUnresolved(wrong, [['playerReadback', 'post_delivery']]);
 
   const right = await service.finalize(OWNER, run.projectId, {
     candidateId: run.candidateId,

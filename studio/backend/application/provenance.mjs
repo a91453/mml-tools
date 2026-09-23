@@ -140,6 +140,9 @@ export function provenanceOf(published) {
     canonical_status: metadata.canonical_status ?? null,
     manifest_version: metadata.manifest_version ?? null,
     rules_snapshot_sha: metadata.rules_snapshot_sha ?? null,
+    // Carried so a stored run or artifact re-derives machine-delivery authority
+    // from the release it was made under (final/delivery-evaluator.mjs).
+    machine_delivery_schema: metadata.machine_delivery_schema ?? null,
     manifest_commit: git.manifest_commit ?? null,
     published_main_head: git.published_main_head ?? null,
     repository_head: git.repository_head ?? null,
@@ -160,6 +163,7 @@ export function unloadedProvenance(reason) {
     canonical_status: null,
     manifest_version: null,
     rules_snapshot_sha: null,
+    machine_delivery_schema: null,
     manifest_commit: null,
     published_main_head: null,
     repository_head: null,

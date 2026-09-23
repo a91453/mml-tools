@@ -414,9 +414,12 @@ for (const [name, manifest] of [
 test('a missing Manifest on published main cannot fall back to the pinned snapshot', t => {
   const published = publishedSource(t);
   const root = sourceTreeWithoutGit(t);
-  // The rules snapshot commit predates the Manifest, so publishing it leaves a
-  // main with every rule document and no entry point.
-  published.publish(PUBLISHED_CANONICAL.metadata.rules_snapshot_sha);
+  // The first release's snapshot predates every Manifest revision, so
+  // publishing it leaves a main with every rule document and no entry point. (A
+  // later release's snapshot carries the previous Manifest, so it cannot.)
+  const firstSnapshot = '0a172900a01fdf39c2e9e84cf176961320b779ea';
+  assert.equal(git(repositoryRoot, 'ls-tree', '--name-only', firstSnapshot, '--', BOOTSTRAP_CONTRACT.entryPoint).trim(), '');
+  published.publish(firstSnapshot);
   assert.throws(() => materializePublishedCanonical({ root, publishedSource: published.url }), notLoaded);
   assert.throws(() => loadPublishedCanonical({ root }), notLoaded);
 });
@@ -424,7 +427,7 @@ test('a missing Manifest on published main cannot fall back to the pinned snapsh
 for (const [name, replacement] of [
   ['a required rule document missing from the snapshot', null],
   ['a rule document at the wrong version', 'Version: outdated\nStatus: PUBLISHED CANONICAL\n'],
-  ['a rule document at the wrong publication status', 'Version: 2026-09-13-v1\nStatus: DRAFT\n'],
+  ['a rule document at the wrong publication status', `Version: ${PUBLISHED_CANONICAL.metadata.canonical_version}\nStatus: DRAFT\n`],
 ]) {
   test(`${name} fails closed with CANONICAL_NOT_LOADED`, t => {
     const published = publishedSource(t);

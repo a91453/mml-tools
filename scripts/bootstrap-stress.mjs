@@ -13,6 +13,12 @@
 // identity were resolved from this checkout, no bootstrap refused, and the
 // shared refs were untouched. Numbers here are measurements of one machine at
 // one moment: report them as such, never as a fixed failure rate.
+//
+// One exception, and only while a publication is under review: the Manifest
+// verifier reads the rule documents at the snapshot the working-tree Manifest
+// names, which is not yet the published one. That snapshot, and no other, may
+// appear beside the published snapshot. Once the publication is merged the two
+// are the same and the rule is exactly one again.
 import { spawnSync, execFileSync } from 'node:child_process';
 import { mkdtempSync, readdirSync, readFileSync, realpathSync, rmSync, statSync } from 'node:fs';
 import { tmpdir } from 'node:os';
@@ -22,6 +28,8 @@ import { fileURLToPath, pathToFileURL } from 'node:url';
 const root = fileURLToPath(new URL('../', import.meta.url));
 const probe = resolve(root, 'studio/tests/support/git-subprocess-probe.mjs');
 const PUBLISHED_REF = 'refs/remotes/origin/main';
+// The snapshot named by the Manifest in this working tree (see the exception above).
+const reviewedSnapshot = readFileSync(resolve(root, 'docs/CANONICAL_MANIFEST.md'), 'utf8').match(/^rules_snapshot_sha: ([0-9a-f]{40})$/m)?.[1] ?? null;
 
 const argv = process.argv.slice(2);
 const separator = argv.indexOf('--');
@@ -151,10 +159,14 @@ for (let run = 1; run <= runs; run += 1) {
   const metrics = analyse(logPath);
   const sharedRefsUntouched = JSON.stringify(before) === JSON.stringify(after);
   const publishedIdentities = Object.keys(metrics.publishedIdentitiesResolvedFromThisCheckout);
+  const snapshots = metrics.snapshotIdentitiesResolvedFromThisCheckout;
+  const oneSnapshot = snapshots.length === 1
+    || (snapshots.length === 2 && reviewedSnapshot !== null && snapshots.includes(reviewedSnapshot));
   const report = {
     run, command: command.join(' '), exitCode: result.status, signal: result.signal, wallSeconds, tap,
     sharedRefsUntouched, sharedRefs: { before, after }, refusals, ...metrics,
-    ok: result.status === 0 && sharedRefsUntouched && publishedIdentities.length === 1 && metrics.snapshotIdentitiesResolvedFromThisCheckout.length === 1 && Object.keys(refusals).length === 0 && metrics.failedGitCallsFromThisCheckout.length === 0,
+    workingTreeManifestSnapshot: reviewedSnapshot,
+    ok: result.status === 0 && sharedRefsUntouched && publishedIdentities.length === 1 && oneSnapshot && Object.keys(refusals).length === 0 && metrics.failedGitCallsFromThisCheckout.length === 0,
   };
   if (!report.ok) report.failingOutputTail = output.split('\n').filter(line => /^not ok|CANONICAL_NOT_LOADED:|Error:/.test(line.trim())).slice(0, 20);
   if (keepLogs) report.probeLog = logPath; else rmSync(logDir, { recursive: true, force: true });

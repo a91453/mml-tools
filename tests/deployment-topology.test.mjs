@@ -241,15 +241,28 @@ test('the Permanent Studio migration record is present and is not a Canonical au
   assert.match(readme, /not Canonical policy/);
 });
 
-test('the agent plane and the web plane load the same Published Canonical', async () => {
-  // Two deployments, one authority. If these ever diverged, one plane would be
-  // applying rules the other had not published.
+test('the agent plane and the web plane load the same Published Canonical, or the catch-up is recorded', async () => {
+  // Two deployments, one authority. If these ever diverged silently, one plane
+  // would be applying rules the other had not published.
   const { PUBLISHED_CANONICAL } = await import('../studio/backend/rules/index.mjs');
-  const migration = await readFile(join(root, 'ops/permanent/MIGRATION_RESULT.md'), 'utf8');
+  const { parseCanonicalManifest } = await import('../studio/backend/bootstrap/index.mjs');
   assert.equal(PUBLISHED_CANONICAL.status, 'CANONICAL_LOADED');
-  assert.ok(
-    migration.includes(PUBLISHED_CANONICAL.metadata.rules_snapshot_sha),
-    'the permanent deployment records a different rules snapshot than this build loads',
-  );
-  assert.ok(migration.includes(PUBLISHED_CANONICAL.metadata.canonical_version));
+  // The release this tree's Manifest publishes. On published main it is the
+  // loaded one; on a publication PR it is the one about to be loaded.
+  const loaded = parseCanonicalManifest(await readFile(join(root, 'docs/CANONICAL_MANIFEST.md'), 'utf8')).metadata;
+  const served = JSON.parse(await readFile(join(root, 'ops/permanent/release-lock.json'), 'utf8')).canonical;
+  const pendingPath = join(root, 'ops/permanent/PENDING_CANONICAL_RELEASE.md');
+  const pending = await readFile(pendingPath, 'utf8').catch(() => null);
+  if (served.rules_snapshot_sha === loaded.rules_snapshot_sha) {
+    assert.equal(served.canonical_version, loaded.canonical_version);
+    assert.equal(pending, null, 'a caught-up permanent plane carries no pending catch-up record');
+    return;
+  }
+  // A newer publication reaches the permanent plane only through a durable
+  // release packaged from the published main that carries it. Until then the
+  // lag is recorded, naming both identities, never silent.
+  assert.ok(pending, 'the permanent deployment serves a different rules snapshot than this build loads, and no catch-up is recorded');
+  for (const value of [loaded.canonical_version, loaded.rules_snapshot_sha, served.canonical_version, served.rules_snapshot_sha]) {
+    assert.ok(pending.includes(value), `the catch-up record must name ${value}`);
+  }
 });

@@ -310,7 +310,8 @@ test('the public root endpoint reports the Published Canonical bootstrap status'
   const body = await response.json();
 
   assert.equal(body.canonical.status, 'CANONICAL_LOADED');
-  assert.equal(body.canonical.canonical_version, '2026-09-13-v1');
+  const { PUBLISHED_CANONICAL } = await import('../studio/backend/rules/index.mjs');
+  assert.equal(body.canonical.canonical_version, PUBLISHED_CANONICAL.metadata.canonical_version);
   assert.equal(body.canonical.canonical_status, 'PUBLISHED');
   // The five identities stay five fields, and none stands in for another.
   assert.match(body.canonical.rules_snapshot_sha, /^[0-9a-f]{40}$/);

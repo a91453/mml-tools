@@ -94,6 +94,24 @@ export function machineDeliveryAuthority(canonical) {
   });
 }
 
+/**
+ * The gates that stop delivery for one readiness result: the single answer
+ * Final, the emitter and the run loop all use.
+ *
+ * Under the loaded release without machine-delivery authority it is the
+ * pre-game blockers. Under an active release it is the ledger's BLOCKING phase,
+ * plus any pre-game blocker the ledger does not account for at all: a gate the
+ * projection never saw fails closed, never through.
+ */
+export function deliveryBlockingGates(readiness) {
+  const preGame = Array.isArray(readiness?.preGameBlocking) ? readiness.preGameBlocking : [];
+  const projection = readiness?.machineDelivery;
+  if (projection?.authoritative !== true) return Object.freeze([...preGame]);
+  const blocking = projection.blocking.map(entry => entry.gate);
+  const ledger = new Set([...projection.blocking, ...projection.non_blocking_pending, ...projection.post_delivery].map(entry => entry.gate));
+  return Object.freeze([...blocking, ...preGame.filter(name => !ledger.has(name))]);
+}
+
 function missingRequiredGates(gates) {
   return MACHINE_DELIVERY_GATE_NAMES.filter(name => !Object.prototype.hasOwnProperty.call(gates, name));
 }

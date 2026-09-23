@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict';
+import { PUBLISHED_CANONICAL } from '../backend/rules/index.mjs';
 
 // Final MML generation and export, driven through the real page.
 //
@@ -61,8 +62,8 @@ export async function runFinalDeliveryChecks({ page, idle, file, mml }) {
   assert.ok(attemptText.includes('安全格線'), 'the G10 safe grid is shown');
   assert.ok(attemptText.includes('保留區間') && attemptText.includes('拒絕區間') && attemptText.includes('封鎖區間'));
   assert.ok(attemptText.includes('往返讀回'), 'the emitter round-trip state is shown');
-  assert.ok(attemptText.includes('2026-09-13-v1'), 'the Canonical release the emitter used is shown');
-  assert.ok(attemptText.includes('0a172900a01fdf39c2e9e84cf176961320b779ea'));
+  assert.ok(attemptText.includes(PUBLISHED_CANONICAL.metadata.canonical_version), 'the Canonical release the emitter used is shown');
+  assert.ok(attemptText.includes(PUBLISHED_CANONICAL.metadata.rules_snapshot_sha));
 
   const applied = section.locator('.card', { hasText: '目前套用的交付 MML' });
   assert.equal(await applied.count(), 1, 'the applied delivery is its own card, not part of the attempt');
