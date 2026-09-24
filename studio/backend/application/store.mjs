@@ -168,6 +168,16 @@ export function createStore({ directory = null, durability = 'unknown', maxBytes
     notice: backend.notice,
   });
 
+  // How many writes this store has been asked to make, in this process. A
+  // reader that derives something from several stored values across an
+  // `await` compares it before and after: an unchanged count proves no write
+  // of this process landed in between, so what it read was one state. It
+  // counts attempts, not successes -- a write that failed half way still
+  // moves it -- because the reader's question is whether anything MAY have
+  // changed. Not persisted, and not a version of anything.
+  let writes = 0;
+  const wrote = () => { writes += 1; };
+
   const requireCapacity = (key, byteLength) => {
     // Re-analyzing a baseline and updating review/audio evidence replace an
     // existing key. Charge the resulting store size, not old + new bytes.
@@ -181,6 +191,7 @@ export function createStore({ directory = null, durability = 'unknown', maxBytes
     describe,
 
     createProjectRecord(record) {
+      wrote();
       backend.writeRecord(record.project_id, record);
       return structuredClone(record);
     },
@@ -190,6 +201,7 @@ export function createStore({ directory = null, durability = 'unknown', maxBytes
     },
 
     writeProjectRecord(record) {
+      wrote();
       backend.writeRecord(record.project_id, record);
       return structuredClone(record);
     },
@@ -201,10 +213,12 @@ export function createStore({ directory = null, durability = 'unknown', maxBytes
     },
 
     deleteProjectRecord(projectId) {
+      wrote();
       backend.deleteRecord(projectId);
     },
 
     putBytes(key, bytes) {
+      wrote();
       requireCapacity(key, bytes.byteLength);
       backend.writeBlob(key, bytes);
     },
@@ -214,10 +228,12 @@ export function createStore({ directory = null, durability = 'unknown', maxBytes
     },
 
     deleteBytes(key) {
+      wrote();
       backend.deleteBlob(key);
     },
 
     putJson(key, value) {
+      wrote();
       const bytes = new TextEncoder().encode(JSON.stringify(value));
       requireCapacity(key, bytes.byteLength);
       backend.writeBlob(key, bytes);
@@ -233,6 +249,7 @@ export function createStore({ directory = null, durability = 'unknown', maxBytes
 
     usedBytes: () => backend.usedBytes(),
     maxBytes,
+    writeCount: () => writes,
   });
 }
 

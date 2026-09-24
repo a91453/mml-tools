@@ -321,6 +321,14 @@ export function createStudioApplication({
       return { operation: OPERATION_STATUS.SUCCEEDED, reduction: await arrangement.finalReduction(owner, projectId, { ...input, apply: false }) };
     },
 
+    /**
+     * A digest of every stored input the two plan operations read for one
+     * candidate (`arrangement-service.planInputIdentity`). Read-only. The
+     * proposal layer keys its memo of the Agent Review Policy's plan
+     * derivation on it, so the memo is reused only for the same bytes.
+     */
+    planInputIdentity: (owner, projectId, candidateId) => arrangement.planInputIdentity(owner, projectId, candidateId),
+
     async applyFinalReduction(owner, projectId, input) {
       const result = await arrangement.finalReduction(owner, projectId, { ...input, apply: true });
       const reviewResult = result.applied ? await review.review(owner, projectId, { candidateId: result.candidate_id }) : null;

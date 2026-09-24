@@ -92,6 +92,7 @@ import {
   statedFields,
 } from './contracts.mjs';
 import { newId, sha256Of } from './store.mjs';
+import { createPlanDerivationMemo } from './plan-derivation-memo.mjs';
 import { RUN_REVIEW_REQUEST, RUN_STATE } from './run-contracts.mjs';
 import {
   ACCEPTABLE_AGENT_REVIEW,
@@ -681,22 +682,46 @@ export function createProposalService({ canonical, projects, store, operations, 
   // name of 1-120 characters, which the acceptance's own `accepted_by` and the
   // proposal's `plan_accepted_by` are both already held to.
 
-  const derivePlanId = async (owner, projectId, proposal, reviewer) => {
-    if (proposal.kind === PROPOSAL_KIND.FINAL_REDUCTION) {
-      const preview = await operations.planFinalReduction(owner, projectId, {
+  // What the plan operation is called with, built in one place so the memo
+  // below keys on exactly the input the operation receives.
+  const planOperationInput = (proposal, reviewer) => (proposal.kind === PROPOSAL_KIND.FINAL_REDUCTION
+    ? {
+      operation: 'planFinalReduction',
+      input: {
         candidateId: proposal.binding.candidate_id,
         decisions: structuredClone(proposal.action.decisions),
         acceptedBy: reviewer,
         instrumentProfile: structuredClone(proposal.action.instrument_profile),
-      });
-      return preview.reduction?.plan?.id ?? null;
+      },
     }
-    const preview = await operations.planMobileAdaptation(owner, projectId, {
-      candidateId: proposal.binding.candidate_id,
-      profile: structuredClone(proposal.action.profile),
+    : {
+      operation: 'planMobileAdaptation',
+      input: {
+        candidateId: proposal.binding.candidate_id,
+        profile: structuredClone(proposal.action.profile),
+      },
     });
-    return preview.adaptation?.plan?.id ?? null;
+
+  const planIdOf = async (owner, projectId, { operation, input }) => {
+    const preview = await operations[operation](owner, projectId, input);
+    return (operation === 'planFinalReduction' ? preview.reduction : preview.adaptation)?.plan?.id ?? null;
   };
+
+  const derivePlanId = (owner, projectId, proposal, reviewer) => planIdOf(owner, projectId, planOperationInput(proposal, reviewer));
+
+  // The policy's own derivation, memoized on every input it reads
+  // (`plan-derivation-memo.mjs`, which says why and on what key). The policy
+  // polls it on every read; one derivation of a song-length reduction holds
+  // the event loop for seconds. `translate` does not use it: an acceptance's
+  // own derivations -- under the accepting reviewer, and under the named one
+  // for a stated id -- run afresh after the acceptance is recorded, as the
+  // backstop the INPUTS_CHANGED codes name.
+  const policyPlanDerivations = createPlanDerivationMemo({
+    canonical,
+    store,
+    planInputIdentity: (owner, projectId, candidateId) => operations.planInputIdentity(owner, projectId, candidateId),
+    derive: planIdOf,
+  });
 
   // The classes whose acceptance goes through a plan derivation, and the codes
   // a derivation that fails is graded with.
@@ -741,15 +766,16 @@ export function createProposalService({ canonical, projects, store, operations, 
     const reviewer = proposal.kind === PROPOSAL_KIND.FINAL_REDUCTION ? proposal.action.plan_accepted_by : null;
     let planId;
     try {
-      planId = await derivePlanId(owner, record.project_id, proposal, reviewer);
-    } catch (error) {
-      if (error?.code === ERROR_CODES.INVALID_REQUEST) {
+      const derived = await policyPlanDerivations.outcome(owner, record.project_id, planOperationInput(proposal, reviewer));
+      if (derived.refusal) {
         return {
           verdict: AGENT_REVIEW.INVALID,
           refusals: [check.refused],
-          detail: { plan_refusal: { operation: check.operation, code: error.code, message: String(error.message ?? '').slice(0, 500) } },
+          detail: { plan_refusal: { operation: check.operation, code: derived.refusal.code, message: derived.refusal.message } },
         };
       }
+      planId = derived.plan_id;
+    } catch (error) {
       // Not a refusal of the action: the stored material or the engines could
       // not be read. The same discipline as an unresolvable citation above --
       // a statement about the material, never an accusation about the proposal
@@ -812,7 +838,10 @@ export function createProposalService({ canonical, projects, store, operations, 
    *
    * Called on every read and again, under the lock, immediately before an
    * acceptance. Never cached: a cached safety check is a safety check that can
-   * be wrong, and every input it reads is one another caller can move.
+   * be wrong, and every input it reads is one another caller can move. The one
+   * engine derivation inside it (`planRefusal`) reuses an earlier outcome only
+   * for byte-identical inputs, re-read on this call (`policyPlanDerivations`),
+   * and the verdict is graded from that outcome afresh.
    */
   const agentReview = async (owner, record, proposal, canonicalProvenance) => {
     const kind = proposal.kind;
@@ -1101,11 +1130,13 @@ export function createProposalService({ canonical, projects, store, operations, 
   // thing a manual caller does before applying.
   //
   // Every check below is also graded by the Agent Review Policy, through the
-  // same `derivePlanId` (`planRefusal`), so a proposal that fails one of them
-  // is refused before an acceptance is ever recorded. What still reaches them
-  // here is material that moved after the policy's check under the lock -- or
-  // a retry that skipped the policy because an earlier attempt may already
-  // have reached the run -- which is why they keep the INPUTS_CHANGED codes.
+  // same derivation (`planOperationInput`, `planIdOf`; `planRefusal`, which
+  // holds its outcomes in `policyPlanDerivations`), so a proposal that fails
+  // one of them is refused before an acceptance is ever recorded. What still
+  // reaches them here is material that moved after the policy's check under
+  // the lock -- or a retry that skipped the policy because an earlier attempt
+  // may already have reached the run -- which is why they keep the
+  // INPUTS_CHANGED codes.
 
   const translate = async (owner, projectId, proposal, acceptedBy) => {
     const kind = proposal.kind;

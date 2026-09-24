@@ -269,6 +269,17 @@ export function createIntakeService({ canonical, projects, assets, store }) {
       }
       return { record, baseline: record.baseline, project };
     },
+
+    /**
+     * The digest of the stored baseline's bytes, exactly as `project` above
+     * reads them, or null when nothing is stored. Read-only, and it decodes
+     * nothing: it identifies what `project` would rebuild, so a reader that
+     * has to know whether that input changed need not rebuild it to find out.
+     */
+    storedBaselineDigest(record) {
+      const bytes = store.getBytes(baselineKey(record.project_id));
+      return bytes ? sha256Of(bytes) : null;
+    },
   });
 }
 

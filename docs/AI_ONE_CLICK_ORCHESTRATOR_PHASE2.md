@@ -107,6 +107,7 @@ that happens to have been written by a machine.
 | --- | --- |
 | `studio/backend/application/proposal-contracts.mjs` | Proposal classes, states, agent-review verdicts, refusal causes, the closed target table, the evidence vocabulary, the request-key derivation, the separation notices. |
 | `studio/backend/application/proposal-service.mjs` | Submission, the Agent Review Policy, acceptance, and the translation into an existing operation's input. |
+| `studio/backend/application/plan-derivation-memo.mjs` | The policy's plan derivation, held in memory on every input it reads, so a polled read does not re-run an engine (§6). Grades nothing. |
 | `studio/backend/application/contracts.mjs` | `pro_` identity, three error codes, five bounds. |
 | `studio/backend/application/run-service.mjs` | Every review request now carries the `request_key` an agent addresses it by. Nothing else changed. |
 | `studio/backend/application/index.mjs` | Wires it in, exposes the five operations, and adds two read-only baseline projections to the internal façade. |
@@ -302,7 +303,24 @@ not one: a cached safety check is a safety check that can be wrong. The verdict
 the proposal was written under is kept beside the live one as
 `agent_review_at_submission`, so a reviewer can see that the two differ and why.
 
-One acceptance does not re-run it, and the exception is named here rather than
+One rung runs an engine: the plan check (§7), which derives the plan an
+acceptance would derive. The engine is synchronous, and on a song-length project
+one reduction plan holds the event loop for seconds, so deriving it afresh on
+every read of a proposal a client polls stalled every other request the process
+serves. The derivation's **outcome** — the plan id, or the plan operation's
+refusal — is therefore held in memory (`plan-derivation-memo.mjs`), keyed on
+every input the derivation reads: the operation and its exact input (the bound
+candidate, the action, the reviewer), the loaded engines by identity and the
+rules snapshot they were loaded as, and a digest of the stored **bytes** the
+operation reads — bytes rather than ids, because a blob can change under the id
+that names it. That is not a cached verdict. The verdict is still graded on
+every read, from that outcome, against the proposal as it stands, and every
+other rung is re-read as before. Nothing is held when the material could not be
+read, nor when anything the derivation depends on may have moved while it ran;
+nothing is persisted; the memo is bounded. A regression moves each input on its
+own and requires a fresh derivation.
+
+One acceptance does not re-run the policy, and the exception is named here rather than
 only where it is implemented: a **retry** of an acceptance that was already
 recorded skips the policy gate, because that acceptance's own application moves
 the run and would then read as stale to a policy looking at revisions. What
@@ -747,6 +765,7 @@ No mock stands in anywhere.
 | `studio/tests/proposal-duplication.test.mjs` | one acceptance, one application — across retries, concurrency and a crash in the window |
 | `studio/tests/proposal-adversarial.test.mjs` | the four escalations an independent adversarial review found, kept in the shape they were found in |
 | `studio/tests/proposal-untranslatable.test.mjs` | a proposal the acceptance could never translate is `INVALID` before it is accepted; an acceptance that never reached the run can be withdrawn, race-free, and one that may have cannot |
+| `studio/tests/proposal-plan-derivation-memo.test.mjs` | the policy derives a plan once per set of inputs, and a held outcome is never served for any other: each input moved on its own, and a derivation a change may have raced, is derived afresh |
 | `tests/proposal-transport.test.mjs` | HTTP/MCP parity, and what Phase 2 did not add |
 
 ## 15. Not covered by Phase 2
