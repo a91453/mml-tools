@@ -1,21 +1,62 @@
 name: OSS Export CI
 
+# Every path scripts/export-oss.mjs ships is in both filters, and
+# tests/oss-export-ci-policy.test.mjs keeps it that way. The push trigger on
+# main catches two merged PRs that each passed alone.
 on:
   push:
-    branches: ['oss/**']
-  pull_request:
+    branches: ['oss/**', main]
     paths:
       - 'oss/**'
+      - 'package.json'
       - 'scripts/export-oss.mjs'
       - 'scripts/audit-oss-export.mjs'
+      - 'scripts/build-studio-web.mjs'
+      - 'scripts/serve-studio-web.mjs'
+      - 'scripts/studio-artifact-identity.mjs'
+      - 'scripts/verify-studio-artifact.mjs'
+      - 'scripts/build-default-soundbank.mjs'
       - '.github/workflows/oss-export-ci.yml'
       - 'studio/**'
       - 'server/**'
       - 'dist/core.js'
       - 'dist/player.js'
+      - 'docs/G11C_CANDIDATE_ARRANGEMENT.md'
       - 'tests/core.test.mjs'
       - 'tests/mcp.test.mjs'
       - 'tests/player.test.mjs'
+      - 'tests/api.test.mjs'
+      - 'tests/mcp-studio.test.mjs'
+      - 'tests/mcp-listen.test.mjs'
+      - 'tests/listen-*.test.mjs'
+      - 'tests/fixtures/synthetic-soundfont.mjs'
+      - 'tests/oss-export-ci-policy.test.mjs'
+  pull_request:
+    paths:
+      - 'oss/**'
+      - 'package.json'
+      - 'scripts/export-oss.mjs'
+      - 'scripts/audit-oss-export.mjs'
+      - 'scripts/build-studio-web.mjs'
+      - 'scripts/serve-studio-web.mjs'
+      - 'scripts/studio-artifact-identity.mjs'
+      - 'scripts/verify-studio-artifact.mjs'
+      - 'scripts/build-default-soundbank.mjs'
+      - '.github/workflows/oss-export-ci.yml'
+      - 'studio/**'
+      - 'server/**'
+      - 'dist/core.js'
+      - 'dist/player.js'
+      - 'docs/G11C_CANDIDATE_ARRANGEMENT.md'
+      - 'tests/core.test.mjs'
+      - 'tests/mcp.test.mjs'
+      - 'tests/player.test.mjs'
+      - 'tests/api.test.mjs'
+      - 'tests/mcp-studio.test.mjs'
+      - 'tests/mcp-listen.test.mjs'
+      - 'tests/listen-*.test.mjs'
+      - 'tests/fixtures/synthetic-soundfont.mjs'
+      - 'tests/oss-export-ci-policy.test.mjs'
   workflow_dispatch:
 
 permissions:
