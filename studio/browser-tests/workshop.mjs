@@ -308,8 +308,39 @@ export async function runWorkshopChecks({ page, base, idle, file, screenshot, pr
   await page.locator('#studioSendBox.on').waitFor();
   const sent = await page.locator('#studioSendText').inputValue();
   assert.match(sent, /^MML@([^,;]*,){5}[^,;]*;$/, 'six role slots');
-  await Promise.all([page.waitForURL(url => new URL(url).pathname === '/' || new URL(url).pathname.endsWith('/index.html')), page.locator('#studioSendGo').click()]);
-  await page.locator('#workshop-return .workshop-return').waitFor();
+  // Studio's page, not the Workshop's own .../workshop/index.html, which the
+  // old endsWith('/index.html') test also accepted, so a send that never
+  // navigated only surfaced 30 s later as a missing panel.
+  const studioHome = url => ['/', '/index.html'].includes(new URL(url).pathname);
+  await page.locator('#studioSendGo').click();
+  try {
+    await page.waitForURL(studioHome, { timeout: 15000 });
+  } catch (error) {
+    const seen = await page.evaluate(() => ({
+      url: location.href,
+      send_box_open: document.querySelector('#studioSendBox')?.classList.contains('on'),
+      send_notes: document.querySelector('#studioSendNotes')?.textContent?.slice(0, 500),
+      status: [...document.querySelectorAll('[role=status], #status, #say, .toast')].map(node => node.textContent.trim()).filter(Boolean).slice(0, 5),
+    })).catch(e => ({ unreadable: e.message }));
+    throw Object.assign(new Error(`The Workshop did not navigate to Studio: ${JSON.stringify(seen)}`), { cause: error });
+  }
+  try {
+    await page.locator('#workshop-return .workshop-return').waitFor();
+  } catch (error) {
+    // Say what Studio showed instead: a boot error, a message about the
+    // record, or a record still waiting in storage all point somewhere else.
+    const seen = await page.evaluate(() => ({
+      url: location.href,
+      boot: { hidden: document.querySelector('#boot')?.hidden, text: document.querySelector('#boot')?.textContent },
+      app_hidden: document.querySelector('#app')?.hidden,
+      message: document.querySelector('#message')?.textContent,
+      return_hidden: document.querySelector('#workshop-return')?.hidden,
+      stored_return: (() => { try { return localStorage.getItem('studio-workshop/return')?.slice(0, 200) ?? null; } catch (e) { return `unreadable: ${e.message}`; } })(),
+      controller: navigator.serviceWorker?.controller?.scriptURL ?? null,
+      body: document.body?.innerText?.slice(0, 600),
+    })).catch(e => ({ unreadable: e.message }));
+    throw Object.assign(new Error(`Studio did not offer the Workshop return: ${JSON.stringify(seen)}`), { cause: error });
+  }
   assert.match(await page.locator('#workshop-return').textContent(), /工作坊編輯（未經 Studio 驗證）/);
   assert.equal(await page.locator('#workshop-return-mml').inputValue(), sent);
   await idle();
