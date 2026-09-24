@@ -1,5 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import * as mcpModule from '../server/mcp.mjs';
 import { handleMcp, MCP_TOOLS, MCP_VERSIONS, MAX_BODY_BYTES, UNSUPPORTED_PROTOCOL_VERSION } from '../server/mcp.mjs';
 import { createWorker } from '../server/worker.mjs';
 import { DEMO, validateMML } from '../dist/core.js';
@@ -106,6 +107,102 @@ test('a request at a protocol version this server does not speak is refused with
   assert.deepEqual(rejected.at(-1), { status: 400, reason: 'Invalid JSON', method: null, protocol_version_header: null, user_agent: 'Broken' });
   // A logger that throws never turns a refusal into a crash.
   assert.equal((await handleMcp(req('{'), { rejectLog: () => { throw Error('log sink down'); } })).status, 400);
+});
+// 2025-03-26 requires a server to receive JSON-RPC batches and forbids
+// initialize inside one; 2025-06-18 removed batching. A request without the
+// version header speaks 2025-03-26.
+const at2025_03_26 = { 'mcp-protocol-version': '2025-03-26' };
+test('a 2025-03-26 batch of a request and a notification answers the request alone', async () => {
+  const batch = [{ jsonrpc: '2.0', id: 2, method: 'tools/list' }, { jsonrpc: '2.0', method: 'notifications/initialized' }];
+  for (const extra of [at2025_03_26, {}]) {
+    const response = await handleMcp(req(batch, extra));
+    assert.equal(response.status, 200);
+    assert.match(response.headers.get('content-type'), /^application\/json/);
+    assert.deepEqual(await response.json(), [{ jsonrpc: '2.0', id: 2, result: { tools: MCP_TOOLS } }]);
+  }
+  // Each element takes the path a single message takes: the same tool report.
+  const single = (await call('mml_validate', simple)).result;
+  const [batched] = await (await handleMcp(req([{ jsonrpc: '2.0', id: 1, method: 'tools/call', params: { name: 'mml_validate', arguments: simple } }], at2025_03_26))).json();
+  assert.deepEqual(batched.result, single);
+  // The batch passes the same gateway identity check a single message does.
+  const worker = createWorker({});
+  assert.equal((await worker.fetch(req(batch, at2025_03_26))).status, 401);
+  const viaWorker = await worker.fetch(req(batch, { ...at2025_03_26, 'oai-authenticated-user-email': 'synthetic@example.com' }));
+  assert.equal(viaWorker.status, 200);
+  assert.deepEqual((await viaWorker.json()).map(response => response.id), [2]);
+});
+test('a 2025-03-26 batch of notifications alone is accepted with 202 and no body', async () => {
+  const response = await handleMcp(req([{ jsonrpc: '2.0', method: 'notifications/initialized' }, { jsonrpc: '2.0', method: 'notifications/cancelled', params: { requestId: 1 } }], at2025_03_26));
+  assert.equal(response.status, 202);
+  assert.equal(await response.text(), '');
+  // A notification this server does not accept is refused inside a batch too.
+  const refused = await handleMcp(req([{ jsonrpc: '2.0', method: 'notifications/initialized' }, { jsonrpc: '2.0', method: 'tools/call', params: { name: 'mml_validate', arguments: simple } }], at2025_03_26));
+  assert.equal(refused.status, 400);
+  assert.deepEqual(await refused.json(), [{ jsonrpc: '2.0', id: null, error: { code: -32600, message: 'Unsupported notification' } }]);
+});
+test('a batch carrying initialize is refused whole', async () => {
+  const rejected = [];
+  const init = { jsonrpc: '2.0', id: 1, method: 'initialize', params: { protocolVersion: '2025-03-26', capabilities: {}, clientInfo: { name: 'test', version: '1' } } };
+  for (const batch of [[init], [{ jsonrpc: '2.0', id: 2, method: 'ping' }, init]]) {
+    const response = await handleMcp(req(batch), { rejectLog: entry => rejected.push(entry) });
+    assert.equal(response.status, 400);
+    assert.deepEqual(await response.json(), { jsonrpc: '2.0', id: null, error: { code: -32600, message: 'initialize must not be part of a JSON-RPC batch' } });
+  }
+  assert.deepEqual(rejected.map(entry => [entry.status, entry.method]), [[400, 'initialize'], [400, 'initialize']]);
+});
+test('batches are refused at 2025-06-18 and later, when empty, at an unknown version and past the size cap', async () => {
+  const ping = { jsonrpc: '2.0', id: 1, method: 'ping' };
+  for (const version of ['2025-11-25', '2025-06-18']) {
+    const response = await handleMcp(req([ping], { 'mcp-protocol-version': version }));
+    assert.equal(response.status, 400);
+    assert.deepEqual(await response.json(), { jsonrpc: '2.0', id: null, error: { code: -32600, message: 'JSON-RPC batches are not supported at this MCP protocol version' } });
+  }
+  // The single message is still answered at those versions.
+  assert.equal((await handleMcp(req(ping, { 'mcp-protocol-version': '2025-11-25' }))).status, 200);
+  for (const extra of [at2025_03_26, {}]) {
+    const empty = await handleMcp(req([], extra));
+    assert.equal(empty.status, 400);
+    assert.equal((await empty.json()).error.code, -32600);
+  }
+  const future = await handleMcp(req([ping], { 'mcp-protocol-version': '2026-07-28' }));
+  assert.equal(future.status, 400);
+  assert.deepEqual((await future.json()).error, { code: UNSUPPORTED_PROTOCOL_VERSION, message: 'Unsupported MCP protocol version', data: { supported: MCP_VERSIONS, requested: '2026-07-28' } });
+  const { MAX_BATCH_MESSAGES } = mcpModule;
+  assert.ok(Number.isSafeInteger(MAX_BATCH_MESSAGES) && MAX_BATCH_MESSAGES > 1);
+  const full = Array.from({ length: MAX_BATCH_MESSAGES }, (_, id) => ({ ...ping, id }));
+  assert.equal((await (await handleMcp(req(full, at2025_03_26))).json()).length, MAX_BATCH_MESSAGES);
+  const over = await handleMcp(req([...full, { ...ping, id: MAX_BATCH_MESSAGES }], at2025_03_26));
+  assert.equal(over.status, 400);
+  assert.deepEqual((await over.json()).error.data, { max_messages: MAX_BATCH_MESSAGES });
+});
+test('an element that fails inside a batch answers with its own error while the others succeed', async () => {
+  const rejected = [];
+  const response = await handleMcp(req([
+    { jsonrpc: '2.0', id: 1, method: 'ping' },
+    { jsonrpc: '2.0', id: 2, method: 'tools/call', params: { name: 'unknown' } },
+    { jsonrpc: '2.0', id: { bad: true }, method: 'ping' },
+    'not a message',
+    { jsonrpc: '2.0', id: 'u', method: 'unknown' },
+    { jsonrpc: '2.0', id: 3, method: 'tools/call', params: { name: 'mml_validate', arguments: simple } },
+  ], { ...at2025_03_26, 'user-agent': 'batcher' }), { rejectLog: entry => rejected.push(entry) });
+  assert.equal(response.status, 200);
+  const replies = await response.json();
+  assert.equal(replies.length, 6);
+  assert.deepEqual(replies.slice(0, 5), [
+    { jsonrpc: '2.0', id: 1, result: {} },
+    { jsonrpc: '2.0', id: 2, error: { code: -32602, message: 'Unknown tool' } },
+    { jsonrpc: '2.0', id: null, error: { code: -32600, message: 'Invalid request id' } },
+    { jsonrpc: '2.0', id: null, error: { code: -32600, message: 'Invalid JSON-RPC request' } },
+    { jsonrpc: '2.0', id: 'u', error: { code: -32601, message: 'Method not found' } },
+  ]);
+  assert.equal(replies[5].id, 3);
+  assert.equal(replies[5].result.structuredContent.technical_ok, true);
+  // The elements refused before dispatch are logged one by one, as a single
+  // refused message is, with their place in the batch.
+  assert.deepEqual(rejected, [
+    { status: 400, reason: 'Invalid request id', method: 'ping', protocol_version_header: '2025-03-26', user_agent: 'batcher', batch_index: 2 },
+    { status: 400, reason: 'Invalid JSON-RPC request', method: null, protocol_version_header: '2025-03-26', user_agent: 'batcher', batch_index: 3 },
+  ]);
 });
 test('content-length and streaming byte limits both enforced', async () => {
   assert.equal((await handleMcp(req('{}', { 'content-length': String(MAX_BODY_BYTES + 1) }))).status, 413);
