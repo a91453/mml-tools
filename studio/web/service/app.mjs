@@ -141,7 +141,7 @@ async function loadAgent(observedProject, observedRun) {
   clearTimeout(agentTimer);
   if (agentTask?.state === 'running') agentTimer = setTimeout(() => {
     if (!client.authenticated() || projectId !== observedProject || current?.run?.run_id !== observedRun) return;
-    loadAgent(observedProject, observedRun).catch(error => { text('#agent-status', error.message); });
+    loadAgent(observedProject, observedRun).catch(error => { text('#agent-status', error.message); if (error.authentication) authView(); });
   }, 2000);
 }
 async function startAgent() {
