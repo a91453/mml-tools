@@ -82,6 +82,30 @@ export async function runWorkshopChecks({ page, base, idle, file, screenshot, pr
     await (profile.hasTouch ? press(page.locator('#settingsClose')) : page.keyboard.press('Escape'));
     await page.waitForFunction(() => document.querySelector('#settings').getBoundingClientRect().left >= innerWidth - 1);
   };
+  // Waits for the bank label to name `name`. A load that never lands says
+  // where it stopped -- still reading, a refused load, the engine's own boot
+  // step, the audio context, the bank in the store -- instead of only that a
+  // 30 s wait ran out (desktop Chromium, once in CI on 2b5fe41).
+  const bankLoaded = async name => {
+    try {
+      await page.waitForFunction(name => document.querySelector('#dlsName')?.textContent.startsWith(name), name);
+    } catch (error) {
+      const seen = await page.evaluate(async () => {
+        const engine = await import('./engine.mjs').catch(e => ({ unreadable: e.message }));
+        const stored = await import('../preview/soundbank-store.mjs').then(store => store.loadBank()).then(bank => bank?.name ?? null, e => `unreadable: ${e.message}`);
+        return {
+          url: location.href,
+          label: document.querySelector('#dlsName')?.textContent,
+          engine_status: document.querySelector('#engine')?.textContent,
+          audio_context: engine.context ? engine.context()?.state ?? 'not created' : engine,
+          play_enabled: document.querySelector('#play')?.disabled === false,
+          log: document.querySelector('#log')?.textContent?.trim().slice(0, 500),
+          stored_bank: stored,
+        };
+      }).catch(e => ({ unreadable: e.message }));
+      throw Object.assign(new Error(`The Workshop never showed ${name} as its bank: ${JSON.stringify(seen)}`), { cause: error });
+    }
+  };
   // ── Studio → Workshop: the candidate MML opens as a copy ─────────────────
   // A project of its own, so the hand-back below touches no other fixture.
   await page.goto(base); await page.locator('#app h1').waitFor(); await idle();
@@ -152,7 +176,7 @@ export async function runWorkshopChecks({ page, base, idle, file, screenshot, pr
   // ── the user's bank, kept in Studio's local bank store ────────────────────
   await command('#gear');
   await page.locator('#dls').setInputFiles({ name: 'saw.sf2', mimeType: 'application/octet-stream', buffer: Buffer.from(BasicSoundBank.getSampleSoundBankFile()) });
-  await page.locator('#dlsName').filter({ hasText: 'saw.sf2' }).waitFor();
+  await bankLoaded('saw.sf2');
   await closeSettings();
   assert.equal(await page.locator('#play').isEnabled(), true);
 
@@ -193,7 +217,7 @@ export async function runWorkshopChecks({ page, base, idle, file, screenshot, pr
   assert.equal(await page.evaluate(async () => (await (await import('../preview/soundbank-store.mjs')).loadBank())?.name), 'saw.sf2', 'the refused pick left saw.sf2 in the store');
   await page.unroute(PROCESSOR);
   await page.reload(); await page.locator('#unverified').waitFor();
-  await page.waitForFunction(() => document.querySelector('#dlsName')?.textContent.startsWith('saw.sf2'));
+  await bankLoaded('saw.sf2');
   await page.locator('#play:enabled').waitFor();
 
   // ── draw a note on the roll, then undo / redo ─────────────────────────────
