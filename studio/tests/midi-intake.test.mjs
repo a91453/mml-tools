@@ -7,6 +7,7 @@ import {
   MIDI_INGESTION_STATUS,
   sha256Hex,
 } from '../backend/source/index.mjs';
+import { RESTRIKE_DETAIL_DEPTH } from '../backend/source/midi.mjs';
 import { DEMO, validateMML, writeMidi, f } from '../../dist/core.js';
 
 // Fixtures are built from raw bytes rather than from another library so that
@@ -724,4 +725,27 @@ test('a blank track name cannot destroy an otherwise complete ingest', () => {
     ],
   }));
   assert.equal(midiFragmentToProject(named).title, 'Lead');
+});
+
+test('overlapping strikes are listed in full up to the detail depth, and a deeper run stays linear', async () => {
+  // Three strikes of one key before any release: listed exactly as before.
+  const three = ingest(simple([[0, ...noteOn(0, 60, 100)], [0, ...noteOn(0, 60, 90)], [0, ...noteOn(0, 60, 80)], [0, ...noteOff(0, 60)], [0, ...noteOff(0, 60)], [0, ...noteOff(0, 60)]]));
+  const listed = three.warnings.filter(w => w.code === 'RESTRUCK_BEFORE_RELEASE');
+  assert.deepEqual(listed.map(w => [w.depth, w.sourceEventIds.length, w.listing]), [[2, 2, undefined], [3, 3, undefined]]);
+
+  // One key struck 10,000 times without a release: this used to list every
+  // open strike on every new one, and a 30 KB file exhausted the heap.
+  const strikes = 10000;
+  const started = Date.now();
+  const deep = ingest(simple(Array.from({ length: strikes }, () => [0, ...noteOn(0, 60, 100)])));
+  assert.ok(Date.now() - started < 5000, 'linear, not quadratic');
+  const restruck = deep.warnings.filter(w => w.code === 'RESTRUCK_BEFORE_RELEASE');
+  assert.equal(restruck.length, RESTRIKE_DETAIL_DEPTH, 'depths 2..16 listed, then one summary');
+  const summary = restruck.at(-1);
+  assert.equal(summary.listing, 'FIRST_AND_LATEST_STRIKE');
+  assert.equal(summary.depth, strikes);
+  assert.equal(summary.sourceEventIds.length, 2);
+  assert.notEqual(summary.sourceEventIds[0], summary.sourceEventIds[1]);
+  // Nothing is dropped: every strike is still reported as never released.
+  assert.equal(deep.unsupported.filter(u => u.code === 'UNCLOSED_NOTE_ON').length, strikes);
 });

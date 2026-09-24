@@ -174,7 +174,7 @@ function matchNotes(track, state) {
       // the provenance of a note that already finished sounding, and would
       // give every note on the channel the file's last program.
       queue.push({ event, program: state.programs.get(event.channel) ?? null });
-      if (queue.length > 1) {
+      if (queue.length > 1 && queue.length <= RESTRIKE_DETAIL_DEPTH) {
         state.warnings.push({
           code: 'RESTRUCK_BEFORE_RELEASE',
           trackIndex: track.index,
@@ -183,6 +183,31 @@ function matchNotes(track, state) {
           depth: queue.length,
           sourceEventIds: queue.map(pending => eventRef(track.index, pending.event.eventIndex)),
         });
+      } else if (queue.length > RESTRIKE_DETAIL_DEPTH) {
+        // Past the detailed depth, one record per run of overlapping strikes,
+        // updated in place: the first and the latest strike, and the deepest
+        // the queue went. Listing every open strike on every new one made the
+        // warnings quadratic in the strikes -- a 30 KB file of one key struck
+        // 10,000 times without release exhausted the heap and took down the
+        // whole service. Every strike still becomes an event or an
+        // UNCLOSED_NOTE_ON, so nothing is dropped; only the listing is bounded.
+        const first = eventRef(track.index, queue[0].event.eventIndex);
+        const latest = eventRef(track.index, event.eventIndex);
+        if (!queue.overflow) {
+          queue.overflow = {
+            code: 'RESTRUCK_BEFORE_RELEASE',
+            trackIndex: track.index,
+            channel: event.channel,
+            noteNumber: event.noteNumber,
+            depth: queue.length,
+            sourceEventIds: [first, latest],
+            listing: 'FIRST_AND_LATEST_STRIKE',
+          };
+          state.warnings.push(queue.overflow);
+        } else {
+          queue.overflow.depth = Math.max(queue.overflow.depth, queue.length);
+          queue.overflow.sourceEventIds = [queue.overflow.sourceEventIds[0], latest];
+        }
       }
       continue;
     }
@@ -219,6 +244,11 @@ function matchNotes(track, state) {
   }
   return matched;
 }
+
+// Overlapping strikes of one key are listed in full up to this depth, which
+// covers every real voicing and keeps such warnings exactly as they were.
+// Deeper runs are summarized (see the note-on branch in matchNotes).
+export const RESTRIKE_DETAIL_DEPTH = 16;
 
 export function ingestMIDI(input, options = {}) {
   const bytes = toBytes(input);
