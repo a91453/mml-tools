@@ -263,3 +263,23 @@ test('local call --output and its receipt keep a size-compacted run status whole
   assert.equal(receipts.length, 1);
   assert.deepEqual(receipts[0].result, status, 'the receipt holds the full result');
 });
+
+test('local export refuses a stale run whose MCP view compacts the staleness list, with the full list as evidence', async t => {
+  const { dir, command } = workspace(t);
+  const app = createStudioApplication({ dataDirectory: join(dir, 'store'), durability: 'persistent' });
+  const { project_id, run_id, status, view } = await staleCompletedRun(app, join(dir, 'store'), LOCAL_AGENT_OWNER);
+  assert.equal(view.staleness.length, undefined, 'precondition: the summary object has no length to test');
+  const output = join(dir, 'stale.mml');
+  const result = command(['export', '--project-id', project_id, '--run-id', run_id, '--out', output], 1);
+  assert.equal(existsSync(output), false, 'no Final of a stale run is written');
+  assert.equal(result.error.code, 'AGENT_INPUT_REFUSED');
+  assert.match(result.error.message, /bound to changed inputs/);
+  assert.deepEqual(result.error.details, {
+    run_id, staleness: status.staleness, staleness_notice: status.staleness_notice, canonical: status.canonical,
+  }, 'the refusal keeps every staleness entry, not a summary');
+  const receipts = readdirSync(join(dir, 'receipts')).map(name => JSON.parse(readFileSync(join(dir, 'receipts', name), 'utf8')));
+  assert.equal(receipts.length, 1);
+  assert.deepEqual(receipts[0].result, result);
+  assert.deepEqual(JSON.parse(JSON.stringify(await app.getRun(LOCAL_AGENT_OWNER, project_id, run_id))), status, 'refusal never rewrites the run');
+  assert.equal(existsSync(join(dir, '.agent.lock')), false);
+});

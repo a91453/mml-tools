@@ -83,6 +83,43 @@ export async function callAgentTool(application, name, args, actor, remote = nul
   }
 }
 
+const isRecord = value => value !== null && typeof value === 'object' && !Array.isArray(value);
+const isText = value => typeof value === 'string' && value.length > 0;
+
+// Write the delivered Final MML of one completed, unchanged run. `read` returns
+// the whole result of a read-only tool: uncompacted in-process locally,
+// reassembled through report_page remotely.
+//
+// Fails closed. Every field the decision reads must have exactly the shape a
+// whole read gives it, and anything else refuses. A read carrying
+// `response_compaction` is a bounded MCP view, not the result itself; in such
+// a view a long list is a {compacted: true, ...} summary object whose `.length`
+// is undefined, so a truthiness test on it let the Final of a run bound to
+// changed inputs be written. `staleness` must therefore be an actual, empty
+// array, and the artifact must be the one the run names, for its candidate.
+async function exportRunFinal(read, { project_id, run_id, out }) {
+  const status = await read('studio_run_status', { project_id, run_id });
+  const { run, staleness, staleness_notice, canonical } = isRecord(status) ? status : {};
+  const evidence = { run_id, staleness, staleness_notice, canonical };
+  if (!isRecord(status) || status.response_compaction !== undefined || !isRecord(run) || run.run_id !== run_id || !Array.isArray(staleness)) {
+    refuse(`Run ${run_id} status was not read whole (its run or staleness list is missing or compacted). A Final is never exported from a partial read; re-read the run status in full.`,
+      { ...evidence, ...(status?.response_compaction !== undefined ? { response_compaction: status.response_compaction } : {}) });
+  }
+  if (run.state !== 'completed' || !isText(run.final_artifact_id)) refuse(`Run ${run_id} is ${run.state}; no completed Final artifact to export.`);
+  if (staleness.length !== 0) refuse(
+    `Run ${run_id} is bound to changed inputs (${staleness.map(entry => entry?.code).join(', ')}). Re-read the run and resolve its bindings before exporting.`,
+    evidence,
+  );
+  const final = await read('studio_artifact_get', { artifact_id: run.final_artifact_id });
+  const artifact = isRecord(final) && final.response_compaction === undefined ? final.artifact : null;
+  if (!isRecord(artifact) || artifact.artifact_id !== run.final_artifact_id || artifact.type !== 'final_mml'
+    || !isText(run.candidate_id) || artifact.candidate_id !== run.candidate_id || !isText(artifact.mml)) {
+    refuse('Final artifact was not read whole, is not the Final this run names for its candidate, or contains no delivered MML.');
+  }
+  writeFileSync(out, artifact.mml, { encoding: 'utf8', flag: 'wx' });
+  return { output: out, run_id, artifact, staleness, staleness_notice, canonical };
+}
+
 export async function main(argv = process.argv.slice(2)) {
   const { values, positionals } = parseArgs({ args: argv, allowPositionals: true, options: {
     'data-dir': { type: 'string' }, actor: { type: 'string', default: 'agent:external' },
@@ -157,16 +194,7 @@ export async function main(argv = process.argv.slice(2)) {
       } else if (command === 'export') {
         if (!values['project-id'] || !values['run-id'] || !values.out) refuse('export requires --project-id, --run-id and --out.');
         input = { project_id: values['project-id'], run_id: values['run-id'], out: resolve(values.out) };
-        const { run, staleness, staleness_notice, canonical } = await read('studio_run_status', { project_id: input.project_id, run_id: input.run_id });
-        if (run.state !== 'completed' || !run.final_artifact_id) refuse(`Run ${run.run_id} is ${run.state}; no completed Final artifact to export.`);
-        if (staleness.length) refuse(
-          `Run ${run.run_id} is bound to changed inputs (${staleness.map(entry => entry.code).join(', ')}). Re-read the run and resolve its bindings before exporting.`,
-          { run_id: run.run_id, staleness, staleness_notice, canonical },
-        );
-        const { artifact } = await read('studio_artifact_get', { artifact_id: run.final_artifact_id });
-        if (artifact.type !== 'final_mml' || artifact.candidate_id !== run.candidate_id || !artifact.mml) refuse('Final artifact does not match this run candidate or contains no delivered MML.');
-        writeFileSync(input.out, artifact.mml, { encoding: 'utf8', flag: 'wx' });
-        result = { output: input.out, run_id: run.run_id, artifact, staleness, staleness_notice, canonical };
+        result = await exportRunFinal(read, input);
       } else refuse(`Unknown command: ${command}`);
     } catch (error) {
       result = error.remoteResult ?? { error: { code: error.code ?? 'LOCAL_ERROR', message: error.message, details: error.details ?? null } };

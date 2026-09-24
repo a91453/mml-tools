@@ -306,6 +306,10 @@ node scripts/studio-agent.mjs --data-dir $work --actor agent:codex export --proj
 
 只匯出 `completed` run 所指、candidate ID 相符且實際有 MML 的 `final_mml`；
 匯出前重讀 `getRun`，若其 `staleness` 非空，拒絕輸出且不改寫 run。
+這個判斷 fail closed：run status 與 artifact 必須是完整讀取（本機不經 MCP 摘要，
+遠端經 report_page 完整回讀）；`staleness` 必須是實際的空陣列，artifact 必須是 run
+所指的 Final 且 candidate 相符。任一欄位缺漏、型別不符或被摘要成
+`{compacted: true, …}`，一律拒絕輸出，不會把摘要當成「沒有失效」。
 拒絕回應／receipt 的 `error.details` 保留 run ID、完整 `staleness`、
 `staleness_notice` 與當前 `canonical`。先以 `studio_run_status` 核對來源／baseline／
 候選／規則綁定，再透過既有流程處理；不能刪除失效訊號或直接把舊 run 改成可交付。
