@@ -182,6 +182,7 @@ function midiSourceCard(entry) {
   return `<div class="card">
     <div class="row"><h3>${esc(slotLabels[entry.slot] ?? entry.slot)} · ${esc(entry.name)}</h3>${badge(integrity)}</div>
     <p class="meta">位元組完整性 ${integrity === 'PASS' ? '＝儲存的位元組與來源身分一致' : `＝失敗：${esc(entry.integrity.reasons.join(', '))}`}。這不是來源審核，也不是 SOURCE_PASS。</p>
+    ${(entry.integrity.reasons ?? []).includes('STORED_PROJECT_DOES_NOT_MATCH_SOURCE_BYTES') ? '<p class="meta">儲存的事件與這些位元組現在讀出的結果不同。若這份 MIDI 是在較早版本匯入的，讀法可能已經更新（例如把 SMF 的微秒速度讀回它代表的整數 Tempo），請重新匯入原始檔；若不是，請把它當成儲存內容已被改動。</p>' : ''}
     ${facts([
       ['檔案位元組', entry.source.byteLength === null ? null : `${entry.source.byteLength} bytes（${bytesLabel(entry.source.byteLength)}）`],
       ['sha256', entry.source.sha256],
