@@ -110,8 +110,7 @@ export function renderPlan({ alternatives, meter, pickup = null, barRange = null
  * bar `from` alone fits. A window's length only grows with `to`, so this is
  * a binary search over the bar grid.
  */
-export function longestFittingRange({ alternatives, allBars, from, maxSeconds }) {
-  const clocks = alternatives.map(alternative => tempoClock(alternative.performance.tempo));
+export function longestFittingRange({ alternatives, allBars, from, maxSeconds, clocks = alternatives.map(alternative => tempoClock(alternative.performance.tempo)) }) {
   const first = allBars[from - 1];
   const starts = clocks.map(clock => Math.max(0, clock.seconds(first.startExact) - PREROLL_SECONDS));
   const fits = index => clocks.every((clock, a) => clock.seconds(allBars[index].endExact) - starts[a] <= maxSeconds);
@@ -122,6 +121,21 @@ export function longestFittingRange({ alternatives, allBars, from, maxSeconds })
     if (fits(mid)) lo = mid; else hi = mid - 1;
   }
   return { from, to: allBars[lo].bar };
+}
+
+/**
+ * For a request whose first bar alone is over the limit: the longest fitting
+ * range from the first later bar that fits alone, or null when no later bar
+ * of the song fits, so no section from there on can be prescreened. The tempo
+ * clocks are built once, so the scan stays linear in the bar count.
+ */
+export function firstFittingRangeAfter({ alternatives, allBars, from, maxSeconds }) {
+  const clocks = alternatives.map(alternative => tempoClock(alternative.performance.tempo));
+  for (let bar = from + 1; bar <= allBars.length; bar++) {
+    const range = longestFittingRange({ alternatives, allBars, from: bar, maxSeconds, clocks });
+    if (range) return range;
+  }
+  return null;
 }
 
 /**

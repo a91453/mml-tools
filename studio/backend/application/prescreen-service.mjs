@@ -32,7 +32,7 @@ import {
 import { normalizeThresholds, VERDICT } from '../audio/prescreen/decision.mjs';
 import {
   LABELS, ORIGINAL_STATUS, PREROLL_SECONDS, PRESCREEN_NOTICE, PRESCREEN_REPORT_SCHEMA, RULE_DRAFT, SAMPLE_RATES,
-  longestFittingRange, renderPlan, runPrescreen,
+  firstFittingRangeAfter, longestFittingRange, renderPlan, runPrescreen,
 } from '../audio/prescreen/prescreen.mjs';
 import { ALL_METRICS } from '../audio/prescreen/metrics.mjs';
 import { decodeWav } from '../audio/prescreen/wav.mjs';
@@ -185,13 +185,18 @@ export function plannedRender({ alternatives, meter, pickup, barRange }) {
   if (!over.length) return plan;
   const from = plan.bars[0].bar;
   const suggested = longestFittingRange({ alternatives, allBars: plan.allBars, from, maxSeconds: max });
+  // With the first bar itself over the limit, name a later section that
+  // fits, or say that none does, rather than advise a range that cannot work.
+  const later = suggested ? null : firstFittingRangeAfter({ alternatives, allBars: plan.allBars, from, maxSeconds: max });
   const longest = Math.max(...plan.renderSeconds);
   const span = plan.whole ? 'the whole song' : `bars ${from}-${plan.bars.at(-1).bar} (with the ${PREROLL_SECONDS} s pre-roll)`;
   const next = suggested && suggested.to < plan.allBars.length ? `, then continue from bar ${suggested.to + 1}` : '';
   refuse(`Rendering ${span} would take ${Math.ceil(longest)} s of audio for alternative${over.length > 1 ? 's' : ''} ${over.join(', ')}; the prescreen renders at most ${max} s (${max / 60} minutes) per alternative. `
     + (suggested
       ? `Prescreen it in sections with bar_range, for example {"from": ${suggested.from}, "to": ${suggested.to}}${next}.`
-      : `Even bar ${from} alone is longer than that; prescreen a section starting at another bar with bar_range.`), {
+      : later
+        ? `Even bar ${from} alone is longer than that; the first section after it that fits is bar_range {"from": ${later.from}, "to": ${later.to}}.`
+        : `Even bar ${from} alone is longer than that, and so is every bar after it, so no section from bar ${from} on can be prescreened.`), {
     reason: 'RENDER_TOO_LONG',
     max_render_seconds: max,
     render_seconds: Object.fromEntries(alternatives.map((alternative, a) => [alternative.label, roundSeconds(plan.renderSeconds[a])])),
@@ -199,6 +204,7 @@ export function plannedRender({ alternatives, meter, pickup, barRange }) {
     bars_total: plan.allBars.length,
     bar_range: plan.whole ? null : { from, to: plan.bars.at(-1).bar },
     suggested_bar_range: suggested,
+    ...(suggested ? {} : { later_bar_range: later }),
   });
 }
 

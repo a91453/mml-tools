@@ -86,7 +86,7 @@ const RUN_FINALIZE_DESCRIPTION = 'finalize 選項：technical_timing_repair（�
 const PRESCREEN_NOTICE_TEXT = '預篩結果只是機器證據：不設定 Gate 7（原曲音訊證據）、不設定玩家回讀（Gate 6 player_readback）、不設定 in_game，也不選定、接受或套用任何版本。免費 GM 音色（FluidR3Mono，首次需要時由服務下載並以 SHA-256 驗證）不是遊戲音色。';
 // The render-length limit, stated where a caller chooses the request. The
 // service checks it before anything renders (prescreen-service.mjs).
-const PRESCREEN_RENDER_LIMIT_TEXT = `每個替代版本最多渲染 ${PRESCREEN_LIMITS.maxRenderSeconds} 秒（${PRESCREEN_LIMITS.maxRenderSeconds / 60} 分鐘）音訊：整首，或有 bar_range 時從第一小節前 ${PREROLL_SECONDS} 秒預捲到最後一小節結束。超過時在任何渲染之前以 INVALID_REQUEST 拒絕（details.reason=RENDER_TOO_LONG，附 suggested_bar_range），請改用 bar_range 分段預篩。`;
+const PRESCREEN_RENDER_LIMIT_TEXT = `每個替代版本最多渲染 ${PRESCREEN_LIMITS.maxRenderSeconds} 秒（${PRESCREEN_LIMITS.maxRenderSeconds / 60} 分鐘）音訊：整首，或有 bar_range 時從第一小節前 ${PREROLL_SECONDS} 秒預捲到最後一小節結束。超過時在任何渲染之前以 INVALID_REQUEST 拒絕（details.reason=RENDER_TOO_LONG，附 suggested_bar_range；起始小節本身就超過上限時為 null，改由 later_bar_range 指出之後第一段可行範圍或 null），請改用 bar_range 分段預篩。`;
 const prescreenMml = { type: 'string', minLength: 1, maxLength: 16384, description: '完整六軌 MML@...,...,...,...,...,...; 原文；本工具不改寫。' };
 const prescreenInstruments = {
   type: 'array', minItems: 6, maxItems: 6, items: { type: 'string', enum: [...GAME_INSTRUMENT_IDS] },

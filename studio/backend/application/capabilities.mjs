@@ -399,7 +399,8 @@ export function buildCapabilities({ canonical, storage, jobs, transports = [] })
       alternatives: '2-4: raw six-role MML, or a project candidate or Final artifact',
       // Checked before anything renders; a request over one is refused with
       // INVALID_REQUEST (the render-length refusal carries
-      // details.reason RENDER_TOO_LONG and a suggested_bar_range).
+      // details.reason RENDER_TOO_LONG and a suggested_bar_range, or a
+      // later_bar_range when the first bar alone is over the limit).
       limits: freeze({
         max_mml_characters: PRESCREEN_LIMITS.maxMmlCharacters,
         max_bars: PRESCREEN_LIMITS.maxBars,

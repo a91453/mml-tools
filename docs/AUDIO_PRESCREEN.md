@@ -216,7 +216,10 @@ alone, so a request over it is refused before the bank is loaded or any worker
 runs, with `INVALID_REQUEST`, `details.reason: "RENDER_TOO_LONG"`, each
 alternative's `render_seconds` and a `suggested_bar_range` (the longest range
 from the requested first bar that fits); a longer song is prescreened section
-by section with `bar_range`. Twenty minutes is about four times the longest
+by section with `bar_range`. When that first bar alone is over the limit
+(only an extreme meter such as 255/1 at T32 does this), `suggested_bar_range`
+is null and `later_bar_range` names the first later section that fits, or is
+null too when no bar from there on fits. Twenty minutes is about four times the longest
 real song this repository has carried (311 s) and over five times the 220 s
 cost fixture below.
 

@@ -301,6 +301,28 @@ test('APS-7 a render longer than the limit is refused before the bank is loaded 
     await assert.rejects(service.audioPrescreen(OWNER, null, { alternatives: [{ mml: hours }, { mml: hours.replace('t32', 't33') }], meter_text: '0 16/4', render: { sample_rate: 44100, channels: 2 } }), renderTooLong({
       over_limit: ['A', 'B'], bars_total: 9996, suggested_bar_range: { from: 1, to: 40 },
     }));
+    // The suggestion fits every alternative, not only the first: with the
+    // slower T32 alternative second, {1, 41} would still be 1,230 s long.
+    await assert.rejects(service.audioPrescreen(OWNER, null, { alternatives: [{ mml: hours.replace('t32', 't33') }, { mml: hours }], meter_text: '0 16/4', render: { sample_rate: 44100, channels: 2 } }), renderTooLong({
+      over_limit: ['A', 'B'], bars_total: 9996, suggested_bar_range: { from: 1, to: 40 },
+    }));
+    // A first bar longer than the limit on its own (255/1 at T32 is
+    // 1,912.5 s): the refusal names the first later section that fits, or
+    // says that none does, instead of advising a range that cannot work.
+    const firstBarTooLong = (expected, pattern) => error => {
+      assert.equal(error.code, 'INVALID_REQUEST', error.message);
+      assert.equal(error.details.reason, 'RENDER_TOO_LONG');
+      assert.equal(error.details.suggested_bar_range, null);
+      assert.deepEqual(error.details.later_bar_range, expected);
+      assert.match(error.message, pattern);
+      return true;
+    };
+    const oneLongBar = `MML@t32o4l1${'c'.repeat(259)},,,,,;`;
+    await assert.rejects(service.audioPrescreen(OWNER, null, { alternatives: [{ mml: oneLongBar }, { mml: oneLongBar.replace('o4', 'o5') }], meter_text: '0 255/1\n1020 4/4' }),
+      firstBarTooLong({ from: 2, to: 5 }, /Even bar 1 alone is longer than that; the first section after it that fits is bar_range \{"from": 2, "to": 5\}/));
+    const onlyLongBars = `MML@t32o4l1${'c'.repeat(510)},,,,,;`;
+    await assert.rejects(service.audioPrescreen(OWNER, null, { alternatives: [{ mml: onlyLongBars }, { mml: onlyLongBars.replace('o4', 'o5') }], meter_text: '0 255/1' }),
+      firstBarTooLong(null, /and so is every bar after it, so no section from bar 1 on can be prescreened/));
     assert.deepEqual(touched, [], 'nothing was loaded or dispatched');
     // Exactly at the limit is admitted: it goes on to load the bank.
     await assert.rejects(service.audioPrescreen(OWNER, null, { alternatives: [{ mml: wholeNotes(160) }, { mml: wholeNotes(160, 'd') }], meter_text: '0 4/4' }), /the sound bank was loaded/);
