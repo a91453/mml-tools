@@ -157,7 +157,10 @@ export async function bootstrapStudio({ lock, trustZip, fetchArchive, cacheRoot 
         const name = path === '/' ? 'index.html' : path.slice(1);
         const bytes = path === '/health' ? health : files.get(name);
         if (!bytes) { res.writeHead(404, { 'Cache-Control': 'no-store' }); res.end('Not found'); return; }
-        res.writeHead(200, { 'Content-Type': path === '/health' ? 'application/json' : (types[extname(name)] ?? 'application/octet-stream'), 'Content-Length': bytes.length, 'Cache-Control': 'no-store', 'X-Content-Type-Options': 'nosniff' });
+        // Studio Web keeps the user's projects in same-origin IndexedDB and has
+        // state-changing UI, and it never frames itself, so no page may frame
+        // it (clickjacking). X-Frame-Options covers engines without CSP 3.
+        res.writeHead(200, { 'Content-Type': path === '/health' ? 'application/json' : (types[extname(name)] ?? 'application/octet-stream'), 'Content-Length': bytes.length, 'Cache-Control': 'no-store', 'X-Content-Type-Options': 'nosniff', 'Content-Security-Policy': "frame-ancestors 'none'", 'X-Frame-Options': 'DENY' });
         res.end(req.method === 'HEAD' ? undefined : bytes);
       } catch { res.writeHead(400); res.end('Bad request'); }
     });

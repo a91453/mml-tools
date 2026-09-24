@@ -26,6 +26,11 @@ test('empty volume, verified cached start, fail-closed corruption, durable recov
     assert.equal(first.mode, 'durable-source');
     const base = `http://127.0.0.1:${first.server.address().port}`;
     for (const path of ['/health', '/', '/build.json', '/sw.js', '/studio/web/app.mjs', '/studio/web/worker.mjs']) assert.equal((await fetch(base + path)).status, 200, path);
+    for (const path of ['/', '/index.html', '/sw.js']) {
+      const response = await fetch(base + path);
+      assert.equal(response.headers.get('content-security-policy'), "frame-ancestors 'none'", `${path} may not be framed`);
+      assert.equal(response.headers.get('x-frame-options'), 'DENY', path);
+    }
     const health = await (await fetch(base + '/health')).json();
     assert.equal(health.buildId, lock.buildId); assert.equal(health.cacheId, lock.cacheId);
     assert.deepEqual(health.canonical, lock.canonical);
