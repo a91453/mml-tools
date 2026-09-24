@@ -56,6 +56,7 @@ class AuthStore {
   remove(kind, id) { this.db.prepare('DELETE FROM auth_records WHERE kind=? AND id=?').run(kind, id); }
   prune() { this.db.prepare('DELETE FROM auth_records WHERE expires<=?').run(this.now()); }
   count(kind) { return this.db.prepare('SELECT count(*) AS n FROM auth_records WHERE kind=? AND expires>?').get(kind, this.now()).n; }
+  list(kind) { return this.db.prepare('SELECT id, value FROM auth_records WHERE kind=? AND expires>?').all(kind, this.now()).map(row => ({ id: row.id, value: JSON.parse(row.value) })); }
   atomic(fn) { this.db.exec('BEGIN IMMEDIATE'); try { const result = fn(); this.db.exec('COMMIT'); return result; } catch (error) { this.db.exec('ROLLBACK'); throw error; } }
   close() { this.db.close(); }
 }
@@ -167,9 +168,22 @@ export function createAuth({ origin, ownerPassword, database, allowedRedirectHos
     // RFC 9700 section 4.12: 303 explicitly turns the credential POST into GET.
     return new Response(null, { status: 303, headers: { ...noCache, location: target.href, 'set-cookie': clearFlowCookie() } });
   }
+  // Clients no live grant uses, registered over a day ago: an abandoned
+  // registration or one whose grants all expired or were revoked. Evicted
+  // oldest first, and only when the registration cap is reached, so a
+  // connector holding a live grant never loses its client to capacity.
+  function evictIdleClients() {
+    const live = new Set(store.list('grant').filter(entry => !entry.value.revoked).map(entry => entry.value.clientId));
+    const idle = store.list('client')
+      .filter(entry => !live.has(entry.id) && (entry.value.client_id_issued_at ?? 0) < now() - 86400)
+      .sort((a, b) => (a.value.client_id_issued_at ?? 0) - (b.value.client_id_issued_at ?? 0));
+    for (const entry of idle) {
+      if (store.count('client') < 128) break;
+      store.remove('client', entry.id);
+    }
+  }
   async function register(request) {
     rate('register', 12); store.prune();
-    requireValue(store.count('client') < 128, 'temporarily_unavailable', 'Client registration capacity reached', 429);
     const body = await readBody(request, 'application/json');
     requireValue(body && typeof body === 'object' && !Array.isArray(body), 'invalid_client_metadata', 'Expected an object');
     requireValue(Array.isArray(body.redirect_uris) && body.redirect_uris.length > 0 && body.redirect_uris.length <= 5 && body.redirect_uris.every(redirectAllowed), 'invalid_redirect_uri', 'Only approved HTTPS callback hosts are accepted');
@@ -179,7 +193,20 @@ export function createAuth({ origin, ownerPassword, database, allowedRedirectHos
     const name = body.client_name ?? 'ChatGPT';
     requireValue(typeof name === 'string' && name.length > 0 && name.length <= 100, 'invalid_client_metadata', 'Invalid client name');
     checkScope(body.scope);
-    const clientId = opaque(), client = { client_id: clientId, client_id_issued_at: now(), client_name: name, redirect_uris: [...new Set(body.redirect_uris)], grant_types: ['authorization_code', 'refresh_token'], response_types: ['code'], token_endpoint_auth_method: 'none', scope: SCOPE };
+    const redirectUris = [...new Set(body.redirect_uris)];
+    // The service page registers on every login, and a consented client is kept
+    // for a year, so its logins alone used up the 128 registrations and then
+    // every connector's registration was refused. A registration whose only
+    // callback is this server's own page is answered with the page's existing
+    // client: it is a public PKCE client with no secret, and the callback, the
+    // owner's consent and the PKCE check per login are unchanged.
+    if (redirectUris.length === 1 && redirectUris[0] === issuer + '/studio/') {
+      const existing = store.list('client').find(entry => entry.value.client_name === name && entry.value.redirect_uris?.length === 1 && entry.value.redirect_uris[0] === redirectUris[0]);
+      if (existing) return json(existing.value, 201);
+    }
+    if (store.count('client') >= 128) store.atomic(evictIdleClients);
+    requireValue(store.count('client') < 128, 'temporarily_unavailable', 'Client registration capacity reached', 429);
+    const clientId = opaque(), client = { client_id: clientId, client_id_issued_at: now(), client_name: name, redirect_uris: redirectUris, grant_types: ['authorization_code', 'refresh_token'], response_types: ['code'], token_endpoint_auth_method: 'none', scope: SCOPE };
     store.put('client', clientId, client, now() + 86400);
     return json(client, 201);
   }

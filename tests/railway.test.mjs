@@ -261,6 +261,40 @@ test('the Bearer scheme name is matched without regard to case; the token is not
   const flipped = grant.access_token.replace(/[a-z]/, c => c.toUpperCase());
   if (flipped !== grant.access_token) assert.equal((await send(mcpRequest(flipped))).status, 401);
 });
+test('service page logins reuse one client, and the registration cap only evicts clients no live grant uses', async t => {
+  let clock = 100000;
+  const send = setup(t, { now: () => clock });
+  const page = { client_name: 'MML Studio 服務工作區', redirect_uris: [origin + '/studio/'] };
+  // Every page login registers, then the owner consents; a year-long client
+  // per login used to exhaust the 128 registrations for every client.
+  const pageLogin = async () => {
+    const client = await register(send, page);
+    const params = new URLSearchParams({ client_id: client.client_id, redirect_uri: origin + '/studio/', response_type: 'code', scope: 'mml:read', resource: origin + '/mcp', code_challenge: pkce, code_challenge_method: 'S256', state: 's' });
+    const start = await send(req('/oauth/authorize?' + params));
+    assert.equal(start.status, 200);
+    const cookie = start.headers.get('set-cookie').split(';')[0], csrf = /name="csrf" value="([^"]+)"/.exec(await start.text())[1];
+    assert.equal((await send(form('/oauth/authorize', { csrf, password, decision: 'allow' }, { cookie, origin }))).status, 303);
+    clock += 3 * 3600;
+    return client.client_id;
+  };
+  const ids = new Set();
+  for (let i = 0; i < 140; i++) ids.add(await pageLogin());
+  assert.equal(ids.size, 1, 'one client for the page, however many logins');
+  // A connector can still register afterwards.
+  assert.ok((await register(send)).client_id);
+
+  // Fill the rest of the capacity with connector registrations that a live
+  // grant uses; none of them may be evicted to make room.
+  const connectors = [];
+  while (connectors.length < 126) { connectors.push((await register(send)).client_id); clock += 6; }
+  for (const id of connectors.slice(0, 60)) { await authorizedCode(send, id); clock += 6; }
+  clock += 2 * 86400;
+  // At the cap: the idle registrations are evicted, oldest first, the ones
+  // with a live grant are not, and the new registration succeeds.
+  const fresh = await register(send);
+  assert.ok(fresh.client_id);
+  for (const id of connectors.slice(0, 60)) assert.equal((await begin(send, id)).status, 200, 'a client with a live grant is kept');
+});
 test('production configuration fails closed without credentials or HTTPS', () => {
   assert.throws(() => createApplication({ ...options, ownerPassword: 'short' }), /MML_OWNER_PASSWORD/);
   assert.throws(() => createApplication({ ...options, origin: 'http://example.com' }), /HTTPS/);
