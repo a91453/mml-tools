@@ -63,6 +63,17 @@
 // written, which is a crash inside `advance` — is reported as the conflict it
 // is, with the run's own reconciliation machinery named as the remedy. It is
 // not resolved by guessing, and the proposal is not marked applied.
+//
+// One short lock hold sits between the two, immediately before `runs.resume`.
+// It re-reads the proposal and records, durably and BEFORE the call, that an
+// attempt is about to hand the prepared input to the run
+// (`application.run_resume_called`, never cleared). That marker is what tells
+// an accepted proposal whose application never reached the run apart from one
+// whose application may have, and only the first may still be rejected or
+// withdrawn. The re-read is what makes that race-free: a withdrawal and this
+// hold take the same lock, so either the withdrawal lands first and the attempt
+// stops before the run, or the marker lands first and the withdrawal is
+// refused. See `resolve`.
 
 import {
   ASSET_KIND_INTAKE,
@@ -284,6 +295,21 @@ export function createProposalService({ canonical, projects, store, operations, 
 
   const bumpProposal = (owner, projectId, proposal, changes) =>
     putProposal(owner, projectId, { ...proposal, ...changes, revision: proposal.revision + 1, updated_at: now() });
+
+  /**
+   * Whether an accepted proposal's application may already have reached the
+   * run.
+   *
+   * `application.run_resume_called` is set under the lock BEFORE any attempt
+   * hands the prepared input to `runs.resume`, and is never cleared, so
+   * `false` means no attempt ever did. A record without the field was accepted
+   * before this service kept it, and nothing else on the record can establish
+   * that no attempt reached the run -- the last recorded conflict names only
+   * the last attempt, and an attempt that died inside the run records nothing
+   * at all -- so it reads as `true`: the answer that refuses, not the one that
+   * guesses.
+   */
+  const mayHaveReachedRun = proposal => proposal.application?.run_resume_called !== false;
 
   // ── request resolution ────────────────────────────────────────────────────
   //
@@ -639,6 +665,127 @@ export function createProposalService({ canonical, projects, store, operations, 
     return moved;
   };
 
+  // ── plan derivation ───────────────────────────────────────────────────────
+  //
+  // The one derivation both the Agent Review Policy and an acceptance's
+  // `translate` perform, so the check the policy grades is the check an
+  // acceptance would otherwise fail. Read-only: the existing plan operations
+  // with `apply: false`, which write nothing and take no lock.
+  //
+  // It is a pure function of what is stored -- the bound candidate and its
+  // lineage, the baseline, the loaded Published Canonical engines -- and of the
+  // proposal's own action and the reviewer it runs under. The reviewer is the
+  // one input an acceptance supplies and the policy cannot know, and it does
+  // not decide whether the derivation succeeds: a reduction plan id is bound to
+  // its reviewer, but the operation refuses a reviewer only for not being a
+  // name of 1-120 characters, which the acceptance's own `accepted_by` and the
+  // proposal's `plan_accepted_by` are both already held to.
+
+  const derivePlanId = async (owner, projectId, proposal, reviewer) => {
+    if (proposal.kind === PROPOSAL_KIND.FINAL_REDUCTION) {
+      const preview = await operations.planFinalReduction(owner, projectId, {
+        candidateId: proposal.binding.candidate_id,
+        decisions: structuredClone(proposal.action.decisions),
+        acceptedBy: reviewer,
+        instrumentProfile: structuredClone(proposal.action.instrument_profile),
+      });
+      return preview.reduction?.plan?.id ?? null;
+    }
+    const preview = await operations.planMobileAdaptation(owner, projectId, {
+      candidateId: proposal.binding.candidate_id,
+      profile: structuredClone(proposal.action.profile),
+    });
+    return preview.adaptation?.plan?.id ?? null;
+  };
+
+  // The classes whose acceptance goes through a plan derivation, and the codes
+  // a derivation that fails is graded with.
+  const PLAN_CHECKS = Object.freeze({
+    [PROPOSAL_KIND.FINAL_REDUCTION]: Object.freeze({
+      operation: 'planFinalReduction',
+      refused: PROPOSAL_REFUSAL.REDUCTION_PLAN_REFUSED,
+      mismatch: PROPOSAL_REFUSAL.REDUCTION_PLAN_ID_MISMATCH,
+    }),
+    [PROPOSAL_KIND.MOBILE_ADAPTATION]: Object.freeze({
+      operation: 'planMobileAdaptation',
+      refused: PROPOSAL_REFUSAL.ADAPTATION_PLAN_REFUSED,
+      mismatch: PROPOSAL_REFUSAL.ADAPTATION_PLAN_ID_MISMATCH,
+    }),
+  });
+
+  /**
+   * Would an acceptance be able to translate this proposal into the run's
+   * input? `null` when it would; otherwise the verdict to grade it with.
+   *
+   * This used to be discovered only at acceptance, after the acceptance was
+   * recorded. A final reduction naming an `expected_plan_id` its own decisions
+   * do not produce passed the policy, which judged bindings and not the
+   * translation; was accepted; failed in `translate` before `runs.resume` was
+   * ever called; and failed identically on every retry, because nothing about
+   * it could change. It stayed `accepted` for good, could not be withdrawn,
+   * and held one of the project's open-proposal slots -- enough of them locked
+   * the project out of the protocol.
+   *
+   * What the operation REPORTS about an action it accepts -- blockers, a Lead
+   * interlock, an event left PENDING -- is not graded here. That is the
+   * operation's musical answer, and it is reached at the run exactly as it is
+   * for a manual caller. Only a refusal to derive a plan at all, and a stated
+   * plan id the action does not produce, are this policy's business: those
+   * are the two ways an acceptance's translation fails.
+   */
+  const planRefusal = async (owner, record, proposal) => {
+    const check = PLAN_CHECKS[proposal.kind];
+    // The reviewer the proposal itself names for its stated plan id, which is
+    // exactly the one `translate` checks that id under; with none named, the
+    // plan operation's own preview reviewer.
+    const reviewer = proposal.kind === PROPOSAL_KIND.FINAL_REDUCTION ? proposal.action.plan_accepted_by : null;
+    let planId;
+    try {
+      planId = await derivePlanId(owner, record.project_id, proposal, reviewer);
+    } catch (error) {
+      if (error?.code === ERROR_CODES.INVALID_REQUEST) {
+        return {
+          verdict: AGENT_REVIEW.INVALID,
+          refusals: [check.refused],
+          detail: { plan_refusal: { operation: check.operation, code: error.code, message: String(error.message ?? '').slice(0, 500) } },
+        };
+      }
+      // Not a refusal of the action: the stored material or the engines could
+      // not be read. The same discipline as an unresolvable citation above --
+      // a statement about the material, never an accusation about the proposal
+      // -- and never an acceptable verdict either, because the translation
+      // would fail the same way right now.
+      return {
+        verdict: AGENT_REVIEW.STALE,
+        refusals: [error?.code === ERROR_CODES.CANDIDATE_NOT_FOUND ? PROPOSAL_REFUSAL.CANDIDATE_CHANGED : PROPOSAL_REFUSAL.BASELINE_CHANGED],
+        detail: {
+          plan_derivation_error: error?.code ?? ERROR_CODES.SOURCE_INCOMPLETE,
+          notice: `The plan an acceptance of this proposal would derive through ${check.operation} could not be derived from the stored material. That is a statement about the material, not about the proposal.`,
+        },
+      };
+    }
+    if (!planId) {
+      return {
+        verdict: AGENT_REVIEW.INVALID,
+        refusals: [check.refused],
+        detail: { plan_refusal: { operation: check.operation, code: null, message: 'The existing plan operation produced no plan id for this action, so there is nothing an acceptance could apply.' } },
+      };
+    }
+    if (proposal.action.expected_plan_id !== null && proposal.action.expected_plan_id !== planId) {
+      return {
+        verdict: AGENT_REVIEW.INVALID,
+        refusals: [check.mismatch],
+        detail: {
+          proposed_plan_id: proposal.action.expected_plan_id,
+          derived_plan_id: planId,
+          ...(proposal.kind === PROPOSAL_KIND.FINAL_REDUCTION ? { plan_accepted_by: reviewer } : {}),
+          notice: `The plan id this proposal states is not the plan ${check.operation} derives from its own action against the material it is bound to${proposal.kind === PROPOSAL_KIND.FINAL_REDUCTION ? ', under the reviewer it names' : ''}. An acceptance applies only a plan it derives itself and refuses a stated id that disagrees, so this proposal could never be applied as written.`,
+        },
+      };
+    }
+    return null;
+  };
+
   // ── the Agent Review Policy ───────────────────────────────────────────────
   //
   // One verdict, from the ladder in `proposal-contracts.AGENT_REVIEW_ORDER`,
@@ -804,6 +951,18 @@ export function createProposalService({ canonical, projects, store, operations, 
     }
     if (invalid.length) return verdictOf(AGENT_REVIEW.INVALID, invalid, detail);
 
+    // The translation an acceptance would perform, graded here rather than
+    // discovered after the acceptance is on the record (`planRefusal`). Last on
+    // this rung, and only for an otherwise valid proposal, because it is the one
+    // INVALID check that runs an engine. Only for a class this request admits:
+    // a class it does not admit is refused on the next rung whatever its plan
+    // says, and deriving a plan against a request that binds no candidate would
+    // report the request's shape as the proposal's fault.
+    if (Object.hasOwn(PLAN_CHECKS, kind) && admissibleKinds(request).includes(kind)) {
+      const refused = await planRefusal(owner, record, proposal);
+      if (refused) return verdictOf(refused.verdict, refused.refusals, { ...detail, ...refused.detail });
+    }
+
     // ── NOT_AGENT_SETTLABLE. Scope, before evidence: no amount of evidence
     // makes a gate confirmation into something an agent states.
     const admissible = admissibleKinds(request);
@@ -940,6 +1099,13 @@ export function createProposalService({ canonical, projects, store, operations, 
   // the profile, so it can, and is still derived rather than taken. Both are
   // derived through the EXISTING read-only plan operations, which is the same
   // thing a manual caller does before applying.
+  //
+  // Every check below is also graded by the Agent Review Policy, through the
+  // same `derivePlanId` (`planRefusal`), so a proposal that fails one of them
+  // is refused before an acceptance is ever recorded. What still reaches them
+  // here is material that moved after the policy's check under the lock -- or
+  // a retry that skipped the policy because an earlier attempt may already
+  // have reached the run -- which is why they keep the INPUTS_CHANGED codes.
 
   const translate = async (owner, projectId, proposal, acceptedBy) => {
     const kind = proposal.kind;
@@ -947,13 +1113,7 @@ export function createProposalService({ canonical, projects, store, operations, 
       return { input: { decisions: structuredClone(proposal.action.decisions), accepted_by: acceptedBy }, derived: {} };
     }
     if (kind === PROPOSAL_KIND.FINAL_REDUCTION) {
-      const preview = await operations.planFinalReduction(owner, projectId, {
-        candidateId: proposal.binding.candidate_id,
-        decisions: structuredClone(proposal.action.decisions),
-        acceptedBy,
-        instrumentProfile: proposal.action.instrument_profile,
-      });
-      const planId = preview.reduction?.plan?.id ?? null;
+      const planId = await derivePlanId(owner, projectId, proposal, acceptedBy);
       if (!planId) fail(ERROR_CODES.PROPOSAL_REFUSED, 'The existing reduction plan operation produced no plan id for these decisions, so there is nothing to apply.', { refusal: PROPOSAL_REFUSAL.REDUCTION_PLAN_INPUTS_CHANGED });
 
       // The agent's stated expectation, checked against a plan derived under
@@ -962,18 +1122,13 @@ export function createProposalService({ canonical, projects, store, operations, 
       // but a stated expectation that no longer holds means the material moved
       // under the proposal, and that is stale rather than something to ignore.
       if (proposal.action.expected_plan_id !== null) {
-        const stated = await operations.planFinalReduction(owner, projectId, {
-          candidateId: proposal.binding.candidate_id,
-          decisions: structuredClone(proposal.action.decisions),
-          acceptedBy: proposal.action.plan_accepted_by,
-          instrumentProfile: proposal.action.instrument_profile,
-        });
-        if ((stated.reduction?.plan?.id ?? null) !== proposal.action.expected_plan_id) {
-          fail(ERROR_CODES.PROPOSAL_REFUSED, 'The reduction plan this proposal named is not the plan its own decisions produce now, under the reviewer it named. Its inputs moved after it was written.', {
+        const statedId = await derivePlanId(owner, projectId, proposal, proposal.action.plan_accepted_by);
+        if (statedId !== proposal.action.expected_plan_id) {
+          fail(ERROR_CODES.PROPOSAL_REFUSED, 'The reduction plan this proposal named is not the plan its own decisions produce now, under the reviewer it named. Its inputs moved after the Agent Review Policy last checked it.', {
             refusal: PROPOSAL_REFUSAL.REDUCTION_PLAN_INPUTS_CHANGED,
             proposed_plan_id: proposal.action.expected_plan_id,
             plan_accepted_by: proposal.action.plan_accepted_by,
-            derived_plan_id: stated.reduction?.plan?.id ?? null,
+            derived_plan_id: statedId,
           });
         }
       }
@@ -990,11 +1145,7 @@ export function createProposalService({ canonical, projects, store, operations, 
       };
     }
     if (kind === PROPOSAL_KIND.MOBILE_ADAPTATION) {
-      const preview = await operations.planMobileAdaptation(owner, projectId, {
-        candidateId: proposal.binding.candidate_id,
-        profile: structuredClone(proposal.action.profile),
-      });
-      const planId = preview.adaptation?.plan?.id ?? null;
+      const planId = await derivePlanId(owner, projectId, proposal, acceptedBy);
       if (!planId) fail(ERROR_CODES.PROPOSAL_REFUSED, 'The existing Mobile adaptation plan operation produced no plan id for this profile, so there is nothing to apply.', { refusal: PROPOSAL_REFUSAL.ADAPTATION_PLAN_INPUTS_CHANGED });
       // An adaptation plan is bound to the candidate and the profile, both of
       // which the proposal itself carries, so an agent CAN state this id ahead
@@ -1325,12 +1476,25 @@ export function createProposalService({ canonical, projects, store, operations, 
         // was a no-op: resolving removes nothing, and the project was locked
         // out of the protocol for good at 64. An adversarial pass followed the
         // instruction exactly and got the same refusal back.
+        //
+        // And the remedy is named only where it exists. A submitted proposal
+        // can be rejected or withdrawn, and so can an accepted one none of
+        // whose application attempts reached the run. An accepted one whose
+        // application may have reached the run cannot be: it leaves the open
+        // set only when a retry of its acceptance completes. A project whose
+        // open set was all of that last kind was still told to "resolve or
+        // withdraw one", and every attempt to do so was refused.
         const open = proposalsOf(current).filter(entry => OPEN_PROPOSAL_STATES.includes(entry.state));
         if (open.length >= LIMITS.maxProposalsPerProject) {
-          fail(ERROR_CODES.STORAGE_FULL, `This project already holds the maximum of ${LIMITS.maxProposalsPerProject} open proposals. Resolve or withdraw one before submitting another.`, {
+          const freeable = open.filter(entry => entry.state === PROPOSAL_STATE.SUBMITTED || !mayHaveReachedRun(entry)).length;
+          fail(ERROR_CODES.STORAGE_FULL, freeable
+            ? `This project already holds the maximum of ${LIMITS.maxProposalsPerProject} open proposals. Resolve or withdraw one before submitting another: ${freeable} of them can be rejected or withdrawn now. An accepted proposal whose application may already have reached the run cannot be; it leaves the open set when a retry of its acceptance completes.`
+            : `This project already holds the maximum of ${LIMITS.maxProposalsPerProject} open proposals, and none of them can be rejected or withdrawn: every one is an accepted proposal whose application may already have reached the run. Each leaves the open set only when a retry of its acceptance completes. If the run refuses those retries for good, continue in a new project, which leaves both records intact and separately citable.`, {
             max_open_proposals: LIMITS.maxProposalsPerProject,
             open_proposals: open.length,
             retained_proposals: proposalsOf(current).length,
+            withdrawable_open_proposals: freeable,
+            remedy: freeable ? 'resolveProposal with reject or withdraw' : 'resolveProposal with accept to retry an accepted proposal, or startRun in a new project',
           });
         }
         // The retention cap is the one nothing frees, because a resolved
@@ -1419,12 +1583,39 @@ export function createProposalService({ canonical, projects, store, operations, 
             proposal_id: proposal.proposal_id, state: proposal.state,
           });
         }
-        // An already-accepted proposal may only be carried forward to its
-        // application. Rejecting one after an acceptance was recorded would
-        // leave the record disagreeing with what the run already did.
-        if (proposal.state === PROPOSAL_STATE.ACCEPTED && normalized.resolution !== RESOLUTION.ACCEPT) {
-          fail(ERROR_CODES.PROPOSAL_CONFLICT, 'This proposal was already accepted and its application may already have reached the run. It cannot be rejected or withdrawn afterwards.', {
-            proposal_id: proposal.proposal_id, state: proposal.state,
+        // An accepted proposal whose application may already have reached the
+        // run may only be carried forward to that application. Rejecting or
+        // withdrawing it would leave the record disagreeing with what the run
+        // may already have done.
+        //
+        // One whose application never reached the run is a different fact, and
+        // it used to get the same answer. An acceptance whose translation
+        // failed before `runs.resume` -- every time, for a proposal the
+        // translation could never pass -- stayed `accepted` for good, could be
+        // neither rejected nor withdrawn, and held an open-proposal slot; the
+        // refusal's own reason ("may already have reached the run") was false.
+        // `run_resume_called` is what tells the two apart (`mayHaveReachedRun`).
+        //
+        // Race-free, and not by refusing while an attempt is in flight. This
+        // check and the hold that sets the marker before `runs.resume` (phase
+        // 2) take the same lock, and that hold re-reads the proposal: if this
+        // withdrawal lands first, an in-flight attempt finds the proposal
+        // withdrawn and stops before the run; if the marker lands first, this
+        // is refused. A durable "attempt open" marker was the alternative and
+        // is worse: an attempt that dies leaves it open for good, and nothing
+        // durable can tell that attempt from a live one.
+        const supersedesAcceptance = proposal.state === PROPOSAL_STATE.ACCEPTED && normalized.resolution !== RESOLUTION.ACCEPT;
+        if (supersedesAcceptance && mayHaveReachedRun(proposal)) {
+          const recorded = proposal.application?.run_resume_called === true;
+          fail(ERROR_CODES.PROPOSAL_CONFLICT, recorded
+            ? 'This proposal was already accepted, and an attempt to apply it has handed its input to the run\'s resume path, so its application may already have reached the run. It cannot be rejected or withdrawn afterwards. Retry the acceptance to finish it: the retry re-issues the same idempotency key, so a run that applied it replays its own receipt. A proposal whose retries the run keeps refusing stays accepted, and open, as the record of an acceptance that could not be finished.'
+            : 'This proposal was accepted before this service recorded whether an application attempt reached the run, so it cannot establish that none did: its application may already have reached the run. It cannot be rejected or withdrawn afterwards. Retry the acceptance to finish it: the retry re-issues the same idempotency key, so a run that applied it replays its own receipt. A proposal whose retries the run keeps refusing stays accepted, and open, as the record of an acceptance that could not be finished.', {
+            proposal_id: proposal.proposal_id,
+            state: proposal.state,
+            // `null` is "not recorded", which is not the same as `false`.
+            run_resume_called: recorded ? true : null,
+            last_conflict_code: proposal.application?.conflict?.code ?? null,
+            remedy: 'resolveProposal with accept, to retry the application',
           });
         }
 
@@ -1433,9 +1624,19 @@ export function createProposalService({ canonical, projects, store, operations, 
           return {
             proposal: bumpProposal(owner, projectId, proposal, {
               state,
-              resolution: { resolution: normalized.resolution, resolved_by: owner, reason: normalized.reason, at: now() },
+              resolution: {
+                resolution: normalized.resolution,
+                resolved_by: owner,
+                reason: normalized.reason,
+                at: now(),
+                // The acceptance this replaces stays on the record, beside the
+                // application attempts it made and their conflicts, so a reader
+                // sees that it was accepted and why it never applied.
+                ...(supersedesAcceptance ? { superseded_acceptance: proposal.resolution } : {}),
+              },
             }),
             accepted: false,
+            supersededAcceptance: supersedesAcceptance,
           };
         }
 
@@ -1457,8 +1658,15 @@ export function createProposalService({ canonical, projects, store, operations, 
         // acceptance observed, so a run that moved for any other reason fails
         // the precondition and is refused. Safety here is the run's, which is
         // where it belongs.
+        //
+        // Skipped only when an earlier attempt may have reached the run,
+        // though, because that is the whole reason for skipping it. An
+        // acceptance none of whose attempts ever handed its input to the run
+        // has not moved the run, so the policy reads it exactly as it read the
+        // first acceptance -- and a retry of it is re-checked like one, rather
+        // than carried past a policy that would now refuse it.
         const alreadyAccepted = proposal.state === PROPOSAL_STATE.ACCEPTED && proposal.application !== null;
-        const review = alreadyAccepted ? null : await agentReview(owner, record, proposal, provenance);
+        const review = alreadyAccepted && mayHaveReachedRun(proposal) ? null : await agentReview(owner, record, proposal, provenance);
         if (review && !review.acceptable) {
           fail(ERROR_CODES.PROPOSAL_REFUSED, 'The Agent Review Policy will not let this proposal reach an operation.', {
             proposal_id: proposal.proposal_id,
@@ -1478,6 +1686,11 @@ export function createProposalService({ canonical, projects, store, operations, 
           // retry carries it as its precondition, so it finishes the
           // application it is a retry of and nothing else.
           run_revision_at_attempt: null,
+          // Whether any attempt ever handed the prepared input to
+          // `runs.resume`. Set under the lock BEFORE the call (phase 2) and
+          // never cleared; while it is false the proposal may still be
+          // rejected or withdrawn, because nothing reached the run.
+          run_resume_called: false,
           accepted_by: normalized.accepted_by,
           attempted_at: now(),
           run_revision_after: null,
@@ -1500,13 +1713,16 @@ export function createProposalService({ canonical, projects, store, operations, 
 
       if (!prepared.accepted) {
         const record = projects.load(owner, projectId);
+        const rejected = prepared.proposal.state === PROPOSAL_STATE.REJECTED;
         return Object.freeze({
           proposal: proposalView(prepared.proposal, await agentReview(owner, record, prepared.proposal, provenance)),
           applied: false,
           run: null,
-          notice: prepared.proposal.state === PROPOSAL_STATE.REJECTED
-            ? 'Rejected. Nothing was applied and the run did not advance; the proposal stays on the record as what was proposed and refused.'
-            : 'Withdrawn. Nothing was applied and the run did not advance.',
+          notice: prepared.supersededAcceptance
+            ? `${rejected ? 'Rejected' : 'Withdrawn'} after an acceptance whose application never reached the run: no attempt handed its input to the run's resume path, so nothing was applied and the run did not advance. The acceptance stays on the record as resolution.superseded_acceptance, beside the application attempts it made.`
+            : rejected
+              ? 'Rejected. Nothing was applied and the run did not advance; the proposal stays on the record as what was proposed and refused.'
+              : 'Withdrawn. Nothing was applied and the run did not advance.',
         });
       }
 
@@ -1520,9 +1736,49 @@ export function createProposalService({ canonical, projects, store, operations, 
       let resumed = null;
       let failure = null;
       let derived = {};
+      // Whether THIS attempt handed the input to the run; the record's
+      // `run_resume_called` says whether ANY attempt did.
+      let reachedRun = false;
+      // The proposal as the last check before the run found it, when a
+      // rejection or withdrawal had landed first.
+      let resolvedMeanwhile = null;
       try {
         const translated = await translate(owner, projectId, prepared.proposal, application.accepted_by);
         derived = translated.derived;
+
+        // ── the last hold before the run, under the lock.
+        //
+        // Records that this attempt is about to call `runs.resume`, BEFORE it
+        // does, and never clears it. A crash between this write and the call
+        // leaves a marker for a call that never happened, which is the safe
+        // direction: the proposal is then treated as one that may have reached
+        // the run, exactly as every acceptance was before the marker existed.
+        // The opposite -- a call with no marker -- cannot happen, because the
+        // call is made only after this hold has committed.
+        //
+        // And it re-reads the proposal first. A rejection or withdrawal is
+        // allowed only while the marker is unset and is decided under this
+        // same lock, so if one landed after phase 1 this attempt stops here,
+        // before the run, and says so; if this hold lands first, the marker is
+        // set and every later rejection or withdrawal is refused.
+        resolvedMeanwhile = await serialize(String(projectId), async () => {
+          const current = findProposal(projects.load(owner, projectId), proposalId);
+          if (current.state === PROPOSAL_STATE.WITHDRAWN || current.state === PROPOSAL_STATE.REJECTED) return current;
+          if (current.application && current.application.run_resume_called !== true) {
+            bumpProposal(owner, projectId, current, {
+              application: { ...current.application, run_resume_called: true, run_resume_called_at: now() },
+            });
+          }
+          return null;
+        });
+        if (resolvedMeanwhile) {
+          fail(ERROR_CODES.PROPOSAL_CONFLICT, `This proposal was ${resolvedMeanwhile.state} while its acceptance was being applied, before the application reached the run. This attempt stopped there: nothing was applied and the run did not advance.`, {
+            proposal_id: proposalId,
+            proposal_state: resolvedMeanwhile.state,
+            run_resume_called: false,
+          });
+        }
+        reachedRun = true;
         resumed = await runs.resume(owner, projectId, prepared.proposal.run_id, {
           ...translated.input,
           idempotency_key: application.idempotency_key,
@@ -1557,6 +1813,10 @@ export function createProposalService({ canonical, projects, store, operations, 
             : application.expected_run_revision,
         });
       } catch (error) {
+        // Stopped before the run by a rejection or withdrawal. That is the
+        // record now, and this attempt, which reached nothing, adds nothing
+        // to it.
+        if (resolvedMeanwhile) throw error;
         failure = { code: error?.code ?? ERROR_CODES.INVALID_REQUEST, message: String(error?.message ?? error).slice(0, 500), details: error?.details ?? {} };
       }
 
@@ -1565,6 +1825,13 @@ export function createProposalService({ canonical, projects, store, operations, 
         const record = projects.load(owner, projectId);
         const proposal = findProposal(record, proposalId);
         if (failure) {
+          // A rejection or withdrawal can have landed while this attempt was
+          // failing -- only one that never reached the run, since an attempt
+          // that did set `run_resume_called` first and that refuses both. It
+          // is the record now, and a failure that reached nothing is not
+          // written over it.
+          if (proposal.state === PROPOSAL_STATE.WITHDRAWN || proposal.state === PROPOSAL_STATE.REJECTED) return proposal;
+
           // The acceptance stands and the application did not complete. The
           // proposal stays `accepted` so a retry re-issues the same key rather
           // than starting a second application, and the conflict is recorded
@@ -1619,11 +1886,23 @@ export function createProposalService({ canonical, projects, store, operations, 
       });
 
       if (failure) {
+        // Which of three things happened, because they have different remedies
+        // and one notice for all of them told the first two something false.
+        const neverReached = settled.application?.run_resume_called === false;
         fail(failure.code, failure.message, {
           ...failure.details,
           proposal_id: proposalId,
           proposal_state: settled.state,
-          notice: 'The acceptance is recorded and the existing operation refused or could not run. Nothing was applied twice: retrying this resolve re-issues the same idempotency key, so a run that did apply it replays its own receipt instead of applying it again. A run that advanced without recording that receipt is reported as a run conflict, and the run\'s own reconciliation is the remedy — this layer does not guess.',
+          run_resume_called: settled.application?.run_resume_called ?? null,
+          notice: reachedRun
+            ? 'The acceptance is recorded and the existing operation refused or could not run. Nothing was applied twice: retrying this resolve re-issues the same idempotency key, so a run that did apply it replays its own receipt instead of applying it again. A run that advanced without recording that receipt is reported as a run conflict, and the run\'s own reconciliation is the remedy — this layer does not guess.'
+            : settled.state === PROPOSAL_STATE.WITHDRAWN || settled.state === PROPOSAL_STATE.REJECTED
+              ? `The acceptance's application stopped before it reached the run, and the proposal was ${settled.state} meanwhile. Nothing was applied and the run did not advance.`
+              : neverReached
+                ? 'The acceptance is recorded, and its application stopped before it reached the run: this attempt failed before handing the input to the run\'s resume path, and no attempt has handed it there, so nothing was applied and the run did not advance. A retry re-checks the proposal against the Agent Review Policy before trying again; it can also still be rejected or withdrawn, because nothing reached the run.'
+                : `This attempt stopped before it handed the input to the run's resume path. ${settled.application?.run_resume_called === true
+                  ? 'An earlier attempt did hand this acceptance to the run\'s resume path'
+                  : 'This acceptance was recorded before this service kept track of whether an attempt reached the run'}, so its application may already have landed, and the proposal cannot be rejected or withdrawn. Retrying re-issues the same idempotency key, so a run that did apply it replays its own receipt instead of applying it again.`,
         });
       }
 

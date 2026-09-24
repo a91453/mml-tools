@@ -263,7 +263,7 @@ set a caller has to rank.
 
 | Verdict | Meaning |
 | --- | --- |
-| `INVALID` | The protocol itself: a forged identity, an unknown field, a field only the server may compute, a collapsed score. |
+| `INVALID` | The protocol itself: a forged identity, an unknown field, a field only the server may compute, a collapsed score — or an action the acceptance could never translate into the run's input (`REDUCTION_PLAN_REFUSED`, `REDUCTION_PLAN_ID_MISMATCH`, `ADAPTATION_PLAN_REFUSED`, `ADAPTATION_PLAN_ID_MISMATCH`; see §7). |
 | `STALE` | Well-formed, but a binding it names no longer matches what is stored now. |
 | `NOT_AGENT_SETTLABLE` | Correctly bound, but this class may not settle this target at **any** evidence level. |
 | `REQUIRES_MORE_EVIDENCE` | In scope and bound, but what the downstream operation needs is absent — including when the proposal says so itself. |
@@ -373,9 +373,23 @@ acceptance through the existing **read-only** `planFinalReduction`, using the
 accepted decisions and the accepting reviewer — the same thing a manual caller
 does before applying. A proposal may still state `expected_plan_id`, and then it
 must also state the `plan_accepted_by` it derived that id under: the pair is
-checked against a plan derived under *that* reviewer, and a mismatch is stale.
+checked against a plan derived under *that* reviewer, and a mismatch is refused.
 An un-checkable stated field is worse than no field, because the agent reads it
 back and believes it was honoured.
+
+**The check is the policy's, not only the acceptance's.** The derivation is a
+pure function of what the proposal is bound to and of the proposal itself, so
+the Agent Review Policy runs it too (on the same code path as the acceptance)
+and grades a failure `INVALID`: `*_PLAN_ID_MISMATCH` for a stated id the action
+does not produce, `*_PLAN_REFUSED` for an action the plan operation refuses
+outright. It used to be found only at acceptance, *after* the acceptance was
+recorded, in the translation before `runs.resume` — and every retry recomputed
+the same failure, so the proposal stayed `accepted` for good, could not be
+withdrawn, and held an open-proposal slot; enough of them locked the project
+out. The one input the policy cannot know, the accepting reviewer, changes a
+reduction plan's id but not whether it can be derived. What the operation
+*reports* about an action it accepts — blockers, a Lead interlock, a `PENDING`
+event — is still not graded: that is its musical answer, reached at the run.
 
 An **adaptation** plan id is bound to the candidate and the profile, both of
 which the proposal carries, so an agent *can* state it in advance. It is still
@@ -399,10 +413,26 @@ is therefore
                     application marker: a deterministic idempotency key
                     `proposal:<proposal_id>:<revision>` and the run revision
                     observed now
-2. no lock          translate, call runs.resume with that key and that revision
-                    as expected_run_revision
+2. no lock          translate
+2b. under the lock  re-read the proposal; unless it was rejected or withdrawn
+                    meanwhile, record run_resume_called: true (never cleared)
+   no lock          call runs.resume with that key and that revision as
+                    expected_run_revision
 3. under the lock   record the outcome
 ```
+
+**An acceptance that never reached the run can still be taken back.**
+`run_resume_called` is written *before* the call, so `false` means no attempt
+ever handed the input to the run, and only then may an accepted proposal be
+rejected or withdrawn (the acceptance stays on the record as
+`resolution.superseded_acceptance`). Once it is `true` — or absent, on a record
+accepted before the field existed, where nothing can establish that no attempt
+reached the run — the refusal stands and says which of the two it is. This is
+race-free without refusing while an attempt is in flight: the withdrawal and
+hold 2b take the same lock, so either the withdrawal lands first and the attempt
+stops before the run, or the marker lands first and the withdrawal is refused.
+A retry of an acceptance whose marker is still `false` goes through the policy
+again, since nothing of it has moved the run.
 
 The window in the middle is closed with what Phase 1 already built rather than a
 second mechanism:
@@ -455,7 +485,7 @@ stands.
 act; a crash between it and its application advances the run, which makes the
 proposal stale, and re-running the policy there would refuse the very retry the
 marker exists for. So the policy gate is skipped for a proposal that is already
-`accepted` and carries a marker — and nothing is taken on trust, because safety
+`accepted`, carries a marker, and may have reached the run — and nothing is taken on trust, because safety
 there is the run's: the same key, and the carried-forward revision precondition
 that pins the retry to the run the acceptance was applying to. This mirrors
 Phase 1's own ordering, where an idempotency replay is decided *before* the
@@ -544,7 +574,7 @@ a union, for the same reason the run operations have one each.
 | collapsed confidence score | refused at every nesting level |
 | oversized rationale, deep nesting, huge arrays, long field names | bounded by `LIMITS`, spent as a budget rather than discovered by a recursion limit |
 | an oversized proposal that breaks no *shape* bound | bounded in **bytes** by `maxProposalBytes`, measured on the record as it will be stored. The node, depth and string budgets bound a proposal's shape; none of them bounds its size, and 4000 nodes × a 4000-character string is 15 MB inside every one of them |
-| too many proposals | two caps: `maxProposalsPerProject` counts the **open** ones, so the refusal's "resolve or withdraw one" is true, and `maxProposalsRetainedPerProject` bounds the lifetime total and promises no remedy, because a resolved proposal is an audit record and nothing evicts it |
+| too many proposals | two caps: `maxProposalsPerProject` counts the **open** ones, and the refusal says "resolve or withdraw one" only when one can be (`withdrawable_open_proposals`) — an accepted proposal whose application may have reached the run cannot be; `maxProposalsRetainedPerProject` bounds the lifetime total and promises no remedy, because a resolved proposal is an audit record and nothing evicts it |
 | stale proposal replay | the policy, recomputed; plus the run's own per-step re-validation |
 
 MCP carries no bytes. Every proposal input is an identity, a small structured
@@ -716,6 +746,7 @@ No mock stands in anywhere.
 | `studio/tests/proposal-agent-review-policy.test.mjs` | the Lead evidence boundary, Gate 8, Gate 9, the ladder, recomputation |
 | `studio/tests/proposal-duplication.test.mjs` | one acceptance, one application — across retries, concurrency and a crash in the window |
 | `studio/tests/proposal-adversarial.test.mjs` | the four escalations an independent adversarial review found, kept in the shape they were found in |
+| `studio/tests/proposal-untranslatable.test.mjs` | a proposal the acceptance could never translate is `INVALID` before it is accepted; an acceptance that never reached the run can be withdrawn, race-free, and one that may have cannot |
 | `tests/proposal-transport.test.mjs` | HTTP/MCP parity, and what Phase 2 did not add |
 
 ## 15. Not covered by Phase 2

@@ -8,7 +8,8 @@
 //   final_reduction     a plan id is bound to its decision set AND its
 //                       reviewer, so it cannot be known before an acceptance
 //                       names one. The service derives it through the existing
-//                       READ-ONLY plan operation rather than taking the agent's.
+//                       READ-ONLY plan operation rather than taking the agent's,
+//                       and a stated id its decisions do not produce is INVALID.
 //   mobile_adaptation   a plan id here IS knowable in advance, so an agent may
 //                       state one — and a stated id that the inputs no longer
 //                       produce is stale, not an override.
@@ -95,7 +96,7 @@ test('a reduction proposal that states a plan id its own inputs no longer produc
   const context = await runAwaitingReduction(app);
 
   // The agent derived a plan under a reviewer it named, and states both. The
-  // service derives the plan again and compares; a mismatch is stale, not an
+  // service derives the plan again and compares; a mismatch is refused, not an
   // override, and the agent's id never becomes the one that is applied.
   const submitted = await app.proposeDecision(OWNER, context.fixture.projectId, {
     run_id: context.run.run_id,
@@ -110,22 +111,34 @@ test('a reduction proposal that states a plan id its own inputs no longer produc
     },
     cites: { event_ids: ['chord5-1'], source_ids: [FIXTURE_SOURCE_ID] },
   });
-  assert.equal(submitted.proposal.agent_review.verdict, AGENT_REVIEW.REQUIRES_EXPLICIT_ACCEPTANCE, 'the policy judges bindings, not plan arithmetic');
+  // Graded by the policy, before any acceptance. This used to read "the policy
+  // judges bindings, not plan arithmetic" and assert an acceptable verdict: the
+  // mismatch surfaced only after the acceptance was recorded, in the
+  // translation, before the run was reached -- and every retry recomputed it,
+  // so the proposal stayed `accepted` for good, could not be withdrawn, and
+  // held an open-proposal slot. The translation is a pure function of what is
+  // stored, so the policy runs it.
+  assert.equal(submitted.proposal.agent_review.verdict, AGENT_REVIEW.INVALID);
+  assert.deepEqual(submitted.proposal.agent_review.refusals, ['REDUCTION_PLAN_ID_MISMATCH']);
+  assert.equal(submitted.proposal.agent_review.proposed_plan_id, `g12:plan:${'0'.repeat(64)}`);
+  assert.match(submitted.proposal.agent_review.derived_plan_id, /^g12:plan:[0-9a-f]{64}$/);
 
   await assert.rejects(
     app.resolveProposal(OWNER, context.fixture.projectId, submitted.proposal.proposal_id, { resolution: 'accept', accepted_by: RUN_REVIEWER }),
     error => {
       assert.equal(error.code, 'PROPOSAL_REFUSED');
-      assert.equal(error.details.refusal, 'REDUCTION_PLAN_INPUTS_CHANGED');
+      assert.equal(error.details.agent_review.verdict, AGENT_REVIEW.INVALID);
+      assert.ok(error.details.agent_review.refusals.includes('REDUCTION_PLAN_ID_MISMATCH'));
       return true;
     },
   );
-  // The acceptance is recorded and the application did not complete, so a
-  // retry re-issues the same key rather than starting a second application.
+  // Refused before an acceptance was recorded, so nothing is left half-done:
+  // the proposal is still an ordinary submitted one, and withdrawable.
   const reread = await app.getProposal(OWNER, context.fixture.projectId, submitted.proposal.proposal_id);
-  assert.equal(reread.proposal.state, PROPOSAL_STATE.ACCEPTED);
-  assert.ok(reread.proposal.application.conflict, 'the conflict is on the record rather than swallowed');
-  assert.equal(reread.proposal.application.run_revision_after, null, 'nothing was applied');
+  assert.equal(reread.proposal.state, PROPOSAL_STATE.SUBMITTED);
+  assert.equal(reread.proposal.application, null, 'no acceptance was recorded');
+  const withdrawn = await app.resolveProposal(OWNER, context.fixture.projectId, submitted.proposal.proposal_id, { resolution: 'withdraw', reason: 'The plan id was wrong.' });
+  assert.equal(withdrawn.proposal.state, PROPOSAL_STATE.WITHDRAWN);
 });
 
 // ─── B. mobile adaptation ───────────────────────────────────────────────────
