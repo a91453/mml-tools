@@ -418,6 +418,61 @@ test('a process that dies inside the run leaves an acceptance whose retry finish
   }
 });
 
+test('an attempt interrupted by a fault, then a retry whose process dies inside the run, is still finished from where the run was left', async () => {
+  // The first attempt is interrupted by a thrown fault, so it records where
+  // its own application left the run. Its retry is admitted, writes further,
+  // and the process dies inside the run, so that record is never updated: it
+  // names a revision behind the run's although every write since the
+  // acceptance is this application's. A retry continues from the run's own
+  // record of its latest writer, not from that stored revision -- carried as
+  // the precondition, it was refused by the run at every retry, and the
+  // proposal stayed accepted and not withdrawable for good.
+  for (const hook of ['beforeEffect', 'afterEffect', 'beforeResponse']) {
+    await withDirectory(async directory => {
+      const app = createStudioApplication({ dataDirectory: directory, durability: 'persistent' });
+      const context = await submitted(app);
+      const read = async service => (await service.getProposal(OWNER, context.fixture.projectId, context.proposal.proposal_id)).proposal;
+
+      let armed = true;
+      const faulted = createStudioApplication({
+        dataDirectory: directory,
+        durability: 'persistent',
+        runHooks: { beforeEffect: ({ step }) => { if (armed && step === RUN_STEP.APPLY_DECISIONS) { armed = false; throw Error('stopped before the effect'); } } },
+      });
+      const first = await acceptIn(faulted, context);
+      assert.equal(first.ok, false, hook);
+      assert.equal(first.error.details.admitted_by_run, true, hook);
+      const pinned = (await read(faulted)).application.run_revision_at_attempt;
+      assert.equal(pinned, (await faulted.getRun(OWNER, context.fixture.projectId, context.run.run_id)).run.revision, `${hook}: the fault recorded where the attempt left the run`);
+
+      const dying = dyingInside(directory, hook);
+      acceptIn(dying.app, context);
+      await dying.stopped;
+
+      const restarted = createStudioApplication({ dataDirectory: directory, durability: 'persistent' });
+      const mid = await read(restarted);
+      assert.equal(mid.state, PROPOSAL_STATE.ACCEPTED, hook);
+      assert.equal(mid.application.run_revision_at_attempt, pinned, `${hook}: the dead retry never recorded where it stopped`);
+      const runAtDeath = (await restarted.getRun(OWNER, context.fixture.projectId, context.run.run_id)).run;
+      assert.ok(runAtDeath.revision > pinned, `${hook}: the dead retry moved the run past the recorded revision`);
+      await assert.rejects(
+        restarted.resolveProposal(OWNER, context.fixture.projectId, context.proposal.proposal_id, { resolution: 'withdraw', reason: 'The process died.' }),
+        error => error.code === 'PROPOSAL_CONFLICT',
+        hook,
+      );
+
+      const retry = await acceptIn(restarted, context);
+      assert.ok(retry.ok, `${hook}: the retry must finish the application, got ${retry.error?.code}: ${retry.error?.message}`);
+      assert.equal(retry.result.proposal.state, PROPOSAL_STATE.APPLIED);
+      assert.equal(retry.result.proposal.application.settled_on_retry, true);
+      assert.equal(retry.result.run.pending_step, null, `${hook}: nothing is left pending`);
+      const candidates = await candidatesOf(restarted, context.fixture.projectId);
+      assert.equal(candidates.length, 1, `${hook}: exactly one candidate for one acceptance, got ${candidates.length}`);
+      assert.equal(retry.result.run.candidate_id, candidates[0].candidate_id, hook);
+    });
+  }
+});
+
 test('after a process died inside the run, a retry is refused once another writer has moved the run', async () => {
   // Continuing from the run's latest write is safe only because the run says
   // which request made it: the idempotency key AND the request. Three other

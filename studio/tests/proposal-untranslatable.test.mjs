@@ -79,6 +79,16 @@ const accept = (app, context, proposalId) => app.resolveProposal(OWNER, context.
   .then(result => ({ ok: true, result }), error => ({ ok: false, error }));
 
 const runOf = async (app, context) => (await app.getRun(OWNER, context.fixture.projectId, context.run.run_id)).run;
+
+/** The stored run record, as it is on disk, with every field the run keeps. */
+const storedRunOf = async (directory, runId) => {
+  for (const name of await readdir(join(directory, 'records'))) {
+    const record = JSON.parse(await readFile(join(directory, 'records', name), 'utf8'));
+    const run = (record.runs ?? []).find(entry => entry.run_id === runId);
+    if (run) return run;
+  }
+  return assert.fail('the stored run record was found');
+};
 const candidatesOf = async (app, context) => (await app.getProject(OWNER, context.fixture.projectId)).project.candidates;
 
 // ─── A. the policy grades the translation ───────────────────────────────────
@@ -832,6 +842,79 @@ test('an admitted attempt pins where its own application left the run, and a rev
     error => error.code === 'PROPOSAL_CONFLICT',
     'its application reached the run, so it is not withdrawable',
   );
+});
+
+test('an attempt whose only write is the run\'s first hold records that write as its own, and its retry finishes the application', async () => {
+  // `resume` bumps the run in its first lock hold, before any step runs, and
+  // that write is this request's like every other: the run records the
+  // request as the writer of the revision it produces and reports the
+  // revision back. Here the run's own reduction step then fails in its
+  // read-only plan preview -- a transient engine fault -- before that step
+  // writes anything, so the first hold's bump is the only write the attempt
+  // made. Recorded as nobody's, it would leave nothing to tell the run's
+  // latest write as this application's: the attempt would record no revision,
+  // every retry would carry the revision the acceptance observed and be
+  // refused, and the proposal would stay accepted and not withdrawable
+  // although only its own application ever wrote to the run.
+  await withDirectory(async directory => {
+    const fault = { armed: false, calls: 0, fired: false };
+    const app = createStudioApplication({
+      dataDirectory: directory,
+      durability: 'persistent',
+      loadEngines: enginesWith(engines => ({
+        reduction: {
+          ...engines.reduction,
+          planFinalReduction: input => {
+            // The acceptance's translation derives the plan under the
+            // accepting reviewer first; the run's own step derives it second.
+            if (fault.armed && input.acceptedBy === RUN_REVIEWER && ++fault.calls === 2) {
+              fault.armed = false;
+              fault.fired = true;
+              throw Error('a transient engine fault in the run step\'s own plan preview');
+            }
+            return engines.reduction.planFinalReduction(input);
+          },
+        },
+      })),
+    });
+    const context = await runAwaitingReduction(app);
+    const submitted = await proposeReduction(app, context, { decisions: REDUCTION_DECISIONS });
+    const read = async () => (await app.getProposal(OWNER, context.fixture.projectId, submitted.proposal.proposal_id)).proposal;
+    const runBefore = await runOf(app, context);
+    const candidatesBefore = await candidatesOf(app, context);
+
+    fault.armed = true;
+    const first = await accept(app, context, submitted.proposal.proposal_id);
+    assert.equal(first.ok, false);
+    assert.equal(fault.fired, true);
+    assert.match(String(first.error.message), /run step's own plan preview/);
+    assert.equal(first.error.details.admitted_by_run, true, 'the run admitted the attempt before its step failed');
+    const runAfter = await runOf(app, context);
+    assert.equal(runAfter.revision, runBefore.revision + 1, 'the first hold\'s bump is the only write the attempt made');
+    assert.equal(runAfter.pending_step, null, 'the step itself wrote nothing');
+
+    const mid = await read();
+    assert.equal(mid.state, PROPOSAL_STATE.ACCEPTED);
+    assert.equal(mid.application.run_revision_at_attempt, runAfter.revision, 'that write was reported as the attempt\'s own');
+    const stored = await storedRunOf(directory, context.run.run_id);
+    assert.deepEqual(stored.revision_written_by, {
+      idempotency_key: mid.application.idempotency_key,
+      request_fingerprint: mid.application.admitted_request_fingerprint,
+      revision: runAfter.revision,
+    }, 'and the run records it as this request\'s write of that revision');
+    await assert.rejects(
+      app.resolveProposal(OWNER, context.fixture.projectId, submitted.proposal.proposal_id, { resolution: 'withdraw', reason: 'The step failed.' }),
+      error => error.code === 'PROPOSAL_CONFLICT',
+      'its application reached the run, so it is not withdrawable',
+    );
+
+    const retry = await accept(app, context, submitted.proposal.proposal_id);
+    assert.ok(retry.ok, `the retry must finish the application, got ${retry.error?.code}: ${retry.error?.message}`);
+    assert.equal(retry.result.proposal.state, PROPOSAL_STATE.APPLIED);
+    assert.equal(retry.result.proposal.application.settled_on_retry, true);
+    const minted = (await candidatesOf(app, context)).filter(entry => !candidatesBefore.some(before => before.candidate_id === entry.candidate_id));
+    assert.equal(minted.length, 1, 'one acceptance, one application');
+  });
 });
 
 test('a refused twin of an attempt the run already admitted pins nothing, and the admitted attempt pins where its own application stopped', async () => {
