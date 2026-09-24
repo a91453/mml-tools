@@ -322,4 +322,16 @@ export async function runWorkshopChecks({ page, base, idle, file, screenshot, pr
   assert.notEqual(await page.locator('.hero .badge').textContent(), 'IN_GAME_ACCEPTED');
   const stored = await page.evaluate(async () => (await (await import('./studio/web/storage.mjs')).listProjectSummaries())[0]);
   assert.ok(stored, 'the project with the imported candidate is saved');
+  // Studio's own intake parsed the candidate (studio/backend/mml/parser.mjs,
+  // ingest): what the Workshop sent must read there without a parser error —
+  // no missing O before the first note, no dotted L or dotted N it cannot
+  // read — and with the notes the Workshop played.
+  const imported = await page.evaluate(async id => {
+    const asset = (await (await import('./studio/web/storage.mjs')).loadProject(id)).assets.candidate;
+    return { content: asset?.content ?? null, errors: asset?.errors ?? null, notes: asset?.project?.events?.filter(e => e.kind === 'note').length ?? 0 };
+  }, stored.id);
+  assert.equal(imported.content, sent, 'the stored candidate is the MML the Workshop sent');
+  assert.ok(Array.isArray(imported.errors), 'the candidate carries its intake validation');
+  assert.deepEqual(imported.errors.filter(e => e.position !== undefined), [], `the sent MML has no parser errors in Studio: ${JSON.stringify(imported.errors)}`);
+  assert.ok(imported.notes >= 3, `Studio reads the notes the Workshop sent: ${imported.notes}`);
 }
