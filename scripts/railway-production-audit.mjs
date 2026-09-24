@@ -677,5 +677,11 @@ if (process.argv[1] && import.meta.url === pathToFileURL(resolve(process.argv[1]
       ].join('\n'));
     }
   }
+  // Drift has one remedy, and it is not a rebuild: the repository's desired
+  // state reaches Railway only through the dispatched config-apply workflow.
+  if (report.control_plane.failure_reason === 'CONFIG_DRIFT') {
+    const fields = [...new Set((report.control_plane.config_drift ?? []).map(item => item.field))].join(', ');
+    console.log(`::error::Railway production config drift (${fields}). If railway/service-settings.json changed in this merge, dispatch 'Railway production config apply' on main with confirmation APPLY_REPOSITORY_DESIRED_STATE, then re-run this audit.`);
+  }
   process.exitCode = report.status === 'PASS' || report.status === SUPERSEDED ? 0 : 1;
 }

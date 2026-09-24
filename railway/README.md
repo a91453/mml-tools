@@ -187,6 +187,19 @@ Nothing in this repository changes a running Railway service. After the Studio A
 
 No variable rotation, volume change, bucket change, service creation or migration is required or implied by this work.
 
+### When a merge changes `service-settings.json`
+
+`railway/service-settings.json` is the desired state the production audit enforces, but merging a change to it changes nothing on Railway. The only path that pushes it is the **Railway production config apply** workflow, dispatched on `main` with the confirmation `APPLY_REPOSITORY_DESIRED_STATE`. Railway ops CI flags such a pull request with a warning and a step summary.
+
+After the merge:
+
+1. Dispatch **Railway production config apply** on `main`.
+2. Dispatch **Railway production audit** for the merged commit.
+
+Until the apply, the post-merge audit fails with `CONFIG_DRIFT` and says so in its log. A later commit that changes only a newly watched path is also SKIPPED by Railway, so production would keep running the older image.
+
+An audit that ends `SUPERSEDED` is not a failure: a later `main` merge replaced the audited deployment while the audit ran, and that commit's own audit verifies production.
+
 ### If the build fails at the Canonical gate
 
 A failing build is the gate working. The probe lines name what was missing, and the materialization step's own JSON names the step that could not be proven. The usual causes, in order of likelihood:
