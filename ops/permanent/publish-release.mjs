@@ -71,6 +71,9 @@ export async function publishRelease(directory, { fetch: fetchImpl = globalThis.
 }
 
 const invokedAsScript = (() => {
-  try { return Boolean(process.argv[1]) && realpathSync(process.argv[1]) === fileURLToPath(import.meta.url); } catch { return false; }
+  // Real paths on both sides: under --preserve-symlinks-main import.meta.url
+  // keeps the link path, and a guard that compared it with the resolved
+  // argv[1] exited 0 having published nothing.
+  try { return Boolean(process.argv[1]) && realpathSync(process.argv[1]) === realpathSync(fileURLToPath(import.meta.url)); } catch { return false; }
 })();
 if (invokedAsScript) console.log(JSON.stringify(await publishRelease(process.argv[2])));

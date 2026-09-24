@@ -3,7 +3,7 @@
 // global fetch is replaced by one that fails the test if it is ever called.
 import test, { before, after } from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtemp, mkdir, readFile, rm, writeFile } from 'node:fs/promises';
+import { mkdtemp, mkdir, readFile, rm, symlink, writeFile } from 'node:fs/promises';
 import { createHash } from 'node:crypto';
 import { spawnSync } from 'node:child_process';
 import { tmpdir } from 'node:os';
@@ -243,4 +243,14 @@ globalThis.fetch = async url => {
   const refused = run({});
   assert.notEqual(refused.status, 0);
   assert.match(refused.stderr, /Release publishing context missing/);
+  // Started through a symlink, with or without --preserve-symlinks-main, the
+  // command line still runs: an entry check that exits 0 there is a green
+  // release step that published nothing.
+  const link = resolve(root, 'publish-link.mjs');
+  await symlink(script, link);
+  for (const flags of [[], ['--preserve-symlinks-main']]) {
+    const viaLink = spawnSync(process.execPath, [...flags, link, dir], { encoding: 'utf8', env: { PATH: process.env.PATH } });
+    assert.notEqual(viaLink.status, 0, `${flags.join(' ') || 'plain'}: the script ran and refused`);
+    assert.match(viaLink.stderr, /Release publishing context missing/, flags.join(' ') || 'plain');
+  }
 });

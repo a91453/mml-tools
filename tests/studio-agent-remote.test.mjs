@@ -205,3 +205,43 @@ test('remote export never writes the Final of a stale run whose MCP view compact
     assert.equal(result.error.details.staleness.compacted, true, `${label}: the refusal records what it was given`);
   }
 });
+
+// Every condition the export's fail-closed guard checks, one at a time, from a
+// status and artifact the export accepts: each alone must refuse and write
+// nothing, so none of them can be dropped without a test noticing.
+test('remote export refuses each malformed status or artifact read on its own', async t => {
+  const dir = mkdtempSync(join(tmpdir(), 'studio-remote-guard-'));
+  t.after(() => rmSync(dir, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 }));
+  const storeDirectory = join(dir, 'service');
+  const remote = await startTestRemote(t, storeDirectory);
+  const { project_id, run_id, status } = await staleCompletedRun(remote.app.studio, storeDirectory, SERVICE_OWNER);
+  const artifact = JSON.parse(JSON.stringify(await remote.app.studio.getArtifact(SERVICE_OWNER, status.run.final_artifact_id)));
+  const { response_compaction: _none, ...whole } = JSON.parse(JSON.stringify(status));
+  const fresh = { ...whole, staleness: [] };
+
+  const exportWith = async (label, served, exit) => {
+    const paged = await pagedViewService(t, served);
+    const out = join(dir, `${label}.mml`);
+    const result = await remoteAgent(paged, join(dir, `client-${label}`), ['export', '--project-id', project_id, '--run-id', run_id, '--out', out], exit);
+    return { result, written: existsSync(out) };
+  };
+
+  // The control: a whole, fresh status and the Final it names export.
+  const accepted = await exportWith('control', { studio_run_status: fresh, studio_artifact_get: artifact }, 0);
+  assert.equal(accepted.written, true, `precondition: the unmodified reads export (${JSON.stringify(accepted.result).slice(0, 300)})`);
+
+  const cases = {
+    'status-compaction-marker': { studio_run_status: { ...fresh, response_compaction: { compacted: [] } }, studio_artifact_get: artifact },
+    'status-other-run': { studio_run_status: { ...fresh, run: { ...fresh.run, run_id: `${run_id}-other` } }, studio_artifact_get: artifact },
+    'run-without-candidate': { studio_run_status: { ...fresh, run: { ...fresh.run, candidate_id: '' } }, studio_artifact_get: artifact },
+    // Missing on both sides, so the candidate match alone cannot catch it.
+    'no-candidate-anywhere': { studio_run_status: { ...fresh, run: { ...fresh.run, candidate_id: undefined } }, studio_artifact_get: { ...artifact, artifact: { ...artifact.artifact, candidate_id: undefined } } },
+    'artifact-compaction-marker': { studio_run_status: fresh, studio_artifact_get: { ...artifact, response_compaction: { compacted: [] } } },
+    'artifact-other-id': { studio_run_status: fresh, studio_artifact_get: { ...artifact, artifact: { ...artifact.artifact, artifact_id: `${artifact.artifact.artifact_id}-other` } } },
+  };
+  for (const [label, served] of Object.entries(cases)) {
+    const { result, written } = await exportWith(label, served, 1);
+    assert.equal(written, false, `${label}: nothing is written`);
+    assert.equal(result.error?.code, 'AGENT_INPUT_REFUSED', `${label}: ${JSON.stringify(result).slice(0, 300)}`);
+  }
+});

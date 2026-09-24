@@ -6,7 +6,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
-import { cpSync, mkdtempSync, readdirSync, realpathSync, rmSync, statSync, symlinkSync } from 'node:fs';
+import { cpSync, mkdirSync, mkdtempSync, readdirSync, realpathSync, rmSync, statSync, symlinkSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -47,4 +47,31 @@ test('scripts started from a path with a space, CJK and # still run main()', t =
     silent.push({ name, status: proc.status, stdout: proc.stdout.slice(0, 200), stderr: proc.stderr.slice(0, 200) });
   }
   assert.deepEqual(silent, [], 'every script runs main() instead of exiting without output');
+});
+
+// Started through a symlink, Node takes import.meta.url from the entry's real
+// path (or keeps the link under --preserve-symlinks-main) while argv[1] is the
+// link, so a guard comparing the two unresolved paths did nothing and exited 0.
+test('scripts started through a symlink still run main(), with or without --preserve-symlinks-main', t => {
+  const root = mkdtempSync(join(tmpdir(), 'mml-entry-link-'));
+  t.after(() => rmSync(root, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 }));
+  for (const entry of readdirSync(repo)) {
+    if (entry === 'scripts' || entry === '.git') continue;
+    symlinkSync(join(repo, entry), join(root, entry), statSync(join(repo, entry)).isDirectory() ? 'junction' : 'file');
+  }
+  // scripts/ is a real directory of links to the real scripts, so relative
+  // imports resolve from either the link or the real path.
+  mkdirSync(join(root, 'scripts'));
+  for (const entry of readdirSync(join(repo, 'scripts'))) symlinkSync(join(repo, 'scripts', entry), join(root, 'scripts', entry));
+  const silent = [];
+  for (const flags of [[], ['--preserve-symlinks-main']]) {
+    for (const [name, status, stream, output] of SCRIPTS) {
+      const proc = spawnSync(process.execPath, [...flags, join(root, 'scripts', `${name}.mjs`), '--help'], {
+        cwd: root, encoding: 'utf8', input: '', timeout: 120000, windowsHide: true,
+      });
+      if (proc.status === status && output.test(proc[stream])) continue;
+      silent.push({ flags: flags.join(' '), name, status: proc.status, stdout: proc.stdout.slice(0, 200), stderr: proc.stderr.slice(0, 200) });
+    }
+  }
+  assert.deepEqual(silent, [], 'every script runs main() through a symlink');
 });

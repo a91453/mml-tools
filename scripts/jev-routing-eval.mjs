@@ -11,7 +11,7 @@
 // take, and nothing here may decide a gate, a rule or a musical result.
 //
 // Dry run is the default because a live run spends the operator's Jev credits.
-import { readFileSync, writeFileSync, readdirSync, statSync } from 'node:fs';
+import { readFileSync, writeFileSync, readdirSync, statSync, realpathSync } from 'node:fs';
 import { join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { parseArgs } from 'node:util';
@@ -433,7 +433,14 @@ export async function main(argv = process.argv.slice(2)) {
   return summary.failed ? 1 : 0;
 }
 
-if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
+// The entry module is compared by real path on both sides: Node takes
+// import.meta.url from the entry's real path (or from the link itself under
+// --preserve-symlinks-main), while argv[1] is the path the caller typed, so a
+// script started through a symlink would otherwise do nothing and exit 0.
+const invokedAsScript = (() => {
+  try { return Boolean(process.argv[1]) && realpathSync(process.argv[1]) === realpathSync(fileURLToPath(import.meta.url)); } catch { return false; }
+})();
+if (invokedAsScript) {
   // process.exitCode, not process.exit: the repo's other scripts do the same, and
   // exiting outright can truncate piped stdout before it is flushed.
   main().then(code => { process.exitCode = code; }).catch(error => {

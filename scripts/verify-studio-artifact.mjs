@@ -8,6 +8,7 @@
 // This verifier consumes the published Canonical identity recorded at build
 // time. It never defines Canonical rules and never re-derives them.
 import { readFile, readdir } from 'node:fs/promises';
+import { realpathSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { createHash } from 'node:crypto';
@@ -154,7 +155,14 @@ export async function verifyStudioArtifact(dir, expected = {}, { serviceWorkerTe
   return { buildId: build.buildId, release: build.release, audit: build.audit, assetCount: manifest.size };
 }
 
-const invokedDirectly = process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.url);
+// The entry module is compared by real path on both sides: Node takes
+// import.meta.url from the entry's real path (or from the link itself under
+// --preserve-symlinks-main), while argv[1] is the path the caller typed, so a
+// script started through a symlink would otherwise do nothing and exit 0.
+const invokedAsScript = (() => {
+  try { return Boolean(process.argv[1]) && realpathSync(process.argv[1]) === realpathSync(fileURLToPath(import.meta.url)); } catch { return false; }
+})();
+const invokedDirectly = invokedAsScript;
 if (invokedDirectly) {
   const [dir = 'studio/web-build', ...pins] = process.argv.slice(2);
   const expected = Object.fromEntries(pins.map(pin => {

@@ -19,7 +19,7 @@
 // rebuilt here carries no tempo map and no per-event MIDI metadata, so only
 // timing/pitch/role facts are reproduced; the full candidate review is not.
 import { createHash } from 'node:crypto';
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, readFileSync, writeFileSync, realpathSync } from 'node:fs';
 import { join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { parseArgs } from 'node:util';
@@ -200,7 +200,14 @@ async function main(argv = process.argv.slice(2)) {
   return receipt.reproduction.matches_expected_microtiming_sha256 === false ? 2 : 0;
 }
 
-if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
+// The entry module is compared by real path on both sides: Node takes
+// import.meta.url from the entry's real path (or from the link itself under
+// --preserve-symlinks-main), while argv[1] is the path the caller typed, so a
+// script started through a symlink would otherwise do nothing and exit 0.
+const invokedAsScript = (() => {
+  try { return Boolean(process.argv[1]) && realpathSync(process.argv[1]) === realpathSync(fileURLToPath(import.meta.url)); } catch { return false; }
+})();
+if (invokedAsScript) {
   try { process.exitCode = await main(); }
   catch (error) { process.stderr.write(`${error.message}\n`); process.exitCode = 1; }
 }

@@ -44,7 +44,9 @@ JSON 文字分段，不是摘要、不會刪除事件、不新建 artifact，一
 不帶此參數時回傳 MCP 的有界檢視：machine-delivery ledger 的逐 release 清單一律摘要，
 超過 96 KiB 的回應再把最大的長清單摘要成 `{compacted: true, total, first, sha256,
 report_page | retrieve}`（見 `response_compaction`），原 512 KiB 上限保留。
-適用 suggestion、reduction／adaptation plan、
+例外：`studio_arrangement_suggest` 與 `studio_baseline_events` 的用途就是那份清單，
+只摘要 ledger 清單，不依大小摘要。
+`report_page` 適用 suggestion、reduction／adaptation plan、
 無 confirmations 的 review、run plan／status、proposal targets／status、
 project／baseline events／job／artifact 讀取。
 

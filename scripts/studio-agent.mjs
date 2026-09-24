@@ -1,6 +1,6 @@
 // Local external-agent adapter. Implementation notes, not Canonical policy.
 // Musical operations and input schemas stay in the existing MCP/Application Service.
-import { mkdirSync, openSync, closeSync, unlinkSync, readFileSync, writeFileSync } from 'node:fs';
+import { mkdirSync, openSync, closeSync, unlinkSync, readFileSync, writeFileSync, realpathSync } from 'node:fs';
 import { basename, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { randomUUID } from 'node:crypto';
@@ -214,7 +214,14 @@ export async function main(argv = process.argv.slice(2)) {
   }
 }
 
-if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
+// The entry module is compared by real path on both sides: Node takes
+// import.meta.url from the entry's real path (or from the link itself under
+// --preserve-symlinks-main), while argv[1] is the path the caller typed, so a
+// script started through a symlink would otherwise do nothing and exit 0.
+const invokedAsScript = (() => {
+  try { return Boolean(process.argv[1]) && realpathSync(process.argv[1]) === realpathSync(fileURLToPath(import.meta.url)); } catch { return false; }
+})();
+if (invokedAsScript) {
   try { process.exitCode = await main(); }
   catch (error) { process.stderr.write(JSON.stringify({ error: { code: error.code ?? 'LOCAL_ERROR', message: error.message } }) + '\n'); process.exitCode = 1; }
 }
