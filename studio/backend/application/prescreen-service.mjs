@@ -21,6 +21,7 @@
 import { ERROR_CODES, LIMITS, fail, isArtifactId, isCandidateId, isProjectId, requireString } from './contracts.mjs';
 import { activeAudioEntries, audioReportHash, readAudioHistory } from './audio-report-history.mjs';
 import { sha256Of } from './store.mjs';
+import { f } from '../../../dist/core.js';
 import { GAME_INSTRUMENT_IDS } from '../audio/instruments.mjs';
 import { createSoundBankProvider, bankCacheDirectory, FREE_GM_BANK, SoundBankError } from '../audio/prescreen/sound-bank.mjs';
 import { createRenderPool } from '../audio/prescreen/render-pool.mjs';
@@ -180,6 +181,7 @@ export function createPrescreenService({ canonical, projects, intake, arrangemen
     const record = projectId === null ? null : projects.load(owner, projectId);
     const alternatives = [];
     const meters = [];
+    const pickups = [];
     const candidatesInOrder = [];
     let pickup = request.pickup;
     for (const entry of request.alternatives) {
@@ -199,7 +201,9 @@ export function createPrescreenService({ canonical, projects, intake, arrangemen
         if (artifact.mml_sha256 && artifact.mml_sha256 !== digest) refuse(`artifact ${entry.id} MML does not match its recorded SHA-256`, { artifact_id: entry.id });
         alternatives.push({ label: entry.label, source: { kind: 'artifact', id: entry.id, candidate_id: artifact.candidate_id ?? null }, mml_sha256: digest, performance: parseMml(engines, artifact.mml, `artifact ${entry.id}`, entry.instruments) });
         if (artifact.final_bar?.meter_text) meters.push({ label: entry.label, meter: meterFromText(artifact.final_bar.meter_text) });
-        if (!pickup && artifact.final_bar?.pickup) pickup = String(artifact.final_bar.pickup);
+        // A delivered Final records its pickup beside its meter map; null there
+        // is the statement that the Final starts on a bar line.
+        if (artifact.final_bar && Object.hasOwn(artifact.final_bar, 'pickup')) pickups.push({ label: entry.label, pickup: artifact.final_bar.pickup ?? null });
         if (artifact.candidate_id) candidatesInOrder.push(artifact.candidate_id);
       }
     }
@@ -213,6 +217,26 @@ export function createPrescreenService({ canonical, projects, intake, arrangemen
       meter = meterFromText(distinct[0]);
     } else if (distinct.length && distinct.some(text => text !== meterText(meter))) {
       refuse('meter_text differs from the meter map an alternative declares; the bars would not line up', { declared: distinct });
+    }
+    // Pickups are compared as meter maps are: a Final's pickup shifts every
+    // bar line after it, so Finals declaring different pickups (a bar-aligned
+    // one declares zero beats) cannot share one bar grid, and a stated pickup
+    // must agree with every declared one. Compared as exact beat lengths.
+    if (pickups.length) {
+      const beatsOf = (text, label) => {
+        try { return f(text ?? '0').toString(); }
+        catch { return refuse(`${label} must be a non-negative integer, decimal or fraction of beats`); }
+      };
+      const declared = pickups.map(entry => ({ label: entry.label, pickup: beatsOf(entry.pickup, `alternative ${entry.label} pickup`) }));
+      const distinctPickups = [...new Set(declared.map(entry => entry.pickup))];
+      if (!pickup) {
+        if (distinctPickups.length !== 1) refuse('the alternatives declare different pickups; state pickup', { declared });
+        // All agree; zero is no pickup at all, as a bar-aligned Final records it.
+        if (distinctPickups[0] !== '0') pickup = String(pickups[0].pickup);
+      } else {
+        const stated = beatsOf(pickup, 'pickup');
+        if (distinctPickups.some(beats => beats !== stated)) refuse('pickup differs from the pickup an alternative declares; the bars would not line up', { declared });
+      }
     }
 
     // The source reference for fidelity (and source-inherited roughness).

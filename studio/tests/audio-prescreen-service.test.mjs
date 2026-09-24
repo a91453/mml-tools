@@ -177,3 +177,62 @@ test('APS-5 shadow mode records predictions and the owner\'s choices, and report
     rmSync(dir, { recursive: true, force: true });
   }
 });
+
+test('APS-6 Final alternatives share one bar grid: differing declared pickups, or a stated pickup that contradicts one, are refused', async () => {
+  const service = createStudioApplication({ audioPrescreen: { bank: BANK, bytes: BANK_BYTES, poolSize: 1 } });
+  const confirmations = {
+    source_complete: { value: true, reason: 'fixture source complete' },
+    player_readback: { value: 'N/A', reason: 'no player readback in this fixture' },
+    mobile_adaptation_reviewed: { value: true, reason: 'g8', evidence: ['g8'] },
+    regression_reviewed: { value: true, reason: 'g9', evidence: ['g9'] },
+    original_audio_required: { value: false, reason: 'no original recording' },
+  };
+  try {
+    const run = await applyKeepOnlyCandidate(service, OWNER);
+    const finalize = bar => service.finalize(OWNER, run.projectId, { candidateId: run.candidateId, ...bar });
+    // Two bar-aligned Finals (pickup recorded as null), and two whose one-beat
+    // pickup is written differently but is the same beat length.
+    const aligned = await finalize({ confirmations });
+    const alignedAgain = await finalize({});
+    const pickedUp = await finalize({ pickup: '1', finalPartial: '3' });
+    const pickedUpDecimal = await finalize({ pickup: '1.0', finalPartial: '3' });
+    for (const final of [aligned, alignedAgain, pickedUp, pickedUpDecimal]) assert.equal(final.operation, 'succeeded');
+    assert.equal(new Set([aligned, alignedAgain, pickedUp, pickedUpDecimal].map(final => final.artifact_id)).size, 4);
+    assert.deepEqual([aligned.final_bar.pickup, pickedUp.final_bar.pickup, pickedUpDecimal.final_bar.pickup], [null, '1', '1.0']);
+    const byId = final => ({ artifact_id: final.artifact_id });
+    const prescreen = async input => (await service.audioPrescreen(OWNER, run.projectId, input)).prescreen;
+    const refused = (input, pattern) => assert.rejects(service.audioPrescreen(OWNER, run.projectId, input), error => {
+      assert.equal(error.code, 'INVALID_REQUEST');
+      assert.match(error.message, pattern);
+      return true;
+    }, JSON.stringify(input).slice(0, 160));
+
+    // In either order, the first declared pickup is not imposed on the other
+    // Final: a bar-aligned Final declares zero beats of pickup.
+    for (const [first, second] of [[aligned, pickedUp], [pickedUp, aligned]]) {
+      await assert.rejects(prescreen({ alternatives: [byId(first), byId(second)] }), error => {
+        assert.equal(error.code, 'INVALID_REQUEST');
+        assert.match(error.message, /the alternatives declare different pickups; state pickup/);
+        assert.deepEqual(error.details.declared, [first, second].map((final, index) => ({ label: ['A', 'B'][index], pickup: final === aligned ? '0' : '1' })));
+        return true;
+      });
+    }
+    // A stated pickup must agree with every Final that declares one.
+    await refused({ alternatives: [byId(pickedUp), byId(pickedUpDecimal)], pickup: '2' }, /pickup differs from the pickup an alternative declares/);
+    await refused({ alternatives: [byId(aligned), byId(pickedUp)], pickup: '1' }, /pickup differs from the pickup an alternative declares/);
+    await refused({ alternatives: [byId(aligned), { candidate_id: run.candidateId }], pickup: '1' }, /pickup differs from the pickup an alternative declares/);
+
+    // Consistent pickups still work, compared as beat lengths however written.
+    const agreed = await prescreen({ alternatives: [byId(pickedUp), byId(pickedUpDecimal)] });
+    assert.equal(agreed.inputs.pickup, '1');
+    assert.equal(agreed.bars.length, 2, 'a one-beat pickup bar, then the three-beat final partial bar');
+    const stated = await prescreen({ alternatives: [byId(pickedUpDecimal), { candidate_id: run.candidateId }], pickup: '1' });
+    assert.equal(stated.inputs.pickup, '1');
+    assert.equal(stated.bars.length, 2);
+    const onBarLines = await prescreen({ alternatives: [byId(aligned), byId(alignedAgain)] });
+    assert.equal(onBarLines.inputs.pickup, null);
+    assert.equal(onBarLines.bars.length, 1);
+  } finally {
+    await service.releaseAudioWorkers();
+  }
+});
