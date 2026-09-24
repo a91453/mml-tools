@@ -342,6 +342,60 @@ test('an acceptance that reached the run cannot be withdrawn, and the refusal sa
   assert.equal(retry.result.proposal.state, PROPOSAL_STATE.APPLIED);
 });
 
+test('an attempt that never reached the run does not pin the revision a later interrupted attempt is retried against', async () => {
+  // The revision a retry carries as its precondition is where an INTERRUPTED
+  // attempt left the run, written once. An attempt that failed before
+  // `runs.resume` left the run nowhere -- it never touched it -- but it used to
+  // write that revision anyway. A later attempt that did reach the run and was
+  // interrupted there then could not move it, so the retry after that failed
+  // the precondition against the pre-interruption revision, with
+  // `run_resume_called` already true: accepted, open and not withdrawable for
+  // good. The same stuck proposal, one attempt later.
+  const fault = { armed: false };
+  let interrupt = false;
+  const app = createStudioApplication({
+    runHooks: { beforeEffect: ({ step }) => { if (interrupt && step === RUN_STEP.FINAL_REDUCTION) { interrupt = false; throw Error('the process stopped before the effect'); } } },
+    loadEngines: enginesWith(engines => ({
+      reduction: {
+        ...engines.reduction,
+        planFinalReduction: input => {
+          if (fault.armed && input.acceptedBy === RUN_REVIEWER) throw Error('the reduction plan could not be derived for this acceptance');
+          return engines.reduction.planFinalReduction(input);
+        },
+      },
+    })),
+  });
+  const context = await runAwaitingReduction(app);
+  const submitted = await proposeReduction(app, context, { decisions: REDUCTION_DECISIONS });
+  const candidatesBefore = await candidatesOf(app, context);
+  const read = async () => (await app.getProposal(OWNER, context.fixture.projectId, submitted.proposal.proposal_id)).proposal;
+
+  // 1. Fails before the run. Nothing about the run is known to it.
+  fault.armed = true;
+  const first = await accept(app, context, submitted.proposal.proposal_id);
+  assert.equal(first.ok, false);
+  assert.equal(first.error.details.run_resume_called, false);
+  assert.equal((await read()).application.run_revision_at_attempt, null, 'an attempt that never reached the run pins nothing');
+
+  // 2. Reaches the run and is interrupted inside it.
+  fault.armed = false;
+  interrupt = true;
+  const second = await accept(app, context, submitted.proposal.proposal_id);
+  assert.equal(second.ok, false);
+  assert.match(String(second.error.message), /stopped before the effect/);
+  assert.equal(second.error.details.run_resume_called, true);
+  const interrupted = await read();
+  assert.equal(interrupted.application.run_revision_at_attempt, (await runOf(app, context)).revision, 'pinned where the interrupted attempt left the run');
+
+  // 3. The retry finishes exactly that application.
+  const third = await accept(app, context, submitted.proposal.proposal_id);
+  assert.ok(third.ok, `the retry must finish the interrupted application, got ${third.error?.code}: ${third.error?.message}`);
+  assert.equal(third.result.proposal.state, PROPOSAL_STATE.APPLIED);
+  assert.equal(third.result.proposal.application.settled_on_retry, true);
+  const minted = (await candidatesOf(app, context)).filter(entry => !candidatesBefore.some(before => before.candidate_id === entry.candidate_id));
+  assert.equal(minted.length, 1, 'one acceptance, one application');
+});
+
 test('an acceptance recorded before the marker existed is not guessed about', async () => {
   await withDirectory(async directory => {
     // A proposal stuck exactly as the defect left them: accepted, with a

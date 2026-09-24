@@ -1856,13 +1856,26 @@ export function createProposalService({ canonical, projects, store, operations, 
           // longer be finished -- the same terminal `accepted` a persistently
           // refusing run already produces -- and the remedy is the one the
           // record states: a fresh proposal against the request as it stands.
+          //
+          // And only by an attempt that REACHED the run. One that failed
+          // before `runs.resume` left the run nowhere, so the revision the run
+          // happens to be at is no fact about it -- but it used to be written
+          // all the same, and being written once, it could not then move to
+          // where a later attempt that did reach the run was interrupted. The
+          // retry after that failed its precondition against a revision no
+          // interrupted attempt had left, with `run_resume_called` already
+          // true: accepted, open and not withdrawable for good. Left unset, a
+          // retry carries the revision the acceptance observed -- which, while
+          // no attempt has reached the run, the policy that retry goes back
+          // through re-checks against the run first -- and the pin is written
+          // by the first attempt that reaches the run and does not finish.
           const runNow = runsOf(record).find(entry => entry.run_id === proposal.run_id) ?? null;
           return bumpProposal(owner, projectId, proposal, {
             application: {
               ...proposal.application,
               conflict: { ...failure, at: now() },
               derived,
-              run_revision_at_attempt: proposal.application.run_revision_at_attempt ?? runNow?.revision ?? null,
+              run_revision_at_attempt: proposal.application.run_revision_at_attempt ?? (reachedRun ? runNow?.revision ?? null : null),
             },
           });
         }
