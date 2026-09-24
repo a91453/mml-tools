@@ -25,11 +25,12 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 
 import { createStudioApplication, ERROR_CODES, READINESS_BLOCKER_WITHOUT_OPERATION, RUN_STATE, RUN_STEP, RUN_STEP_STATUS } from '../backend/application/index.mjs';
-import { createCanonicalNoteEvent, createCanonicalProject } from '../backend/canonical/index.mjs';
+import { createArbitrationDecision, createCanonicalNoteEvent, createCanonicalProject, createCanonicalRestEvent } from '../backend/canonical/index.mjs';
+import { MICRO_TIMING_KEEP_ACTION, createIntervalIdentity } from '../backend/canonical/micro-timing.mjs';
 import { enginesWith } from './support/real-engines.mjs';
 import { baselineWithOverflowLane, baselineWithPercussion, baselineWithoutLead, leadEvidenceFor, FIXTURE_SOURCE_ID } from './fixtures/g12-fixtures.mjs';
 import { FIXTURE_CONFIRMATIONS, RUN_REVIEWER, mobileProfile, projectWithSymbolicAsset, runDecisionsFor, sixRoleBaseline } from './fixtures/run-fixtures.mjs';
-import { MACHINE_DELIVERY_ACTIVE, assertRunHeldOrDeliveredUnresolved } from './support/loaded-release.mjs';
+import { LISTEN_FIRST_RELEASES_ACTIVE, MACHINE_DELIVERY_ACTIVE, assertRunHeldOrDeliveredUnresolved } from './support/loaded-release.mjs';
 
 const OWNER = 'owner:run-blocking';
 
@@ -462,6 +463,107 @@ test('a micro-timing boundary Final cannot reach names no operation, says why, a
   // The capability record says the same thing a request does.
   const caps = await createStudioApplication({}).capabilities();
   assert.ok(caps.runs.refuses.some(entry => entry.includes(BOUNDARY) && entry.includes('lists no operation')), JSON.stringify(caps.runs.refuses));
+});
+
+test('a release no release representation can move names no operation in a run, whatever follows it, and one it can move keeps the hint', async () => {
+  // Chord5 of the six-role fixture is [0,1) [1,2) [2,4). Each case puts one of
+  // its releases one 480-tick short of the 1/64 grid:
+  //   K0  chord5-2 ends at 719/480 and an explicit rest runs from there to 2;
+  //   K1  chord5-2 ends at 719/480 with implicit silence to 2;
+  //   K2  chord5-3 ends at 1919/480, the role's end.
+  // A keep claim on the release (accepted or pending) takes away every
+  // representation, and in K0 the rest refuses both of them anyway, so K0 with
+  // the claim rejected or absent is the same case. Before, K1 and K2 under a
+  // claim passed microTiming and the run went on to a finalize the emitter
+  // could not serialize, and K0 without a claim named release representation,
+  // which refuses both options.
+  const BOUNDARY = 'MICRO_TIMING_BOUNDARY_NOT_FINAL_REPRESENTABLE';
+  const gap = { type: 'inter-event-gap', previousEventId: 'chord5-2', nextEventId: 'chord5-3', start: '719/480', end: '3/2' };
+  const shapes = {
+    K0: { changes: { 'chord5-2': { end: '719/480' } }, rest: true, identity: gap, claimed: ['chord5-2', 'chord5-3'] },
+    K1: { changes: { 'chord5-2': { end: '719/480' } }, rest: false, identity: gap, claimed: ['chord5-2', 'chord5-3'] },
+    K2: { changes: { 'chord5-3': { end: '1919/480' } }, rest: false, identity: { type: 'event-duration', eventId: 'chord5-3', start: '2', end: '1919/480' }, claimed: ['chord5-3'] },
+  };
+  const runOn = async (name, status) => {
+    const shape = shapes[name];
+    const source = sixRoleBaseline();
+    const events = source.events.map(event => (shape.changes[event.id] ? createCanonicalNoteEvent({ ...event, ...shape.changes[event.id] }) : event));
+    if (shape.rest) {
+      events.push(createCanonicalRestEvent({ id: 'chord5-breath', start: '719/480', end: '2', role: 'Chord5', voice: 'chord5', sourceIds: [FIXTURE_SOURCE_ID], sourceEventIds: [`${FIXTURE_SOURCE_ID}#chord5-breath`] }));
+    }
+    const decisions = status ? [createArbitrationDecision({
+      id: `keep-${status}`,
+      eventIds: shape.claimed,
+      action: MICRO_TIMING_KEEP_ACTION,
+      status,
+      reason: 'claimed musically meaningful',
+      metadata: { intervalIdentity: createIntervalIdentity(shape.identity) },
+    })] : [];
+    const project = createCanonicalProject({ ...source, events, decisions });
+    const isolated = createStudioApplication({});
+    const own = await projectWithSymbolicAsset(isolated, OWNER, { project });
+    await isolated.analyzeSources(OWNER, own.projectId, { assetIds: [own.assetId] });
+    // An arrangement decision targets notes only; the explicit rest is carried.
+    const notes = new Set(project.events.filter(event => event.kind === 'note').map(event => event.id));
+    const accepted = runDecisionsFor(own.project).map(decision => ({ ...decision, target: { ...decision.target, eventIds: decision.target.eventIds.filter(id => notes.has(id)) } }));
+    const candidate = (await isolated.applyDecisions(OWNER, own.projectId, { decisions: accepted })).decisions.candidate_id;
+    return (await isolated.startRun(OWNER, own.projectId, { target_candidate_id: candidate, confirmations: FIXTURE_CONFIRMATIONS })).run;
+  };
+  const none = request => request.detail.unsupportedBoundaries.filter(entry => entry.coverage === 'none')
+    .map(entry => [entry.role, entry.eventId, entry.kind, entry.boundary, entry.position, entry.reason]);
+  const REST_START = ['Chord5', 'chord5-breath', 'rest', 'start', '719/480', 'REST_START_NOT_FINAL_REPRESENTABLE'];
+  const claimedRelease = (eventId, position) => ['Chord5', eventId, 'note', 'end', position, 'RELEASE_UNDER_A_KEEP_CLAIM_NOT_FINAL_REPRESENTABLE'];
+
+  const cases = [
+    ['K0', 'accepted', [REST_START]],
+    ['K0', 'pending', [REST_START]],
+    ['K0', 'rejected', [REST_START]],
+    ['K0', null, [REST_START]],
+    ['K1', 'accepted', [claimedRelease('chord5-2', '719/480')]],
+    ['K1', 'pending', [claimedRelease('chord5-2', '719/480')]],
+    ['K2', 'accepted', [claimedRelease('chord5-3', '1919/480')]],
+    ['K2', 'pending', [claimedRelease('chord5-3', '1919/480')]],
+  ];
+  for (const [name, status, expected] of cases) {
+    const label = `${name} ${status ?? 'no'} keep`;
+    const run = await runOn(name, status);
+    assert.notEqual(run.state, RUN_STATE.COMPLETED, label);
+    assert.equal(run.final_artifact_id, null, label);
+    const request = gateRequest(run, 'microTiming');
+    assert.ok(request, `${label}: ${JSON.stringify(run.review_requests.map(entry => entry.gate))}`);
+    assert.deepEqual(request.blockers, [BOUNDARY], label);
+    assert.deepEqual(request.available_operations, [], `${label}: no operation is offered that cannot answer the gate`);
+    assert.deepEqual(request.missing, [READINESS_BLOCKER_WITHOUT_OPERATION.microTiming[BOUNDARY]], label);
+    assert.deepEqual(none(request), expected, `${label}: the request says where, as G10 and the emitter do`);
+    // A pending claim is an open decision besides, with its own answer.
+    const pendingRequest = gateRequest(run, 'pendingDecisions');
+    assert.equal(Boolean(pendingRequest), status === 'pending', label);
+    if (pendingRequest) assert.deepEqual(pendingRequest.available_operations, ['applyDecisions'], label);
+  }
+  const text = READINESS_BLOCKER_WITHOUT_OPERATION.microTiming[BOUNDARY];
+  assert.match(text, /a note release no release representation can move \(one under a keep claim, or one whose every representation is invalid\)/);
+  assert.match(text, /RELEASE_EVENT_HAS_A_SOURCE_SUPPORTED_KEEP_CLAIM/);
+  assert.match(text, /RELEASE_REPRESENTATION_NOT_VALID_FOR_EVENT/);
+
+  // Control: K1 and K2 with the claim rejected or absent have a valid
+  // representation, so G10 raises the release code, whose hint is true. Under
+  // the listen-first schema the run holds the release provisionally and
+  // delivers it for listening instead of asking.
+  for (const [name, status] of [['K1', 'rejected'], ['K1', null], ['K2', null]]) {
+    const label = `${name} ${status ?? 'no'} keep`;
+    const run = await runOn(name, status);
+    if (LISTEN_FIRST_RELEASES_ACTIVE) {
+      assertRunHeldOrDeliveredUnresolved(run, [['microTiming', 'non_blocking_pending']]);
+      const entry = run.machine_delivery.non_blocking_pending.find(item => item.gate === 'microTiming');
+      assert.deepEqual(entry.blockers, ['MICRO_TIMING_RELEASE_NOT_FINAL_REPRESENTABLE', 'MICRO_TIMING_RELEASE_EVIDENCE_REQUIRED', 'MICRO_TIMING_RELEASE_PROVISIONAL'], label);
+      continue;
+    }
+    const request = gateRequest(run, 'microTiming');
+    assert.ok(request, label);
+    assert.deepEqual(request.blockers, ['MICRO_TIMING_RELEASE_NOT_FINAL_REPRESENTABLE', 'MICRO_TIMING_RELEASE_EVIDENCE_REQUIRED', 'MICRO_TIMING_RELEASE_PROVISIONAL'], label);
+    assert.deepEqual(request.available_operations, ['planMobileAdaptation', 'applyMobileAdaptation.release_representation'], label);
+    assert.deepEqual(request.missing, [], label);
+  }
 });
 
 // ─── an unknown blocker still blocks ────────────────────────────────────────

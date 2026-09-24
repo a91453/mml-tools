@@ -167,8 +167,9 @@ reported with `known: false`, gets no operation hint, and still blocks.
 `READINESS_GATE_OPERATIONS` is a hint table and decides nothing. A known gate
 can carry a blocker none of its hinted operations answers;
 `READINESS_BLOCKER_WITHOUT_OPERATION` lists those (today
-`MICRO_TIMING_BOUNDARY_NOT_FINAL_REPRESENTABLE`, an onset or rest boundary Final
-cannot reach, which nothing in this build moves). The request states each one it
+`MICRO_TIMING_BOUNDARY_NOT_FINAL_REPRESENTABLE`: an onset, a rest boundary, or a
+release under a keep claim or with no valid representation, that Final cannot
+reach and nothing in this build moves). The request states each one it
 carries in `missing`, names no operation when they are all it carries, and
 still blocks.
 
