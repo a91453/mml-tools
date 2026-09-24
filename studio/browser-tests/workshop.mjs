@@ -333,5 +333,6 @@ export async function runWorkshopChecks({ page, base, idle, file, screenshot, pr
   assert.equal(imported.content, sent, 'the stored candidate is the MML the Workshop sent');
   assert.ok(Array.isArray(imported.errors), 'the candidate carries its intake validation');
   assert.deepEqual(imported.errors.filter(e => e.position !== undefined), [], `the sent MML has no parser errors in Studio: ${JSON.stringify(imported.errors)}`);
-  assert.ok(imported.notes >= 3, `Studio reads the notes the Workshop sent: ${imported.notes}`);
+  // The score on the page when it was sent is the last import above.
+  assert.equal(imported.notes, late.flat().length, `Studio reads every note the Workshop sent: ${imported.notes}`);
 }
