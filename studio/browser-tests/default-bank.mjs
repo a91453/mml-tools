@@ -205,6 +205,100 @@ export async function runDefaultBankChecks({ browser, base, profile }) {
     await page.locator('#listen-stop').click();
     assert.equal(upstreamRequests.length, 3, 'the user bank plays without contacting the upstream');
     assert.ok((await page.locator('[data-listen-instrument="0"] option').allTextContents()).every(text => /^\d{3} /.test(text)), 'the picker lists the user bank\'s presets');
+
+    // Picks that overlap: the last one wins. Each pick's bank is checked off
+    // the main thread, and a big bank takes longer, so here the check of the
+    // first pick is held in the page (its Worker's answer, not its loaded
+    // message, waits for release) until the pick after it has been checked,
+    // kept and shown, and has played. Once released, the first pick is
+    // neither kept nor shown, whether its bank parsed or not, and does not
+    // reset the engine that plays the later pick. Removing the bank is a
+    // later choice too.
+    await page.evaluate(() => {
+      const RealWorker = window.Worker;
+      const onmessage = Object.getOwnPropertyDescriptor(RealWorker.prototype, 'onmessage');
+      window.holdNextCheck = () => {
+        let release;
+        window.heldCheck = { armed: true, held: 0, answered: 0, released: new Promise(resolve => { release = resolve; }), release: () => release() };
+      };
+      window.Worker = function (url, options) {
+        const worker = new RealWorker(url, options);
+        const hold = window.heldCheck;
+        if (!hold?.armed || !String(url).endsWith('/preview/bank-check-worker.mjs')) return worker;
+        hold.armed = false;
+        Object.defineProperty(worker, 'onmessage', {
+          configurable: true,
+          get() { return onmessage.get.call(this); },
+          set(handler) {
+            onmessage.set.call(this, typeof handler !== 'function' ? handler : function (event) {
+              if (event.data?.loaded) return handler.call(this, event);
+              hold.held += 1;
+              hold.released.then(() => { hold.answered += 1; handler.call(this, event); });
+              return undefined;
+            });
+          },
+        });
+        return worker;
+      };
+      window.restoreWorker = () => { window.Worker = RealWorker; };
+    });
+    const clearMessage = () => page.evaluate(() => { document.querySelector('#message').textContent = ''; });
+    // After the held answer is let through, nothing the older pick would do
+    // may happen: checked every 100 ms for 2 s (storing and showing a bank
+    // this small takes well under that).
+    const staysOn = async (older, kept, line) => {
+      await page.evaluate(() => window.heldCheck.release());
+      await page.waitForFunction(() => window.heldCheck.answered === 1);
+      for (let i = 0; i < 20; i += 1) {
+        const seen = await page.evaluate(() => ({ message: document.querySelector('#message')?.textContent ?? '', line: document.querySelector('#listen-bank')?.textContent ?? '' }));
+        assert.ok(!seen.message.includes(older) && !seen.message.includes('沒有儲存'), `the older pick ${older} shows nothing: ${seen.message}`);
+        assert.ok(line(seen.line) && !seen.line.includes(older), `the bank line stays on the later choice: ${seen.line}`);
+        await page.waitForTimeout(100);
+      }
+      assert.equal(await storedUserBank(), kept, `the older pick ${older} is not kept`);
+    };
+    const pickHeld = async (name, bytes) => {
+      await page.evaluate(() => window.holdNextCheck());
+      await page.locator('#listen-bank-file').setInputFiles({ name, mimeType: 'application/octet-stream', buffer: bytes });
+      await page.waitForFunction(() => window.heldCheck.held === 1);
+    };
+
+    // A bank that parses, overtaken by a later pick.
+    await clearMessage();
+    await pickHeld('first.sf2', sample);
+    await page.locator('#listen-bank-file').setInputFiles({ name: 'second.sf2', mimeType: 'application/octet-stream', buffer: sample });
+    await page.locator('#listen-bank').filter({ hasText: 'second.sf2' }).waitFor();
+    assert.equal(await storedUserBank(), 'second.sf2');
+    await page.locator('#listen-play').click();
+    await played();
+    await page.evaluate(() => document.querySelector('#listen-stop:enabled')?.click());
+    await page.locator('#listen-position[data-state="stopped"]').waitFor();
+    const loadsWithSecond = await bankSends();
+    await clearMessage();
+    await staysOn('first.sf2', 'second.sf2', line => line.includes('second.sf2'));
+    await page.locator('#listen-play').click();
+    await played();
+    await page.evaluate(() => document.querySelector('#listen-stop:enabled')?.click());
+    await page.locator('#listen-position[data-state="stopped"]').waitFor();
+    assert.equal(await bankSends(), loadsWithSecond, 'the older pick did not reset the engine: the later pick plays on without a new load');
+
+    // A damaged bank, overtaken by a later pick: its refusal is not shown.
+    await pickHeld('damaged.sf2', truncated);
+    await page.locator('#listen-bank-file').setInputFiles({ name: 'saw.sf2', mimeType: 'application/octet-stream', buffer: sample });
+    await page.locator('#listen-bank').filter({ hasText: 'saw.sf2' }).waitFor();
+    await clearMessage();
+    await staysOn('damaged.sf2', 'saw.sf2', line => line.includes('saw.sf2'));
+
+    // A pick overtaken by removing the bank (section 06's button): nothing
+    // is kept, and the default bank stays in place.
+    await pickHeld('late.sf2', sample);
+    await page.evaluate(() => document.querySelector('#bank-clear').click());
+    await page.locator('#listen-bank').filter({ hasText: LABEL }).waitFor();
+    assert.equal(await storedUserBank(), null);
+    await clearMessage();
+    await staysOn('late.sf2', null, line => line.includes(LABEL));
+    await page.evaluate(() => window.restoreWorker());
+    assert.equal(upstreamRequests.length, 3, 'nothing here asked for the default bank');
     assert.deepEqual(errors, []);
     return { upstream: fixture.real ? 'pinned upstream file' : 'synthetic stand-in with swapped pins' };
   } finally {

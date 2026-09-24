@@ -108,7 +108,17 @@ export function checkBankInWorker(bytes, { timeoutMs = bankCheckTimeoutMs(bytes.
 // Workshop can say it in its own language. `check` receives a copy of
 // the bytes; tests pass one that runs the npm spessasynth_core in-process
 // instead of the Worker.
-export async function storeBank(file, { check = checkBankInWorker } = {}) {
+//
+// `current` says whether this bank is still the one wanted. A page where
+// picks can overlap passes it, so that the last pick wins. A pick checked
+// while a newer one was made is not written: `current` is asked again after
+// the check and inside the write's own transaction, right before the write
+// request, with nothing awaited in between. The call then rejects with code
+// BANK_SUPERSEDED. A newer pick made after that write request has been sent
+// cannot stop it; that pick's own write, if it has one, comes later in the
+// same store, so the store still ends on the newer pick.
+export const BANK_SUPERSEDED = 'BANK_SUPERSEDED';
+export async function storeBank(file, { check = checkBankInWorker, current = () => true } = {}) {
   const name = String(file?.name ?? '');
   if (!BANK_EXTENSIONS.some(ext => name.toLowerCase().endsWith(ext))) throw Error('音色庫需為 .dls、.sf2 或 .sf3 檔案');
   if (file.size > MAX_BANK_BYTES) throw Error(`音色庫超過 ${MAX_BANK_BYTES / 1048576} MiB 上限`);
@@ -124,8 +134,13 @@ export async function storeBank(file, { check = checkBankInWorker } = {}) {
     const why = error?.code === BANK_CHECK_UNAVAILABLE ? '無法在這個瀏覽器檢查音色庫，沒有儲存' : '音色庫無法解析，沒有儲存';
     throw Error(detail ? `${why}（${detail}）` : why);
   }
+  const superseded = () => Object.assign(Error('已選擇較新的音色庫，這個音色庫沒有儲存'), { code: BANK_SUPERSEDED });
+  if (!current()) throw superseded();
   const record = { name, size: bytes.byteLength, sha256: await sha256Hex(bytes), format: form.trim(), savedAt: new Date().toISOString(), bytes };
-  await transact('readwrite', store => request(store.put(record, KEY)));
+  await transact('readwrite', store => {
+    if (!current()) throw superseded();
+    return request(store.put(record, KEY));
+  });
   return describe(record);
 }
 export async function loadBank() {

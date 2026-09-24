@@ -115,6 +115,32 @@ test('storeBank refuses a bank that does not parse before anything is written, a
   });
 });
 
+// Studio's pickBank passes `current`, so that when picks overlap the last one
+// wins (the browser check in default-bank.mjs drives the page itself).
+test('storeBank writes a bank only while it is still the one wanted', async () => {
+  await withMemoryIndexedDB(async memory => {
+    // A newer pick was made while this one was checked: refused before the
+    // store is opened, saying it was not kept because of the newer pick.
+    const overtaken = await storeBank(new File([bank], 'older.sf2'), { check, current: () => false }).then(() => null, error => error);
+    assert.equal(overtaken?.code, 'BANK_SUPERSEDED');
+    assert.equal(overtaken.message, '已選擇較新的音色庫，這個音色庫沒有儲存');
+    assert.deepEqual(memory.log, [], 'the store is never opened');
+
+    // One made while its digest was computed or the store opened: asked
+    // again inside the write's transaction, and stopped before the write.
+    let asked = 0;
+    const late = await storeBank(new File([bank], 'older.sf2'), { check, current: () => (asked += 1) === 1 }).then(() => null, error => error);
+    assert.equal(late?.code, 'BANK_SUPERSEDED');
+    assert.equal(asked, 2, 'asked after the check, and again right before the write');
+    assert.deepEqual(memory.log.filter(([kind]) => kind === 'put'), [], 'nothing was written');
+    assert.equal(await loadBank(), null);
+
+    // Still the one wanted: kept.
+    assert.equal((await storeBank(new File([bank], 'wanted.sf2'), { check, current: () => true })).name, 'wanted.sf2');
+    assert.equal((await loadBank()).name, 'wanted.sf2');
+  });
+});
+
 // A stand-in for the spessasynth_lib WorkletSynthesizer as the preview and the
 // Workshop use it: addSoundBank waits for the worklet's reply, and a bank the
 // worklet cannot parse is only reported through the `soundBankError` event
