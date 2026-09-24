@@ -20,12 +20,14 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import {
   createSource,
+  createArbitrationDecision,
   createCanonicalNoteEvent,
   createCanonicalRestEvent,
   createCanonicalTempoEvent,
   createCanonicalProject,
 } from '../backend/canonical/index.mjs';
-import { POSITION_CLASS, classifyPosition } from '../backend/canonical/release-timing.mjs';
+import { MICRO_TIMING_KEEP_ACTION, createIntervalIdentity } from '../backend/canonical/micro-timing.mjs';
+import { POSITION_CLASS, TARGET_STATUS, analyzeReleaseTiming, classifyPosition } from '../backend/canonical/release-timing.mjs';
 import { BOUNDARY_COVERAGE, MICRO_GAP_BLOCKERS, enforceMicroGaps } from '../backend/final/micro-gap-enforcement.mjs';
 import { evaluateProjectReadiness } from '../backend/final/readiness.mjs';
 import { emitFinalMml } from '../backend/final/mml-emitter.mjs';
@@ -48,13 +50,13 @@ const note = (start, end, { id = `n${++counter}`, role = 'Melody' } = {}) => cre
 const rest = (start, end, { id = `r${++counter}`, role = 'Melody' } = {}) => createCanonicalRestEvent({
   id, start: String(start), end: String(end), role, voice: role, sourceIds: ['official'],
 });
-const project = (events, tempo = [['0', 120]]) => createCanonicalProject({
+const project = (events, tempo = [['0', 120]], decisions = []) => createCanonicalProject({
   id: `boundary:${++counter}`,
   title: 'boundary representability fixture',
   sources: [OFFICIAL],
   events,
   tempoEvents: tempo.map(([beat, bpm], index) => createCanonicalTempoEvent({ id: `t${index}`, beat, bpm, sourceIds: ['official'] })),
-  decisions: [],
+  decisions,
   metadata: {},
 });
 const codes = result => result.diagnostics.map(item => item.code);
@@ -145,6 +147,49 @@ test('a boundary another G10 outcome decides keeps that outcome, and one inside 
   assert.deepEqual(report.blockers, []);
   assert.deepEqual(report.unsupportedBoundaries.map(item => [item.eventId, item.reason, item.coverage]), [['r', 'REST_START_NOT_FINAL_REPRESENTABLE', BOUNDARY_COVERAGE.INSIDE_SILENCE]]);
   assert.equal(emitFinalMml(inside).status, 'PASS');
+});
+
+test('a release under a keep claim raises no release blocker, so a rest boundary at it raises the boundary code', () => {
+  // The same shape as the release-target case above, but a keep decision claims
+  // the sub-grid release is musically meaningful. The release analysis then
+  // reports it SOURCE_SUPPORTED_NOT_REPRESENTABLE and leaves it out of
+  // notVisibleToIntervalAnalyzerCount, so RELEASE_NOT_FINAL_REPRESENTABLE is not
+  // raised and nothing on the release side decides the rest's start. Counting
+  // the target as coverage left G10 and readiness at PASS here while the
+  // emitter proved the position unreachable.
+  const keep = status => createArbitrationDecision({
+    id: `keep-x-${status}`,
+    eventIds: ['x'],
+    action: MICRO_TIMING_KEEP_ACTION,
+    status,
+    reason: 'claimed musically meaningful',
+    metadata: { intervalIdentity: createIntervalIdentity({ type: 'inter-event-gap', previousEventId: 'x', nextEventId: 'y', start: '479/480', end: '1' }) },
+  });
+  const events = () => [note(0, '479/480', { id: 'x' }), rest('479/480', 2, { id: 'r' }), note(2, 3, { id: 'y' })];
+  for (const status of ['accepted', 'pending']) {
+    const claimed = project(events(), undefined, [keep(status)]);
+    const analysis = analyzeReleaseTiming({ candidate: claimed });
+    assert.deepEqual(analysis.targets.map(target => [target.eventId, target.status]), [['x', TARGET_STATUS.SOURCE_SUPPORTED_NOT_REPRESENTABLE]], status);
+    assert.equal(analysis.notVisibleToIntervalAnalyzerCount, 0, status);
+
+    const g10 = enforceMicroGaps(claimed);
+    assert.equal(g10.status, 'PENDING', status);
+    assert.deepEqual(g10.blockers, [BOUNDARY], status);
+    assert.deepEqual(g10.unsupportedBoundaries.map(item => [item.eventId, item.boundary, item.position, item.coverage]),
+      [['r', 'start', '479/480', BOUNDARY_COVERAGE.NONE]], status);
+    const readiness = evaluateProjectReadiness({ project: claimed }).gates.microTiming;
+    assert.equal(readiness.status, 'PENDING', status);
+    assert.deepEqual(readiness.blockers, [BOUNDARY], status);
+    const emitted = emitFinalMml(claimed);
+    assert.notEqual(emitted.status, 'PASS', status);
+    assert.equal(emitted.combinedMml, null, status);
+  }
+
+  // Control: without the claim the release itself raises its blocker, and that
+  // still decides the rest's start.
+  const unclaimed = enforceMicroGaps(project(events()));
+  assert.deepEqual(unclaimed.blockers, [MICRO_GAP_BLOCKERS.RELEASE_NOT_FINAL_REPRESENTABLE]);
+  assert.deepEqual(unclaimed.unsupportedBoundaries.map(item => [item.eventId, item.coverage]), [['r', BOUNDARY_COVERAGE.RELEASE_TARGET]]);
 });
 
 test('the boundary code is BLOCKING under both machine-delivery schemas, even beside the listen-first code', () => {

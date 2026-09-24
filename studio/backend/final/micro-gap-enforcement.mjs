@@ -67,6 +67,7 @@ import {
   REPRESENTATION,
   TARGET_STATUS,
   analyzeReleaseTiming,
+  isNotVisibleToIntervalAnalyzer,
   releaseOffsetKeyOf,
   releaseEvidenceRequirement,
   summarizeReleaseTiming,
@@ -121,8 +122,10 @@ export const MICRO_GAP_BLOCKERS = Object.freeze({
   //
   // Raised only for a boundary no other outcome here already decides: one an
   // analysed interval in its role starts or ends at keeps that interval's
-  // three-way outcome, and a note release the release analysis reports keeps the
-  // release-side handling above. A rest boundary where no note of its role starts
+  // three-way outcome, and one at a note release of its role that raises
+  // RELEASE_NOT_FINAL_REPRESENTABLE keeps the release-side handling above. A
+  // release under a keep claim raises nothing there, so it decides nothing
+  // here either. A rest boundary where no note of its role starts
   // or ends and the role does not end lies inside one silence, which a Final
   // writes as one exact span (final/mml-emitter.mjs merges adjacent silence), so
   // it is reported and never raises this. Onsets are attacks and are never moved,
@@ -171,8 +174,11 @@ export const BOUNDARY_COVERAGE = Object.freeze({
   // An analysed sub-grid interval in the boundary's role starts or ends here;
   // that interval's classification decides, as for any other interval.
   ANALYSED_INTERVAL: 'analysed-interval',
-  // A note release the release analysis reports as a target sits here in the
-  // boundary's role; the release-side handling decides.
+  // A note release in the boundary's role sits here and raises
+  // RELEASE_NOT_FINAL_REPRESENTABLE itself (it is one
+  // `notVisibleToIntervalAnalyzerCount` counts); the release-side handling
+  // decides. A release target that raises nothing -- one a keep claim reports
+  // SOURCE_SUPPORTED_NOT_REPRESENTABLE -- covers nothing.
   RELEASE_TARGET: 'release-target',
   // A rest boundary where no note of its role starts or ends and the role does
   // not end: it lies inside one silence, which a Final writes as one exact span.
@@ -376,8 +382,13 @@ function coverUnsupportedBoundaries(project, microTiming, releaseAnalysis) {
     }
   }
 
+  // Only a release that raises RELEASE_NOT_FINAL_REPRESENTABLE decides a
+  // boundary. A release under a keep claim is left out of that count, so nothing
+  // on the release side is raised for it; counting it here would let a boundary
+  // at an unreachable position pass this gate unblocked.
   const releaseTargets = new Set();
   for (const target of releaseAnalysis.targets) {
+    if (!isNotVisibleToIntervalAnalyzer(target)) continue;
     const event = byId.get(target.eventId);
     if (event) releaseTargets.add(positionKey(target.role, event.end));
   }

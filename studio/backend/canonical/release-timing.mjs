@@ -533,6 +533,26 @@ function recommend(options) {
   return { recommended: first.representation, basis: 'minimal-change-without-new-articulation' };
 }
 
+// The following shapes after which the sub-grid *interval* analyzer
+// (canonical/micro-timing.mjs) builds no interval at the release.
+const SHAPES_WITHOUT_AN_INTERVAL = new Set(['rest-of-at-least-safe-grid', 'role-end', 'covered-by-same-role-span', 'explicit-rest-at-release']);
+
+/**
+ * Whether a release target is one `notVisibleToIntervalAnalyzerCount` counts:
+ * the sub-grid interval analyzer has no interval for it (the release is followed
+ * by a rest of at least the safe grid, an explicit rest, a same-role span, or
+ * ends the role, and the note itself is not a sub-grid duration), and no keep
+ * claim takes it out of the representation question. Exactly these are what
+ * `final/micro-gap-enforcement.mjs` raises
+ * MICRO_TIMING_RELEASE_NOT_FINAL_REPRESENTABLE for, so a caller asking "does
+ * the release side decide this release" asks this, not its own copy.
+ */
+export function isNotVisibleToIntervalAnalyzer(target) {
+  return target.status !== TARGET_STATUS.SOURCE_SUPPORTED_NOT_REPRESENTABLE
+    && SHAPES_WITHOUT_AN_INTERVAL.has(target.analysis.followingShape)
+    && f(target.source.duration).cmp(SAFE_GRID) >= 0;
+}
+
 /**
  * Layer A/B analysis of every note release in the candidate's assigned roles.
  *
@@ -705,12 +725,7 @@ export function analyzeReleaseTiming({ candidate, baseline = null, windowGapBeat
   }));
 
   const count = status => targets.filter(target => target.status === status).length;
-  // Targets the sub-grid *interval* analyzer (canonical/micro-timing.mjs) has no
-  // interval for: the release is followed by a rest of at least the safe grid, or
-  // ends the role, and the note itself is not a sub-grid duration.
-  const hidden = targets.filter(target => target.status !== TARGET_STATUS.SOURCE_SUPPORTED_NOT_REPRESENTABLE
-    && ['rest-of-at-least-safe-grid', 'role-end', 'covered-by-same-role-span', 'explicit-rest-at-release'].includes(target.analysis.followingShape)
-    && f(target.source.duration).cmp(SAFE_GRID) >= 0);
+  const hidden = targets.filter(isNotVisibleToIntervalAnalyzer);
   return Object.freeze({
     schema: RELEASE_TIMING_SCHEMA,
     safeGrid: SAFE_GRID.toString(),
