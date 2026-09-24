@@ -219,9 +219,16 @@ export function createAuth({ origin, ownerPassword, database, allowedRedirectHos
     let result;
     store.atomic(() => {
       if (body.get('grant_type') === 'authorization_code') {
-        const codeHash = hash(body.get('code') ?? ''), code = store.get('code', codeHash), verifier = body.get('code_verifier') ?? '';
-        requireValue(code && code.clientId === clientId && code.redirect === body.get('redirect_uri'), 'invalid_grant', 'Invalid authorization code');
-        requireValue(/^[A-Za-z0-9._~-]{43,128}$/.test(verifier) && equals(challenge(verifier), code.challenge), 'invalid_grant', 'Invalid PKCE verifier');
+        const codeHash = hash(body.get('code') ?? ''), code = store.get('code', codeHash), verifier = body.get('code_verifier') ?? '', redirect = body.get('redirect_uri');
+        // An OAuth 2.1 client sends no redirect_uri here; an RFC 6749 client
+        // does, and then it must match the authorized one exactly. Leaving it
+        // out is accepted only for a code bound to a PKCE challenge (authorize
+        // requires S256, so every issued code has one): the verifier ties the
+        // code to the client that started the flow. A code without a challenge
+        // must name its redirect and is refused by the verifier check anyway.
+        const pkceBound = typeof code?.challenge === 'string';
+        requireValue(code && code.clientId === clientId && (redirect === null ? pkceBound : redirect === code.redirect), 'invalid_grant', 'Invalid authorization code');
+        requireValue(pkceBound && /^[A-Za-z0-9._~-]{43,128}$/.test(verifier) && equals(challenge(verifier), code.challenge), 'invalid_grant', 'Invalid PKCE verifier');
         if (code.consumed) { revokeGrant(code.grantId); result = problem('invalid_grant', 'Authorization code was already used'); return; }
         requireValue(code.expires > now(), 'invalid_grant', 'Authorization code expired');
         store.put('code', codeHash, { ...code, consumed: true }, now() + 600);

@@ -5,6 +5,7 @@ import { mkdtemp, readFile, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { once } from 'node:events';
+import { DatabaseSync } from 'node:sqlite';
 import { createApplication, createHttpServer, HTTP_TIMEOUTS, productionAgentConfiguration } from '../railway/server.mjs';
 
 const origin = 'https://mml.example';
@@ -25,15 +26,15 @@ async function begin(send, clientId, extra = {}) {
   const params = new URLSearchParams({ client_id: clientId, redirect_uri: redirectUri, response_type: 'code', scope: 'mml:read', resource: origin + '/mcp', code_challenge: pkce, code_challenge_method: 'S256', state: 'synthetic-state', ...extra });
   return send(req('/oauth/authorize?' + params));
 }
-async function authorizedCode(send, clientId, usePassword = password) {
-  const response = await begin(send, clientId); assert.equal(response.status, 200);
+async function authorizedCode(send, clientId, usePassword = password, callback = redirectUri) {
+  const response = await begin(send, clientId, { redirect_uri: callback }); assert.equal(response.status, 200);
   const cookie = response.headers.get('set-cookie').split(';')[0];
   const html = await response.text(), csrf = /name="csrf" value="([^"]+)"/.exec(html)?.[1];
   assert.ok(csrf);
   const login = await send(form('/oauth/authorize', { csrf, password: usePassword, decision: 'allow' }, { cookie, origin }));
   assert.equal(login.status, 303);
   const location = new URL(login.headers.get('location'));
-  assert.equal(location.origin + location.pathname, redirectUri); assert.equal(location.searchParams.get('state'), 'synthetic-state'); assert.equal(location.searchParams.get('iss'), origin);
+  assert.equal(location.origin + location.pathname, callback); assert.equal(location.searchParams.get('state'), 'synthetic-state'); assert.equal(location.searchParams.get('iss'), origin);
   return location.searchParams.get('code');
 }
 async function exchange(send, clientId, code, extra = {}) {
@@ -144,6 +145,48 @@ test('PKCE, scope, resource, and repeated parameters are checked', async t => {
   for (const extra of [{ code_verifier: 'wrong'.repeat(10) }, { resource: 'https://another.example/mcp' }, { redirect_uri: redirectUri + '/changed' }]) assert.equal((await exchange(send, client.client_id, code, extra)).status, 400);
   const duplicate = await send(form('/oauth/token', 'client_id=a&client_id=b&grant_type=authorization_code')); assert.equal(duplicate.status, 400);
   assert.equal((await exchange(send, client.client_id, code)).status, 200);
+});
+test('an OAuth 2.1 code exchange may leave out redirect_uri; PKCE binds the code and a sent redirect must match', async () => {
+  // A client following only OAuth 2.1 sends no redirect_uri to the token
+  // endpoint, so every such exchange used to be refused as invalid_grant.
+  const directory = await mkdtemp(join(tmpdir(), 'mml-auth-test-')), database = join(directory, 'auth.sqlite');
+  const app = createApplication({ ...options, database }), send = request => app.fetch(request);
+  const refusal = async (response, description) => { assert.equal(response.status, 400); assert.deepEqual(await response.json(), { error: 'invalid_grant', error_description: description }); };
+  try {
+    for (const callback of [redirectUri, 'http://127.0.0.1:33418/callback']) {
+      const client = await register(send, { redirect_uris: [callback] }), code = await authorizedCode(send, client.client_id, password, callback);
+      const omitted = (extra = {}) => send(form('/oauth/token', { client_id: client.client_id, grant_type: 'authorization_code', code, code_verifier: verifier, resource: origin + '/mcp', ...extra }));
+      // Without redirect_uri the verifier is what binds the code.
+      await refusal(await omitted({ code_verifier: 'wrong'.repeat(10) }), 'Invalid PKCE verifier');
+      await refusal(await omitted({ code_verifier: '' }), 'Invalid PKCE verifier');
+      // Sent, even empty, the redirect must still be the authorized one exactly.
+      for (const sent of [callback + '/changed', '']) await refusal(await exchange(send, client.client_id, code, { redirect_uri: sent }), 'Invalid authorization code');
+      const response = await omitted();
+      assert.equal(response.status, 200, callback);
+      const grant = await response.json();
+      assert.equal((await send(mcpRequest(grant.access_token))).status, 200);
+      // Still single-use: a replay is refused and revokes what the code issued.
+      await refusal(await omitted(), 'Authorization code was already used');
+      assert.equal((await send(mcpRequest(grant.access_token))).status, 401);
+    }
+    // Authorize refuses a request without S256 PKCE, so every issued code
+    // carries a challenge.
+    const client = await register(send);
+    const noPkce = new URLSearchParams({ client_id: client.client_id, redirect_uri: redirectUri, response_type: 'code', resource: origin + '/mcp', state: 'synthetic-state' });
+    const refused = await send(req('/oauth/authorize?' + noPkce));
+    assert.equal(refused.status, 400); assert.equal((await refused.json()).error_description, 'PKCE S256 is required');
+    // A stored code without one must still name its redirect and cannot be
+    // redeemed either way.
+    const code = await authorizedCode(send, client.client_id);
+    const db = new DatabaseSync(database);
+    try {
+      const id = createHash('sha256').update(code).digest('hex'), row = db.prepare("SELECT value FROM auth_records WHERE kind='code' AND id=?").get(id);
+      const record = JSON.parse(row.value); assert.equal(typeof record.challenge, 'string'); delete record.challenge;
+      db.prepare("UPDATE auth_records SET value=? WHERE kind='code' AND id=?").run(JSON.stringify(record), id);
+    } finally { db.close(); }
+    await refusal(await send(form('/oauth/token', { client_id: client.client_id, grant_type: 'authorization_code', code, code_verifier: verifier })), 'Invalid authorization code');
+    await refusal(await exchange(send, client.client_id, code), 'Invalid PKCE verifier');
+  } finally { app.close(); await rm(directory, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 }); }
 });
 test('owner consent requires correct password, matching CSRF cookie and same origin', async t => {
   const send = setup(t), client = await register(send), response = await begin(send, client.client_id);
