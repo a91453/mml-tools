@@ -298,6 +298,118 @@ export async function runDefaultBankChecks({ browser, base, profile }) {
     await clearMessage();
     await staysOn('late.sf2', null, line => line.includes(LABEL));
     await page.evaluate(() => window.restoreWorker());
+
+    // A newer choice made while an older pick's store write is already under
+    // way: the write cannot be stopped, but the page names only the bank the
+    // store keeps. The older pick's write is held in the page from the
+    // moment it has been sent: the write itself runs, and only the page's
+    // handler for its transaction's completion waits for release, so the
+    // older pick's result arrives after the newer choice has settled.
+    await page.evaluate(() => {
+      const put = IDBObjectStore.prototype.put, del = IDBObjectStore.prototype.delete;
+      const complete = Object.getOwnPropertyDescriptor(IDBTransaction.prototype, 'oncomplete');
+      window.holdNextWrite = name => {
+        let release;
+        window.heldWrite = { name, sent: 0, answered: 0, released: new Promise(resolve => { release = resolve; }), release: () => release() };
+      };
+      IDBObjectStore.prototype.put = function (value, key, ...rest) {
+        const request = put.call(this, value, key, ...rest);
+        const hold = window.heldWrite;
+        if (hold && !hold.sent && key === 'current' && value?.name === hold.name) {
+          hold.sent += 1;
+          Object.defineProperty(this.transaction, 'oncomplete', {
+            configurable: true,
+            get() { return complete.get.call(this); },
+            set(handler) {
+              complete.set.call(this, typeof handler !== 'function' ? handler : function (event) {
+                hold.released.then(() => { hold.answered += 1; handler.call(this, event); });
+              });
+            },
+          });
+        }
+        return request;
+      };
+      // The next delete of the kept bank is refused, as by a failing store.
+      window.refuseNextDelete = () => {
+        IDBObjectStore.prototype.delete = function () {
+          IDBObjectStore.prototype.delete = del;
+          throw new DOMException('bank delete refused (browser check)', 'UnknownError');
+        };
+      };
+      window.restoreStore = () => { IDBObjectStore.prototype.put = put; IDBObjectStore.prototype.delete = del; };
+    });
+    const lineNow = () => page.evaluate(() => document.querySelector('#listen-bank')?.textContent ?? '');
+    const pickWriteHeld = async name => {
+      await page.evaluate(name => window.holdNextWrite(name), name);
+      await page.locator('#listen-bank-file').setInputFiles({ name, mimeType: 'application/octet-stream', buffer: sample });
+      await page.waitForFunction(() => window.heldWrite.sent === 1);
+    };
+    // Once the held write is let through, for 2 s: the message and the bank
+    // line keep what the newer choice left, and so does the store.
+    const settlesOn = async (older, kept, shown) => {
+      await page.evaluate(() => window.heldWrite.release());
+      await page.waitForFunction(() => window.heldWrite.answered === 1);
+      for (let i = 0; i < 20; i += 1) {
+        const seen = await page.evaluate(() => ({ message: document.querySelector('#message')?.textContent ?? '', line: document.querySelector('#listen-bank')?.textContent ?? '' }));
+        assert.ok(!seen.message.includes(`已載入音色庫 ${older}`), `the overtaken pick ${older} shows nothing: ${seen.message}`);
+        assert.ok(shown(seen), `the page stays on what the store keeps: ${JSON.stringify(seen)}`);
+        await page.waitForTimeout(100);
+      }
+      assert.equal(await storedUserBank(), kept, `the store keeps ${kept ?? 'no bank'}`);
+    };
+    const playOnce = async () => {
+      await page.locator('#listen-play').click();
+      await played();
+      await page.evaluate(() => document.querySelector('#listen-stop:enabled')?.click());
+      await page.locator('#listen-position[data-state="stopped"]').waitFor();
+    };
+    await page.locator('#listen-bank-file').setInputFiles({ name: 'saw.sf2', mimeType: 'application/octet-stream', buffer: sample });
+    await page.locator('#listen-bank').filter({ hasText: 'saw.sf2' }).waitFor();
+    await playOnce();
+
+    // A damaged bank is picked while first.sf2's write is under way. It is
+    // refused and changes nothing, so the store keeps first.sf2, written
+    // before the damaged pick was made, and the page names first.sf2, not
+    // saw.sf2, which it showed before and the store no longer keeps. The
+    // engine, loaded with saw.sf2, is let go: the next play loads first.sf2.
+    await clearMessage();
+    await pickWriteHeld('first.sf2');
+    await page.locator('#listen-bank-file').setInputFiles({ name: 'damaged.sf2', mimeType: 'application/octet-stream', buffer: truncated });
+    await page.locator('#message').filter({ hasText: '音色庫無法解析，沒有儲存' }).waitFor();
+    await page.locator('#listen-bank').filter({ hasText: 'first.sf2' }).waitFor({ timeout: 10000 }).catch(async () => {
+      assert.fail(`after the refusal the page names the bank the store keeps (${await storedUserBank()}): ${await lineNow()}`);
+    });
+    assert.equal(await storedUserBank(), 'first.sf2');
+    await settlesOn('first.sf2', 'first.sf2', seen => seen.line.includes('first.sf2') && seen.message.includes('音色庫無法解析，沒有儲存'));
+    const sendsBeforeKept = await bankSends();
+    await playOnce();
+    assert.equal(await bankSends(), sendsBeforeKept + 1, 'the next play loads the bank the store keeps, not the engine\'s saw.sf2');
+
+    // A removal that fails leaves the bank in the store, and the page goes
+    // on naming it instead of the default bank.
+    await clearMessage();
+    await page.evaluate(() => window.refuseNextDelete());
+    await page.evaluate(() => document.querySelector('#bank-clear').click());
+    await page.locator('#message').filter({ hasText: 'bank delete refused (browser check)' }).waitFor();
+    for (let i = 0; i < 10; i += 1) {
+      const line = await lineNow();
+      assert.ok(line.includes('first.sf2') && !line.includes(LABEL), `a failed removal leaves the kept bank named: ${line}`);
+      await page.waitForTimeout(100);
+    }
+    assert.equal(await storedUserBank(), 'first.sf2', 'the failed removal left the bank in the store');
+
+    // The bank is removed while overtaken.sf2's write is under way. The
+    // delete runs after that write, so the store ends empty; the removal
+    // says so, and overtaken.sf2 is never named.
+    await clearMessage();
+    await pickWriteHeld('overtaken.sf2');
+    await page.evaluate(() => document.querySelector('#bank-clear').click());
+    await page.locator('#listen-bank').filter({ hasText: LABEL }).waitFor();
+    await page.locator('#message').filter({ hasText: '已移除你的音色庫；試聽改用預設音色。' }).waitFor();
+    assert.equal(await storedUserBank(), null, 'the delete ran after the write already under way');
+    assert.equal(await page.evaluate(() => window.heldWrite.answered), 0, 'overtaken.sf2\'s result is still held');
+    await settlesOn('overtaken.sf2', null, seen => seen.line.includes(LABEL) && !seen.line.includes('overtaken.sf2') && seen.message.includes('已移除你的音色庫'));
+    await page.evaluate(() => window.restoreStore());
     assert.equal(upstreamRequests.length, 3, 'nothing here asked for the default bank');
     assert.deepEqual(errors, []);
     return { upstream: fixture.real ? 'pinned upstream file' : 'synthetic stand-in with swapped pins' };

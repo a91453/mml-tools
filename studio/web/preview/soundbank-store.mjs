@@ -110,13 +110,17 @@ export function checkBankInWorker(bytes, { timeoutMs = bankCheckTimeoutMs(bytes.
 // instead of the Worker.
 //
 // `current` says whether this bank is still the one wanted. A page where
-// picks can overlap passes it, so that the last pick wins. A pick checked
-// while a newer one was made is not written: `current` is asked again after
-// the check and inside the write's own transaction, right before the write
-// request, with nothing awaited in between. The call then rejects with code
-// BANK_SUPERSEDED. A newer pick made after that write request has been sent
-// cannot stop it; that pick's own write, if it has one, comes later in the
-// same store, so the store still ends on the newer pick.
+// picks can overlap passes it, so that the last choice wins. A pick checked
+// while a newer choice was made is not written: `current` is asked after
+// the check and again inside the write's own transaction, right before the
+// write request, with nothing awaited in between. The call then rejects with
+// code BANK_SUPERSEDED. A newer choice made after that write request has
+// been sent cannot stop it, and the call resolves: the caller asks `current`
+// again before it shows or uses the bank. The newer choice's own write or
+// delete, if it makes one, runs after it in the same store (IndexedDB runs
+// overlapping read/write transactions in the order they were made), so the
+// store ends on that choice; a newer pick that is refused leaves this bank
+// kept.
 export const BANK_SUPERSEDED = 'BANK_SUPERSEDED';
 export async function storeBank(file, { check = checkBankInWorker, current = () => true } = {}) {
   const name = String(file?.name ?? '');

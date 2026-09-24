@@ -1130,11 +1130,11 @@ const listenAudio = {
   setMuted(role, value) { if (preview.owner === 'listen') preview.transport?.setMuted(role, value); },
   state: () => (preview.owner === 'listen' ? preview.transport?.state ?? null : null),
   async pickBank(file) {
-    // The last pick wins. Picks can overlap, since each is checked off the
-    // main thread and a big bank takes longer than a small one. So a pick
-    // made while an older one is still being checked means the older one is
-    // not kept, and its result (kept or refused) is neither shown nor allowed
-    // to reset the engine.
+    // The last choice wins. Picks can overlap, since each is checked off the
+    // main thread and a big bank takes longer than a small one, and removing
+    // the bank (the timbre card) is a choice too. A pick overtaken by a newer
+    // choice is not kept, and whatever became of it (kept or refused) is
+    // neither shown nor allowed to reset the engine.
     const pick = ++preview.bankPicks;
     const current = () => pick === preview.bankPicks;
     const { storeBank } = await import('./preview/soundbank-store.mjs');
@@ -1142,10 +1142,22 @@ const listenAudio = {
     // reset, so a refused bank leaves the engine and the kept bank as they were.
     let stored;
     try { stored = await storeBank(file, { current }); }
-    catch (error) { if (current()) throw error; return; }
-    // Written, so this bank is the one kept now. A newer pick made while the
-    // write was already under way could not stop it (storeBank); the page
-    // shows what the store keeps, and that pick's own result follows.
+    catch (error) {
+      if (!current()) return;
+      // Refused: this pick changes nothing. An older pick it overtook may
+      // still have been written, though, if that write had been sent before
+      // this pick was made (storeBank). The page shows the bank the store
+      // keeps, never the one it showed before that write.
+      await showKeptBank(current);
+      throw error;
+    }
+    // Written, but overtaken while the write was under way: the write
+    // request had been sent before the newer choice was made, so it could
+    // not be stopped. IndexedDB runs the newer choice's own write or delete
+    // after it, so the store ends on that choice, which shows its own result
+    // (a refused pick shows the bank the store keeps). This pick shows
+    // nothing and resets nothing.
+    if (!current()) return;
     resetPreviewEngine();
     preview.bank = stored;
     preview.error = null;
@@ -1221,12 +1233,23 @@ function bindTimbrePreview() {
   };
   const clear = $('#bank-clear');
   if (clear) clear.onclick = async () => {
-    // Removing the bank is a newer choice than any pick still being checked.
-    preview.bankPicks += 1;
+    // Removing the bank is a newer choice than any pick still being checked
+    // or written (pickBank). IndexedDB runs this delete after a write such a
+    // pick had already sent, so the store is empty once it has run, and the
+    // page says so; a pick made since writes after it and shows its own
+    // result.
+    const choice = ++preview.bankPicks;
     const { clearBank } = await import('./preview/soundbank-store.mjs');
     resetPreviewEngine();
-    await clearBank().catch(error => message(error.message, true));
+    try { await clearBank(); }
+    catch (error) {
+      // Not removed: the page goes on naming the bank the store keeps.
+      message(error.message, true);
+      await showKeptBank(() => choice === preview.bankPicks);
+      return;
+    }
     preview.bank = null;
+    message('已移除你的音色庫；試聽改用預設音色。');
     refreshPreview();
   };
   const clearDefault = $('#default-bank-clear');
@@ -1247,6 +1270,25 @@ async function loadStoredBankInfo() {
     preview.bank = stored ? describe(stored) : null;
     preview.defaultCached = await hasDefaultSubset(DEFAULT_BANK_SUBSET.sha256).catch(() => false);
   } catch (error) { preview.bank = null; preview.error = `音色庫讀取失敗：${error.message}`; }
+  refreshPreview();
+}
+// Shows the bank the store keeps where a choice that changed nothing cannot
+// tell otherwise: a refused pick, or a removal that failed, may come after an
+// older pick's write it could not stop (pickBank). The engine is reset only
+// when that is not the bank the page showed. Nothing changes once a newer
+// choice has been made (`current`), whose own result follows, or when the
+// store cannot be read.
+async function showKeptBank(current) {
+  let kept;
+  try {
+    const { loadBank, describe } = await import('./preview/soundbank-store.mjs');
+    const stored = await loadBank();
+    kept = stored ? describe(stored) : null;
+  } catch { return; }
+  if (!current()) return;
+  const same = (a, b) => (a?.sha256 ?? null) === (b?.sha256 ?? null) && (a?.savedAt ?? null) === (b?.savedAt ?? null);
+  if (!same(kept, preview.bank)) resetPreviewEngine();
+  preview.bank = kept;
   refreshPreview();
 }
 // ─── Six-role review roll ───────────────────────────────────────────────────
