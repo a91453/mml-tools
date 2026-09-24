@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { execFileSync } from 'node:child_process';
-import { mkdtemp, writeFile, readFile } from 'node:fs/promises';
+import { mkdtemp, writeFile, readFile, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { MAX_ENTRY_BYTES, crc32, unzipFiles, zipFiles } from '../web/backup-zip.mjs';
@@ -32,6 +32,7 @@ test('names that differ only in case are kept apart', async () => {
 test('the archive opens with the system unzip tool', async t => {
   try { execFileSync('unzip', ['-v'], { stdio: 'ignore' }); } catch { return t.skip('unzip not installed'); }
   const dir = await mkdtemp(join(tmpdir(), 'studio-zip-'));
+  t.after(() => rm(dir, { recursive: true, force: true }));
   await writeFile(join(dir, 'b.zip'), await zipFiles([{ name: 'p/one.json', data: text('{"id":1}') }]));
   execFileSync('unzip', ['-q', 'b.zip'], { cwd: dir });
   assert.equal(await readFile(join(dir, 'p/one.json'), 'utf8'), '{"id":1}');

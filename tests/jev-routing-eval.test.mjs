@@ -1,13 +1,22 @@
 // Pure-function tests for the offline Jev routing evaluation harness.
 // No network call is made here, and none may be added: the harness is only
 // allowed to reach TypeSafe under an explicit --live flag.
-import test from 'node:test';
+import test, { after } from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtempSync, mkdirSync, writeFileSync, readFileSync } from 'node:fs';
+import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { QUESTIONS, ROUTES, buildCase, casesFromDataDir, buildPayload, summarize, estimateCostUsd, assertUsableAnswers, main }
   from '../scripts/jev-routing-eval.mjs';
+
+// Every temporary directory this file creates is removed when it finishes.
+const created = [];
+const tempDir = prefix => {
+  const directory = mkdtempSync(join(tmpdir(), prefix));
+  created.push(directory);
+  return directory;
+};
+after(() => { for (const directory of created) rmSync(directory, { recursive: true, force: true }); });
 
 const run = (overrides = {}) => ({
   run_id: 'run-1', revision: 3, state: 'awaiting_review',
@@ -62,7 +71,7 @@ test('buildCase tolerates a sparse run record', () => {
 });
 
 test('casesFromDataDir reads receipts, skips the irrelevant and dedupes per revision', () => {
-  const directory = mkdtempSync(join(tmpdir(), 'jev-eval-'));
+  const directory = tempDir('jev-eval-');
   const receipts = join(directory, 'receipts');
   mkdirSync(receipts);
   const write = (name, body) => writeFileSync(join(receipts, name), JSON.stringify(body));
@@ -87,7 +96,7 @@ test('casesFromDataDir reads receipts, skips the irrelevant and dedupes per revi
 });
 
 test('casesFromDataDir refuses a directory that is not an agent workspace', () => {
-  const directory = mkdtempSync(join(tmpdir(), 'jev-eval-empty-'));
+  const directory = tempDir('jev-eval-empty-');
   assert.throws(() => casesFromDataDir(directory), /No receipts directory/);
 });
 
@@ -141,7 +150,7 @@ test('the summary tallies exactly the routes the question offers', () => {
 });
 
 test('one run raising the same code twice yields two cases, not a duplicate', () => {
-  const directory = mkdtempSync(join(tmpdir(), 'jev-eval-dup-'));
+  const directory = tempDir('jev-eval-dup-');
   mkdirSync(join(directory, 'receipts'));
   const record = run({ review_requests: [
     { code: 'EVIDENCE_NEEDED', lane: 'bass' },
@@ -168,14 +177,14 @@ test('summarize counts failed cases so a partial live run is visible', () => {
 });
 
 test('main names a malformed case instead of failing with a type error', async () => {
-  const directory = mkdtempSync(join(tmpdir(), 'jev-eval-cases-'));
+  const directory = tempDir('jev-eval-cases-');
   const file = join(directory, 'cases.json');
   writeFileSync(file, JSON.stringify([{ id: 'no-state' }]));
   await assert.rejects(main(['--cases', file]), /Case no-state has no state object/);
 });
 
 test('main refuses a limit that is not a positive integer', async () => {
-  const directory = mkdtempSync(join(tmpdir(), 'jev-eval-limit-'));
+  const directory = tempDir('jev-eval-limit-');
   const file = join(directory, 'cases.json');
   writeFileSync(file, JSON.stringify([{ id: 'a', state: { run: {} } }]));
   await assert.rejects(main(['--cases', file, '--limit', 'abc']), /--limit must be a positive integer/);
@@ -183,7 +192,7 @@ test('main refuses a limit that is not a positive integer', async () => {
 });
 
 test('main refuses to go live without a key in the environment', async () => {
-  const directory = mkdtempSync(join(tmpdir(), 'jev-eval-key-'));
+  const directory = tempDir('jev-eval-key-');
   const file = join(directory, 'cases.json');
   writeFileSync(file, JSON.stringify([{ id: 'a', state: { run: {} } }]));
   const saved = process.env.TYPESAFE_API_KEY;
@@ -213,7 +222,7 @@ test('assertUsableAnswers keeps the paid-for body in the failure details', () =>
 });
 
 test('main refuses an expected-route label that is not a route', async () => {
-  const directory = mkdtempSync(join(tmpdir(), 'jev-eval-label-'));
+  const directory = tempDir('jev-eval-label-');
   const file = join(directory, 'cases.json');
   // A label embedded in --cases must be checked too, not only --labels.
   writeFileSync(file, JSON.stringify([{ id: 'a', state: { run: {} }, label: 'deep_revew' }]));
@@ -226,7 +235,7 @@ test('main refuses an expected-route label that is not a route', async () => {
 });
 
 test('main accepts a label that is a real route', async () => {
-  const directory = mkdtempSync(join(tmpdir(), 'jev-eval-label-ok-'));
+  const directory = tempDir('jev-eval-label-ok-');
   const file = join(directory, 'cases.json');
   writeFileSync(file, JSON.stringify([{ id: 'a', state: { run: {} }, label: 'deep_review' }]));
   assert.equal(await main(['--cases', file]), 0);
@@ -268,7 +277,7 @@ test('summarize counts answers that reported no usage instead of costing nothing
 });
 
 test('main proves --out is writable before anything is spent', async () => {
-  const directory = mkdtempSync(join(tmpdir(), 'jev-eval-out-'));
+  const directory = tempDir('jev-eval-out-');
   const file = join(directory, 'cases.json');
   writeFileSync(file, JSON.stringify([{ id: 'a', state: { run: {} } }]));
   // A directory that does not exist must be refused up front, not after the loop.
@@ -279,7 +288,7 @@ test('main proves --out is writable before anything is spent', async () => {
 });
 
 test('main refuses a timeout that is not a positive integer', async () => {
-  const directory = mkdtempSync(join(tmpdir(), 'jev-eval-timeout-'));
+  const directory = tempDir('jev-eval-timeout-');
   const file = join(directory, 'cases.json');
   writeFileSync(file, JSON.stringify([{ id: 'a', state: { run: {} } }]));
   await assert.rejects(main(['--cases', file, '--timeout', 'soon']), /--timeout must be a positive integer/);
@@ -287,7 +296,7 @@ test('main refuses a timeout that is not a positive integer', async () => {
 });
 
 test('the written result marks whether it came from a dry run', async () => {
-  const directory = mkdtempSync(join(tmpdir(), 'jev-eval-mode-'));
+  const directory = tempDir('jev-eval-mode-');
   const cases = join(directory, 'cases.json');
   const out = join(directory, 'out.json');
   writeFileSync(cases, JSON.stringify([{ id: 'a', state: { run: {} } }]));
