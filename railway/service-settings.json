@@ -31,7 +31,6 @@
       "/scripts/materialize-canonical.mjs",
       "/.dockerignore",
       "/package.json",
-      "/package-lock.json",
       "/docs/CANONICAL_MANIFEST.md"
     ],
     "watchPatternNotes": {

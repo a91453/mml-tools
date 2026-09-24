@@ -3,7 +3,6 @@
 *
 
 !package.json
-!package-lock.json
 
 # The legacy core the original technical tools run on.
 !dist/
