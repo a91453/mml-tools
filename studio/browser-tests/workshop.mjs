@@ -5,7 +5,7 @@ import { BANK_CHECKER_LOAD_TIMEOUT_MS, bankCheckTimeoutMs } from '../web/preview
 import { SYNTH_READY_TIMEOUT_MS } from '../web/preview/bank-check.mjs';
 import { bankSendCounter, countBankSends } from './bank-sends.mjs';
 import { readyGate, withholdSynthReady } from './synth-ready.mjs';
-import { keptBankReadHold, processorHold, synthReadyHold } from './workshop-boot.mjs';
+import { bankSendHold, keptBankReadHold, processorHold, synthReadyHold } from './workshop-boot.mjs';
 
 // The Workshop editor (studio/web/workshop/), end to end in a real browser:
 // open a Studio MML as a copy, language switch, dark/light theme, a bank
@@ -424,6 +424,44 @@ export async function runWorkshopChecks({ page, base, idle, file, screenshot, pr
   const readied = await page.evaluate(() => window.bankLabels);
   assert.ok(readied.every(text => !text.startsWith(keptName)), `the kept bank ${keptName} never replaces a pick made while the synth got ready: ${readied.join(' → ')}`);
   assert.equal(await page.evaluate(() => window.bankSends), 1, 'only the pick is sent to the synth');
+
+  // A kept bank that fails to load at boot after a pick has been made says
+  // nothing: the pick's own result is the one shown. The kept bank is one
+  // stored before banks were checked (cut short behind an intact header);
+  // its send to the synth is held (workshop-boot.mjs) until the pick has been
+  // made, which queues behind that load. The synth's parse error then ends
+  // the boot-time load, and the pick loads.
+  await page.addInitScript(bankSendHold);
+  await page.evaluate(async bytes => {
+    const db = await new Promise((resolve, reject) => { const request = indexedDB.open('mml-studio-soundbank', 1); request.onsuccess = () => resolve(request.result); request.onerror = () => reject(request.error); });
+    const buffer = new Uint8Array(bytes).buffer;
+    const sha256 = [...new Uint8Array(await crypto.subtle.digest('SHA-256', buffer))].map(b => b.toString(16).padStart(2, '0')).join('');
+    await new Promise((resolve, reject) => {
+      const tx = db.transaction('banks', 'readwrite');
+      tx.objectStore('banks').put({ name: 'kept-truncated.sf2', size: buffer.byteLength, sha256, format: 'sfbk', savedAt: new Date().toISOString(), bytes: buffer }, 'current');
+      tx.oncomplete = resolve; tx.onerror = () => reject(tx.error);
+    });
+    db.close();
+  }, [...sawBank.subarray(0, sawBank.length >> 1)]);
+  const bootWarnings = [];
+  const onConsole = message => { if (message.type() === 'warning') bootWarnings.push(message.text()); };
+  page.on('console', onConsole);
+  await page.evaluate(() => sessionStorage.setItem('holdBankSend', 'yes'));
+  await page.reload(); await page.locator('#unverified').waitFor();
+  await page.waitForFunction(() => window.bankSendHold?.held === 1);
+  await watchLabels();
+  await page.evaluate(() => { document.querySelector('#logMsg').textContent = ''; });
+  await page.locator('#dls').setInputFiles({ name: 'saw.sf2', mimeType: 'application/octet-stream', buffer: sawBank });
+  await page.evaluate(() => window.bankSendHold.release());
+  await bankLoaded('saw.sf2');
+  page.off('console', onConsole);
+  assert.ok(bootWarnings.some(text => text.includes('[Workshop] stored bank failed to load')), `the kept bank did fail to load at boot: ${bootWarnings.join(' | ')}`);
+  const afterPick = await page.evaluate(() => ({ labels: window.bankLabels, log: document.querySelector('#logMsg')?.textContent ?? '' }));
+  const failedLabel = await t('ui.bankFailed');
+  assert.ok(afterPick.labels.every(text => text !== failedLabel), `the boot-time failure does not replace the pick's label: ${afterPick.labels.join(' → ')}`);
+  assert.equal(afterPick.log, '', 'nor write to the log once a pick has been made');
+  assert.equal(await page.evaluate(() => window.bankSends), 2, 'the kept bank and then the pick were sent');
+  assert.equal(await storedBankName(), 'saw.sf2');
 
   // ── a synth that never reports ready ends the load ───────────────────────
   // With the processor's first reply withheld, as from one that never

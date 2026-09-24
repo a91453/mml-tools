@@ -1,15 +1,16 @@
 // Holds one step of the Workshop's boot in the page until the check says so,
 // so a bank can be picked at that point: the SpessaSynth processor's module
 // load (the engine is still booting), the read of the bank kept in the store
-// (the engine is ready and the kept bank has been asked for), or the new
-// synth's readiness (that bank's load waits for it). Each is installed with
+// (the engine is ready and the kept bank has been asked for), the new
+// synth's readiness (that bank's load waits for it), or the send of that
+// bank to the synth (its load is under way). Each is installed with
 // page.addInitScript and armed for one load by a sessionStorage flag,
-// holdProcessor, holdKeptBankRead or holdSynthReady, set before the reload;
-// window.processorHold, window.keptBankReadHold and window.synthReadyHold
-// then report how many requests are held and release them. Playwright does
-// not route an AudioWorklet's module request (a page.route for processor.js
-// sees nothing in Chromium), so the module load is held at
-// Worklet.addModule instead.
+// holdProcessor, holdKeptBankRead, holdSynthReady or holdBankSend, set
+// before the reload; window.processorHold, window.keptBankReadHold,
+// window.synthReadyHold and window.bankSendHold then report how many
+// requests are held and release them. Playwright does not route an
+// AudioWorklet's module request (a page.route for processor.js sees nothing
+// in Chromium), so the module load is held at Worklet.addModule instead.
 
 export function processorHold() {
   if (sessionStorage.getItem('holdProcessor') !== 'yes') return;
@@ -50,6 +51,26 @@ export function synthReadyHold() {
       });
     },
   });
+}
+
+// The first bank sent to a synth after the load (the boot-time load of the
+// kept bank, when no pick has come first) is posted to the processor only
+// once released, armed by the sessionStorage flag holdBankSend. The load is
+// then past every check it makes and waits on the synth's answer.
+// Installed after bankSendCounter, it holds a send before it is counted.
+export function bankSendHold() {
+  if (sessionStorage.getItem('holdBankSend') !== 'yes') return;
+  sessionStorage.removeItem('holdBankSend');
+  const post = MessagePort.prototype.postMessage;
+  let release;
+  const released = new Promise(resolve => { release = resolve; });
+  window.bankSendHold = { held: 0, release: () => release() };
+  MessagePort.prototype.postMessage = function (message, ...rest) {
+    if (message?.type !== 'soundBankManager' || message?.data?.type !== 'addSoundBank' || window.bankSendHold.held) return post.call(this, message, ...rest);
+    window.bankSendHold.held += 1;
+    released.then(() => post.call(this, message, ...rest));
+    return undefined;
+  };
 }
 
 // The first opening of Studio's bank store after the load (the Workshop's
