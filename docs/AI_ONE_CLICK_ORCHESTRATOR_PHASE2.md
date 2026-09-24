@@ -109,7 +109,7 @@ that happens to have been written by a machine.
 | `studio/backend/application/proposal-service.mjs` | Submission, the Agent Review Policy, acceptance, and the translation into an existing operation's input. |
 | `studio/backend/application/plan-derivation-memo.mjs` | The policy's plan derivation, held in memory on every input it reads, so a polled read does not re-run an engine (§6). Grades nothing. |
 | `studio/backend/application/contracts.mjs` | `pro_` identity, three error codes, five bounds. |
-| `studio/backend/application/run-service.mjs` | Every review request now carries the `request_key` an agent addresses it by. Nothing else changed. |
+| `studio/backend/application/run-service.mjs` | Every review request now carries the `request_key` an agent addresses it by. Every revision the run takes records the request whose write produced it (`revision_written_by`), and `resume` takes two in-process options no transport reaches, `admit` and `wrote`, so an acceptance knows truthfully what its own request did to the run (§7). |
 | `studio/backend/application/index.mjs` | Wires it in, exposes the five operations, and adds two read-only baseline projections to the internal façade. |
 | `studio/backend/application/capabilities.mjs` | The factual `proposals` capability block. |
 | `server/api.mjs`, `server/mcp-studio.mjs` | Thin adapters. One protocol behind both. |
@@ -332,16 +332,17 @@ rather than only where it is implemented: a **retry** of an acceptance that was
 already recorded, and whose application may already have reached the run, skips
 the policy gate, because that acceptance's own application moves the run and
 would then read as stale to a policy looking at revisions. What stands in its
-place is the run's, not this layer's — the same idempotency key, and the
-revision precondition carried forward to where the interrupted attempt left the
-run, so a retry can only finish the application it is a retry of. A retry of an
-acceptance none of whose attempts the run ever admitted
-(`run_resume_called: false`) has moved nothing, and is **not** excepted: the
-policy grades it again, exactly as it graded the first acceptance, so one whose
-run or material has moved since is refused, and can still be withdrawn. That
-includes an acceptance whose attempts reached `runs.resume` and were refused
-there, before the run wrote anything — at its revision precondition, say,
-because another application moved the run first. §7 is the whole argument.
+place is the run's, not this layer's — the same idempotency key, the same
+request, and a revision precondition that moves only to a revision the run's
+own record says this application's request wrote, so a retry can only finish
+the application it is a retry of. A retry of an acceptance none of whose
+attempts the run ever admitted (`run_resume_called: false`) has moved nothing,
+and is **not** excepted: the policy grades it again, exactly as it graded the
+first acceptance, so one whose run or material has moved since is refused, and
+can still be withdrawn. That includes an acceptance whose attempts reached
+`runs.resume` and were refused there, before the run wrote anything — at its
+revision precondition, say, because another application moved the run first.
+§7 is the whole argument.
 
 ## 7. Acceptance, and why there is only one mutation path
 
@@ -445,17 +446,27 @@ is therefore
                     application may have reached the run), mark accepted,
                     record an application marker: a deterministic idempotency
                     key `proposal:<proposal_id>:<revision>` and the run
-                    revision observed now
+                    revision observed now; for a retry of an application the
+                    run admitted, read whether the run's latest write was that
+                    application's own (the run's `revision_written_by`)
 2. no lock          translate
-   no lock          call runs.resume with that key and that revision as
-                    expected_run_revision
+   no lock          call runs.resume with that key and, as
+                    expected_run_revision, the run's current revision when its
+                    latest write was this application's, else the revision the
+                    acceptance observed
 2b. inside the run's own first lock hold, after every refusal of the run's own
                     and before its first write (resume's `admit` option):
                     re-read the proposal; if it was rejected or withdrawn
-                    meanwhile, refuse, and the run writes nothing; otherwise
-                    record run_resume_called: true (never cleared)
-3. under the lock   record the outcome; for a failure, and only once, the
-                    revision an attempt the run admitted left it at
+                    meanwhile, refuse, and the run writes nothing; if an
+                    earlier admission recorded a different request under this
+                    key, refuse; otherwise record run_resume_called: true
+                    (never cleared) and, the first time, which request the run
+                    let in (admitted_request_fingerprint)
+2c. inside the run  every write of that request records it as the writer of
+                    the revision it produces, in the same save, and reports the
+                    revision back under the lock (resume's `wrote`)
+3. under the lock   record the outcome; for a failure, where this attempt's own
+                    request left the run, if it wrote anything
 ```
 
 **An acceptance that never reached the run can still be taken back.**
@@ -476,9 +487,14 @@ still `false` goes through the policy again, since nothing of it has moved the
 run: if a reviewer advanced the run meanwhile, or the material moved, the retry
 is refused as `STALE` before it reaches the run, and the proposal can still be
 withdrawn. A regression moves the run between a failed attempt and its retry
-and requires exactly that; carried past the policy instead, the retry reached
-the run with its old precondition, set the marker, and left the proposal
-accepted and not withdrawable again.
+and requires exactly that. Carried past the policy instead, the retry would
+still not get in: it carries the revision the acceptance observed, and the run
+refuses it at its own precondition, before admitting it, so the marker stays
+`false` and the proposal stays withdrawable. The policy there is defence in
+depth that names the reason (`STALE`) rather than a bare `RUN_CONFLICT`.
+(While the marker was still written in a hold before the call, the same
+skipped retry set it on its way in and left the proposal accepted and not
+withdrawable again; the regression was written against that.)
 
 **Why the admission, and not a hold of this layer's own before the call.** The
 marker used to be written in a short hold of the proposal layer's own just
@@ -537,59 +553,118 @@ longer open — the retry reached `runs.resume` anyway, and the proposal was
 recorded `applied` naming an advancement it had not caused, with the policy's
 own read of it saying `STALE` at the same moment.
 
-So the precondition is **carried forward** rather than dropped: phase 3 records
-the revision the interrupted attempt left the run at, and a retry sends that as
-its `expected_run_revision`. A retry then finishes exactly the application it is
-a retry of, and a run that moved for any other reason fails the precondition and
-is refused. The receipt is still checked *first*, so a run that did apply this
-replays it either way. A regression drives all three interruption classes and
-requires the retry to complete with exactly one candidate for one acceptance;
-another drives a human reviewer's resume into the same window and requires the
-retry to be refused.
+So the precondition is **carried forward** rather than dropped — to the run's
+latest write, and only when the run's own record says that write was this
+application's. The run records, with every revision it takes and in the same
+save, which request's write produced it (`revision_written_by`: the idempotency
+key and the request fingerprint), and the admission records which request it let
+in for this acceptance (`admitted_request_fingerprint`). A retry of an
+application the run admitted reads, under the lock, whether the run's latest
+writer is that key and that request. If it is, the retry carries the run's
+current revision, which the run re-checks under its own lock, and the run's own
+reconciliation settles whatever step the interrupted attempt left pending —
+adopting an effect that landed, re-running one that did not. If it is not, the
+retry carries the revision the acceptance observed, which a run anyone else has
+moved refuses. A retry then finishes exactly the application it is a retry of,
+and a run that moved for any other reason fails the precondition and is refused.
+The receipt is still checked *first*, so a run that did apply this replays it
+either way. The record is the run's, written by `bumpRun` for the request whose
+lock hold is writing: a caller is only ever recorded as the request it actually
+sent, and since the key is the caller's to choose, the request fingerprint is
+compared as well. `resume`'s `wrote`, like `admit`, is an in-process option no
+transport reaches, and it only reports. Regressions drive all three
+interruption classes, a process that dies inside the run at each of them, and a
+second interruption, and require the retry to complete with exactly one
+candidate for one acceptance; others drive a human reviewer's resume into the
+same window, before and after a process death, and require the retry to be
+refused.
 
-That revision is written **once**, by the attempt that was interrupted, and
-never again. Re-recording it on each failure hands the standing permission back
-one round later: a retry refused because the run had moved would file its
-conflict, note the moved revision as the new precondition, and the retry after
-that would pass it. The regression drives four retries for that reason. The
-cost is stated rather than hidden: a proposal interrupted a *second* time can no
-longer be finished, and stays `accepted` with its blocker on the record — the
-same terminal state a persistently refusing run already produces, and the remedy
-is the one that state always had, a fresh proposal against the request as it
-stands.
+**The precondition used to be a revision somebody observed, and that was the
+defect twice over.** Phase 3 of the interrupted attempt pinned it from the run
+as that hold read it, written once. That was wherever the run was when phase 3
+ran, not where the attempt's application stopped: an independent review queued a
+reviewer's manual resume behind the interrupted hold, its first hold — a bump
+folding in the reviewer's own reduction — landed before phase 3, phase 3 pinned
+the reviewer's revision, and the retry passed its precondition against it and was
+recorded `applied` after another actor had moved the run. And a process that
+died inside the run's advance never ran phase 3 at all: every retry carried the
+pre-bump revision, the run refused it at its precondition before admitting it, a
+refused attempt pins nothing, and the proposal stayed accepted, not withdrawable
+and unfinishable although nothing else had touched the run. Being written once,
+the pin also made a second interruption terminal. The run's record of who wrote
+each revision answers all three: it is written with the write itself, so it
+survives the process; it cannot name another writer's revision as this
+application's; and it moves with every write this application makes and with no
+other.
 
-And it is written only by an attempt the run **admitted**. One that never got
-in — it failed before `runs.resume`, in the translation, say, or the run refused
-it before writing anything — left the run nowhere, so the revision the run
-happens to be at is no fact about it. Written by a pre-run failure, being
-written once, it could not then move to where a later attempt that did get in
-was interrupted: the retry after that failed its precondition with
-`RUN_CONFLICT` against a revision no interrupted attempt had left, with
-`run_resume_called` already `true` — accepted, open and not withdrawable for
-good, the same stuck state one attempt later. Written by an attempt the run
-refused, it was the revision *another* application had left the run at (above).
-Left unset, a retry carries the revision the acceptance observed, which the
-policy that retry goes back through checks against the run first. A regression
-drives a pre-run failure, then an attempt interrupted inside the run, then a
-retry that must finish with exactly one new candidate.
+Nor does it hand the standing permission back one round later. A retry the run
+refuses writes nothing, so the run's latest writer stays whoever moved it, and
+the next retry reads the same record and is refused the same way. One regression
+drives four retries after a reviewer's resume for that reason; another puts
+three kinds of other writer after a process death — a reviewer, this proposal's
+own payload sent by hand without its key, and this proposal's key reused with
+another payload and interrupted before the key is bound — and none of them is
+this application's writer. A run record written before the run kept this has no
+writer on it, which reads as not this application's: such a retry is refused
+unless the run is still where the acceptance observed it. What an earlier
+version recorded on the proposal is not trusted past what it proves either: the
+revision it pinned in phase 3 may be another writer's and is never carried, and
+a marker it set without the request is completed by the next admission, so a
+later interruption can still be recognised. Regressions write both records
+directly and require exactly that.
+
+**A retry is the same request.** The admission records the request fingerprint
+the run computed when it first let this acceptance in, and refuses — with
+`IDEMPOTENCY_CONFLICT`, before the run writes anything — an attempt that would
+hand it a different request under the same key: the plan the acceptance derives
+moved in between, say. Continuing a run whose latest write was the first request
+with a second one is not a retry of that application. A regression moves the
+derived plan between an interrupted attempt and its retry, requires the refusal
+with the run untouched, and requires the retry to finish once the plan is back.
+
+`run_revision_at_attempt` is a record of the attempt, not a precondition: the
+last revision the attempt's **own** request wrote, as the run reported it under
+its lock after each of that request's writes (`resume`'s `wrote`), recorded by
+phase 3 when the attempt did not finish. It is never the revision the run is at
+when phase 3 reads it, and it is never written by an attempt that wrote nothing —
+one that failed before `runs.resume`, in the translation, say; one the run
+refused before admitting it, including a refused twin of an attempt of the same
+acceptance the run admitted first; one admitted and stopped before its first
+write. Such an attempt left the run nowhere, so the revision the run happens to
+be at is no fact about it. Written by a pre-run failure, the old pin could not
+then move to where a later attempt that did get in was interrupted, and the retry
+after that failed its precondition for good; written by a refused attempt, it was
+the revision *another* application had left the run at (above). Regressions
+drive a pre-run failure then an attempt interrupted inside the run (the record is
+where that attempt stopped, and the retry finishes); the review's reviewer queued
+behind an interrupted hold (the record is the attempt's own revision, not the
+reviewer's, and the retry is refused); and one proposal accepted twice at once,
+whose refused twin records its refusal while the admitted attempt is still in
+flight and must record no revision.
 
 **A retry does not re-litigate the acceptance.** An acceptance is a recorded past
 act; a crash between it and its application advances the run, which makes the
 proposal stale, and re-running the policy there would refuse the very retry the
 marker exists for. So the policy gate is skipped for a proposal that is already
 `accepted`, carries a marker, and may have reached the run — and nothing is
-taken on trust, because safety there is the run's: the same key, and the
-carried-forward revision precondition that pins the retry to the run the
-acceptance was applying to. This mirrors Phase 1's own ordering, where an
+taken on trust, because safety there is the run's: the same key, the same
+request, and a revision precondition that moves only to a revision the run
+records as this application's own. This mirrors Phase 1's own ordering, where an
 idempotency replay is decided *before* the audit-closed guard. A proposal whose
 marker says the run admitted no attempt has nothing of the kind to finish, and
 is graded again (above).
 
-The one genuinely ambiguous state — the run advanced but its receipt was not
-written, which is a crash inside `advance` — is reported as the conflict it is,
-with the run's own reconciliation machinery as the remedy. The proposal is not
-marked applied, the conflict is recorded on it rather than swallowed, and
-nothing guesses.
+The state that used to be the ambiguous one — the run advanced but its receipt
+was not written, which is an application interrupted inside `advance`, a process
+that died there included — is not guessed about, and it is no longer terminal
+when nothing else has touched the run: the run's own record says whether its
+latest write was this application's, the retry continues from there, and the
+run's own reconciliation settles the pending step. When another writer has moved
+the run since, the retry is refused, the conflict is recorded on the proposal
+rather than swallowed, and the proposal is not marked applied. That state —
+accepted, not withdrawable, its blocker on the record — is the one a
+persistently refusing run already produces, and its remedy is the one it always
+had: a fresh proposal against the request as it stands.
 
 ## 8. Identity and staleness
 
@@ -838,9 +913,9 @@ No mock stands in anywhere.
 | `studio/tests/proposal-staleness.test.mjs` | every binding, moved underneath a proposal, refuses it |
 | `studio/tests/proposal-security.test.mjs` | forged identities, unknown and inherited fields, prototype keys, server-computed fields, collapsed scores, bounds, replay |
 | `studio/tests/proposal-agent-review-policy.test.mjs` | the Lead evidence boundary, Gate 8, Gate 9, the ladder, recomputation |
-| `studio/tests/proposal-duplication.test.mjs` | one acceptance, one application — across retries, concurrency and a crash in the window |
+| `studio/tests/proposal-duplication.test.mjs` | one acceptance, one application — across retries, concurrency, a crash in the window, a second interruption and a process that dies inside the run; a retry continues only from a run whose latest write is its own application's, and is refused once any other writer — a reviewer, the same payload without the key, the same key with another payload — has moved it; a pin or a marker an earlier version recorded is not trusted past what it proves |
 | `studio/tests/proposal-adversarial.test.mjs` | the four escalations an independent adversarial review found, kept in the shape they were found in |
-| `studio/tests/proposal-untranslatable.test.mjs` | a proposal the acceptance could never translate is `INVALID` before it is accepted, and one whose plan cannot be derived from the stored material is `STALE`; an acceptance the run never admitted — failed before the run, or refused by the run before it wrote anything, because another acceptance or a reviewer moved it first — can be withdrawn, race-free, is graded again on a retry, and pins no revision; one that may have reached it cannot be withdrawn |
+| `studio/tests/proposal-untranslatable.test.mjs` | a proposal the acceptance could never translate is `INVALID` before it is accepted, and one whose plan cannot be derived from the stored material is `STALE`; an acceptance the run never admitted — failed before the run, or refused by the run before it wrote anything, because another acceptance or a reviewer moved it first — can be withdrawn, race-free, is graded again on a retry, and pins no revision — nor does a refused twin of an attempt of the same acceptance the run admitted first; one that may have reached it cannot be withdrawn; an admitted attempt records where its own request left the run, never a revision a reviewer's resume produced after it, and that reviewer's move leaves its retry refused; a retry that would carry another request under the same key is refused before the run writes |
 | `studio/tests/proposal-plan-derivation-memo.test.mjs` | the policy derives a plan once per set of inputs, and a held outcome is never served for any other: each input moved on its own, and a derivation a change may have raced, is derived afresh (`studio/tests/application-store-regressions.test.mjs` pins that every store write method moves the write count that guard reads, and no read does) |
 | `tests/proposal-transport.test.mjs` | HTTP/MCP parity, and what Phase 2 did not add |
 

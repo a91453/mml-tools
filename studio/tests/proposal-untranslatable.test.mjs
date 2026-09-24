@@ -399,10 +399,13 @@ test('a retry of an acceptance that never reached the run is graded by the polic
   // policy re-graded from one that skipped it. Here the policy's answer
   // changes between the two: a human reviewer moves the run in between. A
   // retry that went back through the policy is refused as STALE before it
-  // reaches the run, and stays withdrawable. One that skipped it would carry
-  // its old precondition into the run, record that it reached it, and leave
-  // the proposal accepted and not withdrawable -- the defect this marker
-  // exists to prevent.
+  // reaches the run, names the reason, and stays withdrawable. One that
+  // skipped it would carry the revision the acceptance observed into the run
+  // and be refused there instead, at the run's own precondition and before
+  // admission -- still withdrawable, but told only RUN_CONFLICT. Since the
+  // marker is written at the run's admission rather than before the call, the
+  // policy here is defence in depth with the right reason, not the only thing
+  // between the retry and the run.
   const { app, fault } = translationFaulted();
   const context = await runAwaitingReduction(app);
   const submitted = await proposeReduction(app, context, { decisions: REDUCTION_DECISIONS });
@@ -486,10 +489,12 @@ test('a withdrawal that lands while an acceptance is being applied stops the app
   const runBefore = await runOf(app, context);
   const candidatesBefore = await candidatesOf(app, context);
 
-  // Both in flight at once. The acceptance records itself first, releases the
-  // lock to translate, and takes it again before it calls the run -- and the
-  // withdrawal, queued behind the first hold, lands in between. That last
-  // hold re-reads the proposal, finds it withdrawn, and stops.
+  // Both in flight at once. The acceptance records itself first and releases
+  // the lock to translate; the withdrawal, queued behind that first hold,
+  // lands while it translates. The acceptance then calls the run, and the
+  // run's admission -- inside the run's own first lock hold, after the run's
+  // refusals and before its first write -- re-reads the proposal, finds it
+  // withdrawn, and refuses: the run writes nothing.
   const [accepted, withdrawn] = await Promise.all([
     accept(app, context, submitted.proposal.proposal_id),
     app.resolveProposal(OWNER, context.fixture.projectId, submitted.proposal.proposal_id, { resolution: 'withdraw', reason: 'Changed my mind.' })
