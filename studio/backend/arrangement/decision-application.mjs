@@ -1578,7 +1578,14 @@ export function applyAcceptedArrangement({
   const inputById = new Map(noteEvents(applyTo).map(event => [event.id, event]));
   const drift = [];
   for (const event of noteEvents(candidate)) {
-    const origin = event.metadata?.g11d?.derivedFromEventId ?? event.id;
+    // A copy carried from an earlier revision is an input event in its own
+    // right: it is compared with its own previous state. Only a copy minted by
+    // this application is compared with the event it was derived from.
+    // Comparing a carried copy with its origin threw once the origin was
+    // omitted in a later revision (OUTPUT_EVENT_HAS_NO_INPUT) or the copy's
+    // role was transposed by Mobile Adaptation (PITCH_CHANGED), and every
+    // later application on that lineage, reduction plans included, failed.
+    const origin = inputById.has(event.id) ? event.id : (event.metadata?.g11d?.derivedFromEventId ?? event.id);
     const source = inputById.get(origin);
     if (!source) { drift.push({ eventId: event.id, code: 'OUTPUT_EVENT_HAS_NO_INPUT' }); continue; }
     if (event.pitch !== source.pitch) drift.push({ eventId: event.id, code: 'PITCH_CHANGED' });
