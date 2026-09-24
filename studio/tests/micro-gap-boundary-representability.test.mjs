@@ -679,3 +679,139 @@ test('a sub-grid rest that starts at a release no representation can move decide
     assert.deepEqual([proof.blocker, proof.completenessProven, proof.unreachableBoundaries], [BOUNDARY, true, [X_RELEASE(NO_VALID_REASON)]], tag);
   }
 });
+
+// Only two analysed intervals decide a release no representation can move: the
+// note's own sub-grid duration, which ends at the release, and the sub-grid gap
+// after it, which starts at the release in the note's own role. An interval of
+// another span that meets the release at the same beat decides that span's
+// boundary, not the release. The two tests below take the previous test's shape
+// -- x[0,479/480), an explicit rest r[479/480,1) kept as notated with admissible
+// evidence, then y[1,2) -- and add one such interval each: another role's gap
+// starting at the beat, and another note of the role ending there. Letting
+// either decide x brings back the looseness the previous test pins. With that
+// interval kept with evidence, G10 and readiness PASS while the emitter fails.
+// With it still open, x's release hides behind CLASSIFICATION_UNKNOWN and the
+// emitter names no proof for it; once the rest is open too, the emitter
+// answers PENDING although no answer to either open question moves x.
+async function assertAnotherSpanDecidesNothing(t, { events, other, otherIds, otherTarget, otherRole }) {
+  const official = { evidence: ['official bar 1'], metadata: { evidenceSourceIds: ['official'] } };
+  const keep = (id, eventIds, identity, status, evidence = true) => createArbitrationDecision({
+    id,
+    eventIds,
+    action: MICRO_TIMING_KEEP_ACTION,
+    status,
+    reason: 'notated',
+    ...(evidence ? { evidence: official.evidence } : {}),
+    metadata: { ...(evidence ? official.metadata : {}), intervalIdentity: createIntervalIdentity(identity) },
+  });
+  const keepRest = () => keep('keep-r', ['r'], { type: 'event-duration', eventId: 'r', start: '479/480', end: '1' }, 'accepted');
+  const keepOther = (status, evidence) => keep(`keep-${otherTarget}-${status}`, otherIds, other, status, evidence);
+  const releaseOf = (analysis, eventId) => analysis.targets.find(target => target.eventId === eventId);
+  const coverage = report => report.unsupportedBoundaries.map(item => [item.role, item.eventId, item.boundary, item.position, item.coverage]);
+  // Melody's two entries and nothing else: r's start, decided by r's own
+  // interval, and x's release, which nothing decides. The other span's release
+  // is decided by its own interval and is not listed.
+  const EXPECTED_COVERAGE = [
+    ['Melody', 'r', 'start', '479/480', BOUNDARY_COVERAGE.ANALYSED_INTERVAL],
+    ['Melody', 'x', 'end', '479/480', BOUNDARY_COVERAGE.NONE],
+  ];
+
+  // The other interval kept with admissible evidence: both intervals are
+  // preserved and raise nothing, so x's release is all G10 has left to raise.
+  await t.test('the other interval kept with evidence', () => {
+    const tag = 'kept with evidence';
+    const candidate = project(events(), undefined, [keepRest(), keepOther('accepted', true)]);
+    const analysis = analyzeReleaseTiming({ candidate });
+    const x = releaseOf(analysis, 'x');
+    assert.deepEqual([x.role, x.status, x.analysis.followingShape], ['Melody', TARGET_STATUS.NO_VALID_REPRESENTATION, 'explicit-rest-at-release'], tag);
+    assert.ok(x.options.every(option => !option.valid), `${tag}: neither representation is valid for x`);
+    // The other span's release is at the same beat, and the keep claim on the
+    // interval after or within it makes it a release nothing can move either.
+    // Its own interval decides it, so it is not listed.
+    const otherRelease = releaseOf(analysis, otherTarget);
+    assert.deepEqual([otherRelease.role, otherRelease.status], [otherRole, TARGET_STATUS.SOURCE_SUPPORTED_NOT_REPRESENTABLE], tag);
+    const { g10, emitted } = assertBoundaryAgreement(candidate, [X_RELEASE(NO_VALID_REASON)], tag);
+    assert.deepEqual(g10.enforcement.map(item => [item.identity.type, item.classification]),
+      [['event-duration', 'SOURCE_SUPPORTED_MICROTIMING'], [other.type, 'SOURCE_SUPPORTED_MICROTIMING']], `${tag}: both intervals are preserved`);
+    assert.deepEqual(coverage(g10), EXPECTED_COVERAGE, `${tag}: the other interval decides its own span, not x's release`);
+    assert.deepEqual(emitted.diagnostics.filter(item => item.severity !== 'notice').map(item => item.code), [
+      EMIT_DIAGNOSTICS.MICRO_GAP_BOUNDARY_NOT_FINAL_REPRESENTABLE,
+      EMIT_DIAGNOSTICS.SOURCE_SUPPORTED_INTERVAL_NOT_REPRESENTABLE,
+    ], tag);
+    assert.match(emitted.diagnostics[0].message, /Melody event x \(note end\) at beat 479\/480 is a note release its Final role has to reach/, tag);
+  });
+
+  // The other interval still open (claim pending, accepted without evidence, or
+  // absent): its UNKNOWN answer stays pending, and x's release is reported
+  // beside it rather than hidden behind it. In the last case the rest is open
+  // too, so nothing but open questions and x's release is left, and the emitter
+  // FAILs on the proof rather than answering PENDING.
+  const PRESERVED = 'SOURCE_SUPPORTED_MICROTIMING';
+  for (const [label, decisions, restClassification] of [
+    ['the other interval\'s claim pending', () => [keepRest(), keepOther('pending', true)], PRESERVED],
+    ['the other interval\'s claim accepted without evidence', () => [keepRest(), keepOther('accepted', false)], PRESERVED],
+    ['no claim on the other interval', () => [keepRest()], PRESERVED],
+    ['no claim on the other interval or on the rest', () => [], 'UNKNOWN'],
+  ]) {
+    await t.test(label, () => {
+      const open = project(events(), undefined, decisions());
+      assert.equal(releaseOf(analyzeReleaseTiming({ candidate: open }), 'x').status, TARGET_STATUS.NO_VALID_REPRESENTATION, label);
+      const report = enforceMicroGaps(open);
+      assert.deepEqual(report.enforcement.map(item => [item.identity.type, item.classification]),
+        [['event-duration', restClassification], [other.type, 'UNKNOWN']], label);
+      assert.equal(report.status, 'PENDING', label);
+      assert.deepEqual(report.blockers, [MICRO_GAP_BLOCKERS.CLASSIFICATION_UNKNOWN, BOUNDARY], label);
+      assert.deepEqual(coverage(report), EXPECTED_COVERAGE, label);
+      const readiness = evaluateProjectReadiness({ project: open }).gates.microTiming;
+      assert.deepEqual([readiness.status, readiness.blockers], ['PENDING', report.blockers], label);
+      assert.deepEqual(readiness.unsupportedBoundaries, report.unsupportedBoundaries, label);
+      const emitted = emitFinalMml(open);
+      assert.equal(emitted.status, 'FAIL', label);
+      assert.equal(emitted.combinedMml, null, label);
+      const blocking = emitted.diagnostics.filter(item => item.severity !== 'notice');
+      assert.deepEqual(blocking.map(item => item.code), [
+        EMIT_DIAGNOSTICS.MICRO_GAP_BLOCKED_PENDING,
+        EMIT_DIAGNOSTICS.MICRO_GAP_BOUNDARY_NOT_FINAL_REPRESENTABLE,
+        ...(restClassification === PRESERVED ? [EMIT_DIAGNOSTICS.SOURCE_SUPPORTED_INTERVAL_NOT_REPRESENTABLE] : []),
+        ...(label.includes('pending') ? [EMIT_DIAGNOSTICS.PENDING_DECISIONS_PRESENT] : []),
+      ], label);
+      assert.deepEqual([blocking[0].severity, blocking[0].blockers], ['pending', [MICRO_GAP_BLOCKERS.CLASSIFICATION_UNKNOWN]], `${label}: the pending diagnostic keeps only the open question`);
+      assert.deepEqual([blocking[1].severity, blocking[1].blocker, blocking[1].completenessProven, blocking[1].unreachableBoundaries],
+        ['error', BOUNDARY, true, [X_RELEASE(NO_VALID_REASON)]], label);
+    });
+  }
+}
+
+test('another role\'s sub-grid gap that starts at a release no representation can move does not decide that release', async t => {
+  // Chord1's c1[0,479/480) is followed by a sub-grid gap to c2[1,2). That gap
+  // starts at 479/480 too, but it is the silence c1's release opens in Chord1:
+  // it decides c1's release, and Melody still has to reach 479/480 with a note
+  // release nothing can move. The gap-start key is the release's own role.
+  await assertAnotherSpanDecidesNothing(t, {
+    events: () => [
+      note(0, '479/480', { id: 'x' }), rest('479/480', 1, { id: 'r' }), note(1, 2, { id: 'y' }),
+      note(0, '479/480', { id: 'c1', role: 'Chord1', pitch: 64 }), note(1, 2, { id: 'c2', role: 'Chord1', pitch: 64 }),
+    ],
+    other: { type: 'inter-event-gap', previousEventId: 'c1', nextEventId: 'c2', start: '479/480', end: '1' },
+    otherIds: ['c1', 'c2'],
+    otherTarget: 'c1',
+    otherRole: 'Chord1',
+  });
+});
+
+test('another note of the role whose sub-grid duration ends at a release no representation can move does not decide that release', async t => {
+  // w[478/480,479/480) is a second Melody note shorter than the grid. Its own
+  // duration interval ENDS at x's release and decides w's release; no outcome of
+  // it moves x or makes 479/480 reachable. Among intervals that end at the
+  // release, only x's own duration, matched by event, decides it.
+  await assertAnotherSpanDecidesNothing(t, {
+    events: () => [
+      note(0, '479/480', { id: 'x' }), note('478/480', '479/480', { id: 'w', pitch: 67 }),
+      rest('479/480', 1, { id: 'r' }), note(1, 2, { id: 'y' }),
+    ],
+    other: { type: 'event-duration', eventId: 'w', start: '478/480', end: '479/480' },
+    otherIds: ['w'],
+    otherTarget: 'w',
+    otherRole: 'Melody',
+  });
+});
