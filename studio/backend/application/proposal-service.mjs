@@ -59,25 +59,33 @@
 //     revision precondition, and the run is not applied to material the
 //     acceptance never saw.
 //
-// The one genuinely ambiguous state — the run advanced but its receipt was not
-// written, which is a crash inside `advance` — is reported as the conflict it
-// is, with the run's own reconciliation machinery named as the remedy. It is
-// not resolved by guessing, and the proposal is not marked applied.
+// The state that used to be ambiguous — the run advanced but its receipt was
+// not written, which is an application interrupted inside `advance`, a process
+// that died there included — is told apart by the run's own record, not by
+// guessing. The run records, with every revision it takes, which request's
+// write produced it (`revision_written_by`: the idempotency key and the request
+// fingerprint). A retry continues from the run's current revision only when
+// that record says the latest write was this acceptance's own application, and
+// the run's own reconciliation then settles whatever step it left pending. When
+// anything else has written since, the retry carries the revision the
+// acceptance observed, the run refuses it at its precondition, and that is
+// recorded as the conflict it is; the proposal is not marked applied.
 //
 // Between the two, `runs.resume` calls back into this service once, inside the
 // run's OWN first lock hold, after every refusal that hold makes and before its
 // first write (its `admit` option). That admission re-reads the proposal and
 // records, durably and before the run writes anything, that the run has let
-// this acceptance's input in (`application.run_resume_called`, never cleared).
+// this acceptance's input in (`application.run_resume_called`, never cleared),
+// and which request it let in (`application.admitted_request_fingerprint`).
 // That marker is what tells an accepted proposal whose application never
 // reached the run apart from one whose application may have, and only the first
 // may still be rejected or withdrawn. An attempt the run refuses -- at its
 // revision precondition, say, because another application moved the run first
-// -- is never admitted, so it leaves the marker as it was, and it pins nothing a
-// retry is held to. The re-read is what makes withdrawal race-free: a
-// withdrawal and the admission take the same lock, so either the withdrawal
-// lands first and the run refuses the attempt with nothing written, or the
-// marker lands first and the withdrawal is refused. See `resolve`.
+// -- is never admitted, so it leaves the marker as it was, and it pins nothing.
+// The re-read is what makes withdrawal race-free: a withdrawal and the
+// admission take the same lock, so either the withdrawal lands first and the
+// run refuses the attempt with nothing written, or the marker lands first and
+// the withdrawal is refused. See `resolve`.
 
 import {
   ASSET_KIND_INTAKE,
@@ -319,6 +327,31 @@ export function createProposalService({ canonical, projects, store, operations, 
    * is written may name an attempt the run refused; it reads as `true` too.)
    */
   const mayHaveReachedRun = proposal => proposal.application?.run_resume_called !== false;
+
+  /**
+   * Whether the run's latest write was made by this acceptance's own
+   * application.
+   *
+   * The run records, with every revision it takes and in the same save, which
+   * request's write produced it (`run.revision_written_by`: the idempotency key
+   * and the request fingerprint). This acceptance's application is one key
+   * (`application.idempotency_key`) and one request, the one the run's
+   * admission recorded (`application.admitted_request_fingerprint`). When both
+   * match, nothing else has written to the run since this application last
+   * did: not another acceptance, not a reviewer's resume, and not a caller who
+   * reused this key with another payload. That holds after a restart too,
+   * because it is read from the run's own record rather than from anything an
+   * attempt kept in memory. Anything else -- another writer, a run record
+   * written before the run kept this, an application no admission recorded --
+   * reads as `false`: the answer that refuses the retry, not the one that
+   * guesses.
+   */
+  const lastWrittenByThisApplication = (run, application) => {
+    const writer = run?.revision_written_by ?? null;
+    return writer !== null
+      && typeof application?.idempotency_key === 'string' && writer.idempotency_key === application.idempotency_key
+      && typeof application.admitted_request_fingerprint === 'string' && writer.request_fingerprint === application.admitted_request_fingerprint;
+  };
 
   // ── request resolution ────────────────────────────────────────────────────
   //
@@ -1697,10 +1730,12 @@ export function createProposalService({ canonical, projects, store, operations, 
         //
         // Nothing is being taken on trust. The retry re-issues the SAME
         // deterministic idempotency key, so a run that already applied it
-        // replays its own receipt; and it carries the run revision the
-        // acceptance observed, so a run that moved for any other reason fails
-        // the precondition and is refused. Safety here is the run's, which is
-        // where it belongs.
+        // replays its own receipt; and it carries, as its revision
+        // precondition, either the run's current revision -- only when the
+        // run's own record says its latest write was this application's (see
+        // `continueFrom` below) -- or the revision the acceptance observed, so
+        // a run that moved for any other reason fails the precondition and is
+        // refused. Safety here is the run's, which is where it belongs.
         //
         // Skipped only when an earlier attempt may have reached the run,
         // though, because that is the whole reason for skipping it. An
@@ -1727,15 +1762,22 @@ export function createProposalService({ canonical, projects, store, operations, 
         const application = proposal.application ?? {
           idempotency_key: `proposal:${proposal.proposal_id}:${proposal.revision}`,
           expected_run_revision: run.revision,
-          // Where an interrupted attempt left the run, written by phase 3. A
-          // retry carries it as its precondition, so it finishes the
-          // application it is a retry of and nothing else.
+          // Where the last admitted attempt that did not finish left the run:
+          // the revision its OWN request last wrote, as the run reported it
+          // under its lock (phase 3). A record of that attempt, never a
+          // precondition: a retry continues from what the run's own record
+          // says, below.
           run_revision_at_attempt: null,
           // Whether the run ever admitted an attempt: set inside the run's own
           // first lock hold, after its refusals and before its first write
           // (phase 2), and never cleared. While it is false the proposal may
           // still be rejected or withdrawn, because nothing reached the run.
           run_resume_called: false,
+          // Which request the run admitted for this acceptance: the request
+          // fingerprint the run computed, recorded by the first admission. The
+          // run records the same value on every write that request makes, and
+          // a retry must carry the same request.
+          admitted_request_fingerprint: null,
           accepted_by: normalized.accepted_by,
           attempted_at: now(),
           run_revision_after: null,
@@ -1744,6 +1786,30 @@ export function createProposalService({ canonical, projects, store, operations, 
           derived: {},
           conflict: null,
         };
+        // Where a retry of an application the run has already admitted
+        // continues from: the run's current revision, read here under the
+        // lock -- when, and only when, the run's own record says its latest
+        // write was this application's (`lastWrittenByThisApplication`).
+        // Nothing else then has moved the run since this application last
+        // wrote to it, whether the attempt that wrote it was interrupted by a
+        // fault, stopped by a process that died inside the run and recorded
+        // nothing, or interrupted for the second time. The run's precondition
+        // re-checks it under the run's own lock, so a write landing between
+        // here and there is refused, and the run's own reconciliation settles
+        // any step the interrupted attempt left pending.
+        //
+        // Otherwise the retry carries the revision the acceptance observed.
+        // Once the run admitted any attempt of it, that revision can match
+        // only a run nothing has written to since -- an admission whose own
+        // first write never landed -- and a run anyone else moved refuses it.
+        // The revision an attempt observed afterwards is never used: it may be
+        // another writer's, and carrying it was how a retry used to pass its
+        // precondition against a borrowed revision and be recorded `applied`
+        // after another actor had moved the run.
+        const continueFrom = alreadyAccepted && proposal.application.run_resume_called === true
+          && lastWrittenByThisApplication(run, proposal.application)
+          ? run.revision
+          : null;
         return {
           proposal: alreadyAccepted ? proposal : bumpProposal(owner, projectId, proposal, {
             state: PROPOSAL_STATE.ACCEPTED,
@@ -1752,6 +1818,7 @@ export function createProposalService({ canonical, projects, store, operations, 
           }),
           accepted: true,
           retry: alreadyAccepted,
+          continueFrom,
           review,
         };
       });
@@ -1788,6 +1855,11 @@ export function createProposalService({ canonical, projects, store, operations, 
       // attempt was admitted.
       let calledRun = false;
       let admitted = false;
+      // The last revision THIS attempt's own request wrote to the run, as the
+      // run reported it under its lock (resume's `wrote`); null while it has
+      // written none. Never read back from the run afterwards: by then another
+      // writer may have moved it.
+      let ownRevision = null;
       // The proposal as the admission found it, when a rejection or
       // withdrawal had landed first.
       let resolvedMeanwhile = null;
@@ -1820,16 +1892,27 @@ export function createProposalService({ canonical, projects, store, operations, 
           // advancement it had not caused. (A retry none of whose attempts
           // the run admitted goes back through the policy; see phase 1.)
           //
-          // So the precondition is carried forward instead, to the revision the
-          // interrupted attempt LEFT the run at, which phase 3 records under the
-          // lock. A retry then finishes exactly the application it is a retry
-          // of, and a run that moved for any other reason fails the
+          // So the precondition is carried forward instead, to where this
+          // application's OWN request last left the run -- and it is taken from
+          // the run's own record of which request made its latest write, read
+          // under the lock in phase 1 (`continueFrom`), not from a revision an
+          // attempt observed. A retry then finishes exactly the application it
+          // is a retry of, and a run that moved for any other reason fails the
           // precondition -- which is what makes skipping the policy gate safe
-          // rather than merely convenient. The receipt is still checked first,
-          // so a run that did apply this replays it either way.
-          expected_run_revision: prepared.retry
-            ? application.run_revision_at_attempt ?? application.expected_run_revision
-            : application.expected_run_revision,
+          // rather than merely convenient.
+          //
+          // It used to be the revision phase 3 of the interrupted attempt read
+          // from the run. That was wherever the run was when phase 3's hold ran:
+          // a reviewer's resume queued behind the interrupted hold landed its
+          // bump first, phase 3 pinned the reviewer's revision, and the retry
+          // passed its precondition against it and was recorded `applied` after
+          // another actor had moved the run. And a process that died inside the
+          // run never ran phase 3 at all, so every retry carried the pre-bump
+          // revision and was refused for good, accepted and not withdrawable.
+          // The run's own record answers both: it is written with every
+          // revision, by the request that wrote it. The receipt is still checked
+          // first, so a run that did apply this replays it either way.
+          expected_run_revision: prepared.continueFrom ?? application.expected_run_revision,
         }, {
           // ── the admission: inside the run's OWN first lock hold, after every
           // refusal that hold makes and before its first write.
@@ -1857,7 +1940,17 @@ export function createProposalService({ canonical, projects, store, operations, 
           // before it writes anything, and this attempt says so; if the
           // admission lands first, the marker is set and every later rejection
           // or withdrawal is refused.
-          admit: () => {
+          //
+          // It also records WHICH request the run let in: the request
+          // fingerprint the run computed, which the run records as the writer
+          // of every revision that request produces. The first admission
+          // records it; every later attempt of this acceptance must carry the
+          // same request, or it is not a retry of this application but another
+          // request under the same key -- the plan the acceptance derives
+          // moved in between, say -- and continuing a run whose latest write
+          // was the first request with a second one is exactly what a retry
+          // may not do. It is refused here, before the run writes anything.
+          admit: ({ request_fingerprint: requestFingerprint = null } = {}) => {
             const current = findProposal(projects.load(owner, projectId), proposalId);
             if (current.state === PROPOSAL_STATE.WITHDRAWN || current.state === PROPOSAL_STATE.REJECTED) {
               resolvedMeanwhile = current;
@@ -1867,13 +1960,29 @@ export function createProposalService({ canonical, projects, store, operations, 
                 run_resume_called: false,
               });
             }
-            if (current.application && current.application.run_resume_called !== true) {
+            const admittedFingerprint = current.application?.admitted_request_fingerprint ?? null;
+            if (admittedFingerprint !== null && admittedFingerprint !== requestFingerprint) {
+              fail(ERROR_CODES.IDEMPOTENCY_CONFLICT, 'This attempt would hand the run a different request than the one the run admitted for this acceptance: the same idempotency key, another request. It is not a retry of that application, so the run admitted nothing of it and wrote nothing: the input this acceptance derives has moved since the run admitted it. A retry finishes the application only while it derives that same request; work the run can no longer take is answered by a fresh proposal against the request as it stands.', {
+                proposal_id: proposalId,
+                idempotency_key: current.application.idempotency_key,
+                admitted_request_fingerprint: admittedFingerprint,
+                received_request_fingerprint: requestFingerprint,
+              });
+            }
+            if (current.application && (current.application.run_resume_called !== true || admittedFingerprint === null)) {
               bumpProposal(owner, projectId, current, {
-                application: { ...current.application, run_resume_called: true, run_resume_called_at: now() },
+                application: {
+                  ...current.application,
+                  ...(current.application.run_resume_called === true ? {} : { run_resume_called: true, run_resume_called_at: now() }),
+                  admitted_request_fingerprint: requestFingerprint,
+                },
               });
             }
             admitted = true;
           },
+          // Where this attempt's own request has left the run, as the run
+          // reports it after each of that request's writes, under its lock.
+          wrote: revision => { ownRevision = revision; },
         });
       } catch (error) {
         // Stopped at the run's door by a rejection or withdrawal. That is the
@@ -1900,43 +2009,31 @@ export function createProposalService({ canonical, projects, store, operations, 
           // than starting a second application, and the conflict is recorded
           // rather than swallowed.
           //
-          // Where the run was left is recorded with it, and it is what a retry
-          // binds itself to. Without it a retry has nothing to pin: the
-          // revision the ACCEPTANCE observed is stale the moment this
-          // acceptance's own resume bumps it, so the only alternatives are a
-          // precondition that can never match or no precondition at all -- and
-          // the second turns an interrupted acceptance into a standing
-          // permission over whatever the run becomes next.
+          // Where this attempt's own application left the run is recorded with
+          // it, as `run_revision_at_attempt`: the last revision THIS attempt's
+          // request wrote, as the run reported it under its own lock right
+          // after each of that request's writes (resume's `wrote`). It is a
+          // record of the attempt and nothing a retry is held to: a retry
+          // continues only from what the run's own record says about its
+          // latest write (phase 1, `continueFrom`).
           //
-          // Written ONCE, by the attempt that was interrupted, and never again.
-          // Re-recording it on each failure would hand the standing permission
-          // straight back one round later: a retry refused because the run had
-          // moved would file the conflict, note the moved revision as the new
-          // precondition, and the retry after that would pass it. What a retry
-          // is pinned to is where its own interrupted application left the run,
-          // which is a fact about one moment and does not get a second opinion.
-          // A second interruption therefore leaves a proposal that can no
-          // longer be finished -- the same terminal `accepted` a persistently
-          // refusing run already produces -- and the remedy is the one the
-          // record states: a fresh proposal against the request as it stands.
+          // It is never the revision the run is at now, read here. By the time
+          // this hold runs another writer may have moved the run -- a
+          // reviewer's resume queued behind the interrupted hold lands its bump
+          // first -- and that revision is the reviewer's. It used to be pinned
+          // all the same, and it used to be the retry's precondition: the retry
+          // passed against the reviewer's revision and was recorded `applied`
+          // after another actor had moved the run.
           //
-          // And only by an attempt the run ADMITTED. One that never got in --
-          // it failed before `runs.resume`, in the translation, or the run
-          // refused it before writing anything, at its revision precondition
-          // because another application had moved the run, say -- left the run
-          // nowhere, so the revision the run happens to be at is no fact about
-          // it. Written all the same, it was worse than no fact. Written by a
-          // pre-run failure, it could not then move to where a later attempt
-          // that did get in was interrupted, and the retry after that failed
-          // its precondition for good. Written by a refused attempt, it was the
-          // revision ANOTHER application had left the run at, and the retry --
-          // skipping the policy -- passed its precondition against it and
-          // moved the run: the standing permission this pin exists to close.
-          // Left unset, a retry carries the revision the acceptance observed
-          // -- which, while no attempt has been admitted, the policy that
-          // retry goes back through re-checks against the run first -- and the
-          // pin is written by the first admitted attempt that does not finish.
-          const runNow = runsOf(record).find(entry => entry.run_id === proposal.run_id) ?? null;
+          // Nor is it written by an attempt that wrote nothing to the run: one
+          // that failed before `runs.resume`, in the translation; one the run
+          // refused before admitting it, at its revision precondition because
+          // another application -- or another attempt of this same acceptance
+          // -- had moved the run first; one admitted and stopped before its
+          // first write. Such an attempt left the run nowhere, so the revision
+          // the run happens to be at is no fact about it, and the record keeps
+          // what an attempt that did write left there. A later attempt that
+          // writes and does not finish records where IT left the run.
           return bumpProposal(owner, projectId, proposal, {
             application: {
               ...proposal.application,
@@ -1944,7 +2041,7 @@ export function createProposalService({ canonical, projects, store, operations, 
               // answered: a refusal before admission changed nothing.
               conflict: { ...failure, admitted_by_run: admitted, at: now() },
               derived,
-              run_revision_at_attempt: proposal.application.run_revision_at_attempt ?? (admitted ? runNow?.revision ?? null : null),
+              run_revision_at_attempt: ownRevision ?? proposal.application.run_revision_at_attempt ?? null,
             },
           });
         }
@@ -1973,8 +2070,10 @@ export function createProposalService({ canonical, projects, store, operations, 
         const neverAdmitted = settled.application?.run_resume_called === false;
         // How this attempt stopped short of the run, when it did.
         const shortOfTheRun = calledRun
-          ? 'the run refused this attempt before admitting it: its own checks turned the request away before it wrote anything'
+          ? 'the run refused this attempt before admitting it: the request was turned away, under the run\'s lock, before the run wrote anything'
           : 'this attempt failed before handing the input to the run\'s resume path';
+        // What a retry of an application that may have reached the run does.
+        const retryNotice = 'Retrying re-issues the same idempotency key, so a run that did apply it replays its own receipt instead of applying it again. A retry continues the application only while the run\'s own record says its latest write was this application\'s, and the run\'s own reconciliation then settles any step it left pending; once another writer has moved the run, the retry is refused as a run conflict and this layer does not guess.';
         fail(failure.code, failure.message, {
           ...failure.details,
           proposal_id: proposalId,
@@ -1984,14 +2083,14 @@ export function createProposalService({ canonical, projects, store, operations, 
           // whether it let any attempt in.
           admitted_by_run: admitted,
           notice: admitted
-            ? 'The acceptance is recorded and the existing operation refused or could not run. Nothing was applied twice: retrying this resolve re-issues the same idempotency key, so a run that did apply it replays its own receipt instead of applying it again. A run that advanced without recording that receipt is reported as a run conflict, and the run\'s own reconciliation is the remedy — this layer does not guess.'
+            ? `The acceptance is recorded and the existing operation refused or could not run. Nothing was applied twice. ${retryNotice}`
             : settled.state === PROPOSAL_STATE.WITHDRAWN || settled.state === PROPOSAL_STATE.REJECTED
               ? `The acceptance's application stopped before it reached the run, and the proposal was ${settled.state} meanwhile. Nothing was applied and the run did not advance.`
               : neverAdmitted
                 ? `The acceptance is recorded, and its application stopped before it reached the run: ${shortOfTheRun}, and the run has admitted no attempt of it, so nothing was applied and the run did not advance. A retry re-checks the proposal against the Agent Review Policy before trying again; it can also still be rejected or withdrawn, because nothing reached the run.`
                 : `This attempt stopped before it reached the run: ${shortOfTheRun}. ${settled.application?.run_resume_called === true
                   ? 'Another attempt was admitted into the run'
-                  : 'This acceptance was recorded before this service kept track of whether an attempt reached the run'}, so its application may already have landed, and the proposal cannot be rejected or withdrawn. Retrying re-issues the same idempotency key, so a run that did apply it replays its own receipt instead of applying it again.`,
+                  : 'This acceptance was recorded before this service kept track of whether an attempt reached the run'}, so its application may already have landed, and the proposal cannot be rejected or withdrawn. ${retryNotice}`,
         });
       }
 

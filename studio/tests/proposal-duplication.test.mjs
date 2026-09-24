@@ -57,6 +57,10 @@ async function submitted(app, owner = OWNER) {
 
 const candidatesOf = async (app, projectId, owner = OWNER) => (await app.getProject(owner, projectId)).project.candidates;
 
+const acceptIn = (app, context) => app.resolveProposal(OWNER, context.fixture.projectId, context.proposal.proposal_id, {
+  resolution: 'accept', accepted_by: RUN_REVIEWER,
+}).then(result => ({ ok: true, result }), error => ({ ok: false, error }));
+
 // ─── A. the ordinary retry ──────────────────────────────────────────────────
 
 test('accepting the same proposal twice applies it once', async () => {
@@ -175,8 +179,8 @@ test('a crash between the acceptance and its application leaves the proposal acc
     // revision as a precondition could never match. The acceptance was
     // recorded, the work had landed, and the one mechanism built to finish it
     // was the one thing that could not: the proposal stuck `accepted` for good.
-    // An adversarial pass found that; the precondition now belongs to the first
-    // attempt only.
+    // An adversarial pass found that; a retry now carries, as its precondition,
+    // the revision the run records as this application's own latest write.
     assert.ok(retry.ok, `the retry must complete, got ${retry.error?.code}: ${retry.error?.message}`);
     const settled = await restarted.getProposal(OWNER, context.fixture.projectId, context.proposal.proposal_id);
     assert.equal(settled.proposal.state, PROPOSAL_STATE.APPLIED);
@@ -229,11 +233,11 @@ test('an interrupted acceptance is not finished onto a run that moved on without
   // The retry skips the Agent Review Policy, and it has to: `resume` bumps the
   // run's revision before any step runs, so a proposal whose own application
   // moved the run reads as stale to a policy that is only looking at revisions.
-  // What pins it instead is the run's own precondition, carried forward to the
-  // revision the interrupted attempt LEFT the run at. So a run that moved for
-  // any other reason -- here, a human reviewer applying a different decision
-  // set -- fails that precondition, and the acceptance cannot be finished onto
-  // material it never saw.
+  // What pins it instead is the run's own precondition, carried forward only
+  // to a revision the run records as this application's own latest write. So
+  // a run that moved for any other reason -- here, a human reviewer applying a
+  // different decision set -- fails that precondition, and the acceptance
+  // cannot be finished onto material it never saw.
   let armed = true;
   const app = createStudioApplication({
     runHooks: {
@@ -287,7 +291,8 @@ test('an interrupted acceptance is not finished onto a run that moved on without
   // And it stays refused. A refused retry records its own conflict, and if that
   // record moved the precondition to wherever the run had got to, the NEXT
   // retry would pass it -- the standing permission back, one round later. The
-  // precondition is pinned by the interrupted attempt and by nothing after it.
+  // precondition moves only to a revision this application's own request
+  // wrote, and a refused retry writes nothing to the run.
   for (let round = 0; round < 3; round += 1) {
     const again = await app.resolveProposal(OWNER, context.fixture.projectId, context.proposal.proposal_id, {
       resolution: 'accept', accepted_by: RUN_REVIEWER,
@@ -297,6 +302,184 @@ test('an interrupted acceptance is not finished onto a run that moved on without
   }
   assert.equal((await app.getProposal(OWNER, context.fixture.projectId, context.proposal.proposal_id)).proposal.state, PROPOSAL_STATE.ACCEPTED);
   assert.deepEqual(await candidatesOf(app, context.fixture.projectId), candidatesBefore, 'and still nothing was minted');
+});
+
+test('an application interrupted a second time is still finished by its retry, and records where each interruption left the run', async () => {
+  // The first attempt stops before its effect; the retry continues from there,
+  // re-runs the step and stops again after the effect, before its receipt.
+  // That used to be terminal: the revision a retry was held to was written
+  // once, by the first interruption, so the third attempt carried it into a
+  // run the second attempt had moved and was refused for good. What a retry
+  // is held to is now the run's own record of which request made its latest
+  // write, and here every write since the acceptance is this application's.
+  const armed = { beforeEffect: false, afterEffect: false };
+  const seen = {};
+  const hook = name => ({ step, run }) => {
+    if (!armed[name] || step !== RUN_STEP.APPLY_DECISIONS) return;
+    armed[name] = false;
+    seen[name] = run.revision;
+    throw Error(`stopped at ${name}`);
+  };
+  const app = createStudioApplication({ runHooks: { beforeEffect: hook('beforeEffect'), afterEffect: hook('afterEffect') } });
+  const context = await submitted(app);
+  const read = async () => (await app.getProposal(OWNER, context.fixture.projectId, context.proposal.proposal_id)).proposal;
+
+  armed.beforeEffect = true;
+  const first = await acceptIn(app, context);
+  assert.equal(first.ok, false);
+  assert.match(String(first.error.message), /stopped at beforeEffect/);
+  assert.equal((await read()).application.run_revision_at_attempt, seen.beforeEffect, 'the first interruption records where it left the run');
+
+  armed.afterEffect = true;
+  const second = await acceptIn(app, context);
+  assert.equal(second.ok, false);
+  assert.match(String(second.error.message), /stopped at afterEffect/);
+  assert.equal(second.error.details.admitted_by_run, true, 'the retry continued the application');
+  assert.ok(seen.afterEffect > seen.beforeEffect);
+  assert.equal((await read()).application.run_revision_at_attempt, seen.afterEffect, 'and the second records where IT left the run');
+  const afterSecond = await candidatesOf(app, context.fixture.projectId);
+  assert.equal(afterSecond.length, 1, 'the second attempt\'s effect landed');
+
+  const third = await acceptIn(app, context);
+  assert.ok(third.ok, `the retry must finish the twice-interrupted application, got ${third.error?.code}: ${third.error?.message}`);
+  assert.equal(third.result.proposal.state, PROPOSAL_STATE.APPLIED);
+  assert.equal(third.result.proposal.application.settled_on_retry, true);
+  assert.deepEqual(await candidatesOf(app, context.fixture.projectId), afterSecond, 'the landed effect was adopted, not repeated');
+});
+
+// ─── C. a process that dies inside the run ──────────────────────────────────
+//
+// The interruptions above throw from a hook, so the acceptance's own last step
+// -- recording the conflict under the lock -- still runs in the process that
+// was interrupted. A process that dies inside the run records nothing at all:
+// the run holds whatever its own writes left, and the proposal holds only the
+// acceptance and the run's admission of it.
+
+/**
+ * A service that stops for good inside the run's advance: the hook never
+ * returns, so nothing after it runs in that service -- no receipt, no failure,
+ * no outcome recorded on the proposal. What it leaves in the store is what a
+ * process that died there leaves.
+ */
+const dyingInside = (directory, hook, stepName = RUN_STEP.APPLY_DECISIONS) => {
+  let reached;
+  const stopped = new Promise(resolve => { reached = resolve; });
+  const app = createStudioApplication({
+    dataDirectory: directory,
+    durability: 'persistent',
+    runHooks: { [hook]: ({ step }) => { if (step === stepName) { reached(); return new Promise(() => {}); } } },
+  });
+  return { app, stopped };
+};
+
+test('a process that dies inside the run leaves an acceptance whose retry finishes exactly that application', async () => {
+  for (const hook of ['beforeEffect', 'afterEffect', 'beforeResponse']) {
+    await withDirectory(async directory => {
+      const app = createStudioApplication({ dataDirectory: directory, durability: 'persistent' });
+      const context = await submitted(app);
+
+      const dying = dyingInside(directory, hook);
+      acceptIn(dying.app, context);
+      await dying.stopped;
+
+      // A fresh service over the same store. The acceptance and the run's
+      // admission of it are on the record; nothing after that is.
+      const restarted = createStudioApplication({ dataDirectory: directory, durability: 'persistent' });
+      const mid = (await restarted.getProposal(OWNER, context.fixture.projectId, context.proposal.proposal_id)).proposal;
+      assert.equal(mid.state, PROPOSAL_STATE.ACCEPTED, `${hook}: accepted, not applied`);
+      assert.equal(mid.application.run_resume_called, true, `${hook}: the run admitted it`);
+      assert.equal(mid.application.conflict, null, `${hook}: and no outcome was ever recorded`);
+      assert.equal(mid.application.run_revision_at_attempt, null, `${hook}: so nothing pinned where it stopped`);
+      const runAtDeath = (await restarted.getRun(OWNER, context.fixture.projectId, context.run.run_id)).run;
+      assert.ok(runAtDeath.revision > context.run.revision, `${hook}: its application moved the run before the process died`);
+
+      // Its application may have landed, so it cannot be taken back.
+      await assert.rejects(
+        restarted.resolveProposal(OWNER, context.fixture.projectId, context.proposal.proposal_id, { resolution: 'withdraw', reason: 'The process died.' }),
+        error => error.code === 'PROPOSAL_CONFLICT',
+      );
+
+      // It used to be unfinishable from here: every retry carried the revision
+      // the acceptance observed, the run -- moved by this application's own
+      // writes -- refused it at its precondition before admitting it, and a
+      // refused attempt pins nothing, so the next retry was identical. The
+      // run's own record says its latest write was this application's, so the
+      // retry continues from there, and the run's reconciliation settles
+      // whatever step the dead process left pending.
+      const retry = await acceptIn(restarted, context);
+      assert.ok(retry.ok, `${hook}: the retry must finish the application, got ${retry.error?.code}: ${retry.error?.message}`);
+      assert.equal(retry.result.proposal.state, PROPOSAL_STATE.APPLIED);
+      assert.equal(retry.result.proposal.application.settled_on_retry, true);
+      assert.equal(retry.result.run.pending_step, null, `${hook}: nothing is left pending`);
+      const candidates = await candidatesOf(restarted, context.fixture.projectId);
+      assert.equal(candidates.length, 1, `${hook}: exactly one candidate for one acceptance, got ${candidates.length}`);
+      assert.equal(retry.result.run.candidate_id, candidates[0].candidate_id, hook);
+    });
+  }
+});
+
+test('after a process died inside the run, a retry is refused once another writer has moved the run', async () => {
+  // Continuing from the run's latest write is safe only because the run says
+  // which request made it: the idempotency key AND the request. Three other
+  // writers land between the death and the retry: a reviewer with a decision
+  // set of their own; a caller who sends exactly this acceptance's payload by
+  // hand, without its key; and a caller who reuses the acceptance's own key
+  // with a different payload and is interrupted before the key is bound. None
+  // of those writes is this application's, so the retry is refused at the
+  // run's precondition and moves nothing.
+  const theirs = project => runDecisionsFor(project, { acceptedBy: 'a-different-reviewer' })
+    .map(decision => (decision.fromRole === 'Chord5'
+      ? { ...decision, id: `omit:${decision.id}`, type: 'OMIT_FROM_SIX', reason: 'The reviewer dropped this role.' }
+      : decision));
+  for (const writer of ['reviewer', 'same-payload-without-key', 'same-key-other-payload']) {
+    await withDirectory(async directory => {
+      const app = createStudioApplication({ dataDirectory: directory, durability: 'persistent' });
+      const context = await submitted(app);
+      const dying = dyingInside(directory, 'beforeEffect');
+      acceptIn(dying.app, context);
+      await dying.stopped;
+
+      let interruptOther = false;
+      const restarted = createStudioApplication({
+        dataDirectory: directory,
+        durability: 'persistent',
+        runHooks: { beforeResponse: ({ step }) => { if (interruptOther && step === RUN_STEP.APPLY_DECISIONS) { interruptOther = false; throw Error('the other request stopped before its response'); } } },
+      });
+      const key = (await restarted.getProposal(OWNER, context.fixture.projectId, context.proposal.proposal_id)).proposal.application.idempotency_key;
+      if (writer === 'reviewer') {
+        await restarted.resumeRun(OWNER, context.fixture.projectId, context.run.run_id, {
+          decisions: theirs(context.fixture.project), accepted_by: 'a-different-reviewer',
+        });
+      } else if (writer === 'same-payload-without-key') {
+        // What the acceptance translates this proposal into, sent by hand.
+        await restarted.resumeRun(OWNER, context.fixture.projectId, context.run.run_id, {
+          decisions: context.proposal.action.decisions, accepted_by: RUN_REVIEWER,
+        });
+      } else {
+        interruptOther = true;
+        await assert.rejects(restarted.resumeRun(OWNER, context.fixture.projectId, context.run.run_id, {
+          idempotency_key: key, decisions: theirs(context.fixture.project), accepted_by: 'a-different-reviewer',
+        }), /stopped before its response/);
+      }
+      const runBefore = (await restarted.getRun(OWNER, context.fixture.projectId, context.run.run_id)).run;
+      const candidatesBefore = await candidatesOf(restarted, context.fixture.projectId);
+      assert.equal(candidatesBefore.length, 1, `${writer}: the other writer's application landed`);
+
+      for (let round = 0; round < 2; round += 1) {
+        const retry = await acceptIn(restarted, context);
+        assert.equal(retry.ok, false, `${writer}: retry ${round + 1} may not finish the acceptance onto a run another writer moved`);
+        assert.equal(retry.error.code, 'RUN_CONFLICT', `${writer}: ${retry.error.code}: ${retry.error.message}`);
+        assert.equal(retry.error.details.admitted_by_run, false, writer);
+      }
+      const runAfter = (await restarted.getRun(OWNER, context.fixture.projectId, context.run.run_id)).run;
+      assert.equal(runAfter.revision, runBefore.revision, `${writer}: the refused retries did not touch the run`);
+      assert.equal(runAfter.candidate_id, runBefore.candidate_id, writer);
+      assert.deepEqual(await candidatesOf(restarted, context.fixture.projectId), candidatesBefore, `${writer}: and minted nothing`);
+      const settled = (await restarted.getProposal(OWNER, context.fixture.projectId, context.proposal.proposal_id)).proposal;
+      assert.equal(settled.state, PROPOSAL_STATE.ACCEPTED, `${writer}: not recorded as applied`);
+      assert.equal(settled.application.conflict.code, 'RUN_CONFLICT', `${writer}: the blocker is on the record`);
+    });
+  }
 });
 
 test('a rejection after an acceptance is refused, because the run may already have it', async () => {
