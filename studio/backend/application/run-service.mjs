@@ -3421,11 +3421,29 @@ export function createRunService({ canonical, projects, store, operations, seria
       return Object.freeze({ run: await advance(owner, projectId, created.run.run_id, normalized), replayed: false, advanced: true });
     },
 
-    /** Re-check an existing run and advance it with new input. */
-    async resume(owner, projectId, runId, input = {}) {
+    /**
+     * Re-check an existing run and advance it with new input.
+     *
+     * `admit` is for an in-process caller that has to know, truthfully,
+     * whether its request got INTO the run rather than merely reached this
+     * method -- today the proposal service, whose acceptance may be taken back
+     * only while none of its attempts has. It is not a resume input: the public
+     * `resumeRun` passes four arguments, so no transport reaches it. It is
+     * called once, inside this call's first lock hold, AFTER every refusal
+     * that hold makes (the idempotency fingerprint, the revision precondition,
+     * the audit-closed guard, the adoption checks) and BEFORE the hold's first
+     * write -- or before a replay or a settled answer is returned. So a request
+     * this method refused was never admitted, and wrote nothing; a request it
+     * acts on was admitted before anything was written; and the caller's own
+     * record of which it was is written under the same lock as that first
+     * write. `admit` can only refuse, never widen: if it throws, the request is
+     * refused with nothing written to the run.
+     */
+    async resume(owner, projectId, runId, input = {}, { admit = null } = {}) {
       const normalized = normalizeRunInput(input, { label: 'resume input', allowed: RESUME_INPUT_KEYS });
       const fingerprint = requestFingerprintOf(normalized);
       const provenance = await canonical.provenance();
+      const admitted = async () => { if (typeof admit === 'function') await admit(); };
 
       const prepared = await serialize(String(projectId), async () => {
         const record = projects.load(owner, projectId);
@@ -3452,6 +3470,7 @@ export function createRunService({ canonical, projects, store, operations, seria
               run_id: run.run_id, bound_request_fingerprint: receipt.request_fingerprint, received_request_fingerprint: fingerprint,
             });
           }
+          await admitted();
           return { run, replayed: true, receipt };
         }
         if (normalized.expected_run_revision !== null && normalized.expected_run_revision !== run.revision) {
@@ -3479,9 +3498,14 @@ export function createRunService({ canonical, projects, store, operations, seria
               available_operations: ['getRun', 'getArtifact', 'startRun'],
             });
           }
+          await admitted();
           return { run, replayed: false, settled: true };
         }
-        return { run: bumpRun(owner, projectId, run, resumeChanges(owner, record, run, normalized, provenance)), replayed: false };
+        // Every refusal of this hold is above this line, including the ones
+        // `resumeChanges` makes, and every write is below it.
+        const changes = resumeChanges(owner, record, run, normalized, provenance);
+        await admitted();
+        return { run: bumpRun(owner, projectId, run, changes), replayed: false };
       });
 
       if (prepared.settled) {

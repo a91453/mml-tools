@@ -328,11 +328,13 @@ would then read as stale to a policy looking at revisions. What stands in its
 place is the run's, not this layer's — the same idempotency key, and the
 revision precondition carried forward to where the interrupted attempt left the
 run, so a retry can only finish the application it is a retry of. A retry of an
-acceptance none of whose attempts ever handed its input to the run
+acceptance none of whose attempts the run ever admitted
 (`run_resume_called: false`) has moved nothing, and is **not** excepted: the
 policy grades it again, exactly as it graded the first acceptance, so one whose
-run or material has moved since is refused, and can still be withdrawn. §7 is
-the whole argument.
+run or material has moved since is refused, and can still be withdrawn. That
+includes an acceptance whose attempts reached `runs.resume` and were refused
+there, before the run wrote anything — at its revision precondition, say,
+because another application moved the run first. §7 is the whole argument.
 
 ## 7. Acceptance, and why there is only one mutation path
 
@@ -438,31 +440,68 @@ is therefore
                     key `proposal:<proposal_id>:<revision>` and the run
                     revision observed now
 2. no lock          translate
-2b. under the lock  re-read the proposal; unless it was rejected or withdrawn
-                    meanwhile, record run_resume_called: true (never cleared)
    no lock          call runs.resume with that key and that revision as
                     expected_run_revision
+2b. inside the run's own first lock hold, after every refusal of the run's own
+                    and before its first write (resume's `admit` option):
+                    re-read the proposal; if it was rejected or withdrawn
+                    meanwhile, refuse, and the run writes nothing; otherwise
+                    record run_resume_called: true (never cleared)
 3. under the lock   record the outcome; for a failure, and only once, the
-                    revision an attempt that reached the run left it at
+                    revision an attempt the run admitted left it at
 ```
 
 **An acceptance that never reached the run can still be taken back.**
-`run_resume_called` is written *before* the call, so `false` means no attempt
-ever handed the input to the run, and only then may an accepted proposal be
-rejected or withdrawn (the acceptance stays on the record as
-`resolution.superseded_acceptance`). Once it is `true` — or absent, on a record
-accepted before the field existed, where nothing can establish that no attempt
-reached the run — the refusal stands and says which of the two it is. This is
-race-free without refusing while an attempt is in flight: the withdrawal and
-hold 2b take the same lock, so either the withdrawal lands first and the attempt
-stops before the run, or the marker lands first and the withdrawal is refused.
-A retry of an acceptance whose marker is still `false` goes through the policy
-again, since nothing of it has moved the run: if a reviewer advanced the run
-meanwhile, or the material moved, the retry is refused as `STALE` before it
-reaches the run, and the proposal can still be withdrawn. A regression moves the
-run between a failed attempt and its retry and requires exactly that; carried
-past the policy instead, the retry reached the run with its old precondition,
-set the marker, and left the proposal accepted and not withdrawable again.
+`run_resume_called` is written when the run **admits** an attempt — inside the
+run's own first lock hold, after the run has made every refusal of its own (the
+idempotency fingerprint, the revision precondition, the audit-closed guard, the
+adoption checks) and before it writes anything. So `false` means the run never
+let any attempt in and nothing of this acceptance has changed it, and only then
+may an accepted proposal be rejected or withdrawn (the acceptance stays on the
+record as `resolution.superseded_acceptance`). Once it is `true` — or absent, on
+a record accepted before the field existed, where nothing can establish that no
+attempt reached the run — the refusal stands and says which of the two it is.
+This is race-free without refusing while an attempt is in flight: the
+withdrawal and the admission take the same lock, so either the withdrawal lands
+first and the run refuses the attempt with nothing written, or the marker lands
+first and the withdrawal is refused. A retry of an acceptance whose marker is
+still `false` goes through the policy again, since nothing of it has moved the
+run: if a reviewer advanced the run meanwhile, or the material moved, the retry
+is refused as `STALE` before it reaches the run, and the proposal can still be
+withdrawn. A regression moves the run between a failed attempt and its retry
+and requires exactly that; carried past the policy instead, the retry reached
+the run with its old precondition, set the marker, and left the proposal
+accepted and not withdrawable again.
+
+**Why the admission, and not a hold of this layer's own before the call.** The
+marker used to be written in a short hold of the proposal layer's own just
+before `runs.resume`. That counted an attempt the run then *refused* as one that
+had reached it, although a refusal at the run's precondition happens under the
+run's lock before anything is written. An independent review drove two
+different acceptances of one request at once: the second reached `runs.resume`
+after the first had moved the run, was refused at its precondition, and —
+counted as having reached the run — pinned the revision the *first* application
+had left the run at. Its retry skipped the policy on the marker's word, passed its precondition
+against that borrowed revision and moved the run: recorded `applied`, naming an
+advancement it had not caused, while the policy graded it `STALE` at the same
+moment — the standing permission below, back through a refusal. (Before the hold
+existed the same path pinned a revision taken mid-way through the other
+application and stuck on `RUN_CONFLICT`: true, but not withdrawable.) Two ways
+to tell the cases apart were available. A flag on the run's refusals would have
+to be attached to every refusal the run makes before its first write, and one
+added later without it would read as "may have written" and reopen the hole for
+that refusal; and the marker would still be written before the call, so taking
+it back after a refusal would need per-attempt bookkeeping to stay correct while
+another attempt of the same acceptance is admitted and in flight. The admission
+has neither problem: it is the one point where the run passes from refusing to
+writing, the marker is written there under the same lock as the run's first
+write, and nothing classifies the run's errors. `admit` is not a resume input —
+the public `resumeRun` passes none, so no transport reaches it — and it can only
+refuse, never widen what the run accepts. Two regressions drive the refusal: the
+review's two concurrent acceptances, and a human reviewer's manual resume landing
+while an acceptance is being translated. Each requires the refused attempt to
+pin nothing and leave the marker `false`, its retry to be refused as `STALE` with
+the run untouched, and the proposal to stay withdrawable.
 
 The window in the middle is closed with what Phase 1 already built rather than a
 second mechanism:
@@ -512,18 +551,20 @@ same terminal state a persistently refusing run already produces, and the remedy
 is the one that state always had, a fresh proposal against the request as it
 stands.
 
-And it is written only by an attempt that **reached** the run. One that failed
-before `runs.resume` — in the translation, say — left the run nowhere, so the
-revision the run happens to be at is no fact about it; but it used to be
-written all the same, and being written once, it could not then move to where
-a later attempt that did reach the run was interrupted. The retry after that
-failed its precondition with `RUN_CONFLICT` against a revision no interrupted
-attempt had left, with `run_resume_called` already `true`: accepted, open and
-not withdrawable for good, the same stuck state one attempt later. Left unset,
-a retry carries the revision the acceptance observed, which the policy that
-retry goes back through checks against the run first. A regression drives a
-pre-run failure, then an attempt interrupted inside the run, then a retry that
-must finish with exactly one new candidate.
+And it is written only by an attempt the run **admitted**. One that never got
+in — it failed before `runs.resume`, in the translation, say, or the run refused
+it before writing anything — left the run nowhere, so the revision the run
+happens to be at is no fact about it. Written by a pre-run failure, being
+written once, it could not then move to where a later attempt that did get in
+was interrupted: the retry after that failed its precondition with
+`RUN_CONFLICT` against a revision no interrupted attempt had left, with
+`run_resume_called` already `true` — accepted, open and not withdrawable for
+good, the same stuck state one attempt later. Written by an attempt the run
+refused, it was the revision *another* application had left the run at (above).
+Left unset, a retry carries the revision the acceptance observed, which the
+policy that retry goes back through checks against the run first. A regression
+drives a pre-run failure, then an attempt interrupted inside the run, then a
+retry that must finish with exactly one new candidate.
 
 **A retry does not re-litigate the acceptance.** An acceptance is a recorded past
 act; a crash between it and its application advances the run, which makes the
@@ -534,7 +575,7 @@ taken on trust, because safety there is the run's: the same key, and the
 carried-forward revision precondition that pins the retry to the run the
 acceptance was applying to. This mirrors Phase 1's own ordering, where an
 idempotency replay is decided *before* the audit-closed guard. A proposal whose
-marker says no attempt reached the run has nothing of the kind to finish, and
+marker says the run admitted no attempt has nothing of the kind to finish, and
 is graded again (above).
 
 The one genuinely ambiguous state — the run advanced but its receipt was not
@@ -792,7 +833,7 @@ No mock stands in anywhere.
 | `studio/tests/proposal-agent-review-policy.test.mjs` | the Lead evidence boundary, Gate 8, Gate 9, the ladder, recomputation |
 | `studio/tests/proposal-duplication.test.mjs` | one acceptance, one application — across retries, concurrency and a crash in the window |
 | `studio/tests/proposal-adversarial.test.mjs` | the four escalations an independent adversarial review found, kept in the shape they were found in |
-| `studio/tests/proposal-untranslatable.test.mjs` | a proposal the acceptance could never translate is `INVALID` before it is accepted, and one whose plan cannot be derived from the stored material is `STALE`; an acceptance that never reached the run can be withdrawn, race-free, is graded again on a retry, and pins no revision; one that may have reached it cannot be withdrawn |
+| `studio/tests/proposal-untranslatable.test.mjs` | a proposal the acceptance could never translate is `INVALID` before it is accepted, and one whose plan cannot be derived from the stored material is `STALE`; an acceptance the run never admitted — failed before the run, or refused by the run before it wrote anything, because another acceptance or a reviewer moved it first — can be withdrawn, race-free, is graded again on a retry, and pins no revision; one that may have reached it cannot be withdrawn |
 | `studio/tests/proposal-plan-derivation-memo.test.mjs` | the policy derives a plan once per set of inputs, and a held outcome is never served for any other: each input moved on its own, and a derivation a change may have raced, is derived afresh |
 | `tests/proposal-transport.test.mjs` | HTTP/MCP parity, and what Phase 2 did not add |
 

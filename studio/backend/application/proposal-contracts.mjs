@@ -257,9 +257,10 @@ export const PROPOSAL_STATE = freeze({
   SUBMITTED: 'submitted',
   /**
    * Explicitly accepted by a named reviewer; the existing operation is being
-   * reached. Its `application.run_resume_called` says whether any attempt ever
-   * handed the prepared input to the run: while it is `false`, nothing reached
-   * the run and the proposal may still be rejected or withdrawn.
+   * reached. Its `application.run_resume_called` says whether the run ever
+   * admitted an attempt -- let the prepared input past every refusal of its
+   * own, before writing anything: while it is `false`, nothing reached the run
+   * and the proposal may still be rejected or withdrawn.
    */
   ACCEPTED: 'accepted',
   /** The existing operation was called with the input this proposal prepared. */

@@ -15,10 +15,12 @@
 //
 //   * the policy runs the same derivation and grades a failure INVALID, so
 //     such a proposal is refused BEFORE an acceptance is recorded;
-//   * an acceptance records, under the lock and before the call, that an
-//     attempt is about to reach `runs.resume`. While no attempt has, the
-//     proposal may still be rejected or withdrawn; once one has, it may not,
-//     and the refusal says which of the two it is.
+//   * an acceptance records when the run ADMITS one of its attempts -- inside
+//     the run's own first lock hold, after the run's own refusals and before
+//     its first write. While the run has admitted none, the proposal may still
+//     be rejected or withdrawn, and a retry is graded by the policy again,
+//     including after an attempt the run refused before writing anything; once
+//     one is admitted, it may not, and the refusal says which of the two it is.
 
 import test from 'node:test';
 import assert from 'node:assert/strict';
@@ -594,6 +596,147 @@ test('an attempt that never reached the run does not pin the revision a later in
   assert.equal(third.result.proposal.application.settled_on_retry, true);
   const minted = (await candidatesOf(app, context)).filter(entry => !candidatesBefore.some(before => before.candidate_id === entry.candidate_id));
   assert.equal(minted.length, 1, 'one acceptance, one application');
+});
+
+test('an attempt the run refuses at its own precondition changed nothing: it pins no revision, and its retry is graded again and refused', async () => {
+  // Two different, valid reduction proposals on one request, accepted at once.
+  // Both are graded against, and record, the same run revision. The first to
+  // reach the run is applied. The other reaches `runs.resume` after the run
+  // has moved, and the run refuses it at its own revision precondition --
+  // under its lock, before it writes anything. That attempt changed nothing.
+  //
+  // It used to count as one that had reached the run all the same, because the
+  // marker was written before the call: phase 3 pinned the revision the OTHER
+  // application had left the run at, the retry skipped the policy on the
+  // strength of the marker, passed its precondition against that borrowed
+  // revision and moved the run -- recorded `applied`, naming an advancement it
+  // had not caused, while the policy graded it STALE at the same moment.
+  const app = createStudioApplication({});
+  const context = await runAwaitingReduction(app);
+  const alternative = [{ ...REDUCTION_DECISIONS[0], id: 'place-chord5-alternative', reason: 'Another reading of the same lane: placed in the free enrichment role as a separate decision.' }];
+  const planOf = async decisions => (await app.planFinalReduction(OWNER, context.fixture.projectId, {
+    candidateId: context.run.candidate_id, decisions, acceptedBy: RUN_REVIEWER,
+  })).reduction.plan.id;
+  const alternativePlan = await planOf(alternative);
+  assert.notEqual(await planOf(REDUCTION_DECISIONS), alternativePlan, 'two different applications of one request');
+  const proposals = [
+    (await proposeReduction(app, context, { decisions: REDUCTION_DECISIONS })).proposal,
+    (await proposeReduction(app, context, { decisions: alternative }, 'Place the unassigned lane, read as a separate decision.')).proposal,
+  ];
+  for (const proposal of proposals) assert.equal(proposal.agent_review.verdict, AGENT_REVIEW.REQUIRES_EXPLICIT_ACCEPTANCE, JSON.stringify(proposal.agent_review));
+  const candidatesBefore = await candidatesOf(app, context);
+
+  const outcomes = await Promise.all(proposals.map(proposal => accept(app, context, proposal.proposal_id)));
+  assert.equal(outcomes.filter(outcome => outcome.ok).length, 1, `exactly one is applied: ${JSON.stringify(outcomes.map(outcome => outcome.ok || outcome.error.code))}`);
+  const winner = outcomes.find(outcome => outcome.ok).result;
+  const refused = outcomes.find(outcome => !outcome.ok).error;
+  const loser = proposals[outcomes.findIndex(outcome => !outcome.ok)];
+
+  // The run's own refusal, at its precondition: the revision both acceptances
+  // observed, and a run that had moved past it.
+  assert.equal(refused.code, 'RUN_CONFLICT', `${refused.code}: ${refused.message}`);
+  assert.equal(refused.details.expected_run_revision, context.run.revision);
+  assert.notEqual(refused.details.current_run_revision, context.run.revision);
+  assert.equal(refused.details.run_resume_called, false, 'the run admitted nothing of it');
+  assert.match(refused.details.notice, /refused this attempt before admitting it/);
+
+  const runAfterWinner = await runOf(app, context);
+  assert.equal(runAfterWinner.candidate_id, winner.run.candidate_id);
+  const candidatesAfterWinner = await candidatesOf(app, context);
+  assert.equal(candidatesAfterWinner.length, candidatesBefore.length + 1, 'one application landed');
+
+  const read = async () => (await app.getProposal(OWNER, context.fixture.projectId, loser.proposal_id)).proposal;
+  const mid = await read();
+  assert.equal(mid.state, PROPOSAL_STATE.ACCEPTED);
+  assert.equal(mid.application.conflict.code, 'RUN_CONFLICT', 'the refusal is on the record');
+  assert.equal(mid.application.conflict.admitted_by_run, false, 'and so is that the run never admitted it');
+  assert.equal(mid.application.run_revision_at_attempt, null, 'it left the run nowhere, so it pins nothing');
+  assert.equal(mid.application.run_resume_called, false);
+  assert.equal(mid.agent_review.verdict, AGENT_REVIEW.STALE);
+
+  // The retry goes back through the policy, which refuses it: the run moved
+  // on without it. It is not applied onto the run the other application left.
+  const retry = await accept(app, context, loser.proposal_id);
+  assert.equal(retry.ok, false, 'not applied onto a run another application moved');
+  assert.equal(retry.error.code, 'PROPOSAL_REFUSED', `${retry.error.code}: ${retry.error.message}`);
+  assert.equal(retry.error.details.agent_review.verdict, AGENT_REVIEW.STALE);
+  assert.ok(retry.error.details.agent_review.refusals.includes('RUN_REVISION_CHANGED'));
+  const runNow = await runOf(app, context);
+  assert.equal(runNow.revision, runAfterWinner.revision, 'the refused retry did not touch the run');
+  assert.equal(runNow.candidate_id, runAfterWinner.candidate_id);
+  const candidatesNow = await candidatesOf(app, context);
+  assert.deepEqual(candidatesNow, candidatesAfterWinner, 'and minted nothing');
+  assert.ok(!candidatesNow.some(entry => (entry.decision_ids ?? []).includes(alternativePlan)), 'no candidate carries the refused plan');
+
+  // Nothing of it ever reached the run, so it can still be withdrawn.
+  const withdrawn = await app.resolveProposal(OWNER, context.fixture.projectId, loser.proposal_id, {
+    resolution: 'withdraw', reason: 'The request was answered by the other proposal.',
+  });
+  assert.equal(withdrawn.proposal.state, PROPOSAL_STATE.WITHDRAWN);
+  assert.match(withdrawn.notice, /never reached the run/);
+  assert.equal((await runOf(app, context)).revision, runAfterWinner.revision);
+});
+
+test('a human reviewer who moves the run while an acceptance is on its way to it leaves that acceptance refused, not borrowed', async () => {
+  // The same defect with a person as the other actor. The acceptance is
+  // graded and recorded under the lock; while it is being translated a
+  // reviewer applies a reduction of their own by hand; the acceptance then
+  // reaches `runs.resume` and the run refuses it at its precondition. The
+  // reviewer's revision is not the acceptance's to finish on.
+  const other = 'another-human-reviewer';
+  const manual = { started: null };
+  let plan = null;
+  let context = null;
+  const app = createStudioApplication({
+    loadEngines: enginesWith(engines => ({
+      reduction: {
+        ...engines.reduction,
+        planFinalReduction: input => {
+          // Only the acceptance's own translation plans under the accepting
+          // reviewer; the policy's derivation and the reviewer's own step do
+          // not. Once, and without waiting: the reviewer's request is simply
+          // in flight by the time the translation returns.
+          if (plan && !manual.started && input.acceptedBy === RUN_REVIEWER) {
+            manual.started = app.resumeRun(OWNER, context.fixture.projectId, context.run.run_id, {
+              final_reduction: { decisions: REDUCTION_DECISIONS, expected_plan_id: plan.id, accepted_by: other },
+            });
+          }
+          return engines.reduction.planFinalReduction(input);
+        },
+      },
+    })),
+  });
+  context = await runAwaitingReduction(app);
+  const submitted = await proposeReduction(app, context, { decisions: REDUCTION_DECISIONS });
+  assert.equal(submitted.proposal.agent_review.verdict, AGENT_REVIEW.REQUIRES_EXPLICIT_ACCEPTANCE);
+  plan = (await app.planFinalReduction(OWNER, context.fixture.projectId, { candidateId: context.run.candidate_id, decisions: REDUCTION_DECISIONS, acceptedBy: other })).reduction.plan;
+
+  const first = await accept(app, context, submitted.proposal.proposal_id);
+  assert.ok(manual.started, 'the reviewer acted while the acceptance was being translated');
+  const reviewed = await manual.started;
+  assert.equal(first.ok, false);
+  assert.equal(first.error.code, 'RUN_CONFLICT', `${first.error.code}: ${first.error.message}`);
+  assert.equal(first.error.details.expected_run_revision, context.run.revision, 'refused at the precondition the acceptance recorded');
+  assert.equal(first.error.details.run_resume_called, false);
+  assert.equal(first.error.details.admitted_by_run, false);
+  const runAfterReviewer = await runOf(app, context);
+  assert.equal(runAfterReviewer.candidate_id, reviewed.run.candidate_id, 'the reviewer\'s application is the run\'s');
+  const candidatesAfterReviewer = await candidatesOf(app, context);
+
+  const mid = (await app.getProposal(OWNER, context.fixture.projectId, submitted.proposal.proposal_id)).proposal;
+  assert.equal(mid.application.run_revision_at_attempt, null, 'the reviewer\'s revision is not pinned as this acceptance\'s');
+  assert.equal(mid.application.run_resume_called, false);
+
+  const retry = await accept(app, context, submitted.proposal.proposal_id);
+  assert.equal(retry.ok, false);
+  assert.equal(retry.error.code, 'PROPOSAL_REFUSED', `${retry.error.code}: ${retry.error.message}`);
+  assert.equal(retry.error.details.agent_review.verdict, AGENT_REVIEW.STALE);
+  assert.equal((await runOf(app, context)).revision, runAfterReviewer.revision, 'the run is where the reviewer left it');
+  assert.deepEqual(await candidatesOf(app, context), candidatesAfterReviewer);
+  const withdrawn = await app.resolveProposal(OWNER, context.fixture.projectId, submitted.proposal.proposal_id, {
+    resolution: 'withdraw', reason: 'Superseded by the reviewer\'s own reduction.',
+  });
+  assert.equal(withdrawn.proposal.state, PROPOSAL_STATE.WITHDRAWN);
 });
 
 test('an acceptance recorded before the marker existed is not guessed about', async () => {
