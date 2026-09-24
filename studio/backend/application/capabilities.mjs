@@ -41,6 +41,11 @@ export const INTERFACE_VERSION = 'studio-application/v1';
 // Named so a report can cite it without re-deriving the claim.
 export const AUDIO_WORKER_ROLE = 'original-audio-evidence-alignment';
 
+// How a Lead citation carried by an accepted decision is graded, stated beside
+// the operation that answers Gate 3 so an agent is not sent to a path that
+// cannot answer it.
+const LEAD_DECISION_TIME_CITATION = 'applyDecisions.leadEvidence is graded at review and finalize on the project source each classified score/audio item cites (ref), like a reviewLeadEvidence citation; a decision states no audio method, so its audio classification is a machine metric and never positive role evidence. On that path only an official score the project holds, cited by ref, can prove the role; an uncited or third-party citation leaves the axis PENDING. A move already applied is answered through reviewLeadEvidence.';
+
 /**
  * Build the capability record.
  *
@@ -148,6 +153,10 @@ export function buildCapabilities({ canonical, storage, jobs, transports = [] })
       // source (`ref`) that must be an official score or the original recording
       // the project holds; a machine-metric audio basis is never positive.
       lead_evidence_graded_on_evidence_not_submitter: true,
+      // A decision's own `leadEvidence`, recovered from the lineage, is resolved
+      // against the project's sources the same way before it is graded, and
+      // its audio classification -- a decision states no method -- is a metric.
+      lead_decision_citation_source_resolution: true,
       // The Published Canonical validator, and the legacy engine kept beside it
       // as an explicitly labelled diagnostic whose PASS is not a Canonical PASS.
       canonical_technical_validation: true,
@@ -362,8 +371,15 @@ export function buildCapabilities({ canonical, storage, jobs, transports = [] })
         { axis: 'core3_source_continuity', gate: 'Gate 4 (source continuity)', readiness_gate: 'core3', operation: 'approveCore3SourceChange' },
         { axis: 'core3_completeness', gate: 'Gate 4 (musical completeness)', readiness_gate: 'core3Completeness', operation: 'recordConfirmations.core3_completeness_reviewed' },
         { axis: 'original_audio_review', gate: 'Gate 7 (role / prominence / sustain / articulation / recording-structure review)', readiness_gate: 'originalAudio', operation: 'recordConfirmations.original_audio_reviewed' },
-        { axis: 'lead_promotion', gate: 'Gate 3 (promotion into Melody)', readiness_gate: 'leadPromotion', operation: 'applyDecisions.leadEvidence / reviewLeadEvidence' },
-        { axis: 'lead_demotion', gate: 'Gate 3 (demotion out of Melody)', readiness_gate: 'leadDemotion', operation: 'applyDecisions.leadEvidence / reviewLeadEvidence' },
+        // `reviewLeadEvidence` is the operation that answers a Lead axis with
+        // resolved evidence: its classified score/audio citations name project
+        // sources by `ref`, and it states how an audio classification was
+        // established. A decision's own `leadEvidence` is graded the same way
+        // at review and finalize, except that it states no audio method, so its
+        // audio classification is a locator: on that path only an official
+        // score the project holds, cited by `ref`, proves the role.
+        { axis: 'lead_promotion', gate: 'Gate 3 (promotion into Melody)', readiness_gate: 'leadPromotion', operation: 'reviewLeadEvidence', decision_time_citation: LEAD_DECISION_TIME_CITATION },
+        { axis: 'lead_demotion', gate: 'Gate 3 (demotion out of Melody)', readiness_gate: 'leadDemotion', operation: 'reviewLeadEvidence', decision_time_citation: LEAD_DECISION_TIME_CITATION },
       ]),
       // Each of these moves only through an explicit, candidate-bound,
       // evidence-backed review. Parser/emitter/test success never sets one, and

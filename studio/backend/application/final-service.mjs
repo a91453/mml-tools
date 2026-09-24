@@ -201,8 +201,10 @@ export function createFinalService({ canonical, projects, review, store }) {
       // candidate-bound Lead evidence re-reviews reach it too, from the same
       // `review.context()` -- so a citation a reviewer re-supplied is graded
       // here by the same shared gate, and Finalize cannot be satisfied by a
-      // path review does not see, or refuse one review accepts.
-      const leadReportInputs = { applications: ctx.applicationLineage, baseline: baselineProject, candidate: application.candidate, freshReviews: ctx.gradedLeadEvidenceReviews };
+      // path review does not see, or refuse one review accepts. The lineage is
+      // the prepared one review reads: each decision's Lead citation resolved
+      // against the project's sources, its audio classification a metric.
+      const leadReportInputs = { applications: ctx.gradedApplicationLineage, baseline: baselineProject, candidate: application.candidate, freshReviews: ctx.gradedLeadEvidenceReviews };
       const leadDemotionReports = engines.arrangement.leadDemotionReportsFromLineage(leadReportInputs);
       const leadPromotionReports = engines.arrangement.leadPromotionReportsFromLineage(leadReportInputs);
       const lineage = engines.compare.compareCandidateLineage({ sourceBaseline: baselineProject, acceptedPrevious: parent, candidate: project });

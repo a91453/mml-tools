@@ -351,6 +351,9 @@ test('a Core3 approval does not travel to another candidate', async () => {
 
 test('an accepted role decision and its Lead evidence are not a Core3 approval', async () => {
   const { service, fixture, projectId } = await applicationWithBaseline();
+  // The citation names an official score the project holds: a decision's Lead
+  // citation is graded on the source it cites (SOURCE_POLICY §1).
+  const score = (await service.uploadAsset(OWNER, projectId, { kind: 'official_musicxml', filename: 'score.musicxml', mediaType: 'application/xml', bytes: new TextEncoder().encode('fixture official score') })).asset.asset_id;
   // A Lead promotion with complete positive evidence, which also moves Core3
   // material: the promotion gate passes and the Core3 change stays unapproved.
   const applied = await service.applyDecisions(OWNER, projectId, {
@@ -365,7 +368,7 @@ test('an accepted role decision and its Lead evidence are not a Core3 approval',
       leadEvidence: {
         sourceIdentity: { sourceId: 'fixture:official-midi', sourceEventId: 'fixture:official-midi#chord1-1' },
         sectionRole: 'instrumental',
-        scoreEvidence: { availability: 'available', classification: 'lead', citation: 'fixture:score top staff' },
+        scoreEvidence: { availability: 'available', classification: 'lead', citation: 'fixture:score top staff', ref: score },
         audioEvidence: { availability: 'available', classification: 'foreground', citation: 'fixture:audio 0:00' },
         continuity: { checked: true, createsLeadGap: false, replacementEventIds: [] },
         core3: { checked: true, status: 'PASS' },

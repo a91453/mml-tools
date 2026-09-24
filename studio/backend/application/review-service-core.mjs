@@ -314,6 +314,41 @@ export function createReviewService({ canonical, projects, intake, arrangement, 
       return { ...review, leadEvidence: prepared.leadEvidence, evidenceSources: prepared.sources };
     });
 
+  // The revision lineage, prepared for the shared Lead grader the same way as
+  // the fresh reviews above. A decision's `leadEvidence` is the citation the
+  // lineage builders recover and re-grade for every Lead move an earlier
+  // revision made. Handed over as stored, it reached the grader with no
+  // resolved source and no stated audio method, and the grader reads both of
+  // those absences as the historical "may prove a role": an uncited or
+  // third-party score citation and an audio "metric" were positive role
+  // evidence, and Gate 3 passed on them (SOURCE_POLICY §1C, §6).
+  //
+  // Each applied decision's citation is therefore resolved against the
+  // project's evidence registry, as it is now, and graded with no attestation:
+  // a decision states no audio method, so a classified audio item is graded as
+  // a machine metric -- never positive role evidence -- and only a score
+  // citation naming an official score the project holds (`ref`) can prove a
+  // role on this path. A classified audio reading from a direct review of the
+  // recording is filed through `reviewLeadEvidence`, which states its method.
+  //
+  // Read-time only. The stored applications are not rewritten: a copy of each
+  // `applied[]` entry carries the prepared evidence, and nothing the
+  // integrity check reads (status, candidate, revision) is touched.
+  const gradedApplicationLineage = (applications, registry) => {
+    if (!Array.isArray(applications)) return applications;
+    return applications.map(application => {
+      if (!application || typeof application !== 'object' || !Array.isArray(application.applied)) return application;
+      return {
+        ...application,
+        applied: application.applied.map(entry => {
+          const evidence = entry?.leadEvidence;
+          if (!evidence || typeof evidence !== 'object' || Array.isArray(evidence)) return entry;
+          return { ...entry, leadEvidence: gradedLeadEvidenceOf(evidence, null, registry ?? null).leadEvidence };
+        }),
+      };
+    });
+  };
+
   /** Everything review and finalize both need, assembled once. */
   const context = async (owner, projectId, candidateId) => {
     // Checked by shape first, before the Canonical engines are loaded or the
@@ -348,7 +383,11 @@ export function createReviewService({ canonical, projects, intake, arrangement, 
     // both hand readiness: a recorded `false` counts only while the project,
     // its baseline and this review project hold no original audio.
     const originalAudioRequired = originalAudioRequiredFor(record, confirmations, [baselineProject, project]);
-    return { engines, record, baseline, baselineProject, entry, application, applicationLineage: arrangement.loadCandidateLineage(record, candidateId), core3Approvals: core3ApprovalsFor(record, candidateId), leadEvidenceReviews, gradedLeadEvidenceReviews: gradedLeadEvidenceReviews(leadEvidenceReviews, releaseEvidenceRegistry), confirmations, staleConfirmations: stale, audioReports, audioErrors, project, parent, candidateRulesSnapshot, loadedRulesSnapshot, releaseEvidenceRegistry, originalAudioRequired };
+    // The lineage exactly as stored, and the same lineage with every decision's
+    // Lead citation prepared for the grader. Every Lead report builder call
+    // (review, finalize, reviewLeadEvidence) reads the prepared one.
+    const applicationLineage = arrangement.loadCandidateLineage(record, candidateId);
+    return { engines, record, baseline, baselineProject, entry, application, applicationLineage, gradedApplicationLineage: gradedApplicationLineage(applicationLineage, releaseEvidenceRegistry), core3Approvals: core3ApprovalsFor(record, candidateId), leadEvidenceReviews, gradedLeadEvidenceReviews: gradedLeadEvidenceReviews(leadEvidenceReviews, releaseEvidenceRegistry), confirmations, staleConfirmations: stale, audioReports, audioErrors, project, parent, candidateRulesSnapshot, loadedRulesSnapshot, releaseEvidenceRegistry, originalAudioRequired };
   };
 
   /** Record an explicit confirmation. Each one needs a stated reason. */
@@ -648,7 +687,7 @@ export function createReviewService({ canonical, projects, intake, arrangement, 
       const graded = gradedLeadEvidenceReviews(leadEvidenceReviewsFor(record, candidateId), ctx.releaseEvidenceRegistry);
       const others = graded.filter(entry => !(entry.eventId === eventId && entry.axis === axis));
       const reportsWith = freshReviews => {
-        const inputs = { applications: ctx.applicationLineage, baseline: baselineProject, candidate: application.candidate, freshReviews };
+        const inputs = { applications: ctx.gradedApplicationLineage, baseline: baselineProject, candidate: application.candidate, freshReviews };
         return axis === axes.PROMOTION
           ? engines.arrangement.leadPromotionReportsFromLineage(inputs)
           : engines.arrangement.leadDemotionReportsFromLineage(inputs);
@@ -822,8 +861,10 @@ export function createReviewService({ canonical, projects, intake, arrangement, 
       // revision: a Lead move made three revisions ago still needs evidence
       // relative to the Source-Faithful baseline, and its evidence record lives
       // on the revision that made it. Every recovered record is re-graded
-      // against the current candidate, never carried forward as a stored PASS.
-      const leadReportInputs = { applications: ctx.applicationLineage, baseline: baselineProject, candidate: application.candidate, freshReviews: ctx.gradedLeadEvidenceReviews };
+      // against the current candidate, never carried forward as a stored PASS,
+      // and its citation is resolved against the project's sources first
+      // (`gradedApplicationLineage`), exactly as a fresh review's is.
+      const leadReportInputs = { applications: ctx.gradedApplicationLineage, baseline: baselineProject, candidate: application.candidate, freshReviews: ctx.gradedLeadEvidenceReviews };
       const leadDemotionReports = engines.arrangement.leadDemotionReportsFromLineage(leadReportInputs);
       const leadPromotionReports = engines.arrangement.leadPromotionReportsFromLineage(leadReportInputs);
       const readinessInputs = {

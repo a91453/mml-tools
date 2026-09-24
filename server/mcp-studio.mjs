@@ -192,7 +192,7 @@ export const STUDIO_MCP_TOOLS = [
   {
     name: 'studio_decisions_apply',
     title: '套用已接受的編排決定',
-    description: '將明確接受的決定集合交給既有 G11-D 套用流程，全有或全無。acceptance 綁定由服務依現在載入的 baseline 與聲部拆解計算，呼叫端不得提供。已有角色的 MOVE_ROLE 進出 Melody、複製進 Melody、以及 Lead demotion 都維持完整 leadEvidence 門檻。唯一候選流程例外是 role-less 來源第一次 ASSIGN_ROLE -> Melody：可不帶 leadEvidence 先產生明確 review-pending 的可逆候選；這不是 Lead evidence、不是 Gate 3 PASS，Final 前仍需 candidate-bound reviewer evidence。',
+    description: '將明確接受的決定集合交給既有 G11-D 套用流程，全有或全無。acceptance 綁定由服務依現在載入的 baseline 與聲部拆解計算，呼叫端不得提供。已有角色的 MOVE_ROLE 進出 Melody、複製進 Melody、以及 Lead demotion 都維持完整 leadEvidence 門檻。唯一候選流程例外是 role-less 來源第一次 ASSIGN_ROLE -> Melody：可不帶 leadEvidence 先產生明確 review-pending 的可逆候選；這不是 Lead evidence、不是 Gate 3 PASS，Final 前仍需 candidate-bound reviewer evidence。leadEvidence 的 scoreEvidence／audioEvidence 有分類時請附 ref（本專案的 asset_id 或 source id）：review 與 finalize 會依本專案來源解析後才交給 Lead grader，沒有 ref、對不到專案來源或第三方來源的引用不算正面角色證據（SOURCE_POLICY §1C）；決定不陳述音訊判定方法，其 audio 分類一律視為 machine metric，只是定位（§6）。因此此路徑只有本專案持有的官方譜能證明角色；以直接審閱原曲錄音為依據，或替已套用的 move 補證據，請用 studio_lead_evidence_review。',
     inputSchema: {
       type: 'object',
       properties: {

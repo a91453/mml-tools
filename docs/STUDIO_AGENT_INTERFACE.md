@@ -494,6 +494,17 @@ every step through the same `applicationIntegrity()` and refuses an inconsistent
 chain whole) and re-grade each recovered *evidence record* through the shared
 grader. No previous PASS is ever read.
 
+A recovered record is prepared for the grader exactly as a
+`studio_lead_evidence_review` citation is, at read time and without rewriting
+the stored application: each classified score/audio item is resolved against
+the project's sources by its `ref`, so an uncited citation, one that names
+nothing the project holds, or a third-party one is not positive role evidence
+(SOURCE_POLICY §1C). A decision states no audio method, so its audio
+classification is graded as a machine metric, a locator and never role evidence
+(§6). On the decision path only an official score the project holds, cited by
+`ref`, proves a role; a direct review of the recording is filed through
+`studio_lead_evidence_review`, which states its method.
+
 A recovered record is returned to `PENDING` rather than graded when the
 candidate has moved under it:
 

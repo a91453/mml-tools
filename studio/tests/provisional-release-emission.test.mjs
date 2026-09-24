@@ -37,7 +37,7 @@ import {
 import { createStudioApplication } from '../backend/application/index.mjs';
 import { createStore } from '../backend/application/store.mjs';
 import { unresolvedGatesFrom } from '../backend/application/review-service.mjs';
-import { OWNER, ALL_RELEASE_EVENTS, assign, oneTickEarlyBaseline, roleDecisions } from './fixtures/release-fixtures.mjs';
+import { OWNER, ALL_RELEASE_EVENTS, assign, oneTickEarlyBaseline, roleDecisions, uploadOfficialScore } from './fixtures/release-fixtures.mjs';
 
 const identity = (version, schema) => Object.freeze({ canonical_version: version, canonical_status: 'PUBLISHED', rules_snapshot_sha: 'd'.repeat(40), machine_delivery_schema: schema });
 const AT1 = identity('2026-09-23-v2', MACHINE_DELIVERY_SCHEMA_V1);
@@ -253,7 +253,10 @@ async function candidate(service, decisions) {
   const created = (await service.createProject(OWNER, { title: 'Provisional release delivery' })).project;
   await service.uploadAsset(OWNER, created.project_id, { kind: 'canonical_project', filename: 'b.json', mediaType: 'application/json', bytes: new TextEncoder().encode(JSON.stringify(baseline)) });
   await service.analyzeSources(OWNER, created.project_id);
-  const applied = await service.applyDecisions(OWNER, created.project_id, { decisions });
+  // `decisions` may be a function of the official score the project holds, for
+  // Lead citations that must name it by reference to prove a role.
+  const scoreRef = typeof decisions === 'function' ? await uploadOfficialScore(service, created.project_id) : null;
+  const applied = await service.applyDecisions(OWNER, created.project_id, { decisions: typeof decisions === 'function' ? decisions(scoreRef) : decisions });
   assert.equal(applied.decisions.applied, true, JSON.stringify(applied.decisions.rejected ?? null));
   return { projectId: created.project_id, candidateId: applied.decisions.candidate_id };
 }
@@ -265,7 +268,7 @@ async function withDirectory(work) {
 
 test('the Final service delivers under @2 with every rendering recorded, and refuses the same input under @1', async () => withDirectory(async directory => {
   const at2 = await serviceUnder(AT2, join(directory, 'at2'));
-  const { projectId, candidateId } = await candidate(at2, roleDecisions());
+  const { projectId, candidateId } = await candidate(at2, scoreRef => roleDecisions({ scoreRef }));
   const store = createStore({ directory: join(directory, 'at2') });
   const storedBefore = structuredClone(store.getJson(`application:${projectId}:${candidateId}`));
 
@@ -298,7 +301,7 @@ test('the Final service delivers under @2 with every rendering recorded, and ref
 
   // @1: the same input is refused before the emitter runs.
   const at1 = await serviceUnder(AT1, join(directory, 'at1'));
-  const again = await candidate(at1, roleDecisions());
+  const again = await candidate(at1, scoreRef => roleDecisions({ scoreRef }));
   const refused = await at1.finalize(OWNER, again.projectId, { candidateId: again.candidateId, confirmations: CONFIRMATIONS });
   assert.equal(refused.operation, 'blocked');
   assert.deepEqual(refused.blockers, ['microTiming']);

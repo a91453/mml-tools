@@ -299,6 +299,9 @@ test('the Studio service re-grades a lawful promotion and reports it separately 
   await service.analyzeSources(OWNER, created.project_id);
 
   const event = project.events.find(item => item.id === 'chord1-1');
+  // The citation names an official score the project holds: a decision's Lead
+  // citation is graded on the source it cites (SOURCE_POLICY §1).
+  const score = (await service.uploadAsset(OWNER, created.project_id, { kind: 'official_musicxml', filename: 'score.musicxml', mediaType: 'application/xml', bytes: new TextEncoder().encode('fixture official score') })).asset.asset_id;
   const applied = await service.applyDecisions(OWNER, created.project_id, {
     decisions: [{
       id: 'promote-reviewed',
@@ -311,7 +314,7 @@ test('the Studio service re-grades a lawful promotion and reports it separately 
       leadEvidence: {
         sourceIdentity: { sourceId: event.sourceIds[0], sourceEventId: event.sourceEventIds[0] },
         sectionRole: 'instrumental',
-        scoreEvidence: { availability: 'available', classification: 'lead', citation: 'fixture:official-score hand-off' },
+        scoreEvidence: { availability: 'available', classification: 'lead', citation: 'fixture:official-score hand-off', ref: score },
         audioEvidence: { availability: 'available', classification: 'foreground', citation: 'fixture:audio foreground' },
         continuity: { checked: true, createsLeadGap: false, replacementEventIds: [] },
         core3: { checked: true, status: 'PASS' },

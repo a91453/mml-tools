@@ -21,7 +21,7 @@ import { LISTEN_LIMITS, ListenLinkError, decodeListenLink, streamCodec } from '.
 import { createStudioApplication } from '../studio/backend/application/index.mjs';
 import { sha256Hex } from '../studio/backend/source/sha256.mjs';
 import { canonicalProjectBytes, keepEveryRole, sixRoleBaseline } from '../studio/tests/fixtures/application-fixtures.mjs';
-import { OWNER as RELEASE_OWNER, assign, oneTickEarlyBaseline, roleDecisions } from '../studio/tests/fixtures/release-fixtures.mjs';
+import { OWNER as RELEASE_OWNER, assign, oneTickEarlyBaseline, roleDecisions, uploadOfficialScore } from '../studio/tests/fixtures/release-fixtures.mjs';
 import { DELIVERY_FLAG, MACHINE_DELIVERY_SCHEMA_V2 } from '../studio/backend/final/delivery-evaluator.mjs';
 import { finalListeningMarkers, groupRuns, PROVISIONAL_MARKER_BUDGET, LEAD_MARKER_BUDGET } from '../server/listen/final-markers.mjs';
 import { parseListenMml } from '../server/listen/mml-events.mjs';
@@ -383,7 +383,10 @@ async function v3Final(t, decisions) {
   const created = (await service.createProject(RELEASE_OWNER, { title: 'Synthetic v3 listening fixture' })).project;
   await service.uploadAsset(RELEASE_OWNER, created.project_id, { kind: 'canonical_project', filename: 'b.json', mediaType: 'application/json', bytes: new TextEncoder().encode(JSON.stringify(oneTickEarlyBaseline())) });
   await service.analyzeSources(RELEASE_OWNER, created.project_id);
-  const applied = await service.applyDecisions(RELEASE_OWNER, created.project_id, { decisions });
+  // `decisions` may be a function of an official score the project holds, for
+  // Lead citations that must name it by reference to prove a role.
+  const scoreRef = typeof decisions === 'function' ? await uploadOfficialScore(service, created.project_id, RELEASE_OWNER) : null;
+  const applied = await service.applyDecisions(RELEASE_OWNER, created.project_id, { decisions: typeof decisions === 'function' ? decisions(scoreRef) : decisions });
   assert.equal(applied.decisions.applied, true, JSON.stringify(applied.decisions.rejected ?? null));
   const final = await service.finalize(RELEASE_OWNER, created.project_id, { candidateId: applied.decisions.candidate_id, confirmations: V3_CONFIRMATIONS });
   assert.equal(final.operation, 'succeeded', JSON.stringify(final.blockers));
@@ -397,7 +400,7 @@ const listenOn = (application, owner = RELEASE_OWNER) => async args => (await (a
 }), { application, owner, listen: createListenConfig({ studioWebOrigin: STUDIO_WEB }) })).json()).result;
 
 test('a v3 Final: every provisionally rendered release is a marker at its source release, with the counts and per-source figures as notes', async t => {
-  const { service, artifact } = await v3Final(t, roleDecisions());
+  const { service, artifact } = await v3Final(t, scoreRef => roleDecisions({ scoreRef }));
   assert.deepEqual(artifact.delivery.flags, [DELIVERY_FLAG.RELEASES_RENDERED_PROVISIONALLY]);
   assert.equal(artifact.provisional_release_rendering.renderings.length, 8);
 
