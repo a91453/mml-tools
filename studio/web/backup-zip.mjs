@@ -13,6 +13,24 @@ export const MAX_ENTRIES = 500;
 export const MAX_ENTRY_BYTES = 16 * 1024 * 1024;
 export const MAX_TOTAL_BYTES = 256 * 1024 * 1024;
 
+// The backup JSON of one project. Restore (model.mjs importWorkspace) rebuilds
+// a Raw MIDI asset from the source bytes it carries and never reads the
+// project, event list or diagnostics stored beside them, so those are left
+// out. They were over 90% of a MIDI project's backup: a 5,000-note MIDI in two
+// slots came to 16.2 MiB, over the 16 MiB a restore accepts, so the backups
+// the page asks the owner to keep could not be restored. 'MIDI' is
+// midi-source.mjs MIDI_SOURCE_FORMAT, inlined so the page does not load the
+// MIDI decoder to write a backup.
+export function portableBackup(workspace, canonical) {
+  const assets = {};
+  for (const [slot, asset] of Object.entries(workspace?.assets ?? {})) {
+    assets[slot] = asset?.format === 'MIDI' && typeof asset.source?.bytesBase64 === 'string'
+      ? { format: asset.format, name: asset.name, source: asset.source }
+      : asset;
+  }
+  return JSON.stringify({ ...workspace, assets, canonical }, null, 2);
+}
+
 const TABLE = (() => {
   const table = new Uint32Array(256);
   for (let n = 0; n < 256; n++) {
@@ -31,6 +49,29 @@ export function crc32(bytes) {
 async function transform(bytes, stream) {
   const out = new Blob([bytes]).stream().pipeThrough(stream);
   return new Uint8Array(await new Response(out).arrayBuffer());
+}
+// Inflates no more than `limit` bytes. An entry that declares a small size
+// and inflates to far more used to be inflated in full before its declared
+// size was compared: a 300 KB file reached 1.3 GB, enough to kill a phone
+// tab. The stream is cancelled as soon as the output passes the declared size.
+async function inflateAtMost(bytes, limit, name) {
+  const reader = new Blob([bytes]).stream().pipeThrough(new DecompressionStream('deflate-raw')).getReader();
+  const chunks = [];
+  let length = 0;
+  for (;;) {
+    const { value, done } = await reader.read();
+    if (done) break;
+    length += value.length;
+    if (length > limit) {
+      await reader.cancel().catch(() => {});
+      throw Error(`${name} 的內容校驗失敗`);
+    }
+    chunks.push(value);
+  }
+  const out = new Uint8Array(length);
+  let at = 0;
+  for (const chunk of chunks) { out.set(chunk, at); at += chunk.length; }
+  return out;
 }
 const canDeflate = () => typeof CompressionStream === 'function';
 const canInflate = () => typeof DecompressionStream === 'function';
@@ -121,7 +162,7 @@ export async function unzipFiles(input) {
     if (method === 0) data = body;
     else if (method === 8) {
       if (!canInflate()) throw Error('此瀏覽器無法解壓縮 ZIP 備份');
-      data = await transform(body, new DecompressionStream('deflate-raw'));
+      data = await inflateAtMost(body, size, name);
     } else throw Error(`${name} 使用不支援的壓縮方式`);
     if (data.length !== size || crc32(data) !== crc) throw Error(`${name} 的內容校驗失敗`);
     files.push({ name, data });

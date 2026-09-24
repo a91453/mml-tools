@@ -48,3 +48,42 @@ test('corrupted or oversized archives are refused', async () => {
   view.setUint32(central + 24, MAX_ENTRY_BYTES + 1, true); // declared uncompressed size
   await assert.rejects(unzipFiles(big), /超過/);
 });
+
+test('a Raw MIDI project backup carries its bytes, not its event list, and restores to the same project', async () => {
+  // A 5,000-note MIDI in two slots used to write a 16.2 MiB backup, over the
+  // 16 MiB a restore accepts. Restore re-ingests MIDI from the bytes and never
+  // read the stored events.
+  const { portableBackup } = await import('../web/backup-zip.mjs');
+  const model = await import('../web/model.mjs');
+  const { buildMidi, buildTrack, notesToEntries, setTempo } = await import('./fixtures/midi-fixtures.mjs');
+  const notes = Array.from({ length: 5000 }, (_, i) => [i % 3, 48 + (i % 24), i * 90, i * 90 + 80]);
+  const midi = buildMidi({ tracks: [buildTrack([[0, ...setTempo(500000)], ...notesToEntries(notes)])] });
+  const workspace = model.newWorkspace();
+  workspace.assets.candidate = model.intakeMidi({ name: 'song.mid', bytes: midi });
+  workspace.assets.baseline = model.intakeMidi({ name: 'song.mid', bytes: midi });
+  const backup = text(portableBackup(workspace, { canonical_version: 'test' }));
+  assert.ok(backup.length < 2 * 1024 * 1024, `${backup.length} bytes`);
+  const [entry] = await unzipFiles(await zipFiles([{ name: 'projects/song.json', data: backup }]));
+  const restored = model.importWorkspace(new TextDecoder().decode(entry.data));
+  for (const slot of ['candidate', 'baseline']) {
+    assert.deepEqual(restored.assets[slot].project.events.map(event => event.id), workspace.assets[slot].project.events.map(event => event.id), slot);
+    assert.equal(restored.assets[slot].source.sha256, workspace.assets[slot].source.sha256);
+  }
+  // A text asset is carried unchanged.
+  const mml = model.newWorkspace();
+  mml.assets.candidate = model.intake({ name: 'c.mml', content: 'MML@t120o4c1,,,,,;', id: 'c' });
+  assert.deepEqual(JSON.parse(portableBackup(mml, null)).assets.candidate, JSON.parse(JSON.stringify(mml.assets.candidate)));
+});
+
+test('an entry that inflates past its declared size is refused without inflating it all', async () => {
+  const { deflateRawSync } = await import('node:zlib');
+  const packed = deflateRawSync(Buffer.alloc(64 * 1024 * 1024, 0x20), { level: 9 });
+  const name = Buffer.from('projects/x.json');
+  const local = Buffer.alloc(30); local.writeUInt32LE(0x04034b50, 0); local.writeUInt16LE(8, 8); local.writeUInt32LE(packed.length, 18); local.writeUInt32LE(10, 22); local.writeUInt16LE(name.length, 26);
+  const central = Buffer.alloc(46); central.writeUInt32LE(0x02014b50, 0); central.writeUInt16LE(8, 10); central.writeUInt32LE(packed.length, 20); central.writeUInt32LE(10, 24); central.writeUInt16LE(name.length, 28);
+  const end = Buffer.alloc(22); end.writeUInt32LE(0x06054b50, 0); end.writeUInt16LE(1, 8); end.writeUInt16LE(1, 10); end.writeUInt32LE(46 + name.length, 12); end.writeUInt32LE(30 + name.length + packed.length, 16);
+  const zip = new Uint8Array(Buffer.concat([local, name, packed, central, name, end]));
+  const before = process.memoryUsage().arrayBuffers;
+  await assert.rejects(unzipFiles(zip), /projects\/x\.json 的內容校驗失敗/);
+  assert.ok(process.memoryUsage().arrayBuffers - before < 16 * 1024 * 1024, 'the 64 MiB body was never held');
+});

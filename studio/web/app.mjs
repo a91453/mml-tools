@@ -1,5 +1,5 @@
 import { listProjectSummaries, loadProject, requestPersistence, saveProject, storageHealth } from './storage.mjs';
-import { unzipFiles, zipFiles } from './backup-zip.mjs';
+import { portableBackup, unzipFiles, zipFiles } from './backup-zip.mjs';
 import { createWorkerClient } from './worker-client.mjs';
 import { createTaskQueue } from './task-queue.mjs';
 import { createUpdateFlow } from './pwa-update.mjs';
@@ -833,8 +833,8 @@ function sendToListening(mml,label,{markers=false}={}){
 
 $('#new-project').onclick=()=>run(async()=>{audioFile=null;await commit(await call('newWorkspace'));},{revisionBound:false,projectBound:false});
 $('#projects').onchange=()=>{const id=$('#projects').value;run(async()=>{if(!projects.some(p=>p.id===id))throw Error('找不到選取的專案，請重新開啟');const selected=await loadProject(id);audioFile=null;await commit(selected);},{revisionBound:false,projectBound:false});};
-$('#export-project').onclick=()=>{if(workspace)download('mml-studio-project.json',JSON.stringify({...workspace,canonical:identity.metadata},null,2));};
-$('#restore-project').onchange=()=>{const file=$('#restore-project').files[0];if(file&&/\.zip$/i.test(file.name))return run(()=>restoreZip(file),{revisionBound:false,projectBound:false});if(file)run(async()=>{if(file.size>16*1048576)throw Error(`Project backup is ${(file.size/1048576).toFixed(1)} MiB; the restore limit is 16 MiB. Export the sources separately if a MIDI project exceeds it.`);audioFile=null;await commit(await call('importWorkspace',await file.text()));message('已匯入；先前審核保留為歷史，本輪需要重新審核。');},{revisionBound:false,projectBound:false});};
+$('#export-project').onclick=()=>{if(workspace)download('mml-studio-project.json',portableBackup(workspace,identity.metadata));};
+$('#restore-project').onchange=()=>{const file=$('#restore-project').files[0];$('#restore-project').value='';if(file&&/\.zip$/i.test(file.name))return run(()=>restoreZip(file),{revisionBound:false,projectBound:false});if(file)run(async()=>{if(file.size>16*1048576)throw Error(`Project backup is ${(file.size/1048576).toFixed(1)} MiB; the restore limit is 16 MiB. Export the sources separately if a MIDI project exceeds it.`);audioFile=null;await commit(await call('importWorkspace',await file.text()));message('已匯入；先前審核保留為歷史，本輪需要重新審核。');},{revisionBound:false,projectBound:false});};
 // ─── In-game probe kit ──────────────────────────────────────────────────────
 // Fixed test strings for open engine questions and a place to record what the
 // game actually did. Observations stay on this device (engine-probe-store.mjs),
@@ -1514,7 +1514,7 @@ $('#export-all').onclick=()=>run(async()=>{
   const files = [];
   for (const summary of summaries) {
     const full = await loadProject(summary.id);
-    files.push({ name: `projects/${safeName(full.title)}-${full.id.slice(0, 8)}.json`, data: new TextEncoder().encode(JSON.stringify({ ...full, canonical: identity.metadata }, null, 2)) });
+    files.push({ name: `projects/${safeName(full.title)}-${full.id.slice(0, 8)}.json`, data: new TextEncoder().encode(portableBackup(full, identity.metadata)) });
   }
   if (!files.length) throw Error('沒有可匯出的專案');
   download(`mml-studio-projects-${new Date().toISOString().slice(0, 10)}.zip`, await zipFiles(files), 'application/zip');
