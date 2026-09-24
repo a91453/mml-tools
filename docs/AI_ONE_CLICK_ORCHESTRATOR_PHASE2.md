@@ -1015,15 +1015,51 @@ on who asked.
 
 ## 14. Regressions
 
-Eleven files. Every operation they exercise runs on the real Canonical
-engines, the real G11-C suggestion, the real G11-D application, the real G12
-ledger and the real readiness modules, and no mock stands in for any of them. A
-regression that needs an engine fault, a counted derivation or a moved plan
-replaces exactly one engine function over the real set and delegates to it
-(`studio/tests/support/real-engines.mjs`); one that needs the Manifest missing
-fails the engine load; an interruption is thrown from, or held forever in, a
-run hook; and a record an earlier version or an older build left is written
-into the store directly.
+Eleven files. Every regression in them that exercises the service does so
+through `createStudioApplication` — in `tests/proposal-transport.test.mjs`
+mostly through its HTTP and MCP doors — and there every operation runs on the
+real Canonical engines, the real G11-C suggestion, the real G11-D application,
+the real G12 ledger and the real readiness modules: no mock stands in for any of
+them. The tests that do not exercise the service are eight of the ten in
+`proposal-contracts.test.mjs`, which check the protocol's constants and pure
+functions directly, one in `tests/proposal-transport.test.mjs`, which reads the
+MCP tool schemas, and five of the nine in
+`proposal-plan-derivation-memo.test.mjs`, described below.
+
+To reach a state the service would not produce by itself, a regression through
+the service changes one of these, and nothing else:
+
+* an engine fault, a counted derivation, a plan answered with no id or with
+  another id, or another request or write started from inside an engine call at
+  a chosen moment: exactly one engine function is replaced over the real set,
+  and it delegates to the real one (`studio/tests/support/real-engines.mjs`);
+* another published release: `proposal-staleness.test.mjs` relabels the loaded
+  rules' `PUBLISHED_CANONICAL` metadata with another `rules_snapshot_sha` over
+  the real engines — a value, so nothing delegates;
+* a missing Manifest: the engine load fails;
+* an interruption: thrown from, or held forever in, a run hook, which may first
+  start another request or read the stored record;
+* stored state no current operation writes: a record an earlier version or an
+  older build left, a restored record whose asset no longer matches the digest
+  the run recorded (`proposal-staleness.test.mjs` writes a corrupted `sha256`),
+  stored bytes rewritten or removed under the ids that name them, and the
+  proposal states the open-proposal cap counts, each written into the store
+  directly;
+* the HTTP door: the router is handed the authenticated owner (`ownerOf`)
+  rather than resolving one from credentials.
+
+The five tests of `proposal-plan-derivation-memo.test.mjs` that do not go
+through the service test the memo's key and its guards on their own. The four
+built on `memoWorld` drive `createPlanDerivationMemo` over a synthetic world: a
+fake engine set (`{ release: 'engines-1' }`), a fake provenance, a fake store
+write count, a fake stored-input identity and a fake derivation, which together
+let the test move each input the key covers on its own — the loaded engines and
+the rules snapshot included, which a running service holds constant. The
+stored-input identity test calls the real `planInputIdentity` of an arrangement
+service it builds, with an intake service, over a real in-memory store: both
+with `canonical: null`, the intake service with no asset service, and both
+reading a stub `projects.load` that returns a record the test writes. The other
+four tests in the file go through the service as above.
 
 | File | What it pins |
 | --- | --- |
@@ -1034,7 +1070,7 @@ into the store directly.
 | `studio/tests/proposal-security.test.mjs` | forged identities, unknown and inherited fields, prototype keys, server-computed fields, collapsed scores, bounds, replay |
 | `studio/tests/proposal-agent-review-policy.test.mjs` | the Lead evidence boundary, Gate 8, Gate 9, the ladder, recomputation |
 | `studio/tests/proposal-duplication.test.mjs` | one acceptance, one application — across retries, concurrency, a crash in the window, a second interruption, a process that dies inside the run, and an interruption by a fault followed by a retry whose process dies inside the run; a retry continues only from a run whose latest write is its own application's, and is refused once any other writer — a reviewer, the same payload without the key, the same key with another payload — has moved it; a pin or a marker an earlier version recorded is not trusted past what it proves, and a writer record a build that predates it carried onto its own revision is not read as this application's |
-| `studio/tests/proposal-adversarial.test.mjs` | the four escalations an independent adversarial review found, kept in the shape they were found in |
+| `studio/tests/proposal-adversarial.test.mjs` | the four escalations an independent adversarial review found, and the two storage bounds the same pass found saying something that was not true (§9), each kept in the shape it was found in |
 | `studio/tests/proposal-untranslatable.test.mjs` | a proposal the acceptance could never translate is `INVALID` before it is accepted, and one whose plan cannot be derived from the stored material is `STALE`; an acceptance the run never admitted — failed before the run, or refused by the run before it wrote anything, because another acceptance or a reviewer moved it first — can be withdrawn, race-free, is graded again on a retry, and pins no revision — nor does a refused twin of an attempt of the same acceptance the run admitted first; one that may have reached it cannot be withdrawn; an admitted attempt records where its own request left the run, never a revision a reviewer's resume produced after it, and that reviewer's move leaves its retry refused; an attempt whose only write is the run's first hold records that write as its own and is finished by its retry; a retry that would carry another request under the same key is refused before the run writes; an acceptance the release a rollback returns to may have applied — any write since the acceptance that records no writer, alone or followed by writes that do — cannot be rejected or withdrawn, and the open cap does not count it as one that can, while such a write the acceptance observed leaves it withdrawable |
 | `studio/tests/proposal-plan-derivation-memo.test.mjs` | the policy derives a plan once per set of inputs, and a held outcome is never served for any other: each input moved on its own, and a derivation a change may have raced, is derived afresh (`studio/tests/application-store-regressions.test.mjs` pins that every store write method moves the write count that guard reads, and no read does) |
 | `tests/proposal-transport.test.mjs` | HTTP/MCP parity, and what Phase 2 did not add |
