@@ -347,6 +347,38 @@ test('an application interrupted a second time is still finished by its retry, a
   assert.deepEqual(await candidatesOf(app, context.fixture.projectId), afterSecond, 'the landed effect was adopted, not repeated');
 });
 
+test('a rejection after an acceptance is refused, because the run may already have it', async () => {
+  const app = createStudioApplication({});
+  const context = await submitted(app);
+  await app.resolveProposal(OWNER, context.fixture.projectId, context.proposal.proposal_id, {
+    resolution: 'accept', accepted_by: RUN_REVIEWER,
+  });
+  // Rejecting it now would leave the record disagreeing with what the run did.
+  for (const resolution of ['reject', 'withdraw']) {
+    await assert.rejects(
+      app.resolveProposal(OWNER, context.fixture.projectId, context.proposal.proposal_id, { resolution, reason: 'On reflection, no.' }),
+      error => error.code === 'PROPOSAL_CONFLICT',
+    );
+  }
+});
+
+test('an acceptance is refused when the proposal moved under the caller', async () => {
+  const app = createStudioApplication({});
+  const context = await submitted(app);
+
+  await assert.rejects(
+    app.resolveProposal(OWNER, context.fixture.projectId, context.proposal.proposal_id, {
+      resolution: 'accept', accepted_by: RUN_REVIEWER, expected_proposal_revision: context.proposal.revision + 3,
+    }),
+    error => {
+      assert.equal(error.code, 'PROPOSAL_CONFLICT');
+      assert.equal(error.details.current_proposal_revision, context.proposal.revision);
+      return true;
+    },
+  );
+  assert.deepEqual(await candidatesOf(app, context.fixture.projectId), [], 'a refused precondition applies nothing');
+});
+
 // ─── C. a process that dies inside the run ──────────────────────────────────
 //
 // The interruptions above throw from a hook, so the acceptance's own last step
@@ -760,36 +792,4 @@ test('a writer record an older build carried onto its own revision is never read
       assert.equal(own.revision_written_by.revision, own.revision, `${writer}: the writer record names the revision it was written for`);
     });
   }
-});
-
-test('a rejection after an acceptance is refused, because the run may already have it', async () => {
-  const app = createStudioApplication({});
-  const context = await submitted(app);
-  await app.resolveProposal(OWNER, context.fixture.projectId, context.proposal.proposal_id, {
-    resolution: 'accept', accepted_by: RUN_REVIEWER,
-  });
-  // Rejecting it now would leave the record disagreeing with what the run did.
-  for (const resolution of ['reject', 'withdraw']) {
-    await assert.rejects(
-      app.resolveProposal(OWNER, context.fixture.projectId, context.proposal.proposal_id, { resolution, reason: 'On reflection, no.' }),
-      error => error.code === 'PROPOSAL_CONFLICT',
-    );
-  }
-});
-
-test('an acceptance is refused when the proposal moved under the caller', async () => {
-  const app = createStudioApplication({});
-  const context = await submitted(app);
-
-  await assert.rejects(
-    app.resolveProposal(OWNER, context.fixture.projectId, context.proposal.proposal_id, {
-      resolution: 'accept', accepted_by: RUN_REVIEWER, expected_proposal_revision: context.proposal.revision + 3,
-    }),
-    error => {
-      assert.equal(error.code, 'PROPOSAL_CONFLICT');
-      assert.equal(error.details.current_proposal_revision, context.proposal.revision);
-      return true;
-    },
-  );
-  assert.deepEqual(await candidatesOf(app, context.fixture.projectId), [], 'a refused precondition applies nothing');
 });
