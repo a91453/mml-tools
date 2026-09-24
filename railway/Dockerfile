@@ -48,10 +48,13 @@ RUN apt-get update \
 WORKDIR /app
 
 # Dependencies first, so a source-only change does not re-resolve them. The
-# single runtime dependency is exactly pinned in package.json, install scripts
-# stay disabled, and nothing here contacts a paid service.
-COPY package.json ./package.json
-RUN npm install --omit=dev --ignore-scripts --no-audit --no-fund
+# runtime dependencies are exactly pinned in package.json, but theirs are caret
+# ranges, so `npm install` let every rebuild pick up transitive versions no PR
+# reviewed or tested. `npm ci` installs exactly what package-lock.json records
+# and fails when it disagrees with package.json. Install scripts stay disabled,
+# and nothing here contacts a paid service.
+COPY package.json package-lock.json ./
+RUN npm ci --omit=dev --ignore-scripts --no-audit --no-fund
 
 # The .dockerignore allowlist decides what this copies.
 COPY . ./
