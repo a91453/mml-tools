@@ -57,5 +57,7 @@ export function gmVoiceFor(id) {
 
 // v0–v15 → MIDI velocity 1–127, the curve of the Studio Web preview
 // (studio/web/preview/schedule.mjs `velocityFor`): v0 is still a struck note.
-// It describes this rendering, not the game engine.
+// It describes this rendering, not the game engine. The preview's Gate 6
+// readback (studio/web/preview/readback.mjs) uses this definition, not the
+// scheduler's copy, as the velocity it expects.
 export const velocityForVolume = volume => Math.max(1, Math.round((Number(volume) * 127) / 15));

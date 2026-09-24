@@ -264,8 +264,14 @@ exact timing, event identity and the evidence boundaries. See
   - **Verdict.** Every analysis parses the exact delivery string again and
     compares, per channel, the order, pitch and velocity of every note on and
     off exactly, and the timing within 25 ms of the exact tempo-map time. The
-    expected events are derived without the preview scheduler, so a scheduling
-    fault is a mismatch. A stored verdict is never read.
+    expected events share no code with the preview scheduler
+    (`preview/schedule.mjs`): the readback integrates the tempo map with its
+    own exact rationals, restates the role → channel rule (the six roles on the
+    melodic GM channels in order, never channel 9), and takes volume →
+    velocity from the backend renderer's table
+    (`studio/backend/audio/instruments.mjs`). A fault in the scheduler's
+    timing, channels or velocities is therefore a mismatch. A stored verdict
+    is never read.
   - **Gate.** PASS needs a matching readback and a current Tempo review. The
     N/A path is unchanged (no player declared, Tempo reviewed). Anything else,
     including a mismatch, is PENDING. A new revision, a new delivery string or

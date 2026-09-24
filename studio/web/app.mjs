@@ -13,7 +13,7 @@ import { createListening } from './listen-ui.mjs';
 import { markersFromReport, sanitizeStoredNotes } from './listen-notes.mjs';
 // Request identity only. The MIDI decoder, the Canonical conversion and the
 // G11-B/G11-C derivation all live behind the Worker, so the main thread never
-// imports the backend and never parses a source file itself.
+// imports a backend source decoder and never parses a source file itself.
 import { createSourceRequestLedger } from './source-requests.mjs';
 // The Workshop editor (studio/web/workshop/) is outside the Canonical
 // pipeline. This small adapter only opens a copy there and brings an edit back

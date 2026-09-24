@@ -66,7 +66,9 @@ test('the timbre preview engine is vendored from npm, self-contained, licensed a
   assert.match(lib, /this\.worklet\.port\.onmessage = \(e\) => this\.handleMessage\(e\.data\);/);
   for (const path of ['vendor/spessasynth/core.js', 'vendor/spessasynth/processor.js']) assert.match(await read(path), /SPDX-License-Identifier: Apache-2\.0/);
   const sw = await read('sw.js');
-  for (const path of ['vendor/spessasynth/lib.js', 'vendor/spessasynth/core.js', 'vendor/spessasynth/processor.js', 'studio/web/preview/player.mjs', 'studio/web/preview/readback.mjs', 'studio/web/preview/worklet-console.mjs']) {
+  // The readback takes its expected velocities from the backend renderer's
+  // instrument table, so that table must be offline too.
+  for (const path of ['vendor/spessasynth/lib.js', 'vendor/spessasynth/core.js', 'vendor/spessasynth/processor.js', 'studio/web/preview/player.mjs', 'studio/web/preview/readback.mjs', 'studio/backend/audio/instruments.mjs', 'studio/web/preview/worklet-console.mjs']) {
     assert.ok(sw.includes(`./${path}`), `offline asset missing: ${path}`);
   }
   // No sound bank is in the build, the manifest or the precache list: the
