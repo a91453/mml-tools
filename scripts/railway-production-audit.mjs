@@ -29,11 +29,17 @@ export const LIVE_DEPLOYMENT_STATES = new Set(['SUCCESS', 'SLEEPING']);
 // cancels the older audit, and it used to report ACTIVE_DEPLOYMENT_MISMATCH or
 // DEPLOYMENT_REMOVED -- a red audit on a healthy commit after every overlapping
 // merge (observed 2026-09-23, run #40: 784aad83 REMOVED by d359ab79, drift 0).
-// When the deployment that replaced it is on the same branch and its commit
-// strictly descends from the audited one, the audited commit is SUPERSEDED:
-// neither verified nor failed here, because production now runs a later
-// commit and that commit's own audit verifies it. A replacement that does not
-// descend (a rollback, another branch) still fails.
+// When the deployment that replaced it is LIVE, on the same branch, and its
+// commit strictly descends from the audited one, the audited commit is
+// SUPERSEDED: neither verified nor failed here, because production now runs a
+// later commit and that commit's own audit verifies it. A replacement that
+// does not descend (a rollback, another branch) still fails.
+//
+// A later deployment that is not live -- still building, held for CI, failed,
+// crashed or skipped -- replaces nothing: the audited deployment is still the
+// one serving, so it is audited normally, public probe included, and the later
+// deployment's own audit reports its outcome. Treating it as SUPERSEDED would
+// leave the serving deployment unverified exactly when its successor failed.
 export const SUPERSEDED = 'SUPERSEDED';
 export const SUPERSEDABLE_DEPLOYMENT_STATES = new Set([...LIVE_DEPLOYMENT_STATES, 'REMOVED', 'SKIPPED']);
 // Railway holds a deployment in these states before it builds: WAITING is the
@@ -108,13 +114,21 @@ export function commitStrictlyDescends({ ancestorSha, sha, gitImpl = defaultGitI
   }
 }
 
-// The deployment that replaced the audited one, when it is a later commit on
-// the same branch; otherwise null.
-export function supersedingDeployment({ expected, expectedSha, state, targetDeployment, gitImpl = defaultGitImpl }) {
-  if (!targetDeployment || !SUPERSEDABLE_DEPLOYMENT_STATES.has(targetDeployment.status)) return null;
+// Railway's latest deployment when it is a different deployment of a later
+// commit on the same branch, whatever its status; otherwise null.
+export function laterDeployment({ expected, expectedSha, state, targetDeployment, gitImpl = defaultGitImpl }) {
+  if (!targetDeployment) return null;
   const active = state?.instance?.latestDeployment;
   if (!active || active.id === targetDeployment.id || active.meta?.branch !== expected.source.branch) return null;
   return commitStrictlyDescends({ ancestorSha: expectedSha, sha: active.meta?.commitHash, gitImpl }) ? active : null;
+}
+
+// The deployment that replaced the audited one: a later commit's deployment
+// that is live, over an audited one that is live, removed or skipped.
+export function supersedingDeployment({ expected, expectedSha, state, targetDeployment, gitImpl = defaultGitImpl }) {
+  if (!targetDeployment || !SUPERSEDABLE_DEPLOYMENT_STATES.has(targetDeployment.status)) return null;
+  const later = laterDeployment({ expected, expectedSha, state, targetDeployment, gitImpl });
+  return later && LIVE_DEPLOYMENT_STATES.has(later.status) ? later : null;
 }
 
 export function manifestCommitAt(sha, gitImpl = defaultGitImpl) {
@@ -340,7 +354,7 @@ export function findExpectedDeployment(deployments, expectedSha) {
   return deployments.find(deployment => deployment?.meta?.commitHash === expectedSha) ?? null;
 }
 
-export function resolveDeploymentBinding({ expected, expectedSha, state, targetDeployment, changedPaths = [], supersededBy = null }) {
+export function resolveDeploymentBinding({ expected, expectedSha, state, targetDeployment, changedPaths = [], supersededBy = null, pendingSuccessor = null }) {
   if (!targetDeployment) return {
     activeDeployment: null,
     effectiveSha: expectedSha,
@@ -358,11 +372,16 @@ export function resolveDeploymentBinding({ expected, expectedSha, state, targetD
   };
   if (LIVE_DEPLOYMENT_STATES.has(targetDeployment.status)) {
     const active = state?.instance?.latestDeployment;
-    const activeMatches = active?.id === targetDeployment.id && LIVE_DEPLOYMENT_STATES.has(active?.status);
+    // A later commit's deployment that is not live yet (or never became live)
+    // is Railway's latest, but the audited one is still the one serving.
+    const successorNotLive = Boolean(pendingSuccessor) && active?.id === pendingSuccessor.id
+      && !LIVE_DEPLOYMENT_STATES.has(active?.status);
+    const activeMatches = (active?.id === targetDeployment.id && LIVE_DEPLOYMENT_STATES.has(active?.status)) || successorNotLive;
     return {
       activeDeployment: targetDeployment,
       effectiveSha: expectedSha,
       reason: activeMatches ? null : 'ACTIVE_DEPLOYMENT_MISMATCH',
+      ...(successorNotLive ? { pendingSuccessor } : {}),
       skippedChanges: [],
       watchedSkippedChanges: [],
     };
@@ -457,7 +476,7 @@ export async function runAuditGate({ token, expectedSha, fetchImpl = fetch,
 
 export function buildControlPlaneResult({
   expected, expectedSha, effectiveSha = expectedSha, state, deployment, requestedDeployment = deployment,
-  reason, skippedChanges = [], watchedSkippedChanges = [], supersededBy = null,
+  reason, skippedChanges = [], watchedSkippedChanges = [], supersededBy = null, pendingSuccessor = null,
 }) {
   const drift = state?.instance
     ? compareServiceInstance(expected, state.instance, state.availableFields)
@@ -502,6 +521,9 @@ export function buildControlPlaneResult({
   };
   return {
     status: !reason && deploymentOk && requestedOk && drift.length === 0 ? 'PASS' : 'FAIL',
+    // A later commit's deployment that is not live: named, so a reader sees
+    // why Railway's latest deployment is not the one audited.
+    ...(pendingSuccessor ? { later_deployment_not_live: summarizeDeployment(pendingSuccessor) } : {}),
     expected_sha: expectedSha,
     effective_deployed_sha: effectiveSha,
     deployment: summarizeDeployment(deployment),
@@ -554,9 +576,13 @@ export async function runProductionAudit({
     const waited = await waitForExpectedDeployment({
       token, expected, expectedSha, fetchImpl, waitSeconds, pollSeconds,
     });
-    const supersededBy = waited.reason ? null : supersedingDeployment({
+    const later = waited.reason ? null : laterDeployment({
       expected, expectedSha, state: waited.state, targetDeployment: waited.deployment, gitImpl,
     });
+    const supersededBy = later && LIVE_DEPLOYMENT_STATES.has(later.status)
+      && SUPERSEDABLE_DEPLOYMENT_STATES.has(waited.deployment?.status) ? later : null;
+    const pendingSuccessor = later && !LIVE_DEPLOYMENT_STATES.has(later.status)
+      && LIVE_DEPLOYMENT_STATES.has(waited.deployment?.status) ? later : null;
     let changedPaths = [];
     if (!waited.reason && !supersededBy && waited.deployment?.status === 'SKIPPED') {
       const activeSha = waited.state?.instance?.latestDeployment?.meta?.commitHash;
@@ -577,6 +603,7 @@ export async function runProductionAudit({
       targetDeployment: waited.deployment,
       changedPaths,
       supersededBy,
+      pendingSuccessor,
     });
     report.control_plane = buildControlPlaneResult({
       expected,
@@ -589,6 +616,7 @@ export async function runProductionAudit({
       skippedChanges: binding.skippedChanges,
       watchedSkippedChanges: binding.watchedSkippedChanges,
       supersededBy: binding.supersededBy ?? null,
+      pendingSuccessor: binding.pendingSuccessor ?? null,
     });
     if (report.control_plane.status === SUPERSEDED) {
       report.status = SUPERSEDED;

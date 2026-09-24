@@ -198,7 +198,7 @@ After the merge:
 
 Until the apply, the post-merge audit fails with `CONFIG_DRIFT` and says so in its log. A later commit that changes only a newly watched path is also SKIPPED by Railway, so production would keep running the older image.
 
-An audit that ends `SUPERSEDED` is not a failure: a later `main` merge replaced the audited deployment while the audit ran, and that commit's own audit verifies production.
+An audit that ends `SUPERSEDED` is not a failure: a later `main` merge's deployment went live and replaced the audited one while the audit ran, and that commit's own audit verifies production. A later deployment that is still building, held, failed or crashed replaces nothing: the audited deployment is still serving and is audited normally.
 
 ### If the build fails at the Canonical gate
 

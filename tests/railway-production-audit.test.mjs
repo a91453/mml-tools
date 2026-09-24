@@ -626,9 +626,12 @@ test('only a later commit on the same branch supersedes the audited deployment',
   for (const status of ['SUCCESS', 'SLEEPING', 'REMOVED', 'SKIPPED']) {
     assert.equal(supersedingDeployment({ expected, expectedSha: SHA, state: state(newer), targetDeployment: deployment('784aad83', status, SHA), gitImpl })?.id, 'd359ab79', status);
   }
-  // A newer deployment that is still building supersedes too: its own audit
-  // reports whether it went live.
-  assert.equal(supersedingDeployment({ expected, expectedSha: SHA, state: state({ ...newer, status: 'BUILDING' }), targetDeployment: deployment('784aad83', 'SUCCESS', SHA), gitImpl })?.id, 'd359ab79');
+  // A later deployment that is not live replaces nothing: the audited one is
+  // still serving, whether its successor is building, held, failed, crashed
+  // or skipped.
+  for (const status of ['QUEUED', 'BUILDING', 'DEPLOYING', 'WAITING', 'NEEDS_APPROVAL', 'FAILED', 'CRASHED', 'SKIPPED', 'REMOVED']) {
+    assert.equal(supersedingDeployment({ expected, expectedSha: SHA, state: state({ ...newer, status }), targetDeployment: deployment('784aad83', 'SUCCESS', SHA), gitImpl }), null, status);
+  }
   // A failed or crashed target is a failure of its own, whatever came later.
   for (const status of ['FAILED', 'CRASHED']) {
     assert.equal(supersedingDeployment({ expected, expectedSha: SHA, state: state(newer), targetDeployment: deployment('784aad83', status, SHA), gitImpl }), null, status);
@@ -727,4 +730,39 @@ test('the audit of a commit a later main merge replaced ends SUPERSEDED without 
     fetchImpl: supersededFetch(expected, deployment('skip-1', 'SKIPPED', SHA), newer),
   });
   assert.equal(skipped.status, SUPERSEDED);
+});
+
+test('a later deployment that is not live leaves the serving deployment to be audited, probe included', async () => {
+  const expected = resolved();
+  const target = deployment('784aad83', 'SUCCESS', SHA);
+  const { gitImpl } = fakeGit({ ancestry: { [`${SHA}..${LATER}`]: true } });
+  for (const status of ['BUILDING', 'WAITING', 'FAILED', 'CRASHED']) {
+    const successor = deployment('d359ab79', status, LATER);
+    const binding = resolveDeploymentBinding({ expected, expectedSha: SHA, state: { instance: { ...live(), latestDeployment: successor } }, targetDeployment: target, pendingSuccessor: successor });
+    assert.equal(binding.reason, null, status);
+    const report = await runProductionAudit({
+      token: 'project-token-secret', expectedSha: SHA, manifestCommit: SHA, loadJson, waitSeconds: 0, gitImpl,
+      fetchImpl: supersededFetch(expected, target, successor),
+    });
+    assert.notEqual(report.status, SUPERSEDED, status);
+    assert.equal(report.control_plane.status, 'PASS', status);
+    assert.equal(report.control_plane.deployment.id, '784aad83', status);
+    assert.equal(report.control_plane.later_deployment_not_live.id, 'd359ab79', status);
+    assert.equal(report.control_plane.later_deployment_not_live.status, status);
+    assert.notEqual(report.public_probe.status, 'NOT_RUN', `${status}: the serving deployment is probed`);
+  }
+  // Without the ancestry, a different latest deployment is still a mismatch.
+  const stranger = await runProductionAudit({
+    token: 'project-token-secret', expectedSha: SHA, manifestCommit: SHA, loadJson, waitSeconds: 0, gitImpl: fakeGit().gitImpl,
+    fetchImpl: supersededFetch(expected, target, deployment('d1', 'BUILDING', OTHER)),
+  });
+  assert.equal(stranger.control_plane.failure_reason, 'ACTIVE_DEPLOYMENT_MISMATCH');
+  // A removed audited deployment whose successor failed is not superseded:
+  // nothing later is live.
+  const removed = await runProductionAudit({
+    token: 'project-token-secret', expectedSha: SHA, manifestCommit: SHA, loadJson, waitSeconds: 0, gitImpl,
+    fetchImpl: supersededFetch(expected, deployment('784aad83', 'REMOVED', SHA), deployment('d359ab79', 'FAILED', LATER)),
+  });
+  assert.equal(removed.status, 'FAIL');
+  assert.equal(removed.control_plane.failure_reason, 'DEPLOYMENT_REMOVED');
 });
