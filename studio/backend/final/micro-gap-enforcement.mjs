@@ -51,7 +51,7 @@
 //
 // Nothing here mutates the project, the Source-Faithful Baseline, or any event.
 // The module reads and reports.
-import { F, f } from '../mml/index.mjs';
+import { F, f, ROLES } from '../mml/index.mjs';
 import { EFFECTIVE_RULESET } from '../rules/index.mjs';
 import {
   carriesCanonicalCandidateMarker,
@@ -107,9 +107,28 @@ export const MICRO_GAP_BLOCKERS = Object.freeze({
   // a sub-grid gap, or a sub-grid note, already surfaces as an interval above and
   // keeps its three-way outcome there; whether a *preserved* source-supported
   // interval can be written at all stays the separate technical gate's question,
-  // exactly as before. Unsupported onsets and rest boundaries are reported in
-  // `unsupportedBoundaries` for the same reason, without a blocker of their own.
+  // exactly as before. Unsupported onsets and rest boundaries have a code of
+  // their own, below.
   RELEASE_NOT_FINAL_REPRESENTABLE: 'MICRO_TIMING_RELEASE_NOT_FINAL_REPRESENTABLE',
+  // An onset, or a rest boundary a Final role has to reach, that no admitted
+  // Final token sequence can reach (`unsupportedBoundaries`, whose entries each
+  // say how they are covered). The interval analyzer only sees a boundary that
+  // is an end of a sub-grid interval: it builds a gap only between two segments
+  // closer than the grid, so a role's first off-grid onset, an off-grid onset
+  // after a rest of at least the grid, a legato join at an off-grid point or an
+  // off-grid role end leaves no interval, and this gate used to PASS while the
+  // Final emitter could not write the role.
+  //
+  // Raised only for a boundary no other outcome here already decides: one an
+  // analysed interval in its role starts or ends at keeps that interval's
+  // three-way outcome, and a note release the release analysis reports keeps the
+  // release-side handling above. A rest boundary where no note of its role starts
+  // or ends and the role does not end lies inside one silence, which a Final
+  // writes as one exact span (final/mml-emitter.mjs merges adjacent silence), so
+  // it is reported and never raises this. Onsets are attacks and are never moved,
+  // and no provisional rendering holds any of these, so the machine-delivery
+  // schemas leave it BLOCKING (final/delivery-evaluator.mjs).
+  BOUNDARY_NOT_FINAL_REPRESENTABLE: 'MICRO_TIMING_BOUNDARY_NOT_FINAL_REPRESENTABLE',
   // A recorded release representation that does not re-verify from the project:
   // a timing change without the evidence-backed decision it claims.
   RELEASE_RECORD_INVALID: 'MICRO_TIMING_RELEASE_REPRESENTATION_RECORD_INVALID',
@@ -144,6 +163,22 @@ export const MICRO_GAP_BLOCKERS = Object.freeze({
 // published snapshot.
 export const PROVISIONAL_RELEASE_POLICY = Object.freeze({
   dominantOffsetMinShare: Object.freeze({ numerator: 95, denominator: 100 }),
+});
+
+// How each entry of the report's `unsupportedBoundaries` is covered, recorded on
+// the entry as `coverage`. Only NONE raises BOUNDARY_NOT_FINAL_REPRESENTABLE.
+export const BOUNDARY_COVERAGE = Object.freeze({
+  // An analysed sub-grid interval in the boundary's role starts or ends here;
+  // that interval's classification decides, as for any other interval.
+  ANALYSED_INTERVAL: 'analysed-interval',
+  // A note release the release analysis reports as a target sits here in the
+  // boundary's role; the release-side handling decides.
+  RELEASE_TARGET: 'release-target',
+  // A rest boundary where no note of its role starts or ends and the role does
+  // not end: it lies inside one silence, which a Final writes as one exact span.
+  INSIDE_SILENCE: 'inside-silence',
+  // A position the Final role has to reach and nothing here decides.
+  NONE: 'none',
 });
 
 // The blockers a release-side result may carry beside RELEASE_PROVISIONAL.
@@ -309,6 +344,66 @@ function provisionalReleasePlan({ project, blockers, unknown, preserved, rejecte
   });
 }
 
+const positionKey = (role, beat) => `${role}\u0000${f(beat).toString()}`;
+const isAssignedSpan = event => event && (event.kind === 'note' || event.kind === 'rest')
+  && event.id && event.start != null && event.end != null && ROLES.includes(event.role);
+
+/**
+ * Each onset or rest boundary no admitted Final token sequence can reach
+ * (`canonical/release-timing.mjs#classifyPosition`), with how this gate covers it
+ * (BOUNDARY_COVERAGE). Positions are compared per role and as exact rationals.
+ *
+ * A Final role is written as consecutive tokens from beat 0, so it has to reach
+ * every position where one of its notes starts or ends, and the position where
+ * the role ends; silence in between is one exact span however many rests the
+ * candidate holds there. Nothing here moves a boundary or reads its meaning.
+ */
+function coverUnsupportedBoundaries(project, microTiming, releaseAnalysis) {
+  const boundaries = releaseAnalysis.unsupportedBoundaries;
+  // No entry, no change: the report keeps the analysis's own frozen list.
+  if (!boundaries.length) return boundaries;
+
+  const spans = (Array.isArray(project?.events) ? project.events : []).filter(isAssignedSpan);
+  const byId = new Map(spans.map(event => [event.id, event]));
+
+  const intervalEnds = new Set();
+  for (const interval of microTiming.intervals) {
+    for (const eventId of interval.eventIds) {
+      const role = byId.get(eventId)?.role;
+      if (!role) continue;
+      intervalEnds.add(positionKey(role, interval.identity.start));
+      intervalEnds.add(positionKey(role, interval.identity.end));
+    }
+  }
+
+  const releaseTargets = new Set();
+  for (const target of releaseAnalysis.targets) {
+    const event = byId.get(target.eventId);
+    if (event) releaseTargets.add(positionKey(target.role, event.end));
+  }
+
+  const reached = new Set();
+  const roleEnds = new Map();
+  for (const event of spans) {
+    if (event.kind === 'note') {
+      reached.add(positionKey(event.role, event.start));
+      reached.add(positionKey(event.role, event.end));
+    }
+    const end = f(event.end);
+    if (!roleEnds.has(event.role) || end.cmp(roleEnds.get(event.role)) > 0) roleEnds.set(event.role, end);
+  }
+  for (const [role, end] of roleEnds) reached.add(positionKey(role, end));
+
+  return Object.freeze(boundaries.map(boundary => {
+    const key = positionKey(boundary.role, boundary.position);
+    let coverage = BOUNDARY_COVERAGE.NONE;
+    if (intervalEnds.has(key)) coverage = BOUNDARY_COVERAGE.ANALYSED_INTERVAL;
+    else if (releaseTargets.has(key)) coverage = BOUNDARY_COVERAGE.RELEASE_TARGET;
+    else if (!reached.has(key)) coverage = BOUNDARY_COVERAGE.INSIDE_SILENCE;
+    return Object.freeze({ ...boundary, coverage });
+  }));
+}
+
 // Canonical IR beats are quarter notes, so a whole-note 1/N is 4/N IR beats.
 // Exact rational throughout: no float, no rounding, no epsilon.
 function safeGridFromDenominator(denominator) {
@@ -419,8 +514,9 @@ function failedAnalysisReport(policy, error) {
  * Apply the published Final micro-gap policy to a Canonical project.
  *
  * Returns a frozen enforcement report. It never returns PASS on uncertainty, on
- * a confirmed artifact, or on a non-conformant contract, and it never proposes
- * touching a source-supported interval.
+ * a confirmed artifact, on a non-conformant contract, or on an onset or rest
+ * boundary a Final role has to reach and no admitted token sequence can, and it
+ * never proposes touching a source-supported interval.
  *
  * `finalRepresentable` stays null: source support answers musical meaning only.
  * Whether the emitted Final MML can represent an interval is a separate question
@@ -487,6 +583,14 @@ export function enforceMicroGaps(project, { mobileSyntax, releaseEvidenceRegistr
     return failedAnalysisReport(policy, error);
   }
   if (releaseAnalysis.notVisibleToIntervalAnalyzerCount > 0) blockers.push(MICRO_GAP_BLOCKERS.RELEASE_NOT_FINAL_REPRESENTABLE);
+  // Onsets and rest boundaries (Layer B as well). Raised only when a boundary
+  // Final cannot reach is covered by nothing above, so a project whose
+  // boundaries Final can all reach keeps its blocker list and its report byte
+  // for byte.
+  const unsupportedBoundaries = coverUnsupportedBoundaries(project, report, releaseAnalysis);
+  if (unsupportedBoundaries.some(item => item.coverage === BOUNDARY_COVERAGE.NONE)) {
+    blockers.push(MICRO_GAP_BLOCKERS.BOUNDARY_NOT_FINAL_REPRESENTABLE);
+  }
   const recordInvalid = releaseRecords.violations.length > 0;
   if (recordInvalid) blockers.push(MICRO_GAP_BLOCKERS.RELEASE_RECORD_INVALID);
   const evidenceRequirement = releaseEvidenceRegistry && releaseAnalysis.decisionRequiredCount > 0
@@ -552,7 +656,9 @@ export function enforceMicroGaps(project, { mobileSyntax, releaseEvidenceRegistr
       registryChecked: releaseRecords.registryChecked === true,
       violations: Object.freeze([...releaseRecords.violations]),
     }),
-    unsupportedBoundaries: releaseAnalysis.unsupportedBoundaries,
+    // Every onset or rest boundary Final cannot reach, each with its `coverage`
+    // (BOUNDARY_COVERAGE); NONE is what raised BOUNDARY_NOT_FINAL_REPRESENTABLE.
+    unsupportedBoundaries,
     // With RELEASE_PROVISIONAL: every release a delivery may hold to the
     // following attack or next grid point, and the UNKNOWN interval keys each
     // one closes. Empty otherwise. The provisional rendering's only worklist.

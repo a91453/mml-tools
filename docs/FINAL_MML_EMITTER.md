@@ -277,6 +277,22 @@ only a search limit.
 
 Every diagnostic in this family carries `completenessProven: false`.
 
+One outcome is a proof, and it replaces either search code. When the span the
+search failed on starts or ends at a position that
+`canonical/release-timing.mjs#classifyPosition` calls `NOT_FINAL_REPRESENTABLE`,
+the emitter reports `BOUNDARY_NOT_FINAL_REPRESENTABLE` with
+`completenessProven: true`, the search's own `planFailure`, and the
+`unreachableBoundaries`. A role is written as consecutive tokens from beat 0, so
+every position it reaches is a sum of admitted token lengths, whose whole-note
+denominator divides the lcm of the admitted token denominators; that position's
+does not, so no bound, budget or `cautionLengthOptIn` changes the answer. It is a
+claim about a position, never about a duration, and an off-grid position
+`classifyPosition` calls `CAUTION_REPRESENTABLE` keeps the search's own code.
+G10 already refuses an onset or rest boundary of that kind before any
+serialization (`MICRO_TIMING_BOUNDARY_NOT_FINAL_REPRESENTABLE`, §5), so the
+emitter meets it where G10 does not look, such as an off-grid Tempo position
+that splits a span.
+
 A worked example, pinned by regression in both the planner and the production
 `emitFinalMml` path: a 100-beat sustain is exactly 16 dotted whole notes plus one
 whole note, so an exact decomposition demonstrably exists, yet the default
@@ -289,6 +305,7 @@ search-policy limit; raising only the bound makes the same candidate emit.
 | --- | --- |
 | the bounded search finds no exact plan | `FAIL` — never rounded to the nearest token, and reported as a search-policy limit rather than as unrepresentability |
 | duration search budget exhausted | `FAIL`, reported as a search limit rather than a proof of impossibility |
+| a span the search failed on starts or ends at a position no admitted token sequence reaches | `FAIL` with `BOUNDARY_NOT_FINAL_REPRESENTABLE` — a proof about the position (§4b); the boundary is not moved |
 | two notes overlap inside one role | `FAIL` — a role is one sequential voice; neither note is dropped or truncated |
 | a note event carries no six-slot role | `FAIL` — the emitter does not choose a slot |
 | a rest event carries no six-slot role | not a slot's material: a rest is silence, and one no role holds (a notated MusicXML rest carried from the baseline) is left out of the role streams, as the gaps of a MIDI source are; a rest a role holds is written as that role's rest |
@@ -301,6 +318,7 @@ search-policy limit; raising only the bound makes the same candidate emit.
 | any role exceeds the 2,400-character budget | `FAIL` with role, count, overage and attack count — no note, attack or rest is removed |
 | G10 reports confirmed technical residue | `FAIL` — unless `technicalTimingRepair` is opted into *and* the repair layer normalizes it exactly (§5a) |
 | G10 reports unproven sub-grid material | `PENDING` — never acted on, with or without the repair opt-in |
+| G10 reports an onset or rest boundary the role must reach and no admitted token sequence can | `PENDING` (`MICRO_TIMING_BOUNDARY_NOT_FINAL_REPRESENTABLE`) — no attack or rest is moved to make it writable |
 | G10 preserves source-supported sub-grid material | `FAIL` — provably unrepresentable (every admitted token is at least one safe-grid unit), and refusing is the only answer that does not damage it |
 | a supplied readiness report blocks on any gate but `technical` | `PENDING` |
 | a pending arbitration decision exists | `PENDING` |

@@ -66,6 +66,13 @@ export const EMIT_DIAGNOSTICS = Object.freeze({
   DURATION_SEARCH_POLICY_LIMIT: 'DURATION_SEARCH_POLICY_LIMIT',
   DURATION_SEARCH_BUDGET_EXHAUSTED: 'DURATION_SEARCH_BUDGET_EXHAUSTED',
   DURATION_NON_POSITIVE: 'DURATION_NON_POSITIVE',
+  // Reported instead of either search code when the span the search failed on
+  // starts or ends at a position no admitted Final token sequence reaches
+  // (`canonical/release-timing.mjs#classifyPosition`). That is a proof about the
+  // position, not a search result: a role is written as consecutive tokens from
+  // beat 0, and every sum of admitted token lengths has a whole-note denominator
+  // dividing their lcm, which this position's does not.
+  BOUNDARY_NOT_FINAL_REPRESENTABLE: 'BOUNDARY_NOT_FINAL_REPRESENTABLE',
   PITCH_NOT_SPELLABLE: 'PITCH_NOT_SPELLABLE',
   PITCH_ABOVE_OFFICIAL_RANGE: 'PITCH_ABOVE_OFFICIAL_RANGE',
   VOLUME_OUT_OF_RANGE: 'VOLUME_OUT_OF_RANGE',

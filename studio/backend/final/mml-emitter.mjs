@@ -26,6 +26,7 @@
 import { F, f, ROLES } from '../mml/index.mjs';
 import { EFFECTIVE_RULESET, studioFinalBlockers } from '../rules/index.mjs';
 import { enforceMicroGaps } from './micro-gap-enforcement.mjs';
+import { POSITION_CLASS, classifyPosition } from '../canonical/release-timing.mjs';
 import {
   DELIVERY_CLASS,
   MACHINE_DELIVERY_SCHEMA_V2,
@@ -405,6 +406,38 @@ function serializeItems(role, items, lattice, facts, options) {
         : reasons.has(PLAN_FAILURE.NON_POSITIVE_DURATION)
           ? PLAN_FAILURE.NON_POSITIVE_DURATION
           : PLAN_FAILURE.SEARCH_POLICY_LIMIT;
+      // Either search outcome yields to a proof about where the span sits. A
+      // role is written as consecutive tokens from beat 0, so a span boundary no
+      // admitted token sequence reaches cannot be written whatever the search
+      // bounds, the budget or the caution opt-in; saying "search limit" there
+      // sends a reader looking for a bound to raise. Only a boundary
+      // `classifyPosition` proves unreachable counts: an off-grid position it
+      // calls CAUTION_REPRESENTABLE keeps the search's own code.
+      if (failure !== PLAN_FAILURE.NON_POSITIVE_DURATION) {
+        const start = f(item.start);
+        const end = start.add(item.duration);
+        const unreachable = [['start', start], ['end', end]]
+          .filter(([, beat]) => classifyPosition(beat) === POSITION_CLASS.NOT_FINAL_REPRESENTABLE)
+          .map(([boundary, beat]) => Object.freeze({ boundary, position: beat.toString() }));
+        if (unreachable.length) {
+          diagnostics.push(diagnostic(
+            EMIT_DIAGNOSTICS.BOUNDARY_NOT_FINAL_REPRESENTABLE,
+            DIAGNOSTIC_SEVERITY.ERROR,
+            `${role}: the ${item.kind} span ${item.start}..${end} (${item.eventId ?? 'silence between events'}) ${unreachable.map(entry => `${entry.boundary}s at beat ${entry.position}`).join(' and ')}, and no sequence of admitted Final length tokens reaches ${unreachable.length > 1 ? 'either position' : 'that position'}: every sum of admitted token lengths has a whole-note denominator dividing the lcm of the token denominators, and ${unreachable.length > 1 ? 'neither position\'s does' : 'that position\'s does not'}. This is a proof, not a search limit, and no search bound, budget or caution opt-in changes it. The emitter fails closed and does not move the boundary.`,
+            {
+              role,
+              eventId: item.eventId,
+              duration: item.duration.toString(),
+              start: item.start,
+              end: end.toString(),
+              unreachableBoundaries: Object.freeze(unreachable),
+              planFailure: failure,
+              completenessProven: true,
+            },
+          ));
+          continue;
+        }
+      }
       const cautionHint = lattice.cautionLengthOptIn
         ? ''
         : ' FINAL_ALLOWED_WITH_CAUTION plain lengths are not admitted here; cautionLengthOptIn widens the lattice.';
