@@ -5,7 +5,7 @@ import { mkdtemp, readFile, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { once } from 'node:events';
-import { createApplication, createHttpServer, productionAgentConfiguration } from '../railway/server.mjs';
+import { createApplication, createHttpServer, HTTP_TIMEOUTS, productionAgentConfiguration } from '../railway/server.mjs';
 
 const origin = 'https://mml.example';
 const password = 'SYNTHETIC_TEST_PASSWORD_ONLY_01234567890123456789';
@@ -237,6 +237,20 @@ test('real loopback HTTP carries the complete OAuth and MCP sequence without ext
       assert.equal(response.status, 200); const data = await response.json(); assert.equal(data.id, id); assert.ok(data.result);
     }
   } finally { server.closeAllConnections(); await new Promise(resolve => server.close(resolve)); app.close(); }
+});
+test('a 64 MiB upload on a slow link is not cut off by the whole-request timeout', () => {
+  // The former 15 s limit answered 408 to any upload slower than about 4 MB/s
+  // (reproduced over loopback: a 5 MB multipart body trickled at 100 KB/s got
+  // 408 at the first 30 s connection check). The limit must at least outlast
+  // the service page's own 120 s upload wait; headers stay tightly bounded.
+  const app = createApplication(options), server = createHttpServer(app);
+  try {
+    assert.equal(server.requestTimeout, HTTP_TIMEOUTS.requestMs);
+    assert.ok(server.requestTimeout >= 120000, 'covers the service page upload wait');
+    assert.ok(64 * 1024 * 1024 / (server.requestTimeout / 1000) < 256 * 1024, 'a 64 MiB file fits at under 2 Mbit/s');
+    assert.equal(server.headersTimeout, 10000, 'the slow-loris guard is unchanged');
+    assert.equal(server.maxHeaderSize, 16384);
+  } finally { server.close(); app.close(); }
 });
 test('production configuration fails closed without credentials or HTTPS', () => {
   assert.throws(() => createApplication({ ...options, ownerPassword: 'short' }), /MML_OWNER_PASSWORD/);

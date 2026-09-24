@@ -256,8 +256,17 @@ export function createApplication(options) {
   };
 }
 
+// How long one request may take to arrive in full. The asset plane accepts
+// 64 MiB (contracts.mjs maxAssetBytes) and the service page waits 120 s for an
+// upload to finish, so the whole-request limit must cover a large file on a
+// phone uplink: at the former 15 s, Node answered 408 to any upload slower than
+// about 4 MB/s and the asset was never stored. The byte ceilings in api.mjs and
+// mcp.mjs bound what a request may carry; the 10 s header timeout stays the
+// slow-loris guard, since a request's headers are small.
+export const HTTP_TIMEOUTS = Object.freeze({ requestMs: 300000, headersMs: 10000 });
+
 export function createHttpServer(application) {
-  return createServer({ maxHeaderSize: 16384, requestTimeout: 15000, headersTimeout: 10000 }, async (req, res) => {
+  return createServer({ maxHeaderSize: 16384, requestTimeout: HTTP_TIMEOUTS.requestMs, headersTimeout: HTTP_TIMEOUTS.headersMs }, async (req, res) => {
     try {
       if (!req.url?.startsWith('/') || req.url.startsWith('//') || req.url.length > 8192) { res.writeHead(400); res.end(); return; }
       const request = new Request(application.origin + req.url, { method: req.method, headers: req.headers, ...(req.method === 'GET' || req.method === 'HEAD' ? {} : { body: Readable.toWeb(req), duplex: 'half' }) });
