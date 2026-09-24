@@ -316,14 +316,19 @@ export async function runWorkshopChecks({ page, base, idle, file, screenshot, pr
   await command('#file');
   await page.locator('#videoOpen').click();
   await page.locator('#videoBox.on #wfMake').waitFor({ timeout: 60000 });
-  const drawnPixels = await page.evaluate(() => {
+  // The preview is drawn on the animation frame after the render is ready,
+  // not when the button appears (the stage is cleared by its layout first),
+  // so a single read right away could find it blank on a slow machine, as
+  // desktop Chromium once did in CI on 9324093. Wait for the drawn frame.
+  const litPixels = () => {
     const c = document.querySelector('#wfStage');
     const d = c.getContext('2d').getImageData(0, 0, c.width, c.height).data;
     let lit = 0;
     for (let i = 0; i < d.length; i += 4) if (d[i] + d[i + 1] + d[i + 2] > 60) lit++;
     return lit;
-  });
-  assert.ok(drawnPixels > 100, 'the waterfall preview is drawn');
+  };
+  const previewDrawn = await page.waitForFunction(`(${litPixels})() > 100`, null, { timeout: 15000 }).then(() => true, () => false);
+  assert.ok(previewDrawn, `the waterfall preview is drawn: ${await page.evaluate(`(${litPixels})()`)} lit pixels after 15 s`);
   await screenshot('workshop-video');
   await page.locator('#videoClose').click();
 
