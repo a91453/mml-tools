@@ -30,23 +30,39 @@
 //                             legacy FAIL        Canonical PASS
 //
 // So a legacy report carries `technical_ok: null`, a `legacy_technical_ok`
-// boolean of its own, `authority: 'LEGACY_DIAGNOSTIC'`, and a
-// `strict_mobile_technical` gate of `NOT_RUN`. A legacy PASS can therefore not
-// be read — by a client, a model, or a later refactor — as a Published
-// Canonical PASS.
+// boolean of its own, `authority: 'LEGACY_DIAGNOSTIC'`, a
+// `strict_mobile_technical` gate of `NOT_RUN`, and `profile: null` beside a
+// `legacy_profile` of its own. A legacy PASS can therefore not be read — by a
+// client, a model, or a later refactor — as a Published Canonical PASS.
 //
 // When Published Canonical cannot be loaded, the Canonical operations fail
 // closed with `CANONICAL_NOT_LOADED`. They do not fall back to the legacy
 // engine: a fallback would answer a Canonical question with a non-Canonical
 // verdict, which is exactly the routing defect this split exists to close.
 //
+// The dist/core.js identity is not the Canonical one
+// --------------------------------------------------
+// `dist/core.js` carries a version and a rule profile of its own
+// (`mobile-strict-2026-09-08`). Neither is what the Canonical operations answer
+// under: their profile is the one the Canonical MML validator exports
+// (`STUDIO_MML_PROFILE`), and the two profiles judge songs differently (a bar of
+// 64th notes above). Wherever this module reports the dist/core.js values it
+// does so under `legacy_*` names only (`legacy_core_version`, `legacy_profile`),
+// and a report's `profile` is only ever the profile that produced its Canonical
+// verdict. `describe()` gives a service-info surface the same answer, reached
+// the same way, so service info and a validation report cannot name two
+// different profiles.
+//
 // Two things are deliberately preserved byte-for-byte rather than modernized:
 //
 //   * the report shape and its `gates` vocabulary. Existing clients and the
 //     existing regression suite read these exact fields, and renaming them
-//     would be a breaking change dressed up as a cleanup. The newer Canonical
-//     gate axes in `contracts.mjs` are a different vocabulary for a different
-//     pipeline; neither is converted into the other;
+//     would be a breaking change dressed up as a cleanup. The one field that
+//     was renamed, `core_version` -> `legacy_core_version`, was renamed because
+//     it misreported: it sat beside `profile` in a Canonical report while
+//     naming the legacy library. The newer Canonical gate axes in
+//     `contracts.mjs` are a different vocabulary for a different pipeline;
+//     neither is converted into the other;
 //   * the three-digit preflight bound. It protects the rational parser from
 //     pathological integers and is not a musical rule.
 
@@ -87,6 +103,15 @@ const legacyGates = ok => Object.freeze({
   player_readback: 'NOT_RUN',
   in_game_acceptance: 'PENDING',
 });
+
+// The Published Canonical release identity `describe()` names, as the separate
+// fields the Canonical gate's provenance envelope carries. None of them is
+// folded into another. No failure message, notice or deployment head is
+// copied: the refusal of a Canonical operation carries its own reason.
+const RELEASE_FIELDS = Object.freeze(['canonical_version', 'canonical_status', 'manifest_version', 'rules_snapshot_sha', 'manifest_commit']);
+
+// What `describe()` reports while the Canonical operations answer.
+export const CANONICAL_VALIDATION_AVAILABLE = 'AVAILABLE';
 
 const pairSummary = review => review?.pairs.map(pair => ({
   left: pair.left,
@@ -180,18 +205,44 @@ export function createTechnicalService({ serviceVersion, canonical = null }) {
         { legacy_fallback_allowed: false },
       );
     }
-    return { validate, profile: engines.mml.STUDIO_MML_PROFILE ?? PROFILE };
+    // The profile a Canonical report names comes from the Canonical validator
+    // or not at all. Substituting the dist/core.js profile here would label a
+    // Canonical verdict with the rules of the engine it was routed away from.
+    const profile = engines.mml.STUDIO_MML_PROFILE;
+    if (typeof profile !== 'string' || !profile) {
+      throw new StudioApplicationError(
+        ERROR_CODES.ENGINE_UNAVAILABLE,
+        'ENGINE_UNAVAILABLE: the Canonical MML validator did not export its profile (STUDIO_MML_PROFILE), so a report could not name the rules it answered under. The legacy profile is not substituted.',
+        { legacy_fallback_allowed: false },
+      );
+    }
+    return { validate, profile };
   };
 
-  const report = (validation, offset, { authority, profile }) => {
-    const song = validation.song;
-    const ok = validation.ok === true;
+  // `profile` is the profile that produced a Canonical verdict. A legacy
+  // diagnostic states no Canonical profile, exactly as it states no Canonical
+  // `technical_ok`: the field stays present and null, and the legacy engine's
+  // profile is reported as `legacy_profile`. `legacy_core_version` is the
+  // dist/core.js library version on both: the Canonical parser reads songs
+  // through that library's primitives, but its version is neither a rule
+  // profile nor a Canonical release.
+  const identity = ({ authority, profile }) => {
     const canonicalAuthority = authority === TECHNICAL_AUTHORITY.CANONICAL;
     return {
       service_version: serviceVersion,
-      core_version: VERSION,
-      profile,
+      legacy_core_version: VERSION,
+      profile: canonicalAuthority ? profile : null,
+      ...(canonicalAuthority ? {} : { legacy_profile: PROFILE }),
       authority,
+    };
+  };
+
+  const report = (validation, offset, meta) => {
+    const song = validation.song;
+    const ok = validation.ok === true;
+    const canonicalAuthority = meta.authority === TECHNICAL_AUTHORITY.CANONICAL;
+    return {
+      ...identity(meta),
       // A legacy diagnostic states no Canonical technical verdict at all. The
       // field stays present so the shape is stable, and stays null so no caller
       // can read a legacy PASS as `technical_ok`.
@@ -228,7 +279,7 @@ export function createTechnicalService({ serviceVersion, canonical = null }) {
     };
   };
 
-  const overlapReport = (review, input, { authority, profile }) => {
+  const overlapReport = (review, input, meta) => {
     const items = [];
     if (input.kind !== 'low_mid_intervals') {
       for (const pair of review.pairs) for (const overlap of pair.overlaps) items.push({ category: 'same_pitch', left: pair.left, right: pair.right, ...overlap });
@@ -238,12 +289,9 @@ export function createTechnicalService({ serviceVersion, canonical = null }) {
     }
     const offset = input.offset ?? 0;
     const limit = input.limit ?? 100;
-    const canonicalAuthority = authority === TECHNICAL_AUTHORITY.CANONICAL;
+    const canonicalAuthority = meta.authority === TECHNICAL_AUTHORITY.CANONICAL;
     return {
-      service_version: serviceVersion,
-      core_version: VERSION,
-      profile,
-      authority,
+      ...identity(meta),
       technical_ok: canonicalAuthority ? true : null,
       ...(canonicalAuthority ? {} : { legacy_technical_ok: true }),
       gates: canonicalAuthority ? canonicalGates(true) : legacyGates(true),
@@ -293,13 +341,14 @@ export function createTechnicalService({ serviceVersion, canonical = null }) {
      * Retained so an environment without the published Git history keeps the
      * capability it already had, and so the difference between the legacy
      * engine and the published rules stays observable. Its PASS is not a
-     * Published Canonical PASS and the report says so in three places:
-     * `authority`, `technical_ok: null`, and `gates.strict_mobile_technical`.
+     * Published Canonical PASS and the report says so in four places:
+     * `authority`, `technical_ok: null`, `gates.strict_mobile_technical`, and
+     * `profile: null` (its own profile is `legacy_profile`).
      */
     legacyValidate(input) {
       checkShape(input, TECHNICAL_INPUT);
       preflight(input);
-      return report(legacyValidateMML(input.mml, settingsOf(input)), input.error_offset ?? 0, { authority: TECHNICAL_AUTHORITY.LEGACY, profile: PROFILE });
+      return report(legacyValidateMML(input.mml, settingsOf(input)), input.error_offset ?? 0, { authority: TECHNICAL_AUTHORITY.LEGACY });
     },
 
     /** Paged overlap detail from the legacy engine, labelled as a diagnostic. */
@@ -307,9 +356,51 @@ export function createTechnicalService({ serviceVersion, canonical = null }) {
       checkShape(input, OVERLAP_INPUT);
       preflight(input);
       const validation = legacyValidateMML(input.mml, settingsOf(input));
-      const meta = { authority: TECHNICAL_AUTHORITY.LEGACY, profile: PROFILE };
+      const meta = { authority: TECHNICAL_AUTHORITY.LEGACY };
       if (!validation.ok) return report(validation, input.error_offset ?? 0, meta);
       return overlapReport(validation.song.review, input, meta);
+    },
+
+    /**
+     * The profile and Published Canonical release `validate()` and
+     * `overlapDetails()` answer under, for a service-info surface.
+     *
+     * It reaches them the way those two operations do — the same Canonical
+     * gate, the same `canonicalValidator()` — so the `profile` it names is the
+     * `profile` a Canonical report carries. It does not throw over a Canonical
+     * state, because service info has to keep answering in exactly the
+     * environment where validation refuses: there `profile` is null and
+     * `canonical_validation` is the code the two operations refuse with. The
+     * legacy engine's profile is never offered in its place; it and the
+     * dist/core.js version appear only under their `legacy_*` names.
+     */
+    async describe() {
+      let profile = null;
+      let status = CANONICAL_VALIDATION_AVAILABLE;
+      try {
+        ({ profile } = await canonicalValidator());
+      } catch (error) {
+        // Only a refusal the Canonical operations themselves would answer
+        // with is a state to describe. Anything else is a fault.
+        if (!(error instanceof StudioApplicationError)) throw error;
+        status = error.code;
+      }
+      // The gate's provenance never throws: it reports the loaded release, the
+      // release beside an engine failure, or CANONICAL_NOT_LOADED. A service
+      // built without a gate (the Sites artifact) has no release at all.
+      const provenance = typeof canonical?.provenance === 'function' ? await canonical.provenance() : null;
+      const gateless = !canonical || typeof canonical.engines !== 'function';
+      return {
+        validation_authority: TECHNICAL_AUTHORITY.CANONICAL,
+        canonical_validation: status,
+        profile,
+        canonical_release: Object.freeze({
+          status: provenance?.status ?? (gateless ? ERROR_CODES.CANONICAL_NOT_LOADED : null),
+          ...Object.fromEntries(RELEASE_FIELDS.map(field => [field, provenance?.[field] ?? null])),
+        }),
+        legacy_core_version: VERSION,
+        legacy_profile: PROFILE,
+      };
     },
   });
 }

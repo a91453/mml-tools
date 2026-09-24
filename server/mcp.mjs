@@ -1,5 +1,5 @@
-import { VERSION, PROFILE, ROLES } from '../dist/core.js';
-import { createTechnicalService } from '../studio/backend/application/technical-service.mjs';
+import { ROLES } from '../dist/core.js';
+import { CANONICAL_VALIDATION_AVAILABLE, createTechnicalService } from '../studio/backend/application/technical-service.mjs';
 import { ERROR_CODES, StudioApplicationError } from '../studio/backend/application/contracts.mjs';
 import { createCanonicalGate } from '../studio/backend/application/provenance.mjs';
 import { STUDIO_MCP_TOOLS, UPLOAD_INSTRUCTION, runStudioTool } from './mcp-studio.mjs';
@@ -46,15 +46,19 @@ const mcpSongProperties = {
 };
 const mcpPageProperty = { type: 'integer', minimum: 0, maximum: 100000 };
 
-// The three original tools, unchanged. Their names, descriptions, schemas,
-// annotations and report shape are a published contract that existing clients
-// and the existing regression suite read; a rename dressed up as a cleanup
-// would be a breaking change. They are listed on their own so that a server
-// with no Application Service attached advertises exactly these three.
+// The three original tools. Their names, schemas, annotations and report shape
+// are a published contract that existing clients and the existing regression
+// suite read; a rename dressed up as a cleanup would be a breaking change. The
+// one exception corrected a misreport rather than tidying a name: the
+// dist/core.js version and profile used to appear as `core_version`/`profile`
+// beside validation that answers under the Published Canonical profile, and
+// now appear only as `legacy_core_version`/`legacy_profile`. They are listed on
+// their own so that a server with no Application Service attached advertises
+// exactly these three.
 export const MCP_TOOLS = [
   {
     name: 'mml_service_info', title: 'MML 工具服務資訊',
-    description: '查看服務版本、能力、限制與驗證範圍。不讀取對話歷史或網站中的歌曲。',
+    description: '查看服務版本、能力、限制與驗證範圍。profile 是 mml_validate／mml_overlap_details 實際採用的 Published Canonical 驗證 profile，canonical_release 是載入的 Canonical release；Canonical 未載入時 profile 為 null，canonical_validation 說明拒絕代碼，不以 legacy profile 代替。legacy_core_version／legacy_profile 只是 dist/core.js legacy 引擎的標示。不讀取對話歷史或網站中的歌曲。',
     inputSchema: { type: 'object', properties: {}, additionalProperties: false },
     annotations: mcpAnnotations,
   },
@@ -172,13 +176,30 @@ function mcpPreflight(args) {
 // or not an Application Service is attached. The gate is lazy and fails closed:
 // a transport in an environment without the published Git history refuses these
 // two tools with CANONICAL_NOT_LOADED rather than silently answering from the
-// legacy engine, whose verdict differs in both directions. Tool discovery,
-// `mml_service_info` and the `studio_*` tools are unaffected.
+// legacy engine, whose verdict differs in both directions. Tool discovery and
+// the `studio_*` tools are unaffected, and `mml_service_info` keeps answering:
+// it names the profile and release these two tools answer under, or says that
+// Canonical is not loaded, and never offers the legacy profile in their place.
 const technical = createTechnicalService({ serviceVersion: SERVICE_VERSION, canonical: createCanonicalGate() });
 
-function mcpServiceInfo(tools) {
+// `profile` comes from the same technical service instance and the same gate
+// `mml_validate` uses, so the two tools cannot name different profiles. The
+// dist/core.js version and profile keep their `legacy_*` names here as in the
+// validation reports.
+async function mcpServiceInfo(tools) {
+  const validation = await technical.describe();
+  const available = validation.canonical_validation === CANONICAL_VALIDATION_AVAILABLE;
   return {
-    name: 'MML Workbench Tools', service_version: SERVICE_VERSION, core_version: VERSION, profile: PROFILE,
+    name: 'MML Workbench Tools', service_version: SERVICE_VERSION,
+    profile: validation.profile,
+    validation_authority: validation.validation_authority,
+    canonical_validation: validation.canonical_validation,
+    canonical_release: validation.canonical_release,
+    profile_notice: available
+      ? 'profile 是 mml_validate 與 mml_overlap_details 實際採用的 Published Canonical 驗證 profile，canonical_release 是本服務載入的 Published Canonical release。legacy_core_version／legacy_profile 只是 dist/core.js legacy 引擎的標示，不是驗證所用的 profile。'
+      : `Published Canonical 驗證目前無法使用（${validation.canonical_validation}）：mml_validate 與 mml_overlap_details 會以此代碼拒絕，不退回 legacy 引擎，因此 profile 為 null。legacy_core_version／legacy_profile 只是 dist/core.js legacy 引擎的標示，不是驗證所用的 profile。`,
+    legacy_core_version: validation.legacy_core_version,
+    legacy_profile: validation.legacy_profile,
     transport: 'stateless-streamable-http', protocol_versions: MCP_VERSIONS,
     roles: ROLES, per_track_character_limit: 2400,
     tools: tools.map(t => t.name),

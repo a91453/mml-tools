@@ -139,7 +139,7 @@ The service calls no LLM API. It cannot: it holds no key and imports no client.
 | `arrangement-service.mjs` | Suggestion, then explicit acceptance. |
 | `review-service.mjs` | Candidate review, confirmations, gate axes. |
 | `final-service.mjs` | Finalize orchestration and artifacts. |
-| `technical-service.mjs` | The legacy Strict Mobile technical check. |
+| `technical-service.mjs` | The Strict Mobile technical check under Published Canonical, and the legacy `dist/core.js` diagnostic under its own names. |
 
 Operations: `capabilities`, `createProject`, `getProject`, `listProjects`,
 `uploadAsset`, `listAssets`, `getAsset`, `readAssetBytes`, `analyzeSources`,
@@ -912,9 +912,8 @@ and the server instructions tell an agent to upload over HTTP and pass the
 ### Backward compatibility
 
 `mml_service_info`, `mml_validate` and `mml_overlap_details` keep their names,
-descriptions, schemas, annotations and exact report shape. A server with no
-Application Service attached — the Sites worker — advertises exactly those
-three, so its contract is untouched.
+schemas and annotations. A server with no Application Service attached — the
+Sites worker — advertises exactly those three.
 
 Their business logic moved into the Application Service's `technical-service.mjs`,
 which the HTTP surface calls too, so there is one implementation. The MCP
@@ -922,6 +921,25 @@ transport binds its own instance of it for one reason: the report carries
 `service_version`, which describes the service answering the call, not the
 orchestration layer, and routing it through a differently-versioned application
 would make one tool report two versions. The logic is identical either way.
+
+**Which profile answered.** `mml_validate` and `mml_overlap_details` answer
+under the Published Canonical validator and report its profile
+(`STUDIO_MML_PROFILE`) as `profile`. `mml_service_info` reports that same
+profile, reached through the same technical service and the same Canonical
+gate, with `canonical_validation` (`AVAILABLE`, or the code the two tools refuse
+with) and `canonical_release` (`status`, `canonical_version`,
+`canonical_status`, `manifest_version`, `rules_snapshot_sha`,
+`manifest_commit`). Where Canonical is not loaded — including the Sites worker,
+which has no gate — service info still answers, with `profile: null` and the
+refusal code; it never names the legacy profile in its place. The
+`dist/core.js` version and profile (`mobile-strict-2026-09-08`) are reported
+only as `legacy_core_version` and `legacy_profile`: in service info, and in
+every technical report over MCP and HTTP, where `legacy_core_version` replaced
+the former `core_version`. A legacy diagnostic (`/technical/legacy/*`) reports
+`profile: null` beside its `legacy_profile`, as it reports `technical_ok: null`
+beside `legacy_technical_ok`. The HTTP API has no separate service-info
+endpoint; `GET /api/v1/capabilities` and the root endpoint report the Canonical
+provenance and name no profile.
 
 ## 13. Transport parity
 

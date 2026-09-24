@@ -89,6 +89,14 @@ test('service info lists the tools that are actually available', async () => {
   const withApp = (await mcp(createStudioApplication({})).call('mml_service_info')).structuredContent;
   assert.ok(withApp.tools.includes('studio_finalize'));
   assert.match(withApp.binary_data_plane, /uploaded over HTTP, never through MCP/);
+
+  // With or without an Application Service, the profile service info names is
+  // the one mml_validate reports on the same transport.
+  const validated = (await mcp(createStudioApplication({})).call('mml_validate', { mml: 'MML@t120o4c1,,,,,;', meter_text: '0 4/4' })).structuredContent;
+  assert.equal(validated.authority, 'PUBLISHED_CANONICAL');
+  assert.equal(withApp.profile, validated.profile);
+  assert.equal(withoutApp.profile, validated.profile);
+  assert.equal(withApp.core_version, undefined);
 });
 
 // ─── the studio surface ─────────────────────────────────────────────────────

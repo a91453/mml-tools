@@ -24,7 +24,7 @@ Railway 已於 2026-09-08 22:48 UTC 完成部署，GitHub 來源為 `a91453/mml-
 
 新增 `POST /mcp`，使用無狀態 Streamable HTTP：
 
-- `mml_service_info`：版本、能力與限制。
+- `mml_service_info`：版本、能力與限制。`profile` 是 `mml_validate`／`mml_overlap_details` 實際採用的 Published Canonical 驗證 profile，並附載入的 Canonical release（`canonical_release`）；Canonical 未載入時 `profile` 為 `null`，`canonical_validation` 標明拒絕代碼，不以 legacy profile 代替。`dist/core.js` 的版本與 profile 只以 `legacy_core_version`／`legacy_profile` 標示，技術檢查報告同樣以 `legacy_core_version` 取代原本的 `core_version`。
 - `mml_validate`：完整六軌技術檢查、字數、Tempo Map、拍長、小節及全部 15 對重疊摘要。
 - `mml_overlap_details`：同音重疊與低中音小二度／大七度區間，完整計數並可分頁取得明細。
 

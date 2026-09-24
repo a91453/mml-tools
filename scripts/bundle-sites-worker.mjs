@@ -38,9 +38,11 @@ export async function bundleSitesWorker(root, assets) {
   parts.push(await scope(root, 'studio/backend/application/contracts.mjs', 'sitesContracts', {}, ['ERROR_CODES', 'StudioApplicationError', 'fail']));
   parts.push(await scope(root, 'studio/backend/application/technical-service.mjs', 'sitesTechnical', {
     '../../../dist/core.js': 'sitesCore', './contracts.mjs': 'sitesContracts',
-  }, ['createTechnicalService']));
+  }, ['createTechnicalService', 'CANONICAL_VALIDATION_AVAILABLE']));
   // createTechnicalService already refuses Canonical operations when its gate
-  // is null. This adapter supplies no rule identity, fake snapshot or verifier.
+  // is null, and its describe() then reports CANONICAL_NOT_LOADED with a null
+  // profile for mml_service_info. This adapter supplies no rule identity, fake
+  // snapshot or verifier.
   // The listening player (studio_listen and its UI resource) is advertised only
   // with an attached Studio, which Sites never has; these are its inert stand-ins.
   parts.push(`const sitesEnvironment = Object.freeze({\ncreateCanonicalGate: () => null,\nSTUDIO_MCP_TOOLS: Object.freeze([]),\nUPLOAD_INSTRUCTION: ${JSON.stringify(sitesNotice)},\nrunStudioTool: () => { throw new Error('Studio is unavailable in Sites'); },\nDEFAULT_LISTEN_CONFIG: null,\nLISTEN_MCP_TOOLS: Object.freeze([]),\nLISTEN_TOOL_NAME: 'studio_listen',\nlistenResources: () => [],\nreadListenResource: () => null,\nrunListenTool: () => { throw new Error('Studio is unavailable in Sites'); }\n});\n`);
