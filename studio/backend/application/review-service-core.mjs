@@ -75,7 +75,7 @@ const CONFIRMATIONS = Object.freeze({
   mobile_adaptation_reviewed: 'readiness `mobileAdaptation` gate: the candidate was reviewed against Acceptance Gate 8 and any Mobile adaptation (or the conclusion that none is needed) is minimal, role-preserving and evidence-backed. Bound to the candidate.',
   regression_reviewed: 'readiness `regression` gate: the candidate was compared against the Source-Faithful Baseline and accepted previous version when present, with Lead/Core3/source drift and available historical regressions explicitly reviewed. Bound to the candidate.',
   core3_completeness_reviewed: 'readiness `core3Completeness` gate: the Core3 the evaluator could not certify complete was reviewed against Acceptance Gate 4 and found to stand up as a one-player arrangement for this source. It resolves the unresolved residue, which includes a missing Chord1/Chord2 function -- the evaluator cannot tell material the source never carried from material cleanup dropped, so only a reviewer can. It can never clear an absent Lead or a Core3 whose identity depends on Chord3-Chord5: those are deficiencies in the arrangement and the gate FAILs on them. Bound to the candidate.',
-  original_audio_required: 'readiness `originalAudio` applicability. Setting it false states the song-specific workflow does not require original audio, and must say why. Bound to the baseline.',
+  original_audio_required: 'readiness `originalAudio` applicability. Setting it false states the song-specific workflow does not require original audio, and must say why. Refused while the project holds original audio (an original_audio asset or audio alignment evidence attached to a candidate), and a false recorded earlier does not count once it does: Acceptance Gate 7 applies whenever official audio is part of the source set. Bound to the baseline.',
   original_audio_reviewed: 'readiness `originalAudio` gate: Acceptance Gate 7 review. The active beat<->recording alignment for the relevant sections and the role / prominence / sustain / articulation / recording-structure questions were reviewed against the recording; audio metrics were not used to overwrite symbolic identity. Bound to the candidate and to the active audio evidence revision it reviewed.',
 });
 
@@ -195,6 +195,53 @@ export function createReviewService({ canonical, projects, intake, arrangement, 
   };
 
   /**
+   * The original audio this project holds, if any.
+   *
+   * ACCEPTANCE_CRITERIA Gate 7 is required when official audio is part of the
+   * source set, so `original_audio_required: false` cannot be true of a project
+   * that holds a recording: an uploaded `original_audio` asset, audio alignment
+   * evidence attached to any of its candidates (or listed in the project's
+   * audio evidence index), or -- when the caller has them -- a Canonical source
+   * of kind `original-audio` in a project it is reviewing. Studio Web makes the
+   * same call and forces the gate required when audio is present.
+   *
+   * Fails closed: an audio evidence record that cannot be read is still
+   * evidence that something was attached.
+   */
+  const originalAudioHeld = (record, canonicalProjects = []) => {
+    const assetIds = (record.assets ?? [])
+      .filter(asset => asset?.kind === 'original_audio')
+      .map(asset => asset.asset_id ?? null);
+    const evidenceCandidateIds = new Set((record.audio_evidence ?? [])
+      .map(entry => entry?.candidate_id ?? null));
+    for (const candidate of record.candidates ?? []) {
+      let attached;
+      try { attached = audioReportsFor(record.project_id, candidate.candidate_id).length > 0; }
+      catch { attached = true; }
+      if (attached) evidenceCandidateIds.add(candidate.candidate_id);
+    }
+    const sourceIds = canonicalProjects.flatMap(project => (project?.sources ?? [])
+      .filter(source => source?.kind === 'original-audio')
+      .map(source => source.id));
+    return Object.freeze({
+      held: assetIds.length > 0 || evidenceCandidateIds.size > 0 || sourceIds.length > 0,
+      original_audio_asset_ids: Object.freeze(assetIds),
+      audio_evidence_candidate_ids: Object.freeze([...evidenceCandidateIds]),
+      original_audio_source_ids: Object.freeze([...new Set(sourceIds)]),
+    });
+  };
+
+  /**
+   * Whether Gate 7 applies to a review or finalize. A recorded
+   * `original_audio_required: false` counts only while the project holds no
+   * original audio: it is re-checked here as well as refused at record time,
+   * so a statement stored before the recording arrived -- or before that
+   * refusal existed -- cannot turn the gate N/A.
+   */
+  const originalAudioRequiredFor = (record, recorded, canonicalProjects = []) => recorded.original_audio_required?.value !== false
+    || originalAudioHeld(record, canonicalProjects).held;
+
+  /**
    * The Core3 source-change approvals stored for one candidate.
    *
    * Returned in the shape `evaluateCore3Continuity` normalizes, and bound to
@@ -297,7 +344,11 @@ export function createReviewService({ canonical, projects, intake, arrangement, 
     // representations are re-graded against it, and Lead evidence citations are
     // resolved against it. Never the resolution stored with a record.
     const releaseEvidenceRegistry = releaseEvidenceRegistryFor(engines, record, baselineProject, project);
-    return { engines, record, baseline, baselineProject, entry, application, applicationLineage: arrangement.loadCandidateLineage(record, candidateId), core3Approvals: core3ApprovalsFor(record, candidateId), leadEvidenceReviews, gradedLeadEvidenceReviews: gradedLeadEvidenceReviews(leadEvidenceReviews, releaseEvidenceRegistry), confirmations, staleConfirmations: stale, audioReports, audioErrors, project, parent, candidateRulesSnapshot, loadedRulesSnapshot, releaseEvidenceRegistry };
+    // Gate 7 applicability for this review, the one value review and finalize
+    // both hand readiness: a recorded `false` counts only while the project,
+    // its baseline and this review project hold no original audio.
+    const originalAudioRequired = originalAudioRequiredFor(record, confirmations, [baselineProject, project]);
+    return { engines, record, baseline, baselineProject, entry, application, applicationLineage: arrangement.loadCandidateLineage(record, candidateId), core3Approvals: core3ApprovalsFor(record, candidateId), leadEvidenceReviews, gradedLeadEvidenceReviews: gradedLeadEvidenceReviews(leadEvidenceReviews, releaseEvidenceRegistry), confirmations, staleConfirmations: stale, audioReports, audioErrors, project, parent, candidateRulesSnapshot, loadedRulesSnapshot, releaseEvidenceRegistry, originalAudioRequired };
   };
 
   /** Record an explicit confirmation. Each one needs a stated reason. */
@@ -396,6 +447,21 @@ export function createReviewService({ canonical, projects, intake, arrangement, 
           fail(ERROR_CODES.INVALID_REQUEST, 'original_audio_reviewed needs active audio alignment evidence for this candidate: attach it first, then review it against the recording.', { candidate_id: boundCandidate });
         }
         audioBinding = { audio_report_sha256: reviewedReport };
+      }
+      // Gate 7 is required when official audio is part of the source set. A
+      // project that holds a recording, or audio evidence attached to one of
+      // its candidates, cannot be declared to need none: the reason string
+      // would contradict what the project holds, and a review is not allowed
+      // to overrule it.
+      if (name === 'original_audio_required' && input.value === false) {
+        const audio = originalAudioHeld(record);
+        if (audio.held) {
+          fail(ERROR_CODES.INVALID_REQUEST, 'This project holds original audio, so original_audio_required cannot be recorded as false: Acceptance Gate 7 applies whenever official audio is part of the source set. Leave it required and review the audio evidence instead.', {
+            confirmation: name,
+            original_audio_asset_ids: audio.original_audio_asset_ids,
+            audio_evidence_candidate_ids: audio.audio_evidence_candidate_ids,
+          });
+        }
       }
       next[name] = { value: input.value, reason, evidence, at: now(), ...binding, ...audioBinding };
     }
@@ -764,7 +830,7 @@ export function createReviewService({ canonical, projects, intake, arrangement, 
         leadDemotionReports,
         leadPromotionReports,
         versionDriftReviewed: recorded.version_drift_reviewed?.value === true,
-        originalAudioRequired: recorded.original_audio_required?.value !== false,
+        originalAudioRequired: ctx.originalAudioRequired,
         originalAudioReviewed: recorded.original_audio_reviewed?.value === true,
         playerReadback: recorded.player_readback?.value ?? 'NOT_RUN',
         mobileAdaptation: recorded.mobile_adaptation_reviewed?.value === true ? 'PASS' : 'PENDING',

@@ -230,7 +230,9 @@ export function createFinalService({ canonical, projects, review, store }) {
         leadDemotionReports,
         leadPromotionReports,
         versionDriftReviewed: recorded.version_drift_reviewed?.value === true,
-        originalAudioRequired: recorded.original_audio_required?.value !== false,
+        // Recorded `false` counts only while the project holds no original
+        // audio (review-service-core.mjs originalAudioRequiredFor).
+        originalAudioRequired: ctx.originalAudioRequired,
         originalAudioReviewed: recorded.original_audio_reviewed?.value === true,
         playerReadback: recorded.player_readback?.value ?? 'NOT_RUN',
         mobileAdaptation: recorded.mobile_adaptation_reviewed?.value === true ? 'PASS' : 'PENDING',
