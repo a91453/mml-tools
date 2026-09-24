@@ -5,7 +5,7 @@ import { BANK_CHECKER_LOAD_TIMEOUT_MS, bankCheckTimeoutMs } from '../web/preview
 import { SYNTH_READY_TIMEOUT_MS } from '../web/preview/bank-check.mjs';
 import { bankSendCounter, countBankSends } from './bank-sends.mjs';
 import { readyGate, withholdSynthReady } from './synth-ready.mjs';
-import { keptBankReadHold, processorHold } from './workshop-boot.mjs';
+import { keptBankReadHold, processorHold, synthReadyHold } from './workshop-boot.mjs';
 
 // The Workshop editor (studio/web/workshop/), end to end in a real browser:
 // open a Studio MML as a copy, language switch, dark/light theme, a bank
@@ -255,6 +255,65 @@ export async function runWorkshopChecks({ page, base, idle, file, screenshot, pr
     await page.locator('#dls').setInputFiles({ name: 'saw.sf2', mimeType: 'application/octet-stream', buffer: sawBank });
     await bankLoaded('saw.sf2');
   }
+
+  // Picks that overlap: the check of the first pick is held in the page (its
+  // Worker's answer waits for release; its loaded message does not) until a
+  // second pick has been made, which queues behind it. Once released, the
+  // first pick has been overtaken: it is not written to the store, not sent
+  // to the synth, and its name is never shown. The second pick is kept, sent
+  // and shown.
+  await page.evaluate(() => {
+    const RealWorker = window.Worker, put = IDBObjectStore.prototype.put;
+    // The native accessor, below any Worker subclass installed over it (the
+    // suite's installWorkerControls, audit.mjs).
+    let proto = RealWorker.prototype, onmessage;
+    while (!(onmessage = Object.getOwnPropertyDescriptor(proto, 'onmessage'))) proto = Object.getPrototypeOf(proto);
+    let release, armed = true;
+    const hold = window.heldCheck = { held: 0, released: new Promise(resolve => { release = resolve; }), release: () => release() };
+    window.Worker = function (url, options) {
+      const worker = new RealWorker(url, options);
+      if (!armed || !String(url).endsWith('/preview/bank-check-worker.mjs')) return worker;
+      armed = false;
+      Object.defineProperty(worker, 'onmessage', {
+        configurable: true,
+        get() { return onmessage.get.call(this); },
+        set(handler) {
+          onmessage.set.call(this, typeof handler !== 'function' ? handler : function (event) {
+            if (event.data?.loaded) return handler.call(this, event);
+            hold.held += 1;
+            hold.released.then(() => handler.call(this, event));
+            return undefined;
+          });
+        },
+      });
+      return worker;
+    };
+    // Every write of the kept bank, by name.
+    window.bankWrites = [];
+    IDBObjectStore.prototype.put = function (value, key, ...rest) {
+      if (key === 'current') window.bankWrites.push(value?.name);
+      return put.call(this, value, key, ...rest);
+    };
+    const label = document.querySelector('#dlsName');
+    window.bankLabels = [];
+    const labels = new MutationObserver(() => window.bankLabels.push(label.textContent));
+    labels.observe(label, { childList: true, characterData: true, subtree: true });
+    window.restoreOverlap = () => { window.Worker = RealWorker; IDBObjectStore.prototype.put = put; labels.disconnect(); };
+  });
+  const sentBeforeOverlap = await bankSends();
+  await page.locator('#dls').setInputFiles({ name: 'first.sf2', mimeType: 'application/octet-stream', buffer: sawBank });
+  await page.waitForFunction(() => window.heldCheck.held === 1);
+  await page.locator('#dls').setInputFiles({ name: 'second.sf2', mimeType: 'application/octet-stream', buffer: sawBank });
+  await page.evaluate(() => window.heldCheck.release());
+  await bankLoaded('second.sf2');
+  const overlap = await page.evaluate(() => ({ labels: window.bankLabels, writes: window.bankWrites }));
+  assert.ok(overlap.labels.every(text => !text.startsWith('first.sf2')), `the overtaken pick is never shown: ${overlap.labels.join(' → ')}`);
+  assert.deepEqual(overlap.writes, ['second.sf2'], 'the overtaken pick is never written to the store');
+  assert.equal(await bankSends(), sentBeforeOverlap + 1, 'only the later pick is sent to the synth');
+  assert.equal(await storedBankName(), 'second.sf2');
+  await page.evaluate(() => window.restoreOverlap());
+  await page.locator('#dls').setInputFiles({ name: 'saw.sf2', mimeType: 'application/octet-stream', buffer: sawBank });
+  await bankLoaded('saw.sf2');
   await closeSettings();
   await press(page.locator('#log button'));
   assert.equal(await page.locator('#play').isEnabled(), true);
@@ -311,6 +370,60 @@ export async function runWorkshopChecks({ page, base, idle, file, screenshot, pr
   const reading = await pickWhileHeld('holdKeptBankRead', 'keptBankReadHold');
   const hz = await page.evaluate(async () => (await import('./engine.mjs')).context().sampleRate);
   assert.equal(reading.engine, await t('engine.ready', { hz }), 'the engine has booted before this pick');
+
+  // A pick overtaken while it waits for the engine: its bank has been checked
+  // and kept, but the processor is still loading, so it has not been sent.
+  // A newer pick is made then. Once the processor loads, the older pick's
+  // bank is not sent to the synth and never shown; the newer pick's is.
+  const watchLabels = () => page.evaluate(() => {
+    const label = document.querySelector('#dlsName');
+    window.bankLabels = [];
+    new MutationObserver(() => window.bankLabels.push(label.textContent)).observe(label, { childList: true, characterData: true, subtree: true });
+  });
+  await page.evaluate(() => sessionStorage.setItem('holdProcessor', 'yes'));
+  await page.reload(); await page.locator('#unverified').waitFor();
+  await page.waitForFunction(() => window.processorHold?.held === 1);
+  await watchLabels();
+  // The pick reads its file twice: for the check, then right before its
+  // load. Once that second read has been answered, and the page has run
+  // everything that follows it without waiting, the pick waits on the boot.
+  await page.evaluate(() => {
+    const arrayBuffer = File.prototype.arrayBuffer;
+    let reads = 0;
+    File.prototype.arrayBuffer = function () {
+      const read = arrayBuffer.call(this);
+      if (this.name === 'waiting.sf2' && ++reads === 2) read.then(() => setTimeout(() => { window.waitingOnBoot = true; }));
+      return read;
+    };
+  });
+  await page.locator('#dls').setInputFiles({ name: 'waiting.sf2', mimeType: 'application/octet-stream', buffer: sawBank });
+  await page.waitForFunction(() => window.waitingOnBoot === true);
+  assert.equal(await page.locator('#engine').textContent(), workletStep, 'the older pick waits for the processor');
+  assert.equal(await storedBankName(), 'waiting.sf2', 'the older pick was kept before the newer one was made');
+  await page.locator('#dls').setInputFiles({ name: 'newer.sf2', mimeType: 'application/octet-stream', buffer: sawBank });
+  await page.evaluate(() => window.processorHold.release());
+  await bankLoaded('newer.sf2');
+  const waited = await page.evaluate(() => window.bankLabels);
+  assert.ok(waited.every(text => !text.startsWith('waiting.sf2')), `the pick overtaken while the engine booted is never shown: ${waited.join(' → ')}`);
+  assert.equal(await page.evaluate(() => window.bankSends), 1, 'only the newer pick is sent to the synth');
+  assert.equal(await storedBankName(), 'newer.sf2');
+
+  // A pick made while the boot-time load of the kept bank waits for the new
+  // synth to be ready (its first reply is held, workshop-boot.mjs): once the
+  // synth is ready, the kept bank is not sent and never shown; the pick,
+  // queued behind that load, is.
+  const keptName = await storedBankName();
+  await page.addInitScript(synthReadyHold);
+  await page.evaluate(() => sessionStorage.setItem('holdSynthReady', 'yes'));
+  await page.reload(); await page.locator('#unverified').waitFor();
+  await page.waitForFunction(() => window.synthReadyHold?.held === 1);
+  await watchLabels();
+  await page.locator('#dls').setInputFiles({ name: 'picked.sf2', mimeType: 'application/octet-stream', buffer: sawBank });
+  await page.evaluate(() => window.synthReadyHold.release());
+  await bankLoaded('picked.sf2');
+  const readied = await page.evaluate(() => window.bankLabels);
+  assert.ok(readied.every(text => !text.startsWith(keptName)), `the kept bank ${keptName} never replaces a pick made while the synth got ready: ${readied.join(' → ')}`);
+  assert.equal(await page.evaluate(() => window.bankSends), 1, 'only the pick is sent to the synth');
 
   // ── a synth that never reports ready ends the load ───────────────────────
   // With the processor's first reply withheld, as from one that never

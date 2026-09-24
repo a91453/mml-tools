@@ -45,7 +45,11 @@ export function boot() {
   return booting;
 }
 
-export async function loadBank(buf) {
+// `current` says whether this bank is still the one wanted. It is asked once
+// the engine has booted and its synth is ready, right before the bank is
+// sent, with nothing awaited in between: a load no longer wanted stops there,
+// sends nothing and resolves to null.
+export async function loadBank(buf, { current = () => true } = {}) {
   const mb = (buf.byteLength / 1048576).toFixed(1);
   await boot();
   if (!synth) {
@@ -70,6 +74,7 @@ export async function loadBank(buf) {
 
     synth.addNewChannel();
   }
+  if (!current()) return null;
   // A bank the worklet cannot parse is reported only as an event; without the
   // guard this load, and every bank load queued behind it, would never end.
   // The synth keeps the bank it had.

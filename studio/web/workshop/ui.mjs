@@ -108,11 +108,17 @@ function fillPresets() {
 
 let bankFile = null;
 
-// Bank loads run one at a time, and a load only runs while nothing newer
+// Bank loads run one at a time, and a load goes on only while nothing newer
 // was asked for, so the synth, the label and the bank store end on the last
 // choice. A pick takes its number the moment it is made, before any file is
 // read; the stored bank read at boot counts as older than any pick: otherwise
-// a slow boot load finishing last would replace the bank just chosen.
+// a slow boot load finishing last would replace the bank just chosen. That
+// is asked when the load starts, again before the pick's store write
+// (storeBank asks after the check and inside the write's transaction), and
+// again right before the bank is sent to the synth, once the engine has
+// booted and its synth is ready. So a pick overtaken before then is neither
+// kept (unless its write request had already been sent, which cannot be
+// stopped; the newer pick's own write comes after it), nor sent, nor shown.
 let bankQueue = Promise.resolve();
 let bankPicks = 0;
 function queueBank(task) {
@@ -121,8 +127,13 @@ function queueBank(task) {
   return run;
 }
 
-async function loadBank(buf, name, builtin = false, file = null) {
-  const { list, mb } = await engine.loadBank(buf);
+// `current` is asked right before the bank is sent to the synth (engine.mjs):
+// a load no longer wanted sends nothing and shows nothing. Once sent, the
+// synth plays that bank, so the page shows it.
+async function loadBank(buf, name, builtin = false, file = null, current = () => true) {
+  const loaded = await engine.loadBank(buf, { current });
+  if (!loaded) return;
+  const { list, mb } = loaded;
   bankLabel = `${name} · ${mb} MB`;
   setPresets(list);
   bankBuiltin = !!builtin;
@@ -636,7 +647,7 @@ export async function loadStoredBank() {
   try { stored = await bankStore.loadBank(); }
   catch (err) { console.warn("[Workshop] stored bank:", err); }
   if (!stored) return;
-  try { await queueBank(() => picked() ? undefined : loadBank(stored.bytes, stored.name, false, null)); }
+  try { await queueBank(() => picked() ? undefined : loadBank(stored.bytes, stored.name, false, null, () => !picked())); }
   catch (err) {
     console.warn("[Workshop] stored bank failed to load:", err);
     if (picked()) return;
@@ -3348,14 +3359,17 @@ export function init() {
     const f = e.target.files[0]; if (!f) return;
     e.target.value = "";
     const pick = ++bankPicks;
+    const current = () => pick === bankPicks;
     if (defBuiltin) { defMap = new Map(); defNames = new Map(); defLabel = ""; defBuiltin = false; }
   $("#dlsName").textContent = i18n.t("ui.bankReading");
     // Kept in Studio's local bank store (never uploaded) so the Studio preview
     // and the next Workshop visit use the same bank.
     try {
       await queueBank(async () => {
-        if (pick !== bankPicks) return;
-        await bankStore.storeBank(f).catch(err => {
+        if (!current()) return;
+        // A pick overtaken while it is checked is not written: storeBank
+        // rejects with BANK_SUPERSEDED, which is only logged here.
+        await bankStore.storeBank(f, { current }).catch(err => {
           // A bank whose check ran out of time is refused, not handed to the
           // synth, whose worklet would run the same parse on it. So is one
           // that could not be checked because the checker did not load in time.
@@ -3363,7 +3377,11 @@ export function init() {
           if (err?.code === "BANK_CHECKER_LOAD_TIMEOUT") throw Error(i18n.t("ui.bankCheckerLoadTimeout", { s: Math.round(err.timeoutMs / 1000) }));
           console.warn("[Workshop] bank not stored:", err);
         });
-        await loadBank(await f.arrayBuffer(), f.name, false, f);
+        // Asked again right before the bank is sent to the synth (loadBank):
+        // a pick overtaken while it was checked or kept, or while the engine
+        // boots or its synth gets ready, is neither sent nor shown. The newer
+        // pick's load is queued behind this one.
+        await loadBank(await f.arrayBuffer(), f.name, false, f, current);
       });
     }
     catch (err) {

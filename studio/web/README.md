@@ -256,7 +256,15 @@ exact timing, event identity and the evidence boundaries. See
     「音色試聽引擎在 20 秒內沒有就緒，已停止載入」 (the Workshop says it in
     its page language), and the next load starts a new synth. When the
     bank kept on the device fails to load as the Workshop opens, its log
-    says why, as it does for a pick.
+    says why, as it does for a pick, unless a pick has been made since:
+    that pick's own result is the one shown. The Workshop loads one bank
+    at a time, and the last pick wins there too: a pick overtaken by a newer
+    one before its bank is sent to the synth (while it is checked or kept,
+    or while the engine boots or its synth gets ready) is not written to the
+    store, unless its write had already been sent, and is never sent to the
+    synth or shown. Neither is the kept bank once a pick has been made. A
+    bank already sent is shown, since the synth plays it, until the newer
+    pick's own load replaces it.
   - **The default bank.** A General MIDI subset of FluidR3Mono_GM.sf3 (MIT).
     It is not in this repository and not in the build: the upstream file asks
     not to be redistributed. Nothing is downloaded when the page loads. The
