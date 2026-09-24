@@ -72,7 +72,9 @@ for (const profile of [
       if (!lostAgent && route.request().method() === 'POST') { lostAgent = true; await route.fetch(); await route.abort(); }
       else await route.continue();
     });
-    await page.locator('#midi').setInputFiles({ name: sourceName, mimeType: 'audio/midi', buffer: source });
+    // The type Windows browsers report for a .mid file, which the service does
+    // not list; the page must declare a listed one (studio/web/service/app.mjs).
+    await page.locator('#midi').setInputFiles({ name: sourceName, mimeType: 'audio/mid', buffer: source });
     let lost = false;
     await page.route('**/api/v1/projects/*/runs', async route => {
       if (!lost && route.request().method() === 'POST') { lost = true; await route.fetch(); await route.abort(); }

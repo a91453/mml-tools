@@ -215,11 +215,22 @@ $('#projects').onchange = () => act(() => loadProject($('#projects').value));
 $('#runs').onchange = () => act(() => loadRun($('#runs').value));
 $('#refresh').onclick = () => act(() => loadProjects(projectId));
 $('#existing-source').onchange = controls;
+// The service refuses a media type it does not list rather than guess a
+// parser from it (asset-service.mjs). Browsers report platform types it does
+// not list -- Windows names a MIDI file audio/mid, and .aac/.ogg/.webm
+// recordings arrive as audio/aac, audio/ogg, audio/webm -- so a picked file is
+// declared with a listed type, as the MusicXML branch below already does. The
+// declaration is metadata only: intake reads the bytes, and the asset kind is
+// what the owner chose.
+const AUDIO_TYPES_THE_SERVICE_LISTS = new Set(['audio/mp4', 'audio/m4a', 'audio/x-m4a', 'audio/mpeg', 'audio/flac', 'audio/x-flac', 'audio/wav', 'audio/x-wav']);
+const withType = (file, type) => (file && file.type !== type ? new File([file], file.name, { type }) : file);
+const midiFile = file => withType(file, 'audio/midi');
+const audioFile = file => (file && !AUDIO_TYPES_THE_SERVICE_LISTS.has(file.type) ? withType(file, 'application/octet-stream') : file);
 $('#start').onclick = () => act(async () => {
   const file = $('#midi').files[0]; if (!file || !/\.midi?$/i.test(file.name)) throw Error('請選擇 MIDI 檔案');
   const attempt = { idempotency_key: crypto.randomUUID(), stage: 'upload_requested', filename: file.name };
   save(attemptKey(projectId), attempt); text('#attempt-status', '正在上傳；若回應中斷，先重新讀取來源清單。');
-  const uploaded = await client.upload(projectId, file, $('#source-kind').value);
+  const uploaded = await client.upload(projectId, midiFile(file), $('#source-kind').value);
   attempt.asset_id = uploaded.asset.asset_id; save(attemptKey(projectId), { ...attempt, stage: 'uploaded' });
   await startAttempt(attempt);
 });
@@ -234,11 +245,11 @@ $('#upload-extra').onclick = () => act(async () => {
   // as the MusicXML archive type; the service reads which one it is from the
   // bytes, not from this declaration.
   const declared = /\.mxl$/i.test(file.name) ? 'application/vnd.recordare.musicxml' : 'application/xml';
-  const uploaded = await client.upload(projectId, musicxml ? new File([file], file.name, { type: declared }) : file, kind);
+  const uploaded = await client.upload(projectId, musicxml ? new File([file], file.name, { type: declared }) : midiFile(file), kind);
   await loadProject(projectId, current?.run?.run_id);
   message(`已加入來源 ${uploaded.asset.asset_id}；尚未啟動任務，也不代表來源已被採用。`);
 });
-$('#upload-audio').onclick = () => act(async () => { await client.upload(projectId, $('#audio').files[0], 'original_audio'); await loadProject(projectId, current?.run?.run_id); message('已加入原曲音訊；對齊與聽驗仍需另行執行。'); });
+$('#upload-audio').onclick = () => act(async () => { await client.upload(projectId, audioFile($('#audio').files[0]), 'original_audio'); await loadProject(projectId, current?.run?.run_id); message('已加入原曲音訊；對齊與聽驗仍需另行執行。'); });
 $('#review').onclick = () => act(async () => {
   const observed = binding(); reviewBinding = null;
   const runId = current.run.run_id, candidate = current.run.candidate_id;
