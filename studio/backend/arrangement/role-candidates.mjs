@@ -167,6 +167,26 @@ function normalizeProject(project) {
   return { notes, unsupported };
 }
 
+// Defence in depth for caller-supplied G11-B output. The default decomposition
+// above is built from the supported notes only; a caller that decomposed the
+// whole project instead would put percussion / unsupported events into lanes,
+// where they could receive a pitched role and would also be counted a second
+// time as unsupported material. Such a decomposition is refused, not repaired:
+// stripping events out of a lane would leave a lane structure nobody computed.
+function refuseUnsupportedLaneEvents(decompositions, unsupported) {
+  if (!unsupported.length) return;
+  const unsupportedIds = new Set(unsupported.map(item => item.eventId));
+  for (const decomposition of decompositions) {
+    for (const lane of Array.isArray(decomposition?.lanes) ? decomposition.lanes : []) {
+      for (const span of Array.isArray(lane?.notes) ? lane.notes : []) {
+        if (!unsupportedIds.has(span?.eventId)) continue;
+        throw Error(`options.decompositions places unsupported source event ${span.eventId} in a lane of source voice ${decomposition.sourceVoice ?? 'voice:null'}; `
+          + 'decompose only the notes suggestRoleCandidates treats as supported (percussion-channel and percussion/drum/unsupported-tagged notes stay unsupported source material)');
+      }
+    }
+  }
+}
+
 function normalizeRoleOverrides(overrides, laneIds) {
   if (overrides === undefined) return new Map();
   if (!overrides || typeof overrides !== 'object' || Array.isArray(overrides)) throw Error('options.roleOverrides must be an object mapping laneId -> role or null');
@@ -2090,6 +2110,7 @@ export function suggestRoleCandidates(project, options = {}) {
       ? splitProjectRoleConsistentVoices({ ...project, events: notes })
       : splitProjectSourceVoices({ ...project, events: notes }));
   if (!Array.isArray(decompositions)) throw Error('options.decompositions must be an array of G11-B decomposition results');
+  refuseUnsupportedLaneEvents(decompositions, unsupported);
 
   const lanes = buildLanes(decompositions, noteById);
   const laneIds = new Set(lanes.map(lane => lane.id));

@@ -91,7 +91,16 @@ const summarizeMergeDiagnostics = diagnostics => {
 // suggestion field or arbitration implementation must not silently reuse a
 // durable suggestion blob written by an older service merely because the
 // baseline and Published Canonical snapshot are unchanged.
-export const ARRANGEMENT_SUGGESTION_CACHE_EPOCH = 'g11c-role-candidate-v2-merge-diagnostics';
+//
+// v3: suggestions are derived from the supported notes only. A v2 blob of a
+// baseline with percussion / unsupported notes can give that material a pitched
+// role, so a v2 blob is never read again and is deleted once its replacement has
+// been derived. For a baseline without such notes v2 and v3 are byte-identical.
+export const ARRANGEMENT_SUGGESTION_CACHE_EPOCH = 'g11c-role-candidate-v3-supported-notes-only';
+export const RETIRED_ARRANGEMENT_SUGGESTION_CACHE_EPOCHS = Object.freeze(['g11c-role-candidate-v2-merge-diagnostics']);
+
+const epochSuggestionKey = (epoch, projectId, baselineId, rulesSnapshotSha) =>
+  `suggestion:${epoch}:${projectId}:${baselineId}:${rulesSnapshotSha}`;
 
 export function createArrangementService({ canonical, projects, intake, store }) {
   // Keyed by the implementation epoch, baseline AND Published Canonical rules
@@ -99,7 +108,7 @@ export function createArrangementService({ canonical, projects, intake, store })
   // shape/semantics change; otherwise a durable pre-upgrade cache could hide
   // newly implemented review diagnostics on the exact song we need to rerun.
   const suggestionKey = (projectId, baselineId, rulesSnapshotSha) =>
-    `suggestion:${ARRANGEMENT_SUGGESTION_CACHE_EPOCH}:${projectId}:${baselineId}:${rulesSnapshotSha}`;
+    epochSuggestionKey(ARRANGEMENT_SUGGESTION_CACHE_EPOCH, projectId, baselineId, rulesSnapshotSha);
   const legacySuggestionKey = (projectId, baselineId, rulesSnapshotSha) =>
     `suggestion:${projectId}:${baselineId}:${rulesSnapshotSha}`;
   // The whole G11-D application result is stored, not just the candidate it
@@ -117,20 +126,24 @@ export function createArrangementService({ canonical, projects, intake, store })
     const cached = refresh ? null : store.getJson(key);
     if (cached) return { engines, record, baseline, project, suggestion: cached };
 
-    const decompositions = engines.arrangement.splitProjectSourceVoices(project);
-    const suggestion = engines.arrangement.suggestRoleCandidates(project, { decompositions });
+    // The engine decomposes the baseline itself. It splits only the notes it
+    // treats as supported and keeps percussion-channel and percussion / drum /
+    // unsupported-tagged notes as unsupported source material. A decomposition
+    // of the whole baseline handed in from here put that material into lanes,
+    // where it could take a pitched role and was counted twice.
+    const suggestion = engines.arrangement.suggestRoleCandidates(project);
 
     // A cache is reconstructible, not evidence. Once the new suggestion has
-    // been derived successfully, discard the pre-epoch blob before writing the
-    // replacement so a large stale cache cannot make an otherwise valid
-    // deployment upgrade fail its store quota.
-    store.deleteBytes(legacySuggestionKey(
-      record.project_id,
-      baseline.baseline_id,
-      engines.emitterContract.canonicalIdentity().rules_snapshot_sha,
-    ));
+    // been derived successfully, discard the pre-epoch and retired-epoch blobs
+    // before writing the replacement so a large stale cache cannot make an
+    // otherwise valid deployment upgrade fail its store quota.
+    const rulesSnapshotSha = engines.emitterContract.canonicalIdentity().rules_snapshot_sha;
+    store.deleteBytes(legacySuggestionKey(record.project_id, baseline.baseline_id, rulesSnapshotSha));
+    for (const epoch of RETIRED_ARRANGEMENT_SUGGESTION_CACHE_EPOCHS) {
+      store.deleteBytes(epochSuggestionKey(epoch, record.project_id, baseline.baseline_id, rulesSnapshotSha));
+    }
     store.putJson(key, suggestion);
-    return { engines, record, baseline, project, suggestion, decompositions };
+    return { engines, record, baseline, project, suggestion };
   };
 
   const loadCandidate = (record, candidateId) => {
