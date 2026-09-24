@@ -160,6 +160,23 @@ test('the service intake reads an uploaded .mxl: the asset is the archive, the X
   await assert.rejects(service.analyzeSources('owner:mxl', second.project_id), error => error.code === 'UNSUPPORTED_SOURCE' && /MXL_ENTRY_PATH_UNSAFE/.test(error.message));
 });
 
+test('the service reads the document inside an .mxl at the size it reads a plain MusicXML, not more', async () => {
+  // At the archive reader's own 16 MiB, a 117 KB upload made intake parse a
+  // 15.5 MiB document (18 s of blocked event loop, 1.5 GB); a plain upload of
+  // that document is refused at 4 MiB. Whitespace compresses to almost nothing.
+  const service = createStudioApplication();
+  const project = (await service.createProject('owner:mxl', { title: 'MXL bound' })).project;
+  const padded = XML.replace('<part-list>', `<part-list>${' '.repeat(4 * 1024 * 1024)}`);
+  const bytes = zip([{ name: 'META-INF/container.xml', data: CONTAINER() }, { name: 'score.xml', data: padded }]);
+  assert.ok(bytes.length < 64 * 1024, 'a small upload');
+  await service.uploadAsset('owner:mxl', project.project_id, { kind: 'third_party_musicxml', filename: 'padded.mxl', mediaType: 'application/zip', bytes });
+  const started = Date.now();
+  await assert.rejects(service.analyzeSources('owner:mxl', project.project_id), error => error.code === 'UNSUPPORTED_SOURCE' && /MXL_ENTRY_TOO_LARGE/.test(error.message));
+  assert.ok(Date.now() - started < 2000, 'refused before inflating');
+  // The reader's own limit is unchanged for anyone else calling it.
+  assert.equal(MXL_LIMITS.maxRootfileBytes, 16 * 1024 * 1024);
+});
+
 test('the Studio Web reads the same .mxl through the same reader', () => {
   const asset = intakeMxl({ name: 'fixture.mxl', bytes: mxl(), id: 'web-src' });
   assert.equal(asset.format, 'MusicXML (compressed .mxl)');

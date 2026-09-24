@@ -73,7 +73,11 @@ export function createIntakeService({ canonical, projects, assets, store }) {
         let container = null;
         if (engines.score.isZipContainer(bytes)) {
           try {
-            ({ xml: content, container } = engines.score.decodeMusicXMLBytes(bytes));
+            // The document inside is held to the size a plain MusicXML upload
+            // is read at (asset-service maxInlineTextBytes): compressing it must
+            // not raise what intake will parse. At the archive reader's own
+            // 16 MiB, a 117 KB upload blocked the event loop for 18 s.
+            ({ xml: content, container } = engines.score.decodeMusicXMLBytes(bytes, { mxlLimits: { ...engines.score.MXL_LIMITS, maxRootfileBytes: Math.min(engines.score.MXL_LIMITS.maxRootfileBytes, LIMITS.maxInlineTextBytes) } }));
           } catch (error) {
             return fail(ERROR_CODES.UNSUPPORTED_SOURCE, `Compressed MusicXML (.mxl) for asset ${asset.asset_id} was refused: ${error?.message ?? 'unreadable archive'}`, { asset_id: asset.asset_id, kind: asset.kind, reason: error?.code ?? null });
           }
@@ -169,10 +173,30 @@ export function createIntakeService({ canonical, projects, assets, store }) {
         fail(ERROR_CODES.SOURCE_INCOMPLETE, 'This project holds no symbolic source asset to ingest.', { project_id: record.project_id });
       }
 
+      // One byte stream is one source of one kind. The same file uploaded as,
+      // say, an official and a third-party MIDI names one Canonical source with
+      // two authorities, which the merge refuses with a bare error that reached
+      // the caller as INTERNAL_ERROR. It is refused here by name instead.
+      const byBytes = new Map();
+      for (const asset of selected) {
+        const key = `${ASSET_KIND_INTAKE[asset.kind]?.adapter}:${asset.sha256}`;
+        byBytes.set(key, [...(byBytes.get(key) ?? []), asset]);
+      }
+      for (const group of byBytes.values()) {
+        if (new Set(group.map(asset => asset.kind)).size > 1) {
+          fail(ERROR_CODES.UNSUPPORTED_SOURCE, 'The same file is selected under more than one source kind. One file is one source; select the asset whose kind states its authority.', { asset_ids: group.map(asset => asset.asset_id), kinds: group.map(asset => asset.kind) });
+        }
+      }
+
       const ingested = selected.map(asset => ({ asset, ...ingestOne(engines, owner, record.project_id, asset, { meterText }) }));
       const project = ingested.length === 1
         ? ingested[0].project
         : engines.merge.mergeCanonicalProjects(ingested.map(entry => entry.project), { id: `${record.project_id}:baseline`, title: record.title });
+      // The merged project's metadata keeps the merge's own diagnostics, not
+      // those of its inputs, so a multi-source baseline reported an incomplete
+      // source with no reason. The summaries are read from every input as well
+      // (they sit beside the baseline and are not part of its identity).
+      const componentMetadata = ingested.length === 1 ? [] : ingested.map(entry => entry.project.metadata ?? {});
 
       const identity = engines.arrangement.baselineIdentityOf(project);
       const baseline = {
@@ -213,8 +237,8 @@ export function createIntakeService({ canonical, projects, assets, store }) {
           meter_text_consumed_by: selected.filter(asset => consumesMeterText(asset.kind)).map(asset => asset.asset_id),
           notice: 'Implementer provenance for the inputs this baseline was built from. meter_text_sha256 is null when no selected source adapter reads a meter map.',
         },
-        warnings: summarize(project.metadata?.warnings ?? []),
-        unsupported: summarize(project.metadata?.unsupported ?? []),
+        warnings: summarize([...componentMetadata.flatMap(metadata => metadata.warnings ?? []), ...(project.metadata?.warnings ?? [])]),
+        unsupported: summarize([...componentMetadata.flatMap(metadata => metadata.unsupported ?? []), ...(project.metadata?.unsupported ?? [])]),
       };
 
       store.putJson(baselineKey(record.project_id), project);
