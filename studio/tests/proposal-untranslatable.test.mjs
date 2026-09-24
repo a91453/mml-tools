@@ -23,11 +23,12 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 
-import { mkdtemp, readdir, readFile, rm, writeFile } from 'node:fs/promises';
+import { mkdtemp, readdir, readFile, rm, unlink, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
 import { AGENT_REVIEW, LIMITS, PROPOSAL_KIND, PROPOSAL_STATE, RUN_STEP, createStudioApplication } from '../backend/application/index.mjs';
+import { blobName } from '../backend/application/store.mjs';
 import { baselineWithUnassignedRole, FIXTURE_SOURCE_ID } from './fixtures/g12-fixtures.mjs';
 import { RUN_REVIEWER, mobileProfile, projectWithSymbolicAsset, runDecisionsFor, sixRoleBaseline } from './fixtures/run-fixtures.mjs';
 import { enginesWith } from './support/real-engines.mjs';
@@ -204,6 +205,120 @@ test('a Mobile adaptation proposal is graded on the plan its own profile produce
   assert.equal(rightId.proposal.agent_review.verdict, AGENT_REVIEW.REQUIRES_EXPLICIT_ACCEPTANCE, JSON.stringify(rightId.proposal.agent_review));
 });
 
+test('a plan that cannot be derived from the stored material is STALE, never INVALID and never acceptable', async () => {
+  await withDirectory(async directory => {
+    const app = createStudioApplication({ dataDirectory: directory, durability: 'persistent' });
+    const context = await runAwaitingReduction(app);
+    const blob = key => join(directory, 'blobs', `${blobName(key)}.bin`);
+    const read = async id => (await app.getProposal(OWNER, context.fixture.projectId, id)).proposal.agent_review;
+
+    // The candidate's stored application is gone, though the record still
+    // names it. That is a statement about the material, not an accusation
+    // about the proposal -- and an acceptance could not translate it either.
+    const cited = await proposeReduction(app, context, { decisions: REDUCTION_DECISIONS });
+    assert.equal(cited.proposal.agent_review.verdict, AGENT_REVIEW.REQUIRES_EXPLICIT_ACCEPTANCE);
+    const candidateBlob = blob(`application:${context.fixture.projectId}:${context.run.candidate_id}`);
+    const candidateBytes = await readFile(candidateBlob);
+    await unlink(candidateBlob);
+    const missingCandidate = await read(cited.proposal.proposal_id);
+    assert.equal(missingCandidate.verdict, AGENT_REVIEW.STALE);
+    assert.deepEqual(missingCandidate.refusals, ['CANDIDATE_CHANGED']);
+    assert.equal(missingCandidate.plan_derivation_error, 'CANDIDATE_NOT_FOUND');
+    assert.match(missingCandidate.notice, /statement about the material, not about the proposal/);
+    const refused = await accept(app, context, cited.proposal.proposal_id);
+    assert.equal(refused.ok, false);
+    assert.equal(refused.error.code, 'PROPOSAL_REFUSED');
+    assert.equal(refused.error.details.agent_review.verdict, AGENT_REVIEW.STALE);
+    await writeFile(candidateBlob, candidateBytes);
+    assert.equal((await read(cited.proposal.proposal_id)).verdict, AGENT_REVIEW.REQUIRES_EXPLICIT_ACCEPTANCE, 'and acceptable again once it is back');
+
+    // Any other failure to read -- here the stored baseline, for a proposal
+    // that cites nothing and so reaches the plan without reading it first --
+    // names the baseline.
+    const uncited = await app.proposeDecision(OWNER, context.fixture.projectId, {
+      run_id: context.run.run_id,
+      request_key: context.target.request_key,
+      kind: PROPOSAL_KIND.FINAL_REDUCTION,
+      proposed_by: AGENT,
+      rationale: 'Place the unassigned lane.',
+      action: { decisions: REDUCTION_DECISIONS },
+    });
+    assert.equal(uncited.proposal.agent_review.verdict, AGENT_REVIEW.REQUIRES_MORE_EVIDENCE);
+    await unlink(blob(`baseline:${context.fixture.projectId}`));
+    const missingBaseline = await read(uncited.proposal.proposal_id);
+    assert.equal(missingBaseline.verdict, AGENT_REVIEW.STALE);
+    assert.deepEqual(missingBaseline.refusals, ['BASELINE_CHANGED']);
+    assert.equal(missingBaseline.plan_derivation_error, 'SOURCE_INCOMPLETE');
+  });
+});
+
+test('a plan operation that answers with no plan id is INVALID, because there is nothing to apply', async () => {
+  const empty = { armed: false };
+  const app = createStudioApplication({
+    loadEngines: enginesWith(engines => ({
+      reduction: {
+        ...engines.reduction,
+        planFinalReduction: input => {
+          const plan = engines.reduction.planFinalReduction(input);
+          return empty.armed ? { ...plan, id: null } : plan;
+        },
+      },
+    })),
+  });
+  const context = await runAwaitingReduction(app);
+  empty.armed = true;
+  const submitted = await proposeReduction(app, context, { decisions: REDUCTION_DECISIONS });
+  const review = submitted.proposal.agent_review;
+  assert.equal(review.verdict, AGENT_REVIEW.INVALID);
+  assert.deepEqual(review.refusals, ['REDUCTION_PLAN_REFUSED']);
+  assert.equal(review.plan_refusal.operation, 'planFinalReduction');
+  assert.equal(review.plan_refusal.code, null);
+  assert.match(review.plan_refusal.message, /produced no plan id/);
+  const outcome = await accept(app, context, submitted.proposal.proposal_id);
+  assert.equal(outcome.ok, false);
+  assert.equal(outcome.error.code, 'PROPOSAL_REFUSED');
+  assert.equal((await app.getProposal(OWNER, context.fixture.projectId, submitted.proposal.proposal_id)).proposal.state, PROPOSAL_STATE.SUBMITTED);
+});
+
+test('the plan check runs only for a class the request admits', async () => {
+  // A Mobile adaptation proposal against the reduction request. The request
+  // does not admit the class, so the proposal is refused on the scope rung
+  // whatever its plan says -- and no plan is derived against a request that
+  // is not asking for one, which would report the request's shape as the
+  // proposal's fault.
+  const adaptations = [];
+  const app = createStudioApplication({
+    loadEngines: enginesWith(engines => ({
+      adaptation: {
+        ...engines.adaptation,
+        planMobileAdaptation: input => {
+          adaptations.push(input.profile?.id ?? null);
+          return engines.adaptation.planMobileAdaptation(input);
+        },
+      },
+    })),
+  });
+  const context = await runAwaitingReduction(app);
+  const before = adaptations.length;
+  const submitted = await app.proposeDecision(OWNER, context.fixture.projectId, {
+    run_id: context.run.run_id,
+    request_key: context.target.request_key,
+    kind: PROPOSAL_KIND.MOBILE_ADAPTATION,
+    proposed_by: AGENT,
+    rationale: 'A profile the adaptation engine refuses, sent to the wrong request.',
+    // A profile the plan operation refuses outright: graded, it would be
+    // INVALID with ADAPTATION_PLAN_REFUSED.
+    action: { profile: mobileProfile({ Chord5: { pitchRange: [40, 30] } }) },
+    cites: { event_ids: ['chord5-1'] },
+  });
+  const review = submitted.proposal.agent_review;
+  assert.equal(review.verdict, AGENT_REVIEW.NOT_AGENT_SETTLABLE, JSON.stringify(review));
+  assert.ok(review.refusals.includes('TARGET_NOT_SETTLABLE_BY_THIS_CLASS'));
+  assert.equal(review.plan_refusal, undefined);
+  await app.getProposal(OWNER, context.fixture.projectId, submitted.proposal.proposal_id);
+  assert.equal(adaptations.length, before, 'no adaptation plan was derived for it');
+});
+
 // ─── B. an acceptance that never reached the run ────────────────────────────
 
 /**
@@ -275,6 +390,91 @@ test('an acceptance whose application stopped before the run can still be withdr
   assert.deepEqual(await candidatesOf(app, context), candidatesBefore, 'and nothing was minted');
   const open = (await app.listProposals(OWNER, context.fixture.projectId)).proposals.filter(entry => ['submitted', 'accepted'].includes(entry.state));
   assert.deepEqual(open, [], 'and it no longer holds an open slot');
+});
+
+test('a retry of an acceptance that never reached the run is graded by the policy again, and refused once the run has moved', async () => {
+  // The retry above fails the same way twice, so it cannot tell a retry the
+  // policy re-graded from one that skipped it. Here the policy's answer
+  // changes between the two: a human reviewer moves the run in between. A
+  // retry that went back through the policy is refused as STALE before it
+  // reaches the run, and stays withdrawable. One that skipped it would carry
+  // its old precondition into the run, record that it reached it, and leave
+  // the proposal accepted and not withdrawable -- the defect this marker
+  // exists to prevent.
+  const { app, fault } = translationFaulted();
+  const context = await runAwaitingReduction(app);
+  const submitted = await proposeReduction(app, context, { decisions: REDUCTION_DECISIONS });
+  assert.equal(submitted.proposal.agent_review.verdict, AGENT_REVIEW.REQUIRES_EXPLICIT_ACCEPTANCE);
+  fault.armed = true;
+  const first = await accept(app, context, submitted.proposal.proposal_id);
+  assert.equal(first.ok, false);
+  assert.equal(first.error.details.run_resume_called, false);
+  fault.armed = false;
+
+  // Meanwhile a human reviewer applies a reduction by hand.
+  const other = 'another-human-reviewer';
+  const plan = (await app.planFinalReduction(OWNER, context.fixture.projectId, { candidateId: context.run.candidate_id, decisions: REDUCTION_DECISIONS, acceptedBy: other })).reduction.plan;
+  const manual = await app.resumeRun(OWNER, context.fixture.projectId, context.run.run_id, {
+    final_reduction: { decisions: REDUCTION_DECISIONS, expected_plan_id: plan.id, accepted_by: other },
+  });
+  assert.notEqual(manual.run.revision, context.run.revision);
+  const candidatesAfterManual = await candidatesOf(app, context);
+
+  const retry = await accept(app, context, submitted.proposal.proposal_id);
+  assert.equal(retry.ok, false, 'the retry is not applied to a run that moved on without it');
+  assert.equal(retry.error.code, 'PROPOSAL_REFUSED', `${retry.error.code}: ${retry.error.message}`);
+  assert.equal(retry.error.details.agent_review.verdict, AGENT_REVIEW.STALE);
+  assert.ok(retry.error.details.agent_review.refusals.includes('RUN_REVISION_CHANGED'));
+
+  const mid = (await app.getProposal(OWNER, context.fixture.projectId, submitted.proposal.proposal_id)).proposal;
+  assert.equal(mid.state, PROPOSAL_STATE.ACCEPTED);
+  assert.equal(mid.application.run_resume_called, false, 'refused before the run, so still nothing reached it');
+  const runNow = await runOf(app, context);
+  assert.equal(runNow.revision, manual.run.revision, 'the refused retry did not touch the run');
+  assert.equal(runNow.candidate_id, manual.run.candidate_id);
+  assert.deepEqual(await candidatesOf(app, context), candidatesAfterManual);
+
+  const withdrawn = await app.resolveProposal(OWNER, context.fixture.projectId, submitted.proposal.proposal_id, {
+    resolution: 'withdraw', reason: 'Superseded by the reviewer\'s own reduction.',
+  });
+  assert.equal(withdrawn.proposal.state, PROPOSAL_STATE.WITHDRAWN);
+});
+
+test('a withdrawal that lands while a failing acceptance is translating is not written over', async () => {
+  // The acceptance records itself, releases the lock and translates; the
+  // withdrawal, queued behind that first hold, lands; the translation then
+  // fails before the run. Phase 3 finds the proposal withdrawn and leaves the
+  // record exactly as the withdrawal wrote it: no conflict, no pin, no new
+  // revision over it.
+  const { app, fault } = translationFaulted();
+  const context = await runAwaitingReduction(app);
+  const submitted = await proposeReduction(app, context, { decisions: REDUCTION_DECISIONS });
+  const runBefore = await runOf(app, context);
+  fault.armed = true;
+
+  const [accepted, withdrawn] = await Promise.all([
+    accept(app, context, submitted.proposal.proposal_id),
+    app.resolveProposal(OWNER, context.fixture.projectId, submitted.proposal.proposal_id, { resolution: 'withdraw', reason: 'Changed my mind.' })
+      .then(result => ({ ok: true, result }), error => ({ ok: false, error })),
+  ]);
+  assert.ok(withdrawn.ok, `${withdrawn.error?.code}: ${withdrawn.error?.message}`);
+  assert.equal(accepted.ok, false);
+  assert.equal(accepted.error.code, 'INVALID_REQUEST', 'the translation failed');
+  assert.equal(accepted.error.details.proposal_state, PROPOSAL_STATE.WITHDRAWN, 'after the withdrawal landed');
+  assert.match(accepted.error.details.notice, /withdrawn meanwhile/);
+
+  const asWithdrawn = withdrawn.result.proposal;
+  assert.equal(asWithdrawn.state, PROPOSAL_STATE.WITHDRAWN);
+  assert.equal(asWithdrawn.revision, submitted.proposal.revision + 2, 'accepted, then withdrawn');
+  const settled = (await app.getProposal(OWNER, context.fixture.projectId, submitted.proposal.proposal_id)).proposal;
+  assert.equal(settled.revision, asWithdrawn.revision, 'the failed attempt added no revision');
+  assert.equal(settled.updated_at, asWithdrawn.updated_at);
+  assert.deepEqual(settled.resolution, asWithdrawn.resolution);
+  assert.deepEqual(settled.application, asWithdrawn.application, 'and wrote nothing into the application record');
+  assert.equal(settled.application.conflict, null);
+  assert.equal(settled.application.run_revision_at_attempt, null);
+  assert.equal(settled.application.run_resume_called, false);
+  assert.equal((await runOf(app, context)).revision, runBefore.revision, 'the run never moved');
 });
 
 test('a withdrawal that lands while an acceptance is being applied stops the application before the run', async () => {
