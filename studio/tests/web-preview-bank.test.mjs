@@ -228,11 +228,11 @@ test('a load stops waiting for a bank the worklet cannot parse, or that never lo
 // it records what it was made with and given, and whether it was
 // terminated. Like the real one, it reports {loaded: true} once its parser
 // module has loaded, here after `loadMs` (never, when null: a download or
-// module load that hangs). `answer` (a message) is posted back a tick after
-// it is handed the bank; without one it never answers, like a parser that
-// allocates until the tab crashes. `events` records, in order, when it
+// module load that hangs). `answer` (a message) is posted back `answerMs`
+// after it is handed the bank; without one it never answers, like a parser
+// that allocates until the tab crashes. `events` records, in order, when it
 // reported loaded and when it was handed the bank; a test adds its timers.
-function checkWorkers({ answer = null, loadMs = 1, early = null } = {}) {
+function checkWorkers({ answer = null, loadMs = 1, early = null, answerMs = 1 } = {}) {
   const made = [], events = [];
   class StandInWorker {
     constructor(url, options) {
@@ -245,7 +245,7 @@ function checkWorkers({ answer = null, loadMs = 1, early = null } = {}) {
     postMessage(message, transfer) {
       this.posted.push({ message, transfer });
       events.push('handed the bank');
-      if (answer) realSetTimeout(() => { if (!this.terminated) this.onmessage?.({ data: answer }); }, 1);
+      if (answer) realSetTimeout(() => { if (!this.terminated) this.onmessage?.({ data: answer }); }, answerMs);
     }
     terminate() { this.terminated = true; }
   }
@@ -356,6 +356,20 @@ test('the check\'s limit starts once the Worker has loaded its parser, and a par
     assert.equal(hung.made[0].terminated, true, 'the Worker, and its download, is stopped');
     assert.deepEqual(hung.made[0].posted, [], 'the bank was never handed over');
     assert.deepEqual(memory.log, [], 'nothing was written');
+  }));
+
+  // Loaded well inside the load limit, then still parsing when that limit,
+  // counted from the Worker's start, would run out: the load limit was
+  // cleared as the parser reported loaded, so only the check's own, longer
+  // limit applies, and the bank is kept. Left armed, it would stop the Worker
+  // and refuse the bank as one whose checker did not load, which is untrue.
+  const longParse = checkWorkers({ loadMs: 100, answer: { ok: true, presets: 1 }, answerMs: 1500 });
+  await withWorker(longParse.StandInWorker, () => withMemoryIndexedDB(async memory => {
+    const ran = await loadTimers(1000, () => storeBank(new File([bank], 'long-parse.sf2'), { check: check({ timeoutMs: 3000, loadTimeoutMs: 1000 }) }).then(value => value, error => error));
+    assert.equal(ran.result?.name, 'long-parse.sf2', `a bank whose parse outlasts the load limit is checked and kept: ${ran.result?.message ?? ''}`);
+    assert.deepEqual(ran.timers, ['cleared'], 'the load limit is cleared once the parser has loaded');
+    assert.deepEqual(longParse.events, ['loaded', 'handed the bank']);
+    assert.deepEqual(new Uint8Array(memory.records.get('current').bytes), bank);
   }));
 
   // A Worker that answers before it says it has loaded is not believed.
