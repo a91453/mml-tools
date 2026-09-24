@@ -829,6 +829,62 @@ test('an admitted attempt pins where its own application left the run, and a rev
   );
 });
 
+test('a refused twin of an attempt the run already admitted pins nothing, and the admitted attempt pins where its own application stopped', async () => {
+  // One proposal accepted twice at once. One attempt is admitted and advances;
+  // the other reaches the run after it has moved and is refused at the run's
+  // precondition, and records its outcome while the admitted one is still in
+  // flight -- so the record's marker is already true when it does. It changed
+  // nothing and pins nothing. The admitted attempt is then interrupted at a
+  // later step and pins where its own application stopped, and the retry
+  // finishes that application.
+  const state = { armed: false, effects: 0, interruptedAt: null, snapshot: null, read: null };
+  const app = createStudioApplication({
+    runHooks: {
+      beforeEffect: async ({ step, run }) => {
+        if (!state.armed) return;
+        state.effects += 1;
+        if (state.effects < 2) return;
+        state.armed = false;
+        state.interruptedAt = run.revision;
+        // What the record said just before the admitted attempt stopped.
+        // Reads take no lock.
+        state.snapshot = (await state.read()).application;
+        throw Error(`the process stopped before the ${step} effect`);
+      },
+    },
+  });
+  const context = await runAwaitingReduction(app);
+  const submitted = await proposeReduction(app, context, { decisions: REDUCTION_DECISIONS });
+  state.read = async () => (await app.getProposal(OWNER, context.fixture.projectId, submitted.proposal.proposal_id)).proposal;
+  const candidatesBefore = await candidatesOf(app, context);
+
+  state.armed = true;
+  const outcomes = await Promise.all([accept(app, context, submitted.proposal.proposal_id), accept(app, context, submitted.proposal.proposal_id)]);
+  assert.ok(outcomes.every(outcome => !outcome.ok), JSON.stringify(outcomes.map(outcome => outcome.ok || outcome.error.code)));
+  const admitted = outcomes.find(outcome => outcome.error.details.admitted_by_run === true);
+  const twin = outcomes.find(outcome => outcome.error.details.admitted_by_run === false);
+  assert.ok(admitted && twin, JSON.stringify(outcomes.map(outcome => [outcome.error.code, outcome.error.details.admitted_by_run])));
+  assert.match(String(admitted.error.message), /stopped before the/);
+  assert.equal(twin.error.code, 'RUN_CONFLICT', `${twin.error.code}: ${twin.error.message}`);
+
+  // The twin had recorded its refusal before the admitted attempt stopped, on
+  // a record whose marker the admitted attempt had already set -- and pinned
+  // nothing.
+  assert.ok(state.snapshot, 'the admitted attempt reached its second effect');
+  assert.equal(state.snapshot.run_resume_called, true);
+  assert.equal(state.snapshot.conflict?.code, 'RUN_CONFLICT', 'the twin\'s refusal was on the record by then');
+  assert.equal(state.snapshot.conflict.admitted_by_run, false);
+  assert.equal(state.snapshot.run_revision_at_attempt, null, 'an attempt the run refused pins nothing, whatever another attempt of the same acceptance did');
+
+  const mid = await state.read();
+  assert.equal(mid.application.run_revision_at_attempt, state.interruptedAt, 'pinned where the admitted attempt\'s own application stopped');
+  const retry = await accept(app, context, submitted.proposal.proposal_id);
+  assert.ok(retry.ok, `the retry must finish the admitted application, got ${retry.error?.code}: ${retry.error?.message}`);
+  assert.equal(retry.result.proposal.state, PROPOSAL_STATE.APPLIED);
+  const minted = (await candidatesOf(app, context)).filter(entry => !candidatesBefore.some(before => before.candidate_id === entry.candidate_id));
+  assert.equal(minted.length, 1, 'one acceptance, one application');
+});
+
 test('a retry that would hand the run a different request than the one it admitted for this acceptance is refused before the run writes anything', async () => {
   // A retry finishes the application the run admitted: the same idempotency
   // key AND the same request. Here the plan the acceptance derives moves
