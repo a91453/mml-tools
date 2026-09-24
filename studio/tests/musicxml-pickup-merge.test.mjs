@@ -182,3 +182,41 @@ test('a role-less rest in a merged baseline does not open a sub-grid stream ques
   assert.equal(report.hasUnknown, false);
   assert.equal(analyzeProjectMicroTiming(held).intervals.length, 1);
 });
+
+test('a pickup piece that repeats or returns to its first measure keeps a meter map with every change on a bar line', async () => {
+  // Pickup of one beat, measure 1 of four, measure 2 of three closing the
+  // pickup's bar; then a backward repeat, or D.C. al Fine, back to the start.
+  // Replaying the pickup restated its written 4/4 one beat into a bar, a map
+  // the Final validator refuses, so the source could never be delivered.
+  const { buildBars, parseMeter } = await import('../../dist/core.js');
+  const { f } = await import('../backend/mml/index.mjs');
+  const note = (step, duration) => `<note><pitch><step>${step}</step><octave>4</octave></pitch><duration>${duration}</duration><voice>1</voice></note>`;
+  const score = mode => {
+    const pickup = `<measure number="0" implicit="yes"><attributes><divisions>1</divisions><time><beats>4</beats><beat-type>4</beat-type></time></attributes>${mode === 'repeat' ? '<barline location="left"><repeat direction="forward"/></barline>' : ''}${note('G', 1)}</measure>`;
+    const one = mode === 'dc' ? `<measure number="1">${note('C', 4)}<direction><direction-type><words>Fine</words></direction-type><sound fine="yes"/></direction></measure>` : `<measure number="1">${note('C', 4)}</measure>`;
+    const two = mode === 'repeat'
+      ? `<measure number="2" implicit="yes">${note('D', 3)}<barline location="right"><repeat direction="backward"/></barline></measure><measure number="3">${note('E', 4)}</measure>`
+      : `<measure number="2">${note('D', 3)}<direction placement="above"><direction-type><words>D.C. al Fine</words></direction-type><sound dacapo="yes"/></direction></measure>`;
+    return `<?xml version="1.0"?><score-partwise version="3.1"><part-list><score-part id="P1"><part-name>P</part-name></score-part></part-list><part id="P1">${pickup}${one}${two}</part></score-partwise>`;
+  };
+  for (const mode of ['repeat', 'dc']) {
+    const fragment = ingestMusicXML(score(mode), {});
+    assert.equal(fragment.complete, true, mode);
+    assert.deepEqual(fragment.meterEvents.map(event => `${event.numerator}/${event.denominator}@${event.beat}`), ['1/4@0', '4/4@1'], mode);
+    const end = fragment.events.reduce((latest, event) => (f(event.end).cmp(latest) > 0 ? f(event.end) : latest), f(0));
+    const map = meterMapText(fragment.meterEvents);
+    assert.deepEqual(map.conflicts, [], mode);
+    // The repeat case ends on measure 3 after a three-beat bar; the final bar
+    // length is a source fact the caller states, as for any Final.
+    assert.doesNotThrow(() => buildBars(String(end), parseMeter(map.text), '', mode === 'repeat' ? '3' : ''), mode);
+  }
+});
+
+test('a repeat back to a first measure without a pickup still restates its meter on the bar line', () => {
+  // The restatement that lands on a bar line is kept exactly as before, so the
+  // meter maps, and the baselines, of existing scores do not change.
+  const note = step => `<note><pitch><step>${step}</step><octave>4</octave></pitch><duration>4</duration><voice>1</voice></note>`;
+  const xml = `<?xml version="1.0"?><score-partwise version="3.1"><part-list><score-part id="P1"><part-name>P</part-name></score-part></part-list><part id="P1"><measure number="1"><attributes><divisions>1</divisions><time><beats>4</beats><beat-type>4</beat-type></time></attributes><barline location="left"><repeat direction="forward"/></barline>${note('C')}</measure><measure number="2">${note('D')}<barline location="right"><repeat direction="backward"/></barline></measure></part></score-partwise>`;
+  const fragment = ingestMusicXML(xml, {});
+  assert.deepEqual(fragment.meterEvents.map(event => `${event.numerator}/${event.denominator}@${event.beat}`), ['4/4@0', '4/4@8']);
+});
