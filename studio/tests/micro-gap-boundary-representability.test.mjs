@@ -44,8 +44,8 @@ const SEARCH_CODES = [EMIT_DIAGNOSTICS.DURATION_SEARCH_POLICY_LIMIT, EMIT_DIAGNO
 const OFFICIAL = createSource({ id: 'official', label: 'Official score', kind: 'official-musicxml', authority: 'primary-symbolic' });
 
 let counter = 0;
-const note = (start, end, { id = `n${++counter}`, role = 'Melody' } = {}) => createCanonicalNoteEvent({
-  id, pitch: 60, start: String(start), end: String(end), role, voice: role, volume: null, sourceIds: ['official'],
+const note = (start, end, { id = `n${++counter}`, role = 'Melody', pitch = 60 } = {}) => createCanonicalNoteEvent({
+  id, pitch, start: String(start), end: String(end), role, voice: role, volume: null, sourceIds: ['official'],
 });
 const rest = (start, end, { id = `r${++counter}`, role = 'Melody' } = {}) => createCanonicalRestEvent({
   id, start: String(start), end: String(end), role, voice: role, sourceIds: ['official'],
@@ -190,6 +190,64 @@ test('a release under a keep claim raises no release blocker, so a rest boundary
   const unclaimed = enforceMicroGaps(project(events()));
   assert.deepEqual(unclaimed.blockers, [MICRO_GAP_BLOCKERS.RELEASE_NOT_FINAL_REPRESENTABLE]);
   assert.deepEqual(unclaimed.unsupportedBoundaries.map(item => [item.eventId, item.coverage]), [['r', BOUNDARY_COVERAGE.RELEASE_TARGET]]);
+});
+
+test('coverage is decided per role: another role\'s interval, release or note at the same beat decides nothing', () => {
+  const view = report => report.unsupportedBoundaries.map(item => [item.role, item.eventId, item.boundary, item.position, item.coverage]);
+
+  // Chord1's sub-grid note ends at 1/480, where Melody's first note starts.
+  // The UNKNOWN interval is Chord1's; Melody's onset is still its own problem.
+  const byInterval = enforceMicroGaps(project([
+    note('1/480', 1, { id: 'late' }),
+    note(0, '1/480', { id: 'blip', role: 'Chord1', pitch: 64 }),
+    note('1/480', 2, { id: 'held', role: 'Chord1', pitch: 64 }),
+  ]));
+  assert.deepEqual(byInterval.blockers, [MICRO_GAP_BLOCKERS.CLASSIFICATION_UNKNOWN, BOUNDARY]);
+  assert.deepEqual(view(byInterval), [
+    ['Chord1', 'blip', 'end', '1/480', BOUNDARY_COVERAGE.ANALYSED_INTERVAL],
+    ['Chord1', 'held', 'start', '1/480', BOUNDARY_COVERAGE.ANALYSED_INTERVAL],
+    ['Melody', 'late', 'start', '1/480', BOUNDARY_COVERAGE.NONE],
+  ]);
+
+  // Melody's release at 479/480 raises the release code; Chord1's onset at the
+  // same beat is not a release and is not decided by Melody's.
+  const byRelease = enforceMicroGaps(project([
+    note(0, '479/480', { id: 'x' }),
+    note(2, 3, { id: 'y' }),
+    note('479/480', 2, { id: 'entry', role: 'Chord1', pitch: 64 }),
+  ]));
+  assert.deepEqual(byRelease.blockers, [MICRO_GAP_BLOCKERS.RELEASE_NOT_FINAL_REPRESENTABLE, BOUNDARY]);
+  assert.deepEqual(view(byRelease), [['Chord1', 'entry', 'start', '479/480', BOUNDARY_COVERAGE.NONE]]);
+
+  // Melody's rest starts inside Melody's own silence; that Chord1 attacks at the
+  // same beat does not make it a position Melody has to reach.
+  const bySilence = enforceMicroGaps(project([
+    note(0, 1, { id: 'm' }),
+    rest('961/480', 3, { id: 'breath' }),
+    note('961/480', 3, { id: 'entry', role: 'Chord1', pitch: 64 }),
+  ]));
+  assert.deepEqual(bySilence.blockers, [BOUNDARY]);
+  assert.deepEqual(view(bySilence), [
+    ['Chord1', 'entry', 'start', '961/480', BOUNDARY_COVERAGE.NONE],
+    ['Melody', 'breath', 'start', '961/480', BOUNDARY_COVERAGE.INSIDE_SILENCE],
+  ]);
+});
+
+test('an unreachable onset that starts a sub-grid note is decided by that note\'s own interval', () => {
+  // The note [1/480, 1/16) is shorter than the grid, so the analyzer reports an
+  // event-duration interval that STARTS at the unreachable onset. That interval
+  // is UNKNOWN and decides the onset; the boundary code is not added on top.
+  const candidate = project([note('1/480', '1/16', { id: 'tiny' })]);
+  const g10 = enforceMicroGaps(candidate);
+  assert.deepEqual(g10.enforcement.map(item => [item.identity.type, item.identity.start, item.identity.end, item.classification]),
+    [['event-duration', '1/480', '1/16', 'UNKNOWN']]);
+  assert.equal(g10.status, 'PENDING');
+  assert.deepEqual(g10.blockers, [MICRO_GAP_BLOCKERS.CLASSIFICATION_UNKNOWN]);
+  assert.deepEqual(g10.unsupportedBoundaries.map(item => [item.eventId, item.boundary, item.position, item.reason, item.coverage]),
+    [['tiny', 'start', '1/480', 'ONSET_NOT_FINAL_REPRESENTABLE', BOUNDARY_COVERAGE.ANALYSED_INTERVAL]]);
+  const emitted = emitFinalMml(candidate);
+  assert.equal(emitted.status, 'PENDING');
+  assert.deepEqual(emitted.microGap.blockedIntervalKeys, g10.blockedIntervalKeys);
 });
 
 test('the boundary code is BLOCKING under both machine-delivery schemas, even beside the listen-first code', () => {
