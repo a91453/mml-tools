@@ -24,7 +24,8 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 
-import { createStudioApplication, ERROR_CODES, RUN_STATE, RUN_STEP, RUN_STEP_STATUS } from '../backend/application/index.mjs';
+import { createStudioApplication, ERROR_CODES, READINESS_BLOCKER_WITHOUT_OPERATION, RUN_STATE, RUN_STEP, RUN_STEP_STATUS } from '../backend/application/index.mjs';
+import { createCanonicalNoteEvent, createCanonicalProject } from '../backend/canonical/index.mjs';
 import { enginesWith } from './support/real-engines.mjs';
 import { baselineWithOverflowLane, baselineWithPercussion, baselineWithoutLead, leadEvidenceFor, FIXTURE_SOURCE_ID } from './fixtures/g12-fixtures.mjs';
 import { FIXTURE_CONFIRMATIONS, RUN_REVIEWER, mobileProfile, projectWithSymbolicAsset, runDecisionsFor, sixRoleBaseline } from './fixtures/run-fixtures.mjs';
@@ -409,6 +410,58 @@ test('a missing audio report, player readback, Gate 8 or Gate 9 each stay unreso
   // the four cases above are not failing for some unrelated reason.
   const control = await app.startRun(OWNER, fixture.projectId, { target_candidate_id: prepared, confirmations: FIXTURE_CONFIRMATIONS });
   assert.equal(control.run.state, RUN_STATE.COMPLETED, JSON.stringify(control.run.blockers));
+});
+
+// ─── a blocker no operation answers is said so ──────────────────────────────
+
+test('a micro-timing boundary Final cannot reach names no operation, says why, and still blocks', async () => {
+  // Chord5's last note starts one 480-tick past the 1/64 grid after a rest of
+  // more than the grid: no sub-grid interval, no release, only an onset no
+  // admitted Final token sequence reaches. The gate hint used to send a caller
+  // to release representation, which never moves an onset.
+  const BOUNDARY = 'MICRO_TIMING_BOUNDARY_NOT_FINAL_REPRESENTABLE';
+  const shifted = (changes) => {
+    const source = sixRoleBaseline();
+    return createCanonicalProject({
+      ...source,
+      events: source.events.map(event => (changes[event.id] ? createCanonicalNoteEvent({ ...event, ...changes[event.id] }) : event)),
+    });
+  };
+  const runOn = async project => {
+    const isolated = createStudioApplication({});
+    const own = await projectWithSymbolicAsset(isolated, OWNER, { project });
+    await isolated.analyzeSources(OWNER, own.projectId, { assetIds: [own.assetId] });
+    const candidate = (await isolated.applyDecisions(OWNER, own.projectId, { decisions: runDecisionsFor(own.project) })).decisions.candidate_id;
+    return (await isolated.startRun(OWNER, own.projectId, { target_candidate_id: candidate, confirmations: FIXTURE_CONFIRMATIONS })).run;
+  };
+
+  const onsetOnly = await runOn(shifted({ 'chord5-3': { start: '991/480' } }));
+  assert.notEqual(onsetOnly.state, RUN_STATE.COMPLETED);
+  assert.equal(onsetOnly.final_artifact_id, null);
+  const request = gateRequest(onsetOnly, 'microTiming');
+  assert.ok(request, JSON.stringify(onsetOnly.review_requests.map(entry => entry.gate)));
+  assert.equal(request.known, true);
+  assert.deepEqual(request.blockers, [BOUNDARY]);
+  assert.deepEqual(request.available_operations, [], 'no operation is offered that cannot answer the gate');
+  assert.deepEqual(request.missing, [READINESS_BLOCKER_WITHOUT_OPERATION.microTiming[BOUNDARY]]);
+  assert.match(request.missing[0], /No operation in this build answers it/);
+  assert.match(request.missing[0], /the gate still blocks/);
+  assert.deepEqual(request.detail.unsupportedBoundaries.filter(entry => entry.coverage === 'none').map(entry => [entry.role, entry.eventId, entry.boundary, entry.position]),
+    [['Chord5', 'chord5-3', 'start', '991/480']], 'the request says where');
+
+  // Beside a blocker release representation does answer -- the sub-grid gap an
+  // unreachable Melody release leaves before the next attack -- the gate's hint
+  // stays, and the boundary is still said to have none.
+  const mixed = await runOn(shifted({ 'chord5-3': { start: '991/480' }, 'melody-1': { end: '479/480' } }));
+  const both = gateRequest(mixed, 'microTiming');
+  assert.ok(both, JSON.stringify(mixed.review_requests.map(entry => entry.gate)));
+  assert.deepEqual(both.blockers, ['MICRO_TIMING_CLASSIFICATION_UNKNOWN', BOUNDARY, 'MICRO_TIMING_RELEASE_EVIDENCE_REQUIRED']);
+  assert.deepEqual(both.available_operations, ['planMobileAdaptation', 'applyMobileAdaptation.release_representation']);
+  assert.deepEqual(both.missing, [READINESS_BLOCKER_WITHOUT_OPERATION.microTiming[BOUNDARY]]);
+
+  // The capability record says the same thing a request does.
+  const caps = await createStudioApplication({}).capabilities();
+  assert.ok(caps.runs.refuses.some(entry => entry.includes(BOUNDARY) && entry.includes('lists no operation')), JSON.stringify(caps.runs.refuses));
 });
 
 // ─── an unknown blocker still blocks ────────────────────────────────────────

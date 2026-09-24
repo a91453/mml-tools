@@ -78,6 +78,7 @@ import { requestKeyOf } from './proposal-contracts.mjs';
 import { CONFIRMATIONS } from './review-service-core.mjs';
 import { CALLER_DECISION_KEYS } from './arrangement-service.mjs';
 import {
+  READINESS_BLOCKER_WITHOUT_OPERATION,
   READINESS_GATE_OPERATIONS,
   RUN_AUTHORITY_NOTICE,
   RUN_EXECUTION_MODE,
@@ -591,18 +592,28 @@ function readinessRequests(readiness, {
     const entry = readiness?.gates?.[gate] ?? null;
     const known = Object.hasOwn(READINESS_GATE_OPERATIONS, gate);
     const raw = entry?.blockers;
+    const blockers = Array.isArray(raw) ? raw : (raw === undefined || raw === null ? [] : [raw]);
+    // Blockers of this gate that none of its hinted operations can answer are
+    // said so, in the table's own words. When they are all the gate carries,
+    // the gate's operations are not offered at all: they cannot answer it.
+    const unanswerable = known && Object.hasOwn(READINESS_BLOCKER_WITHOUT_OPERATION, gate)
+      ? READINESS_BLOCKER_WITHOUT_OPERATION[gate]
+      : null;
+    const codes = [...new Set(blockers.map(blockerCode))];
+    const withoutOperation = unanswerable ? codes.filter(code => Object.hasOwn(unanswerable, code)) : [];
     return reviewRequest({
       code: RUN_REVIEW_REQUEST.READINESS_GATE_BLOCKED,
       step,
       gate,
       known,
-      blockers: Array.isArray(raw) ? raw : (raw === undefined || raw === null ? [] : [raw]),
+      blockers,
       reportReference: `readiness.gates.${gate}`,
       baselineId,
       candidateId,
       eventIds: entry?.eventIds ?? entry?.decisionIds ?? null,
+      availableOperations: withoutOperation.length && withoutOperation.length === codes.length ? [] : null,
       missing: known
-        ? []
+        ? withoutOperation.map(code => unanswerable[code])
         : ['This readiness gate is not in the run orchestrator hint table, so no operation is suggested. It still blocks, and it is answered through the module that owns it.'],
       invalidatedBy: ['candidate', 'canonical'],
       detail: boundedGate(entry),

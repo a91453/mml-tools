@@ -379,7 +379,10 @@ the boundary list it publishes, without re-deriving any threshold:
   `BLOCKING` for machine delivery under every schema, and the release code is
   too unless the provisional hold covers it. The emitter status only says
   whether the candidate is waiting on an answer (`PENDING`) or cannot be
-  written as it stands (`FAIL`).
+  written as it stands (`FAIL`). No operation in this build answers the
+  boundary code either, so a run's microTiming review request says so in
+  `missing` and names no operation when that code is all the gate carries
+  (`READINESS_BLOCKER_WITHOUT_OPERATION` in `application/run-contracts.mjs`).
 
 ## 5a. Technical Timing Repair consumption
 

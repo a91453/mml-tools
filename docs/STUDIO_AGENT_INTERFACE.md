@@ -585,7 +585,11 @@ Three things keep it from becoming a way around this interface's own rules:
 * **it holds no allow-list of blockers.** A run proceeds only while
   `readiness.preGameBlocking` is empty. A gate this layer has never heard of
   produces a review request with `known: false`, no operation hint, and still
-  blocks. The pre-emission exemption is the Final service's own
+  blocks. A blocker of a known gate that none of its hinted operations answers
+  (`READINESS_BLOCKER_WITHOUT_OPERATION`; today
+  `MICRO_TIMING_BOUNDARY_NOT_FINAL_REPRESENTABLE`) is stated in `missing`, and a
+  request carrying only such blockers names no operation. The pre-emission
+  exemption is the Final service's own
   `PRE_EMISSION_EXEMPT_GATES`, imported rather than restated, so the run cannot
   become a second exemption policy or extend the exemption;
 * **it records only what a caller stated.** `source_complete`,
