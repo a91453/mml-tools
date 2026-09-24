@@ -65,6 +65,7 @@
 // not resolved by guessing, and the proposal is not marked applied.
 
 import {
+  ASSET_KIND_INTAKE,
   ERROR_CODES,
   ID_PREFIX,
   LIMITS,
@@ -782,6 +783,9 @@ export function createProposalService({ canonical, projects, store, operations, 
     }
     if (proposal.action && Object.hasOwn(proposal.action, 'asset_ids')) {
       if (proposal.action.asset_ids.some(id => !record.assets.some(entry => entry.asset_id === id))) invalid.push(PROPOSAL_REFUSAL.CROSS_PROJECT_IDENTITY);
+      // A source selection names what intake ingests; an asset it cannot ingest
+      // (a recording, a report) is not a selection that acceptance could apply.
+      else if (proposal.action.asset_ids.some(id => ASSET_KIND_INTAKE[record.assets.find(entry => entry.asset_id === id)?.kind]?.intake !== true)) invalid.push(PROPOSAL_REFUSAL.ACTION_KIND_MISMATCH);
     }
     if (proposal.action && Object.hasOwn(proposal.action, 'candidate_id')) {
       if (!record.candidates.some(entry => entry.candidate_id === proposal.action.candidate_id)) invalid.push(PROPOSAL_REFUSAL.CROSS_PROJECT_IDENTITY);

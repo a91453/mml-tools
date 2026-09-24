@@ -34,7 +34,7 @@ const now = () => new Date().toISOString();
 
 // Fields a caller may state about a decision. `acceptance` is absent on
 // purpose: see the header. `id` is optional and generated when omitted.
-const CALLER_DECISION_KEYS = new Set(['id', 'type', 'target', 'fromRole', 'toRole', 'toRoles', 'reason', 'evidence', 'section', 'leadEvidence', 'metadata', 'acceptedBy', 'note']);
+export const CALLER_DECISION_KEYS = new Set(['id', 'type', 'target', 'fromRole', 'toRole', 'toRoles', 'reason', 'evidence', 'section', 'leadEvidence', 'metadata', 'acceptedBy', 'note']);
 
 const summarizeMergeDiagnostics = diagnostics => {
   if (!diagnostics || typeof diagnostics !== 'object') return null;
