@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import { crc32 } from 'node:zlib';
 import { BasicSoundBank } from 'spessasynth_core';
-import { bankCheckTimeoutMs } from '../web/preview/soundbank-store.mjs';
+import { BANK_CHECKER_LOAD_TIMEOUT_MS, bankCheckTimeoutMs } from '../web/preview/soundbank-store.mjs';
 import { SYNTH_READY_TIMEOUT_MS } from '../web/preview/bank-check.mjs';
 import { bankSendCounter, countBankSends } from './bank-sends.mjs';
 import { readyGate, withholdSynthReady } from './synth-ready.mjs';
@@ -212,40 +212,49 @@ export async function runWorkshopChecks({ page, base, idle, file, screenshot, pr
 
   // A pick whose check does not answer in time (a damaged bank can keep the
   // parser allocating until the tab crashes; here a stand-in check Worker
-  // never answers) is refused in the page language, saying only that it
-  // could not be checked: the check's Worker is stopped, nothing is kept,
-  // nothing is sent to the synth, and the bank queue goes on to the next
-  // pick. Only the check's own limit is shortened for the run: it is the one
-  // timer the page arms with that delay.
+  // loads and then never answers) is refused in the page language, saying
+  // only that it could not be checked: the check's Worker is stopped,
+  // nothing is kept, nothing is sent to the synth, and the bank queue goes on
+  // to the next pick. So is one whose check Worker never loads its parser (a
+  // download that hangs), with its own message, and the bank is never handed
+  // to it. Only the limit that ends each case is shortened for the run: it is
+  // the one timer the page arms with that delay.
   const bankSends = await countBankSends(page);
   const checkLimit = bankCheckTimeoutMs(sawBank.length);
-  await page.evaluate(limit => {
-    const RealWorker = window.Worker, realSetTimeout = window.setTimeout;
-    window.checksStopped = 0;
-    window.Worker = function (url, options) {
-      if (!String(url).endsWith('/preview/bank-check-worker.mjs')) return new RealWorker(url, options);
-      return { postMessage() {}, terminate() { window.checksStopped += 1; } };
-    };
-    window.setTimeout = (callback, ms, ...rest) => realSetTimeout(callback, ms === limit ? 200 : ms, ...rest);
-    window.restoreBankCheck = () => { window.Worker = RealWorker; window.setTimeout = realSetTimeout; };
-  }, checkLimit);
-  const sentBefore = await bankSends();
-  await page.locator('#dls').setInputFiles({ name: 'unchecked.sf2', mimeType: 'application/octet-stream', buffer: sawBank });
-  // Settled: no longer reading, and no longer the bank loaded before.
-  await page.waitForFunction(reading => {
-    const label = document.querySelector('#dlsName')?.textContent ?? '';
-    return label !== reading && !label.startsWith('saw.sf2');
-  }, await t('ui.bankReading'));
-  assert.equal(await page.locator('#dlsName').textContent(), await t('ui.bankFailed'), 'a bank that could not be checked is not loaded');
-  const notChecked = await page.locator('#logMsg').textContent();
-  assert.ok(notChecked.includes(await t('ui.bankCheckTimeout', { s: Math.round(checkLimit / 1000) })), `the refusal says the bank could not be checked in time: ${notChecked}`);
-  assert.ok(!notChecked.includes(unparsable), 'and does not call it damaged');
-  assert.equal(await page.evaluate(() => window.checksStopped), 1, 'the check Worker is stopped');
-  assert.equal(await bankSends(), sentBefore, 'the bank is never sent to the synth');
-  assert.equal(await storedBankName(), 'saw.sf2', 'nor kept');
-  await page.evaluate(() => window.restoreBankCheck());
-  await page.locator('#dls').setInputFiles({ name: 'saw.sf2', mimeType: 'application/octet-stream', buffer: sawBank });
-  await bankLoaded('saw.sf2');
+  for (const [stage, loads, limit, refusal] of [
+    ['check', true, checkLimit, await t('ui.bankCheckTimeout', { s: Math.round(checkLimit / 1000) })],
+    ['checker load', false, BANK_CHECKER_LOAD_TIMEOUT_MS, await t('ui.bankCheckerLoadTimeout', { s: BANK_CHECKER_LOAD_TIMEOUT_MS / 1000 })],
+  ]) {
+    await page.evaluate(([loads, limit]) => {
+      const RealWorker = window.Worker, realSetTimeout = window.setTimeout;
+      window.checks = { stopped: 0, handed: 0 };
+      window.Worker = function (url, options) {
+        if (!String(url).endsWith('/preview/bank-check-worker.mjs')) return new RealWorker(url, options);
+        const worker = { postMessage() { window.checks.handed += 1; }, terminate() { worker.stopped = true; window.checks.stopped += 1; } };
+        if (loads) realSetTimeout(() => { if (!worker.stopped) worker.onmessage?.({ data: { loaded: true } }); }, 1);
+        return worker;
+      };
+      window.setTimeout = (callback, ms, ...rest) => realSetTimeout(callback, ms === limit ? 200 : ms, ...rest);
+      window.restoreBankCheck = () => { window.Worker = RealWorker; window.setTimeout = realSetTimeout; };
+    }, [loads, limit]);
+    const sentBefore = await bankSends();
+    await page.locator('#dls').setInputFiles({ name: 'unchecked.sf2', mimeType: 'application/octet-stream', buffer: sawBank });
+    // Settled: no longer reading, and no longer the bank loaded before.
+    await page.waitForFunction(reading => {
+      const label = document.querySelector('#dlsName')?.textContent ?? '';
+      return label !== reading && !label.startsWith('saw.sf2');
+    }, await t('ui.bankReading'));
+    assert.equal(await page.locator('#dlsName').textContent(), await t('ui.bankFailed'), `${stage}: a bank that could not be checked is not loaded`);
+    const notChecked = await page.locator('#logMsg').textContent();
+    assert.ok(notChecked.includes(refusal), `${stage}: the refusal says why the bank could not be checked: ${notChecked}`);
+    assert.ok(!notChecked.includes(unparsable), `${stage}: and does not call it damaged`);
+    assert.deepEqual(await page.evaluate(() => window.checks), { stopped: 1, handed: loads ? 1 : 0 }, `${stage}: the check Worker is stopped, and is handed the bank only once it has loaded`);
+    assert.equal(await bankSends(), sentBefore, `${stage}: the bank is never sent to the synth`);
+    assert.equal(await storedBankName(), 'saw.sf2', `${stage}: nor kept`);
+    await page.evaluate(() => window.restoreBankCheck());
+    await page.locator('#dls').setInputFiles({ name: 'saw.sf2', mimeType: 'application/octet-stream', buffer: sawBank });
+    await bankLoaded('saw.sf2');
+  }
   await closeSettings();
   await press(page.locator('#log button'));
   assert.equal(await page.locator('#play').isEnabled(), true);

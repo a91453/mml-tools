@@ -219,15 +219,20 @@ exact timing, event identity and the evidence boundaries. See
     synth worklet runs on it. One that does not parse, such as a file cut
     short behind an intact header, is refused with 「音色庫無法解析，沒有儲存」
     and nothing is stored; the kept bank stays as it was. The check has a
-    time limit, 5 s plus 1 s for every 2 MiB (37 s at the 64 MiB cap): a
-    damaged bank can instead keep the parser allocating until the tab
-    crashes, so a check still running then is stopped and the bank refused
-    with 「音色庫在 N 秒內沒有完成檢查，沒有儲存」, which does not call it
-    damaged. The Workshop keeps its picks in the same store, which refuses
-    them the same way; it still hands a bank that does not parse to its
-    synth, whose parse error is what it shows, but a pick whose check ran out
-    of time is refused in the page language and never reaches the synth,
-    which would run the same parse. If the engine
+    time limit, 5 s plus 1 s for every 2 MiB (37 s at the 64 MiB cap),
+    counted from the moment the Worker has loaded its parser: a damaged
+    bank can instead keep the parser allocating until the tab crashes, so a
+    check still running then is stopped and the bank refused with
+    「音色庫在 N 秒內沒有完成檢查，沒有儲存」, which does not call it
+    damaged. Loading the parser (about 740 KB, downloaded on a first visit
+    before the Service Worker has cached it) has a limit of its own, 30 s;
+    a Worker that has not loaded by then is stopped and the bank refused
+    with 「檢查音色庫的程式在 30 秒內沒有載入，音色庫沒有檢查，也沒有儲存」.
+    The Workshop keeps its picks in the same store, which refuses them the
+    same way; it still hands a bank that does not parse to its synth, whose
+    parse error is what it shows, but a pick whose check ran out of time, or
+    whose checker did not load, is refused in the page language and never
+    reaches the synth, which would run the same parse. If the engine
     still cannot load a bank (the worklet reports a parse error, or nothing
     arrives within 60 s), the load stops with 「音色庫無法解析，已停止載入」 or
     the timeout message, the player leaves its loading state, and the next
