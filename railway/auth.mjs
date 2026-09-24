@@ -212,7 +212,9 @@ export function createAuth({ origin, ownerPassword, database, allowedRedirectHos
     return result;
   }
   function authenticated(request) {
-    const match = /^Bearer ([A-Za-z0-9_-]{43})$/.exec(request.headers.get('authorization') ?? '');
+    // The scheme name is case-insensitive (RFC 9110 11.1); the token is not,
+    // and its character class already spans both cases.
+    const match = /^Bearer ([A-Za-z0-9_-]{43})$/i.exec(request.headers.get('authorization') ?? '');
     if (!match) return false;
     const access = store.get('access', hash(match[1]));
     if (!access || access.resource !== resource || access.scope !== SCOPE) return false;

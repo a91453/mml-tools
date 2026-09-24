@@ -9,6 +9,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 
 import { API_PREFIX, createApiRouter } from '../server/api.mjs';
+import { handleMcp } from '../server/mcp.mjs';
 import { createStudioApplication } from '../studio/backend/application/index.mjs';
 import { sixRoleBaseline, canonicalProjectBytes, keepEveryRole } from '../studio/tests/fixtures/application-fixtures.mjs';
 
@@ -51,6 +52,40 @@ const multipart = (boundary, parts) => {
 };
 
 // ─── routing and framing ────────────────────────────────────────────────────
+
+test('an unexpected fault is answered generically and logged once for the operator', async () => {
+  const faults = [];
+  const application = createStudioApplication({});
+  const route = createApiRouter({ application, ownerOf: () => { throw new TypeError('owner lookup broke at /internal/path'); }, faultLog: entry => faults.push(entry) });
+  const response = await route(new Request(`${ORIGIN}${API_PREFIX}/projects?x=secret`, { method: 'GET', headers: { authorization: 'Bearer do-not-log' } }), { authenticated: true });
+  assert.equal(response.status, 500);
+  const body = await response.json();
+  assert.deepEqual(body.error, { code: 'INTERNAL_ERROR', message: 'The request could not be completed.' });
+  assert.equal(JSON.stringify(body).includes('/internal/path'), false, 'the caller is told nothing internal');
+  assert.deepEqual(faults, [{ transport: 'http', method: 'GET', path: '/projects', error_name: 'TypeError', error_message: 'owner lookup broke at /internal/path' }]);
+  assert.equal(JSON.stringify(faults).includes('do-not-log') || JSON.stringify(faults).includes('secret'), false, 'no header or query is logged');
+  // A refusal the service meant is not a fault and is not logged.
+  const refused = createApiRouter({ application, ownerOf: () => OWNER, faultLog: entry => faults.push(entry) });
+  assert.equal((await refused(new Request(`${ORIGIN}${API_PREFIX}/projects/prj_missing`, { method: 'GET' }), { authenticated: true })).status >= 400, true);
+  assert.equal(faults.length, 1);
+  // A logger that throws never turns the 500 into a crash.
+  const noisy = createApiRouter({ application, ownerOf: () => { throw new Error('x'); }, faultLog: () => { throw Error('sink down'); } });
+  assert.equal((await noisy(new Request(`${ORIGIN}${API_PREFIX}/projects`, { method: 'GET' }), { authenticated: true })).status, 500);
+});
+
+test('an MCP tool call that faults is answered generically and logged once for the operator', async () => {
+  const faults = [];
+  const application = createStudioApplication({});
+  const broken = Object.create(application, { capabilities: { value: () => { throw new RangeError('engine table missing at /app/x'); } } });
+  const response = await handleMcp(new Request(`${ORIGIN}/mcp`, {
+    method: 'POST', headers: { 'content-type': 'application/json', accept: 'application/json, text/event-stream' },
+    body: JSON.stringify({ jsonrpc: '2.0', id: 1, method: 'tools/call', params: { name: 'studio_capabilities', arguments: {} } }),
+  }), { application: broken, owner: OWNER, faultLog: entry => faults.push(entry) });
+  const result = (await response.json()).result;
+  assert.equal(result.isError, true);
+  assert.equal(result.structuredContent.error.code, 'INTERNAL_ERROR');
+  assert.deepEqual(faults, [{ transport: 'mcp', tool: 'studio_capabilities', error_name: 'RangeError', error_message: 'engine table missing at /app/x' }]);
+});
 
 test('the router only answers for its own prefix', async () => {
   const { application } = setup();

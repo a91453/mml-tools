@@ -271,7 +271,10 @@ export const UNSUPPORTED_PROTOCOL_VERSION = -32022;
 // The deployed server logs it so a client that is turned away is diagnosable
 // from the deployment log alone: the platform's HTTP log records the status
 // but not why.
-export async function handleMcp(request, { application = null, owner = null, allowedOrigins = DEFAULT_MCP_ORIGINS, listen = DEFAULT_LISTEN_CONFIG, rejectLog = null } = {}) {
+// `faultLog`, when given, receives one record per tool call that ends in an
+// unexpected fault (see server/api.mjs faultRecord); the caller still sees only
+// INTERNAL_ERROR.
+export async function handleMcp(request, { application = null, owner = null, allowedOrigins = DEFAULT_MCP_ORIGINS, listen = DEFAULT_LISTEN_CONFIG, rejectLog = null, faultLog = null } = {}) {
   const context = { application, owner };
   const protocol = request.headers.get('mcp-protocol-version');
   const reject = (code, message, status, method = null, id = null, data = undefined) => {
@@ -373,6 +376,11 @@ export async function handleMcp(request, { application = null, owner = null, all
       // HTTP adapter's error responses do: an agent that is told a call failed
       // has to read that failure against the right release.
       const canonical = application ? await application.canonical.provenance().catch(() => null) : null;
+      if (error?.name !== 'StudioApplicationError' && typeof faultLog === 'function') {
+        try {
+          faultLog({ transport: 'mcp', tool: tool.name, error_name: typeof error?.name === 'string' ? error.name.slice(0, 64) : typeof error, error_message: String(error?.message ?? error).replace(/\s+/g, ' ').slice(0, 300) });
+        } catch {}
+      }
       const structured = {
         ...(error?.name === 'StudioApplicationError'
           ? { error: { code: error.code, message: error.message, details: error.details } }

@@ -252,6 +252,15 @@ test('a 64 MiB upload on a slow link is not cut off by the whole-request timeout
     assert.equal(server.maxHeaderSize, 16384);
   } finally { server.close(); app.close(); }
 });
+test('the Bearer scheme name is matched without regard to case; the token is not', async t => {
+  const send = setup(t);
+  const grant = await tokens(send);
+  for (const scheme of ['Bearer', 'bearer', 'BEARER']) {
+    assert.equal((await send(mcpRequest(null, { authorization: `${scheme} ${grant.access_token}` }))).status, 200, scheme);
+  }
+  const flipped = grant.access_token.replace(/[a-z]/, c => c.toUpperCase());
+  if (flipped !== grant.access_token) assert.equal((await send(mcpRequest(flipped))).status, 401);
+});
 test('production configuration fails closed without credentials or HTTPS', () => {
   assert.throws(() => createApplication({ ...options, ownerPassword: 'short' }), /MML_OWNER_PASSWORD/);
   assert.throws(() => createApplication({ ...options, origin: 'http://example.com' }), /HTTPS/);

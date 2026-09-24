@@ -4,7 +4,7 @@ import { pathToFileURL } from 'node:url';
 import { createAuth } from './auth.mjs';
 import { handleMcp, SERVICE_VERSION } from '../server/mcp.mjs';
 import { createListenConfig } from '../server/mcp-listen.mjs';
-import { createApiRouter } from '../server/api.mjs';
+import { createApiRouter, faultRecord } from '../server/api.mjs';
 import { studioWebResponse } from '../server/studio-web.mjs';
 import { createStudioApplication } from '../studio/backend/application/index.mjs';
 import { createAgentDriver } from '../server/studio-agent-driver.mjs';
@@ -43,6 +43,10 @@ export const SERVICE_OWNER = 'owner:service';
 // reason, the protocol-version header and the user agent, never a body. The
 // platform HTTP log shows the 400 but not why (see handleMcp).
 export const mcpRejectLog = entry => console.warn(JSON.stringify({ event: 'MCP_REQUEST_REJECTED', ...entry }));
+// One deployment-log line per request that ends in an unexpected fault. The
+// caller's response stays the generic INTERNAL_ERROR; headers, bodies and
+// tokens are never logged.
+export const serverFaultLog = entry => console.error(JSON.stringify({ event: 'UNEXPECTED_SERVER_ERROR', at: new Date().toISOString(), ...entry }));
 
 // The connector hosts whose exact HTTPS callbacks Dynamic Client Registration
 // accepts by default: the ChatGPT and Claude web connectors. Native clients use
@@ -177,7 +181,7 @@ export function createApplication(options) {
     samplesUrl: options.listenSamplesUrl ?? null,
     samplesCredit: options.listenSamplesCredit ?? null,
   });
-  const api = createApiRouter({ application: exposedStudio, ownerOf: () => SERVICE_OWNER, challenge: auth.unauthorized().headers.get('www-authenticate'), agentDriver: agent });
+  const api = createApiRouter({ application: exposedStudio, ownerOf: () => SERVICE_OWNER, challenge: auth.unauthorized().headers.get('www-authenticate'), agentDriver: agent, faultLog: serverFaultLog });
   return {
     close() { agent.close(); auth.close(); },
     origin: auth.issuer,
@@ -195,7 +199,7 @@ export function createApplication(options) {
         // Only locally issued, audience-bound OAuth access tokens authorize this
         // standalone service. Sites identity headers have no authority here.
         if (!auth.authenticated(request)) return auth.unauthorized();
-        return handleMcp(request, { application: exposedStudio, owner: SERVICE_OWNER, allowedOrigins: auth.allowedOrigins, listen, rejectLog: mcpRejectLog });
+        return handleMcp(request, { application: exposedStudio, owner: SERVICE_OWNER, allowedOrigins: auth.allowedOrigins, listen, rejectLog: mcpRejectLog, faultLog: serverFaultLog });
       }
       // The Application HTTP surface, behind the same OAuth check. The router
       // is told whether the request is authenticated rather than deciding it:
@@ -275,7 +279,11 @@ export function createHttpServer(application) {
       if (response.headers.getSetCookie().length) headers['set-cookie'] = response.headers.getSetCookie();
       res.writeHead(response.status, headers);
       res.end(Buffer.from(await response.arrayBuffer()));
-    } catch { if (!res.headersSent) res.writeHead(500, { 'content-type': 'text/plain', 'cache-control': 'no-store' }); res.end('Request could not be completed'); }
+    } catch (error) {
+      try { serverFaultLog(faultRecord({ transport: 'http-adapter', method: req.method, path: String(req.url ?? '').split('?')[0].slice(0, 256) }, error)); } catch {}
+      if (!res.headersSent) res.writeHead(500, { 'content-type': 'text/plain', 'cache-control': 'no-store' });
+      res.end('Request could not be completed');
+    }
   });
 }
 
