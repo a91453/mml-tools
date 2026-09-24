@@ -66,8 +66,11 @@ test('G7-4 a review bound to another audio evidence revision is stale and does n
     assert.equal((await review(service, run)).gates.audio, 'PASS');
     // Simulate a restored/edited record whose review names a different revision.
     const store = createStore({ directory: dir, durability: 'persistent' });
+    // A candidate-scoped confirmation is stored under the candidate it names.
     const record = store.readProjectRecord(run.projectId);
-    store.writeProjectRecord({ ...record, confirmations: { ...record.confirmations, original_audio_reviewed: { ...record.confirmations.original_audio_reviewed, audio_report_sha256: 'e'.repeat(64) } } });
+    const own = record.candidate_confirmations[run.candidateId];
+    assert.ok(own.original_audio_reviewed);
+    store.writeProjectRecord({ ...record, candidate_confirmations: { ...record.candidate_confirmations, [run.candidateId]: { ...own, original_audio_reviewed: { ...own.original_audio_reviewed, audio_report_sha256: 'e'.repeat(64) } } } });
     const after = await review(service, run);
     assert.equal(after.gates.audio, 'PENDING');
     assert.ok(after.stale_confirmations.some(entry => entry.name === 'original_audio_reviewed' && entry.reason === 'AUDIO_EVIDENCE_REVISION_CHANGED'));

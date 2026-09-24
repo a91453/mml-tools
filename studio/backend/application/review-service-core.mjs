@@ -42,6 +42,17 @@
 // require a player readback to be "actual, not assumed" (Gate 6); a PASS that
 // outlived the material it described would be exactly that assumption.
 //
+// Where they are stored follows from the same binding. A baseline-scoped
+// confirmation is one statement per project, kept in `confirmations[name]`. A
+// candidate-scoped one is a statement about one candidate, so it is kept per
+// candidate, in `candidate_confirmations[candidateId][name]`, the way Core3
+// approvals and Lead evidence reviews already are: recording a review for
+// candidate B must not overwrite candidate A's. Records written before this
+// shape existed kept every kind in `confirmations[name]`; such an entry still
+// counts for the candidate it names and is reported stale for any other, and
+// it is replaced only by a new statement about that same candidate -- exactly
+// as a re-record always replaced it -- never by one about another candidate.
+//
 // Player readback has three honest states here. `NOT_RUN` (the default), `N/A`
 // with a stated reason when no preview or verification assets are used for the
 // cue — the same state the Studio Web plane records for that situation, and
@@ -112,7 +123,36 @@ export const STALE_CONFIRMATION = Object.freeze({
   // A Gate 7 review is about one audio evidence revision; another one being
   // active means the review is about evidence that is no longer selected.
   AUDIO_EVIDENCE_REVISION_CHANGED: 'AUDIO_EVIDENCE_REVISION_CHANGED',
+  // A legacy single-map entry for this candidate that the candidate's own
+  // per-candidate entry of the same kind replaces. Not reachable through
+  // `record()`, which replaces the legacy entry itself; reported rather than
+  // hidden when a restored or hand-edited record carries both.
+  SUPERSEDED: 'SUPERSEDED',
 });
+
+const isPlainRecord = value => Boolean(value) && typeof value === 'object' && !Array.isArray(value);
+
+// The baseline-scoped confirmations, and every confirmation a record written
+// before per-candidate storage existed, by name.
+const confirmationsOf = record => (isPlainRecord(record?.confirmations) ? record.confirmations : {});
+
+// The candidate-scoped confirmations, by candidate id and then by name.
+const candidateConfirmationsOf = record => (isPlainRecord(record?.candidate_confirmations) ? record.candidate_confirmations : {});
+
+/**
+ * Every confirmation entry a project record stores, from both maps, with the
+ * candidate map it was filed under (null for `confirmations`). For readers that
+ * must see every statement on record -- whether a candidate has been reviewed at
+ * all, for instance -- rather than only the effective ones.
+ */
+export function storedConfirmationEntries(record) {
+  const entries = Object.entries(confirmationsOf(record)).map(([name, entry]) => ({ name, entry, filedUnder: null }));
+  for (const [filedUnder, byName] of Object.entries(candidateConfirmationsOf(record))) {
+    if (!isPlainRecord(byName)) continue;
+    for (const [name, entry] of Object.entries(byName)) entries.push({ name, entry, filedUnder });
+  }
+  return entries;
+}
 
 export function createReviewService({ canonical, projects, intake, arrangement, store }) {
   const audioKey = (projectId, candidateId) => `audio:${projectId}:${candidateId}`;
@@ -153,8 +193,6 @@ export function createReviewService({ canonical, projects, intake, arrangement, 
     return { project, audioErrors };
   };
 
-  const confirmationsOf = record => record.confirmations ?? {};
-
   // The identity of the audio evidence currently selected for a candidate:
   // the report hash(es) of the active head(s) read from the store -- the same
   // reports readiness grades -- never the `audio_evidence` index cache. Null when
@@ -169,22 +207,58 @@ export function createReviewService({ canonical, projects, intake, arrangement, 
    *
    * Everything else on the record is reported as stale with the reason, so a
    * reviewer can see that a statement exists and why it does not count here.
+   *
+   * Both maps are read. This candidate's own per-candidate entries are
+   * candidates for effect; every other candidate's are reported stale
+   * (`CANDIDATE_MISMATCH`) and left where they are. A legacy entry in
+   * `confirmations` is judged exactly as before: it counts for the candidate
+   * it names and is stale for any other.
    */
   const effectiveConfirmations = (record, candidateId) => {
     const baselineId = record.baseline?.baseline_id ?? null;
     const effective = {};
     const stale = [];
-    for (const [name, entry] of Object.entries(confirmationsOf(record))) {
+    // `filedUnder` is the per-candidate map an entry was read from, or
+    // undefined for the single map. An entry filed under a candidate is a
+    // statement about that candidate only: its own `candidate_id` must agree
+    // with the map it sits in, and its kind must be candidate-scoped, or it is
+    // not bound to anything provable and counts for nobody.
+    const staleReasonOf = (name, entry, filedUnder) => {
       const boundBaseline = entry?.baseline_id ?? null;
       const boundCandidate = entry?.candidate_id ?? null;
-      let reason = null;
-      if (boundBaseline === null) reason = STALE_CONFIRMATION.UNBOUND;
-      else if (boundBaseline !== baselineId) reason = STALE_CONFIRMATION.BASELINE_CHANGED;
-      else if (CONFIRMATION_SCOPE[name] === 'candidate' && boundCandidate !== candidateId) reason = STALE_CONFIRMATION.CANDIDATE_MISMATCH;
-      else if (name === 'original_audio_reviewed' && entry?.value === true
-        && (entry.audio_report_sha256 ?? null) !== activeAudioReportSha(record, candidateId)) reason = STALE_CONFIRMATION.AUDIO_EVIDENCE_REVISION_CHANGED;
-      if (reason) stale.push({ name, reason, bound_baseline_id: boundBaseline, bound_candidate_id: boundCandidate, at: entry?.at ?? null });
+      if (boundBaseline === null) return STALE_CONFIRMATION.UNBOUND;
+      if (boundBaseline !== baselineId) return STALE_CONFIRMATION.BASELINE_CHANGED;
+      if (filedUnder !== undefined) {
+        if (CONFIRMATION_SCOPE[name] !== 'candidate' || boundCandidate !== filedUnder || boundCandidate !== candidateId) return STALE_CONFIRMATION.CANDIDATE_MISMATCH;
+      } else if (CONFIRMATION_SCOPE[name] === 'candidate' && boundCandidate !== candidateId) return STALE_CONFIRMATION.CANDIDATE_MISMATCH;
+      if (name === 'original_audio_reviewed' && entry?.value === true
+        && (entry.audio_report_sha256 ?? null) !== activeAudioReportSha(record, candidateId)) return STALE_CONFIRMATION.AUDIO_EVIDENCE_REVISION_CHANGED;
+      return null;
+    };
+    const reportStale = (name, entry, reason) => stale.push({
+      name, reason, bound_baseline_id: entry?.baseline_id ?? null, bound_candidate_id: entry?.candidate_id ?? null, at: entry?.at ?? null,
+    });
+
+    const byCandidate = candidateConfirmationsOf(record);
+    const own = typeof candidateId === 'string' && Object.hasOwn(byCandidate, candidateId) && isPlainRecord(byCandidate[candidateId])
+      ? byCandidate[candidateId]
+      : {};
+    for (const [name, entry] of Object.entries(confirmationsOf(record))) {
+      if (CONFIRMATION_SCOPE[name] === 'candidate' && Object.hasOwn(own, name) && (entry?.candidate_id ?? null) === candidateId) {
+        reportStale(name, entry, STALE_CONFIRMATION.SUPERSEDED);
+        continue;
+      }
+      const reason = staleReasonOf(name, entry, undefined);
+      if (reason) reportStale(name, entry, reason);
       else effective[name] = entry;
+    }
+    for (const [filedUnder, byName] of Object.entries(byCandidate)) {
+      if (!isPlainRecord(byName)) continue;
+      for (const [name, entry] of Object.entries(byName)) {
+        const reason = staleReasonOf(name, entry, filedUnder);
+        if (reason) reportStale(name, entry, reason);
+        else effective[name] = entry;
+      }
     }
     return { effective: Object.freeze(effective), stale: Object.freeze(stale) };
   };
@@ -398,6 +472,32 @@ export function createReviewService({ canonical, projects, intake, arrangement, 
     }
     const baselineId = record.baseline?.baseline_id ?? null;
     const next = { ...confirmationsOf(record) };
+    // One map per candidate, copied so nothing is written until every
+    // confirmation in the call has been validated. It grows the way the
+    // candidate set does and no faster: an entry is filed only for a candidate
+    // the project holds (checked below), at most one per kind, replaced on a
+    // re-record, and -- like the per-candidate Core3 approvals, Lead reviews and
+    // audio evidence -- kept for the audit trail when a re-intake drops the
+    // candidate, where it reads as BASELINE_CHANGED.
+    const nextByCandidate = Object.fromEntries(Object.entries(candidateConfirmationsOf(record))
+      .map(([candidate, byName]) => [candidate, isPlainRecord(byName) ? { ...byName } : byName]));
+    const recorded = {};
+    // A baseline-scoped confirmation replaces the project's one statement of
+    // that kind. A candidate-scoped one replaces only the named candidate's own
+    // statement of that kind: another candidate's is a different statement and
+    // stays where it is. The legacy single-map entry of that kind is replaced
+    // only when it names this same candidate, as a re-record always replaced it.
+    const put = (name, entry) => {
+      recorded[name] = entry;
+      if (CONFIRMATION_SCOPE[name] !== 'candidate') {
+        next[name] = entry;
+        return;
+      }
+      const candidate = entry.candidate_id;
+      const own = Object.hasOwn(nextByCandidate, candidate) && isPlainRecord(nextByCandidate[candidate]) ? nextByCandidate[candidate] : {};
+      nextByCandidate[candidate] = { ...own, [name]: entry };
+      if (Object.hasOwn(next, name) && (next[name]?.candidate_id ?? null) === candidate) delete next[name];
+    };
     for (const [name, input] of Object.entries(confirmations)) {
       if (name === 'in_game' || name === 'in_game_acceptance') {
         fail(ERROR_CODES.INVALID_REQUEST, 'in-game acceptance is not recordable through this interface. Only the user or a controlled target-client test can record it.', { gate: 'in_game' });
@@ -444,7 +544,7 @@ export function createReviewService({ canonical, projects, intake, arrangement, 
           if (!SHA256_HEX.test(digest)) fail(ERROR_CODES.INVALID_REQUEST, 'player_readback.mml_sha256 must be the SHA-256 (64 hex characters) of the exact MML that was read back.');
           mmlSha256 = digest;
         }
-        next[name] = { value, reason, evidence: normalizeEvidence(input.evidence), at: now(), ...binding, ...(mmlSha256 ? { mml_sha256: mmlSha256 } : {}) };
+        put(name, { value, reason, evidence: normalizeEvidence(input.evidence), at: now(), ...binding, ...(mmlSha256 ? { mml_sha256: mmlSha256 } : {}) });
         continue;
       }
 
@@ -502,10 +602,18 @@ export function createReviewService({ canonical, projects, intake, arrangement, 
           });
         }
       }
-      next[name] = { value: input.value, reason, evidence, at: now(), ...binding, ...audioBinding };
+      put(name, { value: input.value, reason, evidence, at: now(), ...binding, ...audioBinding });
     }
-    projects.save({ ...record, confirmations: next });
-    return Object.freeze({ confirmations: Object.freeze({ ...next }) });
+    // A record that has never held a candidate-scoped confirmation is saved in
+    // exactly the shape it had.
+    const byCandidate = Object.keys(nextByCandidate).length || Object.hasOwn(record, 'candidate_confirmations')
+      ? { candidate_confirmations: nextByCandidate }
+      : {};
+    projects.save({ ...record, confirmations: next, ...byCandidate });
+    // The response keeps its name-keyed shape: the project's baseline-level
+    // statements (and any legacy entries still in that map), with every
+    // statement this call recorded under its name.
+    return Object.freeze({ confirmations: Object.freeze({ ...next, ...recorded }) });
   }
 
   /**

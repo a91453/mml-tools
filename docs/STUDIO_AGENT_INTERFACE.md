@@ -386,8 +386,18 @@ from the review or finalize call the confirmations arrive with. A confirmation
 whose identity no longer matches — the baseline was replaced by a new intake,
 or a different candidate is being reviewed — stays on the record for the audit
 trail, is reported under `stale_confirmations` with the reason
-(`BASELINE_CHANGED`, `CANDIDATE_MISMATCH`, `UNBOUND`), and feeds no gate. A
+(`BASELINE_CHANGED`, `CANDIDATE_MISMATCH`, `UNBOUND`,
+`AUDIO_EVIDENCE_REVISION_CHANGED`, `SUPERSEDED`), and feeds no gate. A
 readback PASS recorded for revision one does not pass revision two.
+
+Candidate-scoped confirmations are stored per candidate, so recording one for
+candidate B never replaces candidate A's statement of the same kind: A's review
+still counts A's, and reports B's as `CANDIDATE_MISMATCH`. Baseline-scoped
+confirmations stay one statement per project. A record written before
+per-candidate storage kept every kind in one map by name; such an entry still
+counts for the candidate it names, is stale for any other, and is replaced only
+by a new statement about that same candidate (`SUPERSEDED` reports a restored
+record that holds both).
 
 `player_readback` has three honest states. `NOT_RUN` is the default. `N/A`,
 with the reason, states that no preview or verification assets are used for
