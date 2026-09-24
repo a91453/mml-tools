@@ -289,18 +289,31 @@ does not, so no bound, budget or `cautionLengthOptIn` changes the answer. It is 
 claim about a position, never about a duration, and an off-grid position
 `classifyPosition` calls `CAUTION_REPRESENTABLE` keeps the search's own code.
 G10 already refuses positions of that kind before any serialization. An onset
-or rest boundary a role has to reach, and a note release no release
-representation can move (one under a keep claim, or one with no valid
-representation), raise `MICRO_TIMING_BOUNDARY_NOT_FINAL_REPRESENTABLE` unless an
-analysed sub-grid interval of the role starts or ends there and decides it; an
-unreachable release a representation can move raises
-`MICRO_TIMING_RELEASE_NOT_FINAL_REPRESENTABLE` unless such an interval decides
-it. The emitter reports the boundary refusal as the same proof under its own
-code, `MICRO_GAP_BOUNDARY_NOT_FINAL_REPRESENTABLE` (§5), and serializes nothing
-past a G10 that has not cleared. So `BOUNDARY_NOT_FINAL_REPRESENTABLE` is left
-for positions G10 does not own, such as an off-grid Tempo position that splits
-a span. Whether an explicit rest or implicit silence follows an unreachable
-release, or the role ends there, does not change G10's answer.
+or rest boundary a role has to reach raises
+`MICRO_TIMING_BOUNDARY_NOT_FINAL_REPRESENTABLE` unless an analysed sub-grid
+interval of the role starts or ends there and decides it. A note release no
+release representation can move (one under a keep claim, or one with no valid
+representation) raises the same code unless an analysed interval decides the
+release itself: the note's own sub-grid duration, or the sub-grid gap after the
+release. A sub-grid rest that starts at the release decides only the rest's
+start, so it does not stand in for the release. An unreachable release a
+representation can move raises `MICRO_TIMING_RELEASE_NOT_FINAL_REPRESENTABLE`
+unless such an interval decides it. The emitter reports the boundary refusal as
+the same proof under its own code, `MICRO_GAP_BOUNDARY_NOT_FINAL_REPRESENTABLE`
+(§5), and serializes nothing past a G10 that has not cleared. So
+`BOUNDARY_NOT_FINAL_REPRESENTABLE` is left for positions G10 does not own, such
+as an off-grid Tempo position that splits a span. What follows an unreachable
+release that no interval decides changes G10's answer only through whether a
+representation is valid for it. Under a keep claim it raises the boundary code
+whether an explicit rest follows it, implicit silence follows it or the role
+ends there. With no keep claim, an explicit rest starting at the release makes
+both representations invalid (extending enters the rest, and truncating leaves
+the rest's start where it is), so it raises the boundary code. After implicit
+silence, or at the role end, it raises the release code when a representation
+is valid (and G10 adds `MICRO_TIMING_RELEASE_PROVISIONAL` when the provisional
+hold covers every open micro-timing question, ACCEPTANCE_CRITERIA "Delivered
+first, flagged for listening"), and the boundary code only when neither
+representation is valid for another reason.
 
 A worked example, pinned by regression in both the planner and the production
 `emitFinalMml` path: a 100-beat sustain is exactly 16 dotted whole notes plus one
@@ -366,13 +379,23 @@ the boundary list it publishes, without re-deriving any threshold:
   `SOURCE_SUPPORTED_NOT_REPRESENTABLE`) or one whose every representation is
   invalid (`RELEASE_WITH_NO_VALID_REPRESENTATION`, target status
   `NO_VALID_REPRESENTATION`). Such a release is left out when an analysed
-  interval of its role starts or ends at it — that interval's outcome decides
-  it, so it is not reported twice — and when another entry already reports
-  that position of its role with coverage `none` (an explicit rest starting at
-  the release). Neither raises the release code, and neither covers a boundary
-  as `release-target`. So an unreachable release decides G10 the same way
-  whether an explicit rest follows it, implicit silence follows it, or the
-  role ends there. A boundary with coverage `none` makes G10 raise
+  interval decides the release itself — the note's own sub-grid duration,
+  which ends at it, or the sub-grid gap after it, which starts at it — because
+  that interval's outcome decides it and it is not reported twice. It is also
+  left out when another entry already reports that position of its role with
+  coverage `none` (an explicit rest starting at the release that no interval
+  decides). An interval of another span at the same beat does not decide the
+  release: a sub-grid rest that starts at the release decides the rest's start
+  (`analysed-interval`), and the release is listed beside it with coverage
+  `none` whether that rest's interval is preserved, unproven or technical
+  residue. Neither kind of release raises the release code, and neither covers
+  a boundary as `release-target`. So a release under a keep claim gets the same
+  G10 answer whether an explicit rest follows it, implicit silence follows it,
+  or the role ends there. A release with no keep claim is such an entry only
+  while no representation is valid for it, which is always so when an explicit
+  rest starts at it; after implicit silence or at the role end it usually has a
+  valid representation and raises the release code instead (§4b). A boundary
+  with coverage `none` makes G10 raise
   `MICRO_TIMING_BOUNDARY_NOT_FINAL_REPRESENTABLE`. That is a proof, not
   unproven material, so the emitter keeps it out of
   `MICRO_GAP_BLOCKED_PENDING` (which keeps the other G10 blockers, if any) and
@@ -407,9 +430,9 @@ the boundary list it publishes, without re-deriving any threshold:
   "Delivered first, flagged for listening"). A release with no valid
   representation has neither answer — the representation is refused and the
   hold takes only a valid extension — so it is a boundary entry above, not a
-  release code. For identical events, where no analysed interval covers the
-  release, the emitter therefore answers `FAIL` for such a release whether a
-  keep claim on it is accepted, pending, rejected or absent. Where a
+  release code. For identical events, where no analysed interval decides the
+  release itself, the emitter therefore answers `FAIL` for such a release
+  whether a keep claim on it is accepted, pending, rejected or absent. Where a
   representation is valid, an accepted or pending keep claim takes it away
   (release representation refuses a claimed release), so that release is
   `FAIL` while the claim stands and `PENDING` once no claim covers it. G10's
