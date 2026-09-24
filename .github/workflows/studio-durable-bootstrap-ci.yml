@@ -18,5 +18,7 @@ jobs:
           node-version: '22'
       - name: Verify cold cache, offline cached restart, corruption and durable recovery
         run: RELEASE_TEST_ASSETS=ops/permanent/assets node --test --test-timeout=300000 ops/permanent/bootstrap.test.mjs
+      - name: Verify the release publisher resumes a partial draft against a fake GitHub API
+        run: node --test ops/permanent/publish-release.test.mjs
       - name: Render the pinned Railway bootstrap
         run: python ops/permanent/build_function.py ops/permanent/assets /tmp/studio-durable-function.ts
