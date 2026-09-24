@@ -140,25 +140,56 @@ function worklet({ reply }) {
   return synth;
 }
 
+// The load's own timer: every timer armed with `timeoutMs` while `work`
+// runs, and whether it was cleared or ran. Timers with other delays (the
+// stand-in worklet's reply) are not followed. One left armed is reported by
+// the caller's assertions and cleared here, so it cannot also hold the test
+// process open for a minute.
+async function loadTimers(timeoutMs, work) {
+  const { setTimeout: set, clearTimeout: clear } = globalThis;
+  const timers = [];
+  globalThis.setTimeout = (callback, ms, ...args) => {
+    const timer = { state: 'armed' };
+    timer.id = set((...values) => { timer.state = 'ran'; callback(...values); }, ms, ...args);
+    if (ms === timeoutMs) timers.push(timer);
+    return timer.id;
+  };
+  globalThis.clearTimeout = id => {
+    const timer = timers.find(t => t.id === id);
+    if (timer?.state === 'armed') timer.state = 'cleared';
+    return clear(id);
+  };
+  try { return { result: await work(), timers: timers.map(t => t.state) }; }
+  finally {
+    globalThis.setTimeout = set; globalThis.clearTimeout = clear;
+    for (const timer of timers) if (timer.state === 'armed') clear(timer.id);
+  }
+}
+
 test('a load stops waiting for a bank the worklet cannot parse, or that never loads, and the preview says why', async () => {
   assert.equal(BANK_LOAD_TIMEOUT_MS, 60000);
   const unparsable = worklet({ reply: 'error' });
-  const refusal = await addSoundBankOrFail(unparsable, truncated.slice().buffer, 'studio-user-bank').then(() => null, error => error);
+  const failed = await loadTimers(BANK_LOAD_TIMEOUT_MS, () => addSoundBankOrFail(unparsable, truncated.slice().buffer, 'studio-user-bank').then(() => null, error => error));
+  const refusal = failed.result;
   assert.ok(refusal, 'an unparsable bank rejects instead of waiting forever');
   assert.equal(refusal.code, 'BANK_UNPARSABLE');
   assert.equal(refusal.message, 'SF parsing error: Invalid chunk header! Expected "list" got " " The file may be corrupted.');
   assert.equal(bankLoadMessage(refusal), '音色庫無法解析，已停止載入（SF parsing error: Invalid chunk header! Expected "list" got " " The file may be corrupted.）');
   assert.equal(unparsable.listenersAtSend, 1, 'the error listener is in place before the bank is sent');
   assert.equal(unparsable.listeners('soundBankError'), 0, 'and removed once the load is settled');
+  assert.deepEqual(failed.timers, ['cleared'], 'the load\'s timer is cleared once the parse error ends it');
 
   const silent = worklet({ reply: 'silent' });
-  const timedOut = await addSoundBankOrFail(silent, bank.slice().buffer, 'studio-user-bank', { timeoutMs: 1000 }).then(() => null, error => error);
+  const waited = await loadTimers(1000, () => addSoundBankOrFail(silent, bank.slice().buffer, 'studio-user-bank', { timeoutMs: 1000 }).then(() => null, error => error));
+  const timedOut = waited.result;
   assert.equal(timedOut?.code, 'BANK_LOAD_TIMEOUT');
   assert.equal(bankLoadMessage(timedOut), '音色庫在 1 秒內沒有載入完成，已停止載入');
   assert.equal(silent.listeners('soundBankError'), 0);
+  assert.deepEqual(waited.timers, ['ran'], 'the timer is what ended the wait');
 
   const ready = worklet({ reply: 'ready' });
-  await addSoundBankOrFail(ready, bank.slice().buffer, 'studio-user-bank');
+  const loaded = await loadTimers(BANK_LOAD_TIMEOUT_MS, () => addSoundBankOrFail(ready, bank.slice().buffer, 'studio-user-bank'));
   assert.equal(ready.sent.id, 'studio-user-bank');
-  assert.equal(ready.listeners('soundBankError'), 0, 'a loaded bank leaves no listener or timer behind');
+  assert.equal(ready.listeners('soundBankError'), 0, 'a loaded bank leaves no listener behind');
+  assert.deepEqual(loaded.timers, ['cleared'], 'and no timer: its timeout is cleared, not left to run a minute later');
 });

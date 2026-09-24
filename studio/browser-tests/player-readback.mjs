@@ -1,5 +1,6 @@
 import assert from 'node:assert/strict';
 import { BasicSoundBank } from 'spessasynth_core';
+import { countBankSends } from './bank-sends.mjs';
 
 // Gate 6 through a real engine: a project that declares a verification player
 // stays PENDING until a complete playback of its exact delivery string is
@@ -49,10 +50,18 @@ export async function runPlayerReadbackChecks({ page, idle, file }) {
     });
     db.close();
   }, [...truncated]);
+  // Each play loads the bank again. A play handed the first play's failed
+  // load back would show the same message but send the engine nothing, so
+  // the banks sent to the worklet are counted. Pressing play clears the
+  // card's error before anything is awaited, so the message waited for is
+  // this play's.
+  const bankSends = await countBankSends(page);
   for (const attempt of ['first play', 'retry']) {
+    const sent = await bankSends();
     await page.locator('#preview-play').click();
     // Well inside the engine's load timeout: the worklet's parse error ends the load.
     await page.locator('#timbre-preview .note').filter({ hasText: '音色庫無法解析，已停止載入' }).waitFor({ timeout: 20000 });
+    assert.equal(await bankSends(), sent + 1, `${attempt}: this play sent the bank to the engine itself`);
     assert.equal((await page.locator('#preview-play').textContent()).trim(), '▶ 播放', `${attempt}: the card is not left loading`);
     assert.equal(await page.locator('#preview-play').isEnabled(), true, `${attempt}: play can be pressed again`);
   }

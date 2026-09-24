@@ -193,6 +193,17 @@ export async function runWorkshopChecks({ page, base, idle, file, screenshot, pr
   assert.equal(await storedBankName(), 'saw.sf2', 'the truncated bank is not kept');
   await page.locator('#dls').setInputFiles({ name: 'saw.sf2', mimeType: 'application/octet-stream', buffer: sawBank });
   await bankLoaded('saw.sf2');
+  // The engine's error quotes the bank's own bytes (a chunk name), and the
+  // log line is HTML: a chunk name written as markup is shown as text.
+  const marked = Buffer.from(sawBank);
+  marked.write('<b>A', 12, 'latin1');
+  await page.locator('#dls').setInputFiles({ name: 'marked.sf2', mimeType: 'application/octet-stream', buffer: marked });
+  await page.locator('#dlsName').filter({ hasText: await t('ui.bankFailed') }).waitFor({ timeout: 20000 });
+  const quoted = await page.locator('#logMsg').textContent();
+  assert.ok(quoted.includes('got "<b>a"'), `the bank's bytes are quoted as text: ${quoted}`);
+  assert.equal(await page.locator('#logMsg b').count(), 0, 'nothing from the bank becomes markup');
+  await page.locator('#dls').setInputFiles({ name: 'saw.sf2', mimeType: 'application/octet-stream', buffer: sawBank });
+  await bankLoaded('saw.sf2');
   await closeSettings();
   await press(page.locator('#log button'));
   assert.equal(await page.locator('#play').isEnabled(), true);
