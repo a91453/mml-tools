@@ -480,7 +480,8 @@ function evaluateOption(kind, { event, stream, samePitch, release, floor, ceil, 
     }
     // An explicit rest that begins at this release keeps its unrepresentable
     // start whichever way the note moves; that is a rest-boundary question
-    // (technical timing repair), not a release representation.
+    // (final/micro-gap-enforcement.mjs reports it as an unreachable boundary),
+    // not a release representation.
     if (restAtRelease) reasons.push('RELEASE_ADJOINS_AN_EXPLICIT_REST');
   }
   const silenceBefore = following;
@@ -542,10 +543,13 @@ const SHAPES_WITHOUT_AN_INTERVAL = new Set(['rest-of-at-least-safe-grid', 'role-
  * the sub-grid interval analyzer has no interval for it (the release is followed
  * by a rest of at least the safe grid, an explicit rest, a same-role span, or
  * ends the role, and the note itself is not a sub-grid duration), and no keep
- * claim takes it out of the representation question. Exactly these are what
- * `final/micro-gap-enforcement.mjs` raises
- * MICRO_TIMING_RELEASE_NOT_FINAL_REPRESENTABLE for, so a caller asking "does
- * the release side decide this release" asks this, not its own copy.
+ * claim takes it out of the representation question. A caller asking "is this
+ * release one the interval analyzer leaves to the release side" asks this, not
+ * its own copy. `final/micro-gap-enforcement.mjs` raises
+ * MICRO_TIMING_RELEASE_NOT_FINAL_REPRESENTABLE for those of them that await a
+ * representation decision (REPRESENTATION_DECISION_REQUIRED); one with
+ * NO_VALID_REPRESENTATION has nothing on the release side that answers it, and
+ * that gate reports it as an unreachable boundary instead.
  */
 export function isNotVisibleToIntervalAnalyzer(target) {
   return target.status !== TARGET_STATUS.SOURCE_SUPPORTED_NOT_REPRESENTABLE

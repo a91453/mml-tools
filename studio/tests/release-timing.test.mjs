@@ -477,9 +477,13 @@ test('RT-17 a release followed at once by an explicit rest is visible and never 
   assert.equal(target.analysis.followingShape, 'explicit-rest-at-release');
   assert.equal(target.status, TARGET_STATUS.NO_VALID_REPRESENTATION);
   assert.ok(target.options.every(option => !option.valid));
+  // Visible to G10, as the boundary nothing moves: no representation of this
+  // release is valid, so the release code (whose answer is a representation)
+  // is not raised for it, and the rest's start at the release blocks instead.
   const enforcement = enforceMicroGaps(candidate);
   assert.equal(enforcement.status, 'PENDING');
-  assert.ok(enforcement.blockers.includes(MICRO_GAP_BLOCKERS.RELEASE_NOT_FINAL_REPRESENTABLE));
+  assert.deepEqual(enforcement.blockers, [MICRO_GAP_BLOCKERS.BOUNDARY_NOT_FINAL_REPRESENTABLE]);
+  assert.deepEqual(enforcement.unsupportedBoundaries.map(item => [item.eventId, item.boundary, item.coverage]), [['r', 'start', 'none']]);
 });
 
 test('RT-18 a derived duplicate is traced to its origin, and its record re-verifies', () => {

@@ -861,17 +861,27 @@ function evaluateGates(project, options) {
     if (status !== EMIT_STATUS.FAIL) status = EMIT_STATUS.PENDING;
   }
 
-  // An onset, or a rest boundary a role has to reach, that G10 proves no
-  // admitted Final token sequence reaches and that no other G10 outcome decides
+  // A position a role has to reach -- an onset, a rest boundary, or a note
+  // release no release representation can move -- that G10 proves no admitted
+  // Final token sequence reaches and that no other G10 outcome decides
   // (coverage NONE). FAIL, not PENDING. DIAGNOSTIC_SEVERITY.ERROR is "a
   // confirmed negative: this candidate cannot be Final-emitted as it stands",
   // and PENDING is "an unresolved Canonical/evidence question"; this is the
-  // first and not the second. Nothing answers it the way evidence answers an
-  // unproven interval (a classification, and for confirmed residue Technical
-  // Timing Repair) or an unreachable release (an evidence-backed release
-  // representation, or the provisional hold): an onset is an attack and is
-  // never moved, no rest is moved to make a role writable, and the arithmetic
-  // does not depend on any search bound, budget, caution opt-in or evidence.
+  // first and not the second. Nothing in this build answers it the way evidence
+  // answers an unproven interval (a classification, and for confirmed residue
+  // Technical Timing Repair), or the way an evidence-backed release
+  // representation answers MICRO_TIMING_RELEASE_NOT_FINAL_REPRESENTABLE -- which
+  // G10 raises only for a release with no keep claim and at least one valid
+  // representation, and which under machine delivery a qualifying release may
+  // also meet by the provisional hold. An onset is an attack and is never
+  // moved, no rest is moved to make a role writable, release representation
+  // refuses a release under a keep claim and every invalid option, the
+  // provisional hold only ever takes a valid extension, and the arithmetic does
+  // not depend on any search bound, budget, caution opt-in or evidence. So a
+  // release whose every representation is invalid, and that no analysed
+  // interval decides, gets this FAIL whether a keep claim on it is accepted,
+  // pending, rejected or absent, and a release with a valid representation
+  // gets it only while a keep claim takes that representation away.
   // The same proof met at serialization is BOUNDARY_NOT_FINAL_REPRESENTABLE,
   // and the other provable G10-side negative,
   // SOURCE_SUPPORTED_INTERVAL_NOT_REPRESENTABLE, is FAIL too. G10's own status
@@ -882,13 +892,15 @@ function evaluateGates(project, options) {
     const unreachable = (microGap.unsupportedBoundaries ?? []).filter(item => item.coverage === BOUNDARY_COVERAGE.NONE);
     const count = unreachable.length;
     const where = item => `${item.role} event ${item.eventId} (${item.kind} ${item.boundary}) at beat ${item.position}`;
+    const isRelease = item => item.kind === 'note' && item.boundary === 'end';
+    const what = item => (item.kind === 'rest' ? 'a rest boundary' : isRelease(item) ? 'a note release' : 'an onset');
     const named = count === 1
-      ? `${where(unreachable[0])} is an onset or rest boundary its Final role has to reach, and no admitted Final token sequence reaches it`
-      : `${count} onset or rest boundaries a Final role has to reach sit where no admitted Final token sequence reaches${count ? `, the first ${where(unreachable[0])}; unreachableBoundaries lists ${count > MAX_REPORTED_BOUNDARIES ? `the first ${MAX_REPORTED_BOUNDARIES}` : 'them'}` : ''}`;
+      ? `${where(unreachable[0])} is ${what(unreachable[0])} its Final role has to reach, and no admitted Final token sequence reaches it`
+      : `${count} ${unreachable.some(isRelease) ? 'onset, note release or rest boundaries' : 'onset or rest boundaries'} a Final role has to reach sit where no admitted Final token sequence reaches${count ? `, the first ${where(unreachable[0])}; unreachableBoundaries lists ${count > MAX_REPORTED_BOUNDARIES ? `the first ${MAX_REPORTED_BOUNDARIES}` : 'them'}` : ''}`;
     diagnostics.push(diagnostic(
       EMIT_DIAGNOSTICS.MICRO_GAP_BOUNDARY_NOT_FINAL_REPRESENTABLE,
       DIAGNOSTIC_SEVERITY.ERROR,
-      `G10 (${MICRO_GAP_BLOCKERS.BOUNDARY_NOT_FINAL_REPRESENTABLE}): ${named}. A role is written as consecutive tokens from beat 0, so every position it reaches is a sum of admitted token lengths, whose whole-note denominator divides the lcm of the admitted token denominators; ${count > 1 ? 'none of these positions\' does' : 'this position\'s does not'}. This is a proof about ${count > 1 ? 'those positions' : 'the position'}, not a search limit and not an unproven question: no search bound, budget, caution opt-in or evidence changes it, and no attack or rest is moved to make the role writable. This candidate cannot be Final-emitted as it stands; the emitter fails closed.`,
+      `G10 (${MICRO_GAP_BLOCKERS.BOUNDARY_NOT_FINAL_REPRESENTABLE}): ${named}. A role is written as consecutive tokens from beat 0, so every position it reaches is a sum of admitted token lengths, whose whole-note denominator divides the lcm of the admitted token denominators; ${count > 1 ? 'none of these positions\' does' : 'this position\'s does not'}. This is a proof about ${count > 1 ? 'those positions' : 'the position'}, not a search limit and not an unproven question: no search bound, budget, caution opt-in or evidence changes where ${count > 1 ? 'they are' : 'it is'}, and nothing is moved to make the role writable -- no attack, no rest, and no release that release representation refuses (one under a keep claim, or one with no valid representation). This candidate cannot be Final-emitted as it stands; the emitter fails closed.`,
       {
         blocker: MICRO_GAP_BLOCKERS.BOUNDARY_NOT_FINAL_REPRESENTABLE,
         unreachableBoundaryCount: count,

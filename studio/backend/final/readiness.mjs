@@ -435,9 +435,11 @@ function leadPromotionGate(reports, leadEventDiff = null) {
 //   UNKNOWN                       unproven either way          -> PENDING
 //   unresolved stream identity    relationship not establishable -> PENDING
 //
-// Beside them, an onset or rest boundary the role has to reach at a position
-// no admitted Final token sequence reaches, which no interval above covers, is
-// PENDING too (MICRO_TIMING_BOUNDARY_NOT_FINAL_REPRESENTABLE).
+// Beside them, an onset, a rest boundary or a note release no release
+// representation can move (under a keep claim, or with no valid
+// representation), that the role has to reach at a position no admitted Final
+// token sequence reaches and that no interval above covers, is PENDING too
+// (MICRO_TIMING_BOUNDARY_NOT_FINAL_REPRESENTABLE).
 //
 // The classification/enforcement split itself lives in
 // final/micro-gap-enforcement.mjs, which is also where the published Final

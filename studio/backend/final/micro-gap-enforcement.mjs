@@ -98,42 +98,52 @@ export const MICRO_GAP_BLOCKERS = Object.freeze({
   // Published rule authorised the change, so it can never reach PASS here.
   UNPUBLISHED_CANONICAL_CANDIDATE: 'MICRO_GAP_UNPUBLISHED_CANONICAL_CANDIDATE',
   // A note release that no admitted Final token sequence can reach
-  // (canonical/release-timing.mjs). The interval analyzer above only sees
-  // sub-grid *intervals*; a release one source tick before the grid followed by
-  // a real rest, or at a role end, leaves no sub-grid interval and was invisible
-  // to this gate while the Final emitter still could not write it. Published v1
-  // needs an evidence-backed Mobile representation decision for each one.
+  // (canonical/release-timing.mjs) and that a release representation can move.
+  // The interval analyzer above only sees sub-grid *intervals*; a release one
+  // source tick before the grid followed by a real rest, or at a role end,
+  // leaves no sub-grid interval and was invisible to this gate while the Final
+  // emitter still could not write it. Published v1 needs an evidence-backed
+  // Mobile representation decision for each one.
   //
   // Only releases the interval analyzer cannot see raise it. A release followed by
   // a sub-grid gap, or a sub-grid note, already surfaces as an interval above and
   // keeps its three-way outcome there; whether a *preserved* source-supported
   // interval can be written at all stays the separate technical gate's question,
-  // exactly as before. Unsupported onsets and rest boundaries have a code of
-  // their own, below.
+  // exactly as before. And only a release awaiting a representation decision
+  // (REPRESENTATION_DECISION_REQUIRED) raises it: it has no keep claim and at
+  // least one valid representation, so an evidence-backed release representation
+  // answers it (applyMobileAdaptation.release_representation), and under machine
+  // delivery a qualifying one may be held provisionally. A release no release
+  // representation can move -- one under a keep claim, or one whose every
+  // representation is invalid -- has nothing that answers it here, so it is an
+  // entry of `unsupportedBoundaries` and raises the boundary code below instead.
   RELEASE_NOT_FINAL_REPRESENTABLE: 'MICRO_TIMING_RELEASE_NOT_FINAL_REPRESENTABLE',
-  // An onset, or a rest boundary a Final role has to reach, that no admitted
-  // Final token sequence can reach (`unsupportedBoundaries`, whose entries each
-  // say how they are covered). The interval analyzer only sees a boundary that
-  // is an end of a sub-grid interval: it builds a gap only between two segments
-  // closer than the grid, so a role's first off-grid onset, an off-grid onset
-  // after a rest of at least the grid, a legato join at an off-grid point or an
-  // off-grid role end leaves no interval, and this gate used to PASS while the
-  // Final emitter could not write the role.
+  // A position a Final role has to reach -- an onset, a rest boundary, or a note
+  // release no release representation can move -- that no admitted Final token
+  // sequence can reach (`unsupportedBoundaries`, whose entries each say how they
+  // are covered). The interval analyzer only sees a boundary that is an end of
+  // a sub-grid interval: it builds a gap only between two segments closer than
+  // the grid, so a role's first off-grid onset, an off-grid onset after a rest
+  // of at least the grid, a legato join at an off-grid point or an off-grid role
+  // end leaves no interval, and this gate used to PASS while the Final emitter
+  // could not write the role.
   //
   // Raised only for a boundary no other outcome here already decides: one an
   // analysed interval in its role starts or ends at keeps that interval's
   // three-way outcome, and one at a note release of its role that raises
   // RELEASE_NOT_FINAL_REPRESENTABLE keeps the release-side handling above. A
-  // release under a keep claim raises nothing there, so it decides nothing
-  // here either. A rest boundary where no note of its role starts
-  // or ends and the role does not end lies inside one silence, which a Final
-  // writes as one exact span (final/mml-emitter.mjs merges adjacent silence), so
-  // it is reported and never raises this. Onsets are attacks and are never moved,
-  // and no provisional rendering holds any of these, so the machine-delivery
-  // schemas leave it BLOCKING (final/delivery-evaluator.mjs). This gate stays
-  // PENDING, as for the release code; the Final emitter, whose question is
-  // whether the candidate can be written, reports it as the proof it is
-  // (MICRO_GAP_BOUNDARY_NOT_FINAL_REPRESENTABLE, FAIL).
+  // release that raises nothing there -- under a keep claim, or with no valid
+  // representation -- decides nothing here either, and is itself an entry. A
+  // rest boundary where no note of its role starts or ends and the role does
+  // not end lies inside one silence, which a Final writes as one exact span
+  // (final/mml-emitter.mjs merges adjacent silence), so it is reported and never
+  // raises this. Onsets are attacks and are never moved, no rest is moved, a
+  // release representation refuses a release under a keep claim and every
+  // invalid option, and no provisional rendering holds any of these, so the
+  // machine-delivery schemas leave it BLOCKING (final/delivery-evaluator.mjs).
+  // This gate stays PENDING, as for the release code; the Final emitter, whose
+  // question is whether the candidate can be written, reports it as the proof
+  // it is (MICRO_GAP_BOUNDARY_NOT_FINAL_REPRESENTABLE, FAIL).
   BOUNDARY_NOT_FINAL_REPRESENTABLE: 'MICRO_TIMING_BOUNDARY_NOT_FINAL_REPRESENTABLE',
   // A recorded release representation that does not re-verify from the project:
   // a timing change without the evidence-backed decision it claims.
@@ -178,10 +188,10 @@ export const BOUNDARY_COVERAGE = Object.freeze({
   // that interval's classification decides, as for any other interval.
   ANALYSED_INTERVAL: 'analysed-interval',
   // A note release in the boundary's role sits here and raises
-  // RELEASE_NOT_FINAL_REPRESENTABLE itself (it is one
-  // `notVisibleToIntervalAnalyzerCount` counts); the release-side handling
-  // decides. A release target that raises nothing -- one a keep claim reports
-  // SOURCE_SUPPORTED_NOT_REPRESENTABLE -- covers nothing.
+  // RELEASE_NOT_FINAL_REPRESENTABLE itself (`raisesReleaseCode`); the
+  // release-side handling decides. A release target that raises nothing -- one
+  // a keep claim reports SOURCE_SUPPORTED_NOT_REPRESENTABLE, or one with
+  // NO_VALID_REPRESENTATION -- covers nothing.
   RELEASE_TARGET: 'release-target',
   // A rest boundary where no note of its role starts or ends and the role does
   // not end: it lies inside one silence, which a Final writes as one exact span.
@@ -189,6 +199,33 @@ export const BOUNDARY_COVERAGE = Object.freeze({
   // A position the Final role has to reach and nothing here decides.
   NONE: 'none',
 });
+
+// The `reason` of an `unsupportedBoundaries` entry for a note release no release
+// representation can move, by the release analysis's target status. The
+// analysis reports every other unreachable release as a target, never as a
+// boundary, because a representation decision answers it; these two it cannot
+// answer. A release under a keep claim is claimed musically meaningful, so
+// release representation refuses it (RELEASE_EVENT_HAS_A_SOURCE_SUPPORTED_KEEP_CLAIM)
+// and Final cannot express it under the loaded Canonical. A release with no
+// valid representation has every option refused
+// (RELEASE_REPRESENTATION_NOT_VALID_FOR_EVENT), and the provisional hold,
+// which only ever takes a valid EXTEND_TO_NEXT_GRID, never holds it.
+export const RELEASE_BOUNDARY_REASON = Object.freeze({
+  [TARGET_STATUS.SOURCE_SUPPORTED_NOT_REPRESENTABLE]: 'RELEASE_UNDER_A_KEEP_CLAIM_NOT_FINAL_REPRESENTABLE',
+  [TARGET_STATUS.NO_VALID_REPRESENTATION]: 'RELEASE_WITH_NO_VALID_REPRESENTATION',
+});
+
+/**
+ * Whether a release target raises RELEASE_NOT_FINAL_REPRESENTABLE: one the
+ * interval analyzer cannot see (`isNotVisibleToIntervalAnalyzer`, which already
+ * leaves out a release under a keep claim) and that awaits a representation
+ * decision, so at least one representation is valid for it. A release with no
+ * valid representation is left out: nothing on the release side can answer it,
+ * and it is reported as a boundary instead.
+ */
+function raisesReleaseCode(target) {
+  return isNotVisibleToIntervalAnalyzer(target) && target.status === TARGET_STATUS.REPRESENTATION_DECISION_REQUIRED;
+}
 
 // The blockers a release-side result may carry beside RELEASE_PROVISIONAL.
 const RELEASE_SIDE_BLOCKERS = new Set([
@@ -255,7 +292,7 @@ function releaseOffsetSources(releaseAnalysis) {
  * valid for it (that option already refuses a hold that would cross a same-role
  * onset, enter an explicit rest, create a cross-role same-pitch overlap or leave
  * a sub-grid silence). Any release or interval outside that shape, any
- * unsupported onset or rest boundary, any source-supported or technical
+ * unsupported onset, rest boundary or release, any source-supported or technical
  * interval, and any blocker beyond the three release-side ones makes the whole
  * answer "no": then nothing is held and the gate keeps its usual codes.
  */
@@ -360,7 +397,9 @@ const isAssignedSpan = event => event && (event.kind === 'note' || event.kind ==
 /**
  * Each onset or rest boundary no admitted Final token sequence can reach
  * (`canonical/release-timing.mjs#classifyPosition`), with how this gate covers it
- * (BOUNDARY_COVERAGE). Positions are compared per role and as exact rationals.
+ * (BOUNDARY_COVERAGE), and each note release there that no release
+ * representation can move and nothing else here decides. Positions are compared
+ * per role and as exact rationals.
  *
  * A Final role is written as consecutive tokens from beat 0, so it has to reach
  * every position where one of its notes starts or ends, and the position where
@@ -369,8 +408,11 @@ const isAssignedSpan = event => event && (event.kind === 'note' || event.kind ==
  */
 function coverUnsupportedBoundaries(project, microTiming, releaseAnalysis) {
   const boundaries = releaseAnalysis.unsupportedBoundaries;
-  // No entry, no change: the report keeps the analysis's own frozen list.
-  if (!boundaries.length) return boundaries;
+  // Releases no release representation can move (RELEASE_BOUNDARY_REASON).
+  const unmovable = releaseAnalysis.targets.filter(target => Object.hasOwn(RELEASE_BOUNDARY_REASON, target.status));
+  // No entry and no such release, no change: the report keeps the analysis's
+  // own frozen list.
+  if (!boundaries.length && !unmovable.length) return boundaries;
 
   const spans = (Array.isArray(project?.events) ? project.events : []).filter(isAssignedSpan);
   const byId = new Map(spans.map(event => [event.id, event]));
@@ -386,12 +428,13 @@ function coverUnsupportedBoundaries(project, microTiming, releaseAnalysis) {
   }
 
   // Only a release that raises RELEASE_NOT_FINAL_REPRESENTABLE decides a
-  // boundary. A release under a keep claim is left out of that count, so nothing
-  // on the release side is raised for it; counting it here would let a boundary
-  // at an unreachable position pass this gate unblocked.
+  // boundary. A release under a keep claim, or one with no valid
+  // representation, raises nothing on the release side; counting it here would
+  // let a boundary at an unreachable position pass this gate unblocked, or
+  // leave it blocked by a code whose only answer refuses it.
   const releaseTargets = new Set();
   for (const target of releaseAnalysis.targets) {
-    if (!isNotVisibleToIntervalAnalyzer(target)) continue;
+    if (!raisesReleaseCode(target)) continue;
     const event = byId.get(target.eventId);
     if (event) releaseTargets.add(positionKey(target.role, event.end));
   }
@@ -408,14 +451,47 @@ function coverUnsupportedBoundaries(project, microTiming, releaseAnalysis) {
   }
   for (const [role, end] of roleEnds) reached.add(positionKey(role, end));
 
-  return Object.freeze(boundaries.map(boundary => {
+  const covered = boundaries.map(boundary => {
     const key = positionKey(boundary.role, boundary.position);
     let coverage = BOUNDARY_COVERAGE.NONE;
     if (intervalEnds.has(key)) coverage = BOUNDARY_COVERAGE.ANALYSED_INTERVAL;
     else if (releaseTargets.has(key)) coverage = BOUNDARY_COVERAGE.RELEASE_TARGET;
     else if (!reached.has(key)) coverage = BOUNDARY_COVERAGE.INSIDE_SILENCE;
     return Object.freeze({ ...boundary, coverage });
-  }));
+  });
+
+  // A note release no release representation can move is a position its role
+  // has to reach, like an onset. The release analysis reports it only as a
+  // target, so it is added here -- unless an analysed interval of its role
+  // starts or ends there, whose outcome decides it as for any other boundary
+  // (the release is not reported twice), or an entry above already reports that
+  // position of its role with coverage NONE (an explicit rest starting at the
+  // release, for example). Another note's release target at the same position
+  // covers nothing: a representation of that note moves only that note.
+  const reportedNone = new Set(covered
+    .filter(item => item.coverage === BOUNDARY_COVERAGE.NONE)
+    .map(item => positionKey(item.role, item.position)));
+  const releases = [];
+  for (const target of unmovable) {
+    const event = byId.get(target.eventId);
+    if (!event || event.kind !== 'note') continue;
+    const key = positionKey(target.role, event.end);
+    if (intervalEnds.has(key) || reportedNone.has(key)) continue;
+    reportedNone.add(key);
+    releases.push(Object.freeze({
+      eventId: target.eventId,
+      role: target.role,
+      kind: 'note',
+      boundary: 'end',
+      position: f(event.end).toString(),
+      reason: RELEASE_BOUNDARY_REASON[target.status],
+      coverage: BOUNDARY_COVERAGE.NONE,
+    }));
+  }
+  if (!releases.length) return Object.freeze(covered);
+  // In role and beat order. The sort is stable, so the analysis's own entries
+  // keep their order among themselves wherever their role is one voice.
+  return Object.freeze([...covered, ...releases].sort((a, b) => cmpText(a.role, b.role) || f(a.position).cmp(b.position)));
 }
 
 // Canonical IR beats are quarter notes, so a whole-note 1/N is 4/N IR beats.
@@ -596,11 +672,11 @@ export function enforceMicroGaps(project, { mobileSyntax, releaseEvidenceRegistr
   } catch (error) {
     return failedAnalysisReport(policy, error);
   }
-  if (releaseAnalysis.notVisibleToIntervalAnalyzerCount > 0) blockers.push(MICRO_GAP_BLOCKERS.RELEASE_NOT_FINAL_REPRESENTABLE);
-  // Onsets and rest boundaries (Layer B as well). Raised only when a boundary
-  // Final cannot reach is covered by nothing above, so a project whose
-  // boundaries Final can all reach keeps its blocker list and its report byte
-  // for byte.
+  if (releaseAnalysis.targets.some(raisesReleaseCode)) blockers.push(MICRO_GAP_BLOCKERS.RELEASE_NOT_FINAL_REPRESENTABLE);
+  // Onsets, rest boundaries and releases no release representation can move
+  // (Layer B as well). Raised only when a boundary Final cannot reach is covered
+  // by nothing above, so a project whose boundaries Final can all reach keeps
+  // its blocker list and its report byte for byte.
   const unsupportedBoundaries = coverUnsupportedBoundaries(project, report, releaseAnalysis);
   if (unsupportedBoundaries.some(item => item.coverage === BOUNDARY_COVERAGE.NONE)) {
     blockers.push(MICRO_GAP_BLOCKERS.BOUNDARY_NOT_FINAL_REPRESENTABLE);
@@ -670,8 +746,10 @@ export function enforceMicroGaps(project, { mobileSyntax, releaseEvidenceRegistr
       registryChecked: releaseRecords.registryChecked === true,
       violations: Object.freeze([...releaseRecords.violations]),
     }),
-    // Every onset or rest boundary Final cannot reach, each with its `coverage`
-    // (BOUNDARY_COVERAGE); NONE is what raised BOUNDARY_NOT_FINAL_REPRESENTABLE.
+    // Every onset or rest boundary Final cannot reach, and every release there
+    // no release representation can move that nothing else here decides
+    // (RELEASE_BOUNDARY_REASON), each with its `coverage` (BOUNDARY_COVERAGE);
+    // NONE is what raised BOUNDARY_NOT_FINAL_REPRESENTABLE.
     unsupportedBoundaries,
     // With RELEASE_PROVISIONAL: every release a delivery may hold to the
     // following attack or next grid point, and the UNKNOWN interval keys each

@@ -27,7 +27,7 @@ import {
   createCanonicalProject,
 } from '../backend/canonical/index.mjs';
 import { MICRO_TIMING_KEEP_ACTION, createIntervalIdentity } from '../backend/canonical/micro-timing.mjs';
-import { POSITION_CLASS, TARGET_STATUS, analyzeReleaseTiming, classifyPosition } from '../backend/canonical/release-timing.mjs';
+import { POSITION_CLASS, RELEASE_REFUSAL, REPRESENTATION, TARGET_STATUS, analyzeReleaseTiming, classifyPosition, planReleaseRepresentation } from '../backend/canonical/release-timing.mjs';
 import { BOUNDARY_COVERAGE, MICRO_GAP_BLOCKERS, enforceMicroGaps } from '../backend/final/micro-gap-enforcement.mjs';
 import { evaluateProjectReadiness } from '../backend/final/readiness.mjs';
 import { emitFinalMml } from '../backend/final/mml-emitter.mjs';
@@ -140,10 +140,13 @@ test('a boundary another G10 outcome decides keeps that outcome, and one inside 
   assert.deepEqual(gap.blockers, [MICRO_GAP_BLOCKERS.CLASSIFICATION_UNKNOWN]);
   assert.deepEqual(gap.unsupportedBoundaries.map(item => [item.eventId, item.coverage]), [['b', BOUNDARY_COVERAGE.ANALYSED_INTERVAL]]);
 
-  // An explicit rest starting at an unreachable release: the release side decides.
+  // An explicit rest starting at an unreachable release. Extending the release
+  // enters the rest and truncating it leaves the rest's start where it is, so
+  // the release has no valid representation: it raises no release code, and
+  // nothing on the release side decides the rest's start.
   const atRelease = enforceMicroGaps(project([note(0, '479/480', { id: 'x' }), rest('479/480', 2, { id: 'r' }), note(2, 3, { id: 'y' })]));
-  assert.deepEqual(atRelease.blockers, [MICRO_GAP_BLOCKERS.RELEASE_NOT_FINAL_REPRESENTABLE]);
-  assert.deepEqual(atRelease.unsupportedBoundaries.map(item => [item.eventId, item.boundary, item.coverage]), [['r', 'start', BOUNDARY_COVERAGE.RELEASE_TARGET]]);
+  assert.deepEqual(atRelease.blockers, [BOUNDARY]);
+  assert.deepEqual(atRelease.unsupportedBoundaries.map(item => [item.eventId, item.boundary, item.coverage]), [['r', 'start', BOUNDARY_COVERAGE.NONE]]);
 
   // A rest starting inside a silence: the Final writes the silence as one exact
   // span, so the rest's own start is never a position the role has to reach.
@@ -156,7 +159,7 @@ test('a boundary another G10 outcome decides keeps that outcome, and one inside 
 });
 
 test('a release under a keep claim raises no release blocker, so a rest boundary at it raises the boundary code', () => {
-  // The same shape as the release-target case above, but a keep decision claims
+  // The same shape as the explicit-rest case above, but a keep decision claims
   // the sub-grid release is musically meaningful. The release analysis then
   // reports it SOURCE_SUPPORTED_NOT_REPRESENTABLE and leaves it out of
   // notVisibleToIntervalAnalyzerCount, so RELEASE_NOT_FINAL_REPRESENTABLE is not
@@ -193,11 +196,12 @@ test('a release under a keep claim raises no release blocker, so a rest boundary
     assert.deepEqual(proof.unreachableBoundaries.map(item => [item.eventId, item.boundary, item.position]), [['r', 'start', '479/480']], status);
   }
 
-  // Control: without the claim the release itself raises its blocker, and that
-  // still decides the rest's start.
+  // Without the claim the release has no valid representation either (the
+  // explicit rest at it refuses both options), so it raises no release code and
+  // the rest's start is still the boundary the role cannot reach.
   const unclaimed = enforceMicroGaps(project(events()));
-  assert.deepEqual(unclaimed.blockers, [MICRO_GAP_BLOCKERS.RELEASE_NOT_FINAL_REPRESENTABLE]);
-  assert.deepEqual(unclaimed.unsupportedBoundaries.map(item => [item.eventId, item.coverage]), [['r', BOUNDARY_COVERAGE.RELEASE_TARGET]]);
+  assert.deepEqual(unclaimed.blockers, [BOUNDARY]);
+  assert.deepEqual(unclaimed.unsupportedBoundaries.map(item => [item.eventId, item.coverage]), [['r', BOUNDARY_COVERAGE.NONE]]);
 });
 
 test('coverage is decided per role: another role\'s interval, release or note at the same beat decides nothing', () => {
@@ -353,4 +357,235 @@ test('the emitter names a span boundary no admitted token sequence reaches as a 
   assert.ok(codes(preferred).includes(EMIT_DIAGNOSTICS.DURATION_SEARCH_POLICY_LIMIT));
   assert.equal(codes(preferred).includes(EMIT_DIAGNOSTICS.BOUNDARY_NOT_FINAL_REPRESENTABLE), false);
   assert.equal(emitFinalMml(triplet, { cautionLengthOptIn: true }).status, 'PASS');
+});
+
+// ─── a release no release representation can move ───────────────────────────
+//
+// The release analysis reports an unreachable note release as a target, never
+// as a boundary, because a representation decision can move it. A release under
+// a keep claim (SOURCE_SUPPORTED_NOT_REPRESENTABLE) and one whose every
+// representation is invalid (NO_VALID_REPRESENTATION) cannot be moved. The
+// first used to raise nothing at all, so G10 and readiness PASSed it whenever no
+// explicit rest started at it (implicit silence after it, or the role ending
+// there) while the emitter proved the position unreachable; the second raised
+// the release code, whose only answer, release representation, refuses it.
+
+const KEEP_REASON = 'RELEASE_UNDER_A_KEEP_CLAIM_NOT_FINAL_REPRESENTABLE';
+const NO_VALID_REASON = 'RELEASE_WITH_NO_VALID_REPRESENTATION';
+const keepOn = (status, identity) => createArbitrationDecision({
+  id: `keep-x-${status}`,
+  eventIds: ['x'],
+  action: MICRO_TIMING_KEEP_ACTION,
+  status,
+  reason: 'claimed musically meaningful',
+  metadata: { intervalIdentity: createIntervalIdentity(identity) },
+});
+// One unreachable release, x at 479/480, and what follows it. A keep claim
+// names x's release through the gap after it (K0, K1) or its own duration (K2).
+const SHAPES = Object.freeze({
+  K0: {
+    followingShape: 'explicit-rest-at-release',
+    events: () => [note(0, '479/480', { id: 'x' }), rest('479/480', 2, { id: 'r' }), note(2, 3, { id: 'y' })],
+    identity: { type: 'inter-event-gap', previousEventId: 'x', nextEventId: 'y', start: '479/480', end: '1' },
+  },
+  K1: {
+    followingShape: 'rest-of-at-least-safe-grid',
+    events: () => [note(0, '479/480', { id: 'x' }), note(2, 3, { id: 'y' })],
+    identity: { type: 'inter-event-gap', previousEventId: 'x', nextEventId: 'y', start: '479/480', end: '1' },
+  },
+  K2: {
+    followingShape: 'role-end',
+    events: () => [note(0, '479/480', { id: 'x' })],
+    identity: { type: 'event-duration', eventId: 'x', start: '0', end: '479/480' },
+  },
+});
+const shaped = (name, status) => project(SHAPES[name].events(), undefined, status ? [keepOn(status, SHAPES[name].identity)] : []);
+const noneEntries = report => report.unsupportedBoundaries.filter(item => item.coverage === BOUNDARY_COVERAGE.NONE)
+  .map(({ role, eventId, kind, boundary, position, reason }) => ({ role, eventId, kind, boundary, position, reason }));
+const REST_AT_X = { role: 'Melody', eventId: 'r', kind: 'rest', boundary: 'start', position: '479/480', reason: 'REST_START_NOT_FINAL_REPRESENTABLE' };
+const X_RELEASE = reason => ({ role: 'Melody', eventId: 'x', kind: 'note', boundary: 'end', position: '479/480', reason });
+const planFor = (analysis, representation) => planReleaseRepresentation({
+  analysis,
+  registry: null,
+  input: { decisions: [{ id: `rr-${representation}`, eventIds: ['x'], representation, reason: 'fixture', evidence: [] }] },
+});
+
+// What G10, the readiness microTiming gate, the machine-delivery schemas and
+// the emitter (alone and with the readiness report) each say about a candidate
+// they must agree on.
+function assertBoundaryAgreement(candidate, expectedNone, label) {
+  const g10 = enforceMicroGaps(candidate);
+  assert.equal(g10.status, 'PENDING', label);
+  assert.deepEqual(g10.blockers, [BOUNDARY], label);
+  assert.deepEqual(noneEntries(g10), expectedNone, label);
+  assert.equal(g10.provisionalReleases.length, 0, `${label}: nothing is held provisionally`);
+
+  const readiness = evaluateProjectReadiness({ project: candidate });
+  const micro = readiness.gates.microTiming;
+  assert.equal(micro.status, 'PENDING', label);
+  assert.deepEqual(micro.blockers, [BOUNDARY], label);
+  assert.deepEqual(micro.unsupportedBoundaries, g10.unsupportedBoundaries, `${label}: readiness republishes G10`);
+  assert.ok(readiness.preGameBlocking.includes('microTiming'), label);
+
+  const identity = schema => Object.freeze({ canonical_version: 'x', canonical_status: 'PUBLISHED', rules_snapshot_sha: 'f'.repeat(40), machine_delivery_schema: schema });
+  const gates = { ...Object.fromEntries(MACHINE_DELIVERY_GATE_NAMES.map(name => [name, { status: 'PASS' }])), microTiming: { status: micro.status, blockers: micro.blockers } };
+  for (const schema of [MACHINE_DELIVERY_SCHEMA_V1, MACHINE_DELIVERY_SCHEMA_V2]) {
+    const delivery = evaluateMachineDelivery(gates, { canonical: identity(schema), requireCompleteGateMap: true });
+    assert.deepEqual(delivery.blocking.map(entry => entry.gate), ['microTiming'], `${label} ${schema}`);
+    assert.equal(delivery.ready, false, `${label} ${schema}`);
+  }
+
+  for (const options of [{}, { readiness }]) {
+    const tag = `${label}${options.readiness ? ' with readiness' : ''}`;
+    const emitted = emitFinalMml(candidate, options);
+    assert.equal(emitted.status, 'FAIL', tag);
+    assert.equal(emitted.combinedMml, null, tag);
+    const proofs = emitted.diagnostics.filter(item => item.code === EMIT_DIAGNOSTICS.MICRO_GAP_BOUNDARY_NOT_FINAL_REPRESENTABLE);
+    assert.equal(proofs.length, 1, tag);
+    assert.deepEqual([proofs[0].severity, proofs[0].completenessProven, proofs[0].unreachableBoundaryCount], ['error', true, expectedNone.length], tag);
+    assert.deepEqual(proofs[0].unreachableBoundaries, expectedNone, `${tag}: the emitter names what G10 named`);
+    // A proof, never unproven material, and never met again at serialization.
+    assert.equal(codes(emitted).includes(EMIT_DIAGNOSTICS.MICRO_GAP_BLOCKED_PENDING), false, tag);
+    assert.equal(codes(emitted).includes(EMIT_DIAGNOSTICS.BOUNDARY_NOT_FINAL_REPRESENTABLE), false, tag);
+    assert.equal(codes(emitted).some(code => SEARCH_CODES.includes(code)), false, tag);
+  }
+  return { g10, readiness, emitted: emitFinalMml(candidate) };
+}
+
+test('a release under a keep claim blocks G10, readiness and the emitter alike, whether an explicit rest follows it, implicit silence follows it or the role ends there', () => {
+  for (const name of ['K0', 'K1', 'K2']) {
+    for (const status of ['accepted', 'pending']) {
+      const label = `${name} ${status} keep`;
+      const candidate = shaped(name, status);
+      const analysis = analyzeReleaseTiming({ candidate });
+      assert.deepEqual(analysis.targets.map(target => [target.eventId, target.status, target.analysis.followingShape]),
+        [['x', TARGET_STATUS.SOURCE_SUPPORTED_NOT_REPRESENTABLE, SHAPES[name].followingShape]], label);
+      assert.equal(analysis.notVisibleToIntervalAnalyzerCount, 0, `${label}: no release code is raised for it`);
+      assert.equal(enforceMicroGaps(candidate).candidateCount, 0, `${label}: no analysed interval covers it`);
+
+      // The explicit rest starting at the release already reports that position,
+      // so the release is not listed a second time; without it, the release is.
+      const expected = name === 'K0' ? [REST_AT_X] : [X_RELEASE(KEEP_REASON)];
+      const { readiness, emitted } = assertBoundaryAgreement(candidate, expected, label);
+      if (name !== 'K0') assert.match(emitted.diagnostics[0].message, /Melody event x \(note end\) at beat 479\/480 is a note release its Final role has to reach/, label);
+      // A pending claim is also an open decision of its own.
+      assert.equal(readiness.gates.pendingDecisions.status, status === 'pending' ? 'PENDING' : 'PASS', label);
+      assert.equal(codes(emitted).includes(EMIT_DIAGNOSTICS.PENDING_DECISIONS_PRESENT), status === 'pending', label);
+      // Release representation refuses the claimed release, whichever option.
+      for (const representation of Object.values(REPRESENTATION)) {
+        assert.deepEqual(planFor(analysis, representation).blockers.map(item => item.code), [RELEASE_REFUSAL.KEEP_DECISION_PRESENT], `${label} ${representation}`);
+      }
+    }
+  }
+});
+
+test('a release no representation can move gets one answer whether a keep claim on it is accepted, pending, rejected or absent', () => {
+  // K0: the explicit rest at x refuses both options, so no status of a claim
+  // leaves anything that could move x. For identical events the emitter used to
+  // answer FAIL with the claim accepted and PENDING ("unproven sub-grid
+  // material") with it rejected, and the run hint named release representation.
+  for (const status of ['accepted', 'pending', 'rejected', null]) {
+    const label = `K0 ${status ?? 'no'} keep`;
+    const candidate = shaped('K0', status);
+    const analysis = analyzeReleaseTiming({ candidate });
+    const claimed = status === 'accepted' || status === 'pending';
+    const [target] = analysis.targets;
+    assert.equal(target.status, claimed ? TARGET_STATUS.SOURCE_SUPPORTED_NOT_REPRESENTABLE : TARGET_STATUS.NO_VALID_REPRESENTATION, label);
+    assert.ok(target.options.every(option => !option.valid), `${label}: neither representation is valid`);
+    for (const representation of Object.values(REPRESENTATION)) {
+      assert.deepEqual(planFor(analysis, representation).blockers.map(item => item.code),
+        [claimed ? RELEASE_REFUSAL.KEEP_DECISION_PRESENT : RELEASE_REFUSAL.REPRESENTATION_INVALID], `${label} ${representation}`);
+    }
+    assertBoundaryAgreement(candidate, [REST_AT_X], label);
+  }
+
+  // K1 and K2: x has a valid representation. A standing claim takes it away, so
+  // the release is the proven boundary; with the claim rejected or absent it is
+  // an open decision a release representation answers, and stays PENDING.
+  for (const name of ['K1', 'K2']) {
+    for (const status of ['rejected', null]) {
+      const label = `${name} ${status ?? 'no'} keep`;
+      const candidate = shaped(name, status);
+      const analysis = analyzeReleaseTiming({ candidate });
+      assert.equal(analysis.targets[0].status, TARGET_STATUS.REPRESENTATION_DECISION_REQUIRED, label);
+      const valid = analysis.targets[0].options.find(option => option.valid)?.representation;
+      assert.ok(valid, label);
+      assert.deepEqual(planFor(analysis, valid).blockers, [], `${label}: release representation takes it`);
+      const g10 = enforceMicroGaps(candidate);
+      assert.deepEqual(g10.blockers, [MICRO_GAP_BLOCKERS.RELEASE_NOT_FINAL_REPRESENTABLE, MICRO_GAP_BLOCKERS.RELEASE_PROVISIONAL], label);
+      assert.deepEqual(g10.unsupportedBoundaries, [], label);
+      const emitted = emitFinalMml(candidate);
+      assert.equal(emitted.status, 'PENDING', label);
+      assert.deepEqual(emitted.diagnostics.map(item => [item.code, item.severity]), [[EMIT_DIAGNOSTICS.MICRO_GAP_BLOCKED_PENDING, 'pending']], label);
+    }
+    assertBoundaryAgreement(shaped(name, 'accepted'), [X_RELEASE(KEEP_REASON)], `${name} accepted keep`);
+  }
+
+  // A release with no valid representation and no rest at it is its own entry.
+  // x starts on a triplet position, so truncating it would leave a sub-grid
+  // note; Chord1 attacks the same pitch just before the next grid point, so
+  // extending it would overlap that attack. Both positions are ones a caution
+  // length reaches, so x's release is the only unreachable position.
+  assert.equal(classifyPosition('1/3'), POSITION_CLASS.CAUTION_REPRESENTABLE);
+  assert.equal(classifyPosition('157/360'), POSITION_CLASS.CAUTION_REPRESENTABLE);
+  for (const [label, tail] of [['followed by silence', [note(2, 3, { id: 'y' })]], ['at the role end', []]]) {
+    const candidate = project([note('1/3', '209/480', { id: 'x' }), ...tail, note('157/360', 1, { id: 'c', role: 'Chord1', pitch: 60 })]);
+    const analysis = analyzeReleaseTiming({ candidate });
+    assert.deepEqual(analysis.targets.map(target => [target.eventId, target.status, target.options.map(option => option.reasons)]), [['x', TARGET_STATUS.NO_VALID_REPRESENTATION, [
+      ['EXTENSION_INTRODUCES_CROSS_ROLE_SAME_PITCH_OVERLAP'], ['TRUNCATION_WOULD_LEAVE_A_SUB_GRID_NOTE'],
+    ]]], label);
+    assert.equal(analysis.notVisibleToIntervalAnalyzerCount, 1, label);
+    assertBoundaryAgreement(candidate, [{ role: 'Melody', eventId: 'x', kind: 'note', boundary: 'end', position: '209/480', reason: NO_VALID_REASON }], `no valid representation, ${label}`);
+  }
+});
+
+test('a release an analysed interval decides is not reported again, and a release a representation can move still decides a boundary at it', () => {
+  const official = { evidence: ['official bar 1'], metadata: { evidenceSourceIds: ['official'] } };
+  const keepWithEvidence = (status, identity) => createArbitrationDecision({
+    id: `keep-${status}`,
+    eventIds: identity.type === 'event-duration' ? [identity.eventId] : [identity.previousEventId, identity.nextEventId],
+    action: MICRO_TIMING_KEEP_ACTION,
+    status,
+    reason: 'notated',
+    evidence: official.evidence,
+    metadata: { ...official.metadata, intervalIdentity: createIntervalIdentity(identity) },
+  });
+  const cases = [
+    // x's release is followed by a sub-grid gap: the gap interval starts at it.
+    ['gap', [note(0, '479/480', { id: 'x' }), note(1, 2, { id: 'y' })], { type: 'inter-event-gap', previousEventId: 'x', nextEventId: 'y', start: '479/480', end: '1' }],
+    // x is itself shorter than the grid: its duration interval ends at it.
+    ['sub-grid note', [note(0, '29/480', { id: 'x' }), note(1, 2, { id: 'y' })], { type: 'event-duration', eventId: 'x', start: '0', end: '29/480' }],
+  ];
+  for (const [label, events, identity] of cases) {
+    for (const status of ['accepted', 'pending']) {
+      const tag = `${label} ${status}`;
+      const candidate = project(events, undefined, [keepWithEvidence(status, identity)]);
+      assert.equal(analyzeReleaseTiming({ candidate }).targets[0].status, TARGET_STATUS.SOURCE_SUPPORTED_NOT_REPRESENTABLE, tag);
+      const g10 = enforceMicroGaps(candidate);
+      // The interval's own outcome decides: preserved when the claim is
+      // accepted with admissible evidence, UNKNOWN while it is pending.
+      assert.deepEqual(g10.enforcement.map(item => [item.identity.start, item.identity.end, item.classification]),
+        [[identity.start, identity.end, status === 'accepted' ? 'SOURCE_SUPPORTED_MICROTIMING' : 'UNKNOWN']], tag);
+      assert.deepEqual(g10.blockers, status === 'accepted' ? [] : [MICRO_GAP_BLOCKERS.CLASSIFICATION_UNKNOWN], tag);
+      assert.deepEqual(g10.unsupportedBoundaries, [], `${tag}: the release is not reported a second time`);
+      const emitted = emitFinalMml(candidate);
+      assert.deepEqual(emitted.diagnostics.filter(item => item.severity !== 'notice').map(item => item.code), status === 'accepted'
+        ? [EMIT_DIAGNOSTICS.SOURCE_SUPPORTED_INTERVAL_NOT_REPRESENTABLE]
+        : [EMIT_DIAGNOSTICS.MICRO_GAP_BLOCKED_PENDING, EMIT_DIAGNOSTICS.PENDING_DECISIONS_PRESENT], tag);
+    }
+  }
+
+  // A release with no valid representation whose gap to an explicit rest is
+  // sub-grid: the UNKNOWN gap decides, and neither the release nor the rest's
+  // start is reported as a boundary nothing decides.
+  const toRest = enforceMicroGaps(project([note(0, '479/480', { id: 'x' }), rest('959/960', 2, { id: 'r' }), note(2, 3, { id: 'y' })]));
+  assert.deepEqual(toRest.blockers, [MICRO_GAP_BLOCKERS.CLASSIFICATION_UNKNOWN]);
+  assert.equal(toRest.releaseTiming.noValidRepresentationCount, 1);
+  assert.deepEqual(toRest.unsupportedBoundaries.map(item => [item.eventId, item.boundary, item.coverage]), [['r', 'start', BOUNDARY_COVERAGE.ANALYSED_INTERVAL]]);
+
+  // A release a representation can move still raises the release code, and a
+  // boundary at it (here a rest ending there) is still decided by it.
+  const overlapping = enforceMicroGaps(project([note(0, '479/480', { id: 'x' }), rest('1/2', '479/480', { id: 'r' }), note(2, 3, { id: 'y' })]));
+  assert.deepEqual(overlapping.blockers, [MICRO_GAP_BLOCKERS.RELEASE_NOT_FINAL_REPRESENTABLE]);
+  assert.deepEqual(overlapping.unsupportedBoundaries.map(item => [item.eventId, item.boundary, item.coverage]), [['r', 'end', BOUNDARY_COVERAGE.RELEASE_TARGET]]);
 });

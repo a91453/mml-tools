@@ -45,13 +45,16 @@ export const EMIT_DIAGNOSTICS = Object.freeze({
   // --- Canonical / G10 ---------------------------------------------------
   MICRO_GAP_TECHNICAL_RESIDUE: 'MICRO_GAP_TECHNICAL_RESIDUE',
   MICRO_GAP_BLOCKED_PENDING: 'MICRO_GAP_BLOCKED_PENDING',
-  // G10 raised MICRO_TIMING_BOUNDARY_NOT_FINAL_REPRESENTABLE: an onset, or a rest
-  // boundary a role has to reach, sits where no admitted Final token sequence
-  // reaches, and no other G10 outcome decides it. An error, not pending: a proof
-  // about this candidate that no evidence or search setting changes, so it is
-  // never folded into MICRO_GAP_BLOCKED_PENDING's "unproven" wording. It
-  // carries `unreachableBoundaries` (role, eventId, kind, boundary, position,
-  // reason; at most 20) with `unreachableBoundaryCount`, the true count, and
+  // G10 raised MICRO_TIMING_BOUNDARY_NOT_FINAL_REPRESENTABLE: a position a role
+  // has to reach -- an onset, a rest boundary, or a note release no release
+  // representation can move (one under a keep claim, or one with no valid
+  // representation) -- sits where no admitted Final token sequence reaches,
+  // and no other G10 outcome decides it. An error, not pending: a proof about
+  // this candidate that no evidence or search setting changes and nothing in
+  // this build moves, so it is never folded into MICRO_GAP_BLOCKED_PENDING's
+  // "unproven" wording. It carries `unreachableBoundaries` (role, eventId,
+  // kind, boundary, position, reason; at most 20) with
+  // `unreachableBoundaryCount`, the true count, and
   // `unreachableBoundariesTruncated`, as BOUNDARY_NOT_FINAL_REPRESENTABLE
   // carries the positions of the same proof met at serialization.
   MICRO_GAP_BOUNDARY_NOT_FINAL_REPRESENTABLE: 'MICRO_GAP_BOUNDARY_NOT_FINAL_REPRESENTABLE',

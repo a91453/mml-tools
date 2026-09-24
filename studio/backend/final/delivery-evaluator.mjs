@@ -88,10 +88,13 @@ export const MACHINE_DELIVERY_GATE_NAMES = Object.freeze(Object.keys(CLASS_BY_GA
 //     results, stream identity, analysis failure, invalid release records,
 //     technical residue and anything else stay BLOCKING. That includes
 //     MICRO_TIMING_BOUNDARY_NOT_FINAL_REPRESENTABLE, left out on purpose: an
-//     onset or role end no Final token sequence reaches is not a release, the
-//     provisional rendering never moves an attack or a rest, and the gate never
-//     adds the listen-first code beside it, so there is nothing to deliver --
-//     the same answer RELEASE_NOT_FINAL_REPRESENTABLE gets without that code;
+//     onset or role end no Final token sequence reaches is not a release, a
+//     release it names is one under a keep claim or with no valid
+//     representation, the provisional rendering never moves an attack or a
+//     rest and holds only a release with a valid extension and no keep claim,
+//     and the gate never adds the listen-first code beside it, so there is
+//     nothing to deliver -- the same answer RELEASE_NOT_FINAL_REPRESENTABLE
+//     gets without that code;
 //   * leadPromotion -- every pending promotion is missing primary evidence and
 //     nothing else. Demotion is another gate and is not touched; invalid
 //     evidence, an origin outside the baseline, an ungraded promotion and an
