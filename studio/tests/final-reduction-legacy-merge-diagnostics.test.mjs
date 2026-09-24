@@ -181,3 +181,81 @@ test('diagnostics never mutate source or candidate arrays', () => {
   assert.equal(LEGACY_MERGE_DIAGNOSTIC_STATUS.automaticOmission, false);
   assert.equal(LEGACY_MERGE_DIAGNOSTIC_STATUS.automaticTruncation, false);
 });
+
+// The lane diagnostics feed a cached, stored suggestion, so their exact output
+// is pinned here: counts, continuity distances and the role ranking.
+test('the full per-role diagnostic output is pinned exactly', () => {
+  const source = [
+    note('overflow-b', null, 70, '2', '3'),
+    note('overflow-a', null, 64, '1/2', '1'),
+    note('overflow-c', null, 60, '6', '8'),
+  ];
+  const candidate = [
+    ...source,
+    note('c4-early', 'Chord4', 69, '0', '1/2'),
+    note('c4-high', 'Chord4', 80, '1', '2'),
+    note('c4-low', 'Chord4', 65, '1', '2'),
+    note('c4-short', 'Chord4', 90, '3', '4'),
+    note('c4-long', 'Chord4', 71, '3', '5'),
+    // Two touching same-pitch spans (given out of order) cover overflow-c.
+    note('c3-cover-2', 'Chord3', 60, '7', '8'),
+    note('c3-cover-1', 'Chord3', 60, '6', '7'),
+    note('c3-hit', 'Chord3', 62, '3/4', '5/4'),
+    // A covering unison plus a different-pitch overlap on overflow-b.
+    note('c5-cover', 'Chord5', 70, '1', '4'),
+    note('c5-other', 'Chord5', 72, '5/2', '7/2'),
+    // Equal starts and ends, different pitches.
+    note('m-a', 'Melody', 76, '4', '6'),
+    note('m-b', 'Melody', 74, '4', '6'),
+    note('m-c', 'Melody', 74, '10', '12'),
+  ];
+  const report = analyzeLegacyMergeLane({ sourceEvents: source, candidateEvents: candidate, preferredRole: 'Chord3' });
+  const entry = (role, core3, targetEventCount, losslessGapCount, unisonCoveredCount, wouldRequireTrimOrDropCount, continuityDistance) => ({
+    role,
+    core3,
+    leadReviewRequired: role === 'Melody',
+    preferredByRoleAnalysis: role === 'Chord3',
+    candidateEventCount: 3,
+    sourceEventCount: 3,
+    targetEventCount,
+    losslessGapCount,
+    unisonCoveredCount,
+    wouldRequireTrimOrDropCount,
+    fullyLossless: losslessGapCount === 3,
+    requiresReviewerDecision: unisonCoveredCount > 0 || wouldRequireTrimOrDropCount > 0,
+    continuityDistance,
+    authority: 'SUGGESTION_ONLY',
+  });
+  assert.deepEqual(JSON.parse(JSON.stringify(report.targets)), [
+    entry('Chord4', false, 5, 3, 0, 0, 1),
+    entry('Melody', true, 3, 3, 0, 0, 4),
+    entry('Chord1', true, 0, 3, 0, 0, null),
+    entry('Chord2', true, 0, 3, 0, 0, null),
+    entry('Chord5', false, 2, 2, 1, 1, 6),
+    entry('Chord3', false, 3, 1, 1, 1, 2),
+  ]);
+  assert.equal(report.candidateEventCount, 3);
+  assert.equal(report.sourceEventCount, 3);
+  assert.equal(report.sourceCount, 1);
+  assert.equal(report.preferredRole, 'Chord3');
+});
+
+test('continuity neighbours follow the (start, end, pitch, id) order, not the nearest end or onset', () => {
+  // Before 2: c4-low and c4-high both end at 2 and start at 1, so pitch breaks
+  // the tie and c4-high (80) is the LAST such neighbour. After 3: c4-short and
+  // c4-long both start at 3, so the earlier end makes c4-short (90) the FIRST.
+  // |70-80| = 10 and |70-90| = 20: the distance is 10. Choosing c4-low (5) or
+  // c4-long (1) instead would be a different, wrong, diagnostic.
+  const source = [note('overflow', null, 70, '2', '3')];
+  const candidate = [
+    ...source,
+    note('c4-early', 'Chord4', 69, '0', '1/2'),
+    note('c4-high', 'Chord4', 80, '1', '2'),
+    note('c4-low', 'Chord4', 65, '1', '2'),
+    note('c4-long', 'Chord4', 71, '3', '5'),
+    note('c4-short', 'Chord4', 90, '3', '4'),
+  ];
+  const report = analyzeLegacyMergeLane({ sourceEvents: source, candidateEvents: candidate, roles: ['Chord4'] });
+  assert.equal(target(report, 'Chord4').continuityDistance, 10);
+  assert.equal(target(report, 'Chord4').fullyLossless, true);
+});
