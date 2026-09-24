@@ -18,7 +18,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 
-import { mkdtemp, rm } from 'node:fs/promises';
+import { mkdtemp, readdir, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
@@ -480,6 +480,119 @@ test('after a process died inside the run, a retry is refused once another write
       assert.equal(settled.application.conflict.code, 'RUN_CONFLICT', `${writer}: the blocker is on the record`);
     });
   }
+});
+
+// ─── D. records an earlier version wrote ────────────────────────────────────
+//
+// A proposal accepted and admitted before the run recorded who wrote each of
+// its revisions carries what that version recorded: a revision phase 3 read
+// from the run, and a marker with no request beside it. Neither is proof of
+// anything the run did, and neither is trusted past what it proves.
+
+/** Rewrite one stored proposal in place, as a record an earlier version left. */
+const rewriteStoredProposal = async (directory, proposalId, edit) => {
+  let rewritten = false;
+  for (const name of await readdir(join(directory, 'records'))) {
+    const path = join(directory, 'records', name);
+    const body = await readFile(path, 'utf8');
+    if (!body.includes(proposalId)) continue;
+    const record = JSON.parse(body);
+    edit(record.proposals.find(entry => entry.proposal_id === proposalId), record);
+    await writeFile(path, JSON.stringify(record));
+    rewritten = true;
+  }
+  assert.ok(rewritten, 'the stored proposal record was found and rewritten');
+};
+
+test('a revision an earlier version recorded as where an attempt stopped is never carried as a retry\'s precondition', async () => {
+  // The earlier version pinned, in phase 3, the revision the run was at when
+  // phase 3 ran, and carried it as the retry's precondition. A reviewer's
+  // resume landing before that phase 3 made it the reviewer's revision, and
+  // the retry passed against it and was recorded `applied`. Such a record is
+  // written here directly: an interrupted, admitted acceptance, a reviewer who
+  // then moved the run, and the pin equal to the reviewer's revision.
+  await withDirectory(async directory => {
+    let armed = true;
+    const app = createStudioApplication({
+      dataDirectory: directory,
+      durability: 'persistent',
+      runHooks: { beforeEffect: ({ step }) => { if (armed && step === RUN_STEP.APPLY_DECISIONS) { armed = false; throw Error('stopped before the effect'); } } },
+    });
+    const context = await submitted(app);
+    const first = await acceptIn(app, context);
+    assert.equal(first.ok, false);
+    assert.equal(first.error.details.admitted_by_run, true);
+    const theirs = runDecisionsFor(context.fixture.project, { acceptedBy: 'a-different-reviewer' })
+      .map(decision => (decision.fromRole === 'Chord5'
+        ? { ...decision, id: `omit:${decision.id}`, type: 'OMIT_FROM_SIX', reason: 'The reviewer dropped this role.' }
+        : decision));
+    const manual = await app.resumeRun(OWNER, context.fixture.projectId, context.run.run_id, { decisions: theirs, accepted_by: 'a-different-reviewer' });
+    await rewriteStoredProposal(directory, context.proposal.proposal_id, proposal => {
+      proposal.application.run_revision_at_attempt = manual.run.revision;
+    });
+
+    const restarted = createStudioApplication({ dataDirectory: directory, durability: 'persistent' });
+    const candidatesBefore = await candidatesOf(restarted, context.fixture.projectId);
+    const retry = await acceptIn(restarted, context);
+    assert.equal(retry.ok, false, 'a borrowed revision on the record does not let the retry onto the reviewer\'s run');
+    assert.equal(retry.error.code, 'RUN_CONFLICT', `${retry.error.code}: ${retry.error.message}`);
+    assert.equal(retry.error.details.admitted_by_run, false);
+    const runAfter = (await restarted.getRun(OWNER, context.fixture.projectId, context.run.run_id)).run;
+    assert.equal(runAfter.revision, manual.run.revision, 'the run is where the reviewer left it');
+    assert.equal(runAfter.candidate_id, manual.run.candidate_id);
+    assert.deepEqual(await candidatesOf(restarted, context.fixture.projectId), candidatesBefore, 'and nothing was minted');
+    assert.equal((await restarted.getProposal(OWNER, context.fixture.projectId, context.proposal.proposal_id)).proposal.state, PROPOSAL_STATE.ACCEPTED);
+  });
+});
+
+test('a marker an earlier version set without recording the request is completed at the next admission, so a later interruption is still finished', async () => {
+  // The earlier version recorded that the run admitted an attempt, but not
+  // which request. Here its admission's own write to the run never landed, so
+  // the run is still where the acceptance observed it and the next attempt is
+  // admitted -- and that admission records the request, or no later retry
+  // could ever recognise the run's latest write as this application's.
+  await withDirectory(async directory => {
+    const app = createStudioApplication({ dataDirectory: directory, durability: 'persistent' });
+    const context = await submitted(app);
+    const at = new Date().toISOString();
+    await rewriteStoredProposal(directory, context.proposal.proposal_id, proposal => {
+      proposal.state = PROPOSAL_STATE.ACCEPTED;
+      proposal.revision += 1;
+      proposal.resolution = { resolution: 'accept', resolved_by: OWNER, accepted_by: RUN_REVIEWER, reason: null, at };
+      proposal.application = {
+        idempotency_key: `proposal:${proposal.proposal_id}:${proposal.revision - 1}`,
+        expected_run_revision: context.run.revision,
+        run_revision_at_attempt: null,
+        run_resume_called: true,
+        run_resume_called_at: at,
+        accepted_by: RUN_REVIEWER,
+        attempted_at: at,
+        run_revision_after: null,
+        run_state_after: null,
+        candidate_id_after: null,
+        derived: {},
+        conflict: null,
+      };
+    });
+
+    let armed = true;
+    const restarted = createStudioApplication({
+      dataDirectory: directory,
+      durability: 'persistent',
+      runHooks: { beforeEffect: ({ step }) => { if (armed && step === RUN_STEP.APPLY_DECISIONS) { armed = false; throw Error('stopped before the effect'); } } },
+    });
+    const first = await acceptIn(restarted, context);
+    assert.equal(first.ok, false);
+    assert.match(String(first.error.message), /stopped before the effect/);
+    assert.equal(first.error.details.admitted_by_run, true, 'the run was still where the acceptance observed it');
+    const mid = (await restarted.getProposal(OWNER, context.fixture.projectId, context.proposal.proposal_id)).proposal;
+    assert.equal(typeof mid.application.admitted_request_fingerprint, 'string', 'the admission recorded which request it let in');
+
+    const retry = await acceptIn(restarted, context);
+    assert.ok(retry.ok, `the retry must finish the application, got ${retry.error?.code}: ${retry.error?.message}`);
+    assert.equal(retry.result.proposal.state, PROPOSAL_STATE.APPLIED);
+    assert.equal((await candidatesOf(restarted, context.fixture.projectId)).length, 1, 'one acceptance, one application');
+  });
 });
 
 test('a rejection after an acceptance is refused, because the run may already have it', async () => {
