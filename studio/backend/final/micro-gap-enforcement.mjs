@@ -133,7 +133,11 @@ export const MICRO_GAP_BLOCKERS = Object.freeze({
   // three-way outcome, and one at a note release of its role that raises
   // RELEASE_NOT_FINAL_REPRESENTABLE keeps the release-side handling above. A
   // release that raises nothing there -- under a keep claim, or with no valid
-  // representation -- decides nothing here either, and is itself an entry. A
+  // representation -- decides nothing here either, and is itself an entry
+  // unless an analysed interval decides the release itself: its own sub-grid
+  // duration, or the sub-grid gap after it. A sub-grid rest that starts at such
+  // a release decides the rest's start and not the release, so the release is
+  // an entry beside it however the rest's interval is classified. A
   // rest boundary where no note of its role starts or ends and the role does
   // not end lies inside one silence, which a Final writes as one exact span
   // (final/mml-emitter.mjs merges adjacent silence), so it is reported and never
@@ -185,7 +189,10 @@ export const PROVISIONAL_RELEASE_POLICY = Object.freeze({
 // the entry as `coverage`. Only NONE raises BOUNDARY_NOT_FINAL_REPRESENTABLE.
 export const BOUNDARY_COVERAGE = Object.freeze({
   // An analysed sub-grid interval in the boundary's role starts or ends here;
-  // that interval's classification decides, as for any other interval.
+  // that interval's classification decides, as for any other interval. A note
+  // release no release representation can move is not decided this way by any
+  // interval at its beat, only by one that decides the release itself (its own
+  // sub-grid duration, or the sub-grid gap after it), and is then not listed.
   ANALYSED_INTERVAL: 'analysed-interval',
   // A note release in the boundary's role sits here and raises
   // RELEASE_NOT_FINAL_REPRESENTABLE itself (`raisesReleaseCode`); the
@@ -418,14 +425,32 @@ function coverUnsupportedBoundaries(project, microTiming, releaseAnalysis) {
   const byId = new Map(spans.map(event => [event.id, event]));
 
   const intervalEnds = new Set();
+  // The analysed intervals that decide a note release itself: the note's own
+  // sub-grid duration, which ends at the release, and the sub-grid gap after
+  // it, which starts there (the analyzer builds a gap only from the end of a
+  // segment, so a gap starting at a release is the silence that release opens).
+  const ownDurations = new Set();
+  const gapStarts = new Set();
   for (const interval of microTiming.intervals) {
+    const { identity } = interval;
     for (const eventId of interval.eventIds) {
       const role = byId.get(eventId)?.role;
       if (!role) continue;
-      intervalEnds.add(positionKey(role, interval.identity.start));
-      intervalEnds.add(positionKey(role, interval.identity.end));
+      intervalEnds.add(positionKey(role, identity.start));
+      intervalEnds.add(positionKey(role, identity.end));
+    }
+    if (identity.type === INTERVAL_TYPES.EVENT_DURATION) {
+      ownDurations.add(identity.eventId);
+    } else if (identity.type === INTERVAL_TYPES.INTER_EVENT_GAP) {
+      const role = byId.get(identity.previousEventId)?.role;
+      if (role) gapStarts.add(positionKey(role, identity.start));
     }
   }
+  // An interval of another span that only starts or ends at the same beat -- a
+  // sub-grid rest that starts at the release -- decides that span's boundary,
+  // not the release: a rest starts where a release is, and no outcome of the
+  // rest's own duration moves the release or makes its position reachable.
+  const decidesRelease = (event, role) => ownDurations.has(event.id) || gapStarts.has(positionKey(role, event.end));
 
   // Only a release that raises RELEASE_NOT_FINAL_REPRESENTABLE decides a
   // boundary. A release under a keep claim, or one with no valid
@@ -462,12 +487,16 @@ function coverUnsupportedBoundaries(project, microTiming, releaseAnalysis) {
 
   // A note release no release representation can move is a position its role
   // has to reach, like an onset. The release analysis reports it only as a
-  // target, so it is added here -- unless an analysed interval of its role
-  // starts or ends there, whose outcome decides it as for any other boundary
+  // target, so it is added here -- unless an analysed interval decides the
+  // release itself (`decidesRelease`: the note's own sub-grid duration, or the
+  // sub-grid gap after it), whose outcome decides it as for any other boundary
   // (the release is not reported twice), or an entry above already reports that
   // position of its role with coverage NONE (an explicit rest starting at the
-  // release, for example). Another note's release target at the same position
-  // covers nothing: a representation of that note moves only that note.
+  // release, for example). A sub-grid rest starting at the release decides only
+  // the rest's start, so the release is its own entry beside that rest's, with
+  // coverage NONE whether the rest's interval is preserved, UNKNOWN or residue.
+  // Another note's release target at the same position covers nothing: a
+  // representation of that note moves only that note.
   const reportedNone = new Set(covered
     .filter(item => item.coverage === BOUNDARY_COVERAGE.NONE)
     .map(item => positionKey(item.role, item.position)));
@@ -476,7 +505,7 @@ function coverUnsupportedBoundaries(project, microTiming, releaseAnalysis) {
     const event = byId.get(target.eventId);
     if (!event || event.kind !== 'note') continue;
     const key = positionKey(target.role, event.end);
-    if (intervalEnds.has(key) || reportedNone.has(key)) continue;
+    if (decidesRelease(event, target.role) || reportedNone.has(key)) continue;
     reportedNone.add(key);
     releases.push(Object.freeze({
       eventId: target.eventId,

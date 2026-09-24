@@ -589,3 +589,93 @@ test('a release an analysed interval decides is not reported again, and a releas
   assert.deepEqual(overlapping.blockers, [MICRO_GAP_BLOCKERS.RELEASE_NOT_FINAL_REPRESENTABLE]);
   assert.deepEqual(overlapping.unsupportedBoundaries.map(item => [item.eventId, item.boundary, item.coverage]), [['r', 'end', BOUNDARY_COVERAGE.RELEASE_TARGET]]);
 });
+
+test('a sub-grid rest that starts at a release no representation can move decides the rest\'s start, never the release, whatever its outcome', () => {
+  // x[0,479/480) is followed at once by an explicit rest r[479/480,1) one
+  // 480-tick long, then y[1,2). The rest refuses both of x's representations,
+  // so x has no valid one. r is shorter than the grid, so the interval analyzer
+  // reports r's own duration, an interval that STARTS at x's release. That
+  // interval decides r's start; it does not decide x's release: a rest starts
+  // where a release is, and no outcome of r's own duration moves x or makes
+  // 479/480 reachable. Counting it as covering x let G10 and readiness PASS once
+  // r was kept with evidence, while the emitter failed and nothing on the
+  // release side could answer x. Only an interval that decides the release
+  // itself -- x's own sub-grid duration, or the sub-grid gap after it (the
+  // previous test) -- decides it.
+  const official = { evidence: ['official bar 1'], metadata: { evidenceSourceIds: ['official'] } };
+  const restDuration = { type: 'event-duration', eventId: 'r', start: '479/480', end: '1' };
+  const keepRest = (status, evidence = true) => createArbitrationDecision({
+    id: `keep-r-${status}`,
+    eventIds: ['r'],
+    action: MICRO_TIMING_KEEP_ACTION,
+    status,
+    reason: 'notated breath',
+    ...(evidence ? { evidence: official.evidence } : {}),
+    metadata: { ...(evidence ? official.metadata : {}), intervalIdentity: createIntervalIdentity(restDuration) },
+  });
+  const events = () => [note(0, '479/480', { id: 'x' }), rest('479/480', 1, { id: 'r' }), note(1, 2, { id: 'y' })];
+  const coverage = report => report.unsupportedBoundaries.map(item => [item.eventId, item.boundary, item.position, item.coverage]);
+  const REST_START_DECIDED = ['r', 'start', '479/480', BOUNDARY_COVERAGE.ANALYSED_INTERVAL];
+  const X_RELEASE_NONE = ['x', 'end', '479/480', BOUNDARY_COVERAGE.NONE];
+
+  // r kept with admissible evidence: its interval is preserved. x has no claim
+  // (NO_VALID_REPRESENTATION) or a standing claim of its own
+  // (SOURCE_SUPPORTED_NOT_REPRESENTABLE); either way nothing moves it.
+  const preservedCases = [
+    ['no claim on x', [], TARGET_STATUS.NO_VALID_REPRESENTATION, NO_VALID_REASON],
+    ['accepted claim on x', [keepOn('accepted', SHAPES.K0.identity)], TARGET_STATUS.SOURCE_SUPPORTED_NOT_REPRESENTABLE, KEEP_REASON],
+    ['pending claim on x', [keepOn('pending', SHAPES.K0.identity)], TARGET_STATUS.SOURCE_SUPPORTED_NOT_REPRESENTABLE, KEEP_REASON],
+  ];
+  for (const [label, claims, targetStatus, reason] of preservedCases) {
+    const tag = `preserved rest, ${label}`;
+    const candidate = project(events(), undefined, [keepRest('accepted'), ...claims]);
+    const analysis = analyzeReleaseTiming({ candidate });
+    assert.deepEqual(analysis.targets.map(target => [target.eventId, target.status, target.analysis.followingShape]),
+      [['x', targetStatus, 'explicit-rest-at-release']], tag);
+    assert.ok(analysis.targets[0].options.every(option => !option.valid), `${tag}: neither representation is valid`);
+    const { g10, emitted } = assertBoundaryAgreement(candidate, [X_RELEASE(reason)], tag);
+    assert.deepEqual(g10.enforcement.map(item => [item.identity.type, item.identity.eventId, item.classification]),
+      [['event-duration', 'r', 'SOURCE_SUPPORTED_MICROTIMING']], `${tag}: the rest's own interval is preserved`);
+    assert.deepEqual(coverage(g10), [REST_START_DECIDED, X_RELEASE_NONE], `${tag}: the rest's start is decided by its interval, x's release is not`);
+    // Both proofs stand: the release no token sequence reaches, and the
+    // preserved rest no token is short enough for.
+    assert.deepEqual(emitted.diagnostics.filter(item => item.severity !== 'notice').map(item => item.code), [
+      EMIT_DIAGNOSTICS.MICRO_GAP_BOUNDARY_NOT_FINAL_REPRESENTABLE,
+      EMIT_DIAGNOSTICS.SOURCE_SUPPORTED_INTERVAL_NOT_REPRESENTABLE,
+      ...(label.startsWith('pending') ? [EMIT_DIAGNOSTICS.PENDING_DECISIONS_PRESENT] : []),
+    ], tag);
+    assert.match(emitted.diagnostics[0].message, /Melody event x \(note end\) at beat 479\/480 is a note release its Final role has to reach/, tag);
+  }
+
+  // r's own duration still open (claim pending, accepted without evidence, or
+  // absent): that UNKNOWN interval keeps its pending answer, and x's release is
+  // reported beside it rather than hidden behind it.
+  const openCases = [
+    ['pending claim on r', [keepRest('pending')]],
+    ['accepted claim on r without evidence', [keepRest('accepted', false)]],
+    ['no claim on r', []],
+  ];
+  for (const [label, decisions] of openCases) {
+    const tag = `open rest, ${label}`;
+    const candidate = project(events(), undefined, decisions);
+    const g10 = enforceMicroGaps(candidate);
+    assert.deepEqual(g10.enforcement.map(item => [item.identity.eventId, item.classification]), [['r', 'UNKNOWN']], tag);
+    assert.equal(g10.status, 'PENDING', tag);
+    assert.deepEqual(g10.blockers, [MICRO_GAP_BLOCKERS.CLASSIFICATION_UNKNOWN, BOUNDARY], tag);
+    assert.deepEqual(coverage(g10), [REST_START_DECIDED, X_RELEASE_NONE], tag);
+    const readiness = evaluateProjectReadiness({ project: candidate });
+    assert.deepEqual([readiness.gates.microTiming.status, readiness.gates.microTiming.blockers], ['PENDING', g10.blockers], tag);
+    assert.deepEqual(readiness.gates.microTiming.unsupportedBoundaries, g10.unsupportedBoundaries, tag);
+    const emitted = emitFinalMml(candidate);
+    assert.equal(emitted.status, 'FAIL', tag);
+    assert.equal(emitted.combinedMml, null, tag);
+    assert.deepEqual(emitted.diagnostics.filter(item => item.severity !== 'notice').map(item => [item.code, item.severity]), [
+      [EMIT_DIAGNOSTICS.MICRO_GAP_BLOCKED_PENDING, 'pending'],
+      [EMIT_DIAGNOSTICS.MICRO_GAP_BOUNDARY_NOT_FINAL_REPRESENTABLE, 'error'],
+      ...(label.startsWith('pending') ? [[EMIT_DIAGNOSTICS.PENDING_DECISIONS_PRESENT, 'pending']] : []),
+    ], tag);
+    assert.deepEqual(emitted.diagnostics[0].blockers, [MICRO_GAP_BLOCKERS.CLASSIFICATION_UNKNOWN], `${tag}: the pending diagnostic keeps only the open question`);
+    const proof = emitted.diagnostics[1];
+    assert.deepEqual([proof.blocker, proof.completenessProven, proof.unreachableBoundaries], [BOUNDARY, true, [X_RELEASE(NO_VALID_REASON)]], tag);
+  }
+});

@@ -879,7 +879,9 @@ function evaluateGates(project, options) {
   // provisional hold only ever takes a valid extension, and the arithmetic does
   // not depend on any search bound, budget, caution opt-in or evidence. So a
   // release whose every representation is invalid, and that no analysed
-  // interval decides, gets this FAIL whether a keep claim on it is accepted,
+  // interval of its own decides (its sub-grid duration or the sub-grid gap
+  // after it; a sub-grid rest starting at it decides only the rest's start),
+  // gets this FAIL whether a keep claim on it is accepted,
   // pending, rejected or absent, and a release with a valid representation
   // gets it only while a keep claim takes that representation away.
   // The same proof met at serialization is BOUNDARY_NOT_FINAL_REPRESENTABLE,

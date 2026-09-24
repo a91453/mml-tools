@@ -566,6 +566,52 @@ test('a release no release representation can move names no operation in a run, 
   }
 });
 
+test('a kept sub-grid rest at a release no representation can move does not let the run past microTiming', async () => {
+  // chord5-2 ends at 719/480, one 480-tick short of the grid, and an explicit
+  // rest one 480-tick long runs from there to the grid point 3/2, kept as
+  // notated with admissible evidence. The rest refuses both representations of
+  // chord5-2, so nothing moves its release, and the rest's own preserved
+  // interval decides only the rest's start. Before, that interval was counted
+  // as covering the release: microTiming passed, and the run went on to a
+  // finalize the emitter could not write and halted on the technical gate,
+  // whose request named finalize again.
+  const BOUNDARY = 'MICRO_TIMING_BOUNDARY_NOT_FINAL_REPRESENTABLE';
+  const source = sixRoleBaseline();
+  const events = source.events.map(event => (event.id === 'chord5-2' ? createCanonicalNoteEvent({ ...event, end: '719/480' }) : event));
+  events.push(createCanonicalRestEvent({ id: 'chord5-breath', start: '719/480', end: '3/2', role: 'Chord5', voice: 'chord5', sourceIds: [FIXTURE_SOURCE_ID], sourceEventIds: [`${FIXTURE_SOURCE_ID}#chord5-breath`] }));
+  const decisions = [createArbitrationDecision({
+    id: 'keep-breath',
+    eventIds: ['chord5-breath'],
+    action: MICRO_TIMING_KEEP_ACTION,
+    status: 'accepted',
+    reason: 'notated breath',
+    evidence: ['official MIDI, bar 1: notated separation'],
+    metadata: { evidenceSourceIds: [FIXTURE_SOURCE_ID], intervalIdentity: createIntervalIdentity({ type: 'event-duration', eventId: 'chord5-breath', start: '719/480', end: '3/2' }) },
+  })];
+  const project = createCanonicalProject({ ...source, events, decisions });
+  const isolated = createStudioApplication({});
+  const own = await projectWithSymbolicAsset(isolated, OWNER, { project });
+  await isolated.analyzeSources(OWNER, own.projectId, { assetIds: [own.assetId] });
+  const notes = new Set(project.events.filter(event => event.kind === 'note').map(event => event.id));
+  const accepted = runDecisionsFor(own.project).map(decision => ({ ...decision, target: { ...decision.target, eventIds: decision.target.eventIds.filter(id => notes.has(id)) } }));
+  const candidate = (await isolated.applyDecisions(OWNER, own.projectId, { decisions: accepted })).decisions.candidate_id;
+  const { run } = await isolated.startRun(OWNER, own.projectId, { target_candidate_id: candidate, confirmations: FIXTURE_CONFIRMATIONS });
+
+  assert.notEqual(run.state, RUN_STATE.COMPLETED);
+  assert.equal(run.final_artifact_id, null);
+  assert.equal(run.review_requests.some(entry => entry.code === 'FINALIZE_BLOCKED' || entry.gate === 'technical'), false,
+    `the run stops at microTiming, before finalize: ${JSON.stringify(run.review_requests.map(entry => [entry.code, entry.gate]))}`);
+  const request = gateRequest(run, 'microTiming');
+  assert.ok(request, JSON.stringify(run.review_requests.map(entry => entry.gate)));
+  assert.deepEqual(request.blockers, [BOUNDARY]);
+  assert.deepEqual(request.available_operations, [], 'no operation is offered that cannot answer the gate');
+  assert.deepEqual(request.missing, [READINESS_BLOCKER_WITHOUT_OPERATION.microTiming[BOUNDARY]]);
+  assert.deepEqual(request.detail.unsupportedBoundaries.map(entry => [entry.role, entry.eventId, entry.kind, entry.boundary, entry.position, entry.coverage]), [
+    ['Chord5', 'chord5-breath', 'rest', 'start', '719/480', 'analysed-interval'],
+    ['Chord5', 'chord5-2', 'note', 'end', '719/480', 'none'],
+  ], 'the rest\'s start is decided by its interval; the release is the position nothing decides');
+});
+
 // ─── an unknown blocker still blocks ────────────────────────────────────────
 
 test('a readiness blocker the run has never heard of is reported and still stops it', async () => {
