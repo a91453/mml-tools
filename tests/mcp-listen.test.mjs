@@ -569,6 +569,18 @@ const listBytes = view => outsideMml({ ...view, listen_link: null });
 const sixRoles = track => `MML@${Array.from({ length: 6 }, () => track).join(',')};`;
 const responseBytes = result => Buffer.byteLength(JSON.stringify(result.structuredContent)) + Buffer.byteLength(result.content[0].text);
 
+test('a start bar in a Final with a pickup opens the bar this tool resolved, not a bar counted from beat 0', async () => {
+  // A one-beat pickup under 4/4: bars run 0-1, 1-5, 5-9, 9-13, 13-16. The link
+  // contract has no pickup, so the Studio Web would count bar 3 from beat 8.
+  const mml = sixRoles(`t120o4${'c4'.repeat(16)}`);
+  const artifact = syntheticArtifact({ mml, final_bar: { pickup: '1', final_partial: null, meter_text: '0 4/4' } });
+  const view = (await surface({ application: stubApplication(artifact) }).call({ artifact_id: ARTIFACT_ID, start_bar: 3 })).result.structuredContent;
+  assert.deepEqual((await linkPayload(view.listen_link.url)).start, { beat: '5' });
+  // Without a pickup the bar number means the same bar on both sides and stays.
+  const plain = (await surface({ application: stubApplication(syntheticArtifact({ mml })) }).call({ artifact_id: ARTIFACT_ID, start_bar: 3 })).result.structuredContent;
+  assert.deepEqual((await linkPayload(plain.listen_link.url)).start, { bar: 3 });
+});
+
 test('the listen bound is the Studio compaction bound', () => {
   assert.equal(LISTEN_RESPONSE.triggerBytes, RESPONSE_COMPACTION.triggerBytes);
   assert.equal(LISTEN_RESPONSE.budgetBytes, RESPONSE_COMPACTION.budgetBytes);
