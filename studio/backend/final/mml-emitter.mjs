@@ -25,7 +25,7 @@
 // user, not to a serializer.
 import { F, f, ROLES } from '../mml/index.mjs';
 import { EFFECTIVE_RULESET, studioFinalBlockers } from '../rules/index.mjs';
-import { enforceMicroGaps } from './micro-gap-enforcement.mjs';
+import { BOUNDARY_COVERAGE, MICRO_GAP_BLOCKERS, enforceMicroGaps } from './micro-gap-enforcement.mjs';
 import { POSITION_CLASS, classifyPosition } from '../canonical/release-timing.mjs';
 import {
   DELIVERY_CLASS,
@@ -74,6 +74,9 @@ const MAX_DEFAULT_LENGTH_CANDIDATES = 12;
 // Always-offered default lengths for long tie/rest segments; see the
 // default-length candidates block in serializeItems().
 const LONG_SEGMENT_DEFAULTS = Object.freeze([1, 2]);
+// How many G10 boundaries a diagnostic lists by location; the true total is
+// reported beside them. The same bound as the unassigned-event list.
+const MAX_REPORTED_BOUNDARIES = 20;
 
 const digits = value => String(value).length;
 
@@ -834,6 +837,12 @@ function evaluateGates(project, options) {
     }
   }
 
+  // G10's boundary code is a proof about this candidate, not an open question,
+  // so it is kept out of MICRO_GAP_BLOCKED_PENDING (whose "unproven" wording
+  // would be false for it) and reported below as the confirmed negative it is.
+  // Every other G10 blocker keeps exactly the diagnostic it had.
+  const boundaryProven = microGap.blockers.includes(MICRO_GAP_BLOCKERS.BOUNDARY_NOT_FINAL_REPRESENTABLE);
+  const openBlockers = microGap.blockers.filter(code => code !== MICRO_GAP_BLOCKERS.BOUNDARY_NOT_FINAL_REPRESENTABLE);
   if (microGap.status === 'FAIL') {
     diagnostics.push(diagnostic(
       EMIT_DIAGNOSTICS.MICRO_GAP_TECHNICAL_RESIDUE,
@@ -842,14 +851,60 @@ function evaluateGates(project, options) {
       { blockers: microGap.blockers, rejectedIntervalKeys: microGap.rejectedIntervalKeys },
     ));
     status = EMIT_STATUS.FAIL;
-  } else if (microGap.status !== 'PASS') {
+  } else if (microGap.status !== 'PASS' && (openBlockers.length || !boundaryProven)) {
     diagnostics.push(diagnostic(
       EMIT_DIAGNOSTICS.MICRO_GAP_BLOCKED_PENDING,
       DIAGNOSTIC_SEVERITY.PENDING,
-      `G10 could not clear this candidate: ${microGap.blockers.join(', ')}. Unproven sub-grid material is never acted on.`,
-      { blockers: microGap.blockers, blockedIntervalKeys: microGap.blockedIntervalKeys },
+      `G10 could not clear this candidate: ${openBlockers.join(', ')}. Unproven sub-grid material is never acted on.`,
+      { blockers: Object.freeze(openBlockers), blockedIntervalKeys: microGap.blockedIntervalKeys },
     ));
     if (status !== EMIT_STATUS.FAIL) status = EMIT_STATUS.PENDING;
+  }
+
+  // An onset, or a rest boundary a role has to reach, that G10 proves no
+  // admitted Final token sequence reaches and that no other G10 outcome decides
+  // (coverage NONE). FAIL, not PENDING. DIAGNOSTIC_SEVERITY.ERROR is "a
+  // confirmed negative: this candidate cannot be Final-emitted as it stands",
+  // and PENDING is "an unresolved Canonical/evidence question"; this is the
+  // first and not the second. Nothing answers it the way evidence answers an
+  // unproven interval (a classification, and for confirmed residue Technical
+  // Timing Repair) or an unreachable release (an evidence-backed release
+  // representation, or the provisional hold): an onset is an attack and is
+  // never moved, no rest is moved to make a role writable, and the arithmetic
+  // does not depend on any search bound, budget, caution opt-in or evidence.
+  // The same proof met at serialization is BOUNDARY_NOT_FINAL_REPRESENTABLE,
+  // and the other provable G10-side negative,
+  // SOURCE_SUPPORTED_INTERVAL_NOT_REPRESENTABLE, is FAIL too. G10's own status
+  // is unchanged; this is the emitter's answer to whether the candidate can be
+  // written. The locations are named, bounded like the other lists a
+  // diagnostic carries, with the true count beside them.
+  if (boundaryProven) {
+    const unreachable = (microGap.unsupportedBoundaries ?? []).filter(item => item.coverage === BOUNDARY_COVERAGE.NONE);
+    const count = unreachable.length;
+    const where = item => `${item.role} event ${item.eventId} (${item.kind} ${item.boundary}) at beat ${item.position}`;
+    const named = count === 1
+      ? `${where(unreachable[0])} is an onset or rest boundary its Final role has to reach, and no admitted Final token sequence reaches it`
+      : `${count} onset or rest boundaries a Final role has to reach sit where no admitted Final token sequence reaches${count ? `, the first ${where(unreachable[0])}; unreachableBoundaries lists ${count > MAX_REPORTED_BOUNDARIES ? `the first ${MAX_REPORTED_BOUNDARIES}` : 'them'}` : ''}`;
+    diagnostics.push(diagnostic(
+      EMIT_DIAGNOSTICS.MICRO_GAP_BOUNDARY_NOT_FINAL_REPRESENTABLE,
+      DIAGNOSTIC_SEVERITY.ERROR,
+      `G10 (${MICRO_GAP_BLOCKERS.BOUNDARY_NOT_FINAL_REPRESENTABLE}): ${named}. A role is written as consecutive tokens from beat 0, so every position it reaches is a sum of admitted token lengths, whose whole-note denominator divides the lcm of the admitted token denominators; ${count > 1 ? 'none of these positions\' does' : 'this position\'s does not'}. This is a proof about ${count > 1 ? 'those positions' : 'the position'}, not a search limit and not an unproven question: no search bound, budget, caution opt-in or evidence changes it, and no attack or rest is moved to make the role writable. This candidate cannot be Final-emitted as it stands; the emitter fails closed.`,
+      {
+        blocker: MICRO_GAP_BLOCKERS.BOUNDARY_NOT_FINAL_REPRESENTABLE,
+        unreachableBoundaryCount: count,
+        unreachableBoundaries: Object.freeze(unreachable.slice(0, MAX_REPORTED_BOUNDARIES).map(item => Object.freeze({
+          role: item.role,
+          eventId: item.eventId,
+          kind: item.kind,
+          boundary: item.boundary,
+          position: item.position,
+          reason: item.reason,
+        }))),
+        unreachableBoundariesTruncated: count > MAX_REPORTED_BOUNDARIES,
+        completenessProven: true,
+      },
+    ));
+    status = EMIT_STATUS.FAIL;
   }
 
   // A source-supported sub-grid interval must survive untouched, and no admitted

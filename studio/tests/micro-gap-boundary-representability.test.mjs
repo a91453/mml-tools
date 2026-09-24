@@ -100,10 +100,12 @@ test('the verifier\'s four cases: an unreachable onset no interval covers blocks
     // Readiness republishes the G10 verdict: microTiming is no longer PASS.
     assert.equal(readiness.status, 'PENDING', label);
     assert.deepEqual(readiness.blockers, [BOUNDARY], label);
-    // The emitter stops at G10 instead of blaming its search limit.
-    assert.equal(emitted.status, 'PENDING', label);
+    // The emitter stops at G10 instead of blaming its search limit, and names
+    // the proof and where it is rather than calling it unproven material.
+    assert.equal(emitted.status, 'FAIL', label);
     assert.equal(emitted.combinedMml, null, label);
-    assert.ok(emitted.diagnostics.some(item => item.code === EMIT_DIAGNOSTICS.MICRO_GAP_BLOCKED_PENDING && item.blockers.includes(BOUNDARY)), label);
+    assert.deepEqual(emitted.diagnostics.map(item => [item.code, item.severity]), [[EMIT_DIAGNOSTICS.MICRO_GAP_BOUNDARY_NOT_FINAL_REPRESENTABLE, 'error']], label);
+    assert.deepEqual(emitted.diagnostics[0].unreachableBoundaries.map(item => [item.role, item.eventId, item.boundary, item.position]), [['Melody', 'late', 'start', onset]], label);
     assert.equal(codes(emitted).some(code => SEARCH_CODES.includes(code)), false, `${label}: no search-limit diagnosis`);
   }
 });
@@ -125,7 +127,11 @@ test('a legato join at an unreachable point and a trailing rest to an unreachabl
   assert.deepEqual(report.unsupportedBoundaries.map(item => [item.eventId, item.boundary, item.reason, item.coverage]), [
     ['tail', 'end', 'REST_END_NOT_FINAL_REPRESENTABLE', BOUNDARY_COVERAGE.NONE],
   ]);
-  assert.equal(emitFinalMml(trailing).status, 'PENDING');
+  const emitted = emitFinalMml(trailing);
+  assert.equal(emitted.status, 'FAIL');
+  assert.deepEqual(codes(emitted), [EMIT_DIAGNOSTICS.MICRO_GAP_BOUNDARY_NOT_FINAL_REPRESENTABLE]);
+  assert.deepEqual(emitted.diagnostics[0].unreachableBoundaries.map(item => [item.role, item.eventId, item.kind, item.boundary, item.position]),
+    [['Melody', 'tail', 'rest', 'end', '961/480']]);
 });
 
 test('a boundary another G10 outcome decides keeps that outcome, and one inside a silence raises nothing', () => {
@@ -181,8 +187,10 @@ test('a release under a keep claim raises no release blocker, so a rest boundary
     assert.equal(readiness.status, 'PENDING', status);
     assert.deepEqual(readiness.blockers, [BOUNDARY], status);
     const emitted = emitFinalMml(claimed);
-    assert.notEqual(emitted.status, 'PASS', status);
+    assert.equal(emitted.status, 'FAIL', status);
     assert.equal(emitted.combinedMml, null, status);
+    const proof = emitted.diagnostics.find(item => item.code === EMIT_DIAGNOSTICS.MICRO_GAP_BOUNDARY_NOT_FINAL_REPRESENTABLE);
+    assert.deepEqual(proof.unreachableBoundaries.map(item => [item.eventId, item.boundary, item.position]), [['r', 'start', '479/480']], status);
   }
 
   // Control: without the claim the release itself raises its blocker, and that
@@ -263,6 +271,62 @@ test('the boundary code is BLOCKING under both machine-delivery schemas, even be
       assert.equal(result.ready, false, schema);
     }
   }
+});
+
+test('the emitter reports a proven boundary as a proof that names where it is, apart from unproven material, and delivers nothing', () => {
+  // The boundary code used to reach the caller inside MICRO_GAP_BLOCKED_PENDING,
+  // "Unproven sub-grid material is never acted on", with status PENDING and no
+  // role, event or beat anywhere in the result. It is a proof, and the emitter
+  // contract's ERROR ("a confirmed negative: this candidate cannot be
+  // Final-emitted as it stands") is the severity that says so.
+  const UNKNOWN = MICRO_GAP_BLOCKERS.CLASSIFICATION_UNKNOWN;
+  const mixed = project([
+    note('1/480', 1, { id: 'late' }),
+    note(0, '1/480', { id: 'blip', role: 'Chord1', pitch: 64 }),
+    note('1/480', 2, { id: 'held', role: 'Chord1', pitch: 64 }),
+  ]);
+  const g10 = enforceMicroGaps(mixed);
+  assert.deepEqual(g10.blockers, [UNKNOWN, BOUNDARY]);
+  for (const options of [{}, { readiness: evaluateProjectReadiness({ project: mixed }) }]) {
+    const label = Object.keys(options).join() || 'no readiness';
+    const emitted = emitFinalMml(mixed, options);
+    assert.equal(emitted.status, 'FAIL', label);
+    assert.equal(emitted.combinedMml, null, label);
+    assert.deepEqual(emitted.microGap.blockers, g10.blockers, `${label}: the G10 report itself is carried unchanged`);
+    // The open question keeps its pending diagnostic, which no longer claims
+    // the proof is unproven.
+    const pending = emitted.diagnostics.filter(item => item.code === EMIT_DIAGNOSTICS.MICRO_GAP_BLOCKED_PENDING);
+    assert.deepEqual(pending.map(item => [item.severity, item.blockers]), [['pending', [UNKNOWN]]], label);
+    assert.equal(pending[0].message.includes(BOUNDARY), false, label);
+    // The proof is its own error, with the location.
+    const proofs = emitted.diagnostics.filter(item => item.code === EMIT_DIAGNOSTICS.MICRO_GAP_BOUNDARY_NOT_FINAL_REPRESENTABLE);
+    assert.equal(proofs.length, 1, label);
+    const [proof] = proofs;
+    assert.deepEqual([proof.severity, proof.blocker, proof.completenessProven, proof.unreachableBoundaryCount, proof.unreachableBoundariesTruncated],
+      ['error', BOUNDARY, true, 1, false], label);
+    assert.deepEqual(proof.unreachableBoundaries, [{ role: 'Melody', eventId: 'late', kind: 'note', boundary: 'start', position: '1/480', reason: 'ONSET_NOT_FINAL_REPRESENTABLE' }], label);
+    assert.match(proof.message, /Melody event late \(note start\) at beat 1\/480/, label);
+    assert.doesNotMatch(proof.message, /unproven sub-grid material|not representable|unrepresentable|impossible/i, label);
+  }
+
+  // Bounded like the other lists a diagnostic carries, with the true count.
+  const many = project(Array.from({ length: 22 }, (_, index) => note(`${960 * index + 1}/480`, `${960 * index + 480}/480`, { id: `m${index}` })));
+  const bounded = emitFinalMml(many);
+  assert.equal(bounded.status, 'FAIL');
+  assert.deepEqual(codes(bounded), [EMIT_DIAGNOSTICS.MICRO_GAP_BOUNDARY_NOT_FINAL_REPRESENTABLE]);
+  const [listed] = bounded.diagnostics;
+  assert.deepEqual([listed.unreachableBoundaryCount, listed.unreachableBoundaries.length, listed.unreachableBoundariesTruncated], [22, 20, true]);
+  assert.deepEqual(listed.unreachableBoundaries.map(item => item.eventId), Array.from({ length: 20 }, (_, index) => `m${index}`));
+  assert.match(listed.message, /^G10 \(MICRO_TIMING_BOUNDARY_NOT_FINAL_REPRESENTABLE\): 22 onset or rest boundaries .* the first Melody event m0 \(note start\) at beat 1\/480; unreachableBoundaries lists the first 20\./);
+
+  // Control: an unreachable release is an open decision -- an evidence-backed
+  // release representation, or the provisional hold (here the one release is
+  // its source's whole offset pattern, so RELEASE_PROVISIONAL is beside it) --
+  // so it stays PENDING, with the pending diagnostic it always had.
+  const release = emitFinalMml(project([note(0, '479/480', { id: 'x' }), note(2, 3, { id: 'y' })]));
+  assert.equal(release.status, 'PENDING');
+  assert.deepEqual(release.diagnostics.map(item => [item.code, item.severity, item.blockers]), [[EMIT_DIAGNOSTICS.MICRO_GAP_BLOCKED_PENDING, 'pending',
+    [MICRO_GAP_BLOCKERS.RELEASE_NOT_FINAL_REPRESENTABLE, MICRO_GAP_BLOCKERS.RELEASE_PROVISIONAL]]]);
 });
 
 test('the emitter names a span boundary no admitted token sequence reaches as a proof, not a search limit', () => {

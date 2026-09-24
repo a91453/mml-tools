@@ -130,7 +130,10 @@ export const MICRO_GAP_BLOCKERS = Object.freeze({
   // writes as one exact span (final/mml-emitter.mjs merges adjacent silence), so
   // it is reported and never raises this. Onsets are attacks and are never moved,
   // and no provisional rendering holds any of these, so the machine-delivery
-  // schemas leave it BLOCKING (final/delivery-evaluator.mjs).
+  // schemas leave it BLOCKING (final/delivery-evaluator.mjs). This gate stays
+  // PENDING, as for the release code; the Final emitter, whose question is
+  // whether the candidate can be written, reports it as the proof it is
+  // (MICRO_GAP_BOUNDARY_NOT_FINAL_REPRESENTABLE, FAIL).
   BOUNDARY_NOT_FINAL_REPRESENTABLE: 'MICRO_TIMING_BOUNDARY_NOT_FINAL_REPRESENTABLE',
   // A recorded release representation that does not re-verify from the project:
   // a timing change without the evidence-backed decision it claims.

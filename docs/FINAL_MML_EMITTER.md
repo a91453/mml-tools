@@ -289,9 +289,11 @@ does not, so no bound, budget or `cautionLengthOptIn` changes the answer. It is 
 claim about a position, never about a duration, and an off-grid position
 `classifyPosition` calls `CAUTION_REPRESENTABLE` keeps the search's own code.
 G10 already refuses an onset or rest boundary of that kind before any
-serialization (`MICRO_TIMING_BOUNDARY_NOT_FINAL_REPRESENTABLE`, §5), so the
-emitter meets it where G10 does not look, such as an off-grid Tempo position
-that splits a span.
+serialization (`MICRO_TIMING_BOUNDARY_NOT_FINAL_REPRESENTABLE`), and the emitter
+reports that refusal as the same proof under its own code,
+`MICRO_GAP_BOUNDARY_NOT_FINAL_REPRESENTABLE` (§5). So
+`BOUNDARY_NOT_FINAL_REPRESENTABLE` is met only where G10 does not look, such as
+an off-grid Tempo position that splits a span.
 
 A worked example, pinned by regression in both the planner and the production
 `emitFinalMml` path: a 100-beat sustain is exactly 16 dotted whole notes plus one
@@ -318,7 +320,7 @@ search-policy limit; raising only the bound makes the same candidate emit.
 | any role exceeds the 2,400-character budget | `FAIL` with role, count, overage and attack count — no note, attack or rest is removed |
 | G10 reports confirmed technical residue | `FAIL` — unless `technicalTimingRepair` is opted into *and* the repair layer normalizes it exactly (§5a) |
 | G10 reports unproven sub-grid material | `PENDING` — never acted on, with or without the repair opt-in |
-| G10 reports an onset or rest boundary the role must reach and no admitted token sequence can | `PENDING` (`MICRO_TIMING_BOUNDARY_NOT_FINAL_REPRESENTABLE`) — no attack or rest is moved to make it writable |
+| G10 reports an onset or rest boundary the role must reach and no admitted token sequence can (`MICRO_TIMING_BOUNDARY_NOT_FINAL_REPRESENTABLE`) | `FAIL` with `MICRO_GAP_BOUNDARY_NOT_FINAL_REPRESENTABLE` — a proof, not unproven material, naming each boundary by role, event and beat (§5); no attack or rest is moved to make it writable |
 | G10 preserves source-supported sub-grid material | `FAIL` — provably unrepresentable (every admitted token is at least one safe-grid unit), and refusing is the only answer that does not damage it |
 | a supplied readiness report blocks on any gate but `technical` | `PENDING` |
 | a pending arbitration decision exists | `PENDING` |
@@ -326,8 +328,8 @@ search-policy limit; raising only the bound makes the same candidate emit.
 
 ## 5. G10 consumption
 
-The emitter calls `enforceMicroGaps(project)` and honours the three key lists it
-publishes, without re-deriving any threshold:
+The emitter calls `enforceMicroGaps(project)` and honours the three key lists and
+the boundary list it publishes, without re-deriving any threshold:
 
 - `preservedIntervalKeys` — source-supported sub-grid material. The emitter may
   not delete, shorten, quantize, absorb or move an attack across these. Because
@@ -343,6 +345,41 @@ publishes, without re-deriving any threshold:
   transformation.
 - `blockedIntervalKeys` — unproven. The emitter returns `PENDING` and emits
   nothing. The repair layer cannot reach these at all.
+- `unsupportedBoundaries` — every onset or rest boundary that
+  `classifyPosition` proves no admitted token sequence reaches, each with the
+  `coverage` G10 decided it by. A boundary an analysed interval of its role
+  starts or ends at (`analysed-interval`) is answered by that interval's outcome
+  above; one at a release of its role that raises
+  `MICRO_TIMING_RELEASE_NOT_FINAL_REPRESENTABLE` (`release-target`) by the
+  release-side handling; one inside a silence (`inside-silence`) needs nothing,
+  because the silence is written as one exact span. A boundary with coverage
+  `none` makes G10 raise `MICRO_TIMING_BOUNDARY_NOT_FINAL_REPRESENTABLE`. That is
+  a proof, not unproven material, so the emitter keeps it out of
+  `MICRO_GAP_BLOCKED_PENDING` (which keeps the other G10 blockers, if any) and
+  returns `FAIL` with `MICRO_GAP_BOUNDARY_NOT_FINAL_REPRESENTABLE`: severity
+  `error`, `completenessProven: true`, and `unreachableBoundaries` naming each
+  boundary by role, event id, kind, boundary and beat — at most 20, with
+  `unreachableBoundaryCount` the true count and `unreachableBoundariesTruncated`.
+  Nothing is emitted, and no attack or rest is moved.
+
+  `FAIL` rather than `PENDING`, because `PENDING` (severity `pending`) is
+  reserved for an unresolved Canonical or evidence question and `error` is "this
+  candidate cannot be Final-emitted as it stands". No evidence answers this one:
+  an onset is an attack and is never moved, no Mobile adaptation, decision or
+  repair moves an onset or removes a rest, and the arithmetic depends on no
+  search bound, budget or caution opt-in. It is the same answer the emitter
+  gives for the same proof met at serialization
+  (`BOUNDARY_NOT_FINAL_REPRESENTABLE`) and for a preserved sub-grid interval.
+  `MICRO_TIMING_RELEASE_NOT_FINAL_REPRESENTABLE` deliberately stays `PENDING`
+  under `MICRO_GAP_BLOCKED_PENDING`: an unreachable release is an open decision,
+  answered by an evidence-backed release representation
+  (`applyMobileAdaptation.release_representation`) or, under machine delivery,
+  held provisionally (ACCEPTANCE_CRITERIA "Delivered first, flagged for
+  listening"). G10's own status is `PENDING` for both; the boundary code is
+  `BLOCKING` for machine delivery under every schema, and the release code is
+  too unless the provisional hold covers it. The emitter status only says
+  whether the candidate is waiting on an answer (`PENDING`) or cannot be
+  written as it stands (`FAIL`).
 
 ## 5a. Technical Timing Repair consumption
 
