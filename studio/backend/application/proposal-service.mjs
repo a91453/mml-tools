@@ -619,6 +619,26 @@ export function createProposalService({ canonical, projects, store, operations, 
     request_report_reference: request.report_reference ?? null,
   });
 
+  // What the PROJECT has done under a run since a binding was taken: the
+  // baseline replaced, the bound candidate gone, a selected asset's bytes no
+  // longer the ones the run recorded. Shared by the Agent Review Policy, which
+  // asks it of a stored proposal, and the targets read, which asks it of the
+  // binding a proposal written now would get -- so the read side never
+  // advertises a target every submission against which is born STALE.
+  const projectMovedUnder = (record, run, bound) => {
+    const moved = [];
+    if (bound.baseline_id !== null && (record.baseline?.baseline_id ?? null) !== bound.baseline_id) moved.push(PROPOSAL_REFUSAL.BASELINE_CHANGED);
+    if (bound.candidate_id !== null && !record.candidates.some(entry => entry.candidate_id === bound.candidate_id)) moved.push(PROPOSAL_REFUSAL.CANDIDATE_CHANGED);
+    if (Array.isArray(run.inputs?.asset_ids)) {
+      const byId = new Map(record.assets.map(asset => [asset.asset_id, asset]));
+      for (const entry of run.inputs.asset_digests ?? []) {
+        const asset = byId.get(entry.asset_id);
+        if (!asset || asset.sha256 !== entry.sha256 || asset.size !== entry.size) moved.push(PROPOSAL_REFUSAL.ASSET_SELECTION_CHANGED);
+      }
+    }
+    return moved;
+  };
+
   // ── the Agent Review Policy ───────────────────────────────────────────────
   //
   // One verdict, from the ladder in `proposal-contracts.AGENT_REVIEW_ORDER`,
@@ -688,15 +708,7 @@ export function createProposalService({ canonical, projects, store, operations, 
     // binding per step -- but a proposal a reader is told is applicable, and
     // which then halts the run the moment it is accepted, is a proposal whose
     // verdict was answering the wrong question.
-    if (bound.baseline_id !== null && (record.baseline?.baseline_id ?? null) !== bound.baseline_id) stale.push(PROPOSAL_REFUSAL.BASELINE_CHANGED);
-    if (bound.candidate_id !== null && !record.candidates.some(entry => entry.candidate_id === bound.candidate_id)) stale.push(PROPOSAL_REFUSAL.CANDIDATE_CHANGED);
-    if (Array.isArray(run.inputs?.asset_ids)) {
-      const byId = new Map(record.assets.map(asset => [asset.asset_id, asset]));
-      for (const entry of run.inputs.asset_digests ?? []) {
-        const asset = byId.get(entry.asset_id);
-        if (!asset || asset.sha256 !== entry.sha256 || asset.size !== entry.size) stale.push(PROPOSAL_REFUSAL.ASSET_SELECTION_CHANGED);
-      }
-    }
+    stale.push(...projectMovedUnder(record, run, bound));
     if ((run.inputs?.decision_set_fingerprint ?? null) !== (bound.decision_set_fingerprint ?? null)) stale.push(PROPOSAL_REFUSAL.DECISION_SET_CHANGED);
     // A completed run is an audit record, not a workspace, and an interrupted
     // one is waiting on somebody to look at a stored record. Neither is a place
@@ -1032,6 +1044,14 @@ export function createProposalService({ canonical, projects, store, operations, 
       const run = findRun(record, runId);
       const provenance = await canonical.provenance();
       const existing = proposalsOf(record).filter(entry => entry.run_id === run.run_id);
+      // The refusals a proposal written now would be born with, from the same
+      // checks the Agent Review Policy applies to its binding. A run whose
+      // project moved under it keeps its old review requests open, but a
+      // proposal against any of them could never be accepted.
+      const staleAtSubmission = Object.freeze([...new Set([
+        ...((provenance.rules_snapshot_sha ?? null) === null ? [PROPOSAL_REFUSAL.CANONICAL_SNAPSHOT_UNKNOWN] : []),
+        ...projectMovedUnder(record, run, { baseline_id: run.baseline_id ?? null, candidate_id: run.candidate_id ?? null }),
+      ])]);
       return Object.freeze({
         project_id: record.project_id,
         run_id: run.run_id,
@@ -1051,8 +1071,13 @@ export function createProposalService({ canonical, projects, store, operations, 
         // submission was then refused -- the same "a stated thing that is not
         // true" defect this protocol refuses everywhere else.
         accepts_proposals: !(run.state === RUN_STATE.COMPLETED || run.report_artifact_id || run.pending_step || run.needs_reconciliation === true)
+          && staleAtSubmission.length === 0
           && proposalsOf(record).filter(entry => OPEN_PROPOSAL_STATES.includes(entry.state)).length < LIMITS.maxProposalsPerProject
           && proposalsOf(record).length < LIMITS.maxProposalsRetainedPerProject,
+        // Why a proposal written now would be STALE from the start; empty when
+        // it would not. The remedy is the run's own: a new run on what the
+        // project holds now.
+        stale_at_submission: staleAtSubmission,
         targets: Object.freeze(openRequests(run).map(request => {
           const admissible = admissibleKinds(request);
           return Object.freeze({
