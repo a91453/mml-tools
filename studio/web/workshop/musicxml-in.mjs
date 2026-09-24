@@ -136,6 +136,31 @@ function midiOf(note) {
   return (oct + 1) * 12 + semi + (Number.isFinite(alter) ? Math.round(alter) : 0);
 }
 
+// A tie (or a same-pitch slur) merges a note into the note that started the
+// chain. The merged note is dropped and remembers where it went, so the chain
+// head is always the note that is kept.
+function chainHead(note) {
+  while (note.into) note = note.into;
+  return note;
+}
+
+function mergeInto(head, note) {
+  head = chainHead(head);
+  if (head === chainHead(note)) return false;
+  if (note.endTick > head.endTick) head.endTick = note.endTick;
+  note.dropped = true;
+  note.into = head;
+  return true;
+}
+
+// A note's tie and slur stops are read before its starts, whatever order the
+// file lists them in: a note that ends one tie or slur and begins the next
+// closes the first before it opens the second.
+const stopsFirst = list => [
+  ...list.filter(x => x.attrs.type === "stop"),
+  ...list.filter(x => x.attrs.type === "start"),
+];
+
 function repeatPlan(root, stats, atPieceStart) {
   const parts = kidsOf(root, "part");
   if (!parts.length) return null;
@@ -306,28 +331,29 @@ function readPart(part, outStats, carriedBeats = 0, plan = null) {
             const note = { ch: 0, tick: onset, endTick: onset + dur, midi, vel: DEFAULT_VEL };
             push(staff, note);
 
-            for (const t of [...kidsOf(el, "tie"), ...kidsOf(el, "notations")
-              .flatMap(n => kidsOf(n, "tied"))]) {
+            // A chain's middle note (stop + start) first joins the chain, then
+            // passes on its head, so later stops extend the head and a tie
+            // over three or more notes keeps its whole length.
+            for (const t of stopsFirst([...kidsOf(el, "tie"), ...kidsOf(el, "notations")
+              .flatMap(n => kidsOf(n, "tied"))])) {
               const key = `${staff}/${midi}`;
-              if (t.attrs.type === "start") openTies.set(key, note);
-              else if (t.attrs.type === "stop") {
+              if (t.attrs.type === "start") openTies.set(key, chainHead(note));
+              else {
                 const head = openTies.get(key);
-                if (head && head !== note) { head.endTick = note.endTick; note.dropped = true; }
+                if (head) mergeInto(head, note);
                 openTies.delete(key);
               }
             }
 
-            for (const n of kidsOf(el, "notations")) for (const s of kidsOf(n, "slur")) {
+            for (const s of stopsFirst(kidsOf(el, "notations").flatMap(n => kidsOf(n, "slur")))) {
               const num = s.attrs.number ?? "1";
-              if (s.attrs.type === "start") openSlurs.set(num, { note, midi, staff });
-              else if (s.attrs.type === "stop") {
+              if (s.attrs.type === "start") openSlurs.set(num, { note: chainHead(note), midi, staff });
+              else {
                 const open = openSlurs.get(num);
                 openSlurs.delete(num);
                 if (!open) { stats.straySlurs++; continue; }
                 if (open.midi === midi && open.staff === staff) {
-                  open.note.endTick = note.endTick;
-                  note.dropped = true;
-                  stats.ties++;
+                  if (mergeInto(open.note, note)) stats.ties++;
                 } else stats.slurs++;
               }
             }

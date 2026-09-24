@@ -203,6 +203,7 @@ export default {
   "fileBox.mode.all": "Full chord capture ({n} tracks)",
   "fileBox.modeTitle": "Which note to keep when several sound at once. Broken chords (notes entering staggered) are captured by both modes.",
   "fileBox.colUnit": "Voice",
+  "fileBox.colChannel": "Channel",
   "fileBox.importAria": "Import {label}",
   "fileBox.pickAllAria": "Select all (first {max} rows) / clear",
   "fileBox.tag.melody": "Has melody",

@@ -203,6 +203,7 @@ export default {
   "fileBox.mode.all": "和弦全採（{n} 軌）",
   "fileBox.modeTitle": "同時按下多個音時要保留哪一個。分解和弦（音錯開進場）兩個模式都採得到。",
   "fileBox.colUnit": "聲部",
+  "fileBox.colChannel": "Channel",
   "fileBox.importAria": "匯入 {label}",
   "fileBox.pickAllAria": "全選（最多前 {max} 列）／全部取消",
   "fileBox.tag.melody": "有旋律",

@@ -3,10 +3,11 @@ import { crc32 } from 'node:zlib';
 import { BasicSoundBank } from 'spessasynth_core';
 
 // The Workshop editor (studio/web/workshop/), end to end in a real browser:
-// open a Studio MML as a copy, language switch, dark/light theme, a note drawn
-// on the piano roll with undo/redo, 3MLE export and re-import, WAV export
-// through the real SpessaSynth worker, the video dialog's preview, and the
-// hand-back into Studio's ordinary candidate intake. The bank is SpessaSynth's
+// open a Studio MML as a copy, language switch, dark/light theme, a bank
+// picked while the engine boots, a note drawn on the piano roll with
+// undo/redo, 3MLE export and re-import, MusicXML import, WAV export through
+// the real SpessaSynth worker, the video dialog's preview, and the hand-back
+// into Studio's ordinary candidate intake. The bank is SpessaSynth's
 // own one-preset saw wave, generated here; no real instrument bank is used.
 // Everything is driven by element ids, so the check is language-independent.
 // Touch profiles tap, and reach the header commands through the phone menu.
@@ -37,6 +38,11 @@ const SCORE = '<?xml version="1.0" encoding="UTF-8"?><score-partwise version="4.
   + '<measure number="1"><attributes><divisions>1</divisions><time><beats>4</beats><beat-type>4</beat-type></time></attributes><direction><sound tempo="120"/></direction>'
   + '<note><pitch><step>C</step><octave>4</octave></pitch><duration>2</duration></note><note><pitch><step>E</step><octave>4</octave></pitch><duration>2</duration></note></measure>'
   + '<measure number="2"><note><pitch><step>G</step><octave>4</octave></pitch><duration>4</duration></note></measure></part></score-partwise>';
+// Bar 1 is empty; bar 3 turns to 3/4 and carries rehearsal mark B.
+const LATE = '<?xml version="1.0" encoding="UTF-8"?><score-partwise version="4.0"><part-list><score-part id="P1"><part-name>Piano</part-name></score-part></part-list><part id="P1">'
+  + '<measure number="1"><attributes><divisions>1</divisions><time><beats>4</beats><beat-type>4</beat-type></time></attributes><direction><sound tempo="120"/></direction><note><rest/><duration>4</duration></note></measure>'
+  + '<measure number="2"><note><pitch><step>C</step><octave>4</octave></pitch><duration>4</duration></note></measure>'
+  + '<measure number="3"><attributes><time><beats>3</beats><beat-type>4</beat-type></time></attributes><direction><direction-type><rehearsal>B</rehearsal></direction-type></direction><note><pitch><step>G</step><octave>4</octave></pitch><duration>3</duration></note></measure></part></score-partwise>';
 const CONTAINER = '<?xml version="1.0" encoding="UTF-8"?><container><rootfiles><rootfile full-path="score.xml" media-type="application/vnd.recordare.musicxml+xml"/></rootfiles></container>';
 const bare = s => s.replace(/\s+/g, '');
 
@@ -109,6 +115,18 @@ export async function runWorkshopChecks({ page, base, idle, file, screenshot, pr
   assert.equal(await page.locator('#unverified').textContent(), 'ワークショップ編集（Studio 未検証）');
   assert.equal(await page.evaluate(() => document.documentElement.hasAttribute('data-i18n-pending')), false);
   assert.deepEqual(await texts(page), before, 'the score survives a language switch');
+  // Text a module builds is looked up in the page language, which is chosen
+  // only after every module has loaded: the import dialog's capture modes and
+  // its column heading are Japanese too. Cancelled, so the score is untouched.
+  await command('#file');
+  await page.locator('#midFile').setInputFiles({ name: 'score.musicxml', mimeType: 'application/xml', buffer: Buffer.from(SCORE) });
+  await page.locator('#midiBox.on').waitFor();
+  assert.deepEqual(await page.locator('#midiRows select').first().locator('option').allTextContents(),
+    ['メロディ優先', '根音優先', 'メロディ + 根音（2 トラック）', 'スマート声部分割（4 トラック）', '和音まるごと取り込み（15 トラック）'], 'the capture modes are in the page language');
+  assert.equal(await page.locator('#colUnit').textContent(), 'チャンネル', 'the column heading is in the page language');
+  await page.locator('#midiCancel').click();
+  await page.waitForFunction(() => !document.querySelector('#midiBox')?.classList.contains('on'));
+  assert.deepEqual(await texts(page), before, 'a cancelled import leaves the score alone');
   await command('#gear');
   await Promise.all([page.waitForEvent('load'), page.locator('#lang').selectOption('zh-Hant')]);
   await page.locator('#unverified').waitFor();
@@ -137,6 +155,46 @@ export async function runWorkshopChecks({ page, base, idle, file, screenshot, pr
   await page.locator('#dlsName').filter({ hasText: 'saw.sf2' }).waitFor();
   await closeSettings();
   assert.equal(await page.locator('#play').isEnabled(), true);
+
+  // ── a bank picked while the engine boots is not replaced ─────────────────
+  // At boot the Workshop loads the bank kept in the store (saw.sf2), which is
+  // older than any pick. On a slow device the pick can come while the synth
+  // processor is still loading and before its own store write has landed (a
+  // big bank hashes slowly; one over the store's limit is refused), so the
+  // boot-time read still finds saw.sf2. Here the processor is held until the
+  // pick is made, and the pick's store write is refused.
+  await page.addInitScript(() => {
+    if (sessionStorage.getItem('workshopRefuseBankStore') !== 'yes') return;
+    sessionStorage.removeItem('workshopRefuseBankStore');
+    crypto.subtle.digest = () => Promise.reject(Error('bank store write refused (browser check)'));
+  });
+  const PROCESSOR = '**/vendor/spessasynth/processor.js';
+  let releaseProcessor;
+  const processorHeld = new Promise(resolve => { releaseProcessor = resolve; });
+  await page.route(PROCESSOR, async route => { await processorHeld; await route.continue(); });
+  await page.evaluate(() => sessionStorage.setItem('workshopRefuseBankStore', 'yes'));
+  await page.reload(); await page.locator('#unverified').waitFor();
+  await page.evaluate(() => {
+    const label = document.querySelector('#dlsName');
+    window.bankLabels = [];
+    new MutationObserver(() => window.bankLabels.push(label.textContent)).observe(label, { childList: true, characterData: true, subtree: true });
+  });
+  await page.locator('#dls').setInputFiles({ name: 'picked.sf2', mimeType: 'application/octet-stream', buffer: Buffer.from(BasicSoundBank.getSampleSoundBankFile()) });
+  releaseProcessor();
+  await page.waitForFunction(() => window.bankLabels.some(text => text.startsWith('picked.sf2')));
+  // The stored bank never replaces a pick, however late it is asked for. A
+  // stored-bank load queued behind the pick would run before this one ends,
+  // so every label the page showed is recorded by the time it returns.
+  await page.evaluate(async () => (await import('./ui.mjs')).loadStoredBank());
+  const labels = await page.evaluate(() => window.bankLabels);
+  const sincePick = labels.slice(labels.findIndex(text => text.startsWith('picked.sf2')));
+  assert.ok(sincePick.every(text => text.startsWith('picked.sf2')), `the bank picked during boot is never replaced: ${labels.join(' → ')}`);
+  assert.match(await page.locator('#dlsName').textContent(), /^picked\.sf2 /, 'the bank picked during boot is the one loaded');
+  assert.equal(await page.evaluate(async () => (await (await import('../preview/soundbank-store.mjs')).loadBank())?.name), 'saw.sf2', 'the refused pick left saw.sf2 in the store');
+  await page.unroute(PROCESSOR);
+  await page.reload(); await page.locator('#unverified').waitFor();
+  await page.waitForFunction(() => document.querySelector('#dlsName')?.textContent.startsWith('saw.sf2'));
+  await page.locator('#play:enabled').waitFor();
 
   // ── draw a note on the roll, then undo / redo ─────────────────────────────
   const original = (await texts(page))[0];
@@ -202,8 +260,18 @@ export async function runWorkshopChecks({ page, base, idle, file, screenshot, pr
   };
   const fromXml = await importAll('score.musicxml', Buffer.from(SCORE), 'application/xml');
   assert.deepEqual(fromXml.flat().map(note => note.split(':')[2]), ['60', '64', '67'], 'the plain MusicXML score imports its three notes');
+  assert.equal(await page.locator('#expName').inputValue(), 'score', 'the song is named without the .musicxml extension');
   const fromMxl = await importAll('score.mxl', storedZip([['mimetype', 'application/vnd.recordare.musicxml'], ['META-INF/container.xml', CONTAINER], ['score.xml', SCORE]]), 'application/octet-stream');
   assert.deepEqual(fromMxl, fromXml, 'an .mxl imports exactly as the MusicXML it carries');
+  assert.equal(await page.locator('#expName').inputValue(), 'score', 'the song is named without the .mxl extension');
+  // The empty first bar is trimmed; the 3/4 change and mark B move with the
+  // notes, so both still sit on the G.
+  const late = await importAll('late.musicxml', Buffer.from(LATE), 'application/xml');
+  assert.deepEqual(late.flat().map(note => { const [tick, , midi] = note.split(':'); return `${tick}:${midi}`; }), ['0:60', '1920:67']);
+  assert.deepEqual(await page.evaluate(async () => ({ meters: (await import('./meters.mjs')).stored(), marks: (await import('./marks.mjs')).stored() })), {
+    meters: [{ tick: 0, num: 4, den: 4 }, { tick: 1920, num: 3, den: 4 }],
+    marks: [{ tick: 1920, text: 'B' }],
+  }, 'the meter change and the mark are on the G, as in the file');
 
   // ── WAV export through the real render worker ─────────────────────────────
   await command('#file');

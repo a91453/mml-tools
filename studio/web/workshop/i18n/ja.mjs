@@ -203,6 +203,7 @@ export default {
   "fileBox.mode.all": "和音まるごと取り込み（{n} トラック）",
   "fileBox.modeTitle": "同時に複数の音が鳴るとき、どれを残すか。分散和音（音がずれて入る形）はどちらのモードでも拾えます。",
   "fileBox.colUnit": "声部",
+  "fileBox.colChannel": "チャンネル",
   "fileBox.importAria": "{label} を読み込む",
   "fileBox.pickAllAria": "すべて選択（先頭 {max} 行まで）／選択解除",
   "fileBox.tag.melody": "メロディあり",

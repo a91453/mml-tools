@@ -3,6 +3,7 @@
 // Workshop edits sit outside the Canonical/verified pipeline and are never evidence.
 import {
   PPQ, CELL_TICKS, BAR_TICKS, PITCH_MIN, PITCH_MAX, pitchName, MAX_TRACK_CHARS, MAX_TRACKS,
+  makeBarMap,
 } from "./config.mjs";
 import { tempoChanges, bareTrack } from "./mml.mjs";
 import { itemsToMML, MAX_NOTE_TICKS } from "./mml-compress.mjs";
@@ -243,13 +244,30 @@ export function inventory(smf) {
   return rows;
 }
 
-export function fileOrigin(rows) {
+// Where an imported file's score starts: the start of the bar (in the file's
+// own meter map) that holds its first note. Whole empty bars before it are
+// trimmed; a pickup keeps its place in its bar, so the bar grid, and the
+// meters and marks that sit on it, stay where they were against the notes.
+export function fileOrigin(rows, meters = []) {
   let best = Infinity;
   for (const r of rows) {
     const t = r.notes?.[0]?.tick;
     if (t !== undefined && t < best) best = t;
   }
-  return Number.isFinite(best) ? best : 0;
+  if (!Number.isFinite(best)) return 0;
+  const bars = makeBarMap(meters);
+  return bars.barStartTick(bars.barIndexOf(best));
+}
+
+// Moves a file's meter or mark list onto the imported score's clock, which
+// starts at `origin` (see fileOrigin): the lanes are written from the origin,
+// so these move with them. The entry in force at the origin becomes the one
+// at tick 0; earlier ones are dropped.
+export function shiftToOrigin(list, origin) {
+  const sorted = [...(list ?? [])].sort((a, b) => a.tick - b.tick);
+  const head = sorted.filter(e => e.tick <= origin).at(-1);
+  const rest = sorted.filter(e => e.tick > origin).map(e => ({ ...e, tick: e.tick - origin }));
+  return head ? [{ ...head, tick: 0 }, ...rest] : rest;
 }
 
 function channelLabel(tr, ch, programs) {

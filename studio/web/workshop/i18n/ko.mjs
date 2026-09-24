@@ -203,6 +203,7 @@ export default {
   "fileBox.mode.all": "화음 전체 채집({n}개 트랙)",
   "fileBox.modeTitle": "여러 음이 동시에 울릴 때 어느 것을 남길지. 분산화음(음이 어긋나 들어오는 형태)은 두 모드 모두 잡아냅니다.",
   "fileBox.colUnit": "성부",
+  "fileBox.colChannel": "채널",
   "fileBox.importAria": "{label} 가져오기",
   "fileBox.pickAllAria": "전체 선택(처음 {max}개까지) / 전체 해제",
   "fileBox.tag.melody": "멜로디 있음",
