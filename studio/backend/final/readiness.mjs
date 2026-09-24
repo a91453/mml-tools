@@ -2,7 +2,7 @@ import { EFFECTIVE_RULESET, studioFinalBlockers } from '../rules/index.mjs';
 import { compareCanonicalVersions } from '../compare/version-drift.mjs';
 import { enforceMicroGaps } from './micro-gap-enforcement.mjs';
 import { LISTEN_FIRST_CODES, evaluateMachineDelivery } from './delivery-evaluator.mjs';
-import { LEAD_EVIDENCE_IDENTITY_MISMATCH } from '../arbitration/lead-demotion.mjs';
+import { LEAD_EVIDENCE_IDENTITY_MISMATCH, primaryEvidenceContradictsLead } from '../arbitration/lead-demotion.mjs';
 
 const PASS_LIKE = new Set(['PASS', 'N/A']);
 
@@ -338,8 +338,9 @@ function leadDemotionGate(reports, leadEventDiff = null) {
 // The report must say primary positive Lead evidence is missing -- none was
 // supplied, or what was supplied is supporting-only or a metric (SOURCE_POLICY
 // §1C, §6) -- and may otherwise only say which parts of the review were not
-// supplied at all. Anything the grader determined (a conflict, a Lead gap, a
-// Core3 failure), anything wrong with the evidence (malformed, describing
+// supplied at all. Anything the grader determined (a conflict, primary
+// evidence that says the event is not the Lead, a Lead gap, a Core3 failure),
+// anything wrong with the evidence (malformed, describing
 // another event or an earlier candidate, a citation that resolves to nothing
 // the project holds), an origin outside the baseline, and a promotion with no
 // report at all -- the grader never ran -- keep the gate BLOCKING.
@@ -370,7 +371,13 @@ function onlyPrimaryLeadEvidenceMissing(report) {
   // A citation that resolves to nothing the project holds is invalid evidence,
   // not missing evidence.
   const evidence = report.evidence;
-  return ![evidence?.score, evidence?.audio].some(item => item?.sourceAuthority === 'unresolved');
+  if ([evidence?.score, evidence?.audio].some(item => item?.sourceAuthority === 'unresolved')) return false;
+  // Primary evidence saying the event is not the Lead is contradicting
+  // evidence, not missing evidence. The grader reports it as
+  // PRIMARY_EVIDENCE_CONTRADICTS_LEAD, which is outside the allow-list above;
+  // the report's own evidence is asked the same question too, so a report
+  // graded before that code existed cannot pass as "evidence missing".
+  return !primaryEvidenceContradictsLead(evidence?.score, evidence?.audio);
 }
 
 function withPrimaryLeadEvidenceMissing(result, reports) {

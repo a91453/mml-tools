@@ -28,6 +28,7 @@ import {
 import { INTERVAL_TYPES, MICRO_TIMING_KEEP_ACTION, createIntervalIdentity } from '../backend/canonical/micro-timing.mjs';
 import { MICRO_GAP_BLOCKERS, PROVISIONAL_RELEASE_POLICY, enforceMicroGaps } from '../backend/final/micro-gap-enforcement.mjs';
 import { evaluateProjectReadiness } from '../backend/final/readiness.mjs';
+import { PRIMARY_EVIDENCE_CONTRADICTS_LEAD, evaluateLeadPromotion } from '../backend/arbitration/lead-demotion.mjs';
 import { LISTEN_FIRST_CODES, MACHINE_DELIVERY_SCHEMA_V1, MACHINE_DELIVERY_SCHEMA_V2 } from '../backend/final/delivery-evaluator.mjs';
 import { createStudioApplication } from '../backend/application/index.mjs';
 import { OWNER, SOURCE_ID, assign, oneTickEarlyBaseline } from './fixtures/release-fixtures.mjs';
@@ -214,11 +215,59 @@ test('anything beyond missing primary evidence keeps the Lead promotion gate on 
     'primary evidence present, continuity unchecked': report(['LEAD_CONTINUITY_NOT_CHECKED']),
     'no record plus anything else': report(['LEAD_EVIDENCE_MISSING', 'LEAD_EVIDENCE_EVENT_IDENTITY_MISMATCH', 'LEAD_EVIDENCE_PROVENANCE_PAIR_AMBIGUOUS']),
     'a FAIL': { eventId: 'p1', status: 'FAIL', blockers: ['POSITIVE_LEAD_EVIDENCE_MISSING'] },
+    'primary evidence that contradicts the Lead': report(['POSITIVE_LEAD_EVIDENCE_MISSING', PRIMARY_EVIDENCE_CONTRADICTS_LEAD]),
+    // A report graded before the grader raised the contradiction code: the
+    // report's own evidence still says the event is not the Lead.
+    'a stored report whose primary score says accompaniment': report(['POSITIVE_LEAD_EVIDENCE_MISSING'], { score: { availability: 'available', classification: 'accompaniment', citation: 's', sourceAuthority: 'primary' } }),
+    'a stored report whose listening hears background': report(['POSITIVE_LEAD_EVIDENCE_MISSING'], { audio: { availability: 'available', classification: 'background', citation: 'a', basis: 'listening' } }),
   };
   for (const [label, value] of Object.entries(blocking)) {
     const result = readiness(value ? [value] : [], AT2);
     assert.deepEqual(result.gates.leadPromotion.blockers, ['LEAD_PROMOTION_EVIDENCE_REQUIRED'], label);
     assert.ok(result.machineDelivery.blocking.some(entry => entry.gate === 'leadPromotion'), label);
+  }
+});
+
+// ACCEPTANCE_CRITERIA "Delivered first", rule 2 keeps contradicting evidence
+// BLOCKING. Before the grader raised PRIMARY_EVIDENCE_CONTRADICTS_LEAD, an
+// official score calling the event accompaniment, or listening to the original
+// recording hearing it in the background, left the same single blocker as no
+// evidence at all, and the promotion was delivered as "Lead unverified".
+test('the real Lead grader: primary evidence that the event is not the Lead keeps the promotion BLOCKING; no evidence stays listen-first', () => {
+  const origin = createCanonicalNoteEvent({ id: 'p1', pitch: 67, start: '0', end: '1', sourceIds: ['official'], sourceEventIds: ['official#p1'], role: 'Chord1' });
+  const reviewed = {
+    event: origin,
+    sourceIdentity: { sourceId: 'official', sourceEventId: 'official#p1' },
+    sectionRole: 'vocal-active',
+    continuity: { checked: true, createsLeadGap: false, replacementEventIds: [] },
+    core3: { checked: true, status: 'PASS' },
+    positiveReason: 'fills the melody',
+  };
+  const graded = extra => evaluateLeadPromotion({ ...reviewed, ...extra });
+
+  const none = graded({});
+  assert.deepEqual([...none.blockers], ['POSITIVE_LEAD_EVIDENCE_MISSING']);
+  const listenFirst = readiness([none], AT2);
+  assert.deepEqual(listenFirst.gates.leadPromotion.blockers, ['LEAD_PROMOTION_EVIDENCE_REQUIRED', LEAD_CODE]);
+  assert.ok(listenFirst.machineDelivery.non_blocking_pending.some(entry => entry.gate === 'leadPromotion' && entry.delivery_flag === 'LEAD_UNVERIFIED'));
+  assert.deepEqual(listenFirst.machineDelivery.blocking, []);
+  assert.equal(listenFirst.machineDelivery.lifecycle, 'AUTOMATED_VALIDATED', 'no evidence: delivered, flagged Lead unverified');
+
+  const contradicting = {
+    'the official score classifies it as accompaniment': { scoreEvidence: { availability: 'available', classification: 'accompaniment', citation: 'official score m.2: accompaniment staff', sourceAuthority: 'primary' } },
+    'listening to the original recording hears it in the background': { audioEvidence: { availability: 'available', classification: 'background', citation: 'recording 0:12', basis: 'listening', sourceAuthority: 'primary' } },
+  };
+  for (const [label, extra] of Object.entries(contradicting)) {
+    const report = graded(extra);
+    assert.equal(report.status, 'PENDING', label);
+    assert.ok(report.blockers.includes(PRIMARY_EVIDENCE_CONTRADICTS_LEAD), label);
+    const result = readiness([report], AT2);
+    assert.equal(result.gates.leadPromotion.status, 'PENDING', label);
+    assert.deepEqual(result.gates.leadPromotion.blockers, ['LEAD_PROMOTION_EVIDENCE_REQUIRED'], label);
+    assert.equal('unverifiedLeadEventIds' in result.gates.leadPromotion, false, label);
+    assert.deepEqual(result.machineDelivery.blocking.map(entry => entry.gate), ['leadPromotion'], `${label}: BLOCKING`);
+    assert.equal(result.machineDelivery.non_blocking_pending.some(entry => entry.gate === 'leadPromotion'), false, label);
+    assert.equal(result.machineDelivery.lifecycle, 'CANDIDATE', `${label}: never machine-delivered`);
   }
 });
 

@@ -67,6 +67,36 @@ const audioIsPositiveEvidence = audio => audio.availability === 'available' && a
 const sourceAuthorityWarnings = (score, audio) => ([score, audio].some(item => item.availability === 'available' && item.classification !== 'unknown' && item.sourceAuthority !== undefined && item.sourceAuthority !== 'primary')
   ? [LEAD_EVIDENCE_SOURCE_NOT_AUTHORITATIVE] : []);
 
+// Score classifications that say the event is not the Lead.
+const NON_LEAD_SCORE_CLASSES = Object.freeze(['accompaniment', 'inner', 'counter', 'duplicate']);
+
+// The blocker a promotion earns when evidence that may prove a role says the
+// event is not the Lead: an official score (or an unresolved-authority legacy
+// record) classifying it as accompaniment, inner, counter or duplicate, or a
+// recording judged background by listening rather than by a metric. That is
+// contradicting evidence, not missing evidence (ACCEPTANCE_CRITERIA "Delivered
+// first, flagged for listening", rule 2): the promotion stays BLOCKING whether
+// or not positive Lead evidence was also supplied. Supporting-only or metric
+// non-Lead evidence is not primary and does not raise it, exactly as it could
+// not demote a Lead (SOURCE_POLICY §1C, §6).
+export const PRIMARY_EVIDENCE_CONTRADICTS_LEAD = 'PRIMARY_EVIDENCE_CONTRADICTS_LEAD';
+
+/**
+ * Does primary evidence in this normalized score/audio pair say the event is
+ * not the Lead? The same test the promotion grader applies, exported so a
+ * reader of a stored report (final/readiness.mjs) asks the identical question
+ * of the report's own evidence rather than re-deriving it.
+ */
+export function primaryEvidenceContradictsLead(score, audio) {
+  const scoreSaysNonLead = isPlainObject(score)
+    && scoreIsPositiveEvidence(score)
+    && NON_LEAD_SCORE_CLASSES.includes(score.classification);
+  const audioSaysNonLead = isPlainObject(audio)
+    && audioIsPositiveEvidence(audio)
+    && audio.classification === 'background';
+  return scoreSaysNonLead || audioSaysNonLead;
+}
+
 
 // ─── Lead evidence identity binding ─────────────────────────────────────────
 
@@ -281,7 +311,10 @@ export function evaluateLeadDemotion({
  * caller already supplied: exact source identity, resolved section role,
  * positive score/audio Lead evidence, continuity after the move, Core3
  * integrity, and an explicit positive reason for the Melody destination.
- * Conflicting positive/non-Lead source evidence fails closed to PENDING.
+ * Conflicting positive/non-Lead source evidence fails closed to PENDING, and
+ * primary non-Lead evidence is reported as `PRIMARY_EVIDENCE_CONTRADICTS_LEAD`
+ * whether or not positive evidence was also supplied, so a reader can never
+ * mistake a contradicted promotion for one that merely lacks evidence.
  */
 export function evaluateLeadPromotion({
   event,
@@ -317,7 +350,7 @@ export function evaluateLeadPromotion({
 
   const scoreSupportsLead = scoreIsPositiveEvidence(score) && score.classification === 'lead';
   const audioSupportsLead = audioIsPositiveEvidence(audio) && audio.classification === 'foreground';
-  const scoreSupportsNonLead = score.availability === 'available' && ['accompaniment', 'inner', 'counter', 'duplicate'].includes(score.classification);
+  const scoreSupportsNonLead = score.availability === 'available' && NON_LEAD_SCORE_CLASSES.includes(score.classification);
   // Any available audio classification can raise a conflict, including a metric.
   const audioSuggestsLead = audio.availability === 'available' && audio.classification === 'foreground';
   const audioSuggestsNonLead = audio.availability === 'available' && audio.classification === 'background';
@@ -326,6 +359,11 @@ export function evaluateLeadPromotion({
   if ((scoreSupportsLead && audioSuggestsNonLead) || (audioSuggestsLead && scoreSupportsNonLead)) {
     blockers.push('SOURCE_ROLE_EVIDENCE_CONFLICT');
   }
+  // Primary non-Lead evidence contradicts the move even when nothing positive
+  // was supplied beside it. Without this code such a report carried only
+  // POSITIVE_LEAD_EVIDENCE_MISSING -- indistinguishable from no evidence at
+  // all -- and was delivered as "Lead unverified" instead of blocking.
+  if (primaryEvidenceContradictsLead(score, audio)) blockers.push(PRIMARY_EVIDENCE_CONTRADICTS_LEAD);
   if (audio.basis === 'machine-metric' && audio.classification !== 'unknown') warnings.push(AUDIO_METRIC_NOT_ROLE_EVIDENCE);
   warnings.push(...sourceAuthorityWarnings(score, audio));
 
