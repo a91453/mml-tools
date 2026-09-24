@@ -43,18 +43,31 @@ export async function sha256Hex(bytes) {
 }
 
 const BANK_CHECK_UNAVAILABLE = 'BANK_CHECK_UNAVAILABLE';
+export const BANK_CHECK_TIMEOUT = 'BANK_CHECK_TIMEOUT';
+// How long the check of a bank of `size` bytes may run before its Worker is
+// stopped and the bank refused, in whole seconds: 5 s to start the Worker and
+// load the parser, plus 1 s for every 2 MiB begun (a 64 MiB bank gets 37 s).
+// A 60 MB bank is checked in under a second in desktop Chromium, so a slow
+// phone has more than thirty times as long. A damaged bank can instead keep
+// the parser allocating until the tab crashes (a DLS whose connection count
+// reads as four billion), and a Workshop pick is checked inside its bank
+// queue, so without a limit one such bank would also hold every later load.
+export const bankCheckTimeoutMs = size => 5000 + Math.ceil(Math.max(0, size) / 2097152) * 1000;
 // Parses a bank off the main thread, in a module Worker with the vendored
 // spessasynth_core (bank-check-worker.mjs), the way the default bank is
 // trimmed. `bytes` (an ArrayBuffer) is transferred to the Worker: pass a copy.
-// Rejects with the loader's message when the bank does not parse, and with
-// code BANK_CHECK_UNAVAILABLE when the Worker itself cannot run.
-export function checkBankInWorker(bytes) {
+// Rejects with the loader's message when the bank does not parse, with code
+// BANK_CHECK_UNAVAILABLE when the Worker itself cannot run, and with code
+// BANK_CHECK_TIMEOUT (and `timeoutMs`) when it has not answered in time; the
+// Worker is terminated then, and nothing is said about the bank itself.
+export function checkBankInWorker(bytes, { timeoutMs = bankCheckTimeoutMs(bytes.byteLength) } = {}) {
   return new Promise((resolve, reject) => {
     const unavailable = message => Object.assign(Error(message || 'Worker 無法啟動'), { code: BANK_CHECK_UNAVAILABLE });
     let worker;
     try { worker = new Worker(new URL('./bank-check-worker.mjs', import.meta.url), { type: 'module' }); }
     catch (error) { reject(unavailable(error?.message)); return; }
-    const done = () => worker.terminate();
+    const timer = setTimeout(() => { done(); reject(Object.assign(Error(`bank check did not finish within ${timeoutMs} ms`), { code: BANK_CHECK_TIMEOUT, timeoutMs })); }, timeoutMs);
+    const done = () => { clearTimeout(timer); worker.terminate(); };
     worker.onmessage = ({ data }) => { done(); if (data?.ok) resolve({ presets: data.presets }); else reject(Error(data?.message || '無法解析')); };
     worker.onerror = event => { event.preventDefault?.(); done(); reject(unavailable(event.message)); };
     worker.postMessage({ bytes }, [bytes]);
@@ -65,8 +78,11 @@ export function checkBankInWorker(bytes) {
 // keep it. The RIFF header alone does not make a bank: one cut short or
 // corrupt past its header would be kept and then fail every later load, after
 // every reload, so it is parsed first and refused, with nothing written,
-// unless it parses. `check` receives a copy of the bytes; tests pass one that
-// runs the npm spessasynth_core in-process instead of the Worker.
+// unless it parses. A check that runs out of time refuses the bank too,
+// saying only that: the error keeps code BANK_CHECK_TIMEOUT and `timeoutMs`
+// so the Workshop can say it in its own language. `check` receives a copy of
+// the bytes; tests pass one that runs the npm spessasynth_core in-process
+// instead of the Worker.
 export async function storeBank(file, { check = checkBankInWorker } = {}) {
   const name = String(file?.name ?? '');
   if (!BANK_EXTENSIONS.some(ext => name.toLowerCase().endsWith(ext))) throw Error('音色庫需為 .dls、.sf2 或 .sf3 檔案');
@@ -77,6 +93,7 @@ export async function storeBank(file, { check = checkBankInWorker } = {}) {
   if (tag !== 'RIFF' || !['DLS ', 'sfbk'].includes(form)) throw Error('檔案不是 RIFF DLS／SoundFont 音色庫');
   try { await check(bytes.slice(0)); }
   catch (error) {
+    if (error?.code === BANK_CHECK_TIMEOUT) throw Object.assign(Error(`音色庫在 ${Math.round(error.timeoutMs / 1000)} 秒內沒有完成檢查，沒有儲存`), { code: BANK_CHECK_TIMEOUT, timeoutMs: error.timeoutMs });
     const detail = bankErrorDetail(error);
     const why = error?.code === BANK_CHECK_UNAVAILABLE ? '無法在這個瀏覽器檢查音色庫，沒有儲存' : '音色庫無法解析，沒有儲存';
     throw Error(detail ? `${why}（${detail}）` : why);

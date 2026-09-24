@@ -3352,7 +3352,12 @@ export function init() {
     try {
       await queueBank(async () => {
         if (pick !== bankPicks) return;
-        await bankStore.storeBank(f).catch(err => console.warn("[Workshop] bank not stored:", err));
+        await bankStore.storeBank(f).catch(err => {
+          // A bank whose check ran out of time is refused, not handed to the
+          // synth, whose worklet would run the same parse on it.
+          if (err?.code === "BANK_CHECK_TIMEOUT") throw Error(i18n.t("ui.bankCheckTimeout", { s: Math.round(err.timeoutMs / 1000) }));
+          console.warn("[Workshop] bank not stored:", err);
+        });
         await loadBank(await f.arrayBuffer(), f.name, false, f);
       });
     }

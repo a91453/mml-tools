@@ -272,6 +272,7 @@ export default {
   "ui.bankReading": "Reading…",
   "ui.bankFailed": "Load failed",
   "ui.bankLoadError": "The sound bank will not load",
+  "ui.bankCheckTimeout": "The sound bank could not be checked within {s} s; it was not loaded or kept",
   "ui.defUnparsed": "I did not recognise the <code>[Instrument presets]</code> section of this .def. Send me the first few lines and I will fix the parser.",
   "ui.defNoMatch": {"one":"The 1 number in this .def matches nothing in the current sound bank — it is probably paired with the wrong bank. The dropdowns are unchanged.","other":"None of the {n} numbers in this .def match anything in the current sound bank — it is probably paired with the wrong bank. The dropdowns are unchanged."},
   "mark.menu.add": "Add a section mark",

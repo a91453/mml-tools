@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import { createHash } from 'node:crypto';
 import * as core from 'spessasynth_core';
 import { BANK_LOAD_TIMEOUT_MS, addSoundBankOrFail, checkSoundBank } from '../web/preview/bank-check.mjs';
-import { loadBank, storeBank } from '../web/preview/soundbank-store.mjs';
+import { bankCheckTimeoutMs, checkBankInWorker, loadBank, storeBank } from '../web/preview/soundbank-store.mjs';
 import { bankLoadMessage } from '../web/preview/player.mjs';
 
 // A user's sound bank whose RIFF header is intact but whose body is cut short
@@ -192,4 +192,70 @@ test('a load stops waiting for a bank the worklet cannot parse, or that never lo
   assert.equal(ready.sent.id, 'studio-user-bank');
   assert.equal(ready.listeners('soundBankError'), 0, 'a loaded bank leaves no listener behind');
   assert.deepEqual(loaded.timers, ['cleared'], 'and no timer: its timeout is cleared, not left to run a minute later');
+});
+
+// A stand-in for the browser's module Worker running bank-check-worker.mjs:
+// it records what it was made with and given, and whether it was
+// terminated. `answer` (a message) is posted back after a tick; without one it
+// never answers, like a parser that allocates until the tab crashes.
+function checkWorkers(answer = null) {
+  const made = [];
+  class StandInWorker {
+    constructor(url, options) { Object.assign(this, { url: String(url), options, posted: [], terminated: false }); made.push(this); }
+    postMessage(message, transfer) {
+      this.posted.push({ message, transfer });
+      if (answer) setTimeout(() => this.onmessage?.({ data: answer }), 1);
+    }
+    terminate() { this.terminated = true; }
+  }
+  return { StandInWorker, made };
+}
+async function withWorker(Worker, work) {
+  const had = Object.hasOwn(globalThis, 'Worker'), previous = globalThis.Worker;
+  globalThis.Worker = Worker;
+  try { return await work(); } finally { if (had) globalThis.Worker = previous; else delete globalThis.Worker; }
+}
+
+test('a bank check that does not answer in time is stopped, and the bank refused as not checked, not as damaged', async () => {
+  // The limit grows with the bank, in whole seconds: 5 s, plus 1 s for every 2 MiB begun.
+  assert.equal(bankCheckTimeoutMs(0), 5000);
+  assert.equal(bankCheckTimeoutMs(bank.length), 6000);
+  assert.equal(bankCheckTimeoutMs(64 * 1048576), 37000);
+
+  const silent = checkWorkers();
+  await withWorker(silent.StandInWorker, () => withMemoryIndexedDB(async memory => {
+    const check = bytes => checkBankInWorker(bytes, { timeoutMs: 1000 });
+    const started = performance.now();
+    const ran = await loadTimers(1000, () => storeBank(new File([bank], 'slow.sf2'), { check }).then(() => null, error => error));
+    const refusal = ran.result;
+    assert.ok(refusal, 'a check that never answers ends in a refusal');
+    assert.ok(performance.now() - started < 5000, 'at its limit, not later');
+    assert.equal(refusal.message, '音色庫在 1 秒內沒有完成檢查，沒有儲存');
+    assert.doesNotMatch(refusal.message, /無法解析/, 'a bank that could not be checked in time is not called damaged');
+    assert.equal(refusal.code, 'BANK_CHECK_TIMEOUT');
+    assert.equal(refusal.timeoutMs, 1000, 'the Workshop words it from the limit that ran out');
+    assert.deepEqual(ran.timers, ['ran']);
+    assert.equal(silent.made.length, 1);
+    const [worker] = silent.made;
+    assert.match(worker.url, /\/preview\/bank-check-worker\.mjs$/);
+    assert.deepEqual(worker.options, { type: 'module' });
+    assert.equal(worker.posted[0].message.bytes.byteLength, bank.length, 'the whole bank was sent to be checked');
+    assert.equal(worker.terminated, true, 'the Worker, and whatever it was still allocating, is stopped');
+    assert.deepEqual(memory.log, [], 'nothing was written');
+  }));
+
+  // Without a limit given, the check of a bank arms its size's limit.
+  const armed = [];
+  const { setTimeout: set } = globalThis;
+  globalThis.setTimeout = (callback, ms) => { armed.push(ms); return 0; };
+  try { await withWorker(checkWorkers().StandInWorker, () => { checkBankInWorker(new ArrayBuffer(3 * 1048576)); }); }
+  finally { globalThis.setTimeout = set; }
+  assert.deepEqual(armed, [7000]);
+
+  // A check that answers is not cut short, and leaves no Worker or timer.
+  const answering = checkWorkers({ ok: true, presets: 1 });
+  const answered = await withWorker(answering.StandInWorker, () => loadTimers(bankCheckTimeoutMs(bank.length), () => checkBankInWorker(bank.slice().buffer)));
+  assert.deepEqual(answered.result, { presets: 1 });
+  assert.deepEqual(answered.timers, ['cleared']);
+  assert.equal(answering.made[0].terminated, true);
 });

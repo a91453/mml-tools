@@ -218,8 +218,16 @@ exact timing, event identity and the evidence boundaries. See
     the vendored spessasynth_core (`preview/bank-check.mjs`), the loader the
     synth worklet runs on it. One that does not parse, such as a file cut
     short behind an intact header, is refused with 「音色庫無法解析，沒有儲存」
-    and nothing is stored; the kept bank stays as it was. The Workshop keeps
-    its picks in the same store and gets the same refusal. If the engine
+    and nothing is stored; the kept bank stays as it was. The check has a
+    time limit, 5 s plus 1 s for every 2 MiB (37 s at the 64 MiB cap): a
+    damaged bank can instead keep the parser allocating until the tab
+    crashes, so a check still running then is stopped and the bank refused
+    with 「音色庫在 N 秒內沒有完成檢查，沒有儲存」, which does not call it
+    damaged. The Workshop keeps its picks in the same store, which refuses
+    them the same way; it still hands a bank that does not parse to its
+    synth, whose parse error is what it shows, but a pick whose check ran out
+    of time is refused in the page language and never reaches the synth,
+    which would run the same parse. If the engine
     still cannot load a bank (the worklet reports a parse error, or nothing
     arrives within 60 s), the load stops with 「音色庫無法解析，已停止載入」 or
     the timeout message, the player leaves its loading state, and the next
