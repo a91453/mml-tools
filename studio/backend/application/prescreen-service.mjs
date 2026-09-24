@@ -26,11 +26,14 @@ import { GAME_INSTRUMENT_IDS } from '../audio/instruments.mjs';
 import { createSoundBankProvider, bankCacheDirectory, FREE_GM_BANK, SoundBankError } from '../audio/prescreen/sound-bank.mjs';
 import { createRenderPool } from '../audio/prescreen/render-pool.mjs';
 import {
-  meterFromCanonical, meterFromText, meterText, performanceFromCanonical, performanceFromTracks,
+  MAX_BARS, meterFromCanonical, meterFromText, meterText, performanceFromCanonical, performanceFromTracks,
   referenceFromCanonical, referenceFromPerformance,
 } from '../audio/prescreen/performance.mjs';
 import { normalizeThresholds, VERDICT } from '../audio/prescreen/decision.mjs';
-import { LABELS, ORIGINAL_STATUS, PRESCREEN_NOTICE, PRESCREEN_REPORT_SCHEMA, RULE_DRAFT, SAMPLE_RATES, runPrescreen } from '../audio/prescreen/prescreen.mjs';
+import {
+  LABELS, ORIGINAL_STATUS, PREROLL_SECONDS, PRESCREEN_NOTICE, PRESCREEN_REPORT_SCHEMA, RULE_DRAFT, SAMPLE_RATES,
+  longestFittingRange, renderPlan, runPrescreen,
+} from '../audio/prescreen/prescreen.mjs';
 import { ALL_METRICS } from '../audio/prescreen/metrics.mjs';
 import { decodeWav } from '../audio/prescreen/wav.mjs';
 
@@ -43,6 +46,28 @@ export const NO_PREFERENCE = 'NO_PREFERENCE';
 
 export const PRESCREEN_LIMITS = Object.freeze({
   maxMmlCharacters: 40000,
+  // The bar grid's own bound (performance.mjs), repeated so the limits are
+  // advertised together.
+  maxBars: MAX_BARS,
+  // Seconds of audio rendered for one alternative: its whole performance, or
+  // with bar_range the window from the 3 s pre-roll to the end of the last
+  // bar. Checked before anything renders. Render time and analysis memory
+  // grow linearly with it (about 14 MB of analysis buffers per 1,000 s at
+  // either sample rate; CPU per second depends on the arrangement), and
+  // neither the character limit nor the bar limit bounds it: 40,000
+  // characters of whole notes at T32 under a 16/4 meter stay inside
+  // MAX_BARS and last 83 hours, over 4 GB of analysis per alternative.
+  //
+  // 1,200 s (20 minutes). The longest real song this repository has carried
+  // (a six-role Final, since moved out of the public tree with the other
+  // real-song material) runs 311 s; the song-length test fixture runs 220 s.
+  // Twenty minutes is about four times the longest, so real songs and long
+  // arrangements pass whole, while one alternative stays at about 17 MB of
+  // analysis buffers and, at that song's density with the pinned bank, about
+  // 18 s of CPU at 22.05 kHz mono or 40 s at 44.1 kHz stereo (measured on
+  // the 311 s song: 4.5 s and 10.4 s). Anything longer is prescreened
+  // section by section with bar_range.
+  maxRenderSeconds: 1200,
   maxPredictionsPerProject: 256,
   maxChoicesPerProject: 4096,
   reportCacheEntries: 8,
@@ -137,11 +162,53 @@ export function normalizePrescreenInput(input, { projectMode }) {
   return { alternatives: normalized, meter, pickup, barRange, referenceMml, referenceCandidateId, render, thresholds };
 }
 
+// A bar grid, bar_range or pickup the request got wrong, as the prescreen
+// engine words it.
+const isRequestProblem = error => /bar_range|meter|no notes|bars|pickup/.test(error?.message ?? '');
+const roundSeconds = value => Math.round(value * 1000) / 1000;
+
+/**
+ * The render plan for resolved alternatives, refused when any alternative's
+ * render would be longer than PRESCREEN_LIMITS.maxRenderSeconds. Runs before
+ * the sound bank is loaded, a recording decoded or a worker dispatched: the
+ * length is known from the performances alone.
+ */
+export function plannedRender({ alternatives, meter, pickup, barRange }) {
+  let plan;
+  try { plan = renderPlan({ alternatives, meter, pickup, barRange }); }
+  catch (error) {
+    if (isRequestProblem(error)) refuse(error.message);
+    throw error;
+  }
+  const max = PRESCREEN_LIMITS.maxRenderSeconds;
+  const over = alternatives.filter((_, a) => plan.renderSeconds[a] > max).map(alternative => alternative.label);
+  if (!over.length) return plan;
+  const from = plan.bars[0].bar;
+  const suggested = longestFittingRange({ alternatives, allBars: plan.allBars, from, maxSeconds: max });
+  const longest = Math.max(...plan.renderSeconds);
+  const span = plan.whole ? 'the whole song' : `bars ${from}-${plan.bars.at(-1).bar} (with the ${PREROLL_SECONDS} s pre-roll)`;
+  const next = suggested && suggested.to < plan.allBars.length ? `, then continue from bar ${suggested.to + 1}` : '';
+  refuse(`Rendering ${span} would take ${Math.ceil(longest)} s of audio for alternative${over.length > 1 ? 's' : ''} ${over.join(', ')}; the prescreen renders at most ${max} s (${max / 60} minutes) per alternative. `
+    + (suggested
+      ? `Prescreen it in sections with bar_range, for example {"from": ${suggested.from}, "to": ${suggested.to}}${next}.`
+      : `Even bar ${from} alone is longer than that; prescreen a section starting at another bar with bar_range.`), {
+    reason: 'RENDER_TOO_LONG',
+    max_render_seconds: max,
+    render_seconds: Object.fromEntries(alternatives.map((alternative, a) => [alternative.label, roundSeconds(plan.renderSeconds[a])])),
+    over_limit: over,
+    bars_total: plan.allBars.length,
+    bar_range: plan.whole ? null : { from, to: plan.bars.at(-1).bar },
+    suggested_bar_range: suggested,
+  });
+}
+
 /**
  * The prescreen service.
  *
  * `audioPrescreen` options (all optional): `bank` (descriptor), `bytes`
- * (inject a bank), `fetchImpl`, `allowDownload`, `cacheDirectory`, `poolSize`.
+ * (inject a bank), `fetchImpl`, `allowDownload`, `cacheDirectory`, `poolSize`,
+ * `renderPool` (a render pool to use instead of the service's own; the caller
+ * keeps it and closes it).
  */
 export function createPrescreenService({ canonical, projects, intake, arrangement, final, assets, store, dataDirectory = null, options = {} }) {
   const env = process.env;
@@ -153,7 +220,7 @@ export function createPrescreenService({ canonical, projects, intake, arrangemen
     allowDownload: options.allowDownload ?? env.MML_STUDIO_AUDIO_BANK_FETCH !== '0',
   });
   let pool = null;
-  const poolFor = () => (pool ??= createRenderPool(options.poolSize ? { size: options.poolSize } : {}));
+  const poolFor = () => (pool ??= options.renderPool ?? createRenderPool(options.poolSize ? { size: options.poolSize } : {}));
   const profileCache = new Map();
   const reportCache = new Map();
 
@@ -294,6 +361,10 @@ export function createPrescreenService({ canonical, projects, intake, arrangemen
     if (projectId !== null && !isProjectId(projectId)) fail(ERROR_CODES.PROJECT_NOT_FOUND, 'Unknown project', { project_id: String(projectId).slice(0, 96) });
     const request = normalizePrescreenInput(input, { projectMode: projectId !== null });
     const resolved = await resolve(owner, projectId, request);
+    // Sized before anything renders: a request whose render is over the
+    // render-length limit is refused here, before the bank is loaded, a
+    // recording decoded or a worker dispatched.
+    plannedRender({ alternatives: resolved.alternatives, meter: resolved.meter, pickup: resolved.pickup, barRange: request.barRange });
     const fingerprint = JSON.stringify({
       project: projectId,
       alternatives: resolved.alternatives.map(entry => [entry.label, entry.source, entry.mml_sha256, entry.performance.roles.map(role => role.instrument), entry.source.kind === 'candidate' ? entry.performance.totalExact : null]),
@@ -327,7 +398,7 @@ export function createPrescreenService({ canonical, projects, intake, arrangemen
     } catch (error) {
       if (error instanceof SoundBankError) fail(ERROR_CODES[error.code], error.message, error.details);
       if (error?.code === 'AUDIO_RENDER_FAILED') fail(ERROR_CODES.AUDIO_RENDER_FAILED, 'The prescreen render did not complete.', { reason: error.message.slice(0, 200) });
-      if (/bar_range|meter|no notes|bars|pickup/.test(error?.message ?? '')) refuse(error.message);
+      if (isRequestProblem(error)) refuse(error.message);
       throw error;
     }
     reportCache.set(fingerprint, result.report);
@@ -490,7 +561,7 @@ export function createPrescreenService({ canonical, projects, intake, arrangemen
     },
 
     async close() {
-      if (pool) await pool.close();
+      if (pool && pool !== options.renderPool) await pool.close();
       pool = null;
     },
   });

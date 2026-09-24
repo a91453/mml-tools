@@ -205,6 +205,21 @@ alternatives; never assumed), `pickup`, `instruments` (six ids), `bar_range`
 compaction and read in full with `report_page`; a prescreen report is cached in
 memory, so a page read does not re-render.
 
+Limits (`PRESCREEN_LIMITS` in `prescreen-service.mjs`, advertised under
+`audio_prescreen.limits` in `studio_capabilities`): 40,000 MML characters,
+10,000 bars, and **1,200 s (20 minutes) of rendered audio per alternative** —
+the whole performance, or with `bar_range` the window from 3 s before its first
+bar to the end of its last bar. Neither of the first two bounds the third:
+40,000 characters of whole notes at T32 under a 16/4 meter stay inside 10,000
+bars and last 83 hours. The render length is known from the performances
+alone, so a request over it is refused before the bank is loaded or any worker
+runs, with `INVALID_REQUEST`, `details.reason: "RENDER_TOO_LONG"`, each
+alternative's `render_seconds` and a `suggested_bar_range` (the longest range
+from the requested first bar that fits); a longer song is prescreened section
+by section with `bar_range`. Twenty minutes is about four times the longest
+real song this repository has carried (311 s) and over five times the 220 s
+cost fixture below.
+
 ## Cost
 
 Measured on a synthetic 220 s six-role song (110 bars, T120, 4/4), three
@@ -219,3 +234,16 @@ alternatives, 22.05 kHz mono, on the 4-core development container used for this 
 
 The render pool uses up to `min(4, cores − 1)` worker threads; each worker
 starts on first use and stops after 30 s idle. `bar_range` narrows the work.
+
+Cost grows linearly with rendered audio: about 14 MB of analysis buffers per
+1,000 s at either sample rate, and CPU that depends on the arrangement. For the
+311 s real song with FluidR3Mono, about 15 ms of CPU per second of audio at
+22.05 kHz mono and 33 ms at 44.1 kHz stereo; for six roles of sixteenth notes
+at T120 on harp (the densest case measured), about 120 ms at 22.05 kHz mono.
+At the 1,200 s limit one alternative therefore holds about 17 MB of analysis
+buffers.
+
+A render job still running 15 minutes after it was dispatched fails with
+`AUDIO_RENDER_FAILED` and its worker thread is terminated, not reused; the next
+job gets a fresh worker. This is a backstop for a job that never ends, well
+above what an admitted render costs.

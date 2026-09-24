@@ -742,6 +742,7 @@ export {
   isRunId,
 };
 export { buildCapabilities, INTERFACE_VERSION } from './capabilities.mjs';
+export { PRESCREEN_LIMITS } from './prescreen-service.mjs';
 export { createCanonicalGate, provenanceOf, unloadedProvenance } from './provenance.mjs';
 export { PRE_EMISSION_EXEMPT_GATES, FINAL_ARTIFACT_SCHEMA } from './final-service.mjs';
 export { CONFIRMATIONS, CONFIRMATION_SCOPE, PLAYER_READBACK_VALUES, STALE_CONFIRMATION, gatesFrom } from './review-service.mjs';

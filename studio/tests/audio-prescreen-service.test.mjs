@@ -13,9 +13,12 @@ import { createHash } from 'node:crypto';
 
 import { REASON, VERDICT } from '../backend/audio/prescreen/decision.mjs';
 import { encodeWav16 } from '../backend/audio/prescreen/wav.mjs';
+import { createRenderPool } from '../backend/audio/prescreen/render-pool.mjs';
 import { createStudioApplication } from '../backend/application/index.mjs';
+import { PRESCREEN_LIMITS } from '../backend/application/prescreen-service.mjs';
 import { applyKeepOnlyCandidate, audioAlignmentReport } from './fixtures/application-fixtures.mjs';
 import { syntheticSoundBank } from './support/synthetic-render-bank.mjs';
+import { syntheticSongMml, SYNTHETIC_METER } from './support/prescreen-fixtures.mjs';
 
 const OWNER = 'owner:prescreen';
 const { bytes: BANK_BYTES, descriptor: BANK } = syntheticSoundBank();
@@ -237,5 +240,107 @@ test('APS-6 Final alternatives share one bar grid: differing declared pickups, o
     assert.equal(onBarLines.bars.length, 1);
   } finally {
     await service.releaseAudioWorkers();
+  }
+});
+// ─── the render-length limit ────────────────────────────────────────────────
+
+// One role of `count` whole notes at T32: under a 4/4 meter each is one 7.5 s
+// bar, so the song lasts count × 7.5 s.
+const wholeNotes = (count, pitch = 'c') => `MML@t32o4l1${pitch.repeat(count)},,,,,;`;
+
+// A bank and a render pool that record being touched and refuse to work: a
+// request refused for its render length must load nothing and dispatch nothing.
+const untouched = () => {
+  const touched = [];
+  return {
+    touched,
+    audioPrescreen: {
+      bankProvider: { descriptor: BANK, load: async () => { touched.push('bank'); throw Error('the sound bank was loaded'); } },
+      renderPool: { size: 1, run: async type => { touched.push(type); throw Error(`a ${type} job was dispatched`); }, close: async () => {} },
+    },
+  };
+};
+
+// A real render pool that records every job it is given.
+const recordingPool = () => {
+  const pool = createRenderPool({ size: 2, idleMs: 2000 });
+  const jobs = [];
+  return {
+    jobs,
+    pool: { size: pool.size, close: () => pool.close(), run: (type, payload, options) => { jobs.push({ type, window: payload.window ?? null }); return pool.run(type, payload, options); } },
+  };
+};
+
+const renderTooLong = expected => error => {
+  assert.equal(error.code, 'INVALID_REQUEST', error.message);
+  assert.equal(error.details.reason, 'RENDER_TOO_LONG');
+  assert.equal(error.details.max_render_seconds, 1200);
+  for (const [key, value] of Object.entries(expected)) assert.deepEqual(error.details[key], value, key);
+  assert.match(error.message, /at most 1200 s/);
+  const { from, to } = expected.suggested_bar_range;
+  assert.ok(error.message.includes(`bar_range, for example {"from": ${from}, "to": ${to}}`), error.message);
+  return true;
+};
+
+test('APS-7 a render longer than the limit is refused before the bank is loaded or any worker dispatched', async () => {
+  const { touched, audioPrescreen } = untouched();
+  const service = createStudioApplication({ audioPrescreen });
+  try {
+    // 161 whole notes: 1,207.5 s, inside every other limit.
+    await assert.rejects(service.audioPrescreen(OWNER, null, { alternatives: [{ mml: wholeNotes(161) }, { mml: wholeNotes(161, 'd') }], meter_text: '0 4/4' }), renderTooLong({
+      render_seconds: { A: 1207.5, B: 1207.5 }, over_limit: ['A', 'B'], bars_total: 161, bar_range: null, suggested_bar_range: { from: 1, to: 160 },
+    }));
+    // Only the alternative over the limit is named.
+    await assert.rejects(service.audioPrescreen(OWNER, null, { alternatives: [{ mml: wholeNotes(20) }, { mml: wholeNotes(161, 'd'), label: 'long' }], meter_text: '0 4/4' }), renderTooLong({
+      render_seconds: { A: 150, long: 1207.5 }, over_limit: ['long'], suggested_bar_range: { from: 1, to: 160 },
+    }));
+    // A 16/4 meter keeps 39,983 whole notes at T32 inside the bar limit, but
+    // they last 83 hours: the render length, not the bar count, refuses it.
+    const hours = `MML@t32o4l1${'c'.repeat(39983)},,,,,;`;
+    assert.ok(hours.length <= PRESCREEN_LIMITS.maxMmlCharacters);
+    await assert.rejects(service.audioPrescreen(OWNER, null, { alternatives: [{ mml: hours }, { mml: hours.replace('t32', 't33') }], meter_text: '0 16/4', render: { sample_rate: 44100, channels: 2 } }), renderTooLong({
+      over_limit: ['A', 'B'], bars_total: 9996, suggested_bar_range: { from: 1, to: 40 },
+    }));
+    assert.deepEqual(touched, [], 'nothing was loaded or dispatched');
+    // Exactly at the limit is admitted: it goes on to load the bank.
+    await assert.rejects(service.audioPrescreen(OWNER, null, { alternatives: [{ mml: wholeNotes(160) }, { mml: wholeNotes(160, 'd') }], meter_text: '0 4/4' }), /the sound bank was loaded/);
+    assert.deepEqual(touched, ['bank']);
+    assert.equal(PRESCREEN_LIMITS.maxRenderSeconds, 1200, 'twenty minutes of audio per alternative');
+  } finally {
+    await service.releaseAudioWorkers();
+  }
+});
+
+test('APS-8 a bar_range over a long song is judged by its window, and a real-length song renders whole', async () => {
+  const { jobs, pool } = recordingPool();
+  const service = createStudioApplication({ audioPrescreen: { bank: BANK, bytes: BANK_BYTES, renderPool: pool } });
+  try {
+    // A 3,000 s song. A window over the limit is refused, before any job,
+    // with the longest range from its first bar that fits: bars 10-168 run
+    // from 64.5 s (the pre-roll before bar 10) to 1,260 s.
+    const long = [{ mml: wholeNotes(400) }, { mml: wholeNotes(400, 'd') }];
+    await assert.rejects(service.audioPrescreen(OWNER, null, { alternatives: long, meter_text: '0 4/4', bar_range: { from: 10, to: 250 } }), renderTooLong({
+      render_seconds: { A: 1810.5, B: 1810.5 }, bar_range: { from: 10, to: 250 }, bars_total: 400, suggested_bar_range: { from: 10, to: 168 },
+    }));
+    assert.deepEqual(jobs, []);
+
+    // Three of its bars render, and only their window.
+    const section = (await service.audioPrescreen(OWNER, null, { alternatives: long, meter_text: '0 4/4', bar_range: { from: 150, to: 152 } })).prescreen;
+    assert.deepEqual(section.bars.map(bar => bar.bar), [150, 151, 152]);
+    assert.equal(section.inputs.bars_total, 400);
+    assert.deepEqual(jobs.filter(job => job.type === 'analyze').map(job => job.window), [{ startSec: 1114.5, endSec: 1140 }, { startSec: 1114.5, endSec: 1140 }]);
+    assert.equal(section.alternatives[0].render.start_seconds, 1114.5);
+
+    // 160 bars at T120: 320 s, longer than any real song this repository has
+    // carried (311 s) and well inside the limit. It renders whole.
+    jobs.length = 0;
+    const base = syntheticSongMml({ bars: 160 });
+    const song = (await service.audioPrescreen(OWNER, null, { alternatives: [{ mml: base }, { mml: syntheticSongMml({ bars: 160, variant: 'crunch' }) }], meter_text: SYNTHETIC_METER, reference: { mml: base } })).prescreen;
+    assert.equal(song.summary.bars, 160);
+    assert.deepEqual(song.alternatives.map(entry => entry.duration_seconds), [320, 320]);
+    assert.deepEqual(jobs.filter(job => job.type === 'analyze').map(job => job.window), [null, null], 'both alternatives rendered whole');
+  } finally {
+    await service.releaseAudioWorkers();
+    await pool.close();
   }
 });

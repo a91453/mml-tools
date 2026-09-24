@@ -13,6 +13,8 @@
 // agent read it as any of those.
 
 import { ASSET_KIND_NAMES, GATE_NAMES, IDENTITY_MODEL, JOB_STATUS, LIMITS } from './contracts.mjs';
+import { PRESCREEN_LIMITS } from './prescreen-service.mjs';
+import { PREROLL_SECONDS } from '../audio/prescreen/prescreen.mjs';
 import { RUN_EXECUTION_MODE, RUN_EXECUTION_NOTICE, RUN_RECORD_SCHEMA, RUN_REPORT_SCHEMA, RUN_SEPARATION_NOTICE, RUN_STATE_NAMES, RUN_STEP_OPERATION, RUN_STEP_ORDER } from './run-contracts.mjs';
 import {
   ACCEPTABLE_AGENT_REVIEW,
@@ -395,6 +397,15 @@ export function buildCapabilities({ canonical, storage, jobs, transports = [] })
       operations: freeze(['audioPrescreen', 'prescreenShadowStatus', 'recordPrescreenShadow']),
       read_only_operations: freeze(['audioPrescreen', 'prescreenShadowStatus']),
       alternatives: '2-4: raw six-role MML, or a project candidate or Final artifact',
+      // Checked before anything renders; a request over one is refused with
+      // INVALID_REQUEST (the render-length refusal carries
+      // details.reason RENDER_TOO_LONG and a suggested_bar_range).
+      limits: freeze({
+        max_mml_characters: PRESCREEN_LIMITS.maxMmlCharacters,
+        max_bars: PRESCREEN_LIMITS.maxBars,
+        max_render_seconds_per_alternative: PRESCREEN_LIMITS.maxRenderSeconds,
+        render_seconds_are: `the whole performance, or with bar_range the window from ${PREROLL_SECONDS} s before its first bar to the end of its last bar; a longer song is prescreened section by section with bar_range`,
+      }),
       metrics: freeze(['roughness (low/mid, source-inherited pairs excluded)', 'masking', 'smear', 'clipping', 'original_similarity (WAV/PCM recordings with active alignment only)']),
       verdicts: freeze(['OBVIOUS', 'NEEDS_HUMAN', 'NO_DIFFERENCE']),
       sound_bank: freeze({

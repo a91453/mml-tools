@@ -58,6 +58,12 @@ test('APT-1 the prescreen tools say what they are: machine evidence, no gate, no
   assert.deepEqual([alternatives.minItems, alternatives.maxItems], [2, 4]);
   assert.equal(alternatives.items.additionalProperties, false);
   assert.equal(alternatives.items.properties.mml.maxLength, 16384, 'a Final is at most 6 x 2,400 characters');
+  // The render-length limit is stated where the request is chosen, with the
+  // refusal it gives and the way around it.
+  for (const fact of ['1200 秒', '20 分鐘', 'RENDER_TOO_LONG', 'suggested_bar_range', 'bar_range 分段']) assert.ok(prescreen.description.includes(fact), fact);
+  const barRange = prescreen.inputSchema.properties.bar_range;
+  assert.deepEqual([barRange.properties.from.maximum, barRange.properties.to.maximum], [10000, 10000]);
+  assert.ok(barRange.description.includes('1200 秒'));
   assert.deepEqual(prescreen.inputSchema.properties.instruments.items.enum, [...GAME_INSTRUMENT_IDS]);
   assert.deepEqual(shadow.inputSchema.required, ['project_id', 'entry']);
   assert.ok(PAGED_REPORT_TOOLS.has('studio_audio_prescreen'));
@@ -168,6 +174,32 @@ test('APT-6 capability discovery states the prescreen as a fact and automatic se
   assert.equal(capabilities.audio_prescreen.sound_bank.is_game_timbre, false);
   assert.equal(capabilities.audio_prescreen.sound_bank.stored_in_repository_or_image, false);
   assert.deepEqual(capabilities.audio_prescreen.never_sets, ['audio (Gate 7)', 'player_readback (Gate 6)', 'in_game']);
+  const { render_seconds_are: measured, ...limits } = capabilities.audio_prescreen.limits;
+  assert.deepEqual(limits, { max_mml_characters: 40000, max_bars: 10000, max_render_seconds_per_alternative: 1200 });
+  assert.match(measured, /bar_range/);
+});
+
+test('APT-7 MCP and HTTP refuse a render over the limit alike, before anything renders', async () => {
+  let loads = 0;
+  const app = createStudioApplication({ transports: ['http', 'mcp'], audioPrescreen: { bankProvider: { descriptor: BANK, load: async () => { loads++; throw Error('the sound bank was loaded'); } } } });
+  // 161 whole notes at T32 in 4/4: 1,207.5 s.
+  const long = pitch => `MML@t32o4l1${pitch.repeat(161)},,,,,;`;
+  const request = { alternatives: [{ mml: long('c') }, { mml: long('d') }], meter_text: '0 4/4' };
+  const overMcp = (await rpc('studio_audio_prescreen', request, { app })).body.result;
+  assert.equal(overMcp.isError, true);
+  const overHttp = await createApiRouter({ application: app, ownerOf: () => OWNER })(new Request(`${ORIGIN}${API_PREFIX}/audio-prescreen`, {
+    method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(request),
+  }), { authenticated: true });
+  assert.equal(overHttp.status, 400);
+  const httpError = (await overHttp.json()).error;
+  for (const error of [overMcp.structuredContent.error, httpError]) {
+    assert.equal(error.code, 'INVALID_REQUEST');
+    assert.equal(error.details.reason, 'RENDER_TOO_LONG');
+    assert.equal(error.details.max_render_seconds, 1200);
+    assert.deepEqual(error.details.suggested_bar_range, { from: 1, to: 160 });
+  }
+  assert.deepEqual(httpError, overMcp.structuredContent.error);
+  assert.equal(loads, 0, 'the bank was never loaded');
 });
 
 // ── listen links for human_review regions (server/prescreen-listen.mjs) ─────
