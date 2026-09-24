@@ -59,16 +59,20 @@ export function checkAgentCall(name, args, actor) {
   if (Object.hasOwn(args, 'accepted_by') && args.accepted_by !== actor) refuse(`accepted_by must name ${actor}.`);
 }
 
-// Same MCP input checker and dispatcher, without the network's 512 KiB response
-// cap. A real 1,545-note MIDI exceeded that cap even on suggestion/finalize.
-// Full local output and receipts preserve those reports without widening MCP.
+// Same MCP input checker and dispatcher, without the network transport's views:
+// no 512 KiB response cap and no long-list compaction (`compact: false`). A real
+// 1,545-note MIDI exceeded that cap even on suggestion/finalize. A local result,
+// its `--output` file and its receipt therefore hold the full Application
+// Service result, without widening MCP. A remote `call` is the MCP response
+// itself, long lists summarized (`response_compaction`); remote `report` and
+// `export` reassemble full reads through report_page (studio-agent-remote.mjs).
 export async function callAgentTool(application, name, args, actor, remote = null) {
   checkAgentCall(name, args, actor);
   const tool = STUDIO_MCP_TOOLS.find(tool => tool.name === name);
   if (!tool) return { error: { code: 'INTERNAL_ERROR', message: 'The request could not be completed.' } };
   try { mcpCheckSchema(tool.inputSchema, args); }
   catch (error) { return { error: { code: -32602, message: error.message } }; }
-  try { return remote ? await remote.call(name, args) : await runStudioTool(name, args, { application, owner: LOCAL_AGENT_OWNER }); }
+  try { return remote ? await remote.call(name, args) : await runStudioTool(name, args, { application, owner: LOCAL_AGENT_OWNER, compact: false }); }
   catch (error) {
     return { error: error?.name === 'StudioApplicationError'
       ? { code: error.code, message: error.message, details: error.details }

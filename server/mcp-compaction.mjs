@@ -1,10 +1,11 @@
 // Bounded MCP responses for long lists, without losing data.
 //
 // A transport view on an Application Service result, like report paging, and
-// applied at the same place: `runStudioTool`, for every call that does not ask
-// for a report page. The Application Service result, every stored run,
-// candidate and artifact, and the HTTP responses are unchanged; a report page is
-// always read from the full result.
+// applied at the same place: `runStudioTool`, for every MCP call that does not
+// ask for a report page. The local agent CLI, which has no result cap and keeps
+// whole results in files, opts out with `compact: false`. The Application
+// Service result, every stored run, candidate and artifact, and the HTTP
+// responses are unchanged; a report page is always read from the full result.
 //
 // Why it exists. A real song under machine-delivery schema @2 carries about 1,500
 // provisionally rendered releases, and their per-release records appear in every

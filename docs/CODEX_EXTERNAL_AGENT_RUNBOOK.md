@@ -21,8 +21,10 @@ Application HTTP API，與同一 owner 的 MCP 共用 project／run。操作與�
 必須指定獨立 `--data-dir`。`store/` 使用既有 JSON record／blob store；
 `receipts/` 保留每次呼叫的時間、actor、參數與結果（不內嵌上傳 bytes）。
 真實歌曲的 suggestion／review／finalize 報告可能超過 MCP 的 512 KiB 序列化結果上限。
-CLI 的本機檔案路徑不套用網路回應限制；使用 `--output` 保存完整 JSON，再分段讀取，
-不要將整份大型報告貼進模型 context。網路 MCP 的限制完全保留。也可直接輸出報告：
+CLI 的本機路徑不套用網路回應限制，也不套用 MCP 的長清單摘要（`response_compaction`）：
+本機 `call` 的回應、`--output` 與 receipt 都是完整的 Application Service 結果。
+使用 `--output` 保存完整 JSON，再分段讀取，不要將整份大型報告貼進模型 context。
+網路 MCP 的限制與摘要完全保留。也可直接輸出報告：
 
 ```powershell
 node scripts/studio-agent.mjs --data-dir .studio-agent/my-song --actor agent:codex report --project-id PROJECT_ID --kind suggestion --out suggestion.json
@@ -33,13 +35,16 @@ node scripts/studio-agent.mjs --data-dir .studio-agent/my-song --actor agent:cod
 `review` 只由 service 重算報告，不寫入 store artifact、不記錄 confirmations。
 報告本文保存在本機 `--out` 檔，receipt 記錄輸出路徑與操作結果；稽核或跨機器搬移時
 必須一起保存兩者，不能只靠 store 或 `studio_artifact_get` 找回這份 review。
-三種報告均不推進 run、不覆寫既有輸出檔。`call --output` 可保存既有命令的完整結果。
+三種報告均不推進 run、不覆寫既有輸出檔。本機 `call --output` 可保存既有命令的完整結果。
 
 ### 遠端 MCP 大型報告
 
 唯讀工具現在接受選填 `report_page`。這是同一份 Application Service 回應的
-JSON 文字分段，不是摘要、不會刪除事件、不新建 artifact；不帶此參數時仍回傳
-原完整結果，原 512 KiB 上限保留。適用 suggestion、reduction／adaptation plan、
+JSON 文字分段，不是摘要、不會刪除事件、不新建 artifact，一律從完整結果讀取；
+不帶此參數時回傳 MCP 的有界檢視：machine-delivery ledger 的逐 release 清單一律摘要，
+超過 96 KiB 的回應再把最大的長清單摘要成 `{compacted: true, total, first, sha256,
+report_page | retrieve}`（見 `response_compaction`），原 512 KiB 上限保留。
+適用 suggestion、reduction／adaptation plan、
 無 confirmations 的 review、run plan／status、proposal targets／status、
 project／baseline events／job／artifact 讀取。
 
@@ -111,6 +116,9 @@ node scripts/studio-agent.mjs @remote report --project-id $created.project.proje
 
 上傳走既有 HTTP multipart，MCP 仍不收檔案 bytes。report 與 export 所需的大型
 唯讀回應會透過 report_page 完整回讀並驗證雜湊；失敗不寫出半份檔案。
+遠端 `call` 的回應、`--output` 與 receipt 則是 MCP 回應本身：長清單可能已摘要為
+`{compacted, total, first, sha256, report_page | retrieve}`（見 `response_compaction`），
+不是完整結果；需要完整清單時，以摘要指名的唯讀工具與 `report_page` 讀回，或改用 report。
 call 不自動重送寫入。網路斷線／逾時為 REMOTE_REQUEST_UNCERTAIN：服務可能已執行，
 先讀 project／run 狀態；不要換新 idempotency key 盲目重做。
 URL 僅接受 HTTPS origin，或明確的 127.0.0.1／[::1] HTTP 測試入口；不跟隨 redirect。

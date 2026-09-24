@@ -674,13 +674,20 @@ const proposalFilter = args => pick(args, PROPOSAL_FILTER_FIELDS);
  * Every branch is a single call. There is no composition here, no fallback to
  * a second path, and no place a verdict could be recomputed: whatever the
  * Application Service returns is what the model sees.
+ *
+ * `compact` is a transport option, never a tool argument. The MCP transport
+ * never sets it, so every MCP response is the bounded view. An in-process
+ * caller with no result cap that keeps whole results in files -- the local
+ * agent CLI (scripts/studio-agent.mjs), whose `--output`, receipts and export
+ * promise the full Application Service result -- passes `compact: false` and
+ * receives that result itself. Only an explicit `false` turns the view off.
  */
-export async function runStudioTool(name, args, { application, owner, listen = null }) {
+export async function runStudioTool(name, args, { application, owner, listen = null, compact = true }) {
   const page = args.report_page === undefined ? null : validateReportPage(name, args);
   const result = await dispatchStudioTool(name, args, { application, owner });
-  // A page is read from the full result; any other response is the bounded
+  // A page is read from the full result; any other MCP response is the bounded
   // view (mcp-compaction.mjs), whose summaries point back at those pages.
-  const view = page ? readReportPage(result, page) : compactStudioResponse(name, args, result);
+  const view = page ? readReportPage(result, page) : compact === false ? result : compactStudioResponse(name, args, result);
   // The one addition to a response: listen links for the prescreen's
   // human_review regions, beside the report and never inside it
   // (server/prescreen-listen.mjs). A page read is of the report itself, so
