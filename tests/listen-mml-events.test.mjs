@@ -129,4 +129,39 @@ test('the SF2 reader refuses what it cannot play instead of guessing', () => {
   const good = syntheticBank();
   refuses(good.slice(0, good.byteLength - 60), /截斷/);
   assert.throws(() => parseSoundFont('text'), SoundFontError);
+  // A sample header addressing points outside the smpl chunk (146 points here)
+  // is a damaged bank: refused when read, not a RangeError while playing.
+  for (const sample of [{ start: 100000, end: 100100, startLoop: 100010, endLoop: 100090 }, { end: 147 }, { start: 60, end: 50 }]) {
+    refuses(syntheticBank({ sample }), /Synthetic Sine.*超出取樣資料範圍/);
+  }
+  assert.equal(parseSoundFont(syntheticBank({ sample: { end: 146 } })).samples[0].end, 146, 'a range ending at the last point is inside');
+  // ROM samples address ROM, compressed (SF3) ones address Ogg bytes: neither is
+  // measured in smpl points, and a compressed bank keeps its own refusal.
+  assert.equal(parseSoundFont(syntheticBank({ sample: { start: 100000, end: 100100, sampleType: 0x8001 } })).samples.length, 1);
+  assert.equal(parseSoundFont(syntheticBank({ sample: { start: 100000, end: 100100, sampleType: 0x11 } })).compressed, true);
+});
+
+test('SF2 sample data is read only inside the smpl chunk', () => {
+  const bank = parseSoundFont(syntheticBank());
+  const [region] = soundFontRegions(bank, 0, 72, 100);
+  const points = bank.smpl.size / 2;
+  assert.equal(points, 146);
+  const read = (start, end) => soundFontSampleData(bank, { ...region, start, end });
+  // Ranges past the data, reversed or empty read as nothing instead of throwing.
+  for (const [start, end] of [[100000, 100100], [points, points + 10], [points + 1, 50], [60, 50], [40, 40], [-20, -10], [Number.NaN, 10]]) {
+    const data = read(start, end);
+    assert.ok(data instanceof Float32Array, `${start}..${end}`);
+    assert.equal(data.length, 0, `${start}..${end}`);
+  }
+  // A range reaching past either edge keeps only the part inside.
+  assert.equal(read(140, 10000).length, points - 140);
+  assert.equal(read(-30, 10).length, 10);
+  assert.deepEqual([...read(-30, 10)], [...read(0, 10)]);
+  assert.ok(Math.abs(read(20, 200)[5] - 16000 / 32768) < 1e-3, 'offset 25 of the sine, read from 20');
+  // A zone's address offsets can move a region of a valid bank past the data;
+  // that region reads as empty (the player then sounds the note with its synth).
+  const shifted = parseSoundFont(syntheticBank({ zoneGenerators: [[4, 1]] }));
+  const [moved] = soundFontRegions(shifted, 0, 72, 100);
+  assert.equal(moved.start, 32768);
+  assert.equal(soundFontSampleData(shifted, moved).length, 0);
 });
