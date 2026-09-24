@@ -316,9 +316,16 @@ operation reads — bytes rather than ids, because a blob can change under the i
 that names it. That is not a cached verdict. The verdict is still graded on
 every read, from that outcome, against the proposal as it stands, and every
 other rung is re-read as before. Nothing is held when the material could not be
-read, nor when anything the derivation depends on may have moved while it ran;
-nothing is persisted; the memo is bounded. A regression moves each input on its
-own and requires a fresh derivation.
+read, nor when a change the memo can detect may have landed while the
+derivation ran: any write of this process (the store counts every write it is
+asked to make, and a regression pins each write method), or a rules snapshot,
+engine or stored-bytes digest that reads differently after the derivation than
+when the key was taken. What neither check can see is a change made by another
+process **and undone** while one derivation ran; the service runs one process
+and says so (`cross_process_run_coordination: false`), and the module's "What
+is never held" section states the limit. Nothing is persisted; the memo is
+bounded. A regression moves each input on its own and requires a fresh
+derivation.
 
 One acceptance does not re-run the policy, and the exception is named here
 rather than only where it is implemented: a **retry** of an acceptance that was
