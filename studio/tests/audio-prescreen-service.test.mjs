@@ -212,14 +212,17 @@ test('APS-6 Final alternatives share one bar grid: differing declared pickups, o
     for (const [first, second] of [[aligned, pickedUp], [pickedUp, aligned]]) {
       await assert.rejects(prescreen({ alternatives: [byId(first), byId(second)] }), error => {
         assert.equal(error.code, 'INVALID_REQUEST');
-        assert.match(error.message, /the alternatives declare different pickups; state pickup/);
+        assert.match(error.message, /the alternatives declare different pickups, so their bars would not line up; compare Finals that share one pickup/);
         assert.deepEqual(error.details.declared, [first, second].map((final, index) => ({ label: ['A', 'B'][index], pickup: final === aligned ? '0' : '1' })));
         return true;
       });
     }
-    // A stated pickup must agree with every Final that declares one.
+    // A stated pickup must agree with every Final that declares one, in
+    // either order: agreeing with the first declared pickup is not enough.
     await refused({ alternatives: [byId(pickedUp), byId(pickedUpDecimal)], pickup: '2' }, /pickup differs from the pickup an alternative declares/);
-    await refused({ alternatives: [byId(aligned), byId(pickedUp)], pickup: '1' }, /pickup differs from the pickup an alternative declares/);
+    for (const [first, second] of [[aligned, pickedUp], [pickedUp, aligned]]) {
+      for (const pickup of ['1', '0']) await refused({ alternatives: [byId(first), byId(second)], pickup }, /pickup differs from the pickup an alternative declares/);
+    }
     await refused({ alternatives: [byId(aligned), { candidate_id: run.candidateId }], pickup: '1' }, /pickup differs from the pickup an alternative declares/);
 
     // Consistent pickups still work, compared as beat lengths however written.

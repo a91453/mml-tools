@@ -213,7 +213,10 @@ export function createPrescreenService({ canonical, projects, intake, arrangemen
     } catch (error) { refuse(`meter_text: ${error.message}`); }
     const distinct = [...new Set(meters.filter(entry => entry.meter.length).map(entry => meterText(entry.meter)))];
     if (!meter) {
-      if (distinct.length !== 1) refuse(distinct.length ? 'the alternatives declare different meter maps; state meter_text' : 'no meter map is known for these alternatives; state meter_text');
+      // Stating meter_text cannot reconcile maps that disagree: it must agree
+      // with every declared one, so the refusal names the only remedy.
+      if (distinct.length > 1) refuse('the alternatives declare different meter maps, so their bars would not line up; compare alternatives that share one meter map', { declared: distinct });
+      if (!distinct.length) refuse('no meter map is known for these alternatives; state meter_text');
       meter = meterFromText(distinct[0]);
     } else if (distinct.length && distinct.some(text => text !== meterText(meter))) {
       refuse('meter_text differs from the meter map an alternative declares; the bars would not line up', { declared: distinct });
@@ -230,7 +233,8 @@ export function createPrescreenService({ canonical, projects, intake, arrangemen
       const declared = pickups.map(entry => ({ label: entry.label, pickup: beatsOf(entry.pickup, `alternative ${entry.label} pickup`) }));
       const distinctPickups = [...new Set(declared.map(entry => entry.pickup))];
       if (!pickup) {
-        if (distinctPickups.length !== 1) refuse('the alternatives declare different pickups; state pickup', { declared });
+        // As with meter maps, a stated pickup would contradict one of them.
+        if (distinctPickups.length !== 1) refuse('the alternatives declare different pickups, so their bars would not line up; compare Finals that share one pickup', { declared });
         // All agree; zero is no pickup at all, as a bar-aligned Final records it.
         if (distinctPickups[0] !== '0') pickup = String(pickups[0].pickup);
       } else {
