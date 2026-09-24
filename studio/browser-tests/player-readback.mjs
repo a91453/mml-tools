@@ -28,8 +28,38 @@ export async function runPlayerReadbackChecks({ page, idle, file }) {
   assert.equal(await gate.locator('.badge').textContent(), 'PENDING');
   assert.ok((await gate.textContent()).includes('PLAYER_READBACK_NOT_RECORDED'));
 
-  await page.locator('#bank-file').setInputFiles({ name: 'saw.sf2', mimeType: 'application/octet-stream', buffer: Buffer.from(BasicSoundBank.getSampleSoundBankFile()) });
-  await page.locator('#bank-status').filter({ hasText: 'sha256' }).waitFor();
+  // A truncated bank (intact RIFF header) is refused here too, before it is
+  // kept. One kept before banks were parsed ends the load with the card's
+  // message, and the card leaves its loading state so play can be pressed
+  // again; a valid bank picked next plays through the checks below.
+  const sample = Buffer.from(BasicSoundBank.getSampleSoundBankFile());
+  const truncated = sample.subarray(0, sample.length >> 1);
+  const storedName = () => page.evaluate(async () => (await (await import('./studio/web/preview/soundbank-store.mjs')).loadBank())?.name ?? null);
+  const before = await storedName();
+  await page.locator('#bank-file').setInputFiles({ name: 'truncated.sf2', mimeType: 'application/octet-stream', buffer: truncated });
+  await page.locator('#timbre-preview .note').filter({ hasText: '音色庫無法解析，沒有儲存' }).waitFor();
+  assert.equal(await storedName(), before, 'the truncated bank is not kept');
+  await page.evaluate(async bytes => {
+    const db = await new Promise((resolve, reject) => { const request = indexedDB.open('mml-studio-soundbank', 1); request.onsuccess = () => resolve(request.result); request.onerror = () => reject(request.error); });
+    const buffer = new Uint8Array(bytes).buffer;
+    await new Promise((resolve, reject) => {
+      const tx = db.transaction('banks', 'readwrite');
+      tx.objectStore('banks').put({ name: 'truncated.sf2', size: buffer.byteLength, sha256: '0'.repeat(64), format: 'sfbk', savedAt: new Date().toISOString(), bytes: buffer }, 'current');
+      tx.oncomplete = resolve; tx.onerror = () => reject(tx.error);
+    });
+    db.close();
+  }, [...truncated]);
+  for (const attempt of ['first play', 'retry']) {
+    await page.locator('#preview-play').click();
+    // Well inside the engine's load timeout: the worklet's parse error ends the load.
+    await page.locator('#timbre-preview .note').filter({ hasText: '音色庫無法解析，已停止載入' }).waitFor({ timeout: 20000 });
+    assert.equal((await page.locator('#preview-play').textContent()).trim(), '▶ 播放', `${attempt}: the card is not left loading`);
+    assert.equal(await page.locator('#preview-play').isEnabled(), true, `${attempt}: play can be pressed again`);
+  }
+
+  await page.locator('#bank-file').setInputFiles({ name: 'saw.sf2', mimeType: 'application/octet-stream', buffer: sample });
+  await page.locator('#bank-status').filter({ hasText: /saw\.sf2.*sha256/ }).waitFor();
+  assert.equal(await storedName(), 'saw.sf2');
 
   // A playback with a role muted is captured but cannot be recorded.
   await page.locator('[data-preview-role="1"]').uncheck();

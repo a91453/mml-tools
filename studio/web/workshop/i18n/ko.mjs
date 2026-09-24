@@ -79,6 +79,8 @@ export default {
   "engine.step.ctx": "AudioContext 생성",
   "engine.step.worklet": "신스 processor 불러오는 중",
   "engine.ready": "엔진 준비 완료 · {hz} Hz",
+  "engine.bankUnparsable": "사운드뱅크를 해석할 수 없어 불러오기를 중단했습니다 ({detail})",
+  "engine.bankTimeout": "사운드뱅크가 {s}초 안에 불러와지지 않아 불러오기를 중단했습니다",
   "error.hint.worklet": "worklet 모듈을 불러올 수 없습니다. Studio Web 주소로 열었는지(<code>file://</code>은 반드시 실패합니다), 빌드에 <code>vendor/spessasynth/</code>가 있는지 확인하세요.",
   "error.hint.lib": "SpessaSynth 모듈을 불러올 수 없습니다. 빌드의 <code>vendor/spessasynth/</code>에 세 파일이 모두 있는지 확인하세요.",
   "error.hint.ctx": "브라우저가 AudioContext 생성을 거부했습니다. 보통 페이지를 아직 클릭하지 않은 경우입니다.",

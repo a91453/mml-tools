@@ -5,6 +5,8 @@
 // with a workspace. Nothing here makes a network request: the bytes come from
 // a file the user picks and stay in this browser. The free default bank's
 // verified subset (default-bank.mjs) is kept here too, under its own key.
+import { bankErrorDetail } from './bank-check.mjs';
+
 const DB = 'mml-studio-soundbank';
 const STORE = 'banks';
 const KEY = 'current';
@@ -40,8 +42,32 @@ export async function sha256Hex(bytes) {
   return [...new Uint8Array(digest)].map(b => b.toString(16).padStart(2, '0')).join('');
 }
 
-// Accept a user-picked File, verify its container, and keep it.
-export async function storeBank(file) {
+const BANK_CHECK_UNAVAILABLE = 'BANK_CHECK_UNAVAILABLE';
+// Parses a bank off the main thread, in a module Worker with the vendored
+// spessasynth_core (bank-check-worker.mjs), the way the default bank is
+// trimmed. `bytes` (an ArrayBuffer) is transferred to the Worker: pass a copy.
+// Rejects with the loader's message when the bank does not parse, and with
+// code BANK_CHECK_UNAVAILABLE when the Worker itself cannot run.
+export function checkBankInWorker(bytes) {
+  return new Promise((resolve, reject) => {
+    const unavailable = message => Object.assign(Error(message || 'Worker 無法啟動'), { code: BANK_CHECK_UNAVAILABLE });
+    let worker;
+    try { worker = new Worker(new URL('./bank-check-worker.mjs', import.meta.url), { type: 'module' }); }
+    catch (error) { reject(unavailable(error?.message)); return; }
+    const done = () => worker.terminate();
+    worker.onmessage = ({ data }) => { done(); if (data?.ok) resolve({ presets: data.presets }); else reject(Error(data?.message || '無法解析')); };
+    worker.onerror = event => { event.preventDefault?.(); done(); reject(unavailable(event.message)); };
+    worker.postMessage({ bytes }, [bytes]);
+  });
+}
+
+// Accept a user-picked File, verify its container, check that it parses, and
+// keep it. The RIFF header alone does not make a bank: one cut short or
+// corrupt past its header would be kept and then fail every later load, after
+// every reload, so it is parsed first and refused, with nothing written,
+// unless it parses. `check` receives a copy of the bytes; tests pass one that
+// runs the npm spessasynth_core in-process instead of the Worker.
+export async function storeBank(file, { check = checkBankInWorker } = {}) {
   const name = String(file?.name ?? '');
   if (!BANK_EXTENSIONS.some(ext => name.toLowerCase().endsWith(ext))) throw Error('音色庫需為 .dls、.sf2 或 .sf3 檔案');
   if (file.size > MAX_BANK_BYTES) throw Error(`音色庫超過 ${MAX_BANK_BYTES / 1048576} MiB 上限`);
@@ -49,6 +75,12 @@ export async function storeBank(file) {
   const head = new Uint8Array(bytes, 0, Math.min(12, bytes.byteLength));
   const tag = String.fromCharCode(...head.slice(0, 4)), form = String.fromCharCode(...head.slice(8, 12));
   if (tag !== 'RIFF' || !['DLS ', 'sfbk'].includes(form)) throw Error('檔案不是 RIFF DLS／SoundFont 音色庫');
+  try { await check(bytes.slice(0)); }
+  catch (error) {
+    const detail = bankErrorDetail(error);
+    const why = error?.code === BANK_CHECK_UNAVAILABLE ? '無法在這個瀏覽器檢查音色庫，沒有儲存' : '音色庫無法解析，沒有儲存';
+    throw Error(detail ? `${why}（${detail}）` : why);
+  }
   const record = { name, size: bytes.byteLength, sha256: await sha256Hex(bytes), format: form.trim(), savedAt: new Date().toISOString(), bytes };
   await transact('readwrite', store => request(store.put(record, KEY)));
   return describe(record);

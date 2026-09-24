@@ -1131,8 +1131,11 @@ const listenAudio = {
   state: () => (preview.owner === 'listen' ? preview.transport?.state ?? null : null),
   async pickBank(file) {
     const { storeBank } = await import('./preview/soundbank-store.mjs');
+    // Checked (parsed off the main thread) and kept before the engine is
+    // reset, so a refused bank leaves the engine and the kept bank as they were.
+    const stored = await storeBank(file);
     resetPreviewEngine();
-    preview.bank = await storeBank(file);
+    preview.bank = stored;
     preview.error = null;
     message(`已載入音色庫 ${file.name}；只保存在這台裝置。`);
     refreshPreview();

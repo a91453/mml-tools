@@ -79,6 +79,8 @@ export default {
   "engine.step.ctx": "Creating AudioContext",
   "engine.step.worklet": "Loading synth processor",
   "engine.ready": "Engine ready · {hz} Hz",
+  "engine.bankUnparsable": "The sound bank does not parse; loading stopped ({detail})",
+  "engine.bankTimeout": "The sound bank did not finish loading within {s} s; loading stopped",
   "error.hint.worklet": "The worklet module could not be loaded. Open the Workshop from your Studio Web address (<code>file://</code> always fails) and check that the build contains <code>vendor/spessasynth/</code>.",
   "error.hint.lib": "The SpessaSynth module could not be loaded — check that all three files in the build's <code>vendor/spessasynth/</code> are present.",
   "error.hint.ctx": "The browser refused to open an AudioContext, usually because the page has not been clicked yet.",

@@ -3,6 +3,7 @@
 // Workshop edits sit outside the Canonical/verified pipeline and are never evidence.
 import { WORKLET, BOOT, ENGINE_LIB } from "./config.mjs";
 import * as i18n from "./i18n.mjs";
+import { addSoundBankOrFail } from "../preview/bank-check.mjs";
 
 let ctx = null, synth = null, out = null, WorkletSynthesizer = null, booting = null;
 
@@ -57,7 +58,15 @@ export async function loadBank(buf) {
 
     synth.addNewChannel();
   }
-  await synth.soundBankManager.addSoundBank(buf, "main");
+  // A bank the worklet cannot parse is reported only as an event; without the
+  // guard this load, and every bank load queued behind it, would never end.
+  // The synth keeps the bank it had.
+  try { await addSoundBankOrFail(synth, buf, "main"); }
+  catch (err) {
+    if (err?.code === "BANK_UNPARSABLE") throw Error(i18n.t("engine.bankUnparsable", { detail: err.message }));
+    if (err?.code === "BANK_LOAD_TIMEOUT") throw Error(i18n.t("engine.bankTimeout", { s: Math.round(err.timeoutMs / 1000) }));
+    throw err;
+  }
   return { list: synth.presetList, mb };
 }
 

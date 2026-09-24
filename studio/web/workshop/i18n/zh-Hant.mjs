@@ -76,6 +76,8 @@ export default {
   "engine.step.ctx": "建立 AudioContext",
   "engine.step.worklet": "載入合成器 processor",
   "engine.ready": "引擎就緒 · {hz} Hz",
+  "engine.bankUnparsable": "音色庫無法解析，已停止載入（{detail}）",
+  "engine.bankTimeout": "音色庫在 {s} 秒內沒有載入完成，已停止載入",
   "error.hint.worklet": "worklet 模組載不進來。請從 Studio Web 的網址開啟（<code>file://</code> 一定失敗），並確認建置裡有 <code>vendor/spessasynth/</code>。",
   "error.hint.lib": "SpessaSynth 模組載不進來，確認建置裡的 <code>vendor/spessasynth/</code> 三個檔案都在。",
   "error.hint.ctx": "瀏覽器不給開 AudioContext，通常是頁面還沒被點過。",

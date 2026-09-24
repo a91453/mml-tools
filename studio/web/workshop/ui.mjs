@@ -601,6 +601,10 @@ function onTransportKey(e) {
   e.preventDefault();
 }
 
+// The line is shown as HTML (say), and an error can quote a file's own bytes
+// (a damaged bank's chunk name, bank-check.mjs), so its message is escaped.
+const escHtml = v => String(v ?? "").replace(/[&<>"']/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
+
 export function describe(err, headline) {
   const s = err.step
     ? i18n.t("ui.stepWrap", { step: i18n.t(`engine.step.${err.step}`) })
@@ -614,7 +618,7 @@ export function describe(err, headline) {
     hint = i18n.t("error.hint.ctx");
   else
     hint = i18n.t("error.hint.generic");
-  return i18n.t("ui.errorLine", { headline, step: s, msg: err.message, hint });
+  return i18n.t("ui.errorLine", { headline, step: s, msg: escHtml(err.message), hint });
 }
 
 // The sound bank is the one the user keeps in Studio Web's local bank store

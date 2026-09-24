@@ -177,7 +177,24 @@ export async function runWorkshopChecks({ page, base, idle, file, screenshot, pr
   await command('#gear');
   await page.locator('#dls').setInputFiles({ name: 'saw.sf2', mimeType: 'application/octet-stream', buffer: Buffer.from(BasicSoundBank.getSampleSoundBankFile()) });
   await bankLoaded('saw.sf2');
+
+  // A truncated bank (its RIFF header intact) is not kept in the store, and
+  // the synth's parse error ends the load with the page's message instead of
+  // leaving it, and every bank load queued behind it, reading forever. The
+  // next pick loads.
+  const t = (key, vars = null) => page.evaluate(([key, vars]) => import('./i18n.mjs').then(i18n => i18n.t(key, vars)), [key, vars]);
+  const storedBankName = () => page.evaluate(async () => (await (await import('../preview/soundbank-store.mjs')).loadBank())?.name);
+  const sawBank = Buffer.from(BasicSoundBank.getSampleSoundBankFile());
+  await page.locator('#dls').setInputFiles({ name: 'truncated.sf2', mimeType: 'application/octet-stream', buffer: sawBank.subarray(0, sawBank.length >> 1) });
+  await page.locator('#dlsName').filter({ hasText: await t('ui.bankFailed') }).waitFor({ timeout: 20000 });
+  const shown = await page.locator('#logMsg').textContent();
+  const unparsable = (await t('engine.bankUnparsable', { detail: '\u0001' })).split('\u0001')[0];
+  assert.ok(shown.includes(await t('ui.bankLoadError')) && shown.includes(unparsable) && shown.includes('SF parsing error'), `the parse error is shown: ${shown}`);
+  assert.equal(await storedBankName(), 'saw.sf2', 'the truncated bank is not kept');
+  await page.locator('#dls').setInputFiles({ name: 'saw.sf2', mimeType: 'application/octet-stream', buffer: sawBank });
+  await bankLoaded('saw.sf2');
   await closeSettings();
+  await press(page.locator('#log button'));
   assert.equal(await page.locator('#play').isEnabled(), true);
 
   // ── a bank picked while the engine boots is not replaced ─────────────────

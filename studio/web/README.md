@@ -214,6 +214,16 @@ exact timing, event identity and the evidence boundaries. See
   - **Where your bank lives.** In its own IndexedDB database on that device. It
     is never uploaded, never in a project backup, and never in the build, and
     it always takes precedence over the default bank.
+  - **A damaged bank.** Before a picked bank is kept, a Worker parses it with
+    the vendored spessasynth_core (`preview/bank-check.mjs`), the loader the
+    synth worklet runs on it. One that does not parse, such as a file cut
+    short behind an intact header, is refused with 「音色庫無法解析，沒有儲存」
+    and nothing is stored; the kept bank stays as it was. The Workshop keeps
+    its picks in the same store and gets the same refusal. If the engine
+    still cannot load a bank (the worklet reports a parse error, or nothing
+    arrives within 60 s), the load stops with 「音色庫無法解析，已停止載入」 or
+    the timeout message, the player leaves its loading state, and the next
+    play tries again. The Workshop's bank loads stop the same way.
   - **The default bank.** A General MIDI subset of FluidR3Mono_GM.sf3 (MIT).
     It is not in this repository and not in the build: the upstream file asks
     not to be redistributed. Nothing is downloaded when the page loads. The
