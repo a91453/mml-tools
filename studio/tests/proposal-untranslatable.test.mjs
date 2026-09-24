@@ -21,6 +21,9 @@
 //     be rejected or withdrawn, and a retry is graded by the policy again,
 //     including after an attempt the run refused before writing anything; once
 //     one is admitted, it may not, and the refusal says which of the two it is.
+//     Nor may it once the run has taken a write since the acceptance that does
+//     not record which request made it: the release a rollback returns to
+//     applies an acceptance without recording any admission (section D).
 
 import test from 'node:test';
 import assert from 'node:assert/strict';
@@ -1143,5 +1146,366 @@ test('the open-proposal cap does not tell a project to withdraw what it cannot',
     await again.resolveProposal(OWNER, fixture.projectId, ids[0], { resolution: 'withdraw', reason: 'Freeing a slot, as the refusal says to.' });
     const after = await again.proposeDecision(OWNER, fixture.projectId, describe(1000));
     assert.equal(after.proposal.agent_review.verdict, AGENT_REVIEW.PROPOSABLE);
+  });
+});
+
+// ─── D. a build that does not record the admission ──────────────────────────
+//
+// Rolling the service back to the release before the admission marker and the
+// run's writer record existed, and forward again, is a documented procedure
+// (`ops/permanent/RELEASE_2026-09-24-v4.md`, Rollback). That release knows
+// neither. Its retry of an accepted proposal skips the policy, is let into the
+// run and writes to it without recording an admission, so the marker stays
+// `false`. And its `bumpRun` writes the run as `{ ...run, ...changes, revision:
+// run.revision + 1, updated_at }`: every write it makes carries, from the run it
+// read, the writer record and every other field this build keeps about the
+// run's writers. Rolled forward, the marker alone read such an acceptance as
+// one nothing of which had reached the run, and let it be withdrawn with its
+// application on the run.
+//
+// What that release leaves is written here as it leaves it. Its request reaches
+// the run through the run's public entry point exactly as its proposal layer
+// sends it -- the acceptance's key, the input the acceptance translates to, the
+// revision the acceptance observed, and no admission -- and the stored run is
+// then written back with the writer fields that release's `bumpRun` carries in
+// place of the ones this build writes. Nothing else that release writes to the
+// run differs from what this build writes for the same request.
+
+/** Rewrite one stored run in place. */
+const rewriteStoredRun = async (directory, runId, edit) => {
+  let rewritten = false;
+  for (const name of await readdir(join(directory, 'records'))) {
+    const path = join(directory, 'records', name);
+    const record = JSON.parse(await readFile(path, 'utf8'));
+    const index = (record.runs ?? []).findIndex(entry => entry.run_id === runId);
+    if (index === -1) continue;
+    record.runs[index] = edit(record.runs[index]);
+    await writeFile(path, JSON.stringify(record));
+    rewritten = true;
+  }
+  assert.ok(rewritten, 'the stored run record was found and rewritten');
+};
+
+/** Rewrite one stored proposal in place. */
+const rewriteStoredProposal = async (directory, proposalId, edit) => {
+  let rewritten = false;
+  for (const name of await readdir(join(directory, 'records'))) {
+    const path = join(directory, 'records', name);
+    const body = await readFile(path, 'utf8');
+    if (!body.includes(proposalId)) continue;
+    const record = JSON.parse(body);
+    edit(record.proposals.find(entry => entry.proposal_id === proposalId), record);
+    await writeFile(path, JSON.stringify(record));
+    rewritten = true;
+  }
+  assert.ok(rewritten, 'the stored proposal record was found and rewritten');
+};
+
+// What this build's `bumpRun` writes about the run's writers, and the older
+// build's carries unchanged from the run it read.
+const WRITER_FIELDS = ['revision_written_by', 'latest_unattributed_revision'];
+
+/** The stored run with its writer fields as they were in `before`. */
+const carriedFrom = before => run => {
+  const written = { ...run };
+  for (const field of WRITER_FIELDS) {
+    if (Object.hasOwn(before, field)) written[field] = before[field];
+    else delete written[field];
+  }
+  return written;
+};
+
+/** A write in exactly the older build's `bumpRun` shape, with no changes of its own. */
+const olderBuildBump = run => ({ ...run, revision: run.revision + 1, updated_at: new Date().toISOString() });
+
+/** A service over the same store, as after a restart or a redeploy. */
+const reopened = directory => createStudioApplication({ dataDirectory: directory, durability: 'persistent' });
+
+/**
+ * The older build's retry of an accepted final-reduction proposal, stopped
+ * inside the run: by a fault thrown before the reduction's effect, after which
+ * that build's own phase 3 records the conflict and pins the run's revision as
+ * it reads it; or by its process dying after the effect, which records nothing.
+ */
+async function olderBuildRetry(directory, context, proposal, stop) {
+  const projectId = context.fixture.projectId;
+  const runId = context.run.run_id;
+  const before = await storedRunOf(directory, runId);
+  let reached;
+  const died = new Promise(resolve => { reached = resolve; });
+  const older = createStudioApplication({
+    dataDirectory: directory,
+    durability: 'persistent',
+    runHooks: stop === 'fault'
+      ? { beforeEffect: ({ step }) => { if (step === RUN_STEP.FINAL_REDUCTION) throw Error('the older build stopped before the effect'); } }
+      : { afterEffect: ({ step }) => { if (step === RUN_STEP.FINAL_REDUCTION) { reached(); return new Promise(() => {}); } } },
+  });
+  const { application } = (await older.getProposal(OWNER, projectId, proposal.proposal_id)).proposal;
+  const plan = (await older.planFinalReduction(OWNER, projectId, { candidateId: context.run.candidate_id, decisions: REDUCTION_DECISIONS, acceptedBy: RUN_REVIEWER })).reduction.plan;
+  const call = older.resumeRun(OWNER, projectId, runId, {
+    final_reduction: { decisions: REDUCTION_DECISIONS, expected_plan_id: plan.id, accepted_by: RUN_REVIEWER, instrument_profile: null },
+    idempotency_key: application.idempotency_key,
+    expected_run_revision: application.expected_run_revision,
+  }).then(() => ({ settled: 'applied' }), error => ({ settled: 'failed', error }));
+  const outcome = await Promise.race([call, died.then(() => ({ settled: 'died' }))]);
+  if (stop === 'fault') {
+    assert.equal(outcome.settled, 'failed', `the older build's retry must be stopped inside the run, got ${outcome.settled}`);
+    assert.match(String(outcome.error.message), /older build stopped before the effect/, `the older build's retry must reach the run, got ${outcome.error.code}: ${outcome.error.message}`);
+  } else {
+    assert.equal(outcome.settled, 'died', `the older build's retry must reach the run and die there, got ${outcome.settled}: ${outcome.error?.code} ${outcome.error?.message}`);
+  }
+
+  await rewriteStoredRun(directory, runId, carriedFrom(before));
+  const after = await storedRunOf(directory, runId);
+  assert.ok(after.revision > before.revision, 'the older build\'s retry wrote to the run');
+  if (stop === 'fault') {
+    // That build's phase 3 after a failure: the conflict, what it derived, and
+    // `run_revision_at_attempt ?? runNow.revision`. No admission, which it
+    // does not know.
+    const at = new Date().toISOString();
+    await rewriteStoredProposal(directory, proposal.proposal_id, stored => {
+      stored.revision += 1;
+      stored.updated_at = at;
+      stored.application = {
+        ...stored.application,
+        conflict: { code: outcome.error.code ?? 'INVALID_REQUEST', message: String(outcome.error.message).slice(0, 500), details: outcome.error.details ?? {}, at },
+        derived: { reduction_plan_id: plan.id, proposed_plan_id: stored.action.expected_plan_id, plan_accepted_by: stored.action.plan_accepted_by },
+        run_revision_at_attempt: stored.application.run_revision_at_attempt ?? after.revision,
+      };
+    });
+  }
+  return { before, after };
+}
+
+test('an acceptance an older build\'s retry applied to the run cannot be withdrawn after rolling forward, whatever writes the run after it', async () => {
+  // The older build's retry reaches the run and is interrupted: by a thrown
+  // fault, or by its process dying. Rolled forward, the proposal is taken back
+  // at once, or after a reviewer's resume through this build -- a write that
+  // records its own writer, on top of the older build's writes that record
+  // none. Either way the acceptance's application may be on the run, and the
+  // marker (`false`: the older build records no admission) cannot say
+  // otherwise.
+  const variants = [
+    { stop: 'fault', then: null },
+    { stop: 'death', then: null },
+    { stop: 'fault', then: 'resume' },
+    { stop: 'death', then: 'resume' },
+  ];
+  for (const { stop, then } of variants) {
+    const label = then ? `${stop}, then a reviewer's resume through this build` : stop;
+    await withDirectory(async directory => {
+      const { app, fault } = translationFaulted({ dataDirectory: directory, durability: 'persistent' });
+      const context = await runAwaitingReduction(app);
+      const projectId = context.fixture.projectId;
+      const submitted = (await proposeReduction(app, context, { decisions: REDUCTION_DECISIONS })).proposal;
+      fault.armed = true;
+      const first = await accept(app, context, submitted.proposal_id);
+      assert.equal(first.ok, false, label);
+      assert.equal(first.error.details.run_resume_called, false, `${label}: this build's attempt stopped before the run`);
+      const acceptedAt = (await app.getProposal(OWNER, projectId, submitted.proposal_id)).proposal.application.expected_run_revision;
+      assert.equal(acceptedAt, context.run.revision, label);
+
+      // Rolled back: the older build's retry of the acceptance reaches the run.
+      const { after } = await olderBuildRetry(directory, context, submitted, stop);
+
+      // Rolled forward.
+      const forward = reopened(directory);
+      if (then === 'resume') {
+        const resumed = await forward.resumeRun(OWNER, projectId, context.run.run_id, {});
+        assert.ok(resumed.run.revision > after.revision, `${label}: the reviewer's resume wrote to the run`);
+        const stored = await storedRunOf(directory, context.run.run_id);
+        assert.equal(stored.revision_written_by?.revision, stored.revision, `${label}: and that write records its own writer`);
+        if (stop === 'death') {
+          assert.notEqual(resumed.run.candidate_id, context.run.candidate_id, `${label}: the reviewer's resume adopted what the older build's application minted`);
+        }
+      }
+      const mid = (await forward.getProposal(OWNER, projectId, submitted.proposal_id)).proposal;
+      assert.equal(mid.state, PROPOSAL_STATE.ACCEPTED, label);
+      assert.equal(mid.application.run_resume_called, false, `${label}: the older build recorded no admission`);
+      const runBefore = await storedRunOf(directory, context.run.run_id);
+
+      for (const resolution of ['withdraw', 'reject']) {
+        const taken = await forward.resolveProposal(OWNER, projectId, submitted.proposal_id, { resolution, reason: 'Taking it back after rolling forward.' })
+          .then(result => ({ ok: true, result }), error => ({ ok: false, error }));
+        assert.equal(taken.ok, false, `${label}: ${resolution} must be refused, got ${taken.result?.proposal?.state}: ${taken.result?.notice}`);
+        assert.equal(taken.error.code, 'PROPOSAL_CONFLICT', `${label}: ${taken.error.code}: ${taken.error.message}`);
+        assert.equal(taken.error.details.run_resume_called, false, label);
+        assert.equal(taken.error.details.run_revision_at_acceptance, acceptedAt, label);
+        assert.equal(taken.error.details.unattributed_run_revision, after.revision, `${label}: the refusal names the older build's latest write`);
+        assert.match(taken.error.message, /does not record which request made it/, label);
+      }
+      const refused = (await forward.getProposal(OWNER, projectId, submitted.proposal_id)).proposal;
+      assert.equal(refused.state, PROPOSAL_STATE.ACCEPTED, `${label}: still accepted`);
+      assert.equal(refused.revision, mid.revision, `${label}: and the refusals wrote nothing`);
+
+      // Its retry is graded again, since the marker is false, and refused: the
+      // run has moved since the acceptance. That leaves it accepted and open,
+      // the cost of a write nothing can attribute.
+      const retry = await accept(forward, context, submitted.proposal_id);
+      assert.equal(retry.ok, false, label);
+      assert.equal(retry.error.code, 'PROPOSAL_REFUSED', `${label}: ${retry.error.code}: ${retry.error.message}`);
+      assert.equal(retry.error.details.agent_review.verdict, AGENT_REVIEW.STALE, label);
+      const runAfter = await storedRunOf(directory, context.run.run_id);
+      assert.equal(runAfter.revision, runBefore.revision, `${label}: nothing here touched the run`);
+      await assert.rejects(
+        forward.resolveProposal(OWNER, projectId, submitted.proposal_id, { resolution: 'withdraw', reason: 'After the refused retry.' }),
+        error => error.code === 'PROPOSAL_CONFLICT',
+        `${label}: nor does a refused retry make it withdrawable`,
+      );
+    });
+  }
+});
+
+test('any write by the older build after the acceptance keeps it from being withdrawn, and writes by this build after that do not hide it', async () => {
+  // Nothing on the run names the request an older build's write was made for,
+  // so any such write after the acceptance -- its retry of this acceptance, or
+  // a reviewer's resume through it -- keeps the acceptance from being taken
+  // back. That is the cost of the rule, in the refusing direction. The writes
+  // after it are this build's and each records its own writer; the older
+  // build's write must still count.
+  const variants = {
+    'one older write': [olderBuildBump],
+    'one older write, then a reviewer\'s resume through this build': [olderBuildBump, 'resume'],
+    'one older write, then two resumes through this build': [olderBuildBump, 'resume', 'resume'],
+    'this build, the older build, this build': ['resume', olderBuildBump, 'resume'],
+  };
+  for (const [label, writes] of Object.entries(variants)) {
+    await withDirectory(async directory => {
+      const { app, fault } = translationFaulted({ dataDirectory: directory, durability: 'persistent' });
+      const context = await runAwaitingReduction(app);
+      const projectId = context.fixture.projectId;
+      const submitted = (await proposeReduction(app, context, { decisions: REDUCTION_DECISIONS })).proposal;
+      fault.armed = true;
+      const first = await accept(app, context, submitted.proposal_id);
+      assert.equal(first.error?.details?.run_resume_called, false, `${label}: nothing of the acceptance reached the run`);
+
+      for (const write of writes) {
+        if (write === 'resume') await reopened(directory).resumeRun(OWNER, projectId, context.run.run_id, {});
+        else await rewriteStoredRun(directory, context.run.run_id, write);
+      }
+      const forward = reopened(directory);
+      await assert.rejects(
+        forward.resolveProposal(OWNER, projectId, submitted.proposal_id, { resolution: 'withdraw', reason: 'Taking it back.' }),
+        error => {
+          assert.equal(error.code, 'PROPOSAL_CONFLICT', `${label}: ${error.code}: ${error.message}`);
+          assert.equal(error.details.run_resume_called, false, label);
+          assert.match(error.message, /does not record which request made it/, label);
+          return true;
+        },
+        label,
+      );
+      assert.equal((await forward.getProposal(OWNER, projectId, submitted.proposal_id)).proposal.state, PROPOSAL_STATE.ACCEPTED, label);
+    });
+  }
+});
+
+test('an older build\'s write the acceptance already saw does not keep an acceptance that never reached the run from being withdrawn', async () => {
+  // A write the acceptance observed was made before it and is no part of its
+  // application. Refusing every acceptance on a run an older build ever wrote
+  // would be simpler, and would take away the withdrawal that exists for an
+  // acceptance nothing of which reached the run.
+  const legacy = run => {
+    const written = { ...run };
+    for (const field of WRITER_FIELDS) delete written[field];
+    return written;
+  };
+  const variants = {
+    'nothing but this build': { before: [], after: [] },
+    'a reviewer\'s resume through this build after the acceptance': { before: [], after: ['resume'] },
+    'the older build wrote last before the acceptance': { before: [olderBuildBump], after: [] },
+    'the older build, then this build, before the acceptance': { before: [olderBuildBump, 'resume'], after: [] },
+    'a run record kept before the writer record existed': { before: [legacy], after: [] },
+    'a run record kept before the writer record existed, then a reviewer\'s resume through this build after the acceptance': { before: [legacy], after: ['resume'] },
+  };
+  const write = async (directory, context, step) => {
+    if (step === 'resume') await reopened(directory).resumeRun(OWNER, context.fixture.projectId, context.run.run_id, {});
+    else await rewriteStoredRun(directory, context.run.run_id, step);
+  };
+  for (const [label, { before, after }] of Object.entries(variants)) {
+    await withDirectory(async directory => {
+      const started = await runAwaitingReduction(reopened(directory));
+      for (const step of before) await write(directory, started, step);
+
+      // The run as the acceptance observes it, and its request as it now stands.
+      const { app, fault } = translationFaulted({ dataDirectory: directory, durability: 'persistent' });
+      const run = await runOf(app, started);
+      const targets = await app.proposalTargets(OWNER, started.fixture.projectId, run.run_id);
+      const context = { ...started, run, target: targets.targets.find(entry => entry.code === 'REDUCTION_DECISIONS_REQUIRED') };
+      const submitted = (await proposeReduction(app, context, { decisions: REDUCTION_DECISIONS })).proposal;
+      fault.armed = true;
+      const first = await accept(app, context, submitted.proposal_id);
+      assert.equal(first.ok, false, label);
+      assert.equal(first.error.details.run_resume_called, false, `${label}: nothing reached the run`);
+      for (const step of after) await write(directory, context, step);
+
+      const withdrawn = await reopened(directory).resolveProposal(OWNER, context.fixture.projectId, submitted.proposal_id, { resolution: 'withdraw', reason: 'Nothing of it reached the run.' })
+        .then(result => ({ ok: true, result }), error => ({ ok: false, error }));
+      assert.ok(withdrawn.ok, `${label}: the withdrawal must stand, got ${withdrawn.error?.code}: ${withdrawn.error?.message}`);
+      assert.equal(withdrawn.result.proposal.state, PROPOSAL_STATE.WITHDRAWN, label);
+      assert.match(withdrawn.result.notice, /never reached the run/, label);
+    });
+  }
+});
+
+test('the open-proposal cap does not count an acceptance an older build may have applied as one that can be withdrawn', async () => {
+  await withDirectory(async directory => {
+    const app = reopened(directory);
+    const fixture = await projectWithSymbolicAsset(app, OWNER);
+    const started = await app.startRun(OWNER, fixture.projectId, { asset_ids: [fixture.assetId] });
+    const target = (await app.proposalTargets(OWNER, fixture.projectId, started.run.run_id)).targets
+      .find(entry => entry.admissible_kinds.includes(PROPOSAL_KIND.EVIDENCE_NEEDED));
+    const describe = index => ({
+      run_id: started.run.run_id,
+      request_key: target.request_key,
+      kind: PROPOSAL_KIND.EVIDENCE_NEEDED,
+      proposed_by: AGENT,
+      rationale: `Statement ${index}: what is missing here.`,
+      missing_evidence: ['A score covering this section.'],
+    });
+    const ids = [];
+    for (let index = 0; index < LIMITS.maxProposalsPerProject; index += 1) {
+      ids.push((await app.proposeDecision(OWNER, fixture.projectId, describe(index))).proposal.proposal_id);
+    }
+    // As in the cap test above, the states are written directly: every open
+    // proposal accepted and admitted, but one whose marker says the run
+    // admitted none of its attempts.
+    const at = new Date().toISOString();
+    for (const name of await readdir(join(directory, 'records'))) {
+      const path = join(directory, 'records', name);
+      const body = await readFile(path, 'utf8');
+      if (!body.includes(ids[0])) continue;
+      const record = JSON.parse(body);
+      for (const entry of record.proposals) {
+        entry.state = PROPOSAL_STATE.ACCEPTED;
+        entry.resolution = { resolution: 'accept', resolved_by: OWNER, accepted_by: RUN_REVIEWER, reason: null, at };
+        entry.application = {
+          idempotency_key: `proposal:${entry.proposal_id}:${entry.revision}`, expected_run_revision: started.run.revision, run_revision_at_attempt: null,
+          run_resume_called: entry.proposal_id !== ids[0], accepted_by: RUN_REVIEWER, attempted_at: at,
+          run_revision_after: null, run_state_after: null, candidate_id_after: null, derived: {},
+          conflict: { code: 'RUN_CONFLICT', message: 'fixture', details: {}, at },
+        };
+      }
+      await writeFile(path, JSON.stringify(record));
+    }
+    await assert.rejects(reopened(directory).proposeDecision(OWNER, fixture.projectId, describe(998)), error => {
+      assert.equal(error.code, 'STORAGE_FULL');
+      assert.equal(error.details.withdrawable_open_proposals, 1, 'nothing has written to the run since that acceptance');
+      return true;
+    });
+
+    // Rolled back and forward: the older build wrote to the run after it.
+    await rewriteStoredRun(directory, started.run.run_id, olderBuildBump);
+    const forward = reopened(directory);
+    await assert.rejects(forward.proposeDecision(OWNER, fixture.projectId, describe(999)), error => {
+      assert.equal(error.code, 'STORAGE_FULL');
+      assert.equal(error.details.withdrawable_open_proposals, 0);
+      assert.match(error.message, /none of them can be rejected or withdrawn/);
+      return true;
+    });
+    await assert.rejects(
+      forward.resolveProposal(OWNER, fixture.projectId, ids[0], { resolution: 'withdraw', reason: 'Freeing a slot.' }),
+      error => error.code === 'PROPOSAL_CONFLICT',
+      'and the withdrawal the count no longer offers is refused',
+    );
   });
 });

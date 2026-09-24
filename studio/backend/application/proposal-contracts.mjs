@@ -258,9 +258,12 @@ export const PROPOSAL_STATE = freeze({
   /**
    * Explicitly accepted by a named reviewer; the existing operation is being
    * reached. Its `application.run_resume_called` says whether the run ever
-   * admitted an attempt -- let the prepared input past every refusal of its
-   * own, before writing anything: while it is `false`, nothing reached the run
-   * and the proposal may still be rejected or withdrawn.
+   * admitted an attempt made through this build -- let the prepared input past
+   * every refusal of its own, before writing anything. While it is `false`,
+   * and the run has taken no write since the acceptance that does not record
+   * which request made it (what the release a rollback returns to leaves when
+   * it applies the acceptance itself), nothing of it reached the run and the
+   * proposal may still be rejected or withdrawn.
    */
   ACCEPTED: 'accepted',
   /** The existing operation was called with the input this proposal prepared. */

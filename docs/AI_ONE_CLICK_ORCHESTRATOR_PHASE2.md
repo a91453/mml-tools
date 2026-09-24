@@ -109,7 +109,7 @@ that happens to have been written by a machine.
 | `studio/backend/application/proposal-service.mjs` | Submission, the Agent Review Policy, acceptance, and the translation into an existing operation's input. |
 | `studio/backend/application/plan-derivation-memo.mjs` | The policy's plan derivation, held in memory on every input it reads, so a polled read does not re-run an engine (§6). Grades nothing. |
 | `studio/backend/application/contracts.mjs` | `pro_` identity, three error codes, five bounds. |
-| `studio/backend/application/run-service.mjs` | Every review request now carries the `request_key` an agent addresses it by. Every revision the run takes records the request whose write produced it, and which revision that write produced (`revision_written_by`), and `resume` takes two in-process options no transport reaches, `admit` and `wrote`, so an acceptance knows truthfully what its own request did to the run (§7). |
+| `studio/backend/application/run-service.mjs` | Every review request now carries the `request_key` an agent addresses it by. Every revision the run takes records the request whose write produced it, and which revision that write produced (`revision_written_by`); every write also keeps the latest revision it has found written with no recorded writer (`latest_unattributed_revision`, never lowered); and `resume` takes two in-process options no transport reaches, `admit` and `wrote`, so an acceptance knows truthfully what its own request did to the run (§7). |
 | `studio/backend/application/index.mjs` | Wires it in, exposes the five operations, and adds two read-only baseline projections to the internal façade. |
 | `studio/backend/application/capabilities.mjs` | The factual `proposals` capability block. |
 | `server/api.mjs`, `server/mcp-studio.mjs` | Thin adapters. One protocol behind both. |
@@ -336,13 +336,15 @@ place is the run's, not this layer's — the same idempotency key, the same
 request, and a revision precondition that moves only to a revision the run's
 own record says this application's request wrote, so a retry can only finish
 the application it is a retry of. A retry of an acceptance none of whose
-attempts the run ever admitted (`run_resume_called: false`) has moved nothing,
-and is **not** excepted: the policy grades it again, exactly as it graded the
-first acceptance, so one whose run or material has moved since is refused, and
-can still be withdrawn. That includes an acceptance whose attempts reached
-`runs.resume` and were refused there, before the run wrote anything — at its
-revision precondition, say, because another application moved the run first.
-§7 is the whole argument.
+attempts the run ever admitted through this build (`run_resume_called: false`)
+is **not** excepted: the policy grades it again, exactly as it graded the
+first acceptance, so one whose run or material has moved since is refused. It
+can still be withdrawn, unless the run has taken a write since the acceptance
+that does not record which request made it, which is what the release a
+rollback returns to leaves when it applies the acceptance itself (§7). That
+includes an acceptance whose attempts reached `runs.resume` and were refused
+there, before the run wrote anything — at its revision precondition, say,
+because another application moved the run first. §7 is the whole argument.
 
 ## 7. Acceptance, and why there is only one mutation path
 
@@ -476,19 +478,35 @@ is therefore
 run's own first lock hold, after the run has made every refusal of its own (the
 idempotency fingerprint, the revision precondition, the audit-closed guard, the
 adoption checks) and before it writes anything. So `false` means the run never
-let any attempt in and nothing of this acceptance has changed it, and only then
-may an accepted proposal be rejected or withdrawn (the acceptance stays on the
-record as `resolution.superseded_acceptance`). Once it is `true` — or absent, on
-a record accepted before the field existed, where nothing can establish that no
-attempt reached the run — the refusal stands and says which of the two it is.
+let an attempt made through this build in. The release a rollback returns to
+does not record the admission at all, so the run is read as well, and an
+accepted proposal may be rejected or withdrawn only while both hold (the
+acceptance then stays on the record as `resolution.superseded_acceptance`):
+
+1. `run_resume_called` is `false`; and
+2. no revision the run has taken since the acceptance observed it — that is,
+   after `application.expected_run_revision` — was produced by a write that does
+   not record which request made it. The latest such revision is the larger of
+   the run's `latest_unattributed_revision` and, when `revision_written_by` does
+   not name the run's current revision, that revision (below: *nor can a build
+   that does not record the admission open a withdrawal*).
+
+Otherwise the refusal stands and says which case it is: the marker is `true`;
+the marker is absent, on a record accepted before the field existed, where
+nothing can establish that no attempt reached the run; or the run has taken
+such a write since the acceptance, with the revision it names. A run the
+proposal names that is not on the record is refused as `RUN_NOT_FOUND`. The
+open-proposal cap counts a proposal as one that can be withdrawn by the same
+two conditions.
 This is race-free without refusing while an attempt is in flight: the
 withdrawal and the admission take the same lock, so either the withdrawal lands
 first and the run refuses the attempt with nothing written, or the marker lands
 first and the withdrawal is refused. A retry of an acceptance whose marker is
-still `false` goes through the policy again, since nothing of it has moved the
-run: if a reviewer advanced the run meanwhile, or the material moved, the retry
-is refused as `STALE` before it reaches the run, and the proposal can still be
-withdrawn. A regression moves the run between a failed attempt and its retry
+still `false` goes through the policy again, since no attempt of it made
+through this build has moved the run: if a reviewer advanced the run meanwhile,
+or the material moved, the retry is refused as `STALE` before it reaches the
+run, and the proposal can still be withdrawn unless condition 2 fails. A
+regression moves the run between a failed attempt and its retry
 and requires exactly that. Carried past the policy instead, the retry would
 still not get in: it carries the revision the acceptance observed, and the run
 refuses it at its own precondition, before admitting it, so the marker stays
@@ -625,6 +643,69 @@ run as that build leaves it — after a reviewer's resume, and after a bare
 write in that build's shape — and requires the retry to be refused with the run
 untouched and the proposal not withdrawable.
 
+**Nor can a build that does not record the admission open a withdrawal.** The
+same release knows nothing of `run_resume_called` either. Its retry of an
+accepted proposal skips the policy, as it does for every accepted proposal, is
+let into the run and writes to it, and records no admission. So after an
+acceptance whose first attempt stopped before the run (the marker `false`), a
+rollback, that build's retry reaching the run and being interrupted — by a
+thrown fault, or by its process dying — and a roll forward, the marker still
+said `false` with the acceptance's reduction input on the run and its step
+pending. The proposal could be withdrawn with the notice that nothing of it had
+reached the run, and in the process-death case the owner's next plain resume
+adopted the candidate that application had minted. An independent review
+reproduced both with the released build itself.
+
+Nothing either build writes names this acceptance on every write that build
+makes. The acceptance's key reaches the run only in the idempotency receipt,
+which the run writes in a last hold once every step has finished, so none of an
+interrupted application's writes carries it, and which is kept among the run's
+latest `maxIdempotencyReceiptsPerRun` receipts, so a later one can evict it. The
+input the run folds in is content, which a reviewer's own request can repeat and
+a later resume replaces. The effect attempt ids are random. That build's own
+last phase records a conflict and a revision on the proposal after a thrown
+failure, nothing after a process death, and never an admission. What the run
+does record is whether each revision's writer is known: every write that build
+makes records none, because it carries the record of an earlier revision.
+Only the latest revision can be read that way, since the next write that
+records its writer replaces the record, so `bumpRun` also keeps
+`latest_unattributed_revision`: before each write it folds in the run's current
+revision when that revision's writer is not recorded, and it never lowers the
+value. That build spreads the run it read, so it carries the field forward as
+well. Together they say whether any write since a given revision recorded no
+writer, however many writes that do record one came after it.
+
+So the rule is the conservative one: after a write the run cannot attribute
+has landed since the acceptance, the acceptance is not taken back, whatever
+that write was (condition 2 above). A write the acceptance observed was made
+before it and is no part of its application, so it does not count: a run that
+build wrote before the acceptance, or one kept before the run recorded writers
+at all, leaves an acceptance that never reached the run withdrawable. The cost,
+in the refusing direction: a reviewer's resume through that build after the
+acceptance cannot be told from that build's retry of it, so it blocks the
+withdrawal too. Such a proposal's retry is graded by the policy again, since the
+marker is `false`, and refused as `STALE`, because the run has moved since the
+acceptance; it stays accepted and open, the refusal names the unattributed
+revision, and the remedy is a fresh proposal against the request as it stands.
+The same holds when this application's own retry through that build is the
+write: it cannot be finished or taken back.
+
+Regressions in `proposal-untranslatable.test.mjs` write the stored run as that
+build leaves it — its retry's request sent through the run's public entry point
+exactly as its proposal layer sends it, with the writer fields its `bumpRun`
+carries in place of the ones this build writes, and its last phase's record of a
+thrown failure — and require the rejection and the withdrawal to be refused, the
+retry refused as `STALE`, and nothing written: after a fault and after a process
+death, each alone and followed by a reviewer's resume through this build. Others
+put a bare write in that build's shape after the acceptance, alone, followed by
+one and by two resumes through this build, and between two of them, and require
+the withdrawal to be refused for the same reason; require an acceptance that
+never reached the run to stay
+withdrawable when that build's write, or a run record kept before the field, is
+one the acceptance observed, including when a reviewer's resume through this
+build follows the acceptance; and require the open-proposal cap to stop counting
+such an acceptance as one that can be withdrawn.
+
 Nor does it hand the standing permission back one round later. A retry the run
 refuses writes nothing, so the run's latest writer stays whoever moved it, and
 the next retry reads the same record and is refused the same way. One regression
@@ -675,13 +756,17 @@ flight and must record no revision.
 act; a crash between it and its application advances the run, which makes the
 proposal stale, and re-running the policy there would refuse the very retry the
 marker exists for. So the policy gate is skipped for a proposal that is already
-`accepted`, carries a marker, and may have reached the run — and nothing is
-taken on trust, because safety there is the run's: the same key, the same
-request, and a revision precondition that moves only to a revision the run
-records as this application's own. This mirrors Phase 1's own ordering, where an
-idempotency replay is decided *before* the audit-closed guard. A proposal whose
-marker says the run admitted no attempt has nothing of the kind to finish, and
-is graded again (above).
+`accepted`, carries a marker, and whose marker does not say the run admitted
+none of its attempts (`run_resume_called` is `true`, or absent on a record
+accepted before the field existed) — and nothing is taken on trust, because
+safety there is the run's: the same key, the same request, and a revision
+precondition that moves only to a revision the run records as this
+application's own. This mirrors Phase 1's own ordering, where an idempotency
+replay is decided *before* the audit-closed guard. A proposal whose marker says
+the run admitted no attempt through this build has nothing of this build's to
+finish, and is graded again (above) — including when the release a rollback
+returns to has written to the run since the acceptance, where the policy then
+refuses it because the run has moved.
 
 The state that used to be the ambiguous one — the run advanced but its receipt
 was not written, which is an application interrupted inside `advance`, a process
@@ -950,7 +1035,7 @@ into the store directly.
 | `studio/tests/proposal-agent-review-policy.test.mjs` | the Lead evidence boundary, Gate 8, Gate 9, the ladder, recomputation |
 | `studio/tests/proposal-duplication.test.mjs` | one acceptance, one application — across retries, concurrency, a crash in the window, a second interruption, a process that dies inside the run, and an interruption by a fault followed by a retry whose process dies inside the run; a retry continues only from a run whose latest write is its own application's, and is refused once any other writer — a reviewer, the same payload without the key, the same key with another payload — has moved it; a pin or a marker an earlier version recorded is not trusted past what it proves, and a writer record a build that predates it carried onto its own revision is not read as this application's |
 | `studio/tests/proposal-adversarial.test.mjs` | the four escalations an independent adversarial review found, kept in the shape they were found in |
-| `studio/tests/proposal-untranslatable.test.mjs` | a proposal the acceptance could never translate is `INVALID` before it is accepted, and one whose plan cannot be derived from the stored material is `STALE`; an acceptance the run never admitted — failed before the run, or refused by the run before it wrote anything, because another acceptance or a reviewer moved it first — can be withdrawn, race-free, is graded again on a retry, and pins no revision — nor does a refused twin of an attempt of the same acceptance the run admitted first; one that may have reached it cannot be withdrawn; an admitted attempt records where its own request left the run, never a revision a reviewer's resume produced after it, and that reviewer's move leaves its retry refused; an attempt whose only write is the run's first hold records that write as its own and is finished by its retry; a retry that would carry another request under the same key is refused before the run writes |
+| `studio/tests/proposal-untranslatable.test.mjs` | a proposal the acceptance could never translate is `INVALID` before it is accepted, and one whose plan cannot be derived from the stored material is `STALE`; an acceptance the run never admitted — failed before the run, or refused by the run before it wrote anything, because another acceptance or a reviewer moved it first — can be withdrawn, race-free, is graded again on a retry, and pins no revision — nor does a refused twin of an attempt of the same acceptance the run admitted first; one that may have reached it cannot be withdrawn; an admitted attempt records where its own request left the run, never a revision a reviewer's resume produced after it, and that reviewer's move leaves its retry refused; an attempt whose only write is the run's first hold records that write as its own and is finished by its retry; a retry that would carry another request under the same key is refused before the run writes; an acceptance the release a rollback returns to may have applied — any write since the acceptance that records no writer, alone or followed by writes that do — cannot be rejected or withdrawn, and the open cap does not count it as one that can, while such a write the acceptance observed leaves it withdrawable |
 | `studio/tests/proposal-plan-derivation-memo.test.mjs` | the policy derives a plan once per set of inputs, and a held outcome is never served for any other: each input moved on its own, and a derivation a change may have raced, is derived afresh (`studio/tests/application-store-regressions.test.mjs` pins that every store write method moves the write count that guard reads, and no read does) |
 | `tests/proposal-transport.test.mjs` | HTTP/MCP parity, and what Phase 2 did not add |
 
