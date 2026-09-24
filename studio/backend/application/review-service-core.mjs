@@ -957,4 +957,38 @@ export function gatesFrom(readiness) {
   });
 }
 
+// The readiness gates `gatesFrom` projects onto a public axis, and that axis.
+const AXIS_BY_READINESS_GATE = Object.freeze({
+  technical: 'technical',
+  source: 'source',
+  originalAudio: 'audio',
+  playerReadback: 'player_readback',
+  mobileAdaptation: 'mobile_adaptation',
+  regression: 'regression',
+  inGameAcceptance: 'in_game',
+});
+
+/**
+ * Every gate a readiness result leaves unresolved: any status other than PASS
+ * or N/A, a missing status included.
+ *
+ * `gatesFrom` projects seven axes and is kept as it is for its readers. Under
+ * machine delivery a Final can be delivered with other gates still open --
+ * Lead promotion, micro-timing, Core3 completeness, version drift and any gate
+ * a later release adds -- and a list built from the seven axes alone reported
+ * none of them. The axes keep their public names here; every other readiness
+ * gate is listed under its readiness name, in readiness order, after them.
+ */
+export function unresolvedGatesFrom(readiness, axes = gatesFrom(readiness)) {
+  const unresolved = status => status !== GATE_STATUS.PASS && status !== GATE_STATUS.NOT_APPLICABLE;
+  const names = Object.entries(axes)
+    .filter(([name, status]) => name !== 'notice' && unresolved(status))
+    .map(([name]) => name);
+  for (const [name, gate] of Object.entries(readiness?.gates ?? {})) {
+    if (Object.hasOwn(AXIS_BY_READINESS_GATE, name)) continue;
+    if (unresolved(gate?.status)) names.push(name);
+  }
+  return Object.freeze([...new Set(names)]);
+}
+
 export { CONFIRMATIONS, CONFIRMATION_SCOPE, PLAYER_READBACK_VALUES };

@@ -8,7 +8,7 @@ import {
   unpackAudioSubmission, exportAudioHistory,
 } from './audio-report-history.mjs';
 export {
-  gatesFrom, CONFIRMATIONS, CONFIRMATION_SCOPE, PLAYER_READBACK_VALUES, STALE_CONFIRMATION,
+  gatesFrom, unresolvedGatesFrom, CONFIRMATIONS, CONFIRMATION_SCOPE, PLAYER_READBACK_VALUES, STALE_CONFIRMATION,
 } from './review-service-core.mjs';
 
 const guarded = operation => {

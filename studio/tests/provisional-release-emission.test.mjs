@@ -36,6 +36,7 @@ import {
 } from '../backend/final/delivery-evaluator.mjs';
 import { createStudioApplication } from '../backend/application/index.mjs';
 import { createStore } from '../backend/application/store.mjs';
+import { unresolvedGatesFrom } from '../backend/application/review-service.mjs';
 import { OWNER, ALL_RELEASE_EVENTS, assign, oneTickEarlyBaseline, roleDecisions } from './fixtures/release-fixtures.mjs';
 
 const identity = (version, schema) => Object.freeze({ canonical_version: version, canonical_status: 'PUBLISHED', rules_snapshot_sha: 'd'.repeat(40), machine_delivery_schema: schema });
@@ -329,3 +330,58 @@ test('the Final service delivers role-less Melody material without Lead evidence
   assert.equal(refused.operation, 'blocked');
   assert.deepEqual([...refused.blockers].sort(), ['leadPromotion', 'microTiming']);
 }));
+
+// A Final delivered under machine delivery with Lead promotion and micro-timing
+// still PENDING used to list only the seven public axes in
+// remaining_pending_gates, so neither open gate appeared there.
+test('a delivered Final lists every gate it was delivered with unresolved in remaining_pending_gates', async () => withDirectory(async directory => {
+  const decisions = [
+    ...['lead-1', 'lead-2', 'lead-3', 'lead-4'].map(id => assign(id, 'Melody', { leadEvidence: null })),
+    ...['harm-1', 'harm-2'].map(id => assign(id, 'Chord1')),
+    ...['bass-1', 'bass-2'].map(id => assign(id, 'Chord2')),
+  ];
+  const at2 = await serviceUnder(AT2, join(directory, 'at2'));
+  const { projectId, candidateId } = await candidate(at2, decisions);
+  const delivered = await at2.finalize(OWNER, projectId, { candidateId, confirmations: CONFIRMATIONS });
+  assert.equal(delivered.operation, 'succeeded', JSON.stringify(delivered.blockers));
+  const { artifact } = await at2.getArtifact(OWNER, delivered.artifact_id);
+  const remaining = artifact.remaining_pending_gates;
+  assert.ok(remaining.includes('leadPromotion'), JSON.stringify(remaining));
+  assert.ok(remaining.includes('microTiming'), JSON.stringify(remaining));
+  assert.ok(remaining.includes('in_game'), 'the public axis names are kept');
+  // Exactly the unresolved readiness gates, each once, the seven projected
+  // axes under their public names.
+  const axis = { technical: 'technical', source: 'source', originalAudio: 'audio', playerReadback: 'player_readback', mobileAdaptation: 'mobile_adaptation', regression: 'regression', inGameAcceptance: 'in_game' };
+  const expected = Object.entries(artifact.readiness_summary.gates)
+    .filter(([, status]) => status !== 'PASS' && status !== 'N/A')
+    .map(([name]) => axis[name] ?? name);
+  assert.deepEqual([...remaining].sort(), [...new Set(expected)].sort());
+  for (const name of Object.keys(axis).filter(name => name !== 'technical' && name !== 'source' && name !== 'regression')) {
+    assert.equal(remaining.includes(name), false, `${name} is listed under its public axis name only`);
+  }
+  // Every entry of the machine-delivery ledger is in the list.
+  for (const entry of artifact.machine_delivery.unresolved_evidence_ledger) {
+    assert.ok(remaining.includes(axis[entry.gate] ?? entry.gate), entry.gate);
+  }
+}));
+
+test('unresolvedGatesFrom lists any gate that is not PASS or N/A, a missing status and an unknown gate included', () => {
+  const readiness = { gates: {
+    technical: { status: 'PASS' },
+    source: { status: 'PASS' },
+    originalAudio: { status: 'N/A' },
+    playerReadback: { status: 'PENDING' },
+    mobileAdaptation: { status: 'PASS' },
+    regression: { status: 'PASS' },
+    inGameAcceptance: { status: 'PENDING' },
+    leadPromotion: { status: 'PENDING' },
+    core3Completeness: { status: 'PENDING' },
+    versionDrift: { status: 'PENDING' },
+    microTiming: { status: 'PASS' },
+    crossSourceHarmony: {},
+    someFutureGate: { status: 'FAIL' },
+  } };
+  assert.deepEqual([...unresolvedGatesFrom(readiness)], ['player_readback', 'in_game', 'leadPromotion', 'core3Completeness', 'versionDrift', 'crossSourceHarmony', 'someFutureGate']);
+  // No readiness at all: every axis is NOT_RUN and in_game is PENDING.
+  assert.deepEqual([...unresolvedGatesFrom(null)], ['technical', 'source', 'audio', 'player_readback', 'mobile_adaptation', 'regression', 'in_game']);
+});

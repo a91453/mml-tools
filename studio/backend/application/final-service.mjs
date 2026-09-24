@@ -29,7 +29,7 @@
 
 import { ERROR_CODES, GATE_STATUS, OPERATION_STATUS, fail, requireString } from './contracts.mjs';
 import { sha256Of } from './store.mjs';
-import { gatesFrom } from './review-service.mjs';
+import { gatesFrom, unresolvedGatesFrom } from './review-service.mjs';
 import { migrateMachineDeliveryState } from './machine-delivery-migration.mjs';
 import { MACHINE_DELIVERY_SCHEMA_V2, deliveryBlockingGates } from '../final/delivery-evaluator.mjs';
 
@@ -422,9 +422,11 @@ export function createFinalService({ canonical, projects, review, store }) {
         },
         gates: emitGates,
         machine_delivery: machineDelivery,
-        remaining_pending_gates: Object.entries(emitGates)
-          .filter(([name, status]) => name !== 'notice' && status !== 'PASS' && status !== 'N/A')
-          .map(([name]) => name),
+        // Every gate the Final was delivered with still open, not only the
+        // seven public axes: under machine delivery Lead promotion,
+        // micro-timing, Core3 completeness or version drift can be PENDING
+        // on a delivered Final, and each is listed under its readiness name.
+        remaining_pending_gates: [...unresolvedGatesFrom(finalReadiness, emitGates)],
         canonical: provenance,
         emitter_notice: emitted.notice,
         acceptance_notice: acceptanceNotice(finalReadiness.songState),
