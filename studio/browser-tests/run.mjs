@@ -64,7 +64,16 @@ try {
         }).observe(document,{subtree:true,childList:true,attributes:true,attributeFilter:['aria-busy']});
       });
       await installWorkerControls(page);
-      const idle=()=>page.waitForFunction(()=>document.querySelector('#app')?.getAttribute('aria-busy')!=='true'&&document.querySelector('#app h1'));
+      // A bare timeout does not say where the page stopped: boot still waiting
+      // on the worker, an error left on the boot screen, or a commit that never
+      // settled. Name what was on screen, on the line the CI summary prints.
+      const idle=async()=>{
+        try{await page.waitForFunction(()=>document.querySelector('#app')?.getAttribute('aria-busy')!=='true'&&document.querySelector('#app h1'));}
+        catch(error){
+          const seen=await page.evaluate(()=>({url:location.href,boot_hidden:document.querySelector('#boot')?.hidden,boot:document.querySelector('#boot')?.textContent?.trim().slice(0,300),app_hidden:document.querySelector('#app')?.hidden,aria_busy:document.querySelector('#app')?.getAttribute('aria-busy'),h1:document.querySelector('#app h1')?.textContent??null,message:document.querySelector('#message')?.textContent,analysis:document.querySelector('#gates')?.textContent.match(/ANALYSIS_[A-Z_]+(: [^\n]{0,200})?/)?.[0]??null,worker_starts:window.workerStarts,worker_stops:window.workerStops,held_request:typeof window.releaseWorker==='function',service_worker_controls:Boolean(navigator.serviceWorker?.controller)})).catch(e=>({unreadable:e.message}));
+          throw Object.assign(Error(`${error.message.split('\n')[0]}; the page never settled: ${JSON.stringify(seen)}`),{cause:error});
+        }
+      };
       const file=async(slot,content,name)=>{await page.locator(`[data-intake="${slot}"]`).setInputFiles({name,mimeType:'text/plain',buffer:Buffer.from(content)});await page.waitForFunction(name=>document.querySelector('#intake')?.textContent.includes(name),name);await idle();};
       await page.goto(base);await page.locator('#app h1').waitFor();await idle();
       assert.equal(await page.locator('#copy-mml').isEnabled(),false);
