@@ -65,7 +65,15 @@ const parser = new XMLParser({
   parseTagValue: false,
   parseAttributeValue: false,
   trimValues: true,
-  processEntities: false,
+  // Text and attribute values are decoded as XML requires: the predefined
+  // entities (&amp; &lt; &gt; &apos; &quot;) and numeric character references
+  // (&#233; &#xE9;). They used to reach part names, titles, lyrics and words
+  // directions verbatim ("Rock &amp; Roll"). The parser decodes &amp; last,
+  // so "&amp;#233;" stays the literal text "&#233;", and CDATA is untouched.
+  // DTD subsets and entity declarations are still refused by sanitizeXml
+  // before parsing, so no document-defined entity is ever expanded.
+  processEntities: true,
+  htmlEntities: true,
 });
 
 const nodeName = node => Object.keys(node ?? {}).find(key => key !== ':@') ?? null;

@@ -187,3 +187,30 @@ test('the Studio Web reads the same .mxl through the same reader', () => {
   assert.throws(() => intakeMxl({ name: 'fake.mxl', bytes: encoder.encode(XML), id: 'x' }), /not a compressed MusicXML/);
   assert.throws(() => intakeMxl({ name: 'bad.mxl', bytes: mxl([{ name: '../evil', data: 'x' }]), id: 'x' }), /MXL_ENTRY_PATH_UNSAFE/);
 });
+
+// XML text and attribute values are decoded as XML requires. The parsers ran
+// with entity processing off, so "Piano &amp; Voice" reached the part name,
+// lyrics and titles verbatim, and a rootfile named "Rock &amp; Roll.xml" was
+// looked up under that literal name.
+test('entity and character references are decoded once, in text and attributes, and CDATA stays literal', () => {
+  const xml = '<?xml version="1.0" encoding="UTF-8"?><score-partwise version="4.0">'
+    + '<work><work-title>Rock &amp; Roll &#233;t&#xE9;</work-title></work>'
+    + '<part-list><score-part id="P1"><part-name>Piano &amp; Voice &amp;#233;</part-name></score-part></part-list><part id="P1">'
+    + '<measure number="1"><attributes><divisions>1</divisions><time><beats>4</beats><beat-type>4</beat-type></time></attributes>'
+    + '<note><pitch><step>C</step><octave>4</octave></pitch><duration>4</duration><voice>1</voice><lyric><text>don&apos;t</text></lyric>'
+    + '<lyric><text><![CDATA[a &amp; b]]></text></lyric></note></measure></part></score-partwise>';
+  const project = ingestMusicXML(xml);
+  assert.equal(project.title, 'Rock & Roll été');
+  assert.equal(project.parts[0].name, 'Piano & Voice &#233;', '&amp; is decoded last, so an escaped reference stays literal');
+  assert.deepEqual(project.events[0].metadata.lyrics, ["don't", 'a &amp; b']);
+
+  const named = 'Rock & Roll.xml';
+  const bytes = zip([
+    { name: 'mimetype', data: 'application/vnd.recordare.musicxml', method: 0 },
+    { name: 'META-INF/container.xml', data: CONTAINER('Rock &amp; Roll.xml') },
+    { name: named, data: XML },
+  ]);
+  const { xml: extracted, container } = decodeMusicXMLBytes(bytes);
+  assert.equal(extracted, XML);
+  assert.equal(container.rootfile, named);
+});
