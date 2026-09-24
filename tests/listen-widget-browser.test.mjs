@@ -7,8 +7,10 @@
 // sound: where playback starts, which notes it queues first, and what text a
 // feedback button would post into the conversation.
 //
-// Skipped when no Chromium is installed (CI's unit job has none); the browser
-// jobs and a local checkout with Playwright's Chromium run it.
+// Skipped when no Chromium is installed (the npm test job in CI has none).
+// Studio CI's studio-web job installs Chromium and runs this file with
+// STUDIO_REQUIRE_BROWSER_TESTS=1, which turns a missing browser into a failure
+// instead of a silent skip.
 
 import test from 'node:test';
 import assert from 'node:assert/strict';
@@ -37,6 +39,9 @@ const executable = (() => {
   const candidates = [process.env.STUDIO_BROWSER_CHROMIUM, (() => { try { return chromium.executablePath(); } catch { return null; } })(), ...installedChromiums()];
   return candidates.find(path => path && existsSync(path)) ?? null;
 })();
+if (!executable && process.env.STUDIO_REQUIRE_BROWSER_TESTS === '1') {
+  throw new Error('STUDIO_REQUIRE_BROWSER_TESTS=1 but no Chromium for Playwright is installed');
+}
 const skip = executable ? false : 'Chromium for Playwright is not installed';
 
 const SONG = 'MML@t120o5c4e4d4f4e2g2f4a4g4b4a1,t120o4l2cegcfaec1,t120o3c1f1c1c1,,,t120o2c1f1g1c1;';
