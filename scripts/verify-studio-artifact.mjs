@@ -9,6 +9,7 @@
 // time. It never defines Canonical rules and never re-derives them.
 import { readFile, readdir } from 'node:fs/promises';
 import { resolve } from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { createHash } from 'node:crypto';
 import { assertStableCanonicalPackage } from '../studio/web/canonical-contract.mjs';
 import { BUILD_MANIFEST, SERVICE_WORKER_ASSET, byPath, computeBuildId, computeCacheId, readServiceWorkerTemplate, renderServiceWorker } from './studio-artifact-identity.mjs';
@@ -153,7 +154,7 @@ export async function verifyStudioArtifact(dir, expected = {}, { serviceWorkerTe
   return { buildId: build.buildId, release: build.release, audit: build.audit, assetCount: manifest.size };
 }
 
-const invokedDirectly = process.argv[1] && import.meta.url === new URL(`file://${process.argv[1]}`).href;
+const invokedDirectly = process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.url);
 if (invokedDirectly) {
   const [dir = 'studio/web-build', ...pins] = process.argv.slice(2);
   const expected = Object.fromEntries(pins.map(pin => {

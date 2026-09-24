@@ -13,6 +13,7 @@
 // Dry run is the default because a live run spends the operator's Jev credits.
 import { readFileSync, writeFileSync, readdirSync, statSync } from 'node:fs';
 import { join, resolve } from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { parseArgs } from 'node:util';
 
 const ENDPOINT = '/v1/systemone';
@@ -432,7 +433,7 @@ export async function main(argv = process.argv.slice(2)) {
   return summary.failed ? 1 : 0;
 }
 
-if (process.argv[1] && import.meta.url === `file://${process.argv[1]}`) {
+if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
   // process.exitCode, not process.exit: the repo's other scripts do the same, and
   // exiting outright can truncate piped stdout before it is flushed.
   main().then(code => { process.exitCode = code; }).catch(error => {

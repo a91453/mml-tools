@@ -14,6 +14,7 @@
 import { createHash } from 'node:crypto';
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { join, resolve } from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { parseArgs } from 'node:util';
 import { createStudioApplication } from '../studio/backend/application/index.mjs';
 import { createStore } from '../studio/backend/application/store.mjs';
@@ -116,7 +117,7 @@ async function main(argv = process.argv.slice(2)) {
   return receipt.full_report_matches_expected === false ? 2 : 0;
 }
 
-if (process.argv[1] && resolve(process.argv[1]) === resolve(new URL(import.meta.url).pathname)) {
+if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
   try { process.exitCode = await main(); }
   catch (error) { process.stderr.write(`${error.message}\n`); process.exitCode = 1; }
 }

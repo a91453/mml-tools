@@ -19,6 +19,7 @@
 import { createHash } from 'node:crypto';
 import { readFileSync, writeFileSync } from 'node:fs';
 import { resolve } from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { parseArgs } from 'node:util';
 import { f } from '../studio/backend/mml/index.mjs';
 import { splitProjectSourceVoices } from '../studio/backend/arrangement/voice-split.mjs';
@@ -269,7 +270,7 @@ async function main(argv = process.argv.slice(2)) {
   return 0;
 }
 
-if (process.argv[1] && resolve(process.argv[1]) === resolve(new URL(import.meta.url).pathname)) {
+if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
   try { process.exitCode = await main(); }
   catch (error) { process.stderr.write(`${error.message}\n`); process.exitCode = 1; }
 }
