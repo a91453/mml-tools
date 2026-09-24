@@ -81,6 +81,8 @@ export default {
   "engine.ready": "エンジン準備完了 · {hz} Hz",
   "engine.bankUnparsable": "サウンドバンクを解析できないため、読み込みを中止しました（{detail}）",
   "engine.bankTimeout": "サウンドバンクが {s} 秒以内に読み込まれなかったため、読み込みを中止しました",
+  "engine.synthTimeout": "シンセが {s} 秒以内に準備できなかったため、読み込みを中止しました",
+  "engine.synthFailed": "シンセ processor を起動できなかったため、読み込みを中止しました（{detail}）",
   "error.hint.worklet": "worklet モジュールを読み込めません。Studio Web のアドレスから開いているか（<code>file://</code> では必ず失敗します）、ビルドに <code>vendor/spessasynth/</code> があるかを確認してください。",
   "error.hint.lib": "SpessaSynth モジュールを読み込めません。ビルドの <code>vendor/spessasynth/</code> に 3 つのファイルがあるか確認してください。",
   "error.hint.ctx": "ブラウザが AudioContext の作成を拒否しました。ページがまだクリックされていない場合がほとんどです。",

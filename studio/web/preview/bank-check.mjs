@@ -9,8 +9,9 @@
 //     spessasynth_core the build already ships (vendor/spessasynth/core.js),
 //     before soundbank-store.mjs keeps a picked bank;
 //   * Node, with the npm spessasynth_core the build vendors that copy from.
-// addSoundBankOrFail is the load itself, used by the preview (player.mjs) and
-// the Workshop (workshop/engine.mjs).
+// addSoundBankOrFail is the load itself, and synthReadyOrFail the wait for a
+// new synth before it, both used by the preview (player.mjs) and the Workshop
+// (workshop/engine.mjs).
 
 // How long a bank may take to load into the worklet before the load stops
 // waiting for it. A bank the worklet cannot parse is reported at once; this
@@ -36,9 +37,15 @@ export function checkSoundBank(input, { SoundBankLoader }) {
   return { presets: bank.presets.length };
 }
 
+// How long a new synth may take to report ready once its audio context runs.
+// The processor answers as soon as its bundled decoder is set up, within a
+// fraction of a second on a desktop; this bounds one that never does.
+export const SYNTH_READY_TIMEOUT_MS = 20000;
+
 // Why a load did not finish: BANK_UNPARSABLE (the worklet reported a parse
-// error; the message is the engine's own text) or BANK_LOAD_TIMEOUT. Each
-// page words it in its own language.
+// error; the message is the engine's own text), BANK_LOAD_TIMEOUT,
+// SYNTH_FAILED (the processor stopped with an error while starting) or
+// SYNTH_READY_TIMEOUT. Each page words it in its own language.
 export class BankLoadError extends Error {
   constructor(code, message, extra = {}) { super(message); this.name = 'BankLoadError'; this.code = code; Object.assign(this, extra); }
 }
@@ -64,5 +71,39 @@ export function addSoundBankOrFail(synth, buffer, id, { timeoutMs = BANK_LOAD_TI
   return Promise.race([added, failed]).finally(() => {
     clearTimeout(timer);
     synth.eventHandler.removeEvent('soundBankError', listener);
+  });
+}
+
+/**
+ * Waits for a new WorkletSynthesizer's `isReady`, or rejects. isReady
+ * resolves only on the processor's first reply, sent once its decoder is set
+ * up; a processor that throws while it is constructed (reported only as the
+ * node's `processorerror` event) or never finishes setting up leaves it
+ * pending forever, and with it every bank load waiting behind. The clock
+ * starts once `context` is running: the Web Audio spec constructs the
+ * processor from the rendering thread, so a context still suspended (made
+ * before any user gesture) may rightly not answer until it runs. Chromium
+ * answers while suspended as well. A context that is closed never will.
+ * Listeners and timer are gone once settled.
+ * @returns {Promise<void>} rejects with a BankLoadError
+ */
+export function synthReadyOrFail(synth, context, { timeoutMs = SYNTH_READY_TIMEOUT_MS } = {}) {
+  const node = synth.worklet;
+  let timer = 0, onError = null, onState = null;
+  const failed = new Promise((resolve, reject) => {
+    onError = event => reject(new BankLoadError('SYNTH_FAILED', bankErrorDetail(event?.message || event?.error?.message) || 'processorerror'));
+    onState = () => {
+      if (context?.state === 'closed') reject(new BankLoadError('SYNTH_FAILED', 'the audio context was closed'));
+      if (timer || context?.state !== 'running') return;
+      timer = setTimeout(() => reject(new BankLoadError('SYNTH_READY_TIMEOUT', `synth not ready within ${timeoutMs} ms`, { timeoutMs })), timeoutMs);
+    };
+    node?.addEventListener?.('processorerror', onError);
+    context?.addEventListener?.('statechange', onState);
+    onState();
+  });
+  return Promise.race([synth.isReady, failed]).finally(() => {
+    clearTimeout(timer);
+    node?.removeEventListener?.('processorerror', onError);
+    context?.removeEventListener?.('statechange', onState);
   });
 }

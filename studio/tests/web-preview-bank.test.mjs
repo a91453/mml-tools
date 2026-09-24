@@ -2,7 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { createHash } from 'node:crypto';
 import * as core from 'spessasynth_core';
-import { BANK_LOAD_TIMEOUT_MS, addSoundBankOrFail, checkSoundBank } from '../web/preview/bank-check.mjs';
+import { BANK_LOAD_TIMEOUT_MS, SYNTH_READY_TIMEOUT_MS, addSoundBankOrFail, checkSoundBank, synthReadyOrFail } from '../web/preview/bank-check.mjs';
 import { bankCheckTimeoutMs, checkBankInWorker, loadBank, storeBank } from '../web/preview/soundbank-store.mjs';
 import { bankLoadMessage } from '../web/preview/player.mjs';
 
@@ -258,4 +258,82 @@ test('a bank check that does not answer in time is stopped, and the bank refused
   assert.deepEqual(answered.result, { presets: 1 });
   assert.deepEqual(answered.timers, ['cleared']);
   assert.equal(answering.made[0].terminated, true);
+});
+
+// A stand-in for a WorkletSynthesizer just made on an audio context, as the
+// preview and the Workshop wait for it: `isReady` settles only when ready()
+// is called (the processor's first reply, which the vendored lib's isReady
+// waits for), the node can dispatch `processorerror`, and the context's state
+// and its statechange event are the test's to set. Listeners are counted.
+class CountedTarget extends EventTarget {
+  listening = new Map();
+  addEventListener(type, ...rest) { this.listening.set(type, (this.listening.get(type) ?? 0) + 1); super.addEventListener(type, ...rest); }
+  removeEventListener(type, ...rest) { this.listening.set(type, (this.listening.get(type) ?? 0) - 1); super.removeEventListener(type, ...rest); }
+}
+function newSynth(state) {
+  const worklet = new CountedTarget(), context = Object.assign(new CountedTarget(), { state });
+  let ready;
+  const synth = { worklet, isReady: new Promise(resolve => { ready = resolve; }) };
+  const setState = next => { context.state = next; context.dispatchEvent(new Event('statechange')); };
+  const unheard = () => worklet.listening.get('processorerror') === 0 && context.listening.get('statechange') === 0;
+  return { synth, context, worklet, ready: () => ready(), setState, unheard };
+}
+const pause = ms => new Promise(resolve => setTimeout(resolve, ms));
+
+test('a new synth that never reports ready, or whose processor fails, ends the wait instead of holding every load behind it', async () => {
+  assert.equal(SYNTH_READY_TIMEOUT_MS, 20000);
+
+  // Never ready while its context runs: the limit ends the wait.
+  const silent = newSynth('running');
+  const waited = await loadTimers(1000, () => synthReadyOrFail(silent.synth, silent.context, { timeoutMs: 1000 }).then(() => null, error => error));
+  assert.equal(waited.result?.code, 'SYNTH_READY_TIMEOUT');
+  assert.equal(waited.result.timeoutMs, 1000);
+  assert.equal(bankLoadMessage(waited.result), '音色試聽引擎在 1 秒內沒有就緒，已停止載入');
+  assert.deepEqual(waited.timers, ['ran']);
+  assert.ok(silent.unheard(), 'no listener is left behind');
+
+  // The processor stops with an error while starting: at once, with its text.
+  const broken = newSynth('running');
+  const failing = loadTimers(SYNTH_READY_TIMEOUT_MS, () => synthReadyOrFail(broken.synth, broken.context).then(() => null, error => error));
+  await pause(5);
+  broken.worklet.dispatchEvent(Object.assign(new Event('processorerror'), { message: 'Uncaught Error: decoder\u0000 failed' }));
+  const failed = await failing;
+  assert.equal(failed.result?.code, 'SYNTH_FAILED');
+  assert.equal(bankLoadMessage(failed.result), '音色試聽引擎無法啟動，已停止載入（Uncaught Error: decoder failed）');
+  assert.deepEqual(failed.timers, ['cleared']);
+  assert.ok(broken.unheard());
+
+  // A context not yet running (made before any user gesture) is not timed:
+  // the processor may rightly wait for it. Once it runs, the clock starts.
+  const early = newSynth('suspended');
+  let outcome = null;
+  const later = loadTimers(300, () => synthReadyOrFail(early.synth, early.context, { timeoutMs: 300 }).then(() => 'ready', error => error)).then(value => { outcome = value; return value; });
+  await pause(600);
+  assert.equal(outcome, null, 'still waiting while the context is suspended');
+  early.setState('running');
+  const timed = await later;
+  assert.equal(timed.result?.code, 'SYNTH_READY_TIMEOUT');
+  assert.deepEqual(timed.timers, ['ran']);
+  assert.ok(early.unheard());
+  // ... and a processor that answers once the context runs is ready.
+  const woken = newSynth('suspended');
+  const waking = loadTimers(SYNTH_READY_TIMEOUT_MS, () => synthReadyOrFail(woken.synth, woken.context));
+  woken.setState('running');
+  woken.ready();
+  assert.deepEqual((await waking).timers, ['cleared']);
+  assert.ok(woken.unheard());
+
+  // A closed context never runs again.
+  const closed = newSynth('closed');
+  const refused = await loadTimers(SYNTH_READY_TIMEOUT_MS, () => synthReadyOrFail(closed.synth, closed.context).then(() => null, error => error));
+  assert.equal(refused.result?.code, 'SYNTH_FAILED');
+  assert.equal(refused.result.message, 'the audio context was closed');
+  assert.deepEqual(refused.timers, []);
+
+  // Ready: nothing is left behind.
+  const fine = newSynth('running');
+  const readying = loadTimers(SYNTH_READY_TIMEOUT_MS, () => synthReadyOrFail(fine.synth, fine.context));
+  fine.ready();
+  assert.deepEqual((await readying).timers, ['cleared']);
+  assert.ok(fine.unheard());
 });

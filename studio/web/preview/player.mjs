@@ -22,7 +22,7 @@
 import { buildSchedule, indexAt, soundingAt } from './schedule.mjs';
 import { MAX_CAPTURED_EVENTS, READBACK_KIND, READBACK_SCOPE } from './readback.mjs';
 import { uniformProgram } from './instruments.mjs';
-import { BANK_LOAD_TIMEOUT_MS, addSoundBankOrFail } from './bank-check.mjs';
+import { BANK_LOAD_TIMEOUT_MS, SYNTH_READY_TIMEOUT_MS, addSoundBankOrFail, synthReadyOrFail } from './bank-check.mjs';
 
 export const LOOKAHEAD_SEC = 0.3;
 export const TICK_MS = 25;
@@ -35,10 +35,13 @@ const VENDOR = new URL('../../../vendor/spessasynth/', import.meta.url);
 // to the versions named in vendor/spessasynth/lib.js.
 export const ENGINE_VERSIONS = Object.freeze({ lib: 'spessasynth_lib@4.3.12', core: 'spessasynth_core@4.3.16' });
 
-// The page's words for a bank the worklet did not load (bank-check.mjs).
+// The page's words for a bank the worklet did not load, or a synth that did
+// not start (bank-check.mjs).
 export function bankLoadMessage(error) {
   if (error?.code === 'BANK_UNPARSABLE') return error.message ? `音色庫無法解析，已停止載入（${error.message}）` : '音色庫無法解析，已停止載入';
   if (error?.code === 'BANK_LOAD_TIMEOUT') return `音色庫在 ${Math.round(error.timeoutMs / 1000)} 秒內沒有載入完成，已停止載入`;
+  if (error?.code === 'SYNTH_FAILED') return `音色試聽引擎無法啟動，已停止載入（${error.message}）`;
+  if (error?.code === 'SYNTH_READY_TIMEOUT') return `音色試聽引擎在 ${Math.round(error.timeoutMs / 1000)} 秒內沒有就緒，已停止載入`;
   return String(error?.message ?? error);
 }
 
@@ -46,9 +49,10 @@ export function bankLoadMessage(error) {
 // user's click (iOS Safari only unlocks audio within the gesture, before any
 // await), which is why it is a parameter rather than created here. On any
 // failure -- a bank the worklet cannot parse included, which it reports only
-// as an event -- the context is closed and the promise rejects, so the caller
-// leaves its loading state and the next play tries again.
-export async function createPreviewEngine(bank, context, { bankTimeoutMs = BANK_LOAD_TIMEOUT_MS } = {}) {
+// as an event, and a synth that never reports ready -- the context is closed
+// and the promise rejects, so the caller leaves its loading state and the
+// next play tries again.
+export async function createPreviewEngine(bank, context, { bankTimeoutMs = BANK_LOAD_TIMEOUT_MS, readyTimeoutMs = SYNTH_READY_TIMEOUT_MS } = {}) {
   if (!context?.audioWorklet) { context?.close?.(); throw Error('此瀏覽器不支援 AudioWorklet，無法試聽音色'); }
   try {
     await context.audioWorklet.addModule(new URL('./worklet-console.mjs', import.meta.url));
@@ -69,7 +73,8 @@ export async function createPreviewEngine(bank, context, { bankTimeoutMs = BANK_
     const out = context.createGain();
     synth.connect(out);
     out.connect(context.destination);
-    await synth.isReady;
+    try { await synthReadyOrFail(synth, context, { timeoutMs: readyTimeoutMs }); }
+    catch (error) { throw Error(bankLoadMessage(error)); }
     const listed = new Promise(resolve => synth.eventHandler.addEvent('presetListChange', 'studio-preview', list => resolve(list)));
     try { await addSoundBankOrFail(synth, bank.bytes.slice(0), 'studio-user-bank', { timeoutMs: bankTimeoutMs }); }
     catch (error) { throw Error(bankLoadMessage(error)); }

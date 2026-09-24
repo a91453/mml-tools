@@ -231,7 +231,15 @@ exact timing, event identity and the evidence boundaries. See
     still cannot load a bank (the worklet reports a parse error, or nothing
     arrives within 60 s), the load stops with 「音色庫無法解析，已停止載入」 or
     the timeout message, the player leaves its loading state, and the next
-    play tries again. The Workshop's bank loads stop the same way.
+    play tries again. The Workshop's bank loads stop the same way. Before
+    any bank is sent, a new synth must report ready: its processor answers
+    once its decoder is set up, and one that fails to start or never does
+    would leave the load, and in the Workshop every bank load queued behind
+    it, waiting. A processor error, or no answer within 20 s of the audio
+    context running (a context still waiting for a user gesture is not
+    timed), stops the load with 「音色試聽引擎無法啟動，已停止載入」 or
+    「音色試聽引擎在 20 秒內沒有就緒，已停止載入」 (the Workshop says it in
+    its page language), and the next load starts a new synth.
   - **The default bank.** A General MIDI subset of FluidR3Mono_GM.sf3 (MIT).
     It is not in this repository and not in the build: the upstream file asks
     not to be redistributed. Nothing is downloaded when the page loads. The

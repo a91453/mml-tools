@@ -70,6 +70,17 @@ test('the timbre preview engine is vendored from npm, self-contained, licensed a
   // listener and timeout in addSoundBankOrFail are what end that wait.
   assert.match(await read('vendor/spessasynth/processor.js'), /case"addSoundBank":\{\w+=\w+\.fromArrayBuffer\([^}]*\}[\s\S]{0,300}?\}catch\((\w+)\)\{this\.post\(\{type:"soundBankError",data:\1,/);
   assert.match(lib, /case "soundBankError":\s+SpessaLog\.warn\(m\.data\);\s+this\.eventHandler\.callEventInternal\("soundBankError", m\.data\);/);
+  // A new synth's isReady resolves only on the processor's first reply, which
+  // it sends once its decoder is set up, from this one place, as an
+  // isFullyInitialized message the lib hands to workletResponds; nothing
+  // else settles it. synthReadyOrFail bounds that wait, and the browser
+  // checks withhold exactly this message (browser-tests/synth-ready.mjs).
+  assert.match(lib, /this\.isReady = new Promise\(\(resolve\) => this\.awaitWorkerResponse\("sf3Decoder", resolve\)\);/);
+  assert.match(lib, /case "isFullyInitialized":\s+this\.workletResponds\(m\.data\.type, m\.data\.data\);/);
+  const processor = await read('vendor/spessasynth/processor.js');
+  assert.match(processor, /processorInitialized\.then\(\(\)=>\{this\.port\.onmessage=\w+=>this\.handleMessage\(\w+\.data\),this\.postReady\("sf3Decoder",null\)\}\)/);
+  assert.equal(processor.split('this.postReady("sf3Decoder",null)').length, 2);
+  assert.match(processor, /postReady\((\w+),(\w+),\w+=\[\]\)\{this\.post\(\{type:"isFullyInitialized",data:\{type:\1,data:\2\}/);
   for (const path of ['vendor/spessasynth/core.js', 'vendor/spessasynth/processor.js']) assert.match(await read(path), /SPDX-License-Identifier: Apache-2\.0/);
   const sw = await read('sw.js');
   // The readback takes its expected velocities from the backend renderer's

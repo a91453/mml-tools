@@ -3,7 +3,7 @@
 // Workshop edits sit outside the Canonical/verified pipeline and are never evidence.
 import { WORKLET, BOOT, ENGINE_LIB } from "./config.mjs";
 import * as i18n from "./i18n.mjs";
-import { addSoundBankOrFail } from "../preview/bank-check.mjs";
+import { addSoundBankOrFail, synthReadyOrFail } from "../preview/bank-check.mjs";
 
 let ctx = null, synth = null, out = null, WorkletSynthesizer = null, booting = null;
 
@@ -49,12 +49,24 @@ export async function loadBank(buf) {
   const mb = (buf.byteLength / 1048576).toFixed(1);
   await boot();
   if (!synth) {
-    synth = new WorkletSynthesizer(ctx);
-    out = ctx.createGain();
-    out.connect(ctx.destination);
-    synth.connect(out);
-    synth.eventHandler.addEvent("presetListChange", "ui", list => onPresetList(list));
-    await synth.isReady;
+    const made = new WorkletSynthesizer(ctx);
+    const gain = ctx.createGain();
+    gain.connect(ctx.destination);
+    made.connect(gain);
+    made.eventHandler.addEvent("presetListChange", "ui", list => onPresetList(list));
+    // isReady waits for the processor's first reply. One that fails to start,
+    // or never finishes setting up, would leave this load, and every bank
+    // load queued behind it, waiting forever. A synth that is not ready is
+    // dropped, so the next load starts a new one.
+    try { await synthReadyOrFail(made, ctx); }
+    catch (err) {
+      try { made.destroy(); } catch (e) { console.warn("[Workshop] synth not destroyed:", e); }
+      gain.disconnect();
+      if (err?.code === "SYNTH_READY_TIMEOUT") throw Error(i18n.t("engine.synthTimeout", { s: Math.round(err.timeoutMs / 1000) }));
+      if (err?.code === "SYNTH_FAILED") throw Error(i18n.t("engine.synthFailed", { detail: err.message }));
+      throw err;
+    }
+    synth = made; out = gain;
 
     synth.addNewChannel();
   }

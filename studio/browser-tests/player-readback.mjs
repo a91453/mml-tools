@@ -1,6 +1,8 @@
 import assert from 'node:assert/strict';
 import { BasicSoundBank } from 'spessasynth_core';
+import { SYNTH_READY_TIMEOUT_MS } from '../web/preview/bank-check.mjs';
 import { countBankSends } from './bank-sends.mjs';
+import { readyGate, withholdSynthReady } from './synth-ready.mjs';
 
 // Gate 6 through a real engine: a project that declares a verification player
 // stays PENDING until a complete playback of its exact delivery string is
@@ -69,6 +71,26 @@ export async function runPlayerReadbackChecks({ page, idle, file }) {
   await page.locator('#bank-file').setInputFiles({ name: 'saw.sf2', mimeType: 'application/octet-stream', buffer: sample });
   await page.locator('#bank-status').filter({ hasText: /saw\.sf2.*sha256/ }).waitFor();
   assert.equal(await storedName(), 'saw.sf2');
+
+  // A synth whose processor never reports ready (its first reply withheld,
+  // synth-ready.mjs) ends the load with the card's message instead of
+  // leaving it loading, and no bank is sent to it; the playbacks below start
+  // a new engine. Only the readiness limit is shortened for the run: it is
+  // the one timer the page arms with that delay.
+  await page.evaluate(readyGate);
+  await withholdSynthReady(page, true);
+  await page.evaluate(limit => {
+    const realSetTimeout = window.setTimeout;
+    window.setTimeout = (callback, ms, ...rest) => realSetTimeout(callback, ms === limit ? 300 : ms, ...rest);
+    window.restoreReadyLimit = () => { window.setTimeout = realSetTimeout; };
+  }, SYNTH_READY_TIMEOUT_MS);
+  const sentBeforeReady = await bankSends();
+  await page.locator('#preview-play').click();
+  await page.locator('#timbre-preview .note').filter({ hasText: `音色試聽引擎在 ${SYNTH_READY_TIMEOUT_MS / 1000} 秒內沒有就緒，已停止載入` }).waitFor();
+  assert.equal(await bankSends(), sentBeforeReady, 'no bank is sent to a synth that is not ready');
+  assert.equal((await page.locator('#preview-play').textContent()).trim(), '▶ 播放', 'the card is not left loading');
+  await page.evaluate(() => window.restoreReadyLimit());
+  await withholdSynthReady(page, false);
 
   // A playback with a role muted is captured but cannot be recorded.
   await page.locator('[data-preview-role="1"]').uncheck();

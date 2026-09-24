@@ -2,7 +2,9 @@ import assert from 'node:assert/strict';
 import { crc32 } from 'node:zlib';
 import { BasicSoundBank } from 'spessasynth_core';
 import { bankCheckTimeoutMs } from '../web/preview/soundbank-store.mjs';
+import { SYNTH_READY_TIMEOUT_MS } from '../web/preview/bank-check.mjs';
 import { countBankSends } from './bank-sends.mjs';
+import { readyGate, withholdSynthReady } from './synth-ready.mjs';
 
 // The Workshop editor (studio/web/workshop/), end to end in a real browser:
 // open a Studio MML as a copy, language switch, dark/light theme, a bank
@@ -283,6 +285,46 @@ export async function runWorkshopChecks({ page, base, idle, file, screenshot, pr
   assert.match(await page.locator('#dlsName').textContent(), /^picked\.sf2 /, 'the bank picked during boot is the one loaded');
   assert.equal(await page.evaluate(async () => (await (await import('../preview/soundbank-store.mjs')).loadBank())?.name), 'saw.sf2', 'the refused pick left saw.sf2 in the store');
   await page.unroute(PROCESSOR);
+
+  // ── a synth that never reports ready ends the load ───────────────────────
+  // With the processor's first reply withheld, as from one that never
+  // finishes starting (synth-ready.mjs), the boot-time load of the kept
+  // bank and then a pick each end with the page's message, instead of
+  // leaving the label reading and every bank load queued behind them
+  // waiting, and no bank is sent to a synth that is not ready; each load
+  // tries a new synth. Only the readiness limit is shortened for the run:
+  // it is the one timer the page arms with that delay.
+  await page.addInitScript(readyGate);
+  await withholdSynthReady(page, true);
+  await page.addInitScript(limit => {
+    if (sessionStorage.getItem('workshopShortReadyLimit') !== 'yes') return;
+    sessionStorage.removeItem('workshopShortReadyLimit');
+    const realSetTimeout = window.setTimeout;
+    window.setTimeout = (callback, ms, ...rest) => realSetTimeout(callback, ms === limit ? 300 : ms, ...rest);
+  }, SYNTH_READY_TIMEOUT_MS);
+  await page.evaluate(() => sessionStorage.setItem('workshopShortReadyLimit', 'yes'));
+  await page.reload(); await page.locator('#unverified').waitFor();
+  // The limit counts only while the audio context runs, and one made as the
+  // page loads may wait for a user gesture first: a tap on a button that
+  // only resumes it, as the page's own play or audition would.
+  await page.waitForFunction(async () => Boolean((await import('./engine.mjs')).context()));
+  await page.evaluate(async () => {
+    const engine = await import('./engine.mjs');
+    const button = Object.assign(document.createElement('button'), { id: 'resumeAudio', type: 'button', textContent: 'resume audio' });
+    button.style.cssText = 'position:fixed;left:0;top:0;z-index:2147483647';
+    button.onclick = () => { engine.resume(); button.remove(); };
+    document.body.append(button);
+  });
+  await press(page.locator('#resumeAudio'));
+  await page.waitForFunction(async () => (await import('./engine.mjs')).context().state === 'running');
+  await page.waitForFunction(failed => document.querySelector('#dlsName')?.textContent === failed, await t('ui.bankFailed'));
+  const readySends = await countBankSends(page);
+  const notReady = await t('engine.synthTimeout', { s: SYNTH_READY_TIMEOUT_MS / 1000 });
+  await page.locator('#dls').setInputFiles({ name: 'saw.sf2', mimeType: 'application/octet-stream', buffer: sawBank });
+  await page.waitForFunction(text => document.querySelector('#logMsg')?.textContent.includes(text), notReady);
+  assert.equal(await page.locator('#dlsName').textContent(), await t('ui.bankFailed'), 'the pick ends as a failed load');
+  assert.equal(await readySends(), 0, 'no bank is sent to a synth that is not ready');
+  await withholdSynthReady(page, false);
   await page.reload(); await page.locator('#unverified').waitFor();
   await bankLoaded('saw.sf2');
   await page.locator('#play:enabled').waitFor();
