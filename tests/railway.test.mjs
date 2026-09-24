@@ -540,3 +540,25 @@ test('the deployment passes its Studio Web origin to studio_listen and serves th
   assert.equal(unlinked.listen_link, null);
   assert.equal(unlinked.listen_link_status, 'ORIGIN_NOT_CONFIGURED');
 });
+test('a code exchanged without redirect_uri still expires and stays bound to the client it was issued to', async t => {
+  let clock = 100000;
+  const send = setup(t, { now: () => clock });
+  const withoutRedirect = (clientId, code) => send(form('/oauth/token', { client_id: clientId, grant_type: 'authorization_code', code, code_verifier: verifier, resource: origin + '/mcp' }));
+  const client = await register(send), other = await register(send, { client_name: 'Another synthetic client' });
+  assert.notEqual(other.client_id, client.client_id);
+  // Another client holding the same code and verifier is refused by the
+  // client binding itself, not only by the later grant check.
+  const code = await authorizedCode(send, client.client_id);
+  const cross = await withoutRedirect(other.client_id, code);
+  assert.equal(cross.status, 400);
+  assert.deepEqual(await cross.json(), { error: 'invalid_grant', error_description: 'Invalid authorization code' });
+  // A code past its 90 s lifetime is refused on this path too.
+  const expiring = await authorizedCode(send, client.client_id);
+  clock += 91;
+  const late = await withoutRedirect(client.client_id, expiring);
+  assert.equal(late.status, 400);
+  assert.deepEqual(await late.json(), { error: 'invalid_grant', error_description: 'Authorization code expired' });
+  // The control: a fresh code without redirect_uri is exchanged.
+  const fresh = await authorizedCode(send, client.client_id);
+  assert.equal((await withoutRedirect(client.client_id, fresh)).status, 200);
+});

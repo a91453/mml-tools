@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { validateMML, writeMidi } from '../../dist/core.js';
-import { ingestMIDI, midiFragmentToProject, MIDI_INGESTION_STATUS } from '../backend/source/index.mjs';
+import { ingestMIDI, integerTempoForMicroseconds, midiFragmentToProject, MIDI_INGESTION_STATUS } from '../backend/source/index.mjs';
 import { createCanonicalNoteEvent, createCanonicalProject } from '../backend/canonical/index.mjs';
 import { emitFinalMml, EMIT_DIAGNOSTICS } from '../backend/final/index.mjs';
 import { EFFECTIVE_RULESET } from '../backend/rules/index.mjs';
@@ -121,4 +121,37 @@ test('Studio Web raw MIDI intake reads the same integer Tempo', () => {
   assert.deepEqual(asset.project.tempoEvents.map(event => event.bpm), [130]);
   assert.equal(asset.project.tempoEvents[0].metadata.tempoEncoding, 'SMF_INTEGER_US_ROUNDTRIP');
   assert.equal(asset.project.tempoEvents[0].metadata.microsecondsPerQuarter, 461538);
+});
+
+// The rule is exact: a stored value is read as the integer Tempo only when that
+// integer is written as exactly that value. One microsecond either side of
+// every integer's encoding is a different tempo the source states, and a
+// matcher that snapped anything near an integer would invent tempi.
+test('only the exact microsecond encoding of an integer Tempo is read back as that integer', () => {
+  const snapped = [];
+  for (let bpm = tempoMin; bpm <= tempoMax; bpm++) {
+    const us = Math.round(US_PER_MINUTE / bpm);
+    assert.equal(integerTempoForMicroseconds(us), bpm, `T${bpm} (${us} us)`);
+    for (const near of [us - 1, us + 1]) {
+      const read = integerTempoForMicroseconds(near);
+      // A neighbour is snapped only if it is itself some integer's encoding.
+      const encodes = read !== null && Math.round(US_PER_MINUTE / read) === near;
+      if (read !== null && !encodes) snapped.push(`${near} us -> T${read}`);
+      if (read === null) continue;
+      assert.ok(encodes, `${near} us is not the encoding of T${read}`);
+    }
+  }
+  assert.deepEqual(snapped, []);
+  // A value one microsecond off T130's encoding keeps its exact rate.
+  const fragment = ingestMIDI(tempoFile([[0, Math.round(US_PER_MINUTE / 130) + 1]]));
+  assert.equal(Number.isInteger(fragment.tempoEvents[0].bpm), false, String(fragment.tempoEvents[0].bpm));
+});
+
+// A rounded tempo later in the song is read back at its own beat, not only at
+// tick 0 (the DEMO song's T138 sits at beat 8).
+test('a tempo change the file could only round is read back as its integer at its own beat', () => {
+  const fragment = ingestMIDI(tempoFile([[0, 500000], [PPQ * 4, Math.round(US_PER_MINUTE / 138)]]));
+  assert.deepEqual(fragment.tempoEvents.map(event => [String(event.beat), event.bpm]), [['0', 120], ['4', 138]]);
+  assert.equal(fragment.tempoEvents[1].metadata?.tempoEncoding, 'SMF_INTEGER_US_ROUNDTRIP');
+  assert.equal(fragment.tempoEvents[0].metadata?.tempoEncoding, undefined, 'an exact rate carries no marker');
 });
