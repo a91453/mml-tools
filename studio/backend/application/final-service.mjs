@@ -29,7 +29,7 @@
 
 import { ERROR_CODES, GATE_STATUS, OPERATION_STATUS, fail, requireString } from './contracts.mjs';
 import { sha256Of } from './store.mjs';
-import { gatesFrom } from './review-service.mjs';
+import { gatesFrom, unresolvedGatesFrom } from './review-service.mjs';
 import { migrateMachineDeliveryState } from './machine-delivery-migration.mjs';
 import { MACHINE_DELIVERY_SCHEMA_V2, deliveryBlockingGates } from '../final/delivery-evaluator.mjs';
 
@@ -137,7 +137,10 @@ export function createFinalService({ canonical, projects, review, store }) {
         fail(ERROR_CODES.INVALID_REQUEST, 'technical_timing_repair must be true or false. There is no automatic mode: the repair transforms the musical candidate and stays an explicit opt-in.');
       }
       const barInputs = { pickup: barInput(pickup, 'pickup'), final_partial: barInput(finalPartial, 'final_partial') };
-      if (confirmations) review.record(owner, projectId, confirmations, { candidateId });
+      if (confirmations) {
+        review.requireCandidate(owner, projectId, candidateId);
+        review.record(owner, projectId, confirmations, { candidateId });
+      }
 
       const ctx = await review.context(owner, projectId, candidateId);
       const { engines, record, baseline, entry, application, baselineProject, project, parent, confirmations: recorded } = ctx;
@@ -198,8 +201,10 @@ export function createFinalService({ canonical, projects, review, store }) {
       // candidate-bound Lead evidence re-reviews reach it too, from the same
       // `review.context()` -- so a citation a reviewer re-supplied is graded
       // here by the same shared gate, and Finalize cannot be satisfied by a
-      // path review does not see, or refuse one review accepts.
-      const leadReportInputs = { applications: ctx.applicationLineage, baseline: baselineProject, candidate: application.candidate, freshReviews: ctx.gradedLeadEvidenceReviews };
+      // path review does not see, or refuse one review accepts. The lineage is
+      // the prepared one review reads: each decision's Lead citation resolved
+      // against the project's sources, its audio classification a metric.
+      const leadReportInputs = { applications: ctx.gradedApplicationLineage, baseline: baselineProject, candidate: application.candidate, freshReviews: ctx.gradedLeadEvidenceReviews };
       const leadDemotionReports = engines.arrangement.leadDemotionReportsFromLineage(leadReportInputs);
       const leadPromotionReports = engines.arrangement.leadPromotionReportsFromLineage(leadReportInputs);
       const lineage = engines.compare.compareCandidateLineage({ sourceBaseline: baselineProject, acceptedPrevious: parent, candidate: project });
@@ -227,7 +232,9 @@ export function createFinalService({ canonical, projects, review, store }) {
         leadDemotionReports,
         leadPromotionReports,
         versionDriftReviewed: recorded.version_drift_reviewed?.value === true,
-        originalAudioRequired: recorded.original_audio_required?.value !== false,
+        // Recorded `false` counts only while the project holds no original
+        // audio (review-service-core.mjs originalAudioRequiredFor).
+        originalAudioRequired: ctx.originalAudioRequired,
         originalAudioReviewed: recorded.original_audio_reviewed?.value === true,
         playerReadback: recorded.player_readback?.value ?? 'NOT_RUN',
         mobileAdaptation: recorded.mobile_adaptation_reviewed?.value === true ? 'PASS' : 'PENDING',
@@ -417,9 +424,11 @@ export function createFinalService({ canonical, projects, review, store }) {
         },
         gates: emitGates,
         machine_delivery: machineDelivery,
-        remaining_pending_gates: Object.entries(emitGates)
-          .filter(([name, status]) => name !== 'notice' && status !== 'PASS' && status !== 'N/A')
-          .map(([name]) => name),
+        // Every gate the Final was delivered with still open, not only the
+        // seven public axes: under machine delivery Lead promotion,
+        // micro-timing, Core3 completeness or version drift can be PENDING
+        // on a delivered Final, and each is listed under its readiness name.
+        remaining_pending_gates: [...unresolvedGatesFrom(finalReadiness, emitGates)],
         canonical: provenance,
         emitter_notice: emitted.notice,
         acceptance_notice: acceptanceNotice(finalReadiness.songState),

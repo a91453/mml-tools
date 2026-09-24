@@ -601,6 +601,10 @@ function onTransportKey(e) {
   e.preventDefault();
 }
 
+// The line is shown as HTML (say), and an error can quote a file's own bytes
+// (a damaged bank's chunk name, bank-check.mjs), so its message is escaped.
+const escHtml = v => String(v ?? "").replace(/[&<>"']/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
+
 export function describe(err, headline) {
   const s = err.step
     ? i18n.t("ui.stepWrap", { step: i18n.t(`engine.step.${err.step}`) })
@@ -614,21 +618,27 @@ export function describe(err, headline) {
     hint = i18n.t("error.hint.ctx");
   else
     hint = i18n.t("error.hint.generic");
-  return i18n.t("ui.errorLine", { headline, step: s, msg: err.message, hint });
+  return i18n.t("ui.errorLine", { headline, step: s, msg: escHtml(err.message), hint });
 }
 
 // The sound bank is the one the user keeps in Studio Web's local bank store
 // (the same store the Studio timbre preview reads). Nothing is fetched.
+// It is asked for at boot, before the user can pick anything, so it is older
+// than every pick: once any bank has been picked it is never applied, not
+// even when the pick came while the engine was still booting and its own
+// store write has not finished (or failed), leaving the older bank in the
+// store for this read to find.
 export async function loadStoredBank() {
-  const picks = bankPicks;
+  const picked = () => bankPicks > 0;
+  if (picked()) return;
   let stored = null;
   try { stored = await bankStore.loadBank(); }
   catch (err) { console.warn("[Workshop] stored bank:", err); }
   if (!stored) return;
-  try { await queueBank(() => bankPicks === picks ? loadBank(stored.bytes, stored.name, false, null) : undefined); }
+  try { await queueBank(() => picked() ? undefined : loadBank(stored.bytes, stored.name, false, null)); }
   catch (err) {
     console.warn("[Workshop] stored bank failed to load:", err);
-    if (bankPicks === picks) $("#dlsName").textContent = i18n.t("ui.bankFailed");
+    if (!picked()) $("#dlsName").textContent = i18n.t("ui.bankFailed");
   }
 }
 
@@ -3342,7 +3352,12 @@ export function init() {
     try {
       await queueBank(async () => {
         if (pick !== bankPicks) return;
-        await bankStore.storeBank(f).catch(err => console.warn("[Workshop] bank not stored:", err));
+        await bankStore.storeBank(f).catch(err => {
+          // A bank whose check ran out of time is refused, not handed to the
+          // synth, whose worklet would run the same parse on it.
+          if (err?.code === "BANK_CHECK_TIMEOUT") throw Error(i18n.t("ui.bankCheckTimeout", { s: Math.round(err.timeoutMs / 1000) }));
+          console.warn("[Workshop] bank not stored:", err);
+        });
         await loadBank(await f.arrayBuffer(), f.name, false, f);
       });
     }

@@ -19,6 +19,11 @@ self.addEventListener('fetch', event => {
   const url = new URL(event.request.url);
   if (event.request.method !== 'GET' || url.origin !== self.location.origin) return;
   const allowed = new Set(ASSETS.map(path => new URL(path, self.registration.scope).href));
-  if (!allowed.has(url.href)) return;
-  event.respondWith(caches.open(CACHE).then(cache => cache.match(event.request).then(hit => hit || fetch(event.request))));
+  // A page navigation is matched on its path: a query string (a ?listen= link,
+  // a tracking parameter) does not change which page is shown, and matching
+  // it exactly left such links unanswered offline. Subresources still match
+  // exactly.
+  const page = event.request.mode === 'navigate' && allowed.has(url.origin + url.pathname);
+  if (!page && !allowed.has(url.href)) return;
+  event.respondWith(caches.open(CACHE).then(cache => cache.match(event.request, { ignoreSearch: page }).then(hit => hit || fetch(event.request))));
 });

@@ -363,7 +363,9 @@ function readEntry(bytes, entry, maxBytes, label) {
   return data;
 }
 
-const containerParser = new XMLParser({ ignoreAttributes: false, removeNSPrefix: true, parseTagValue: false, parseAttributeValue: false, processEntities: false });
+// Attribute values are decoded (a rootfile named "Rock &amp; Roll.musicxml" is
+// the entry "Rock & Roll.musicxml"); see the score parser in musicxml.mjs.
+const containerParser = new XMLParser({ ignoreAttributes: false, removeNSPrefix: true, parseTagValue: false, parseAttributeValue: false, processEntities: true, htmlEntities: true });
 const asList = value => (value === undefined || value === null ? [] : Array.isArray(value) ? value : [value]);
 
 function decodeUtf8(data, label) {

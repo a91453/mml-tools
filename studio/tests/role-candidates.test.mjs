@@ -2,6 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import {
   suggestRoleCandidates,
+  splitProjectSourceVoices,
   ROLE_CANDIDATE_STATUS,
   ROLE_DECISIONS,
   SIX_ROLES,
@@ -776,6 +777,21 @@ test('fixture 15: percussion and unsupported material never become a pitched rol
   assert.equal(reported.deleted, false);
   assert.equal(candidate.coverage.unsupportedEventCount, 3);
   assert.equal(candidate.core3.status, 'COMPLETE', 'pitched Core3 is unaffected by retained drum evidence');
+});
+
+test('fixture 15b: a supplied decomposition that lanes unsupported material is refused', () => {
+  // A whole-project decomposition puts the drum and unsupported-tagged notes
+  // into lanes, where they could take a pitched role and would be counted a
+  // second time beside unsupportedSourceMaterial. The caller is told, rather
+  // than the lanes being silently repaired.
+  const whole = project(percussionEvents);
+  assert.throws(() => suggestRoleCandidates(whole, { ...scoredHarmony(), decompositions: splitProjectSourceVoices(whole) }),
+    /places unsupported source event (d1|d2|x1) in a lane/);
+
+  // A decomposition of exactly the supported notes is the engine's own input.
+  const supported = project(percussionEvents.filter(event => !['d1', 'd2', 'x1'].includes(event.id)));
+  const supplied = suggestRoleCandidates(whole, { ...scoredHarmony(), decompositions: splitProjectSourceVoices(supported) });
+  assert.equal(JSON.stringify(supplied), JSON.stringify(run(percussionEvents, scoredHarmony())));
 });
 
 // ─── 16. Core3 non-empty but musically incomplete ───────────────────────────

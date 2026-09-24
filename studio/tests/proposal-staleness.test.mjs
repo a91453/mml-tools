@@ -97,6 +97,42 @@ test('a proposal whose baseline was replaced underneath it is refused', async ()
   await refusesAcceptance(app, context.fixture.projectId, context.proposal.proposal_id, 'BASELINE_CHANGED');
 });
 
+test('the targets read stops advertising a run whose baseline was replaced, instead of accepting proposals born STALE', async () => {
+  const app = createStudioApplication({});
+  const context = await proposedAgainstDecisions(app);
+  const before = await app.proposalTargets(OWNER, context.fixture.projectId, context.run.run_id);
+  assert.equal(before.accepts_proposals, true);
+  assert.deepEqual(before.stale_at_submission, []);
+
+  const second = (await app.uploadAsset(OWNER, context.fixture.projectId, {
+    kind: 'canonical_project',
+    filename: 'second.json',
+    mediaType: 'application/json',
+    bytes: canonicalProjectBytes(sixRoleBaseline({ id: 'fixture:second-baseline', title: 'Second source' })),
+  })).asset;
+  await app.analyzeSources(OWNER, context.fixture.projectId, { assetIds: [context.fixture.assetId, second.asset_id] });
+
+  const after = await app.proposalTargets(OWNER, context.fixture.projectId, context.run.run_id);
+  assert.ok(after.targets.length > 0, 'the run still lists its old review requests');
+  assert.equal(after.accepts_proposals, false, 'but it no longer invites proposals against them');
+  assert.deepEqual(after.stale_at_submission, ['BASELINE_CHANGED']);
+
+  // What it says is what a submission now gets.
+  const events = await app.listBaselineEvents(OWNER, context.fixture.projectId, { limit: 3 });
+  const submitted = await app.proposeDecision(OWNER, context.fixture.projectId, {
+    run_id: context.run.run_id,
+    expected_run_revision: after.run_revision,
+    request_key: context.target.request_key,
+    kind: PROPOSAL_KIND.ARRANGEMENT_DECISION,
+    proposed_by: AGENT,
+    rationale: 'Written after the baseline moved.',
+    action: { decisions: proposable(context.fixture.project) },
+    cites: { event_ids: events.events.map(entry => entry.event_id) },
+  });
+  assert.equal(submitted.proposal.agent_review.verdict, AGENT_REVIEW.STALE);
+  assert.ok(submitted.proposal.agent_review.refusals.includes('BASELINE_CHANGED'));
+});
+
 test('a proposal whose selected source bytes no longer match what the run recorded is refused', async () => {
   // An upload mints a NEW asset id, so a selected asset's bytes cannot change
   // through the public surface -- which is the point of content-addressing

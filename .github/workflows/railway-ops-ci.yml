@@ -84,3 +84,30 @@ jobs:
       - name: Validate Railway JSON references
         run: |
           node -e "JSON.parse(require('node:fs').readFileSync('railway/service-settings.json','utf8')); JSON.parse(require('node:fs').readFileSync('railway/deployment-target.json','utf8'))"
+      # railway/service-settings.json is the desired state the production audit
+      # enforces, but merging it changes nothing on Railway: only the
+      # dispatched "Railway production config apply" workflow pushes it. Until
+      # then the post-merge audit fails with CONFIG_DRIFT, and a later commit
+      # that touches only a newly watched file is SKIPPED by Railway. Say so on
+      # the pull request, where the author can plan the apply.
+      - name: Flag a desired-state change that needs a post-merge apply
+        if: github.event_name == 'pull_request'
+        shell: bash
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+        run: |
+          git fetch --no-tags --depth=1 origin "$BASE_SHA"
+          if git diff --quiet "$BASE_SHA" HEAD -- railway/service-settings.json; then
+            exit 0
+          fi
+          echo "::warning file=railway/service-settings.json::This pull request changes Railway desired state. Merging does not apply it: after merge, dispatch 'Railway production config apply' on main, then re-run 'Railway production audit'. Until then the audit reports CONFIG_DRIFT."
+          {
+            echo "### Railway desired state changes on merge — apply required"
+            echo "This pull request changes \`railway/service-settings.json\`. Merging it does not change the Railway service."
+            echo ""
+            echo "After merge:"
+            echo "1. Dispatch **Railway production config apply** on \`main\` with the confirmation \`APPLY_REPOSITORY_DESIRED_STATE\`."
+            echo "2. Dispatch **Railway production audit** for the merged commit."
+            echo ""
+            echo "Until the apply, the post-merge audit reports \`CONFIG_DRIFT\`, and a later commit that changes only a newly watched path is SKIPPED by Railway."
+          } >> "$GITHUB_STEP_SUMMARY"

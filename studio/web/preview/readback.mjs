@@ -5,8 +5,15 @@
 // as processed, each stamped with the worklet's own audio clock. It is compared
 // with an independent reading of the exact MML string: the Worker parses that
 // string again at every analysis, and the expected events are derived here
-// without going through buildSchedule(), so a scheduling fault shows up as a
-// mismatch instead of agreeing with itself.
+// without any of the preview scheduler's code (schedule.mjs, which this module
+// must never import), so a scheduling fault shows up as a mismatch instead of
+// agreeing with itself:
+//
+//   * beat → seconds is this module's own exact integration over the tempo
+//     map (BigInt rationals, one sweep through the tempo map in beat order);
+//   * role → channel is restated from its definition below;
+//   * volume → velocity is the backend renderer's curve
+//     (studio/backend/audio/instruments.mjs), not the scheduler's copy.
 //
 // Order, pitch and velocity are compared exactly, per channel. Timing is
 // compared within TIMING_TOLERANCE_SEC of the exact tempo-map time, because
@@ -14,7 +21,7 @@
 //
 // Scope: processed engine events, not hardware audio. A capture says nothing
 // about the game's timbre, the original recording or in-game behaviour.
-import { channelFor, tempoClock, velocityFor } from './schedule.mjs';
+import { velocityForVolume } from '../../backend/audio/instruments.mjs';
 
 export const READBACK_KIND = 'studio-preview-readback';
 export const READBACK_SCOPE = 'processed_engine_events_not_hardware_audio';
@@ -22,20 +29,110 @@ export const TIMING_TOLERANCE_SEC = 0.025;
 export const MAX_CAPTURED_EVENTS = 100000;
 const MAX_REPORTED_ERRORS = 12;
 
+// ─── the expected side, independent of schedule.mjs ──────────────────────────
+// The tempo assumed when a song has no tempo map (t120, as the backend
+// prescreen assumes too), and the parser's volume before any `v` command.
+const DEFAULT_BPM = 120;
+const DEFAULT_VOLUME = 8;
+
+// Role → channel. The six roles, in their Canonical order (Melody, Chord1 …
+// Chord5), take the melodic General MIDI channels in order; channel index 9 is
+// GM percussion and is never one of them. The backend renderer and the core
+// MIDI writer place a pitched role on its channel the same way (role i on
+// channel i for the six roles).
+const GM_PERCUSSION_CHANNEL = 9;
+const MELODIC_CHANNELS = Object.freeze(Array.from({ length: 16 }, (_, channel) => channel).filter(channel => channel !== GM_PERCUSSION_CHANNEL));
+function channelOfRole(role) {
+  const channel = MELODIC_CHANNELS[role];
+  if (channel === undefined) throw Error(`no melodic MIDI channel for role ${role}`);
+  return channel;
+}
+
+// Exact rationals as [numerator, denominator] BigInt pairs, denominator > 0,
+// in lowest terms.
+const gcdOf = (a, b) => { a = a < 0n ? -a : a; b = b < 0n ? -b : b; while (b) [a, b] = [b, a % b]; return a || 1n; };
+function ratio(n, d) {
+  if (d === 0n) throw Error('zero denominator');
+  if (d < 0n) { n = -n; d = -d; }
+  const g = gcdOf(n, d);
+  return [n / g, d / g];
+}
+const plus = ([a, b], [c, d]) => ratio(a * d + c * b, b * d);
+const minus = ([a, b], [c, d]) => ratio(a * d - c * b, b * d);
+const order = ([a, b], [c, d]) => { const x = a * d - c * b; return x < 0n ? -1 : x > 0n ? 1 : 0; };
+// Seconds spent crossing `beats` quarter notes at `bpm`.
+const crossing = ([n, d], bpm) => ratio(n * 60n, d * BigInt(bpm));
+
+function exactBeat(value) {
+  const match = /^(-?\d+)(?:\/(\d+))?$/.exec(String(value));
+  if (!match) throw Error(`not an exact beat: ${String(value).slice(0, 40)}`);
+  return ratio(BigInt(match[1]), BigInt(match[2] ?? '1'));
+}
+
+// Exact seconds → the nearest double. One correctly rounded division while
+// both terms are exact doubles; beyond that, 64 significant bits of the
+// quotient are kept before the final rounding.
+const SAFE = 2n ** 53n;
+const bitLength = value => value.toString(2).length;
+function toSeconds([n, d]) {
+  const size = n < 0n ? -n : n;
+  if (size <= SAFE && d <= SAFE) return Number(n) / Number(d);
+  const shift = 64 - bitLength(size) + bitLength(d);
+  const quotient = shift >= 0 ? (size << BigInt(shift)) / d : size / (d << BigInt(-shift));
+  return (n < 0n ? -1 : 1) * (Number(quotient) / 2 ** shift);
+}
+
+// The time of each beat in `beats` (beat texts, any order), keyed by that
+// text: its seconds, and its rank in time order (equal beats share a rank).
+// The beats are visited in ascending order while the tempo map is walked once
+// alongside them, adding each whole tempo segment passed and then the part of
+// the current one up to the beat. The first tempo holds from beat 0 even when
+// the map's first point is later; a beat before 0 is extrapolated at the first
+// tempo.
+function timesOfBeats(tempo, beats) {
+  const points = (Array.isArray(tempo) && tempo.length ? tempo : [{ beat: '0', bpm: DEFAULT_BPM }]).map(point => {
+    if (!Number.isInteger(point?.bpm) || point.bpm <= 0) throw Error(`tempo map point without a positive whole BPM: ${String(point?.bpm).slice(0, 20)}`);
+    return { from: exactBeat(point.beat), bpm: point.bpm };
+  });
+  points.sort((a, b) => order(a.from, b.from));
+  const segments = order(points[0].from, [0n, 1n]) > 0 ? [{ from: [0n, 1n], bpm: points[0].bpm }, ...points] : points;
+  const visits = [...new Set(beats)].map(text => [text, exactBeat(text)]).sort((a, b) => order(a[1], b[1]));
+  const out = new Map();
+  let index = 0, elapsed = [0n, 1n], rank = -1, previous = null;
+  for (const [text, beat] of visits) {
+    while (index + 1 < segments.length && order(segments[index + 1].from, beat) <= 0) {
+      elapsed = plus(elapsed, crossing(minus(segments[index + 1].from, segments[index].from), segments[index].bpm));
+      index++;
+    }
+    if (!previous || order(previous, beat) < 0) rank++;
+    previous = beat;
+    // Left unreduced: it only becomes a float, and its value is the same.
+    const [a, b] = elapsed, [c, d] = crossing(minus(beat, segments[index].from), segments[index].bpm);
+    out.set(text, { rank, seconds: toSeconds([a * d + c * b, b * d]) });
+  }
+  return out;
+}
+
 // Per channel, the note events the exact song asks for, in the order an
 // engine must process them: by time, and a release before an attack at the
 // same instant (a repeated pitch is re-struck, not cut by its own release).
 export function expectedEvents(song) {
-  const seconds = tempoClock(song?.tempo);
+  const tracks = song?.tracks ?? [];
+  const beats = tracks.flatMap(track => (track.events ?? []).flatMap(note => [String(note.start), String(note.end)]));
+  const clock = timesOfBeats(song?.tempo, beats);
+  const at = beat => clock.get(String(beat));
   const channels = new Map();
-  (song?.tracks ?? []).forEach((track, role) => {
+  tracks.forEach((track, role) => {
     const list = [];
     for (const note of track.events ?? []) {
-      list.push({ time: seconds(note.start), on: true, pitch: note.pitch, velocity: velocityFor(note.volume ?? 8) });
-      list.push({ time: seconds(note.end), on: false, pitch: note.pitch });
+      const on = at(note.start), off = at(note.end);
+      list.push({ rank: on.rank, time: on.seconds, on: true, pitch: note.pitch, velocity: velocityForVolume(note.volume ?? DEFAULT_VOLUME) });
+      list.push({ rank: off.rank, time: off.seconds, on: false, pitch: note.pitch });
     }
-    list.sort((a, b) => a.time - b.time || Number(a.on) - Number(b.on));
-    if (list.length) channels.set(channelFor(role), list);
+    // Ordered on exact time (a beat's rank); the float is only the label
+    // compared with the engine's clock.
+    list.sort((a, b) => a.rank - b.rank || Number(a.on) - Number(b.on));
+    if (list.length) channels.set(channelOfRole(role), list.map(({ rank, ...event }) => event));
   });
   return channels;
 }

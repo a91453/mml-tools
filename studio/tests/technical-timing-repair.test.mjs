@@ -1058,6 +1058,146 @@ test('TTR-35 a neutrality class this layer does not implement is itself a violat
   assert.deepEqual(Object.values(REPAIR_NEUTRALITY), ['silence-preserving'], 'there is exactly one implemented class');
 });
 
+// ── the invariant net, one mutation class at a time ────────────────────────
+//
+// `verifyRepairInvariants` promises total equality for notes and checks every
+// planned rest against its plan. It used to compare only a note's id, pitch,
+// start, end, volume, role and sorted sourceIds, only the timing of a rest no
+// plan names, and a planned rest only against its own plan -- so a changed
+// sourceEventId, voice, tag or metadata key, a rest moved to another role, and
+// a plan that extended a rest over the following note all passed. Each class
+// below is a hand-built "repaired" project the real planners never produce.
+
+// A real, passing gap closure in Melody plus a Chord1 rest and note no plan names.
+function repairedWithBystanders() {
+  const opening = note({ id: 'mut-n0', start: 0, end: 1 });
+  const a = rest({ id: 'mut-a', start: 1, end: f(2).sub(RESIDUE) });
+  const b = note({ id: 'mut-b', pitch: 62, start: 2, end: 3 });
+  const c1 = rest({ id: 'mut-c1', start: 0, end: 3, role: 'Chord1' });
+  const c2 = note({ id: 'mut-c2', pitch: 55, start: 3, end: 4, role: 'Chord1' });
+  const identity = gapIdentity(a, b);
+  const candidate = project({ events: [opening, a, b, c1, c2], decisions: [technicalDecision(identity)] });
+  const result = repairTechnicalTiming(candidate);
+  assert.equal(result.status, REPAIR_STATUS.PASS);
+  const after = result.repairedProject;
+  const plans = result.repairs.map(repair => ({ ...repair }));
+  assert.deepEqual(verifyRepairInvariants(candidate, after, plans), [], 'the real repair passes the net');
+  const rebuild = (events, extra = {}) => createCanonicalProject({ ...after, events, ...extra });
+  const replace = (id, make) => after.events.map(event => (event.id === id ? make(event) : event));
+  return { candidate, after, plans, rebuild, replace, identity };
+}
+const rebuildNote = (event, overrides) => createCanonicalNoteEvent({ ...event, ...overrides });
+const rebuildRest = (event, overrides) => createCanonicalRestEvent({ ...event, ...overrides });
+const caught = (violations, pattern, label) => assert.ok(violations.some(item => pattern.test(item)), `${label}: ${JSON.stringify(violations)}`);
+
+test('TTR-36 every field of a note is compared, not a list of protected ones', () => {
+  const { candidate, plans, rebuild, replace } = repairedWithBystanders();
+  const mutations = {
+    'pitch': { pitch: 63 },
+    'sourceEventIds': { sourceEventIds: ['elsewhere/official'] },
+    'voice': { voice: 'Chord1' },
+    'tags': { tags: ['lead'] },
+    'metadata': { metadata: { lead: true } },
+  };
+  for (const [label, overrides] of Object.entries(mutations)) {
+    const violations = verifyRepairInvariants(candidate, rebuild(replace('mut-b', event => rebuildNote(event, overrides))), plans);
+    caught(violations, /note mut-b changed — no implemented repair may touch a note/, label);
+  }
+});
+
+test('TTR-37 a rest no plan names is compared whole: its role and provenance included', () => {
+  const { candidate, plans, rebuild, replace } = repairedWithBystanders();
+  const mutations = {
+    'role and voice moved': { role: 'Chord2', voice: 'Chord2' },
+    'voice': { voice: 'other' },
+    'sourceEventIds': { sourceEventIds: ['zzz'] },
+    'tags': { tags: ['breath'] },
+    'metadata': { metadata: { note: 'edited' } },
+  };
+  for (const [label, overrides] of Object.entries(mutations)) {
+    const violations = verifyRepairInvariants(candidate, rebuild(replace('mut-c1', event => rebuildRest(event, overrides))), plans);
+    caught(violations, /rest mut-c1 changed without a repair plan/, label);
+  }
+  // Its timing is still reported as a move.
+  const moved = verifyRepairInvariants(candidate, rebuild(replace('mut-c1', event => rebuildRest(event, { end: '2' }))), plans);
+  caught(moved, /rest mut-c1 moved without a repair plan/, 'timing');
+});
+
+test('TTR-38 a planned rest is checked beyond its timing: role, provenance and its repair record', () => {
+  const { candidate, plans, rebuild, replace } = repairedWithBystanders();
+  const role = verifyRepairInvariants(candidate, rebuild(replace('mut-a', event => rebuildRest(event, { voice: 'Chord1', tags: ['x'] }))), plans);
+  caught(role, /rest mut-a changed beyond its timing/, 'voice and tags');
+  const provenance = verifyRepairInvariants(candidate, rebuild(replace('mut-a', event => rebuildRest(event, { sourceEventIds: ['forged/official'] }))), plans);
+  caught(provenance, /rest mut-a provenance is not its own plus that of the rest it absorbed/, 'sourceEventIds');
+  const unrecorded = verifyRepairInvariants(candidate, rebuild(replace('mut-a', event => rebuildRest(event, { metadata: {} }))), plans);
+  caught(unrecorded, /rest mut-a does not carry the provenance record of its repair/, 'repair record removed');
+
+  // A coalesce may carry the absorbed rest's provenance, and must: dropping it
+  // loses the reversible mapping back to the source.
+  const { candidate: coalesced } = contiguousRestResidue();
+  const result = repairTechnicalTiming(coalesced);
+  assert.equal(result.status, REPAIR_STATUS.PASS);
+  const coalescePlans = result.repairs.map(repair => ({ ...repair }));
+  assert.deepEqual(verifyRepairInvariants(coalesced, result.repairedProject, coalescePlans), []);
+  const lost = createCanonicalProject({
+    ...result.repairedProject,
+    events: result.repairedProject.events.map(event => (event.id === 'rest-r'
+      ? rebuildRest(event, { sourceEventIds: event.sourceEventIds.filter(id => id !== 'rest-q/official') })
+      : event)),
+  });
+  caught(verifyRepairInvariants(coalesced, lost, coalescePlans), /rest rest-r provenance is not its own plus that of the rest it absorbed/, 'absorbed provenance dropped');
+});
+
+test('TTR-39 a plan that is itself wrong is caught against its interval identity and the role, not trusted', () => {
+  const { candidate, after, plans, rebuild, replace, identity } = repairedWithBystanders();
+  // Extended over the following note, with a plan that agrees with the project.
+  const overlong = plans.map(plan => ({ ...plan, after: { start: plan.after.start, end: '5/2' } }));
+  const over = verifyRepairInvariants(candidate, rebuild(replace('mut-a', event => rebuildRest(event, { end: '5/2' }))), overlong);
+  caught(over, new RegExp(`extends mut-a to 5/2, not to the interval end ${identity.end}`), 'plan end past the interval');
+  caught(over, /mut-a and mut-b overlap in Melody after the repair/, 'overlap with the following note');
+  // Stopping short of the interval end leaves part of the hole and is wrong too.
+  const shortEnd = f(identity.end).sub(new F(1, 1024)).toString();
+  const short = plans.map(plan => ({ ...plan, after: { start: plan.after.start, end: shortEnd } }));
+  caught(verifyRepairInvariants(candidate, rebuild(replace('mut-a', event => rebuildRest(event, { end: shortEnd }))), short),
+    /extends mut-a to .*, not to the interval end/, 'plan end short of the interval');
+  // A plan that does not state an implemented operation cannot be checked.
+  caught(verifyRepairInvariants(candidate, after, plans.map(plan => ({ ...plan, operation: 'snap-to-grid' }))),
+    /states operation snap-to-grid, which this layer does not implement/, 'unknown operation');
+
+  // A coalesce plan that reaches past the rest it absorbs.
+  const { candidate: coalesced } = contiguousRestResidue();
+  const result = repairTechnicalTiming(coalesced);
+  const wide = result.repairs.map(repair => ({ ...repair, after: { start: '3/4', end: repair.after.end } }));
+  const widened = createCanonicalProject({
+    ...result.repairedProject,
+    events: result.repairedProject.events.map(event => (event.id === 'rest-r' ? rebuildRest(event, { start: '3/4' }) : event)),
+  });
+  const violations = verifyRepairInvariants(coalesced, widened, wide);
+  caught(violations, /does not span exactly rest-q and rest-r/, 'coalesce past its absorbed rest');
+  caught(violations, /overlap in Melody after the repair/, 'coalesce over the opening note');
+});
+
+test('TTR-40 overlaps the input already had are not the repair\'s; order, controls and project metadata are compared', () => {
+  // Two Chord1 notes that already overlap: the real repair still passes the net.
+  const opening = note({ id: 'ov-n0', start: 0, end: 1 });
+  const a = rest({ id: 'ov-a', start: 1, end: f(2).sub(RESIDUE) });
+  const b = note({ id: 'ov-b', pitch: 62, start: 2, end: 3 });
+  const lower = note({ id: 'ov-c1', pitch: 55, start: 0, end: 2, role: 'Chord1' });
+  const upper = note({ id: 'ov-c2', pitch: 59, start: 1, end: 3, role: 'Chord1' });
+  const withOverlap = project({ events: [opening, a, b, lower, upper], decisions: [technicalDecision(gapIdentity(a, b))] });
+  const result = repairTechnicalTiming(withOverlap);
+  assert.equal(result.status, REPAIR_STATUS.PASS, JSON.stringify(result.diagnostics));
+  assert.deepEqual(verifyRepairInvariants(withOverlap, result.repairedProject, result.repairs.map(repair => ({ ...repair }))), []);
+
+  const { candidate, after, plans, rebuild } = repairedWithBystanders();
+  const [first, second, ...others] = after.events;
+  caught(verifyRepairInvariants(candidate, rebuild([second, first, ...others]), plans), /event order changed/, 'two events swapped');
+  const tempoEdited = [createCanonicalTempoEvent({ ...after.tempoEvents[0], sourceEventIds: ['forged'] })];
+  caught(verifyRepairInvariants(candidate, rebuild(after.events, { tempoEvents: tempoEdited }), plans), /tempo or meter map changed/, 'tempo provenance');
+  const baselineEdited = { ...after.metadata, sourceFaithfulBaseline: { snapshot: null } };
+  caught(verifyRepairInvariants(candidate, rebuild(after.events, { metadata: baselineEdited }), plans), /project metadata changed beyond the repair record/, 'baseline replaced');
+});
+
 test('TTR-27 the result carries the published Canonical identity and claims no acceptance', () => {
   const { candidate } = earlyReleaseGap();
   const result = repairTechnicalTiming(candidate);

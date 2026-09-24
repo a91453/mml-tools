@@ -596,6 +596,15 @@ The open cap now counts only open proposals, so its remedy is true; a separate
 retention cap bounds the lifetime total and promises no remedy, because there is
 none but a new project; and `accepts_proposals` reflects both.
 
+**`accepts_proposals` ignored a project that had moved under the run.** A run
+whose baseline was replaced, whose bound candidate is gone or whose selected
+asset bytes changed kept listing its old review requests with
+`accepts_proposals: true`, but the Agent Review Policy marks every proposal
+bound to such a run STALE from the moment it is stored. The targets read now
+applies the same project checks to the binding a new proposal would get,
+answers `accepts_proposals: false` when any holds, and names them in
+`stale_at_submission`.
+
 ### One fix that belongs to Phase 1
 
 The adversarial pass found the worst defect not in this layer but under it.

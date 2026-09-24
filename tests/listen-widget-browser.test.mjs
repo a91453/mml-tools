@@ -7,8 +7,10 @@
 // sound: where playback starts, which notes it queues first, and what text a
 // feedback button would post into the conversation.
 //
-// Skipped when no Chromium is installed (CI's unit job has none); the browser
-// jobs and a local checkout with Playwright's Chromium run it.
+// Skipped when no Chromium is installed (the npm test job in CI has none).
+// Studio CI's studio-web job installs Chromium and runs this file with
+// STUDIO_REQUIRE_BROWSER_TESTS=1, which turns a missing browser into a failure
+// instead of a silent skip.
 
 import test from 'node:test';
 import assert from 'node:assert/strict';
@@ -18,6 +20,8 @@ import { join } from 'node:path';
 import { NODE_LISTEN_CODEC, createListenConfig, runListenTool } from '../server/mcp-listen.mjs';
 import { parseListenMml } from '../server/listen/mml-events.mjs';
 import { decodeListenLink } from '../studio/web/listen-link.mjs';
+import { barStart, listenBars as studioWebBars } from '../studio/web/listen-timeline.mjs';
+import { beatNumber } from '../studio/web/roll-geometry.mjs';
 import { syntheticBank } from './fixtures/synthetic-soundfont.mjs';
 
 let chromium = null;
@@ -35,6 +39,9 @@ const executable = (() => {
   const candidates = [process.env.STUDIO_BROWSER_CHROMIUM, (() => { try { return chromium.executablePath(); } catch { return null; } })(), ...installedChromiums()];
   return candidates.find(path => path && existsSync(path)) ?? null;
 })();
+if (!executable && process.env.STUDIO_REQUIRE_BROWSER_TESTS === '1') {
+  throw new Error('STUDIO_REQUIRE_BROWSER_TESTS=1 but no Chromium for Playwright is installed');
+}
 const skip = executable ? false : 'Chromium for Playwright is not installed';
 
 const SONG = 'MML@t120o5c4e4d4f4e2g2f4a4g4b4a1,t120o4l2cegcfaec1,t120o3c1f1c1c1,,,t120o2c1f1g1c1;';
@@ -45,6 +52,42 @@ async function listenResult(args) {
   const { structuredContent, text } = await runListenTool(args, { application: null, owner: null, listen });
   return { content: [{ type: 'text', text }], structuredContent, isError: false };
 }
+
+// A delivered Final with a one-beat pickup under 4/4, 16 beats at T120. The
+// player's bars run 0-1, 1-5, 5-9, 9-13, 13-16; the listen link carries no
+// pickup, so the Studio Web counts 0-4, 4-8, 8-12, 12-16 over the same notes.
+const PICKUP_MML = `MML@${Array.from({ length: 6 }, () => `t120o4${'c4'.repeat(16)}`).join(',')};`;
+const FINAL_ID = `art_${'ab'.repeat(32)}`;
+const pickupFinal = {
+  async getArtifact() {
+    return {
+      canonical: { status: 'CANONICAL_LOADED' }, operation: 'succeeded',
+      artifact: {
+        type: 'final_mml', artifact_id: FINAL_ID, project_id: `prj_${'cd'.repeat(16)}`, candidate_id: 'g11d:rev:synthetic', song_state: 'VALIDATED',
+        mml: PICKUP_MML, final_bar: { pickup: '1', final_partial: null, meter_text: '0 4/4' },
+      },
+    };
+  },
+  async getProject() { return { project: { title: 'Synthetic pickup Final' } }; },
+};
+const pickupFinalView = async (args = {}) => (await runListenTool({ artifact_id: FINAL_ID, ...args }, { application: pickupFinal, owner: null, listen })).structuredContent;
+
+// Where the Studio Web opens a link (studio/web/listen-ui.mjs startBeat): a
+// bar counted from beat 0 over the link's own meter text, or the beat itself.
+function studioWebStartBeat(payload, endBeat) {
+  if (payload.start?.bar) {
+    const { bars } = studioWebBars(payload.meter_text ?? null, endBeat);
+    return beatNumber(barStart(bars, Math.min(payload.start.bar, bars.length)));
+  }
+  return beatNumber(payload.start?.beat ?? '0');
+}
+
+// A plain page at an https origin with no host bridge, holding the player.
+async function standalone(page, html = listen.widgetHtml()) {
+  await page.route('https://widget.test/', route => route.fulfill({ status: 200, contentType: 'text/html; charset=utf-8', body: html }));
+  await page.goto('https://widget.test/');
+}
+const load = (page, view) => page.evaluate(value => window.__mmlListen.load(value), view);
 
 const HOST = `<!doctype html><html><body style="margin:0">
 <iframe id="player" sandbox="allow-scripts" style="width:760px;height:760px;border:0"></iframe>
@@ -318,5 +361,157 @@ test('better timbre is opt-in: an SF2 file stays in memory, a sample library is 
     const state = await page.evaluate(() => window.__mmlListen.snapshot());
     assert.equal(state.voice, 'samples');
     assert.ok(state.voice_counts.samples > 0, JSON.stringify(state.voice_counts));
+  });
+});
+
+test('a Final with a pickup opens at the start bar studio_listen resolved, as a bar or as its exact beat', { skip }, async () => {
+  const view = await pickupFinalView({ start_bar: 3 });
+  assert.equal(view.pickup, '1');
+  await withBrowser(async page => {
+    await standalone(page);
+    const openAt = async start => {
+      await load(page, start === undefined ? view : { ...view, start });
+      return [(await snapshot(page)).cursor_seconds, await page.textContent('#pos-bar')];
+    };
+    // Whichever form studio_listen sends for this Final, bar 3 after a one-beat
+    // pickup starts at beat 5, which is 2.5 s at T120.
+    assert.deepEqual(await openAt(), [2.5, '第 3 小節 · 第 1 拍']);
+    // The exact beat (the form a pickup Final's start travels in, since the
+    // Studio Web would count bar 3 from beat 8) and the bar agree.
+    assert.deepEqual(await openAt({ beat: '5' }), [2.5, '第 3 小節 · 第 1 拍']);
+    assert.deepEqual(await openAt({ bar: 3 }), [2.5, '第 3 小節 · 第 1 拍']);
+    // A different start in an otherwise identical view is a different view.
+    assert.deepEqual(await openAt({ beat: '9' }), [4.5, '第 4 小節 · 第 1 拍']);
+    assert.deepEqual(await openAt({ beat: '11/2' }), [2.75, '第 3 小節 · 第 1.5 拍']);
+    // Clamped to the song; a start the player cannot read opens at the beginning.
+    assert.deepEqual(await openAt({ beat: '999' }), [8, '第 5 小節 · 第 4 拍']);
+    for (const start of [{ beat: '5.5' }, { beat: 5 }, { beat: '-1' }, { bar: 0 }, { bar: '3' }, null]) {
+      assert.equal((await openAt(start))[0], 0, JSON.stringify(start));
+    }
+  });
+});
+
+test('"open here in Studio Web" under a pickup sends the beat of the bar the player is in, which the Studio Web opens at', { skip }, async () => {
+  const pickupView = await pickupFinalView();
+  const plainView = (await listenResult({ mml: PICKUP_MML, meter_text: '0 4/4', title: 'Synthetic' })).structuredContent;
+  assert.equal(plainView.pickup, null);
+  await withBrowser(async page => {
+    await standalone(page);
+    const openHere = async () => decodeListenLink((await page.evaluate(() => window.__mmlListen.hereLink())).split('#listen=')[1], NODE_LISTEN_CODEC);
+    for (const [view, bar, beat, start] of [
+      [pickupView, 3, 5, { beat: '5' }],
+      [pickupView, 1, 0, { beat: '0' }],
+      [pickupView, 5, 13, { beat: '13' }],
+      [plainView, 3, 8, { bar: 3 }],
+    ]) {
+      const label = `${view.pickup ? 'pickup' : 'plain'} bar ${bar}`;
+      await load(page, view);
+      await page.fill('#jump-bar', String(bar));
+      await page.click('#jump-bar-go');
+      await page.click('#play');
+      const state = await snapshot(page);
+      assert.deepEqual([state.last_start.bar, state.last_start.beat], [bar, beat], label);
+      const payload = await openHere();
+      assert.deepEqual(payload.start, start, label);
+      assert.equal(payload.pickup, undefined, 'the link document has no pickup');
+      assert.equal(studioWebStartBeat(payload, '16'), beat, `${label}: the Studio Web opens where the player is`);
+    }
+    // Inside a bar the link opens that bar's start, as a bar number would.
+    await load(page, pickupView);
+    await page.fill('#jump-time', '0:03');
+    await page.click('#jump-time-go');
+    await page.click('#play');
+    const payload = await openHere();
+    assert.deepEqual(payload.start, { beat: '5' });
+    assert.equal(studioWebStartBeat(payload, '16'), 5);
+  });
+});
+
+test('a damaged SF2 bank is refused, and a region with no sample data sounds through the synth without stalling playback', { skip }, async () => {
+  // Two beats at T120: one second, so playback ends on its own.
+  const view = (await listenResult({ mml: 'MML@t120o5c8d8e8f8,,,,,;', meter_text: '0 4/4', title: 'Short' })).structuredContent;
+  await withBrowser(async page => {
+    await standalone(page);
+    await load(page, view);
+    await page.click('[data-tab="sound"]');
+    const loadBank = async (name, bank) => {
+      await page.setInputFiles('#sf2-file', { name, mimeType: 'application/octet-stream', buffer: Buffer.from(bank) });
+      await page.waitForFunction(() => { const text = document.getElementById('sf2-status').textContent; return text && !/讀取中/.test(text); });
+      return page.textContent('#sf2-status');
+    };
+    const playToEnd = async () => {
+      await page.click('#rewind');
+      await page.click('#play');
+      assert.equal((await snapshot(page)).playing, true);
+      await page.waitForFunction(() => window.__mmlListen.snapshot().playing === false, null, { timeout: 5000 });
+      return (await snapshot(page)).voice_counts;
+    };
+    // The sample header points far past the 146 points of sample data.
+    const damaged = syntheticBank({ sample: { start: 100000, end: 100100, startLoop: 100010, endLoop: 100090 } });
+    assert.match(await loadBank('damaged.sf2', damaged), /Synthetic Sine.*超出取樣資料範圍/);
+    let state = await snapshot(page);
+    assert.equal(state.voice, 'synth');
+    assert.deepEqual(state.sf2_presets, []);
+    assert.equal(await page.isDisabled('#voice-sf2'), true);
+    assert.deepEqual(await playToEnd(), { synth: 4, sf2: 0, samples: 0 });
+
+    // A valid bank whose zone offset moves the sample range past the data:
+    // loaded, but every note it cannot sound is sounded by the synth.
+    assert.match(await loadBank('shifted.sf2', syntheticBank({ zoneGenerators: [[4, 1]] })), /已載入 1 個 preset/);
+    state = await snapshot(page);
+    assert.equal(state.voice, 'sf2');
+    assert.deepEqual(await playToEnd(), { synth: 4, sf2: 0, samples: 0 });
+
+    // The intact bank still sounds through its own samples.
+    assert.match(await loadBank('synthetic.sf2', syntheticBank()), /已載入 1 個 preset/);
+    assert.deepEqual(await playToEnd(), { synth: 0, sf2: 4, samples: 0 });
+  });
+});
+
+test('without a host bridge a link opens in a new tab that gets no opener and no referrer, and only a blocked tab is reported', { skip }, async () => {
+  const view = (await listenResult({ mml: SONG, meter_text: '0 4/4', title: 'Synthetic' })).structuredContent;
+  await withBrowser(async page => {
+    const context = page.context();
+    const studio = [];
+    await context.route('https://studio.example/**', route => { studio.push(route.request()); return route.fulfill({ status: 200, contentType: 'text/html', body: '<!doctype html><title>Studio Web</title>' }); });
+    await standalone(page);
+    await load(page, view);
+    const [tab] = await Promise.all([context.waitForEvent('page'), page.click('#open-web')]);
+    await tab.waitForURL(url => url.href === view.listen_link.url);
+    assert.equal(await tab.evaluate(() => window.opener === null), true, 'the opened page cannot reach the player');
+    assert.equal(studio.length, 1);
+    assert.equal(await studio[0].headerValue('referer'), null, 'the page is opened without a referrer');
+    assert.equal(await page.textContent('#status'), '', 'an opened tab is not reported as a failure');
+    assert.equal(await page.evaluate(() => document.getElementById('status').classList.contains('error')), false);
+    await tab.close();
+
+    // A blocked popup is still said plainly.
+    await page.evaluate(() => { window.open = () => null; });
+    await page.click('#open-web');
+    await page.waitForFunction(() => /主機沒有開啟連結/.test(document.getElementById('status').textContent));
+
+    // Inside a sandboxed frame (a host whose bridge never answers): when its
+    // popups escape the sandbox the tab opens without an opener; when they stay
+    // sandboxed the player cannot reach the tab to cut the opener, so the tab
+    // is closed and the failure reported rather than left holding the player.
+    for (const [sandbox, opens] of [['allow-scripts allow-popups allow-popups-to-escape-sandbox', true], ['allow-scripts allow-popups', false]]) {
+      await page.setContent(`<!doctype html><iframe id="player" sandbox="${sandbox}" style="width:760px;height:760px;border:0"></iframe>`);
+      await page.evaluate(html => { document.getElementById('player').srcdoc = html; }, listen.widgetHtml());
+      const frame = await (await page.$('#player')).contentFrame();
+      await frame.waitForFunction(() => window.__mmlListen);
+      await frame.evaluate(value => window.__mmlListen.load(value), view);
+      if (opens) {
+        const [popup] = await Promise.all([context.waitForEvent('page'), frame.click('#open-web')]);
+        await popup.waitForURL(url => url.href === view.listen_link.url);
+        assert.equal(await popup.evaluate(() => window.opener === null), true, sandbox);
+        assert.equal(await frame.textContent('#status'), '', sandbox);
+        await popup.close();
+      } else {
+        await frame.click('#open-web');
+        await frame.waitForFunction(() => /主機沒有開啟連結/.test(document.getElementById('status').textContent));
+        await page.waitForTimeout(500);
+        assert.deepEqual(context.pages().map(open => open.url()), [page.url()], `${sandbox}: no tab is left open`);
+      }
+    }
   });
 });

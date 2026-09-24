@@ -35,8 +35,9 @@
 // No network, no service write, no source bytes. The receipt carries counts,
 // identities and digests only — no pitch sequence, no durations list, no MML text.
 import { createHash } from 'node:crypto';
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, readFileSync, writeFileSync, realpathSync } from 'node:fs';
 import { join, resolve } from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { parseArgs } from 'node:util';
 import { createStudioApplication } from '../studio/backend/application/index.mjs';
 import { createStore } from '../studio/backend/application/store.mjs';
@@ -273,7 +274,7 @@ function leadSection({ review, assets, sources, queue }) {
         `${stored.length} stored reviews state no submitter and no method (unattested); under the old rule and the new one they are not graded.`,
         'Resubmitted with any attestation, they would still prove nothing: their audio classifications come from CQT salience, predominant pitch-class or F0 (metrics: locators, SOURCE_POLICY §6), and a score citation can only name the third-party MIDI (supporting, §1C) or its relabelled "official" copy (not independent); see evidence_probes.',
         'The Lead events are the highest sounding pitch of a third-party piano MIDI; "highest note ⇒ Lead" is a forbidden shortcut (MASTER_RULES §4).',
-        'Caveat, stated rather than used: decision-time Lead citations (applyDecisions.leadEvidence) are still graded as free text on main, not resolved against the project sources, so that path would accept the same weak evidence from any submitter. It is a pre-existing, actor-neutral gap (actor-gate-audit.json, found_not_changed); using it would not make the evidence any stronger, and nothing here uses it.',
+        'Decision-time Lead citations (applyDecisions.leadEvidence) are resolved against the project sources at review and finalize like a reviewLeadEvidence citation, and their audio classification is graded as a machine metric (a decision states no method). They were free text when actor-gate-audit.json recorded that gap under found_not_changed; either way they would not make the evidence any stronger, and nothing here uses them.',
       ],
       would_resolve: 'Per Melody section: positive Lead evidence from a primary source — a direct review of the original recording stating which line is foreground (citing the original_audio asset by reference), or an official score — plus a resolved section role, checked continuity and Core3, filed through reviewLeadEvidence, where the citation is resolved against the project sources, from any submitter.',
     },
@@ -432,7 +433,14 @@ async function main(argv = process.argv.slice(2)) {
   return 0;
 }
 
-if (process.argv[1] && resolve(process.argv[1]) === resolve(new URL(import.meta.url).pathname)) {
+// The entry module is compared by real path on both sides: Node takes
+// import.meta.url from the entry's real path (or from the link itself under
+// --preserve-symlinks-main), while argv[1] is the path the caller typed, so a
+// script started through a symlink would otherwise do nothing and exit 0.
+const invokedAsScript = (() => {
+  try { return Boolean(process.argv[1]) && realpathSync(process.argv[1]) === realpathSync(fileURLToPath(import.meta.url)); } catch { return false; }
+})();
+if (invokedAsScript) {
   try { process.exitCode = await main(); }
   catch (error) { process.stderr.write(`${error.stack ?? error.message}\n`); process.exitCode = 1; }
 }

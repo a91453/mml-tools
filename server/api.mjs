@@ -209,7 +209,17 @@ async function readUpload(request) {
  * Service's: the service takes a subject string and isolates records by it,
  * whatever the deployment's identity model happens to be.
  */
-export function createApiRouter({ application, ownerOf, challenge = null, agentDriver = null }) {
+// `faultLog`, when given, receives one record per request that ends in an
+// unexpected fault: the method, the path, the error's name and a short message.
+// The caller still gets only the generic INTERNAL_ERROR; the record is for the
+// operator's deployment log, which otherwise shows a 500 and nothing about why.
+export const faultRecord = (fields, error) => ({
+  ...fields,
+  error_name: typeof error?.name === 'string' ? error.name.slice(0, 64) : typeof error,
+  error_message: String(error?.message ?? error).replace(/\s+/g, ' ').slice(0, 300),
+});
+
+export function createApiRouter({ application, ownerOf, challenge = null, agentDriver = null, faultLog = null }) {
   const routes = [
     ['GET', /^\/agent$/, async () => json({ enabled: Boolean(agentDriver?.enabled) })],
     ['GET', /^\/projects\/([^/]+)\/runs\/([^/]+)\/agent$/, async (m, _r, owner) => {
@@ -493,6 +503,9 @@ export function createApiRouter({ application, ownerOf, challenge = null, agentD
       // told a call failed still has to know which rules snapshot answered.
       let canonical = null;
       try { canonical = await application.canonical.provenance(); } catch { canonical = null; }
+      if (!(error instanceof StudioApplicationError) && typeof faultLog === 'function') {
+        try { faultLog(faultRecord({ transport: 'http', method: request.method, path }, error)); } catch {}
+      }
       return errorResponse(error, canonical);
     }
   };

@@ -60,7 +60,9 @@ test('RRA-2 a metric-only or locator-only decision changes nothing and says why,
 
 test('RRA-3 a source-backed decision submitted by a conversational AI represents the releases, keeps the source releases and every attack, and clears micro-timing', async () => {
   const service = createStudioApplication();
-  const { projectId, candidateId, audioAssetId } = await candidateWithAudio(service);
+  // The promotions cite an official score the project holds: a decision's Lead
+  // citation is graded on the source it names.
+  const { projectId, candidateId, audioAssetId } = await candidateWithAudio(service, undefined, { officialScore: true });
   const before = (await service.reviewCandidate(OWNER, projectId, { candidateId })).review;
   assert.equal(before.readiness.gates.leadPromotion.status, 'PASS', 'the promotions carry complete evidence');
 

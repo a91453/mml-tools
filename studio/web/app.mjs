@@ -1,5 +1,5 @@
 import { listProjectSummaries, loadProject, requestPersistence, saveProject, storageHealth } from './storage.mjs';
-import { unzipFiles, zipFiles } from './backup-zip.mjs';
+import { portableBackup, unzipFiles, zipFiles } from './backup-zip.mjs';
 import { createWorkerClient } from './worker-client.mjs';
 import { createTaskQueue } from './task-queue.mjs';
 import { createUpdateFlow } from './pwa-update.mjs';
@@ -13,7 +13,7 @@ import { createListening } from './listen-ui.mjs';
 import { markersFromReport, sanitizeStoredNotes } from './listen-notes.mjs';
 // Request identity only. The MIDI decoder, the Canonical conversion and the
 // G11-B/G11-C derivation all live behind the Worker, so the main thread never
-// imports the backend and never parses a source file itself.
+// imports a backend source decoder and never parses a source file itself.
 import { createSourceRequestLedger } from './source-requests.mjs';
 // The Workshop editor (studio/web/workshop/) is outside the Canonical
 // pipeline. This small adapter only opens a copy there and brings an edit back
@@ -182,6 +182,7 @@ function midiSourceCard(entry) {
   return `<div class="card">
     <div class="row"><h3>${esc(slotLabels[entry.slot] ?? entry.slot)} · ${esc(entry.name)}</h3>${badge(integrity)}</div>
     <p class="meta">位元組完整性 ${integrity === 'PASS' ? '＝儲存的位元組與來源身分一致' : `＝失敗：${esc(entry.integrity.reasons.join(', '))}`}。這不是來源審核，也不是 SOURCE_PASS。</p>
+    ${(entry.integrity.reasons ?? []).includes('STORED_PROJECT_DOES_NOT_MATCH_SOURCE_BYTES') ? '<p class="meta">儲存的事件與這些位元組現在讀出的結果不同。若這份 MIDI 是在較早版本匯入的，讀法可能已經更新（例如把 SMF 的微秒速度讀回它代表的整數 Tempo），請重新匯入原始檔；若不是，請把它當成儲存內容已被改動。</p>' : ''}
     ${facts([
       ['檔案位元組', entry.source.byteLength === null ? null : `${entry.source.byteLength} bytes（${bytesLabel(entry.source.byteLength)}）`],
       ['sha256', entry.source.sha256],
@@ -833,8 +834,8 @@ function sendToListening(mml,label,{markers=false}={}){
 
 $('#new-project').onclick=()=>run(async()=>{audioFile=null;await commit(await call('newWorkspace'));},{revisionBound:false,projectBound:false});
 $('#projects').onchange=()=>{const id=$('#projects').value;run(async()=>{if(!projects.some(p=>p.id===id))throw Error('找不到選取的專案，請重新開啟');const selected=await loadProject(id);audioFile=null;await commit(selected);},{revisionBound:false,projectBound:false});};
-$('#export-project').onclick=()=>{if(workspace)download('mml-studio-project.json',JSON.stringify({...workspace,canonical:identity.metadata},null,2));};
-$('#restore-project').onchange=()=>{const file=$('#restore-project').files[0];if(file&&/\.zip$/i.test(file.name))return run(()=>restoreZip(file),{revisionBound:false,projectBound:false});if(file)run(async()=>{if(file.size>16*1048576)throw Error(`Project backup is ${(file.size/1048576).toFixed(1)} MiB; the restore limit is 16 MiB. Export the sources separately if a MIDI project exceeds it.`);audioFile=null;await commit(await call('importWorkspace',await file.text()));message('已匯入；先前審核保留為歷史，本輪需要重新審核。');},{revisionBound:false,projectBound:false});};
+$('#export-project').onclick=()=>{if(workspace)download('mml-studio-project.json',portableBackup(workspace,identity.metadata));};
+$('#restore-project').onchange=()=>{const file=$('#restore-project').files[0];$('#restore-project').value='';if(file&&/\.zip$/i.test(file.name))return run(()=>restoreZip(file),{revisionBound:false,projectBound:false});if(file)run(async()=>{if(file.size>16*1048576)throw Error(`Project backup is ${(file.size/1048576).toFixed(1)} MiB; the restore limit is 16 MiB. Export the sources separately if a MIDI project exceeds it.`);audioFile=null;await commit(await call('importWorkspace',await file.text()));message('已匯入；先前審核保留為歷史，本輪需要重新審核。');},{revisionBound:false,projectBound:false});};
 // ─── In-game probe kit ──────────────────────────────────────────────────────
 // Fixed test strings for open engine questions and a place to record what the
 // game actually did. Observations stay on this device (engine-probe-store.mjs),
@@ -1130,8 +1131,11 @@ const listenAudio = {
   state: () => (preview.owner === 'listen' ? preview.transport?.state ?? null : null),
   async pickBank(file) {
     const { storeBank } = await import('./preview/soundbank-store.mjs');
+    // Checked (parsed off the main thread) and kept before the engine is
+    // reset, so a refused bank leaves the engine and the kept bank as they were.
+    const stored = await storeBank(file);
     resetPreviewEngine();
-    preview.bank = await storeBank(file);
+    preview.bank = stored;
     preview.error = null;
     message(`已載入音色庫 ${file.name}；只保存在這台裝置。`);
     refreshPreview();
@@ -1514,7 +1518,7 @@ $('#export-all').onclick=()=>run(async()=>{
   const files = [];
   for (const summary of summaries) {
     const full = await loadProject(summary.id);
-    files.push({ name: `projects/${safeName(full.title)}-${full.id.slice(0, 8)}.json`, data: new TextEncoder().encode(JSON.stringify({ ...full, canonical: identity.metadata }, null, 2)) });
+    files.push({ name: `projects/${safeName(full.title)}-${full.id.slice(0, 8)}.json`, data: new TextEncoder().encode(portableBackup(full, identity.metadata)) });
   }
   if (!files.length) throw Error('沒有可匯出的專案');
   download(`mml-studio-projects-${new Date().toISOString().slice(0, 10)}.zip`, await zipFiles(files), 'application/zip');

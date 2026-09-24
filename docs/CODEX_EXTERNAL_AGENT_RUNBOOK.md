@@ -21,8 +21,10 @@ Application HTTP API，與同一 owner 的 MCP 共用 project／run。操作與�
 必須指定獨立 `--data-dir`。`store/` 使用既有 JSON record／blob store；
 `receipts/` 保留每次呼叫的時間、actor、參數與結果（不內嵌上傳 bytes）。
 真實歌曲的 suggestion／review／finalize 報告可能超過 MCP 的 512 KiB 序列化結果上限。
-CLI 的本機檔案路徑不套用網路回應限制；使用 `--output` 保存完整 JSON，再分段讀取，
-不要將整份大型報告貼進模型 context。網路 MCP 的限制完全保留。也可直接輸出報告：
+CLI 的本機路徑不套用網路回應限制，也不套用 MCP 的長清單摘要（`response_compaction`）：
+本機 `call` 的回應、`--output` 與 receipt 都是完整的 Application Service 結果。
+使用 `--output` 保存完整 JSON，再分段讀取，不要將整份大型報告貼進模型 context。
+網路 MCP 的限制與摘要完全保留。也可直接輸出報告：
 
 ```powershell
 node scripts/studio-agent.mjs --data-dir .studio-agent/my-song --actor agent:codex report --project-id PROJECT_ID --kind suggestion --out suggestion.json
@@ -33,13 +35,18 @@ node scripts/studio-agent.mjs --data-dir .studio-agent/my-song --actor agent:cod
 `review` 只由 service 重算報告，不寫入 store artifact、不記錄 confirmations。
 報告本文保存在本機 `--out` 檔，receipt 記錄輸出路徑與操作結果；稽核或跨機器搬移時
 必須一起保存兩者，不能只靠 store 或 `studio_artifact_get` 找回這份 review。
-三種報告均不推進 run、不覆寫既有輸出檔。`call --output` 可保存既有命令的完整結果。
+三種報告均不推進 run、不覆寫既有輸出檔。本機 `call --output` 可保存既有命令的完整結果。
 
 ### 遠端 MCP 大型報告
 
 唯讀工具現在接受選填 `report_page`。這是同一份 Application Service 回應的
-JSON 文字分段，不是摘要、不會刪除事件、不新建 artifact；不帶此參數時仍回傳
-原完整結果，原 512 KiB 上限保留。適用 suggestion、reduction／adaptation plan、
+JSON 文字分段，不是摘要、不會刪除事件、不新建 artifact，一律從完整結果讀取；
+不帶此參數時回傳 MCP 的有界檢視：machine-delivery ledger 的逐 release 清單一律摘要，
+超過 96 KiB 的回應再把最大的長清單摘要成 `{compacted: true, total, first, sha256,
+report_page | retrieve}`（見 `response_compaction`），原 512 KiB 上限保留。
+例外：`studio_arrangement_suggest` 與 `studio_baseline_events` 的用途就是那份清單，
+只摘要 ledger 清單，不依大小摘要。
+`report_page` 適用 suggestion、reduction／adaptation plan、
 無 confirmations 的 review、run plan／status、proposal targets／status、
 project／baseline events／job／artifact 讀取。
 
@@ -111,6 +118,9 @@ node scripts/studio-agent.mjs @remote report --project-id $created.project.proje
 
 上傳走既有 HTTP multipart，MCP 仍不收檔案 bytes。report 與 export 所需的大型
 唯讀回應會透過 report_page 完整回讀並驗證雜湊；失敗不寫出半份檔案。
+遠端 `call` 的回應、`--output` 與 receipt 則是 MCP 回應本身：長清單可能已摘要為
+`{compacted, total, first, sha256, report_page | retrieve}`（見 `response_compaction`），
+不是完整結果；需要完整清單時，以摘要指名的唯讀工具與 `report_page` 讀回，或改用 report。
 call 不自動重送寫入。網路斷線／逾時為 REMOTE_REQUEST_UNCERTAIN：服務可能已執行，
 先讀 project／run 狀態；不要換新 idempotency key 盲目重做。
 URL 僅接受 HTTPS origin，或明確的 127.0.0.1／[::1] HTTP 測試入口；不跟隨 redirect。
@@ -298,6 +308,10 @@ node scripts/studio-agent.mjs --data-dir $work --actor agent:codex export --proj
 
 只匯出 `completed` run 所指、candidate ID 相符且實際有 MML 的 `final_mml`；
 匯出前重讀 `getRun`，若其 `staleness` 非空，拒絕輸出且不改寫 run。
+這個判斷 fail closed：run status 與 artifact 必須是完整讀取（本機不經 MCP 摘要，
+遠端經 report_page 完整回讀）；`staleness` 必須是實際的空陣列，artifact 必須是 run
+所指的 Final 且 candidate 相符。任一欄位缺漏、型別不符或被摘要成
+`{compacted: true, …}`，一律拒絕輸出，不會把摘要當成「沒有失效」。
 拒絕回應／receipt 的 `error.details` 保留 run ID、完整 `staleness`、
 `staleness_notice` 與當前 `canonical`。先以 `studio_run_status` 核對來源／baseline／
 候選／規則綁定，再透過既有流程處理；不能刪除失效訊號或直接把舊 run 改成可交付。

@@ -7,6 +7,7 @@ import { encodeListenLink } from '../web/listen-link.mjs';
 import { DEFAULT_BANK_DOWNLOAD_NOTICE, DEFAULT_BANK_SUBSET, DEFAULT_BANK_UPSTREAM } from '../web/preview/default-bank.mjs';
 import { trimDefaultBank } from '../web/preview/default-bank-trim.mjs';
 import { syntheticUpstreamBank } from '../tests/support/synthetic-soundbank.mjs';
+import { countBankSends } from './bank-sends.mjs';
 
 // The free default preview bank through the real page, Worker and engine, in a
 // browser context of its own: its storage starts empty, and the upstream URL
@@ -131,13 +132,76 @@ export async function runDefaultBankChecks({ browser, base, profile }) {
     assert.ok((await page.locator('#listen-status').textContent()).includes('可改為選擇自己的音色庫'));
     assert.equal(upstreamRequests.length, 3);
 
-    // A bank of the user's own takes precedence and needs no download.
+    // A truncated bank of the user's own: its RIFF header is intact, so only
+    // parsing it shows it is damaged. It is refused with a visible message
+    // before anything is kept, and the default bank stays in place.
     mode = 'serve';
+    const sample = Buffer.from(core.BasicSoundBank.getSampleSoundBankFile());
+    const truncated = sample.subarray(0, sample.length >> 1);
+    assert.equal(truncated.toString('latin1', 0, 4) + truncated.toString('latin1', 8, 12), 'RIFFsfbk');
+    const storedUserBank = () => page.evaluate(async () => (await (await import('./studio/web/preview/soundbank-store.mjs')).loadBank())?.name ?? null);
+    await page.locator('#listen-bank-file').setInputFiles({ name: 'truncated.sf2', mimeType: 'application/octet-stream', buffer: truncated });
+    await page.locator('#message').filter({ hasText: '音色庫無法解析，沒有儲存' }).waitFor();
+    assert.equal(await storedUserBank(), null, 'the truncated bank is not kept');
+    assert.ok((await page.locator('#listen-bank').textContent()).includes(LABEL), 'the default bank stays in place');
+
+    // One kept before banks were parsed (only the header was checked then)
+    // stops loading with a visible message instead of leaving the engine
+    // loading forever, after a reload too, and every later play tries again.
+    await page.evaluate(async bytes => {
+      const db = await new Promise((resolve, reject) => { const request = indexedDB.open('mml-studio-soundbank', 1); request.onsuccess = () => resolve(request.result); request.onerror = () => reject(request.error); });
+      const buffer = new Uint8Array(bytes).buffer;
+      const sha256 = [...new Uint8Array(await crypto.subtle.digest('SHA-256', buffer))].map(b => b.toString(16).padStart(2, '0')).join('');
+      await new Promise((resolve, reject) => {
+        const tx = db.transaction('banks', 'readwrite');
+        tx.objectStore('banks').put({ name: 'truncated.sf2', size: buffer.byteLength, sha256, format: 'sfbk', savedAt: new Date().toISOString(), bytes: buffer }, 'current');
+        tx.oncomplete = resolve; tx.onerror = () => reject(tx.error);
+      });
+      db.close();
+    }, [...truncated]);
+    await page.reload(); await settled();
+    await page.locator('#open-listening').click();
+    await page.locator('#listen-head h3', { hasText: 'Default bank fixture' }).waitFor();
+    await page.locator('#listen-bank').filter({ hasText: 'truncated.sf2' }).waitFor();
+    // Each play loads the bank again: one handed an earlier play's failed
+    // load back would show the same message but send the engine nothing.
+    const bankSends = await countBankSends(page);
+    for (const attempt of ['first play', 'retry']) {
+      const sent = await bankSends();
+      await page.evaluate(() => { document.querySelector('#listen-status').textContent = ''; });
+      await page.locator('#listen-play').click();
+      // Well inside the engine's load timeout: the worklet's parse error ends the load.
+      await page.locator('#listen-status').filter({ hasText: '無法播放：音色庫無法解析，已停止載入' }).waitFor({ timeout: 20000 });
+      assert.equal(await bankSends(), sent + 1, `${attempt}: this play sent the bank to the engine itself`);
+      assert.equal(await page.locator('#listen-position').getAttribute('data-state'), 'stopped', `${attempt}: the player is not left playing`);
+    }
+    assert.equal(upstreamRequests.length, 3, 'a damaged bank of the user\'s own never falls back to a download');
+
+    // A bank of the user's own takes precedence and needs no download.
     await page.locator('#listen-bank-file').setInputFiles({ name: 'saw.sf2', mimeType: 'application/octet-stream', buffer: Buffer.from(core.BasicSoundBank.getSampleSoundBankFile()) });
     await page.locator('#listen-bank').filter({ hasText: 'saw.sf2' }).waitFor();
     assert.equal((await page.locator('#listen-bank').textContent()).includes(LABEL), false);
     await page.locator('#listen-play').click();
     await played();
+
+    // A pick that is refused leaves the playing engine alone: the bank is
+    // checked and kept before the engine is reset, so the playback goes on,
+    // the kept bank stays, and the next play needs no second load.
+    const loadsBefore = await bankSends();
+    await page.evaluate(() => { document.querySelector('#message').textContent = ''; });
+    await page.locator('#listen-bank-file').setInputFiles({ name: 'truncated.sf2', mimeType: 'application/octet-stream', buffer: truncated });
+    await page.locator('#message').filter({ hasText: '音色庫無法解析，沒有儲存' }).waitFor();
+    assert.equal(await page.locator('#listen-position').getAttribute('data-state'), 'playing', 'a refused pick does not stop the playback');
+    assert.equal(await storedUserBank(), 'saw.sf2', 'the refused pick leaves the kept bank');
+    // Stopped in the page, not by a click that would wait on a button the
+    // playback's own end may have just disabled.
+    await page.evaluate(() => document.querySelector('#listen-stop:enabled')?.click());
+    await page.locator('#listen-position[data-state="stopped"]').waitFor();
+    // Back at the start: the position moves again only once an engine plays.
+    assert.equal(await page.locator('#listen-position').getAttribute('data-seconds'), '0');
+    await page.locator('#listen-play').click();
+    await played();
+    assert.equal(await bankSends(), loadsBefore, 'the engine loaded before the refused pick plays on without a second load');
     await page.locator('#listen-stop').click();
     assert.equal(upstreamRequests.length, 3, 'the user bank plays without contacting the upstream');
     assert.ok((await page.locator('[data-listen-instrument="0"] option').allTextContents()).every(text => /^\d{3} /.test(text)), 'the picker lists the user bank\'s presets');

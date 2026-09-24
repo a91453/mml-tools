@@ -17,8 +17,9 @@
 // pitch sequence and no durations, so the queue cannot serve as a transcription
 // of the source. A reviewer resolves pitches through `studio_baseline_events`.
 import { createHash } from 'node:crypto';
-import { readFileSync, writeFileSync } from 'node:fs';
+import { readFileSync, writeFileSync, realpathSync } from 'node:fs';
 import { resolve } from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { parseArgs } from 'node:util';
 import { f } from '../studio/backend/mml/index.mjs';
 import { splitProjectSourceVoices } from '../studio/backend/arrangement/voice-split.mjs';
@@ -269,7 +270,14 @@ async function main(argv = process.argv.slice(2)) {
   return 0;
 }
 
-if (process.argv[1] && resolve(process.argv[1]) === resolve(new URL(import.meta.url).pathname)) {
+// The entry module is compared by real path on both sides: Node takes
+// import.meta.url from the entry's real path (or from the link itself under
+// --preserve-symlinks-main), while argv[1] is the path the caller typed, so a
+// script started through a symlink would otherwise do nothing and exit 0.
+const invokedAsScript = (() => {
+  try { return Boolean(process.argv[1]) && realpathSync(process.argv[1]) === realpathSync(fileURLToPath(import.meta.url)); } catch { return false; }
+})();
+if (invokedAsScript) {
   try { process.exitCode = await main(); }
   catch (error) { process.stderr.write(`${error.message}\n`); process.exitCode = 1; }
 }

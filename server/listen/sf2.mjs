@@ -108,6 +108,14 @@ export function parseSoundFont(buffer) {
       sampleType: view.getUint16(at + 44, true),
     });
   }
+  // Every sample header must address points inside the smpl chunk. ROM samples
+  // (0x8000) address the synthesizer's ROM and compressed ones (0x10) address
+  // bytes of Ogg data, so they are not measured in 16-bit points here.
+  const points = Math.floor(smpl.size / 2);
+  for (const sample of samples) {
+    if (sample.sampleType & 0x8010) continue;
+    if (sample.start > sample.end || sample.end > points) refuseBank(`音色庫的取樣「${sample.name || '(未命名)'}」超出取樣資料範圍，檔案可能已損壞`);
+  }
   const ibag = readBags('ibag');
   const igen = readGens('igen');
   const inst = records('inst', 22);
@@ -183,11 +191,17 @@ export function soundFontRegions(bank, presetIndex, key, velocity) {
   return regions;
 }
 
-/** Mono float samples for one region's sample range, from the bank's 16-bit PCM. */
+/**
+ * Mono float samples for one region's sample range, from the bank's 16-bit PCM.
+ * A zone's address offsets can move the range past the sample data; only the
+ * part inside it is read, and a range with nothing inside it reads as empty.
+ */
 export function soundFontSampleData(bank, region) {
-  const first = Math.max(0, region.start);
-  const last = Math.min(bank.smpl.size / 2, region.end);
-  const length = Math.max(0, last - first);
+  const points = Math.floor(bank.smpl.size / 2);
+  const first = Math.min(points, Math.max(0, region.start));
+  const last = Math.min(points, Math.max(first, region.end));
+  const length = last - first;
+  if (!(length > 0)) return new Float32Array(0);
   const pcm = new DataView(bank.buffer, bank.smpl.offset + first * 2, length * 2);
   const out = new Float32Array(length);
   for (let i = 0; i < length; i++) out[i] = pcm.getInt16(i * 2, true) / 32768;

@@ -21,7 +21,7 @@ import { LISTEN_LIMITS, ListenLinkError, decodeListenLink, streamCodec } from '.
 import { createStudioApplication } from '../studio/backend/application/index.mjs';
 import { sha256Hex } from '../studio/backend/source/sha256.mjs';
 import { canonicalProjectBytes, keepEveryRole, sixRoleBaseline } from '../studio/tests/fixtures/application-fixtures.mjs';
-import { OWNER as RELEASE_OWNER, assign, oneTickEarlyBaseline, roleDecisions } from '../studio/tests/fixtures/release-fixtures.mjs';
+import { OWNER as RELEASE_OWNER, assign, oneTickEarlyBaseline, roleDecisions, uploadOfficialScore } from '../studio/tests/fixtures/release-fixtures.mjs';
 import { DELIVERY_FLAG, MACHINE_DELIVERY_SCHEMA_V2 } from '../studio/backend/final/delivery-evaluator.mjs';
 import { finalListeningMarkers, groupRuns, PROVISIONAL_MARKER_BUDGET, LEAD_MARKER_BUDGET } from '../server/listen/final-markers.mjs';
 import { parseListenMml } from '../server/listen/mml-events.mjs';
@@ -383,7 +383,10 @@ async function v3Final(t, decisions) {
   const created = (await service.createProject(RELEASE_OWNER, { title: 'Synthetic v3 listening fixture' })).project;
   await service.uploadAsset(RELEASE_OWNER, created.project_id, { kind: 'canonical_project', filename: 'b.json', mediaType: 'application/json', bytes: new TextEncoder().encode(JSON.stringify(oneTickEarlyBaseline())) });
   await service.analyzeSources(RELEASE_OWNER, created.project_id);
-  const applied = await service.applyDecisions(RELEASE_OWNER, created.project_id, { decisions });
+  // `decisions` may be a function of an official score the project holds, for
+  // Lead citations that must name it by reference to prove a role.
+  const scoreRef = typeof decisions === 'function' ? await uploadOfficialScore(service, created.project_id, RELEASE_OWNER) : null;
+  const applied = await service.applyDecisions(RELEASE_OWNER, created.project_id, { decisions: typeof decisions === 'function' ? decisions(scoreRef) : decisions });
   assert.equal(applied.decisions.applied, true, JSON.stringify(applied.decisions.rejected ?? null));
   const final = await service.finalize(RELEASE_OWNER, created.project_id, { candidateId: applied.decisions.candidate_id, confirmations: V3_CONFIRMATIONS });
   assert.equal(final.operation, 'succeeded', JSON.stringify(final.blockers));
@@ -397,7 +400,7 @@ const listenOn = (application, owner = RELEASE_OWNER) => async args => (await (a
 }), { application, owner, listen: createListenConfig({ studioWebOrigin: STUDIO_WEB }) })).json()).result;
 
 test('a v3 Final: every provisionally rendered release is a marker at its source release, with the counts and per-source figures as notes', async t => {
-  const { service, artifact } = await v3Final(t, roleDecisions());
+  const { service, artifact } = await v3Final(t, scoreRef => roleDecisions({ scoreRef }));
   assert.deepEqual(artifact.delivery.flags, [DELIVERY_FLAG.RELEASES_RENDERED_PROVISIONALLY]);
   assert.equal(artifact.provisional_release_rendering.renderings.length, 8);
 
@@ -568,6 +571,18 @@ const outsideMml = view => { const { mml: _mml, compare_mml: _compare, ...rest }
 const listBytes = view => outsideMml({ ...view, listen_link: null });
 const sixRoles = track => `MML@${Array.from({ length: 6 }, () => track).join(',')};`;
 const responseBytes = result => Buffer.byteLength(JSON.stringify(result.structuredContent)) + Buffer.byteLength(result.content[0].text);
+
+test('a start bar in a Final with a pickup opens the bar this tool resolved, not a bar counted from beat 0', async () => {
+  // A one-beat pickup under 4/4: bars run 0-1, 1-5, 5-9, 9-13, 13-16. The link
+  // contract has no pickup, so the Studio Web would count bar 3 from beat 8.
+  const mml = sixRoles(`t120o4${'c4'.repeat(16)}`);
+  const artifact = syntheticArtifact({ mml, final_bar: { pickup: '1', final_partial: null, meter_text: '0 4/4' } });
+  const view = (await surface({ application: stubApplication(artifact) }).call({ artifact_id: ARTIFACT_ID, start_bar: 3 })).result.structuredContent;
+  assert.deepEqual((await linkPayload(view.listen_link.url)).start, { beat: '5' });
+  // Without a pickup the bar number means the same bar on both sides and stays.
+  const plain = (await surface({ application: stubApplication(syntheticArtifact({ mml })) }).call({ artifact_id: ARTIFACT_ID, start_bar: 3 })).result.structuredContent;
+  assert.deepEqual((await linkPayload(plain.listen_link.url)).start, { bar: 3 });
+});
 
 test('the listen bound is the Studio compaction bound', () => {
   assert.equal(LISTEN_RESPONSE.triggerBytes, RESPONSE_COMPACTION.triggerBytes);

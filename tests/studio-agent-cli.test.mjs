@@ -8,9 +8,11 @@ import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { callAgentTool, checkAgentCall, LOCAL_AGENT_OWNER } from '../scripts/studio-agent.mjs';
 import { createStudioApplication } from '../studio/backend/application/index.mjs';
-import { STUDIO_MCP_TOOLS } from '../server/mcp-studio.mjs';
+import { STUDIO_MCP_TOOLS, runStudioTool } from '../server/mcp-studio.mjs';
+import { compactStudioResponse } from '../server/mcp-compaction.mjs';
 import { canonicalProjectBytes, sixRoleBaseline, runDecisionsFor, projectWithSymbolicAsset, FIXTURE_CONFIRMATIONS } from '../studio/tests/fixtures/run-fixtures.mjs';
 import { sixSourceVoices } from '../studio/tests/fixtures/midi-fixtures.mjs';
+import { staleCompletedRun } from './fixtures/stale-run.mjs';
 
 const cli = fileURLToPath(new URL('../scripts/studio-agent.mjs', import.meta.url));
 const actor = 'agent:codex';
@@ -220,4 +222,64 @@ test('local report output retains a full-song response above the MCP wire cap', 
   const app = { suggestArrangement: async () => report };
   const result = await callAgentTool(app, 'studio_arrangement_suggest', { project_id: 'prj_' + 'a'.repeat(32) }, actor);
   assert.equal(result, report, 'no response rows or diagnostics are lost to a network-size refusal');
+});
+
+test('local call returns the full result of reads the MCP view compacts, and leaves the MCP view unchanged', async () => {
+  const project_id = 'prj_' + 'a'.repeat(32);
+  const run_id = 'run_' + 'b'.repeat(32);
+  const artifact_id = 'art_' + 'c'.repeat(64);
+  // Above the size trigger: the MCP view summarizes its long list.
+  const status = { operation: 'succeeded', project_id, run: { run_id, state: 'awaiting_review',
+    steps: Array.from({ length: 3000 }, (_, index) => ({ step: `s${index}`, note: 'x'.repeat(40) })) }, staleness: [] };
+  // Small, but a machine-delivery ledger's per-release list is always summarized.
+  const artifact = { operation: 'succeeded', artifact: { artifact_id, type: 'final_mml', mml: 'MML@t120l8cdefg;',
+    machine_delivery: { schema: 'fixture-ledger', unresolved_evidence_ledger: [], blocking: [],
+      non_blocking_pending: [{ provisional_releases: Array.from({ length: 12 }, (_, index) => ({ event_id: `e${index}`, role: 'lead' })) }] } } };
+  const app = { getRun: async () => structuredClone(status), getArtifact: async () => structuredClone(artifact) };
+  for (const [name, args, full] of [
+    ['studio_run_status', { project_id, run_id }, status],
+    ['studio_artifact_get', { artifact_id }, artifact],
+  ]) {
+    const mcp = await runStudioTool(name, args, { application: app, owner: LOCAL_AGENT_OWNER });
+    assert.ok(mcp.response_compaction, `precondition: the MCP view of ${name} is compacted`);
+    assert.deepEqual(mcp, compactStudioResponse(name, args, full), 'the MCP transport view is unchanged');
+    const local = await callAgentTool(app, name, args, actor);
+    assert.equal(local.response_compaction, undefined);
+    assert.equal(JSON.stringify(local), JSON.stringify(full), `local ${name} is the full Application Service result`);
+  }
+});
+
+test('local call --output and its receipt keep a size-compacted run status whole', async t => {
+  const { dir, command } = workspace(t);
+  const app = createStudioApplication({ dataDirectory: join(dir, 'store'), durability: 'persistent' });
+  const { project_id, run_id, status } = await staleCompletedRun(app, join(dir, 'store'), LOCAL_AGENT_OWNER);
+  const input = join(dir, 'status-request.json');
+  writeFileSync(input, JSON.stringify({ project_id, run_id }));
+  const output = join(dir, 'status.json');
+  const printed = command(['call', 'studio_run_status', '--input', input, '--output', output]);
+  assert.deepEqual(printed, status, 'stdout is the full result');
+  assert.deepEqual(JSON.parse(readFileSync(output, 'utf8')), status, '--output holds the full result');
+  const receipts = readdirSync(join(dir, 'receipts')).map(name => JSON.parse(readFileSync(join(dir, 'receipts', name), 'utf8')));
+  assert.equal(receipts.length, 1);
+  assert.deepEqual(receipts[0].result, status, 'the receipt holds the full result');
+});
+
+test('local export refuses a stale run whose MCP view compacts the staleness list, with the full list as evidence', async t => {
+  const { dir, command } = workspace(t);
+  const app = createStudioApplication({ dataDirectory: join(dir, 'store'), durability: 'persistent' });
+  const { project_id, run_id, status, view } = await staleCompletedRun(app, join(dir, 'store'), LOCAL_AGENT_OWNER);
+  assert.equal(view.staleness.length, undefined, 'precondition: the summary object has no length to test');
+  const output = join(dir, 'stale.mml');
+  const result = command(['export', '--project-id', project_id, '--run-id', run_id, '--out', output], 1);
+  assert.equal(existsSync(output), false, 'no Final of a stale run is written');
+  assert.equal(result.error.code, 'AGENT_INPUT_REFUSED');
+  assert.match(result.error.message, /bound to changed inputs/);
+  assert.deepEqual(result.error.details, {
+    run_id, staleness: status.staleness, staleness_notice: status.staleness_notice, canonical: status.canonical,
+  }, 'the refusal keeps every staleness entry, not a summary');
+  const receipts = readdirSync(join(dir, 'receipts')).map(name => JSON.parse(readFileSync(join(dir, 'receipts', name), 'utf8')));
+  assert.equal(receipts.length, 1);
+  assert.deepEqual(receipts[0].result, result);
+  assert.deepEqual(JSON.parse(JSON.stringify(await app.getRun(LOCAL_AGENT_OWNER, project_id, run_id))), status, 'refusal never rewrites the run');
+  assert.equal(existsSync(join(dir, '.agent.lock')), false);
 });

@@ -42,6 +42,17 @@
 // require a player readback to be "actual, not assumed" (Gate 6); a PASS that
 // outlived the material it described would be exactly that assumption.
 //
+// Where they are stored follows from the same binding. A baseline-scoped
+// confirmation is one statement per project, kept in `confirmations[name]`. A
+// candidate-scoped one is a statement about one candidate, so it is kept per
+// candidate, in `candidate_confirmations[candidateId][name]`, the way Core3
+// approvals and Lead evidence reviews already are: recording a review for
+// candidate B must not overwrite candidate A's. Records written before this
+// shape existed kept every kind in `confirmations[name]`; such an entry still
+// counts for the candidate it names and is reported stale for any other, and
+// it is replaced only by a new statement about that same candidate -- exactly
+// as a re-record always replaced it -- never by one about another candidate.
+//
 // Player readback has three honest states here. `NOT_RUN` (the default), `N/A`
 // with a stated reason when no preview or verification assets are used for the
 // cue — the same state the Studio Web plane records for that situation, and
@@ -75,7 +86,7 @@ const CONFIRMATIONS = Object.freeze({
   mobile_adaptation_reviewed: 'readiness `mobileAdaptation` gate: the candidate was reviewed against Acceptance Gate 8 and any Mobile adaptation (or the conclusion that none is needed) is minimal, role-preserving and evidence-backed. Bound to the candidate.',
   regression_reviewed: 'readiness `regression` gate: the candidate was compared against the Source-Faithful Baseline and accepted previous version when present, with Lead/Core3/source drift and available historical regressions explicitly reviewed. Bound to the candidate.',
   core3_completeness_reviewed: 'readiness `core3Completeness` gate: the Core3 the evaluator could not certify complete was reviewed against Acceptance Gate 4 and found to stand up as a one-player arrangement for this source. It resolves the unresolved residue, which includes a missing Chord1/Chord2 function -- the evaluator cannot tell material the source never carried from material cleanup dropped, so only a reviewer can. It can never clear an absent Lead or a Core3 whose identity depends on Chord3-Chord5: those are deficiencies in the arrangement and the gate FAILs on them. Bound to the candidate.',
-  original_audio_required: 'readiness `originalAudio` applicability. Setting it false states the song-specific workflow does not require original audio, and must say why. Bound to the baseline.',
+  original_audio_required: 'readiness `originalAudio` applicability. Setting it false states the song-specific workflow does not require original audio, and must say why. Refused while the project holds original audio (an original_audio asset or audio alignment evidence attached to a candidate), and a false recorded earlier does not count once it does: Acceptance Gate 7 applies whenever official audio is part of the source set. Bound to the baseline.',
   original_audio_reviewed: 'readiness `originalAudio` gate: Acceptance Gate 7 review. The active beat<->recording alignment for the relevant sections and the role / prominence / sustain / articulation / recording-structure questions were reviewed against the recording; audio metrics were not used to overwrite symbolic identity. Bound to the candidate and to the active audio evidence revision it reviewed.',
 });
 
@@ -112,7 +123,36 @@ export const STALE_CONFIRMATION = Object.freeze({
   // A Gate 7 review is about one audio evidence revision; another one being
   // active means the review is about evidence that is no longer selected.
   AUDIO_EVIDENCE_REVISION_CHANGED: 'AUDIO_EVIDENCE_REVISION_CHANGED',
+  // A legacy single-map entry for this candidate that the candidate's own
+  // per-candidate entry of the same kind replaces. Not reachable through
+  // `record()`, which replaces the legacy entry itself; reported rather than
+  // hidden when a restored or hand-edited record carries both.
+  SUPERSEDED: 'SUPERSEDED',
 });
+
+const isPlainRecord = value => Boolean(value) && typeof value === 'object' && !Array.isArray(value);
+
+// The baseline-scoped confirmations, and every confirmation a record written
+// before per-candidate storage existed, by name.
+const confirmationsOf = record => (isPlainRecord(record?.confirmations) ? record.confirmations : {});
+
+// The candidate-scoped confirmations, by candidate id and then by name.
+const candidateConfirmationsOf = record => (isPlainRecord(record?.candidate_confirmations) ? record.candidate_confirmations : {});
+
+/**
+ * Every confirmation entry a project record stores, from both maps, with the
+ * candidate map it was filed under (null for `confirmations`). For readers that
+ * must see every statement on record -- whether a candidate has been reviewed at
+ * all, for instance -- rather than only the effective ones.
+ */
+export function storedConfirmationEntries(record) {
+  const entries = Object.entries(confirmationsOf(record)).map(([name, entry]) => ({ name, entry, filedUnder: null }));
+  for (const [filedUnder, byName] of Object.entries(candidateConfirmationsOf(record))) {
+    if (!isPlainRecord(byName)) continue;
+    for (const [name, entry] of Object.entries(byName)) entries.push({ name, entry, filedUnder });
+  }
+  return entries;
+}
 
 export function createReviewService({ canonical, projects, intake, arrangement, store }) {
   const audioKey = (projectId, candidateId) => `audio:${projectId}:${candidateId}`;
@@ -153,8 +193,6 @@ export function createReviewService({ canonical, projects, intake, arrangement, 
     return { project, audioErrors };
   };
 
-  const confirmationsOf = record => record.confirmations ?? {};
-
   // The identity of the audio evidence currently selected for a candidate:
   // the report hash(es) of the active head(s) read from the store -- the same
   // reports readiness grades -- never the `audio_evidence` index cache. Null when
@@ -169,22 +207,58 @@ export function createReviewService({ canonical, projects, intake, arrangement, 
    *
    * Everything else on the record is reported as stale with the reason, so a
    * reviewer can see that a statement exists and why it does not count here.
+   *
+   * Both maps are read. This candidate's own per-candidate entries are
+   * candidates for effect; every other candidate's are reported stale
+   * (`CANDIDATE_MISMATCH`) and left where they are. A legacy entry in
+   * `confirmations` is judged exactly as before: it counts for the candidate
+   * it names and is stale for any other.
    */
   const effectiveConfirmations = (record, candidateId) => {
     const baselineId = record.baseline?.baseline_id ?? null;
     const effective = {};
     const stale = [];
-    for (const [name, entry] of Object.entries(confirmationsOf(record))) {
+    // `filedUnder` is the per-candidate map an entry was read from, or
+    // undefined for the single map. An entry filed under a candidate is a
+    // statement about that candidate only: its own `candidate_id` must agree
+    // with the map it sits in, and its kind must be candidate-scoped, or it is
+    // not bound to anything provable and counts for nobody.
+    const staleReasonOf = (name, entry, filedUnder) => {
       const boundBaseline = entry?.baseline_id ?? null;
       const boundCandidate = entry?.candidate_id ?? null;
-      let reason = null;
-      if (boundBaseline === null) reason = STALE_CONFIRMATION.UNBOUND;
-      else if (boundBaseline !== baselineId) reason = STALE_CONFIRMATION.BASELINE_CHANGED;
-      else if (CONFIRMATION_SCOPE[name] === 'candidate' && boundCandidate !== candidateId) reason = STALE_CONFIRMATION.CANDIDATE_MISMATCH;
-      else if (name === 'original_audio_reviewed' && entry?.value === true
-        && (entry.audio_report_sha256 ?? null) !== activeAudioReportSha(record, candidateId)) reason = STALE_CONFIRMATION.AUDIO_EVIDENCE_REVISION_CHANGED;
-      if (reason) stale.push({ name, reason, bound_baseline_id: boundBaseline, bound_candidate_id: boundCandidate, at: entry?.at ?? null });
+      if (boundBaseline === null) return STALE_CONFIRMATION.UNBOUND;
+      if (boundBaseline !== baselineId) return STALE_CONFIRMATION.BASELINE_CHANGED;
+      if (filedUnder !== undefined) {
+        if (CONFIRMATION_SCOPE[name] !== 'candidate' || boundCandidate !== filedUnder || boundCandidate !== candidateId) return STALE_CONFIRMATION.CANDIDATE_MISMATCH;
+      } else if (CONFIRMATION_SCOPE[name] === 'candidate' && boundCandidate !== candidateId) return STALE_CONFIRMATION.CANDIDATE_MISMATCH;
+      if (name === 'original_audio_reviewed' && entry?.value === true
+        && (entry.audio_report_sha256 ?? null) !== activeAudioReportSha(record, candidateId)) return STALE_CONFIRMATION.AUDIO_EVIDENCE_REVISION_CHANGED;
+      return null;
+    };
+    const reportStale = (name, entry, reason) => stale.push({
+      name, reason, bound_baseline_id: entry?.baseline_id ?? null, bound_candidate_id: entry?.candidate_id ?? null, at: entry?.at ?? null,
+    });
+
+    const byCandidate = candidateConfirmationsOf(record);
+    const own = typeof candidateId === 'string' && Object.hasOwn(byCandidate, candidateId) && isPlainRecord(byCandidate[candidateId])
+      ? byCandidate[candidateId]
+      : {};
+    for (const [name, entry] of Object.entries(confirmationsOf(record))) {
+      if (CONFIRMATION_SCOPE[name] === 'candidate' && Object.hasOwn(own, name) && (entry?.candidate_id ?? null) === candidateId) {
+        reportStale(name, entry, STALE_CONFIRMATION.SUPERSEDED);
+        continue;
+      }
+      const reason = staleReasonOf(name, entry, undefined);
+      if (reason) reportStale(name, entry, reason);
       else effective[name] = entry;
+    }
+    for (const [filedUnder, byName] of Object.entries(byCandidate)) {
+      if (!isPlainRecord(byName)) continue;
+      for (const [name, entry] of Object.entries(byName)) {
+        const reason = staleReasonOf(name, entry, filedUnder);
+        if (reason) reportStale(name, entry, reason);
+        else effective[name] = entry;
+      }
     }
     return { effective: Object.freeze(effective), stale: Object.freeze(stale) };
   };
@@ -193,6 +267,53 @@ export function createReviewService({ canonical, projects, intake, arrangement, 
     const stored = store.getJson(audioKey(projectId, candidateId));
     return Array.isArray(stored) ? stored : [];
   };
+
+  /**
+   * The original audio this project holds, if any.
+   *
+   * ACCEPTANCE_CRITERIA Gate 7 is required when official audio is part of the
+   * source set, so `original_audio_required: false` cannot be true of a project
+   * that holds a recording: an uploaded `original_audio` asset, audio alignment
+   * evidence attached to any of its candidates (or listed in the project's
+   * audio evidence index), or -- when the caller has them -- a Canonical source
+   * of kind `original-audio` in a project it is reviewing. Studio Web makes the
+   * same call and forces the gate required when audio is present.
+   *
+   * Fails closed: an audio evidence record that cannot be read is still
+   * evidence that something was attached.
+   */
+  const originalAudioHeld = (record, canonicalProjects = []) => {
+    const assetIds = (record.assets ?? [])
+      .filter(asset => asset?.kind === 'original_audio')
+      .map(asset => asset.asset_id ?? null);
+    const evidenceCandidateIds = new Set((record.audio_evidence ?? [])
+      .map(entry => entry?.candidate_id ?? null));
+    for (const candidate of record.candidates ?? []) {
+      let attached;
+      try { attached = audioReportsFor(record.project_id, candidate.candidate_id).length > 0; }
+      catch { attached = true; }
+      if (attached) evidenceCandidateIds.add(candidate.candidate_id);
+    }
+    const sourceIds = canonicalProjects.flatMap(project => (project?.sources ?? [])
+      .filter(source => source?.kind === 'original-audio')
+      .map(source => source.id));
+    return Object.freeze({
+      held: assetIds.length > 0 || evidenceCandidateIds.size > 0 || sourceIds.length > 0,
+      original_audio_asset_ids: Object.freeze(assetIds),
+      audio_evidence_candidate_ids: Object.freeze([...evidenceCandidateIds]),
+      original_audio_source_ids: Object.freeze([...new Set(sourceIds)]),
+    });
+  };
+
+  /**
+   * Whether Gate 7 applies to a review or finalize. A recorded
+   * `original_audio_required: false` counts only while the project holds no
+   * original audio: it is re-checked here as well as refused at record time,
+   * so a statement stored before the recording arrived -- or before that
+   * refusal existed -- cannot turn the gate N/A.
+   */
+  const originalAudioRequiredFor = (record, recorded, canonicalProjects = []) => recorded.original_audio_required?.value !== false
+    || originalAudioHeld(record, canonicalProjects).held;
 
   /**
    * The Core3 source-change approvals stored for one candidate.
@@ -267,6 +388,41 @@ export function createReviewService({ canonical, projects, intake, arrangement, 
       return { ...review, leadEvidence: prepared.leadEvidence, evidenceSources: prepared.sources };
     });
 
+  // The revision lineage, prepared for the shared Lead grader the same way as
+  // the fresh reviews above. A decision's `leadEvidence` is the citation the
+  // lineage builders recover and re-grade for every Lead move an earlier
+  // revision made. Handed over as stored, it reached the grader with no
+  // resolved source and no stated audio method, and the grader reads both of
+  // those absences as the historical "may prove a role": an uncited or
+  // third-party score citation and an audio "metric" were positive role
+  // evidence, and Gate 3 passed on them (SOURCE_POLICY §1C, §6).
+  //
+  // Each applied decision's citation is therefore resolved against the
+  // project's evidence registry, as it is now, and graded with no attestation:
+  // a decision states no audio method, so a classified audio item is graded as
+  // a machine metric -- never positive role evidence -- and only a score
+  // citation naming an official score the project holds (`ref`) can prove a
+  // role on this path. A classified audio reading from a direct review of the
+  // recording is filed through `reviewLeadEvidence`, which states its method.
+  //
+  // Read-time only. The stored applications are not rewritten: a copy of each
+  // `applied[]` entry carries the prepared evidence, and nothing the
+  // integrity check reads (status, candidate, revision) is touched.
+  const gradedApplicationLineage = (applications, registry) => {
+    if (!Array.isArray(applications)) return applications;
+    return applications.map(application => {
+      if (!application || typeof application !== 'object' || !Array.isArray(application.applied)) return application;
+      return {
+        ...application,
+        applied: application.applied.map(entry => {
+          const evidence = entry?.leadEvidence;
+          if (!evidence || typeof evidence !== 'object' || Array.isArray(evidence)) return entry;
+          return { ...entry, leadEvidence: gradedLeadEvidenceOf(evidence, null, registry ?? null).leadEvidence };
+        }),
+      };
+    });
+  };
+
   /** Everything review and finalize both need, assembled once. */
   const context = async (owner, projectId, candidateId) => {
     // Checked by shape first, before the Canonical engines are loaded or the
@@ -297,7 +453,15 @@ export function createReviewService({ canonical, projects, intake, arrangement, 
     // representations are re-graded against it, and Lead evidence citations are
     // resolved against it. Never the resolution stored with a record.
     const releaseEvidenceRegistry = releaseEvidenceRegistryFor(engines, record, baselineProject, project);
-    return { engines, record, baseline, baselineProject, entry, application, applicationLineage: arrangement.loadCandidateLineage(record, candidateId), core3Approvals: core3ApprovalsFor(record, candidateId), leadEvidenceReviews, gradedLeadEvidenceReviews: gradedLeadEvidenceReviews(leadEvidenceReviews, releaseEvidenceRegistry), confirmations, staleConfirmations: stale, audioReports, audioErrors, project, parent, candidateRulesSnapshot, loadedRulesSnapshot, releaseEvidenceRegistry };
+    // Gate 7 applicability for this review, the one value review and finalize
+    // both hand readiness: a recorded `false` counts only while the project,
+    // its baseline and this review project hold no original audio.
+    const originalAudioRequired = originalAudioRequiredFor(record, confirmations, [baselineProject, project]);
+    // The lineage exactly as stored, and the same lineage with every decision's
+    // Lead citation prepared for the grader. Every Lead report builder call
+    // (review, finalize, reviewLeadEvidence) reads the prepared one.
+    const applicationLineage = arrangement.loadCandidateLineage(record, candidateId);
+    return { engines, record, baseline, baselineProject, entry, application, applicationLineage, gradedApplicationLineage: gradedApplicationLineage(applicationLineage, releaseEvidenceRegistry), core3Approvals: core3ApprovalsFor(record, candidateId), leadEvidenceReviews, gradedLeadEvidenceReviews: gradedLeadEvidenceReviews(leadEvidenceReviews, releaseEvidenceRegistry), confirmations, staleConfirmations: stale, audioReports, audioErrors, project, parent, candidateRulesSnapshot, loadedRulesSnapshot, releaseEvidenceRegistry, originalAudioRequired };
   };
 
   /** Record an explicit confirmation. Each one needs a stated reason. */
@@ -308,6 +472,32 @@ export function createReviewService({ canonical, projects, intake, arrangement, 
     }
     const baselineId = record.baseline?.baseline_id ?? null;
     const next = { ...confirmationsOf(record) };
+    // One map per candidate, copied so nothing is written until every
+    // confirmation in the call has been validated. It grows the way the
+    // candidate set does and no faster: an entry is filed only for a candidate
+    // the project holds (checked below), at most one per kind, replaced on a
+    // re-record, and -- like the per-candidate Core3 approvals, Lead reviews and
+    // audio evidence -- kept for the audit trail when a re-intake drops the
+    // candidate, where it reads as BASELINE_CHANGED.
+    const nextByCandidate = Object.fromEntries(Object.entries(candidateConfirmationsOf(record))
+      .map(([candidate, byName]) => [candidate, isPlainRecord(byName) ? { ...byName } : byName]));
+    const recorded = {};
+    // A baseline-scoped confirmation replaces the project's one statement of
+    // that kind. A candidate-scoped one replaces only the named candidate's own
+    // statement of that kind: another candidate's is a different statement and
+    // stays where it is. The legacy single-map entry of that kind is replaced
+    // only when it names this same candidate, as a re-record always replaced it.
+    const put = (name, entry) => {
+      recorded[name] = entry;
+      if (CONFIRMATION_SCOPE[name] !== 'candidate') {
+        next[name] = entry;
+        return;
+      }
+      const candidate = entry.candidate_id;
+      const own = Object.hasOwn(nextByCandidate, candidate) && isPlainRecord(nextByCandidate[candidate]) ? nextByCandidate[candidate] : {};
+      nextByCandidate[candidate] = { ...own, [name]: entry };
+      if (Object.hasOwn(next, name) && (next[name]?.candidate_id ?? null) === candidate) delete next[name];
+    };
     for (const [name, input] of Object.entries(confirmations)) {
       if (name === 'in_game' || name === 'in_game_acceptance') {
         fail(ERROR_CODES.INVALID_REQUEST, 'in-game acceptance is not recordable through this interface. Only the user or a controlled target-client test can record it.', { gate: 'in_game' });
@@ -354,7 +544,7 @@ export function createReviewService({ canonical, projects, intake, arrangement, 
           if (!SHA256_HEX.test(digest)) fail(ERROR_CODES.INVALID_REQUEST, 'player_readback.mml_sha256 must be the SHA-256 (64 hex characters) of the exact MML that was read back.');
           mmlSha256 = digest;
         }
-        next[name] = { value, reason, evidence: normalizeEvidence(input.evidence), at: now(), ...binding, ...(mmlSha256 ? { mml_sha256: mmlSha256 } : {}) };
+        put(name, { value, reason, evidence: normalizeEvidence(input.evidence), at: now(), ...binding, ...(mmlSha256 ? { mml_sha256: mmlSha256 } : {}) });
         continue;
       }
 
@@ -397,16 +587,52 @@ export function createReviewService({ canonical, projects, intake, arrangement, 
         }
         audioBinding = { audio_report_sha256: reviewedReport };
       }
-      next[name] = { value: input.value, reason, evidence, at: now(), ...binding, ...audioBinding };
+      // Gate 7 is required when official audio is part of the source set. A
+      // project that holds a recording, or audio evidence attached to one of
+      // its candidates, cannot be declared to need none: the reason string
+      // would contradict what the project holds, and a review is not allowed
+      // to overrule it.
+      if (name === 'original_audio_required' && input.value === false) {
+        const audio = originalAudioHeld(record);
+        if (audio.held) {
+          fail(ERROR_CODES.INVALID_REQUEST, 'This project holds original audio, so original_audio_required cannot be recorded as false: Acceptance Gate 7 applies whenever official audio is part of the source set. Leave it required and review the audio evidence instead.', {
+            confirmation: name,
+            original_audio_asset_ids: audio.original_audio_asset_ids,
+            audio_evidence_candidate_ids: audio.audio_evidence_candidate_ids,
+          });
+        }
+      }
+      put(name, { value: input.value, reason, evidence, at: now(), ...binding, ...audioBinding });
     }
-    projects.save({ ...record, confirmations: next });
-    return Object.freeze({ confirmations: Object.freeze({ ...next }) });
+    // A record that has never held a candidate-scoped confirmation is saved in
+    // exactly the shape it had.
+    const byCandidate = Object.keys(nextByCandidate).length || Object.hasOwn(record, 'candidate_confirmations')
+      ? { candidate_confirmations: nextByCandidate }
+      : {};
+    projects.save({ ...record, confirmations: next, ...byCandidate });
+    // The response keeps its name-keyed shape: the project's baseline-level
+    // statements (and any legacy entries still in that map), with every
+    // statement this call recorded under its name.
+    return Object.freeze({ confirmations: Object.freeze({ ...next, ...recorded }) });
   }
+
+  /**
+   * Refuse an unknown candidate before anything is recorded about it. Review
+   * and finalize record their confirmations first, so a call naming a
+   * candidate that does not exist used to answer CANDIDATE_NOT_FOUND after the
+   * confirmations it carried were already saved, and they then moved the gates
+   * of every other candidate they applied to.
+   */
+  const requireCandidate = (owner, projectId, candidateId) => {
+    if (!isCandidateId(candidateId)) fail(ERROR_CODES.CANDIDATE_NOT_FOUND, 'Unknown candidate', { candidate_id: String(candidateId).slice(0, 96) });
+    arrangement.loadCandidate(projects.load(owner, projectId), candidateId);
+  };
 
   return Object.freeze({
     context,
     audioKey,
     record,
+    requireCandidate,
     effectiveConfirmations,
 
     /**
@@ -569,7 +795,7 @@ export function createReviewService({ canonical, projects, intake, arrangement, 
       const graded = gradedLeadEvidenceReviews(leadEvidenceReviewsFor(record, candidateId), ctx.releaseEvidenceRegistry);
       const others = graded.filter(entry => !(entry.eventId === eventId && entry.axis === axis));
       const reportsWith = freshReviews => {
-        const inputs = { applications: ctx.applicationLineage, baseline: baselineProject, candidate: application.candidate, freshReviews };
+        const inputs = { applications: ctx.gradedApplicationLineage, baseline: baselineProject, candidate: application.candidate, freshReviews };
         return axis === axes.PROMOTION
           ? engines.arrangement.leadPromotionReportsFromLineage(inputs)
           : engines.arrangement.leadDemotionReportsFromLineage(inputs);
@@ -731,7 +957,10 @@ export function createReviewService({ canonical, projects, intake, arrangement, 
      * silently substituted for the other.
      */
     async review(owner, projectId, { candidateId, confirmations = null } = {}) {
-      if (confirmations) record(owner, projectId, confirmations, { candidateId });
+      if (confirmations) {
+        requireCandidate(owner, projectId, candidateId);
+        record(owner, projectId, confirmations, { candidateId });
+      }
       const ctx = await context(owner, projectId, candidateId);
       const { engines, application, baselineProject, confirmations: recorded, project, parent } = ctx;
       const core3ApprovedChanges = ctx.core3Approvals;
@@ -740,15 +969,17 @@ export function createReviewService({ canonical, projects, intake, arrangement, 
       // revision: a Lead move made three revisions ago still needs evidence
       // relative to the Source-Faithful baseline, and its evidence record lives
       // on the revision that made it. Every recovered record is re-graded
-      // against the current candidate, never carried forward as a stored PASS.
-      const leadReportInputs = { applications: ctx.applicationLineage, baseline: baselineProject, candidate: application.candidate, freshReviews: ctx.gradedLeadEvidenceReviews };
+      // against the current candidate, never carried forward as a stored PASS,
+      // and its citation is resolved against the project's sources first
+      // (`gradedApplicationLineage`), exactly as a fresh review's is.
+      const leadReportInputs = { applications: ctx.gradedApplicationLineage, baseline: baselineProject, candidate: application.candidate, freshReviews: ctx.gradedLeadEvidenceReviews };
       const leadDemotionReports = engines.arrangement.leadDemotionReportsFromLineage(leadReportInputs);
       const leadPromotionReports = engines.arrangement.leadPromotionReportsFromLineage(leadReportInputs);
       const readinessInputs = {
         leadDemotionReports,
         leadPromotionReports,
         versionDriftReviewed: recorded.version_drift_reviewed?.value === true,
-        originalAudioRequired: recorded.original_audio_required?.value !== false,
+        originalAudioRequired: ctx.originalAudioRequired,
         originalAudioReviewed: recorded.original_audio_reviewed?.value === true,
         playerReadback: recorded.player_readback?.value ?? 'NOT_RUN',
         mobileAdaptation: recorded.mobile_adaptation_reviewed?.value === true ? 'PASS' : 'PENDING',
@@ -873,6 +1104,40 @@ export function gatesFrom(readiness) {
     in_game: GATE_STATUS.PENDING,
     notice: GATE_NOTICE,
   });
+}
+
+// The readiness gates `gatesFrom` projects onto a public axis, and that axis.
+const AXIS_BY_READINESS_GATE = Object.freeze({
+  technical: 'technical',
+  source: 'source',
+  originalAudio: 'audio',
+  playerReadback: 'player_readback',
+  mobileAdaptation: 'mobile_adaptation',
+  regression: 'regression',
+  inGameAcceptance: 'in_game',
+});
+
+/**
+ * Every gate a readiness result leaves unresolved: any status other than PASS
+ * or N/A, a missing status included.
+ *
+ * `gatesFrom` projects seven axes and is kept as it is for its readers. Under
+ * machine delivery a Final can be delivered with other gates still open --
+ * Lead promotion, micro-timing, Core3 completeness, version drift and any gate
+ * a later release adds -- and a list built from the seven axes alone reported
+ * none of them. The axes keep their public names here; every other readiness
+ * gate is listed under its readiness name, in readiness order, after them.
+ */
+export function unresolvedGatesFrom(readiness, axes = gatesFrom(readiness)) {
+  const unresolved = status => status !== GATE_STATUS.PASS && status !== GATE_STATUS.NOT_APPLICABLE;
+  const names = Object.entries(axes)
+    .filter(([name, status]) => name !== 'notice' && unresolved(status))
+    .map(([name]) => name);
+  for (const [name, gate] of Object.entries(readiness?.gates ?? {})) {
+    if (Object.hasOwn(AXIS_BY_READINESS_GATE, name)) continue;
+    if (unresolved(gate?.status)) names.push(name);
+  }
+  return Object.freeze([...new Set(names)]);
 }
 
 export { CONFIRMATIONS, CONFIRMATION_SCOPE, PLAYER_READBACK_VALUES };

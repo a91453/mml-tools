@@ -139,7 +139,7 @@ The service calls no LLM API. It cannot: it holds no key and imports no client.
 | `arrangement-service.mjs` | Suggestion, then explicit acceptance. |
 | `review-service.mjs` | Candidate review, confirmations, gate axes. |
 | `final-service.mjs` | Finalize orchestration and artifacts. |
-| `technical-service.mjs` | The legacy Strict Mobile technical check. |
+| `technical-service.mjs` | The Strict Mobile technical check under Published Canonical, and the legacy `dist/core.js` diagnostic under its own names. |
 
 Operations: `capabilities`, `createProject`, `getProject`, `listProjects`,
 `uploadAsset`, `listAssets`, `getAsset`, `readAssetBytes`, `analyzeSources`,
@@ -386,8 +386,18 @@ from the review or finalize call the confirmations arrive with. A confirmation
 whose identity no longer matches — the baseline was replaced by a new intake,
 or a different candidate is being reviewed — stays on the record for the audit
 trail, is reported under `stale_confirmations` with the reason
-(`BASELINE_CHANGED`, `CANDIDATE_MISMATCH`, `UNBOUND`), and feeds no gate. A
+(`BASELINE_CHANGED`, `CANDIDATE_MISMATCH`, `UNBOUND`,
+`AUDIO_EVIDENCE_REVISION_CHANGED`, `SUPERSEDED`), and feeds no gate. A
 readback PASS recorded for revision one does not pass revision two.
+
+Candidate-scoped confirmations are stored per candidate, so recording one for
+candidate B never replaces candidate A's statement of the same kind: A's review
+still counts A's, and reports B's as `CANDIDATE_MISMATCH`. Baseline-scoped
+confirmations stay one statement per project. A record written before
+per-candidate storage kept every kind in one map by name; such an entry still
+counts for the candidate it names, is stale for any other, and is replaced only
+by a new statement about that same candidate (`SUPERSEDED` reports a restored
+record that holds both).
 
 `player_readback` has three honest states. `NOT_RUN` is the default. `N/A`,
 with the reason, states that no preview or verification assets are used for
@@ -493,6 +503,17 @@ lives in the `applied[]` of the one revision that performed the move, and
 every step through the same `applicationIntegrity()` and refuses an inconsistent
 chain whole) and re-grade each recovered *evidence record* through the shared
 grader. No previous PASS is ever read.
+
+A recovered record is prepared for the grader exactly as a
+`studio_lead_evidence_review` citation is, at read time and without rewriting
+the stored application: each classified score/audio item is resolved against
+the project's sources by its `ref`, so an uncited citation, one that names
+nothing the project holds, or a third-party one is not positive role evidence
+(SOURCE_POLICY §1C). A decision states no audio method, so its audio
+classification is graded as a machine metric, a locator and never role evidence
+(§6). On the decision path only an official score the project holds, cited by
+`ref`, proves a role; a direct review of the recording is filed through
+`studio_lead_evidence_review`, which states its method.
 
 A recovered record is returned to `PENDING` rather than graded when the
 candidate has moved under it:
@@ -891,9 +912,8 @@ and the server instructions tell an agent to upload over HTTP and pass the
 ### Backward compatibility
 
 `mml_service_info`, `mml_validate` and `mml_overlap_details` keep their names,
-descriptions, schemas, annotations and exact report shape. A server with no
-Application Service attached — the Sites worker — advertises exactly those
-three, so its contract is untouched.
+schemas and annotations. A server with no Application Service attached — the
+Sites worker — advertises exactly those three.
 
 Their business logic moved into the Application Service's `technical-service.mjs`,
 which the HTTP surface calls too, so there is one implementation. The MCP
@@ -901,6 +921,25 @@ transport binds its own instance of it for one reason: the report carries
 `service_version`, which describes the service answering the call, not the
 orchestration layer, and routing it through a differently-versioned application
 would make one tool report two versions. The logic is identical either way.
+
+**Which profile answered.** `mml_validate` and `mml_overlap_details` answer
+under the Published Canonical validator and report its profile
+(`STUDIO_MML_PROFILE`) as `profile`. `mml_service_info` reports that same
+profile, reached through the same technical service and the same Canonical
+gate, with `canonical_validation` (`AVAILABLE`, or the code the two tools refuse
+with) and `canonical_release` (`status`, `canonical_version`,
+`canonical_status`, `manifest_version`, `rules_snapshot_sha`,
+`manifest_commit`). Where Canonical is not loaded — including the Sites worker,
+which has no gate — service info still answers, with `profile: null` and the
+refusal code; it never names the legacy profile in its place. The
+`dist/core.js` version and profile (`mobile-strict-2026-09-08`) are reported
+only as `legacy_core_version` and `legacy_profile`: in service info, and in
+every technical report over MCP and HTTP, where `legacy_core_version` replaced
+the former `core_version`. A legacy diagnostic (`/technical/legacy/*`) reports
+`profile: null` beside its `legacy_profile`, as it reports `technical_ok: null`
+beside `legacy_technical_ok`. The HTTP API has no separate service-info
+endpoint; `GET /api/v1/capabilities` and the root endpoint report the Canonical
+provenance and name no profile.
 
 ## 13. Transport parity
 

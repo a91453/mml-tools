@@ -401,6 +401,34 @@ test('AP-19 the render pool keeps no thread alive once idle', async () => {
   await small.close();
 });
 
+test('AP-21 a job that outlives the pool\'s time limit fails, its worker is stopped, and the queue goes on with a fresh one', async () => {
+  const limited = createRenderPool({ size: 1, idleMs: 1000, jobTimeoutMs: 3000 });
+  try {
+    const loaded = await provider.load();
+    const bank = { sha256: loaded.identity.sha256, bytes: loaded.bytes };
+    // Six roles of 400 whole notes at T32: 3,000 s, far more than three
+    // seconds of rendering and analysis on any machine.
+    const role = `t32o4l1${'c'.repeat(400)}`;
+    const long = perf(`MML@${Array(6).fill(role).join(',')};`, SIX('piano'));
+    const analyze = { performance: long, profiles: {}, bars: [], reference: null, sampleRate: 22050, channels: 1, window: null, returnPcm: false };
+    const started = performance.now();
+    const stuck = limited.run('analyze', analyze, { bank });
+    // Queued behind it on the pool's only worker.
+    const next = limited.run('original', { mono: new Float32Array(16), sampleRate: 22050, spans: [] });
+    await assert.rejects(stuck, error => error.code === 'AUDIO_RENDER_FAILED' && /exceeded 3000 ms; its worker was stopped/.test(error.message));
+    assert.ok(performance.now() - started < 20000, 'it failed at the limit, not when the render would have ended');
+    assert.deepEqual(await next, [], 'the queued job ran on a fresh worker');
+    // Closing the pool settles a job still running instead of leaving it pending.
+    const running = assert.rejects(limited.run('analyze', analyze, { bank }), /render pool closed/);
+    await new Promise(resolve => setTimeout(resolve, 100));
+    await limited.close();
+    await running;
+  } finally {
+    await limited.close();
+  }
+  assert.throws(() => createRenderPool({ jobTimeoutMs: Infinity }), RangeError, 'a timer cannot wait forever; it would fire at once');
+});
+
 test('AP-20 no sound bank is stored in the repository, and the browser bundle excludes the server prescreen', () => {
   const root = fileURLToPath(new URL('../../', import.meta.url));
   const banks = [];

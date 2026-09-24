@@ -66,8 +66,11 @@ test('G7-4 a review bound to another audio evidence revision is stale and does n
     assert.equal((await review(service, run)).gates.audio, 'PASS');
     // Simulate a restored/edited record whose review names a different revision.
     const store = createStore({ directory: dir, durability: 'persistent' });
+    // A candidate-scoped confirmation is stored under the candidate it names.
     const record = store.readProjectRecord(run.projectId);
-    store.writeProjectRecord({ ...record, confirmations: { ...record.confirmations, original_audio_reviewed: { ...record.confirmations.original_audio_reviewed, audio_report_sha256: 'e'.repeat(64) } } });
+    const own = record.candidate_confirmations[run.candidateId];
+    assert.ok(own.original_audio_reviewed);
+    store.writeProjectRecord({ ...record, candidate_confirmations: { ...record.candidate_confirmations, [run.candidateId]: { ...own, original_audio_reviewed: { ...own.original_audio_reviewed, audio_report_sha256: 'e'.repeat(64) } } } });
     const after = await review(service, run);
     assert.equal(after.gates.audio, 'PENDING');
     assert.ok(after.stale_confirmations.some(entry => entry.name === 'original_audio_reviewed' && entry.reason === 'AUDIO_EVIDENCE_REVISION_CHANGED'));
@@ -83,4 +86,78 @@ test('G7-5 finalize reads the same Gate 7 review (no path review does not see)',
   const blocked = await service.finalize(OWNER, run.projectId, { candidateId: run.candidateId });
   assert.equal(blocked.operation, 'blocked');
   assert.ok(JSON.stringify(blocked).includes('originalAudio'));
+});
+
+// Gate 7 is required when official audio is part of the source set. A reason
+// string used to be enough to record `original_audio_required: false` while the
+// project held the recording itself or audio evidence attached to a candidate,
+// and review/finalize then reported the gate N/A. Studio Web already forces it
+// required when audio is present; the service now refuses the statement, and
+// review/finalize re-check it for a `false` stored before the audio arrived.
+const notRequired = { original_audio_required: { value: false, reason: 'Declared not needed.' } };
+const uploadRecording = (service, run) => service.uploadAsset(OWNER, run.projectId, {
+  kind: 'original_audio', filename: 'song.m4a', mediaType: 'audio/mp4', bytes: new TextEncoder().encode('fixture original recording bytes'),
+});
+const refusedAsHeld = error => {
+  assert.equal(error.code, 'INVALID_REQUEST');
+  assert.match(error.message, /holds original audio/);
+  assert.equal(error.details.confirmation, 'original_audio_required');
+  return true;
+};
+
+test('G7-6 original_audio_required cannot be recorded false while the project holds an original_audio asset', async () => {
+  const service = createStudioApplication();
+  const run = await applyKeepOnlyCandidate(service, OWNER);
+  const asset = (await uploadRecording(service, run)).asset;
+  await assert.rejects(() => service.recordConfirmations(OWNER, run.projectId, notRequired), error => {
+    refusedAsHeld(error);
+    assert.deepEqual(error.details.original_audio_asset_ids, [asset.asset_id]);
+    return true;
+  });
+  // Through review as well, and nothing it carried is recorded.
+  await assert.rejects(() => service.reviewCandidate(OWNER, run.projectId, { candidateId: run.candidateId, confirmations: notRequired }), refusedAsHeld);
+  const after = await review(service, run);
+  assert.equal(after.confirmations.original_audio_required, undefined);
+  assert.equal(after.readiness.gates.originalAudio.status, 'PENDING');
+  assert.deepEqual(after.readiness.gates.originalAudio.blockers, ['AUDIO_ALIGNMENT_EVIDENCE_MISSING']);
+  // A statement that audio IS required is still accepted.
+  await service.recordConfirmations(OWNER, run.projectId, { original_audio_required: { value: true, reason: 'The recording is part of the source set.' } });
+});
+
+test('G7-7 original_audio_required cannot be recorded false while audio evidence is attached to a candidate', async () => {
+  const service = createStudioApplication();
+  const run = await applyKeepOnlyCandidate(service, OWNER);
+  await service.attachAudioAlignment(OWNER, run.projectId, { candidateId: run.candidateId, report: cleanReport() });
+  await assert.rejects(() => service.recordConfirmations(OWNER, run.projectId, notRequired), error => {
+    refusedAsHeld(error);
+    assert.deepEqual(error.details.audio_evidence_candidate_ids, [run.candidateId]);
+    return true;
+  });
+  await assert.rejects(() => service.finalize(OWNER, run.projectId, { candidateId: run.candidateId, confirmations: notRequired }), refusedAsHeld);
+  assert.deepEqual((await review(service, run)).readiness.gates.originalAudio.blockers, ['ORIGINAL_AUDIO_GATE7_REVIEW_REQUIRED']);
+});
+
+test('G7-8 a false recorded before the audio arrived no longer makes Gate 7 N/A in review or finalize', async () => {
+  const service = createStudioApplication();
+  const run = await applyKeepOnlyCandidate(service, OWNER);
+  // No recording yet: the statement is accepted and the gate is N/A.
+  await service.recordConfirmations(OWNER, run.projectId, notRequired);
+  assert.equal((await review(service, run)).readiness.gates.originalAudio.status, 'N/A');
+
+  await uploadRecording(service, run);
+  const reviewed = await review(service, run);
+  assert.equal(reviewed.confirmations.original_audio_required.value, false, 'the stored statement is not rewritten');
+  assert.equal(reviewed.readiness.gates.originalAudio.status, 'PENDING');
+  assert.deepEqual(reviewed.readiness.gates.originalAudio.blockers, ['AUDIO_ALIGNMENT_EVIDENCE_MISSING']);
+  assert.equal(reviewed.gates.audio, 'PENDING');
+  const finalized = await service.finalize(OWNER, run.projectId, { candidateId: run.candidateId });
+  assert.equal(finalized.gates.audio, 'PENDING');
+
+  // Audio evidence attached later, with no asset: the same.
+  const other = await applyKeepOnlyCandidate(service, OWNER, { title: 'evidence later' });
+  await service.recordConfirmations(OWNER, other.projectId, notRequired);
+  await service.attachAudioAlignment(OWNER, other.projectId, { candidateId: other.candidateId, report: cleanReport() });
+  const withEvidence = await review(service, other);
+  assert.deepEqual(withEvidence.readiness.gates.originalAudio.blockers, ['ORIGINAL_AUDIO_GATE7_REVIEW_REQUIRED']);
+  assert.equal((await service.finalize(OWNER, other.projectId, { candidateId: other.candidateId })).gates.audio, 'PENDING');
 });

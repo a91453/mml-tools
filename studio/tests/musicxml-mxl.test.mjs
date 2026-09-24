@@ -160,6 +160,23 @@ test('the service intake reads an uploaded .mxl: the asset is the archive, the X
   await assert.rejects(service.analyzeSources('owner:mxl', second.project_id), error => error.code === 'UNSUPPORTED_SOURCE' && /MXL_ENTRY_PATH_UNSAFE/.test(error.message));
 });
 
+test('the service reads the document inside an .mxl at the size it reads a plain MusicXML, not more', async () => {
+  // At the archive reader's own 16 MiB, a 117 KB upload made intake parse a
+  // 15.5 MiB document (18 s of blocked event loop, 1.5 GB); a plain upload of
+  // that document is refused at 4 MiB. Whitespace compresses to almost nothing.
+  const service = createStudioApplication();
+  const project = (await service.createProject('owner:mxl', { title: 'MXL bound' })).project;
+  const padded = XML.replace('<part-list>', `<part-list>${' '.repeat(4 * 1024 * 1024)}`);
+  const bytes = zip([{ name: 'META-INF/container.xml', data: CONTAINER() }, { name: 'score.xml', data: padded }]);
+  assert.ok(bytes.length < 64 * 1024, 'a small upload');
+  await service.uploadAsset('owner:mxl', project.project_id, { kind: 'third_party_musicxml', filename: 'padded.mxl', mediaType: 'application/zip', bytes });
+  const started = Date.now();
+  await assert.rejects(service.analyzeSources('owner:mxl', project.project_id), error => error.code === 'UNSUPPORTED_SOURCE' && /MXL_ENTRY_TOO_LARGE/.test(error.message));
+  assert.ok(Date.now() - started < 2000, 'refused before inflating');
+  // The reader's own limit is unchanged for anyone else calling it.
+  assert.equal(MXL_LIMITS.maxRootfileBytes, 16 * 1024 * 1024);
+});
+
 test('the Studio Web reads the same .mxl through the same reader', () => {
   const asset = intakeMxl({ name: 'fixture.mxl', bytes: mxl(), id: 'web-src' });
   assert.equal(asset.format, 'MusicXML (compressed .mxl)');
@@ -169,4 +186,31 @@ test('the Studio Web reads the same .mxl through the same reader', () => {
   assert.deepEqual(asset.project.events, plain.project.events);
   assert.throws(() => intakeMxl({ name: 'fake.mxl', bytes: encoder.encode(XML), id: 'x' }), /not a compressed MusicXML/);
   assert.throws(() => intakeMxl({ name: 'bad.mxl', bytes: mxl([{ name: '../evil', data: 'x' }]), id: 'x' }), /MXL_ENTRY_PATH_UNSAFE/);
+});
+
+// XML text and attribute values are decoded as XML requires. The parsers ran
+// with entity processing off, so "Piano &amp; Voice" reached the part name,
+// lyrics and titles verbatim, and a rootfile named "Rock &amp; Roll.xml" was
+// looked up under that literal name.
+test('entity and character references are decoded once, in text and attributes, and CDATA stays literal', () => {
+  const xml = '<?xml version="1.0" encoding="UTF-8"?><score-partwise version="4.0">'
+    + '<work><work-title>Rock &amp; Roll &#233;t&#xE9;</work-title></work>'
+    + '<part-list><score-part id="P1"><part-name>Piano &amp; Voice &amp;#233;</part-name></score-part></part-list><part id="P1">'
+    + '<measure number="1"><attributes><divisions>1</divisions><time><beats>4</beats><beat-type>4</beat-type></time></attributes>'
+    + '<note><pitch><step>C</step><octave>4</octave></pitch><duration>4</duration><voice>1</voice><lyric><text>don&apos;t</text></lyric>'
+    + '<lyric><text><![CDATA[a &amp; b]]></text></lyric></note></measure></part></score-partwise>';
+  const project = ingestMusicXML(xml);
+  assert.equal(project.title, 'Rock & Roll été');
+  assert.equal(project.parts[0].name, 'Piano & Voice &#233;', '&amp; is decoded last, so an escaped reference stays literal');
+  assert.deepEqual(project.events[0].metadata.lyrics, ["don't", 'a &amp; b']);
+
+  const named = 'Rock & Roll.xml';
+  const bytes = zip([
+    { name: 'mimetype', data: 'application/vnd.recordare.musicxml', method: 0 },
+    { name: 'META-INF/container.xml', data: CONTAINER('Rock &amp; Roll.xml') },
+    { name: named, data: XML },
+  ]);
+  const { xml: extracted, container } = decodeMusicXMLBytes(bytes);
+  assert.equal(extracted, XML);
+  assert.equal(container.rootfile, named);
 });

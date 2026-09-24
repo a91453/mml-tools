@@ -49,11 +49,17 @@ export function oneTickEarlyBaseline() {
   });
 }
 
-export const promotionEvidence = eventId => ({
+// A promotion's Lead citation. A decision's citation is graded on the project
+// source it names (SOURCE_POLICY §1): with no `scoreRef` it names nothing the
+// project holds and proves no role, so Gate 3 stays PENDING. A fixture whose
+// Lead promotions must PASS cites an official score the project holds
+// (`uploadOfficialScore`). A decision states no audio method, so its audio
+// classification is a locator whatever it cites.
+export const promotionEvidence = (eventId, { scoreRef = null, audioRef = null } = {}) => ({
   sourceIdentity: { sourceId: SOURCE_ID, sourceEventId: `${SOURCE_ID}#${eventId}` },
   sectionRole: 'instrumental',
-  scoreEvidence: { availability: 'available', classification: 'lead', citation: 'fixture:score top line' },
-  audioEvidence: { availability: 'available', classification: 'foreground', citation: 'fixture:audio foreground' },
+  scoreEvidence: { availability: 'available', classification: 'lead', citation: 'fixture:score top line', ...(scoreRef ? { ref: scoreRef } : {}) },
+  audioEvidence: { availability: 'available', classification: 'foreground', citation: 'fixture:audio foreground', ...(audioRef ? { ref: audioRef } : {}) },
   continuity: { checked: true, createsLeadGap: false, replacementEventIds: [] },
   core3: { checked: true, status: 'PASS' },
   positiveReason: 'Fixture: the top line carries the tune in front of the mix.',
@@ -64,21 +70,32 @@ export const assign = (eventId, toRole, extra = {}) => ({
   reason: `Fixture: ${eventId} is ${toRole} material.`, evidence: [`${SOURCE_ID}#${eventId}`], acceptedBy: 'reviewer:fixture', ...extra,
 });
 
-export const roleDecisions = () => [
-  ...['lead-1', 'lead-2', 'lead-3', 'lead-4'].map(id => assign(id, 'Melody', { leadEvidence: promotionEvidence(id) })),
+export const roleDecisions = (refs = {}) => [
+  ...['lead-1', 'lead-2', 'lead-3', 'lead-4'].map(id => assign(id, 'Melody', { leadEvidence: promotionEvidence(id, refs) })),
   ...['harm-1', 'harm-2'].map(id => assign(id, 'Chord1')),
   ...['bass-1', 'bass-2'].map(id => assign(id, 'Chord2')),
 ];
 
-export async function candidateWithAudio(service, title = 'Release representation') {
+// An official score held as project evidence, for a fixture's Lead citations
+// to name by reference. Upload it after intake (or leave it out of the intake
+// selection) so it stays evidence and is not parsed into the baseline.
+export async function uploadOfficialScore(service, projectId, owner = OWNER) {
+  return (await service.uploadAsset(owner, projectId, {
+    kind: 'official_musicxml', filename: 'score.musicxml', mediaType: 'application/xml',
+    bytes: new TextEncoder().encode(`synthetic official score for ${projectId}`),
+  })).asset.asset_id;
+}
+
+export async function candidateWithAudio(service, title = 'Release representation', { officialScore = false } = {}) {
   const baseline = oneTickEarlyBaseline();
   const created = (await service.createProject(OWNER, { title })).project;
   await service.uploadAsset(OWNER, created.project_id, { kind: 'canonical_project', filename: 'b.json', mediaType: 'application/json', bytes: new TextEncoder().encode(JSON.stringify(baseline)) });
   const audio = (await service.uploadAsset(OWNER, created.project_id, { kind: 'original_audio', filename: 'song.m4a', mediaType: 'audio/mp4', bytes: new TextEncoder().encode('synthetic audio bytes') })).asset;
   await service.analyzeSources(OWNER, created.project_id);
-  const applied = await service.applyDecisions(OWNER, created.project_id, { decisions: roleDecisions() });
+  const scoreAssetId = officialScore ? await uploadOfficialScore(service, created.project_id) : null;
+  const applied = await service.applyDecisions(OWNER, created.project_id, { decisions: roleDecisions(scoreAssetId ? { scoreRef: scoreAssetId, audioRef: audio.asset_id } : {}) });
   assert.equal(applied.decisions.applied, true);
-  return { baseline, projectId: created.project_id, candidateId: applied.decisions.candidate_id, audioAssetId: audio.asset_id };
+  return { baseline, projectId: created.project_id, candidateId: applied.decisions.candidate_id, audioAssetId: audio.asset_id, scoreAssetId };
 }
 
 // Who submits a decision is provenance: the fixture defaults to a conversational

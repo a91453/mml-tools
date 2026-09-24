@@ -85,6 +85,60 @@ function windowFor(performance, bars, whole) {
 }
 
 /**
+ * What a prescreen will render, known before anything renders: the bars it
+ * measures and, per alternative, the span its render covers -- the whole
+ * performance, or for a bar range the window from PREROLL_SECONDS before the
+ * first bar to the end of the last. `renderSeconds[a]` is that span's length
+ * (the renderer's fixed release tail not counted). Pure and cheap: the
+ * Application Service checks it against its render-length limit before any
+ * bank is loaded or any worker is dispatched.
+ */
+export function renderPlan({ alternatives, meter, pickup = null, barRange = null }) {
+  const total = alternatives.reduce((max, alternative) => (alternative.performance.totalBeats > max.beats
+    ? { beats: alternative.performance.totalBeats, exact: alternative.performance.totalExact } : max), { beats: 0, exact: '0' });
+  const allBars = barsFor(total.exact, meter, { pickup });
+  const bars = selectBars(allBars, barRange);
+  const whole = bars.length === allBars.length;
+  const windows = alternatives.map(alternative => windowFor(alternative.performance, bars, whole));
+  const renderSeconds = alternatives.map((alternative, a) => (windows[a] ? windows[a].endSec - windows[a].startSec : alternative.performance.durationSeconds));
+  return { allBars, bars, whole, windows, renderSeconds };
+}
+
+/**
+ * The longest bar range starting at bar `from` whose render fits in
+ * `maxSeconds` for every alternative, as { from, to }, or null when not even
+ * bar `from` alone fits. A window's length only grows with `to`, so this is
+ * a binary search over the bar grid.
+ */
+export function longestFittingRange({ alternatives, allBars, from, maxSeconds, clocks = alternatives.map(alternative => tempoClock(alternative.performance.tempo)) }) {
+  const first = allBars[from - 1];
+  const starts = clocks.map(clock => Math.max(0, clock.seconds(first.startExact) - PREROLL_SECONDS));
+  const fits = index => clocks.every((clock, a) => clock.seconds(allBars[index].endExact) - starts[a] <= maxSeconds);
+  if (!fits(from - 1)) return null;
+  let lo = from - 1, hi = allBars.length - 1;
+  while (lo < hi) {
+    const mid = Math.ceil((lo + hi) / 2);
+    if (fits(mid)) lo = mid; else hi = mid - 1;
+  }
+  return { from, to: allBars[lo].bar };
+}
+
+/**
+ * For a request whose first bar alone is over the limit: the longest fitting
+ * range from the first later bar that fits alone, or null when no later bar
+ * of the song fits, so no section from there on can be prescreened. The tempo
+ * clocks are built once, so the scan stays linear in the bar count.
+ */
+export function firstFittingRangeAfter({ alternatives, allBars, from, maxSeconds }) {
+  const clocks = alternatives.map(alternative => tempoClock(alternative.performance.tempo));
+  for (let bar = from + 1; bar <= allBars.length; bar++) {
+    const range = longestFittingRange({ alternatives, allBars, from: bar, maxSeconds, clocks });
+    if (range) return range;
+  }
+  return null;
+}
+
+/**
  * Run a prescreen.
  *
  * alternatives: [{ label, source, mml_sha256, performance }], 2-4 of them.
@@ -109,18 +163,14 @@ export async function runPrescreen({
   if (!Array.isArray(alternatives) || alternatives.length < 2 || alternatives.length > 4) throw Error('two to four alternatives are required');
   if (!SAMPLE_RATES.includes(render.sampleRate) || ![1, 2].includes(render.channels)) throw Error('render sample_rate must be 22050 or 44100 and channels 1 or 2');
   const labels = alternatives.map(alternative => alternative.label);
-  const total = alternatives.reduce((max, alternative) => (alternative.performance.totalBeats > max.beats
-    ? { beats: alternative.performance.totalBeats, exact: alternative.performance.totalExact } : max), { beats: 0, exact: '0' });
-  const allBars = barsFor(total.exact, meter, { pickup });
-  const bars = selectBars(allBars, barRange);
-  const whole = bars.length === allBars.length;
+  const { allBars, bars, windows } = renderPlan({ alternatives, meter, pickup, barRange });
 
   const loaded = await bankProvider.load();
   const bank = { sha256: loaded.identity.sha256, bytes: loaded.bytes };
   const profiles = await profilesFor({ pool, bank, sampleRate: render.sampleRate, alternatives, cache: profileCache });
   const referenceNotes = reference?.notes ?? null;
 
-  const analysed = await Promise.all(alternatives.map(alternative => {
+  const analysed = await Promise.all(alternatives.map((alternative, a) => {
     const own = Object.fromEntries(alternative.performance.roles.map(role => [voiceKey(role), profiles[voiceKey(role)]]));
     return pool.run('analyze', {
       performance: alternative.performance,
@@ -129,7 +179,7 @@ export async function runPrescreen({
       reference: referenceNotes ? { notes: referenceNotes } : null,
       sampleRate: render.sampleRate,
       channels: render.channels,
-      window: windowFor(alternative.performance, bars, whole),
+      window: windows[a],
       returnPcm,
     }, { bank });
   }));

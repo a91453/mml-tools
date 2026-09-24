@@ -67,12 +67,26 @@ function filesystemBackend(directory, { durability, notice }) {
   mkdirSync(recordsDir, { recursive: true, mode: 0o700 });
   mkdirSync(blobsDir, { recursive: true, mode: 0o700 });
 
+  // A temp file can only be left behind by a write this process no longer
+  // runs: every write below is synchronous, so none is in flight while the
+  // store is created. Left in place, one would be charged against the store
+  // budget for good (see usedBytes) and nothing would ever remove it.
+  for (const dir of [recordsDir, blobsDir]) {
+    for (const name of readdirSync(dir)) if (name.endsWith('.tmp')) rmSync(join(dir, name), { force: true });
+  }
+
   // Temp-then-rename: a reader never observes a partially written record, and a
-  // crash mid-write leaves the previous record intact.
+  // crash mid-write leaves the previous record intact. A write that fails
+  // (ENOSPC, EIO) removes its partial temp file before the error surfaces.
   const writeAtomic = (path, bytes) => {
     const temporary = `${path}.${randomBytes(8).toString('hex')}.tmp`;
-    writeFileSync(temporary, bytes, { mode: 0o600 });
-    renameSync(temporary, path);
+    try {
+      writeFileSync(temporary, bytes, { mode: 0o600 });
+      renameSync(temporary, path);
+    } catch (error) {
+      rmSync(temporary, { force: true });
+      throw error;
+    }
   };
 
   const recordPath = id => join(recordsDir, `${suffixOf(id)}.json`);
@@ -120,7 +134,9 @@ function filesystemBackend(directory, { durability, notice }) {
     },
     usedBytes() {
       let total = 0;
+      // Stored blobs only: a temp file is not stored content.
       for (const name of readdirSync(blobsDir)) {
+        if (!name.endsWith('.bin')) continue;
         try { total += statSync(join(blobsDir, name)).size; } catch { /* removed between listing and stat */ }
       }
       return total;

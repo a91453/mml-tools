@@ -11,6 +11,7 @@ import {
   compareServiceInstance,
   expectedProductionConfig,
   findExpectedDeployment,
+  LIVE_DEPLOYMENT_STATES,
   railwayGraphQL,
   readProductionState,
   resolveProductionTarget,
@@ -62,7 +63,7 @@ export async function deployExactCurrentMain({
 
   const existing = findExpectedDeployment(state.deployments, expectedSha);
   const active = state.instance?.latestDeployment;
-  if (existing?.status === 'SUCCESS' && active?.id === existing.id && active?.status === 'SUCCESS') {
+  if (LIVE_DEPLOYMENT_STATES.has(existing?.status) && active?.id === existing.id && LIVE_DEPLOYMENT_STATES.has(active?.status)) {
     return {
       status: 'NOOP',
       deployment_id: existing.id,

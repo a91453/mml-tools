@@ -1,14 +1,14 @@
 // Evidence persistence adapter around the unchanged Canonical review engine.
 // No gate, confidence threshold, role judgement or confirmation policy lives here.
 // The original implementation is retained byte-for-byte in review-service-core.mjs.
-import { createReviewService as createCoreReviewService } from './review-service-core.mjs';
+import { createReviewService as createCoreReviewService, storedConfirmationEntries } from './review-service-core.mjs';
 import { ERROR_CODES, fail, isCandidateId } from './contracts.mjs';
 import {
   readAudioHistory, activeAudioEntries, appendAudioReport,
   unpackAudioSubmission, exportAudioHistory,
 } from './audio-report-history.mjs';
 export {
-  gatesFrom, CONFIRMATIONS, CONFIRMATION_SCOPE, PLAYER_READBACK_VALUES, STALE_CONFIRMATION,
+  gatesFrom, unresolvedGatesFrom, CONFIRMATIONS, CONFIRMATION_SCOPE, PLAYER_READBACK_VALUES, STALE_CONFIRMATION,
 } from './review-service-core.mjs';
 
 const guarded = operation => {
@@ -57,7 +57,9 @@ export function createReviewService(dependencies) {
   // alignment. Until explicit dependency invalidation exists, refuse rather
   // than retaining a potentially stale approval. This never weakens a gate.
   const requireUnreviewedCandidate = (record, candidateId) => {
-    const confirmations = Object.values(record.confirmations ?? {}).some(entry =>
+    // Every stored statement about this candidate counts, from the single map
+    // and from the candidate's own per-candidate map alike.
+    const confirmations = storedConfirmationEntries(record).some(({ entry }) =>
       entry?.candidate_id === candidateId && (entry.value === true || entry.value === 'PASS'));
     const core3 = store.getJson(`core3-approvals:${record.project_id}:${candidateId}`);
     const lead = store.getJson(`lead-evidence-reviews:${record.project_id}:${candidateId}`);

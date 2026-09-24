@@ -37,7 +37,9 @@ export const culturePrefix = () => {
 
 export const DEFAULT_NAME = "score";
 
-const EXT = /\.(mml|mmi|mid|midi|txt)$/i;
+// Every extension the import dialog reads, so an imported file's name becomes
+// the song name without it (score.mxl → score.mid, not score.mxl.mid).
+const EXT = /\.(mml|mmi|mid|midi|txt|mxl|musicxml|xml)$/i;
 
 export const stripExt = name => String(name ?? "").replace(EXT, "");
 

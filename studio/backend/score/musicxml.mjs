@@ -65,7 +65,15 @@ const parser = new XMLParser({
   parseTagValue: false,
   parseAttributeValue: false,
   trimValues: true,
-  processEntities: false,
+  // Text and attribute values are decoded as XML requires: the predefined
+  // entities (&amp; &lt; &gt; &apos; &quot;) and numeric character references
+  // (&#233; &#xE9;). They used to reach part names, titles, lyrics and words
+  // directions verbatim ("Rock &amp; Roll"). The parser decodes &amp; last,
+  // so "&amp;#233;" stays the literal text "&#233;", and CDATA is untouched.
+  // DTD subsets and entity declarations are still refused by sanitizeXml
+  // before parsing, so no document-defined entity is ever expanded.
+  processEntities: true,
+  htmlEntities: true,
 });
 
 const nodeName = node => Object.keys(node ?? {}).find(key => key !== ':@') ?? null;
@@ -756,6 +764,14 @@ export function ingestMusicXML(xml, options = {}) {
     cursor = end;
   });
   const beatAt = (slot, local) => (local.cmp(0) === 0 ? slot.controlStart : slot.start.add(local));
+  // Whether a beat is a bar line of the meter map this part has emitted so
+  // far: a whole number of bars after the part's latest meter event.
+  const onBarLine = (partId, beat) => {
+    const last = meterEvents.findLast(event => event.metadata?.partId === partId);
+    if (!last) return true;
+    const barLength = f(`${4 * last.numerator}/${last.denominator}`);
+    return !String(beat.sub(f(last.beat)).div(barLength)).includes('/');
+  };
   const idSuffix = pass => (pass > 1 ? `:pass${pass}` : '');
   const pathSuffix = pass => (pass > 1 ? `/pass:${pass}` : '');
   const playbackMetadata = slot => ({ pass: slot.pass, playbackMeasureIndex: slot.position + 1 });
@@ -854,9 +870,18 @@ export function ingestMusicXML(xml, options = {}) {
           currentMeter = time;
           continue;
         }
+        const at = beatAt(slot, time.local);
+        // A written signature equal to the one in force is not a meter change.
+        // It is still recorded as before when it falls on a bar line, but not
+        // when it would fall inside a bar: after a pickup, a repeat or D.C.
+        // back to the first measure replays the pickup's written 4/4 one beat
+        // into a bar, and that restatement made the meter map one that the
+        // Final validator and the prescreen refuse (a meter change inside a
+        // bar), so a complete, correct source could never be delivered.
+        if (sameMeter(currentMeter, time) && !onBarLine(partId, at)) continue;
         meterEvents.push(createCanonicalMeterEvent({
           id,
-          beat: String(beatAt(slot, time.local)),
+          beat: String(at),
           numerator: time.numerator,
           denominator: time.denominator,
           sourceIds: [sourceId],

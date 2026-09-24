@@ -117,3 +117,53 @@ test('describeFailure names the failed check for stderr, with the cause when the
   // Evidence never receives this text; the fixed reason strings are unchanged.
   assert.equal(acceptanceReport(origin).public_probe.status, 'NOT_RUN');
 });
+
+// The image captures published main when it is built, so a merge that touches
+// no watched path and lands between a watched merge and its build shows up as
+// a later published_main_head over the audited build_source_head. Observed
+// risk on 2026-09-23: merges #87, #88 and #89 landed within minutes.
+test('a later published main is accepted only when it descends from the audited commit', async () => {
+  const later = '4'.repeat(40);
+  const seen = [];
+  const laterMain = sha => { seen.push(sha); return sha === later; };
+  const raced = { published_main_head: later, repository_head: later };
+  const report = await probeProduction({ origin, expected, expectedAssets, laterMain, fetchImpl: fixture(raced) });
+  assert.equal(report.status, 'PASS');
+  assert.deepEqual(seen, [later]);
+  // Nothing vouches for it without the ancestry check.
+  await assert.rejects(probeProduction({ origin, expected, expectedAssets, fetchImpl: fixture(raced) }), /published_main_head/);
+  // A later main that does not descend, an image built from the later commit,
+  // a repository head that disagrees, or a Manifest that moved all still fail.
+  for (const overrides of [
+    { published_main_head: 'f'.repeat(40), repository_head: 'f'.repeat(40) },
+    { ...raced, build_source_head: later },
+    { ...raced, repository_head: main },
+    { ...raced, manifest_commit: 'e'.repeat(40) },
+    { published_main_head: 'not-a-sha', repository_head: 'not-a-sha' },
+  ]) {
+    await assert.rejects(probeProduction({ origin, expected, expectedAssets, laterMain, fetchImpl: fixture(overrides) }), JSON.stringify(overrides));
+  }
+});
+
+test('the loader vouches for a later main only when git shows it descends from the audited one and is on main', async () => {
+  const later = '4'.repeat(40);
+  const ancestry = new Set([`${main}..${later}`, `${later}..refs/remotes/origin/main`]);
+  const gitImpl = args => {
+    if (args[0] === 'merge-base') {
+      if (args[2] === main && args[3] === 'refs/remotes/origin/main') return Buffer.alloc(0);
+      if (ancestry.has(`${args[2]}..${args[3]}`)) return Buffer.alloc(0);
+      throw Object.assign(Error('not an ancestor'), { status: 1 });
+    }
+    if (args[0] === 'log') return Buffer.from(manifestCommit + '\n');
+    if (args[0] === 'cat-file') return Buffer.from('commit\n');
+    if (args[1] === main + ':docs/CANONICAL_MANIFEST.md') return Buffer.from(manifest);
+    if (args[1].startsWith(snapshot + ':docs/')) return Buffer.from('Version: fixture-v1\nStatus: '
+      + (args[1].endsWith('OFFICIAL_EVIDENCE.md') ? 'CANONICAL SUPPORTING EVIDENCE' : 'PUBLISHED CANONICAL') + '\n');
+    return expectedAssets.get(args[1].split('/').at(-1));
+  };
+  const { laterMain } = await loadProbeInputs({ main, manifestCommit, gitImpl });
+  assert.equal(laterMain(later), true);
+  assert.equal(laterMain('f'.repeat(40)), false);
+  ancestry.delete(`${later}..refs/remotes/origin/main`);
+  assert.equal(laterMain(later), false, 'a descendant that is not on main is not published main');
+});

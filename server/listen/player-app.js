@@ -218,12 +218,15 @@ function synthNote(ctx, dest, note, when, duration) {
 function playNote(note, when, duration) {
   const ctx = T.ctx;
   const dest = T.roleGain[note.r];
-  // A sampled voice that cannot sound this note (no region, not decoded yet)
-  // falls back to the preview synth rather than dropping it.
+  // A sampled voice that cannot sound this note (no region, not decoded yet,
+  // or a bank that fails while rendering it) falls back to the preview synth
+  // rather than dropping it or stopping the scheduler with an exception.
   let voice = 'synth';
-  if (S.voice === 'sf2' && S.sf2 && sf2Note(ctx, dest, note, when, duration)) voice = 'sf2';
-  else if (S.voice === 'samples' && sampleNote(ctx, dest, note, when, duration)) voice = 'samples';
-  else synthNote(ctx, dest, note, when, duration);
+  try {
+    if (S.voice === 'sf2' && S.sf2 && sf2Note(ctx, dest, note, when, duration)) voice = 'sf2';
+    else if (S.voice === 'samples' && sampleNote(ctx, dest, note, when, duration)) voice = 'samples';
+  } catch { voice = 'synth'; }
+  if (voice === 'synth') synthNote(ctx, dest, note, when, duration);
   T.voiceCounts[voice]++;
 }
 
@@ -335,6 +338,7 @@ function sf2Note(ctx, dest, note, when, duration) {
   const regions = soundFontRegions(bank, S.sf2Choice[note.r], note.p, Math.max(1, velocity));
   if (!regions.length) return false;
   const end = when + Math.max(0.03, duration);
+  let sounded = 0;
   for (const region of regions) {
     const key = `${region.sampleIndex}:${region.start}:${region.end}`;
     let buffer = sf2Buffers.get(key);
@@ -373,8 +377,10 @@ function sf2Note(ctx, dest, note, when, duration) {
     source.start(when);
     source.stop(end + region.release + 0.05);
     track(source, gain);
+    sounded++;
   }
-  return true;
+  // Regions whose sample range held no data sound nothing; the synth takes the note.
+  return sounded > 0;
 }
 
 async function loadSoundFontFile(file) {
@@ -839,6 +845,25 @@ function renderAll() {
 // ─── loading a view ────────────────────────────────────────────────────────
 
 const BEAT_TEXT = /^\d{1,9}(?:\/[1-9]\d{0,8})?$/;
+// The denominators studio_listen tries when it writes a beat number as exact
+// text (server/mcp-listen.mjs beatStringOfNumber), in the same order.
+const BEAT_DENOMINATORS = [1, 2, 4, 8, 16, 32, 64, 128, 3, 6, 12, 24, 48, 96, 192, 384, 768, 1536];
+
+/** A beat number as reduced exact text ("5", "9/2"), or null when none fits. */
+function beatText(value) {
+  if (!Number.isFinite(value) || value < 0) return null;
+  for (const denominator of BEAT_DENOMINATORS) {
+    const scaled = value * denominator;
+    const numerator = Math.round(scaled);
+    if (Math.abs(scaled - numerator) >= 1e-7) continue;
+    let [a, b] = [numerator, denominator];
+    while (b) [a, b] = [b, a % b];
+    const divisor = a || 1;
+    const text = denominator / divisor === 1 ? String(numerator / divisor) : `${numerator / divisor}/${denominator / divisor}`;
+    return BEAT_TEXT.test(text) ? text : null;
+  }
+  return null;
+}
 
 function acceptView(view) {
   if (!view || typeof view !== 'object' || view.schema !== VIEW_SCHEMA) return null;
@@ -850,7 +875,7 @@ function acceptView(view) {
 function loadView(raw) {
   const view = acceptView(raw);
   if (!view) return false;
-  const key = [view.mml_sha256, view.compare_mml_sha256, view.title, (view.markers || []).length, view.listen_link?.url?.length, view.start?.bar].join('|');
+  const key = [view.mml_sha256, view.compare_mml_sha256, view.title, (view.markers || []).length, view.listen_link?.url?.length, view.start?.bar, view.start?.beat].join('|');
   if (key === S.viewKey) return true;
   stop();
   const song = buildSong(view.mml);
@@ -877,12 +902,24 @@ function loadView(raw) {
     label: String(marker.label ?? '').slice(0, 200),
   }));
   S.songNotes = (Array.isArray(view.song_notes) ? view.song_notes : []).slice(0, 50).map(note => ({ label: String(note?.label ?? '').slice(0, 200) }));
-  const startBar = view.start && Number.isSafeInteger(view.start.bar) && S.bars ? S.bars[Math.min(S.bars.length, view.start.bar) - 1] : null;
-  S.cursorSec = startBar ? secAtBeat(startBar.start) : 0;
+  S.cursorSec = startSeconds(view.start);
   followView(beatAtSec(S.cursorSec), true);
   readColors();
   renderAll();
   return true;
+}
+
+// Where a view opens. studio_listen sends a bar when the player and the Studio
+// Web number bars alike, and for a Final with a pickup the exact beat that bar
+// resolved to (the listen link carries no pickup). Clamped to the song; a
+// position the player cannot read opens at the beginning.
+function startSeconds(start) {
+  if (!start || typeof start !== 'object') return 0;
+  let beat = null;
+  if (Number.isSafeInteger(start.bar)) beat = start.bar >= 1 && S.bars ? S.bars[Math.min(S.bars.length, start.bar) - 1].start : null;
+  else if (typeof start.beat === 'string' && BEAT_TEXT.test(start.beat)) beat = listenBeatNumber(start.beat);
+  if (!Number.isFinite(beat)) return 0;
+  return clamp(secAtBeat(clamp(beat, 0, S.song.totalBeats)), 0, S.song.duration);
 }
 
 function selectVersion(version) {
@@ -1072,11 +1109,24 @@ function linkPayload(start) {
   return payload;
 }
 
+/**
+ * The link start for the bar under the cursor. The listen-link@1 document
+ * carries no pickup and the Studio Web numbers bars from beat 0, so under a
+ * pickup this player's bar N starts somewhere else there (bar 3 after a
+ * one-beat pickup starts at beat 5 here and at beat 8 there). Then the bar's
+ * start travels as its exact beat, as studio_listen sends it.
+ */
+function linkStart(place) {
+  if (place.bar === null) return { beat: String(Math.floor(place.beat)) };
+  if (!S.view.pickup) return { bar: place.bar };
+  const start = S.bars[place.bar - 1].start;
+  return { beat: beatText(start) ?? String(Math.floor(start)) };
+}
+
 async function hereLink() {
   const link = linkInfo();
   if (!link) return null;
-  const place = locate(positionSec());
-  const start = place.bar !== null ? { bar: place.bar } : { beat: String(Math.floor(place.beat)) };
+  const start = linkStart(locate(positionSec()));
   // The shared contract validates, normalises and encodes (CompressionStream
   // 'deflate-raw'); a document it refuses falls back to the server's link.
   try { return ListenLink.listenUrl(`${link.origin}/`, await ListenLink.encodeListenLink(linkPayload(start))); } catch { return link.url; }
@@ -1216,7 +1266,23 @@ const Bridge = (() => {
     if (typeof window.openai?.openExternal === 'function') {
       try { window.openai.openExternal({ href: url }); return true; } catch { /* fall through */ }
     }
-    try { return Boolean(window.open(url, '_blank', 'noopener,noreferrer')); } catch { return false; }
+    // With `noopener` window.open returns null whether or not a tab opened, so
+    // a blocked popup could not be told from an opened one. Open without it
+    // and cut the opener at once, while the tab still holds its initial blank
+    // document and before the linked page loads; the page's no-referrer policy
+    // keeps the referrer out, as `noreferrer` did. A tab this frame cannot
+    // reach (a sandboxed player whose popups stay sandboxed) cannot have its
+    // opener cut, so it is closed and reported, never left holding the player.
+    let opened = null;
+    try {
+      opened = window.open(url, '_blank');
+      if (!opened) return false;
+      opened.opener = null;
+      return true;
+    } catch {
+      try { opened?.close(); } catch { /* already gone */ }
+      return false;
+    }
   }
 
   return {

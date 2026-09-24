@@ -64,9 +64,28 @@ test('the timbre preview engine is vendored from npm, self-contained, licensed a
   assert.equal(`spessasynth_core@${pkg.dependencies?.spessasynth_core ?? pkg.devDependencies?.spessasynth_core}`, ENGINE_VERSIONS.core);
   assert.match(await read('vendor/spessasynth/processor.js'), /post\(\{type:"eventCall",data:\w+,currentTime:this\.synthesizer\.currentTime\}\)/);
   assert.match(lib, /this\.worklet\.port\.onmessage = \(e\) => this\.handleMessage\(e\.data\);/);
+  // The worklet parses a bank with the loader the pre-store check runs
+  // (preview/bank-check.mjs), and one it cannot parse is reported only as a
+  // soundBankError event, never as the reply addSoundBank() waits for; the
+  // listener and timeout in addSoundBankOrFail are what end that wait.
+  assert.match(await read('vendor/spessasynth/processor.js'), /case"addSoundBank":\{\w+=\w+\.fromArrayBuffer\([^}]*\}[\s\S]{0,300}?\}catch\((\w+)\)\{this\.post\(\{type:"soundBankError",data:\1,/);
+  assert.match(lib, /case "soundBankError":\s+SpessaLog\.warn\(m\.data\);\s+this\.eventHandler\.callEventInternal\("soundBankError", m\.data\);/);
+  // A new synth's isReady resolves only on the processor's first reply, which
+  // it sends once its decoder is set up, from this one place, as an
+  // isFullyInitialized message the lib hands to workletResponds; nothing
+  // else settles it. synthReadyOrFail bounds that wait, and the browser
+  // checks withhold exactly this message (browser-tests/synth-ready.mjs).
+  assert.match(lib, /this\.isReady = new Promise\(\(resolve\) => this\.awaitWorkerResponse\("sf3Decoder", resolve\)\);/);
+  assert.match(lib, /case "isFullyInitialized":\s+this\.workletResponds\(m\.data\.type, m\.data\.data\);/);
+  const processor = await read('vendor/spessasynth/processor.js');
+  assert.match(processor, /processorInitialized\.then\(\(\)=>\{this\.port\.onmessage=\w+=>this\.handleMessage\(\w+\.data\),this\.postReady\("sf3Decoder",null\)\}\)/);
+  assert.equal(processor.split('this.postReady("sf3Decoder",null)').length, 2);
+  assert.match(processor, /postReady\((\w+),(\w+),\w+=\[\]\)\{this\.post\(\{type:"isFullyInitialized",data:\{type:\1,data:\2\}/);
   for (const path of ['vendor/spessasynth/core.js', 'vendor/spessasynth/processor.js']) assert.match(await read(path), /SPDX-License-Identifier: Apache-2\.0/);
   const sw = await read('sw.js');
-  for (const path of ['vendor/spessasynth/lib.js', 'vendor/spessasynth/core.js', 'vendor/spessasynth/processor.js', 'studio/web/preview/player.mjs', 'studio/web/preview/readback.mjs', 'studio/web/preview/worklet-console.mjs']) {
+  // The readback takes its expected velocities from the backend renderer's
+  // instrument table, so that table must be offline too.
+  for (const path of ['vendor/spessasynth/lib.js', 'vendor/spessasynth/core.js', 'vendor/spessasynth/processor.js', 'studio/web/preview/player.mjs', 'studio/web/preview/readback.mjs', 'studio/backend/audio/instruments.mjs', 'studio/web/preview/worklet-console.mjs']) {
     assert.ok(sw.includes(`./${path}`), `offline asset missing: ${path}`);
   }
   // No sound bank is in the build, the manifest or the precache list: the
@@ -81,10 +100,11 @@ test('the timbre preview engine is vendored from npm, self-contained, licensed a
   for (const path of paths) assert.doesNotMatch((await readFile(new URL(`../web-build/${path}`, import.meta.url))).toString('latin1'), bankHeader, `${path} carries no sound bank`);
   const { DEFAULT_BANK_UPSTREAM } = await import('../web/preview/default-bank.mjs');
   assert.match(await read('studio/web/preview/default-bank.mjs'), new RegExp(DEFAULT_BANK_UPSTREAM.sha256), 'the browser pins the upstream digest');
-  for (const path of ['studio/web/preview/default-bank.mjs', 'studio/web/preview/default-bank-trim.mjs', 'studio/web/preview/default-bank-worker.mjs', 'studio/web/preview/instruments.mjs']) {
+  for (const path of ['studio/web/preview/default-bank.mjs', 'studio/web/preview/default-bank-trim.mjs', 'studio/web/preview/default-bank-worker.mjs', 'studio/web/preview/instruments.mjs', 'studio/web/preview/bank-check.mjs', 'studio/web/preview/bank-check-worker.mjs']) {
     assert.ok(sw.includes(`./${path}`), `offline asset missing: ${path}`);
   }
   assert.match(await read('studio/web/preview/default-bank-worker.mjs'), /from '\.\.\/\.\.\/\.\.\/vendor\/spessasynth\/core\.js'/, 'the subset is made with the vendored engine, nothing else');
+  assert.match(await read('studio/web/preview/bank-check-worker.mjs'), /from '\.\.\/\.\.\/\.\.\/vendor\/spessasynth\/core\.js'/, 'a picked bank is parsed with the vendored engine, nothing else');
   // Every precached file must have a type the static hosts serve, or the
   // whole Service Worker install fails and the app never works offline.
   const servable = new Set(['.html', '.mjs', '.js', '.css', '.json', '.webmanifest', '.svg', '.png']);

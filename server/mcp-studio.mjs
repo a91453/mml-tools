@@ -49,8 +49,9 @@ const structuredPayload = description => ({ type: 'object', additionalProperties
 // Gate 4's two questions are named apart on purpose: the source-continuity
 // audit is answered by `studio_core3_change_approve`, one change at a time, and
 // the musical-completeness review is answered here, and neither is the other.
-import { LIMITS, PROPOSAL_KIND_NAMES, PROPOSAL_STATE_NAMES, RESOLUTION_NAMES } from '../studio/backend/application/index.mjs';
+import { LIMITS, PRESCREEN_LIMITS, PROPOSAL_KIND_NAMES, PROPOSAL_STATE_NAMES, RESOLUTION_NAMES } from '../studio/backend/application/index.mjs';
 import { GAME_INSTRUMENTS, GAME_INSTRUMENT_IDS } from '../studio/backend/audio/instruments.mjs';
+import { LABELS as PRESCREEN_LABELS, PREROLL_SECONDS } from '../studio/backend/audio/prescreen/prescreen.mjs';
 import { PAGED_REPORT_TOOLS, REPORT_PAGE_SCHEMA, validateReportPage, readReportPage } from './report-page.mjs';
 import { compactStudioResponse } from './mcp-compaction.mjs';
 import { prescreenListenLinks } from './prescreen-listen.mjs';
@@ -83,6 +84,9 @@ const RUN_FINALIZE_DESCRIPTION = 'finalize 選項：technical_timing_repair（�
 // The audio prescreen's inputs, shared by the read-only prescreen and the
 // shadow-record write so the two cannot describe the same request differently.
 const PRESCREEN_NOTICE_TEXT = '預篩結果只是機器證據：不設定 Gate 7（原曲音訊證據）、不設定玩家回讀（Gate 6 player_readback）、不設定 in_game，也不選定、接受或套用任何版本。免費 GM 音色（FluidR3Mono，首次需要時由服務下載並以 SHA-256 驗證）不是遊戲音色。';
+// The render-length limit, stated where a caller chooses the request. The
+// service checks it before anything renders (prescreen-service.mjs).
+const PRESCREEN_RENDER_LIMIT_TEXT = `每個替代版本最多渲染 ${PRESCREEN_LIMITS.maxRenderSeconds} 秒（${PRESCREEN_LIMITS.maxRenderSeconds / 60} 分鐘）音訊：整首，或有 bar_range 時從第一小節前 ${PREROLL_SECONDS} 秒預捲到最後一小節結束。超過時在任何渲染之前以 INVALID_REQUEST 拒絕（details.reason=RENDER_TOO_LONG，附 suggested_bar_range；起始小節本身就超過上限時為 null，改由 later_bar_range 指出之後第一段可行範圍或 null），請改用 bar_range 分段預篩。`;
 const prescreenMml = { type: 'string', minLength: 1, maxLength: 16384, description: '完整六軌 MML@...,...,...,...,...,...; 原文；本工具不改寫。' };
 const prescreenInstruments = {
   type: 'array', minItems: 6, maxItems: 6, items: { type: 'string', enum: [...GAME_INSTRUMENT_IDS] },
@@ -106,7 +110,7 @@ const prescreenProperties = {
   meter_text: { type: 'string', minLength: 1, maxLength: 2048, description: '來源確認的拍號圖，每行「起拍 拍號」。有 MML 替代版本時必填；候選／artifact 未提供時沿用其自身拍號圖。不可假定 4/4。' },
   pickup: { type: 'string', minLength: 1, maxLength: 32, description: '來源確認的弱起拍長；沒有時省略。' },
   instruments: prescreenInstruments,
-  bar_range: { type: 'object', additionalProperties: false, required: ['from'], properties: { from: { type: 'integer', minimum: 1, maximum: 10000 }, to: { type: 'integer', minimum: 1, maximum: 10000 } }, description: '選填：只預篩第 from–to 小節（依拍號圖編號）。' },
+  bar_range: { type: 'object', additionalProperties: false, required: ['from'], properties: { from: { type: 'integer', minimum: 1, maximum: PRESCREEN_LIMITS.maxBars }, to: { type: 'integer', minimum: 1, maximum: PRESCREEN_LIMITS.maxBars } }, description: `選填：只預篩第 from–to 小節（依拍號圖編號）。每個版本只渲染從 from 小節前 ${PREROLL_SECONDS} 秒預捲到 to 小節結束的視窗；整首超過 ${PRESCREEN_LIMITS.maxRenderSeconds} 秒時用它分段預篩。` },
   reference: {
     type: 'object', additionalProperties: false,
     properties: { mml: prescreenMml, candidate_id: candidateId },
@@ -191,7 +195,7 @@ export const STUDIO_MCP_TOOLS = [
   {
     name: 'studio_decisions_apply',
     title: '套用已接受的編排決定',
-    description: '將明確接受的決定集合交給既有 G11-D 套用流程，全有或全無。acceptance 綁定由服務依現在載入的 baseline 與聲部拆解計算，呼叫端不得提供。已有角色的 MOVE_ROLE 進出 Melody、複製進 Melody、以及 Lead demotion 都維持完整 leadEvidence 門檻。唯一候選流程例外是 role-less 來源第一次 ASSIGN_ROLE -> Melody：可不帶 leadEvidence 先產生明確 review-pending 的可逆候選；這不是 Lead evidence、不是 Gate 3 PASS，Final 前仍需 candidate-bound reviewer evidence。',
+    description: '將明確接受的決定集合交給既有 G11-D 套用流程，全有或全無。acceptance 綁定由服務依現在載入的 baseline 與聲部拆解計算，呼叫端不得提供。已有角色的 MOVE_ROLE 進出 Melody、複製進 Melody、以及 Lead demotion 都維持完整 leadEvidence 門檻。唯一候選流程例外是 role-less 來源第一次 ASSIGN_ROLE -> Melody：可不帶 leadEvidence 先產生明確 review-pending 的可逆候選；這不是 Lead evidence、不是 Gate 3 PASS，Final 前仍需 candidate-bound reviewer evidence。leadEvidence 的 scoreEvidence／audioEvidence 有分類時請附 ref（本專案的 asset_id 或 source id）：review 與 finalize 會依本專案來源解析後才交給 Lead grader，沒有 ref、對不到專案來源或第三方來源的引用不算正面角色證據（SOURCE_POLICY §1C）；決定不陳述音訊判定方法，其 audio 分類一律視為 machine metric，只是定位（§6）。因此此路徑只有本專案持有的官方譜能證明角色；以直接審閱原曲錄音為依據，或替已套用的 move 補證據，請用 studio_lead_evidence_review。',
     inputSchema: {
       type: 'object',
       properties: {
@@ -566,6 +570,7 @@ export const STUDIO_MCP_TOOLS = [
     description: '把 2–4 個替代版本（MML 原文，或本專案的候選／Final artifact）以同一套免費 GM 音色渲染，逐小節比較：低中音粗糙度（感官不協和，指出是哪一對音，例如某個低音小二度；來源本來就有的不協和只回報、不計入勝差）、角色遮蔽／可聽度、衰減拖尾、削波／峰值，以及專案有原曲音訊且有 active 對位證據時與原曲的相似度（目前只讀 WAV／PCM，其他格式回報 ORIGINAL_AUDIO_METRIC_UNAVAILABLE）。'
       + '只有每一項適用指標都指向同一個勝者、各自勝差超過門檻、勝者在其他指標上不比最好的差超過容許值、而且勝者離來源不比其他版本遠時，該小節才是 OBVIOUS；否則是 NEEDS_HUMAN 並附理由（METRICS_CONFLICT／MARGIN_TOO_SMALL／METRIC_UNAVAILABLE／SOURCE_FIDELITY_TRADEOFF／SOURCE_FIDELITY_UNAVAILABLE），human_review 列出要 A/B 試聽的小節與版本；回應另附 listen（不在報告內、不改 report_id）：部署設定了 Studio Web 時，每個區段一條只開那幾小節的 A/B 試聽連結（候選版本沒有 MML，無連結）。試聽連結只是聽的輔助，不記錄任何東西。'
       + '報告含每個版本的 MML SHA-256、音色庫與渲染器身分、門檻 id 與 report_id；相同輸入得到相同報告。不寫入任何專案紀錄。'
+      + PRESCREEN_RENDER_LIMIT_TEXT
       + '只帶 project_id、不帶其他欄位時，改為回傳本專案的 shadow 校準紀錄與逐指標／逐類別一致率。'
       + PRESCREEN_NOTICE_TEXT,
     inputSchema: { type: 'object', properties: { project_id: projectId, ...prescreenProperties }, additionalProperties: false },
@@ -673,26 +678,41 @@ const proposalFilter = args => pick(args, PROPOSAL_FILTER_FIELDS);
  * Every branch is a single call. There is no composition here, no fallback to
  * a second path, and no place a verdict could be recomputed: whatever the
  * Application Service returns is what the model sees.
+ *
+ * `compact` is a transport option, never a tool argument. The MCP transport
+ * never sets it, so every MCP response is the bounded view. An in-process
+ * caller with no result cap that keeps whole results in files -- the local
+ * agent CLI (scripts/studio-agent.mjs), whose `--output`, receipts and export
+ * promise the full Application Service result -- passes `compact: false` and
+ * receives that result itself. Only an explicit `false` turns the view off.
  */
-export async function runStudioTool(name, args, { application, owner, listen = null }) {
+export async function runStudioTool(name, args, { application, owner, listen = null, compact = true }) {
   const page = args.report_page === undefined ? null : validateReportPage(name, args);
-  let result = await dispatchStudioTool(name, args, { application, owner });
-  // The one addition to a result: listen links for the prescreen's
-  // human_review regions, beside the report and never inside it
-  // (server/prescreen-listen.mjs). A page read is of the report itself.
-  if (name === 'studio_audio_prescreen' && !page && result?.prescreen?.human_review) {
-    result = { ...result, listen: await prescreenListenLinks(result.prescreen, { listen, mmlOf: prescreenMmlOf(args, { application, owner }) }) };
-  }
-  // A page is read from the full result; any other response is the bounded
+  const result = await dispatchStudioTool(name, args, { application, owner });
+  // A page is read from the full result; any other MCP response is the bounded
   // view (mcp-compaction.mjs), whose summaries point back at those pages.
-  return page ? readReportPage(result, page) : compactStudioResponse(name, args, result);
+  const view = page ? readReportPage(result, page) : compact === false ? result : compactStudioResponse(name, args, result);
+  // The one addition to a response: listen links for the prescreen's
+  // human_review regions, beside the report and never inside it
+  // (server/prescreen-listen.mjs). A page read is of the report itself, so
+  // the links are added after the view is taken: inside the compacted result
+  // a song-length report's links were summarized into a report_page pointer
+  // at a path the report does not have, and every link was lost. They are
+  // bounded on their own (PRESCREEN_LISTEN_LIMITS) and stay whole.
+  if (name === 'studio_audio_prescreen' && !page && result?.prescreen?.human_review) {
+    return { ...view, listen: await prescreenListenLinks(result.prescreen, { listen, mmlOf: prescreenMmlOf(args, { application, owner }) }) };
+  }
+  return view;
 }
 
 // The MML an alternative label names: the text it was given, or the Final
-// artifact's delivered MML. A candidate alternative has none.
+// artifact's delivered MML. A candidate alternative has none. The report
+// names an alternative by the label the Application Service gave it, which is
+// the caller's label or the positional default (A, B, C, D) when the caller
+// gave none, so the lookup resolves labels the same way.
 function prescreenMmlOf(args, { application, owner }) {
   return async label => {
-    const entry = (args.alternatives ?? []).find(item => item.label === label);
+    const entry = (args.alternatives ?? []).find((item, index) => (item.label ?? PRESCREEN_LABELS[index]) === label);
     if (typeof entry?.mml === 'string') return entry.mml;
     if (typeof entry?.artifact_id === 'string') {
       const { artifact } = await application.getArtifact(owner, entry.artifact_id);

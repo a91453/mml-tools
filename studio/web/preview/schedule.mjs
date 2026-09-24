@@ -8,6 +8,11 @@
 // The volume → velocity curve and the role → channel mapping follow the
 // repository owner's earlier frontend player. They describe this preview, not the
 // game engine.
+//
+// The Gate 6 player readback (readback.mjs) checks what this module schedules
+// with its own implementations of the tempo map, the channel rule and the
+// velocity curve. It must never import from here: a shared function would let
+// a fault here agree with itself.
 import { addBeat, cmpBeat, parseBeat } from '../roll-geometry.mjs';
 
 const make = (n, d) => { const g = gcd(n, d); return { n: n / g, d: d / g }; };

@@ -2,6 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { createHash } from 'node:crypto';
 import { spawn } from 'node:child_process';
+import { createServer } from 'node:http';
 import { once } from 'node:events';
 import { mkdtempSync, writeFileSync, readFileSync, readdirSync, existsSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
@@ -12,6 +13,7 @@ import { createRemoteAgentClient } from '../scripts/studio-agent-remote.mjs';
 import { callAgentTool } from '../scripts/studio-agent.mjs';
 import { sixSourceVoices } from '../studio/tests/fixtures/midi-fixtures.mjs';
 import { readReportPage } from '../server/report-page.mjs';
+import { staleCompletedRun } from './fixtures/stale-run.mjs';
 
 // Actual OAuth consent/token exchange on a synthetic, isolated test service.
 // No real user's password, grant or remote deployment is involved.
@@ -129,4 +131,117 @@ test('remote complete reads verify Unicode content, stale refusals and tampered 
     ? { error: { code: 'INVALID_REQUEST', message: 'changed', details: { reason: 'REPORT_CHANGED' } } } : invoke(_name, args)),
   error => error.remoteResult.error.details.reason === 'REPORT_CHANGED');
   await assert.rejects(remote.read('studio_run_start', {}, invoke), { code: 'REMOTE_CONFIGURATION' });
+});
+
+// The agent CLI in remote mode, as a separate process: the in-process test
+// service must keep answering while it runs.
+async function remoteAgent({ origin, token }, dataDirectory, args, status) {
+  const proc = spawn(process.execPath, [fileURLToPath(new URL('../scripts/studio-agent.mjs', import.meta.url)),
+    '--data-dir', dataDirectory, '--actor', 'agent:codex', '--service-url', origin, '--token-env', 'MML_TEST_REMOTE_TOKEN', ...args],
+  { env: { ...process.env, MML_TEST_REMOTE_TOKEN: token }, windowsHide: true });
+  let stdout = '', stderr = '';
+  proc.stdout.on('data', data => { stdout += data; }); proc.stderr.on('data', data => { stderr += data; });
+  const [exit] = await once(proc, 'close');
+  assert.equal(exit, status, stdout + stderr);
+  return JSON.parse(stdout || stderr);
+}
+
+// An MCP endpoint whose report_page reads are cut from fixed results -- here a
+// bounded MCP view rather than the result itself. Synthetic; no OAuth.
+async function pagedViewService(t, results) {
+  const server = createServer(async (request, response) => {
+    let text = '';
+    for await (const chunk of request) text += chunk;
+    const { id, params } = JSON.parse(text);
+    const { report_page: page } = params.arguments;
+    const structuredContent = readReportPage(results[params.name], {
+      path: page.path ?? [], offset: page.offset ?? 0, length: page.length ?? 16000, expected_sha256: page.expected_sha256,
+    });
+    response.writeHead(200, { 'content-type': 'application/json' });
+    response.end(JSON.stringify({ jsonrpc: '2.0', id, result: { structuredContent } }));
+  });
+  server.listen(0, '127.0.0.1'); await once(server, 'listening');
+  t.after(async () => { server.closeAllConnections(); await new Promise(resolve => server.close(resolve)); });
+  return { origin: `http://127.0.0.1:${server.address().port}`, token: 'SYNTHETIC_PAGED_VIEW_TOKEN' };
+}
+
+test('remote export never writes the Final of a stale run whose MCP view compacts the staleness list', async t => {
+  const dir = mkdtempSync(join(tmpdir(), 'studio-remote-stale-'));
+  t.after(() => rmSync(dir, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 }));
+  const storeDirectory = join(dir, 'service');
+  const remote = await startTestRemote(t, storeDirectory);
+  const { project_id, run_id, status, view } = await staleCompletedRun(remote.app.studio, storeDirectory, SERVICE_OWNER);
+  const artifact = JSON.parse(JSON.stringify(await remote.app.studio.getArtifact(SERVICE_OWNER, status.run.final_artifact_id)));
+  const request = join(dir, 'status.json');
+  writeFileSync(request, JSON.stringify({ project_id, run_id }));
+
+  // The service itself: a remote call is the bounded view, and the export
+  // reassembles the whole status through report_page, so it sees and keeps
+  // every staleness entry.
+  const client = join(dir, 'client');
+  const called = await remoteAgent(remote, client, ['call', 'studio_run_status', '--input', request], 0);
+  assert.equal(called.staleness.compacted, true, 'precondition: a remote call returns the compacted view');
+  assert.equal(called.staleness.total, status.staleness.length);
+  const output = join(dir, 'stale.mml');
+  const refused = await remoteAgent(remote, client, ['export', '--project-id', project_id, '--run-id', run_id, '--out', output], 1);
+  assert.equal(refused.error.code, 'AGENT_INPUT_REFUSED');
+  assert.deepEqual(refused.error.details, {
+    run_id, staleness: status.staleness, staleness_notice: status.staleness_notice, canonical: status.canonical,
+  }, 'the refusal keeps the whole reassembled staleness list');
+  assert.equal(existsSync(output), false);
+
+  // A service whose paged status is cut from the compacted view (with or
+  // without its response_compaction marker): the guard cannot see the list,
+  // so it refuses rather than exporting.
+  const { response_compaction: _marker, ...unmarked } = view;
+  for (const [label, served] of [['marked view', view], ['unmarked view', unmarked]]) {
+    const paged = await pagedViewService(t, { studio_run_status: served, studio_artifact_get: artifact });
+    const out = join(dir, `${label.replace(' ', '-')}.mml`);
+    const result = await remoteAgent(paged, join(dir, `client-${label.replace(' ', '-')}`),
+      ['export', '--project-id', project_id, '--run-id', run_id, '--out', out], 1);
+    assert.equal(existsSync(out), false, `${label}: no Final of a stale run is written`);
+    assert.equal(result.error.code, 'AGENT_INPUT_REFUSED', label);
+    assert.match(result.error.message, /not read whole/, label);
+    assert.equal(result.error.details.staleness.compacted, true, `${label}: the refusal records what it was given`);
+  }
+});
+
+// Every condition the export's fail-closed guard checks, one at a time, from a
+// status and artifact the export accepts: each alone must refuse and write
+// nothing, so none of them can be dropped without a test noticing.
+test('remote export refuses each malformed status or artifact read on its own', async t => {
+  const dir = mkdtempSync(join(tmpdir(), 'studio-remote-guard-'));
+  t.after(() => rmSync(dir, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 }));
+  const storeDirectory = join(dir, 'service');
+  const remote = await startTestRemote(t, storeDirectory);
+  const { project_id, run_id, status } = await staleCompletedRun(remote.app.studio, storeDirectory, SERVICE_OWNER);
+  const artifact = JSON.parse(JSON.stringify(await remote.app.studio.getArtifact(SERVICE_OWNER, status.run.final_artifact_id)));
+  const { response_compaction: _none, ...whole } = JSON.parse(JSON.stringify(status));
+  const fresh = { ...whole, staleness: [] };
+
+  const exportWith = async (label, served, exit) => {
+    const paged = await pagedViewService(t, served);
+    const out = join(dir, `${label}.mml`);
+    const result = await remoteAgent(paged, join(dir, `client-${label}`), ['export', '--project-id', project_id, '--run-id', run_id, '--out', out], exit);
+    return { result, written: existsSync(out) };
+  };
+
+  // The control: a whole, fresh status and the Final it names export.
+  const accepted = await exportWith('control', { studio_run_status: fresh, studio_artifact_get: artifact }, 0);
+  assert.equal(accepted.written, true, `precondition: the unmodified reads export (${JSON.stringify(accepted.result).slice(0, 300)})`);
+
+  const cases = {
+    'status-compaction-marker': { studio_run_status: { ...fresh, response_compaction: { compacted: [] } }, studio_artifact_get: artifact },
+    'status-other-run': { studio_run_status: { ...fresh, run: { ...fresh.run, run_id: `${run_id}-other` } }, studio_artifact_get: artifact },
+    'run-without-candidate': { studio_run_status: { ...fresh, run: { ...fresh.run, candidate_id: '' } }, studio_artifact_get: artifact },
+    // Missing on both sides, so the candidate match alone cannot catch it.
+    'no-candidate-anywhere': { studio_run_status: { ...fresh, run: { ...fresh.run, candidate_id: undefined } }, studio_artifact_get: { ...artifact, artifact: { ...artifact.artifact, candidate_id: undefined } } },
+    'artifact-compaction-marker': { studio_run_status: fresh, studio_artifact_get: { ...artifact, response_compaction: { compacted: [] } } },
+    'artifact-other-id': { studio_run_status: fresh, studio_artifact_get: { ...artifact, artifact: { ...artifact.artifact, artifact_id: `${artifact.artifact.artifact_id}-other` } } },
+  };
+  for (const [label, served] of Object.entries(cases)) {
+    const { result, written } = await exportWith(label, served, 1);
+    assert.equal(written, false, `${label}: nothing is written`);
+    assert.equal(result.error?.code, 'AGENT_INPUT_REFUSED', `${label}: ${JSON.stringify(result).slice(0, 300)}`);
+  }
 });

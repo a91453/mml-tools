@@ -9,7 +9,7 @@ import { toMIDI } from "./midi-out.mjs";
 import * as meters from "./meters.mjs";
 import * as marks from "./marks.mjs";
 import {
-  parseSMF, inventory, buildImport, fileOrigin, trimWarnings, VOICE_LANES, MidiError,
+  parseSMF, inventory, buildImport, fileOrigin, shiftToOrigin, trimWarnings, VOICE_LANES, MidiError,
 } from "./midi-in.mjs";
 import { parseScore } from "./mml-in.mjs";
 import { parseMusicXML, MusicXmlError } from "./musicxml-in.mjs";
@@ -43,13 +43,18 @@ let srcName = "";
 const fileBox = () => $("#fileBox");
 const midiBox = () => $("#midiBox");
 
-const MODES = [
-  ["melody", i18n.t("fileBox.mode.melody")],
-  ["root",   i18n.t("fileBox.mode.root")],
-  ["both",   i18n.t("fileBox.mode.both")],
-  ["voices", i18n.t("fileBox.mode.voices", { n: VOICE_LANES })],
-  ["all",    i18n.t("fileBox.mode.all", { n: MAX_TRACKS })],
-];
+// The labels are looked up when the list is drawn, not when this module is
+// evaluated: main.mjs switches to the page language only after every module
+// has loaded, so a module-level lookup would always read Traditional Chinese.
+const MODES = ["melody", "root", "both", "voices", "all"];
+
+const modeLabels = () => ({
+  melody: i18n.t("fileBox.mode.melody"),
+  root:   i18n.t("fileBox.mode.root"),
+  both:   i18n.t("fileBox.mode.both"),
+  voices: i18n.t("fileBox.mode.voices", { n: VOICE_LANES }),
+  all:    i18n.t("fileBox.mode.all", { n: MAX_TRACKS }),
+});
 
 const MODE_COST = { both: 2, voices: VOICE_LANES, all: MAX_TRACKS };
 
@@ -194,12 +199,18 @@ function readMidi(buf, name) {
   kind = "midi";
   rows = list.map(r => ({ ...r, on: false, mode: "melody" }));
   tempos = smf.tempos;
-  fileMeters = smf.meters ?? [];
-  fileMarks = smf.marks ?? [];
-  origin = fileOrigin(list);
+  useFileTimeline(list, smf);
 
   fileBox().classList.remove("on");
   openList(name, notes);
+}
+
+// The lanes are written from the file's origin (the bar holding its first
+// note), so its meters and marks are moved onto the same clock.
+function useFileTimeline(list, smf) {
+  origin = fileOrigin(list, smf.meters ?? []);
+  fileMeters = shiftToOrigin(smf.meters, origin);
+  fileMarks = shiftToOrigin(smf.marks, origin);
 }
 
 function readText(buf, name) {
@@ -266,9 +277,7 @@ function readXml(text, name) {
   kind = "midi";
   rows = list.map(r => ({ ...r, on: false, mode: "melody" }));
   tempos = smf.tempos;
-  fileMeters = smf.meters ?? [];
-  fileMarks = smf.marks ?? [];
-  origin = fileOrigin(list);
+  useFileTimeline(list, smf);
 
   fileBox().classList.remove("on");
   openList(stripExt(name), [...smf.warnings]);
@@ -281,7 +290,7 @@ function openList(name, notes) {
   const midi = kind === "midi";
   $("#midiBox").dataset.kind = kind;
   $("#colMode").hidden = !midi;
-  $("#colUnit").textContent = midi ? "Channel" : i18n.t("fileBox.colUnit");
+  $("#colUnit").textContent = midi ? i18n.t("fileBox.colChannel") : i18n.t("fileBox.colUnit");
   $("#midiHint").hidden = !midi;
   $("#mmlHint").hidden = midi;
   append = false;
@@ -297,6 +306,7 @@ function openList(name, notes) {
 function renderRows() {
   const tb = $("#midiRows");
   tb.textContent = "";
+  const labels = modeLabels();
   for (const row of rows) {
     const tr = document.createElement("tr");
     tr.classList.toggle("on", row.on);
@@ -327,9 +337,9 @@ function renderRows() {
 
     if (kind === "midi") {
       const sel = document.createElement("select");
-      for (const [v, label] of MODES) {
+      for (const v of MODES) {
         const o = document.createElement("option");
-        o.value = v; o.textContent = label;
+        o.value = v; o.textContent = labels[v];
         sel.appendChild(o);
       }
       sel.value = row.mode;

@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { spawn } from 'node:child_process';
-import { existsSync, mkdirSync, mkdtempSync, readdirSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync, readdirSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { setTimeout as delay } from 'node:timers/promises';
@@ -25,7 +25,12 @@ test('a repository still being written by a background process is removed once i
 });
 
 test('errors other than a busy tree are not retried', async () => {
-  const file = join(mkdtempSync(join(tmpdir(), 'mml-remove-')), 'plain');
+  const dir = mkdtempSync(join(tmpdir(), 'mml-remove-'));
+  const file = join(dir, 'plain');
   writeFileSync(file, 'x');
-  await assert.rejects(removeRepository(join(file, 'child'), { attempts: 3, delayMs: 1000 }), { code: 'ENOTDIR' });
+  try {
+    await assert.rejects(removeRepository(join(file, 'child'), { attempts: 3, delayMs: 1000 }), { code: 'ENOTDIR' });
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
 });

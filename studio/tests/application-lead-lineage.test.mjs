@@ -23,10 +23,16 @@ import { canonicalProjectBytes, sixRoleBaseline } from './fixtures/application-f
 const OWNER = 'owner:alice';
 const SOURCE_ID = 'fixture:official-midi';
 
+// The official score the promotions cite, uploaded by `projectWithBaseline()`.
+// A decision's Lead citation is graded on the project source it names
+// (SOURCE_POLICY §1): a free-text citation naming nothing the project holds
+// proves no role, so these fixtures name one by reference.
+const CITED = { score: null };
+
 const promotionEvidence = eventId => ({
   sourceIdentity: { sourceId: SOURCE_ID, sourceEventId: `${SOURCE_ID}#${eventId}` },
   sectionRole: 'instrumental',
-  scoreEvidence: { availability: 'available', classification: 'lead', citation: 'fixture:score top line bar 1' },
+  scoreEvidence: { availability: 'available', classification: 'lead', citation: 'fixture:score top line bar 1', ref: CITED.score },
   audioEvidence: { availability: 'available', classification: 'foreground', citation: 'fixture:audio 0:00 foreground' },
   continuity: { checked: true, createsLeadGap: false, replacementEventIds: [] },
   core3: { checked: true, status: 'PASS' },
@@ -40,6 +46,8 @@ async function projectWithBaseline(service, title) {
     kind: 'canonical_project', filename: 'baseline.json', mediaType: 'application/json', bytes: canonicalProjectBytes(project),
   });
   await service.analyzeSources(OWNER, created.project_id);
+  // Held after intake, so it stays evidence and is not parsed into the baseline.
+  CITED.score = (await service.uploadAsset(OWNER, created.project_id, { kind: 'official_musicxml', filename: 'score.musicxml', mediaType: 'application/xml', bytes: new TextEncoder().encode(`fixture official score for ${title}`) })).asset.asset_id;
   return { project, projectId: created.project_id };
 }
 

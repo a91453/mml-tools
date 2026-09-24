@@ -18,6 +18,7 @@ from mml_audio_worker.alignment import (
     build_symbolic_chroma,
     _score_seconds,
     _align_timed_features,
+    _control_points,
 )
 
 
@@ -46,6 +47,20 @@ def _project() -> dict:
         "meterEvents": [],
         "decisions": [],
     }
+
+
+def _performed_control_points(tempo_events: list[dict], end_beat: int, performed=lambda seconds: seconds) -> list[dict]:
+    """Control points for a recording that follows `performed(score seconds)`.
+
+    The recording starts 1.25s in and is sampled on a real STFT hop grid, so the
+    beat -> audio mapping goes through the same frame interpolation as the worker.
+    """
+    project = {"tempoEvents": tempo_events}
+    beats = np.arange(end_beat * 8 + 1, dtype=np.float64) / 8
+    audio_seconds = 1.25 + performed(_score_seconds(project, beats))
+    audio_times = np.arange(0.0, audio_seconds[-1] + 0.5, 256 / 22050)
+    mapped_frame = np.interp(audio_seconds, audio_times, np.arange(len(audio_times)))
+    return _control_points(beats, mapped_frame, audio_times, project, step_beats=1.0)
 
 
 def _synthesize_score_audio(sample_rate: int = 22050) -> np.ndarray:
@@ -140,6 +155,35 @@ class AlignmentTests(unittest.TestCase):
             _score_seconds({"tempoEvents": []}, np.array([0, 1]))
         with self.assertRaisesRegex(ValueError, "conflicting"):
             _score_seconds({"tempoEvents": [{"beat": "0", "bpm": 60}, {"beat": "0", "bpm": 120}]}, np.array([0, 1]))
+
+    def test_exact_performance_has_no_drift_at_a_tempo_change_on_a_control_beat(self):
+        # 120 BPM until beat 4, then 60 BPM. The interval [3, 4] is still played
+        # at 120 BPM and must not be judged against the tempo that starts at 4.
+        points = _performed_control_points([{"beat": "0", "bpm": 120}, {"beat": "4", "bpm": 60}], 8)
+        self.assertEqual([point["beat"] for point in points], list(range(9)))
+        for point in points:
+            self.assertEqual(set(point), {"beat", "seconds", "expected_bpm", "local_bpm_from_alignment", "tempo_drift_percent"})
+        self.assertEqual(points[0]["expected_bpm"], 120)
+        self.assertIsNone(points[0]["tempo_drift_percent"])
+        np.testing.assert_allclose([point["tempo_drift_percent"] for point in points[1:]], 0, atol=1e-4)
+        np.testing.assert_allclose([point["local_bpm_from_alignment"] for point in points[1:]], [120] * 4 + [60] * 4, rtol=1e-6)
+        self.assertEqual([point["expected_bpm"] for point in points[1:]], [120] * 4 + [60] * 4)
+
+    def test_exact_performance_has_no_drift_when_tempo_changes_inside_an_interval(self):
+        # [2, 3] is half a beat at 120 plus half a beat at 60: 0.75s, i.e. 80 BPM.
+        # [5, 6] is half a beat at 60 plus half a beat at 90: 5/6s, i.e. 72 BPM.
+        tempo = [{"beat": "0", "bpm": 120}, {"beat": "5/2", "bpm": 60}, {"beat": "11/2", "bpm": 90}]
+        points = _performed_control_points(tempo, 7)
+        expected = [120, 120, 80, 60, 60, 72, 90]
+        np.testing.assert_allclose([point["tempo_drift_percent"] for point in points[1:]], 0, atol=1e-4)
+        np.testing.assert_allclose([point["local_bpm_from_alignment"] for point in points[1:]], expected, rtol=1e-6)
+        self.assertEqual([point["expected_bpm"] for point in points[1:]], expected)
+
+        # Genuine drift is still reported: play everything after beat 4 10% faster.
+        start = float(_score_seconds({"tempoEvents": tempo}, np.array([4.0]))[0])
+        faster = lambda seconds: np.where(seconds <= start, seconds, start + (seconds - start) / 1.1)
+        drift = [point["tempo_drift_percent"] for point in _performed_control_points(tempo, 7, faster)[1:]]
+        np.testing.assert_allclose(drift, [0, 0, 0, 0, 10, 10, 10], atol=1e-4)
 
     def test_strict_subsequence_dtw_finds_music_between_unrelated_intro_and_outro(self):
         rng = np.random.default_rng(4)

@@ -22,8 +22,9 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 
-import { validateMML as canonicalValidateMML } from '../studio/backend/mml/parser.mjs';
-import { validateMML as legacyValidateMML } from '../dist/core.js';
+import { STUDIO_MML_PROFILE, validateMML as canonicalValidateMML } from '../studio/backend/mml/parser.mjs';
+import { PROFILE as LEGACY_PROFILE, VERSION as LEGACY_VERSION, validateMML as legacyValidateMML } from '../dist/core.js';
+import { PUBLISHED_CANONICAL } from '../studio/backend/rules/index.mjs';
 import { API_PREFIX, createApiRouter } from '../server/api.mjs';
 import { handleMcp } from '../server/mcp.mjs';
 import { createStudioApplication } from '../studio/backend/application/index.mjs';
@@ -98,6 +99,78 @@ test('the same MML gets the same Canonical verdict through parser, service, HTTP
     }
     assert.equal(overHttp.status, 200, `${name}: HTTP status`);
     assert.equal(overMcp.isError, false, `${name}: MCP is not a transport error`);
+  }
+});
+
+test('mml_service_info names the profile and release mml_validate answers under', async () => {
+  // Service info used to report dist/core.js's legacy profile while
+  // mml_validate answered under the Published Canonical one. The two profiles
+  // judge SIXTY_FOURTH_BAR oppositely, so a client that read service info was
+  // told the wrong rules for every verdict it then received.
+  const { mcp } = surfaces();
+  const input = { mml: SIXTY_FOURTH_BAR, meter_text: METER };
+  const info = (await mcp('mml_service_info', {})).structuredContent;
+  const validated = (await mcp('mml_validate', input)).structuredContent;
+  const overlaps = (await mcp('mml_overlap_details', input)).structuredContent;
+
+  assert.equal(validated.authority, 'PUBLISHED_CANONICAL');
+  assert.equal(validated.technical_ok, true, 'the Canonical profile accepts the bar the legacy profile rejects');
+  assert.equal(info.profile, validated.profile, 'service info names the profile mml_validate reports');
+  assert.equal(info.profile, overlaps.profile, 'and the one mml_overlap_details reports');
+  assert.equal(info.profile, STUDIO_MML_PROFILE);
+  assert.notEqual(info.profile, LEGACY_PROFILE);
+  assert.equal(info.validation_authority, 'PUBLISHED_CANONICAL');
+  assert.equal(info.canonical_validation, 'AVAILABLE');
+
+  // The release is the one the Canonical gate loaded, its identities kept apart.
+  assert.deepEqual(info.canonical_release, {
+    status: 'CANONICAL_LOADED',
+    canonical_version: PUBLISHED_CANONICAL.metadata.canonical_version,
+    canonical_status: PUBLISHED_CANONICAL.metadata.canonical_status,
+    manifest_version: PUBLISHED_CANONICAL.metadata.manifest_version,
+    rules_snapshot_sha: PUBLISHED_CANONICAL.metadata.rules_snapshot_sha,
+    manifest_commit: PUBLISHED_CANONICAL.provenance.manifest_commit,
+  });
+
+  // The dist/core.js values are still reported, under legacy names only.
+  assert.equal(info.legacy_profile, LEGACY_PROFILE);
+  assert.equal(info.legacy_core_version, LEGACY_VERSION);
+  assert.equal(info.core_version, undefined);
+});
+
+test('technical reports carry the dist/core.js identity only under legacy names', async () => {
+  const { application, http, mcp } = surfaces();
+  const refused = { mml: TEMPO_OVER_RANGE, meter_text: METER };
+  const accepted = { mml: SIXTY_FOURTH_BAR, meter_text: METER };
+
+  // A Canonical report's `profile` is the profile that produced its verdict,
+  // and the dist/core.js version beside it says it is the legacy library's.
+  for (const [surface, report] of [
+    ['service', await application.validateTechnicalMml(refused)],
+    ['http', (await http('/technical/validate', refused)).body],
+    ['mcp', (await mcp('mml_validate', refused)).structuredContent],
+    ['http overlaps', (await http('/technical/overlaps', accepted)).body],
+    ['mcp overlaps', (await mcp('mml_overlap_details', accepted)).structuredContent],
+  ]) {
+    assert.equal(report.authority, 'PUBLISHED_CANONICAL', `${surface}: authority`);
+    assert.equal(report.profile, STUDIO_MML_PROFILE, `${surface}: profile`);
+    assert.equal(report.legacy_core_version, LEGACY_VERSION, `${surface}: legacy library version`);
+    assert.equal(report.core_version, undefined, `${surface}: no unlabelled legacy version`);
+    assert.equal(report.legacy_profile, undefined, `${surface}: a Canonical report has no legacy profile`);
+  }
+
+  // A legacy diagnostic names no Canonical profile, exactly as it states no
+  // Canonical technical_ok; its engine's profile has a legacy name.
+  for (const [surface, report] of [
+    ['service', application.legacyTechnicalDiagnostic(refused)],
+    ['service overlaps', application.legacyTechnicalOverlapDetails(refused)],
+    ['http', (await http('/technical/legacy/validate', refused)).body],
+  ]) {
+    assert.equal(report.authority, 'LEGACY_DIAGNOSTIC', `${surface}: authority`);
+    assert.equal(report.profile, null, `${surface}: no Canonical profile is stated`);
+    assert.equal(report.legacy_profile, LEGACY_PROFILE, `${surface}: legacy profile`);
+    assert.equal(report.legacy_core_version, LEGACY_VERSION, `${surface}: legacy library version`);
+    assert.equal(report.core_version, undefined, `${surface}: no unlabelled legacy version`);
   }
 });
 
@@ -201,4 +274,70 @@ test('the MCP tools fail closed too rather than answering from the legacy engine
   assert.equal(diagnostic.authority, 'LEGACY_DIAGNOSTIC');
   assert.equal(diagnostic.technical_ok, null);
   assert.equal(diagnostic.gates.strict_mobile_technical, 'NOT_RUN');
+});
+
+test('service info says Canonical is unavailable instead of naming the legacy profile', async () => {
+  // mml_service_info is built from describe() on the transport's own technical
+  // service, and has to keep answering exactly where validation refuses.
+  const { createTechnicalService } = await import('../studio/backend/application/technical-service.mjs');
+  const { createCanonicalGate, EngineUnavailableError } = await import('../studio/backend/application/provenance.mjs');
+  const input = { mml: 'MML@t120o4c1,,,,,;', meter_text: METER };
+
+  // No published history; and no gate at all, which is the Sites artifact.
+  for (const [name, service] of [
+    ['unloadable gate', createTechnicalService({ serviceVersion: '0.0.0-test', canonical: createCanonicalGate({ load: async () => { throw Error('no published history'); } }) })],
+    ['no gate', createTechnicalService({ serviceVersion: '0.0.0-test' })],
+  ]) {
+    const info = await service.describe();
+    assert.equal(info.canonical_validation, ERROR_CODES.CANONICAL_NOT_LOADED, name);
+    assert.equal(info.profile, null, `${name}: no profile answers, and the legacy one is not offered instead`);
+    assert.equal(info.validation_authority, 'PUBLISHED_CANONICAL', name);
+    assert.equal(info.canonical_release.status, ERROR_CODES.CANONICAL_NOT_LOADED, name);
+    assert.equal(info.canonical_release.canonical_version, null, name);
+    assert.equal(info.canonical_release.rules_snapshot_sha, null, name);
+    assert.equal(info.legacy_profile, LEGACY_PROFILE, name);
+    assert.equal(info.legacy_core_version, LEGACY_VERSION, name);
+    // The code it names is the refusal the validation operations answer with.
+    await assert.rejects(() => service.validate(input), error => error.code === info.canonical_validation, name);
+  }
+
+  // The rules loaded and a later engine did not: the release is named, the
+  // profile is not, and the code is the engine's rather than the Canonical one.
+  const engineless = createTechnicalService({
+    serviceVersion: '0.0.0-test',
+    canonical: createCanonicalGate({
+      load: async ({ recordPublished }) => {
+        recordPublished(PUBLISHED_CANONICAL);
+        throw new EngineUnavailableError('synthetic engine import failure');
+      },
+    }),
+  });
+  const info = await engineless.describe();
+  assert.equal(info.canonical_validation, ERROR_CODES.ENGINE_UNAVAILABLE);
+  assert.equal(info.profile, null);
+  assert.equal(info.canonical_release.status, 'CANONICAL_LOADED');
+  assert.equal(info.canonical_release.rules_snapshot_sha, PUBLISHED_CANONICAL.metadata.rules_snapshot_sha);
+  assert.equal(info.legacy_profile, LEGACY_PROFILE);
+  await assert.rejects(() => engineless.validate(input), error => error.code === ERROR_CODES.ENGINE_UNAVAILABLE);
+});
+
+test('a Canonical validator that exports no profile is refused, never labelled with the legacy profile', async () => {
+  // The Canonical path used to fill a missing STUDIO_MML_PROFILE with
+  // dist/core.js's PROFILE, so a Canonical verdict claimed the legacy rules.
+  const { createTechnicalService } = await import('../studio/backend/application/technical-service.mjs');
+  const service = createTechnicalService({
+    serviceVersion: '0.0.0-test',
+    canonical: { engines: async () => ({ mml: { validateMML: canonicalValidateMML } }) },
+  });
+  const input = { mml: 'MML@t120o4c1,,,,,;', meter_text: METER };
+  for (const operation of ['validate', 'overlapDetails']) {
+    await assert.rejects(() => service[operation](input), error => {
+      assert.equal(error.code, ERROR_CODES.ENGINE_UNAVAILABLE, operation);
+      assert.equal(error.details.legacy_fallback_allowed, false, operation);
+      return true;
+    });
+  }
+  const info = await service.describe();
+  assert.equal(info.canonical_validation, ERROR_CODES.ENGINE_UNAVAILABLE);
+  assert.equal(info.profile, null);
 });

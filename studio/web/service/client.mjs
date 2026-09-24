@@ -5,20 +5,44 @@ const random = () => encode(crypto.getRandomValues(new Uint8Array(32)));
 
 export function createServiceClient({ origin = location.origin, storage = sessionStorage, fetchImpl = fetch } = {}) {
   let grant = null;
+  let refreshing = null;
   const redirect = origin + '/studio/';
-  async function request(path, { body, form = false, authenticated = true, method = body === undefined ? 'GET' : 'POST' } = {}) {
-    if (authenticated && !grant) throw Error('請先登入服務');
+  // The access token lives 15 minutes. A 401 is answered before a request is
+  // routed, so nothing it carried was applied: the grant's refresh token gets a
+  // new access token once (one refresh at a time -- the service revokes a
+  // refresh token used twice) and the request is sent again. Without this a
+  // session ended after 15 minutes in a full re-login that discarded whatever
+  // the owner was typing.
+  const refresh = () => (refreshing ??= (async () => {
+    const previous = grant;
+    try {
+      const next = await request('/oauth/token', { authenticated: false, form: true, body: {
+        grant_type: 'refresh_token', client_id: previous.client_id, refresh_token: previous.refresh_token, resource: origin + '/mcp',
+      } });
+      grant = { ...next, client_id: previous.client_id };
+      return true;
+    } catch { return false; } finally { refreshing = null; }
+  })());
+  async function request(path, { body, form = false, authenticated = true, method = body === undefined ? 'GET' : 'POST', timeoutMs = 120000, retried = false } = {}) {
+    if (authenticated && !grant) throw Object.assign(Error('請先登入服務'), { authentication: true });
     const headers = {};
     if (authenticated) headers.authorization = `Bearer ${grant.access_token}`;
     if (body !== undefined && !(body instanceof FormData)) headers['content-type'] = form ? 'application/x-www-form-urlencoded' : 'application/json';
     let response;
     try {
-      response = await fetchImpl(origin + path, { method, headers, cache: 'no-store', redirect: 'error', signal: AbortSignal.timeout(120000),
+      response = await fetchImpl(origin + path, { method, headers, cache: 'no-store', redirect: 'error', signal: AbortSignal.timeout(timeoutMs),
         ...(body === undefined ? {} : { body: body instanceof FormData ? body : form ? new URLSearchParams(body) : JSON.stringify(body) }) });
     } catch { throw Object.assign(Error('未能取得服務回應；操作可能已執行。請先重新讀取專案狀態，不要重複上傳或建立專案。'), { uncertain: true }); }
-    if (response.status === 401) { grant = null; throw Object.assign(Error('登入已過期，請重新登入；服務專案仍保留。'), { authentication: true }); }
+    if (response.status === 401 && authenticated) {
+      if (!retried && grant?.refresh_token && await refresh()) return request(path, { body, form, authenticated, method, timeoutMs, retried: true });
+      grant = null;
+      throw Object.assign(Error('登入已過期，請重新登入；服務專案仍保留。'), { authentication: true });
+    }
+    // Revocation answers 200 with no body; that is a success, not a bad reply.
+    const text = await response.text().catch(() => null);
+    if (response.ok && text === '') return {};
     let result;
-    try { result = await response.json(); } catch { throw Object.assign(Error('服務未回傳有效 JSON；請確認服務網址並讀回狀態。'), { uncertain: method !== 'GET' }); }
+    try { result = JSON.parse(text); } catch { throw Object.assign(Error('服務未回傳有效 JSON；請確認服務網址並讀回狀態。'), { uncertain: method !== 'GET' }); }
     if (!response.ok || result.error) {
       const error = result.error;
       throw Object.assign(Error(typeof error === 'object' ? `${error.code}: ${error.message}` : result.error_description || '服務拒絕請求'), { result });
@@ -70,7 +94,10 @@ export function createServiceClient({ origin = location.origin, storage = sessio
       if (!/^prj_[0-9a-f]{32}$/.test(projectId)) throw Error('無效的專案身分');
       if (!file || file.size > 64 * 1024 * 1024) throw Error('請選擇不超過 64 MiB 的檔案');
       const body = new FormData(); body.set('kind', kind); body.set('filename', file.name); body.set('file', file, file.name);
-      return request(`/api/v1/projects/${projectId}/assets`, { body });
+      // 120 s is 64 MiB only above about 4.5 Mbit/s. An upload may take as
+      // long as its size needs at 128 KB/s, up to just under the service's own
+      // 300 s limit for receiving a request.
+      return request(`/api/v1/projects/${projectId}/assets`, { body, timeoutMs: Math.min(290000, Math.max(120000, Math.ceil(file.size / 128))) });
     },
   };
 }

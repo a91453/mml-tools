@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 import {
   evaluateLeadPromotion,
   LEAD_EVIDENCE_IDENTITY_MISMATCH,
+  PRIMARY_EVIDENCE_CONTRADICTS_LEAD,
 } from '../backend/arbitration/lead-demotion.mjs';
 
 const identity = { sourceId: 'official-score', sourceEventId: 'part:P1/measure:1/voice:2/note:1' };
@@ -69,6 +70,46 @@ test('conflicting source-role evidence keeps promotion pending', () => {
   }));
   assert.equal(gate.status, 'PENDING');
   assert.ok(gate.blockers.includes('SOURCE_ROLE_EVIDENCE_CONFLICT'));
+});
+
+// Primary non-Lead evidence is contradicting evidence, not missing evidence
+// (ACCEPTANCE_CRITERIA "Delivered first", rule 2). It must be told apart from
+// "no evidence at all" whether or not any positive Lead evidence sits beside it.
+test('primary evidence that the event is not the Lead is reported as a contradiction, not as missing evidence', () => {
+  const unavailable = { availability: 'unavailable' };
+  const none = evaluateLeadPromotion(fullEvidence({ scoreEvidence: unavailable, audioEvidence: unavailable }));
+  assert.deepEqual([...none.blockers], ['POSITIVE_LEAD_EVIDENCE_MISSING']);
+
+  for (const classification of ['accompaniment', 'inner', 'counter', 'duplicate']) {
+    for (const sourceAuthority of ['primary', undefined]) {
+      const scoreEvidence = { availability: 'available', classification, citation: 'official-score:P1/lower-staff', ...(sourceAuthority ? { sourceAuthority } : {}) };
+      const gate = evaluateLeadPromotion(fullEvidence({ scoreEvidence, audioEvidence: unavailable }));
+      assert.equal(gate.status, 'PENDING', `${classification}/${sourceAuthority}`);
+      assert.deepEqual([...gate.blockers], ['POSITIVE_LEAD_EVIDENCE_MISSING', PRIMARY_EVIDENCE_CONTRADICTS_LEAD], `${classification}/${sourceAuthority}`);
+    }
+  }
+  for (const audioEvidence of [
+    { availability: 'available', classification: 'background', citation: 'original-audio@00:12', basis: 'listening', sourceAuthority: 'primary' },
+    { availability: 'available', classification: 'background', citation: 'original-audio@00:12' },
+  ]) {
+    const gate = evaluateLeadPromotion(fullEvidence({ scoreEvidence: unavailable, audioEvidence }));
+    assert.deepEqual([...gate.blockers], ['POSITIVE_LEAD_EVIDENCE_MISSING', PRIMARY_EVIDENCE_CONTRADICTS_LEAD], JSON.stringify(audioEvidence));
+  }
+  // Positive primary Lead evidence beside it does not hide the contradiction.
+  const both = evaluateLeadPromotion(fullEvidence({ audioEvidence: { availability: 'available', classification: 'background', citation: 'original-audio@00:12', basis: 'listening' } }));
+  assert.ok(both.blockers.includes('SOURCE_ROLE_EVIDENCE_CONFLICT'));
+  assert.ok(both.blockers.includes(PRIMARY_EVIDENCE_CONTRADICTS_LEAD));
+  // Evidence that cannot prove a role (supporting or unresolved material, a
+  // metric) cannot contradict one as primary evidence either (SOURCE_POLICY §1C, §6).
+  for (const [label, extra] of Object.entries({
+    'supporting score': { scoreEvidence: { availability: 'available', classification: 'accompaniment', citation: 'third-party', sourceAuthority: 'supporting' }, audioEvidence: unavailable },
+    'unresolved score': { scoreEvidence: { availability: 'available', classification: 'inner', citation: 'nothing', sourceAuthority: 'unresolved' }, audioEvidence: unavailable },
+    'metric background': { scoreEvidence: unavailable, audioEvidence: { availability: 'available', classification: 'background', citation: 'chroma', basis: 'machine-metric' } },
+  })) {
+    const gate = evaluateLeadPromotion(fullEvidence(extra));
+    assert.equal(gate.blockers.includes(PRIMARY_EVIDENCE_CONTRADICTS_LEAD), false, label);
+    assert.ok(gate.blockers.includes('POSITIVE_LEAD_EVIDENCE_MISSING'), label);
+  }
 });
 
 test('promotion evidence is bound to the exact source event', () => {

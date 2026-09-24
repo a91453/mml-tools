@@ -411,8 +411,12 @@ export async function runListenTool(args, { application, owner, listen = DEFAULT
 
   let start = null;
   if (args.start_bar !== undefined) {
-    barStart(args.start_bar);
-    start = { bar: args.start_bar };
+    const beat = barStart(args.start_bar);
+    // The link contract carries no pickup, so Studio Web numbers bars from
+    // beat 0. For a Final with a pickup that is a different bar from the one
+    // this tool resolved (bar 3 after a one-beat pickup starts at beat 5 here
+    // and at beat 8 there), so the position travels as the beat it resolved to.
+    start = pickup ? { beat } : { bar: args.start_bar };
   }
 
   const mmlSha = sha256Hex(new TextEncoder().encode(mml));

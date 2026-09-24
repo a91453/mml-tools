@@ -5,6 +5,7 @@ import { join, dirname } from 'node:path';
 import { tmpdir } from 'node:os';
 import { fileURLToPath } from 'node:url';
 import { execFileSync } from 'node:child_process';
+import { PROFILE as LEGACY_PROFILE } from '../dist/core.js';
 
 const root = fileURLToPath(new URL('../', import.meta.url));
 let directory, bundle;
@@ -62,7 +63,17 @@ test('a Sites artifact without published Git history refuses Canonical work inst
     assert.equal(reply.result.structuredContent.technical_ok, undefined);
   }
   const info = await (await worker.fetch(request('tools/call', { name: 'mml_service_info', arguments: {} }))).json();
-  assert.match(info.result.structuredContent.binary_data_plane, /CANONICAL_NOT_LOADED/);
+  assert.equal(info.result.isError, false, 'service info keeps answering without Canonical');
+  const described = info.result.structuredContent;
+  assert.match(described.binary_data_plane, /CANONICAL_NOT_LOADED/);
+  // It says Canonical is not loaded rather than naming the legacy profile as
+  // the one the two refused tools would have answered under.
+  assert.equal(described.profile, null);
+  assert.equal(described.canonical_validation, 'CANONICAL_NOT_LOADED');
+  assert.equal(described.canonical_release.status, 'CANONICAL_NOT_LOADED');
+  assert.match(described.profile_notice, /CANONICAL_NOT_LOADED/);
+  assert.equal(described.legacy_profile, LEGACY_PROFILE);
+  assert.equal(described.core_version, undefined);
 });
 
 test('the generated artifact retains input-schema and request-size guards', async () => {

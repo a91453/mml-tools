@@ -5,7 +5,8 @@ import { mkdtemp, readFile, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { once } from 'node:events';
-import { createApplication, createHttpServer, productionAgentConfiguration } from '../railway/server.mjs';
+import { DatabaseSync } from 'node:sqlite';
+import { createApplication, createHttpServer, HTTP_TIMEOUTS, productionAgentConfiguration } from '../railway/server.mjs';
 
 const origin = 'https://mml.example';
 const password = 'SYNTHETIC_TEST_PASSWORD_ONLY_01234567890123456789';
@@ -25,15 +26,15 @@ async function begin(send, clientId, extra = {}) {
   const params = new URLSearchParams({ client_id: clientId, redirect_uri: redirectUri, response_type: 'code', scope: 'mml:read', resource: origin + '/mcp', code_challenge: pkce, code_challenge_method: 'S256', state: 'synthetic-state', ...extra });
   return send(req('/oauth/authorize?' + params));
 }
-async function authorizedCode(send, clientId, usePassword = password) {
-  const response = await begin(send, clientId); assert.equal(response.status, 200);
+async function authorizedCode(send, clientId, usePassword = password, callback = redirectUri) {
+  const response = await begin(send, clientId, { redirect_uri: callback }); assert.equal(response.status, 200);
   const cookie = response.headers.get('set-cookie').split(';')[0];
   const html = await response.text(), csrf = /name="csrf" value="([^"]+)"/.exec(html)?.[1];
   assert.ok(csrf);
   const login = await send(form('/oauth/authorize', { csrf, password: usePassword, decision: 'allow' }, { cookie, origin }));
   assert.equal(login.status, 303);
   const location = new URL(login.headers.get('location'));
-  assert.equal(location.origin + location.pathname, redirectUri); assert.equal(location.searchParams.get('state'), 'synthetic-state'); assert.equal(location.searchParams.get('iss'), origin);
+  assert.equal(location.origin + location.pathname, callback); assert.equal(location.searchParams.get('state'), 'synthetic-state'); assert.equal(location.searchParams.get('iss'), origin);
   return location.searchParams.get('code');
 }
 async function exchange(send, clientId, code, extra = {}) {
@@ -145,6 +146,48 @@ test('PKCE, scope, resource, and repeated parameters are checked', async t => {
   const duplicate = await send(form('/oauth/token', 'client_id=a&client_id=b&grant_type=authorization_code')); assert.equal(duplicate.status, 400);
   assert.equal((await exchange(send, client.client_id, code)).status, 200);
 });
+test('an OAuth 2.1 code exchange may leave out redirect_uri; PKCE binds the code and a sent redirect must match', async () => {
+  // A client following only OAuth 2.1 sends no redirect_uri to the token
+  // endpoint, so every such exchange used to be refused as invalid_grant.
+  const directory = await mkdtemp(join(tmpdir(), 'mml-auth-test-')), database = join(directory, 'auth.sqlite');
+  const app = createApplication({ ...options, database }), send = request => app.fetch(request);
+  const refusal = async (response, description) => { assert.equal(response.status, 400); assert.deepEqual(await response.json(), { error: 'invalid_grant', error_description: description }); };
+  try {
+    for (const callback of [redirectUri, 'http://127.0.0.1:33418/callback']) {
+      const client = await register(send, { redirect_uris: [callback] }), code = await authorizedCode(send, client.client_id, password, callback);
+      const omitted = (extra = {}) => send(form('/oauth/token', { client_id: client.client_id, grant_type: 'authorization_code', code, code_verifier: verifier, resource: origin + '/mcp', ...extra }));
+      // Without redirect_uri the verifier is what binds the code.
+      await refusal(await omitted({ code_verifier: 'wrong'.repeat(10) }), 'Invalid PKCE verifier');
+      await refusal(await omitted({ code_verifier: '' }), 'Invalid PKCE verifier');
+      // Sent, even empty, the redirect must still be the authorized one exactly.
+      for (const sent of [callback + '/changed', '']) await refusal(await exchange(send, client.client_id, code, { redirect_uri: sent }), 'Invalid authorization code');
+      const response = await omitted();
+      assert.equal(response.status, 200, callback);
+      const grant = await response.json();
+      assert.equal((await send(mcpRequest(grant.access_token))).status, 200);
+      // Still single-use: a replay is refused and revokes what the code issued.
+      await refusal(await omitted(), 'Authorization code was already used');
+      assert.equal((await send(mcpRequest(grant.access_token))).status, 401);
+    }
+    // Authorize refuses a request without S256 PKCE, so every issued code
+    // carries a challenge.
+    const client = await register(send);
+    const noPkce = new URLSearchParams({ client_id: client.client_id, redirect_uri: redirectUri, response_type: 'code', resource: origin + '/mcp', state: 'synthetic-state' });
+    const refused = await send(req('/oauth/authorize?' + noPkce));
+    assert.equal(refused.status, 400); assert.equal((await refused.json()).error_description, 'PKCE S256 is required');
+    // A stored code without one must still name its redirect and cannot be
+    // redeemed either way.
+    const code = await authorizedCode(send, client.client_id);
+    const db = new DatabaseSync(database);
+    try {
+      const id = createHash('sha256').update(code).digest('hex'), row = db.prepare("SELECT value FROM auth_records WHERE kind='code' AND id=?").get(id);
+      const record = JSON.parse(row.value); assert.equal(typeof record.challenge, 'string'); delete record.challenge;
+      db.prepare("UPDATE auth_records SET value=? WHERE kind='code' AND id=?").run(JSON.stringify(record), id);
+    } finally { db.close(); }
+    await refusal(await send(form('/oauth/token', { client_id: client.client_id, grant_type: 'authorization_code', code, code_verifier: verifier })), 'Invalid authorization code');
+    await refusal(await exchange(send, client.client_id, code), 'Invalid PKCE verifier');
+  } finally { app.close(); await rm(directory, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 }); }
+});
 test('owner consent requires correct password, matching CSRF cookie and same origin', async t => {
   const send = setup(t), client = await register(send), response = await begin(send, client.client_id);
   const cookie = response.headers.get('set-cookie').split(';')[0]; const csrf = /name="csrf" value="([^"]+)"/.exec(await response.text())[1];
@@ -237,6 +280,63 @@ test('real loopback HTTP carries the complete OAuth and MCP sequence without ext
       assert.equal(response.status, 200); const data = await response.json(); assert.equal(data.id, id); assert.ok(data.result);
     }
   } finally { server.closeAllConnections(); await new Promise(resolve => server.close(resolve)); app.close(); }
+});
+test('a 64 MiB upload on a slow link is not cut off by the whole-request timeout', () => {
+  // The former 15 s limit answered 408 to any upload slower than about 4 MB/s
+  // (reproduced over loopback: a 5 MB multipart body trickled at 100 KB/s got
+  // 408 at the first 30 s connection check). The limit must at least outlast
+  // the service page's own 120 s upload wait; headers stay tightly bounded.
+  const app = createApplication(options), server = createHttpServer(app);
+  try {
+    assert.equal(server.requestTimeout, HTTP_TIMEOUTS.requestMs);
+    assert.ok(server.requestTimeout >= 120000, 'covers the service page upload wait');
+    assert.ok(64 * 1024 * 1024 / (server.requestTimeout / 1000) < 256 * 1024, 'a 64 MiB file fits at under 2 Mbit/s');
+    assert.equal(server.headersTimeout, 10000, 'the slow-loris guard is unchanged');
+    assert.equal(server.maxHeaderSize, 16384);
+  } finally { server.close(); app.close(); }
+});
+test('the Bearer scheme name is matched without regard to case; the token is not', async t => {
+  const send = setup(t);
+  const grant = await tokens(send);
+  for (const scheme of ['Bearer', 'bearer', 'BEARER']) {
+    assert.equal((await send(mcpRequest(null, { authorization: `${scheme} ${grant.access_token}` }))).status, 200, scheme);
+  }
+  const flipped = grant.access_token.replace(/[a-z]/, c => c.toUpperCase());
+  if (flipped !== grant.access_token) assert.equal((await send(mcpRequest(flipped))).status, 401);
+});
+test('service page logins reuse one client, and the registration cap only evicts clients no live grant uses', async t => {
+  let clock = 100000;
+  const send = setup(t, { now: () => clock });
+  const page = { client_name: 'MML Studio 服務工作區', redirect_uris: [origin + '/studio/'] };
+  // Every page login registers, then the owner consents; a year-long client
+  // per login used to exhaust the 128 registrations for every client.
+  const pageLogin = async () => {
+    const client = await register(send, page);
+    const params = new URLSearchParams({ client_id: client.client_id, redirect_uri: origin + '/studio/', response_type: 'code', scope: 'mml:read', resource: origin + '/mcp', code_challenge: pkce, code_challenge_method: 'S256', state: 's' });
+    const start = await send(req('/oauth/authorize?' + params));
+    assert.equal(start.status, 200);
+    const cookie = start.headers.get('set-cookie').split(';')[0], csrf = /name="csrf" value="([^"]+)"/.exec(await start.text())[1];
+    assert.equal((await send(form('/oauth/authorize', { csrf, password, decision: 'allow' }, { cookie, origin }))).status, 303);
+    clock += 3 * 3600;
+    return client.client_id;
+  };
+  const ids = new Set();
+  for (let i = 0; i < 140; i++) ids.add(await pageLogin());
+  assert.equal(ids.size, 1, 'one client for the page, however many logins');
+  // A connector can still register afterwards.
+  assert.ok((await register(send)).client_id);
+
+  // Fill the rest of the capacity with connector registrations that a live
+  // grant uses; none of them may be evicted to make room.
+  const connectors = [];
+  while (connectors.length < 126) { connectors.push((await register(send)).client_id); clock += 6; }
+  for (const id of connectors.slice(0, 60)) { await authorizedCode(send, id); clock += 6; }
+  clock += 2 * 86400;
+  // At the cap: the idle registrations are evicted, oldest first, the ones
+  // with a live grant are not, and the new registration succeeds.
+  const fresh = await register(send);
+  assert.ok(fresh.client_id);
+  for (const id of connectors.slice(0, 60)) assert.equal((await begin(send, id)).status, 200, 'a client with a live grant is kept');
 });
 test('production configuration fails closed without credentials or HTTPS', () => {
   assert.throws(() => createApplication({ ...options, ownerPassword: 'short' }), /MML_OWNER_PASSWORD/);
@@ -439,4 +539,26 @@ test('the deployment passes its Studio Web origin to studio_listen and serves th
   const unlinked = (await (await bare(rpc(bareToken, 'tools/call', listen))).json()).result.structuredContent;
   assert.equal(unlinked.listen_link, null);
   assert.equal(unlinked.listen_link_status, 'ORIGIN_NOT_CONFIGURED');
+});
+test('a code exchanged without redirect_uri still expires and stays bound to the client it was issued to', async t => {
+  let clock = 100000;
+  const send = setup(t, { now: () => clock });
+  const withoutRedirect = (clientId, code) => send(form('/oauth/token', { client_id: clientId, grant_type: 'authorization_code', code, code_verifier: verifier, resource: origin + '/mcp' }));
+  const client = await register(send), other = await register(send, { client_name: 'Another synthetic client' });
+  assert.notEqual(other.client_id, client.client_id);
+  // Another client holding the same code and verifier is refused by the
+  // client binding itself, not only by the later grant check.
+  const code = await authorizedCode(send, client.client_id);
+  const cross = await withoutRedirect(other.client_id, code);
+  assert.equal(cross.status, 400);
+  assert.deepEqual(await cross.json(), { error: 'invalid_grant', error_description: 'Invalid authorization code' });
+  // A code past its 90 s lifetime is refused on this path too.
+  const expiring = await authorizedCode(send, client.client_id);
+  clock += 91;
+  const late = await withoutRedirect(client.client_id, expiring);
+  assert.equal(late.status, 400);
+  assert.deepEqual(await late.json(), { error: 'invalid_grant', error_description: 'Authorization code expired' });
+  // The control: a fresh code without redirect_uri is exchanged.
+  const fresh = await authorizedCode(send, client.client_id);
+  assert.equal((await withoutRedirect(client.client_id, fresh)).status, 200);
 });

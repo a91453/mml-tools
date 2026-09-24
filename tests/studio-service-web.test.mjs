@@ -63,3 +63,35 @@ test('enabled agent discovery discloses model use and derived source data transf
   assert.notEqual(caps.cost.additional_recurring_cost, 'NONE');
   assert.equal(caps.runs.background_execution, false, 'core run and external agent remain separate');
 });
+
+test('the service page keeps a session past the 15-minute token, and logs out without an error', async () => {
+  const origin = 'https://studio-service-session.example', password = 'SYNTHETIC_OWNER_PASSWORD_01234567890123456789';
+  let clock = 100000;
+  const app = createApplication({ origin, ownerPassword: password, database: ':memory:', now: () => clock });
+  try {
+    const data = new Map();
+    const storage = { getItem: key => data.get(key) ?? null, setItem: (key, value) => data.set(key, value), removeItem: key => data.delete(key) };
+    let tokenCalls = 0;
+    const fetchImpl = (url, init) => { if (new URL(url).pathname === '/oauth/token') tokenCalls++; return app.fetch(new Request(url, init)); };
+    const client = createServiceClient({ origin, storage, fetchImpl });
+    const consent = await app.fetch(new Request(await client.loginURL()));
+    const cookie = consent.headers.get('set-cookie').split(';')[0], csrf = /name="csrf" value="([^"]+)"/.exec(await consent.text())[1];
+    const done = await app.fetch(new Request(origin + '/oauth/authorize', { method: 'POST', headers: { origin, cookie, 'content-type': 'application/x-www-form-urlencoded' }, body: new URLSearchParams({ csrf, decision: 'allow', password }) }));
+    assert.equal(await client.completeLogin(done.headers.get('location')), true);
+    assert.ok(Array.isArray((await client.request('/api/v1/projects')).projects));
+
+    // Past the access token's 15 minutes: one refresh, however many requests
+    // hit the expiry at once, and every request is answered.
+    clock += 901;
+    tokenCalls = 0;
+    const answers = await Promise.all([client.request('/api/v1/projects'), client.request('/api/v1/projects'), client.request('/api/v1/capabilities')]);
+    assert.equal(answers.length, 3);
+    assert.equal(tokenCalls, 1, 'one refresh for the three requests');
+    assert.equal(client.authenticated(), true);
+
+    // Revocation answers 200 with no body: logging out is not an error.
+    await client.logout();
+    assert.equal(client.authenticated(), false);
+    await assert.rejects(client.request('/api/v1/projects'), error => error.authentication === true);
+  } finally { app.close(); }
+});

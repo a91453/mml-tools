@@ -24,7 +24,7 @@ import { createStudioApplication, RUN_STATE, RUN_STEP, RUN_STEP_STATUS } from '.
 import { splitMML, parseTrack } from '../backend/mml/parser.mjs';
 import { ROLES } from '../backend/mml/index.mjs';
 import { RELEASE_REGRID_CANDIDATE } from '../backend/canonical/release-regrid-candidate.mjs';
-import { OWNER, AGENT_SUBMITTER, HUMAN_SUBMITTER, audioReviewDecision, oneTickEarlyBaseline, roleDecisions, ALL_RELEASE_EVENTS } from './fixtures/release-fixtures.mjs';
+import { OWNER, AGENT_SUBMITTER, HUMAN_SUBMITTER, audioReviewDecision, oneTickEarlyBaseline, roleDecisions, uploadOfficialScore, ALL_RELEASE_EVENTS } from './fixtures/release-fixtures.mjs';
 import { PUBLISHED_CANONICAL } from '../backend/rules/index.mjs';
 import { LISTEN_FIRST_RELEASES_ACTIVE } from './support/loaded-release.mjs';
 
@@ -60,8 +60,12 @@ const alignmentReport = (baseline, audio, candidateProjectId) => ({
 async function deliver(app, { acceptedBy = 'reviewer:fixture', submitter = AGENT_SUBMITTER } = {}) {
   const fixture = await setUp(app);
   const { projectId } = fixture;
+  // The Lead promotions cite an official score the project holds (not selected
+  // for intake, so it stays evidence): a decision's Lead citation is graded on
+  // the source it names.
+  const scoreRef = await uploadOfficialScore(app, projectId);
   // 1. One call: everything deterministic runs; the run stops where evidence is missing.
-  const started = await app.startRun(OWNER, projectId, { asset_ids: [fixture.symbolicAssetId], decisions: roleDecisions(), accepted_by: acceptedBy });
+  const started = await app.startRun(OWNER, projectId, { asset_ids: [fixture.symbolicAssetId], decisions: roleDecisions({ scoreRef, audioRef: fixture.audio.asset_id }), accepted_by: acceptedBy });
   const runId = started.run.run_id;
   const g11d = started.run.candidate_id;
   // 2. A decision citing the recording, submitted by a conversational AI unless

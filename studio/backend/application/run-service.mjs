@@ -75,6 +75,8 @@ import { migrateMachineDeliveryState } from './machine-delivery-migration.mjs';
 import { deliveryBlockingGates } from '../final/delivery-evaluator.mjs';
 import { ID_PREFIX, newId, sha256Of } from './store.mjs';
 import { requestKeyOf } from './proposal-contracts.mjs';
+import { CONFIRMATIONS } from './review-service-core.mjs';
+import { CALLER_DECISION_KEYS } from './arrangement-service.mjs';
 import {
   READINESS_GATE_OPERATIONS,
   RUN_AUTHORITY_NOTICE,
@@ -393,7 +395,35 @@ function normalizeRunInput(input, { label = 'run input', allowed = RUN_INPUT_KEY
     if (!Array.isArray(source.decisions)) fail(ERROR_CODES.INVALID_REQUEST, 'decisions must be an array of explicitly accepted arrangement decisions.');
     if (!source.decisions.length) fail(ERROR_CODES.INVALID_REQUEST, 'decisions must name at least one explicitly accepted arrangement decision. Omit the field to leave the run waiting for one; an empty set is not an acceptance.');
     if (source.decisions.length > LIMITS.maxDecisionsPerRequest) fail(ERROR_CODES.INVALID_REQUEST, `A decision set is limited to ${LIMITS.maxDecisionsPerRequest} decisions.`, { received: source.decisions.length });
+    // The shape applyDecisions refuses, refused here too, before the run is
+    // written. Refused inside the step, the same error left the run marked
+    // running with a pending step and no halt: every proposal on it turned
+    // STALE, the next action read "inspect interrupted step", and a retry of
+    // the same request was a RUN_CONFLICT. Same checks, same messages.
+    source.decisions.forEach((decision, index) => {
+      requirePlainObject(decision, `decisions[${index}]`);
+      for (const key of Object.keys(decision)) {
+        if (key === 'acceptance') fail(ERROR_CODES.INVALID_REQUEST, 'decisions[].acceptance is computed by this service from the inputs that are loaded now and must not be supplied.', { index });
+        if (!CALLER_DECISION_KEYS.has(key)) fail(ERROR_CODES.INVALID_REQUEST, `decisions[${index}].${key} is not an accepted decision field`, { accepted: [...CALLER_DECISION_KEYS] });
+      }
+      if (!decision.acceptedBy && (source.accepted_by === undefined || source.accepted_by === null)) fail(ERROR_CODES.INVALID_REQUEST, 'acceptedBy must name who accepted the decision.', { index });
+    });
     return source.decisions;
+  })();
+
+  // The confirmation names recordConfirmations refuses, refused before the run
+  // is written, for the reason given for decisions above. What each one must
+  // carry is still checked where it is recorded.
+  const confirmations = source.confirmations === undefined || source.confirmations === null ? null : (() => {
+    const value = requirePlainObject(source.confirmations, 'confirmations');
+    for (const name of Object.keys(value)) {
+      if (name === 'in_game' || name === 'in_game_acceptance') {
+        fail(ERROR_CODES.INVALID_REQUEST, 'in-game acceptance is not recordable through this interface. Only the user or a controlled target-client test can record it.', { gate: 'in_game' });
+      }
+      if (!Object.hasOwn(CONFIRMATIONS, name)) fail(ERROR_CODES.INVALID_REQUEST, `Unknown confirmation: ${String(name).slice(0, 64)}`, { accepted: Object.keys(CONFIRMATIONS) });
+      if (!value[name] || typeof value[name] !== 'object' || Array.isArray(value[name])) fail(ERROR_CODES.INVALID_REQUEST, `confirmations.${name} must be an object`);
+    }
+    return value;
   })();
 
   const reduction = source.final_reduction === undefined || source.final_reduction === null ? null : (() => {
@@ -456,7 +486,7 @@ function normalizeRunInput(input, { label = 'run input', allowed = RUN_INPUT_KEY
     accepted_by: source.accepted_by === undefined || source.accepted_by === null ? null : requireString(source.accepted_by, 'accepted_by', { max: 120 }),
     final_reduction: reduction,
     mobile_adaptation: adaptation,
-    confirmations: source.confirmations === undefined || source.confirmations === null ? null : requirePlainObject(source.confirmations, 'confirmations'),
+    confirmations,
     finalize: finalizeOptions,
     expected_run_revision: source.expected_run_revision === undefined || source.expected_run_revision === null ? null : (() => {
       if (!Number.isSafeInteger(source.expected_run_revision) || source.expected_run_revision < 1 || source.expected_run_revision > LIMITS.maxRunRevision) {
@@ -1438,6 +1468,16 @@ export function createRunService({ canonical, projects, store, operations, seria
   const assetSelection = (record, assetIds) => {
     const symbolic = record.assets.filter(asset => operations.isSymbolicKind(asset.kind));
     const selected = assetIds === null ? symbolic : assetIds.map(assetId => operations.findAsset(record, assetId));
+    // A named asset intake cannot ingest is refused here, before plan, start or
+    // resume writes anything. Accepted into the run, it was only refused inside
+    // the intake effect, on every later resume too: the run stayed running with
+    // a pending intake and could never halt, and a proposal that named it
+    // stayed accepted for good.
+    for (const asset of selected) {
+      if (!operations.isSymbolicKind(asset.kind)) {
+        fail(ERROR_CODES.UNSUPPORTED_SOURCE, `Asset kind ${asset.kind} is not a symbolic source and cannot be ingested`, { asset_id: asset.asset_id, kind: asset.kind });
+      }
+    }
     return {
       selected,
       digests: selected.map(asset => ({ asset_id: asset.asset_id, kind: asset.kind, sha256: asset.sha256, size: asset.size })),

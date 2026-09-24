@@ -1,5 +1,5 @@
-import { VERSION, PROFILE, ROLES } from '../dist/core.js';
-import { createTechnicalService } from '../studio/backend/application/technical-service.mjs';
+import { ROLES } from '../dist/core.js';
+import { CANONICAL_VALIDATION_AVAILABLE, createTechnicalService } from '../studio/backend/application/technical-service.mjs';
 import { ERROR_CODES, StudioApplicationError } from '../studio/backend/application/contracts.mjs';
 import { createCanonicalGate } from '../studio/backend/application/provenance.mjs';
 import { STUDIO_MCP_TOOLS, UPLOAD_INSTRUCTION, runStudioTool } from './mcp-studio.mjs';
@@ -20,6 +20,18 @@ import { DEFAULT_LISTEN_CONFIG, LISTEN_MCP_TOOLS, LISTEN_TOOL_NAME, listenResour
 // project uploads them over the HTTP asset endpoint and passes the `asset_id`.
 export const SERVICE_VERSION = '0.3.0';
 export const MCP_VERSIONS = ['2025-11-25', '2025-06-18', '2025-03-26'];
+// The revision a request speaks when it carries no MCP-Protocol-Version
+// header. The header arrived with 2025-06-18, whose transport tells a server
+// with no other way to know the version to assume 2025-03-26; a stateless
+// server never has another way.
+export const MCP_DEFAULT_PROTOCOL_VERSION = '2025-03-26';
+// JSON-RPC batches exist in 2025-03-26 alone: that revision requires a server
+// to receive them, and 2025-06-18 removed them.
+export const MCP_BATCH_VERSIONS = Object.freeze(['2025-03-26']);
+// A batch arrives in one body, so MAX_BODY_BYTES bounds it as it bounds a
+// single message. This bounds the work one request can start and the reply,
+// which holds one response per element, each under the per-call response cap.
+export const MAX_BATCH_MESSAGES = 16;
 export const MAX_BODY_BYTES = 131072;
 const mcpTextEncoder = new TextEncoder();
 const mcpAnnotations = { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false };
@@ -34,15 +46,19 @@ const mcpSongProperties = {
 };
 const mcpPageProperty = { type: 'integer', minimum: 0, maximum: 100000 };
 
-// The three original tools, unchanged. Their names, descriptions, schemas,
-// annotations and report shape are a published contract that existing clients
-// and the existing regression suite read; a rename dressed up as a cleanup
-// would be a breaking change. They are listed on their own so that a server
-// with no Application Service attached advertises exactly these three.
+// The three original tools. Their names, schemas, annotations and report shape
+// are a published contract that existing clients and the existing regression
+// suite read; a rename dressed up as a cleanup would be a breaking change. The
+// one exception corrected a misreport rather than tidying a name: the
+// dist/core.js version and profile used to appear as `core_version`/`profile`
+// beside validation that answers under the Published Canonical profile, and
+// now appear only as `legacy_core_version`/`legacy_profile`. They are listed on
+// their own so that a server with no Application Service attached advertises
+// exactly these three.
 export const MCP_TOOLS = [
   {
     name: 'mml_service_info', title: 'MML 工具服務資訊',
-    description: '查看服務版本、能力、限制與驗證範圍。不讀取對話歷史或網站中的歌曲。',
+    description: '查看服務版本、能力、限制與驗證範圍。profile 是 mml_validate／mml_overlap_details 實際採用的 Published Canonical 驗證 profile，canonical_release 是載入的 Canonical release；Canonical 未載入時 profile 為 null，canonical_validation 說明拒絕代碼，不以 legacy profile 代替。legacy_core_version／legacy_profile 只是 dist/core.js legacy 引擎的標示。不讀取對話歷史或網站中的歌曲。',
     inputSchema: { type: 'object', properties: {}, additionalProperties: false },
     annotations: mcpAnnotations,
   },
@@ -63,8 +79,17 @@ export const MCP_TOOLS = [
 function mcpReply(body, status = 200, headers = {}) {
   return new Response(JSON.stringify(body), { status, headers: { 'content-type': 'application/json; charset=utf-8', 'cache-control': 'no-store', 'x-content-type-options': 'nosniff', ...headers } });
 }
-function mcpRpcError(id, code, message, status = 200) {
-  return mcpReply({ jsonrpc: '2.0', id, error: { code, message } }, status);
+// The reply to input that produces no JSON-RPC response: accepted
+// notifications only.
+function mcpAccepted() {
+  return new Response(null, { status: 202, headers: { 'cache-control': 'no-store' } });
+}
+// One message's outcome: its JSON-RPC response object and the HTTP status that
+// response carries when it is the whole reply. A JSON-RPC error from a
+// dispatched method is an ordinary 200 answer; a refusal before dispatch is a
+// 4xx.
+function mcpRpcError(id, code, message, status = 200, data = undefined) {
+  return { status, body: { jsonrpc: '2.0', id, error: data === undefined ? { code, message } : { code, message, data } } };
 }
 // Shared with the local file-output adapter; network response bounds below
 // remain unchanged. There is one tool-input schema checker on both paths.
@@ -151,13 +176,30 @@ function mcpPreflight(args) {
 // or not an Application Service is attached. The gate is lazy and fails closed:
 // a transport in an environment without the published Git history refuses these
 // two tools with CANONICAL_NOT_LOADED rather than silently answering from the
-// legacy engine, whose verdict differs in both directions. Tool discovery,
-// `mml_service_info` and the `studio_*` tools are unaffected.
+// legacy engine, whose verdict differs in both directions. Tool discovery and
+// the `studio_*` tools are unaffected, and `mml_service_info` keeps answering:
+// it names the profile and release these two tools answer under, or says that
+// Canonical is not loaded, and never offers the legacy profile in their place.
 const technical = createTechnicalService({ serviceVersion: SERVICE_VERSION, canonical: createCanonicalGate() });
 
-function mcpServiceInfo(tools) {
+// `profile` comes from the same technical service instance and the same gate
+// `mml_validate` uses, so the two tools cannot name different profiles. The
+// dist/core.js version and profile keep their `legacy_*` names here as in the
+// validation reports.
+async function mcpServiceInfo(tools) {
+  const validation = await technical.describe();
+  const available = validation.canonical_validation === CANONICAL_VALIDATION_AVAILABLE;
   return {
-    name: 'MML Workbench Tools', service_version: SERVICE_VERSION, core_version: VERSION, profile: PROFILE,
+    name: 'MML Workbench Tools', service_version: SERVICE_VERSION,
+    profile: validation.profile,
+    validation_authority: validation.validation_authority,
+    canonical_validation: validation.canonical_validation,
+    canonical_release: validation.canonical_release,
+    profile_notice: available
+      ? 'profile 是 mml_validate 與 mml_overlap_details 實際採用的 Published Canonical 驗證 profile，canonical_release 是本服務載入的 Published Canonical release。legacy_core_version／legacy_profile 只是 dist/core.js legacy 引擎的標示，不是驗證所用的 profile。'
+      : `Published Canonical 驗證目前無法使用（${validation.canonical_validation}）：mml_validate 與 mml_overlap_details 會以此代碼拒絕，不退回 legacy 引擎，因此 profile 為 null。legacy_core_version／legacy_profile 只是 dist/core.js legacy 引擎的標示，不是驗證所用的 profile。`,
+    legacy_core_version: validation.legacy_core_version,
+    legacy_profile: validation.legacy_profile,
     transport: 'stateless-streamable-http', protocol_versions: MCP_VERSIONS,
     roles: ROLES, per_track_character_limit: 2400,
     tools: tools.map(t => t.name),
@@ -256,27 +298,115 @@ async function mcpReadBody(request) {
 // and keeps the ChatGPT-only default it always had.
 export const DEFAULT_MCP_ORIGINS = Object.freeze(['https://chatgpt.com']);
 
-export async function handleMcp(request, { application = null, owner = null, allowedOrigins = DEFAULT_MCP_ORIGINS, listen = DEFAULT_LISTEN_CONFIG } = {}) {
+// The JSON-RPC error a 2026-07-28 client expects when it names a protocol
+// version this server does not speak: the versions it does speak, so the
+// client picks one and retries. The MCP SDK's default connect policy probes
+// `server/discover` at its newest version before anything else and falls back
+// to the `initialize` handshake on this answer; every Claude and ChatGPT
+// connector session therefore opens with one refused request, which is the
+// 400-then-200 pair the production HTTP log shows, and not a failure.
+export const UNSUPPORTED_PROTOCOL_VERSION = -32022;
+
+// `rejectLog`, when given, receives one record per request this transport
+// refuses before it reaches a JSON-RPC method (the status, the reason, the
+// method, the protocol-version header and the user agent; never the body).
+// A batch element refused on its own adds its `batch_index`, and its `status`
+// is the one it would carry alone; the batch itself may still answer 200.
+// The deployed server logs it so a client that is turned away is diagnosable
+// from the deployment log alone: the platform's HTTP log records the status
+// but not why.
+// `faultLog`, when given, receives one record per tool call that ends in an
+// unexpected fault (see server/api.mjs faultRecord); the caller still sees only
+// INTERNAL_ERROR.
+export async function handleMcp(request, { application = null, owner = null, allowedOrigins = DEFAULT_MCP_ORIGINS, listen = DEFAULT_LISTEN_CONFIG, rejectLog = null, faultLog = null } = {}) {
   const context = { application, owner };
-  const origin = request.headers.get('origin');
-  if (origin && origin !== new URL(request.url).origin && !allowedOrigins.includes(origin)) return mcpRpcError(null, -32000, 'Origin not allowed', 403);
-  if (request.method !== 'POST') return new Response(null, { status: 405, headers: { allow: 'POST', 'cache-control': 'no-store' } });
-  if (!/^application\/json(?:\s*;|$)/i.test(request.headers.get('content-type') ?? '')) return mcpRpcError(null, -32600, 'Content-Type must be application/json', 415);
-  const accept = (request.headers.get('accept') ?? '').split(',').map(s => s.trim().split(';')[0]);
-  if (!accept.includes('application/json') || !accept.includes('text/event-stream')) return mcpRpcError(null, -32600, 'Accept must include application/json and text/event-stream', 406);
   const protocol = request.headers.get('mcp-protocol-version');
-  if (protocol && !MCP_VERSIONS.includes(protocol)) return mcpRpcError(null, -32600, 'Unsupported MCP protocol version', 400);
+  // Builds a refusal outcome and logs it; `extra` joins the log record.
+  const refusal = (extra = {}) => (code, message, status, method = null, id = null, data = undefined) => {
+    if (typeof rejectLog === 'function') {
+      try { rejectLog({ status, reason: message, method, protocol_version_header: protocol ?? null, user_agent: request.headers.get('user-agent') ?? null, ...extra }); } catch {}
+    }
+    return mcpRpcError(id, code, message, status, data);
+  };
+  const reject = (...args) => { const { status, body } = refusal()(...args); return mcpReply(body, status); };
+  const origin = request.headers.get('origin');
+  if (origin && origin !== new URL(request.url).origin && !allowedOrigins.includes(origin)) return reject(-32000, 'Origin not allowed', 403);
+  if (request.method !== 'POST') return new Response(null, { status: 405, headers: { allow: 'POST', 'cache-control': 'no-store' } });
+  if (!/^application\/json(?:\s*;|$)/i.test(request.headers.get('content-type') ?? '')) return reject(-32600, 'Content-Type must be application/json', 415);
+  const accept = (request.headers.get('accept') ?? '').split(',').map(s => s.trim().split(';')[0]);
+  if (!accept.includes('application/json') || !accept.includes('text/event-stream')) return reject(-32600, 'Accept must include application/json and text/event-stream', 406);
   let message;
   try { message = JSON.parse(await mcpReadBody(request)); }
-  catch (error) { return mcpRpcError(null, error.message === 'BODY_TOO_LARGE' ? -32600 : -32700, error.message === 'BODY_TOO_LARGE' ? 'Request body too large' : 'Invalid JSON', error.message === 'BODY_TOO_LARGE' ? 413 : 400); }
-  if (!message || typeof message !== 'object' || Array.isArray(message) || message.jsonrpc !== '2.0' || typeof message.method !== 'string') return mcpRpcError(null, -32600, 'Invalid JSON-RPC request', 400);
+  catch (error) { return reject(error.message === 'BODY_TOO_LARGE' ? -32600 : -32700, error.message === 'BODY_TOO_LARGE' ? 'Request body too large' : 'Invalid JSON', error.message === 'BODY_TOO_LARGE' ? 413 : 400); }
+  const env = { context, listen, faultLog, protocol };
+  if (Array.isArray(message)) return mcpBatch(message, env, refusal, reject);
+  const outcome = await mcpMessage(message, env, refusal());
+  return outcome ? mcpReply(outcome.body, outcome.status) : mcpAccepted();
+}
+
+// A JSON-RPC batch. 2025-03-26 requires a server to receive one (basic
+// protocol), lists an array of requests and/or notifications as a valid POST
+// body (transports), and forbids initialize inside one (lifecycle); 2025-06-18
+// removed batching, so a batch at a later version is refused. A request without
+// the version header speaks the default revision, 2025-03-26.
+//
+// The batch arrived through the same authenticated request and the same body
+// limit as a single message. Each element then passes the same envelope
+// checks, dispatch, response cap and refusal log as a single message, one
+// after another in order, since a tool call may write. The reply is the array
+// of the responses to its requests; notifications are never answered, so a
+// batch of notifications alone gets 202, or 400 when one is refused.
+async function mcpBatch(messages, env, refusal, reject) {
+  if (!messages.length) return reject(-32600, 'Invalid JSON-RPC request', 400);
+  const { protocol } = env;
+  if (protocol && !MCP_VERSIONS.includes(protocol)) {
+    return reject(UNSUPPORTED_PROTOCOL_VERSION, 'Unsupported MCP protocol version', 400, null, null, { supported: MCP_VERSIONS, requested: protocol });
+  }
+  if (!MCP_BATCH_VERSIONS.includes(protocol ?? MCP_DEFAULT_PROTOCOL_VERSION)) return reject(-32600, 'JSON-RPC batches are not supported at this MCP protocol version', 400);
+  if (messages.length > MAX_BATCH_MESSAGES) return reject(-32600, 'JSON-RPC batch has too many messages', 400, null, null, { max_messages: MAX_BATCH_MESSAGES });
+  // Nothing may run before initialization completes, so a batch carrying
+  // initialize is refused whole rather than partly dispatched.
+  if (messages.some(message => message?.method === 'initialize')) return reject(-32600, 'initialize must not be part of a JSON-RPC batch', 400, 'initialize');
+  const outcomes = [], refusedNotifications = [];
+  for (const [index, message] of messages.entries()) {
+    const outcome = await mcpMessage(message, env, refusal({ batch_index: index }));
+    // JSON-RPC 2.0 never answers a notification, inside a batch or not, so
+    // a well-formed element without an id adds no entry to the reply; its
+    // refusal is still logged. A malformed element is answered with id null.
+    if (outcome) (mcpIsNotification(message) ? refusedNotifications : outcomes).push(outcome);
+  }
+  // Input of notifications alone is accepted with 202, or refused with 400
+  // when one of them is, as the Streamable HTTP transport requires.
+  if (!outcomes.length) return refusedNotifications.length ? mcpReply(refusedNotifications[0].body, 400) : mcpAccepted();
+  // Any dispatched request makes this an ordinary answer carrying each
+  // request's own result or error. Requests all refused before dispatch are
+  // refused with 400, as a single refused message is.
+  return mcpReply(outcomes.map(outcome => outcome.body), outcomes.some(outcome => outcome.status === 200) ? 200 : 400);
+}
+
+function mcpIsNotification(message) {
+  return Boolean(message) && typeof message === 'object' && !Array.isArray(message) && message.jsonrpc === '2.0' && typeof message.method === 'string' && !Object.hasOwn(message, 'id');
+}
+
+// One JSON-RPC message: its outcome ({ status, body }), or null for an
+// accepted notification, which produces no response. `refuse` logs and builds
+// a refusal before dispatch.
+async function mcpMessage(message, { context, listen, faultLog, protocol }, refuse) {
+  const { application } = context;
+  if (!message || typeof message !== 'object' || Array.isArray(message) || message.jsonrpc !== '2.0' || typeof message.method !== 'string') return refuse(-32600, 'Invalid JSON-RPC request', 400);
   const hasId = Object.hasOwn(message, 'id');
-  if (hasId && typeof message.id !== 'string' && !Number.isSafeInteger(message.id)) return mcpRpcError(null, -32600, 'Invalid request id', 400);
+  if (hasId && typeof message.id !== 'string' && !Number.isSafeInteger(message.id)) return refuse(-32600, 'Invalid request id', 400, message.method);
+  // A request naming a protocol version this server does not speak is refused
+  // with 400, as the Streamable HTTP transport requires, and the refusal names
+  // the versions it does speak so a newer client falls back to one of them.
+  if (protocol && !MCP_VERSIONS.includes(protocol)) {
+    return refuse(UNSUPPORTED_PROTOCOL_VERSION, 'Unsupported MCP protocol version', 400, message.method, hasId ? message.id : null, { supported: MCP_VERSIONS, requested: protocol });
+  }
   if (!hasId) {
     // Notifications must never invoke tools. Stateless initialized/cancelled
     // notifications are accepted without producing a JSON-RPC response.
-    if (!['notifications/initialized', 'notifications/cancelled'].includes(message.method)) return mcpRpcError(null, -32600, 'Unsupported notification', 400);
-    return new Response(null, { status: 202, headers: { 'cache-control': 'no-store' } });
+    if (!['notifications/initialized', 'notifications/cancelled'].includes(message.method)) return refuse(-32600, 'Unsupported notification', 400, message.method);
+    return null;
   }
   const id = message.id, params = message.params;
   let result;
@@ -301,7 +431,7 @@ export async function handleMcp(request, { application = null, owner = null, all
   } else if (application && message.method === 'resources/read') {
     if (!params || typeof params.uri !== 'string' || params.uri.length > 256) return mcpRpcError(id, -32602, 'Invalid resource uri');
     result = readListenResource(params.uri, listen);
-    if (!result) return mcpReply({ jsonrpc: '2.0', id, error: { code: -32002, message: 'Resource not found', data: { uri: params.uri.slice(0, 256) } } });
+    if (!result) return mcpRpcError(id, -32002, 'Resource not found', 200, { uri: params.uri.slice(0, 256) });
   }
   else if (message.method === 'tools/list') {
     if (params?.cursor !== undefined) return mcpRpcError(id, -32602, 'This tool list is not paginated');
@@ -347,6 +477,11 @@ export async function handleMcp(request, { application = null, owner = null, all
       // HTTP adapter's error responses do: an agent that is told a call failed
       // has to read that failure against the right release.
       const canonical = application ? await application.canonical.provenance().catch(() => null) : null;
+      if (error?.name !== 'StudioApplicationError' && typeof faultLog === 'function') {
+        try {
+          faultLog({ transport: 'mcp', tool: tool.name, error_name: typeof error?.name === 'string' ? error.name.slice(0, 64) : typeof error, error_message: String(error?.message ?? error).replace(/\s+/g, ' ').slice(0, 300) });
+        } catch {}
+      }
       const structured = {
         ...(error?.name === 'StudioApplicationError'
           ? { error: { code: error.code, message: error.message, details: error.details } }
@@ -356,5 +491,5 @@ export async function handleMcp(request, { application = null, owner = null, all
       result = { content: [{ type: 'text', text: JSON.stringify(structured) }], structuredContent: structured, isError: true };
     }
   } else return mcpRpcError(id, -32601, 'Method not found');
-  return mcpReply({ jsonrpc: '2.0', id, result });
+  return { status: 200, body: { jsonrpc: '2.0', id, result } };
 }

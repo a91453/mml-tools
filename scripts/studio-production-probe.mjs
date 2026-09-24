@@ -30,18 +30,33 @@ export function expectedIdentity(manifest, main, manifestCommit) {
   return { ...expected, manifest_commit: manifestCommit, published_main_head: main };
 }
 
-export function verifyIdentity(canonical, expected) {
-  for (const [field, value] of Object.entries(expected)) assert.equal(canonical[field], value, 'deployment identity: ' + field);
-  assert.equal(canonical.build_source_head, expected.published_main_head, 'build source must match selected Published main');
-  assert.equal(canonical.repository_head, expected.published_main_head, 'materialized repository identity');
+// The image captures published main with `git ls-remote` when it is BUILT, not
+// the commit Railway built it from. When a merge that touches no watched path
+// lands between a watched merge and its build (Wait for CI delays the build by
+// minutes), the image reports that later main as published_main_head while its
+// build_source_head is the audited commit, and no audit could pass until the
+// next watched merge rebuilt it. A later published main is therefore accepted
+// when `laterMain` confirms it descends from the audited one; the build source
+// must still be the audited commit, and every Manifest identity (version,
+// status, snapshot, Manifest commit) must still match, so a Canonical release
+// in between still fails.
+export function verifyIdentity(canonical, expected, { laterMain = () => false } = {}) {
+  const { published_main_head: main, ...pinned } = expected;
+  for (const [field, value] of Object.entries(pinned)) assert.equal(canonical[field], value, 'deployment identity: ' + field);
+  assert.equal(canonical.build_source_head, main, 'build source must match selected Published main');
+  if (canonical.published_main_head !== main) {
+    assert.ok(/^[0-9a-f]{40}$/.test(canonical.published_main_head ?? '') && laterMain(canonical.published_main_head) === true,
+      'deployment identity: published_main_head');
+  }
+  assert.equal(canonical.repository_head, canonical.published_main_head, 'materialized repository identity');
   assert.equal(canonical.checkout_identity, 'materialized-published-main');
   assert.equal(canonical.pr_head, null, 'production must not report a PR head');
 }
 
-export async function probeProduction({ origin, expected, expectedAssets, fetchImpl = fetch }) {
+export async function probeProduction({ origin, expected, expectedAssets, laterMain, fetchImpl = fetch }) {
   origin = serviceOrigin(origin);
   const result = await verifyService({ baseURL: origin, expectedOrigin: origin, expectedAssets, fetchImpl, timeoutMs: 30000 });
-  verifyIdentity(result.canonical, expected);
+  verifyIdentity(result.canonical, expected, { laterMain });
   return { status: 'PASS', observed_at: new Date().toISOString(), service_origin: origin, expected,
     ...result, provenance_evidence: 'HTTPS service self-report plus source asset hashes; not independent Railway control-plane evidence' };
 }
@@ -64,7 +79,16 @@ export async function loadProbeInputs({ main, manifestCommit, gitImpl = args => 
       assert.ok(source.split(/\r?\n/).includes('Version: ' + expected.canonical_version));
       assert.ok(source.split(/\r?\n/).includes('Status: ' + (file === 'OFFICIAL_EVIDENCE' ? 'CANONICAL SUPPORTING EVIDENCE' : 'PUBLISHED CANONICAL')));
     }
-    return { expected, expectedAssets: new Map(WORKSPACE_ASSETS.map(([, file]) =>
+    // A later published main counts only when it is on main and descends from
+    // this one; the operator's fetch of origin/main is what makes it known.
+    const laterMain = sha => {
+      try {
+        gitImpl(['merge-base', '--is-ancestor', main, sha]);
+        gitImpl(['merge-base', '--is-ancestor', sha, 'refs/remotes/origin/main']);
+        return true;
+      } catch { return false; }
+    };
+    return { expected, laterMain, expectedAssets: new Map(WORKSPACE_ASSETS.map(([, file]) =>
       [file, show(main, 'studio/web/service/' + file)])) };
   } catch (error) {
     // The code stays fixed so callers fail closed the same way, but the cause

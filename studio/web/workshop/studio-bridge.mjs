@@ -99,7 +99,9 @@ function openSource(workspace, source) {
   writeOrigin({ projectId: workspace.id, title: workspace.title ?? "", slot: source.slot, label: source.label, revision: workspace.revision ?? null, at: Date.now() });
   box().classList.remove("on");
   const notes = [i18n.t("studio.opened", { title: workspace.title || "—", source: source.label })];
-  if (warnings.length) notes.push(i18n.t("studio.nWarning"));
+  const codes = new Set(warnings.map(w => w.code));
+  if (codes.has("N_REWRITTEN")) notes.push(i18n.t("studio.nWarning"));
+  if (codes.has("N_BELOW_WORKSHOP_RANGE")) notes.push(i18n.t("studio.nLowWarning"));
   say(notes.join(" "));
   return true;
 }

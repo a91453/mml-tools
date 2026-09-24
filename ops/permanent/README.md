@@ -36,7 +36,10 @@ is a durable distribution copy of the fixed ZIPs. GitHub currently reports
 Content immutability is anchored independently by the Git blob/commit identities
 above and the SHA256 pins in [release-lock.json](release-lock.json). No deployment
 accepts replacement bytes just because they are at the same URL, tag or object key.
-The publishing workflow refuses to overwrite an existing asset.
+The publishing workflow refuses to overwrite an existing asset. A re-run after
+a run that failed during the uploads resumes that run's draft (found by listing
+releases, since a draft does not own its tag yet) and uploads only the missing
+assets; it refuses if more than one draft matches the lock's tag and source.
 
 The private Railway bucket `studio-release-artifacts`
 (`<redacted-id-5>`) contains byte-identical runtime and trust

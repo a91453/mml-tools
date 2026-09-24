@@ -659,17 +659,58 @@ function applyPlans(project, plans) {
 
 // ── invariants ─────────────────────────────────────────────────────────────
 
-// Every field of a note, `end` included. No implemented operation touches a note
-// at all, so this is total equality rather than a list of protected fields.
-const noteShape = event => ({
-  id: event.id,
-  pitch: event.pitch,
-  start: event.start,
-  end: event.end,
-  volume: event.volume ?? null,
-  role: event.role,
-  sourceIds: [...event.sourceIds].sort(),
-});
+// A whole record, serialized independently of key order: every field of an
+// event -- id, kind, pitch, start, end, volume, role, voice, sourceIds,
+// sourceEventIds, tags, metadata, and anything a later IR version adds. Arrays
+// keep their order; keys whose value is undefined are dropped, as JSON does.
+// Comparing this rather than a list of protected fields is what makes "no
+// implemented operation touches a note" total equality: a field nobody thought
+// to list is still compared.
+function canonicalJson(value) {
+  if (value === null || typeof value !== 'object') return JSON.stringify(value) ?? 'null';
+  if (Array.isArray(value)) return `[${value.map(canonicalJson).join(',')}]`;
+  const keys = Object.keys(value).filter(key => value[key] !== undefined).sort();
+  return `{${keys.map(key => `${JSON.stringify(key)}:${canonicalJson(value[key])}`).join(',')}}`;
+}
+
+const sortedIds = values => [...(Array.isArray(values) ? values : [])].sort();
+
+// A repaired rest, less exactly what a repair may change on it: its timing
+// (checked against its plan), its source identities (checked against its own
+// plus those of the rest it absorbed) and the provenance record the repair
+// attaches under `metadata.technicalTimingRepair`. Everything else -- kind,
+// role, voice, tags and every other metadata key -- must be unchanged.
+function repairedRestShape(event) {
+  const { start: _start, end: _end, sourceIds: _sourceIds, sourceEventIds: _sourceEventIds, metadata, ...rest } = event;
+  const { technicalTimingRepair: _record, ...otherMetadata } = metadata ?? {};
+  return canonicalJson({ ...rest, metadata: otherMetadata });
+}
+
+/**
+ * Every pair of spans of one assigned role that overlap in time, as
+ * `role, id, id` keys with the ids ordered. Touching (one ends where the next
+ * starts) is not overlapping. Exact rational comparison throughout.
+ */
+function overlappingSpanPairs(project) {
+  const byRole = new Map();
+  for (const event of project.events) {
+    if (!SPAN_KINDS.has(event?.kind) || !ASSIGNED_ROLES.has(event.role)) continue;
+    if (!byRole.has(event.role)) byRole.set(event.role, []);
+    byRole.get(event.role).push(event);
+  }
+  const pairs = new Set();
+  for (const [role, spans] of byRole) {
+    const ordered = [...spans].sort((left, right) => f(left.start).cmp(right.start) || f(left.end).cmp(right.end));
+    for (let index = 0; index < ordered.length; index += 1) {
+      const current = ordered[index];
+      for (let later = index + 1; later < ordered.length && f(ordered[later].start).cmp(current.end) < 0; later += 1) {
+        const [first, second] = [current.id, ordered[later].id].sort();
+        pairs.add(`${role}\u0000${first}\u0000${second}`);
+      }
+    }
+  }
+  return pairs;
+}
 
 /**
  * A role's silence, as the exact point set no note of that role covers.
@@ -708,7 +749,25 @@ const controlShape = event => ({ id: event.id, beat: event.beat, bpm: event.bpm 
  * project rather than assumed from the plans that produced it.
  *
  * These are not defensive noise. Each one is a mutation someone could introduce
- * in this file that every happy-path assertion would still pass.
+ * in this file that every happy-path assertion would still pass:
+ *
+ *   * a note changed in any field at all -- the whole record is compared, so
+ *     its source event ids, voice, tags and metadata count as much as its
+ *     pitch or release;
+ *   * a rest no plan names changed in any field, its role and provenance
+ *     included;
+ *   * a planned rest that does not match its plan, changed beyond its timing,
+ *     carries source identities other than its own plus those of the rest it
+ *     absorbed, or lacks its repair's provenance record;
+ *   * a plan that is not what its interval identity says: a gap closure must
+ *     extend its target rest from the interval start exactly to the interval
+ *     end, where the following span starts; a coalesce must span exactly the
+ *     contiguous preceding rest of its role and its target;
+ *   * a span of a role that overlaps another span of that role after the
+ *     repair and did not before;
+ *   * events reordered, invented or dropped, the tempo or meter map, source
+ *     set, decision record or project metadata (the Source-Faithful Baseline
+ *     it carries included) changed.
  *
  * Exported because the planners already refuse everything this would catch, so
  * nothing in production can reach these branches — and a check nothing exercises
@@ -719,6 +778,8 @@ export function verifyRepairInvariants(before, after, plans) {
   const violations = [];
   const byKeyTarget = new Map(plans.map(plan => [plan.targetEventId, plan]));
   const absorbed = new Set(plans.filter(plan => plan.absorbedEventId).map(plan => plan.absorbedEventId));
+  const beforeById = new Map(before.events.map(event => [event.id, event]));
+  const afterById = new Map(after.events.map(event => [event.id, event]));
 
   const beforeNotes = before.events.filter(event => event.kind === 'note');
   const afterNotes = after.events.filter(event => event.kind === 'note');
@@ -732,10 +793,10 @@ export function verifyRepairInvariants(before, after, plans) {
       violations.push(`note ${note.id} disappeared`);
       continue;
     }
-    // Total equality. A note is never a repair target: not its pitch, onset,
-    // volume, role or provenance, and not its release either. A plan naming one
-    // is itself the violation.
-    if (JSON.stringify(noteShape(note)) !== JSON.stringify(noteShape(now))) {
+    // Total equality of the whole record. A note is never a repair target: not
+    // its pitch, onset, volume, role, voice, provenance, tags or metadata, and
+    // not its release either. A plan naming one is itself the violation.
+    if (canonicalJson(note) !== canonicalJson(now)) {
       violations.push(`note ${note.id} changed — no implemented repair may touch a note, its release included`);
     }
     if (byKeyTarget.has(note.id)) violations.push(`note ${note.id} is a repair target; only a rest may be`);
@@ -746,6 +807,56 @@ export function verifyRepairInvariants(before, after, plans) {
   for (const plan of plans) {
     if (plan.neutrality !== REPAIR_NEUTRALITY.SILENCE_PRESERVING) {
       violations.push(`repair ${plan.identityKey} claims neutrality ${plan.neutrality}, which this layer does not implement`);
+    }
+  }
+
+  // Each plan against the interval identity it claims to repair and the input
+  // project, so a plan that is itself wrong is caught rather than trusted.
+  for (const plan of plans) {
+    const target = beforeById.get(plan.targetEventId);
+    if (!target) {
+      violations.push(`repair ${plan.identityKey} targets ${plan.targetEventId}, which is not in the input project`);
+      continue;
+    }
+    // A note target is reported above; there is no rest plan to check.
+    if (target.kind !== 'rest') continue;
+    if (!exactlyEqual(plan.before?.start, target.start) || !exactlyEqual(plan.before?.end, target.end)) {
+      violations.push(`repair ${plan.identityKey} records ${target.id} as ${plan.before?.start}..${plan.before?.end}, but the input has ${target.start}..${target.end}`);
+    }
+    const identity = plan.identity;
+    if (plan.operation === REPAIR_OPERATIONS.CLOSE_GAP_INTO_PRECEDING_REST) {
+      if (identity?.type !== INTERVAL_TYPES.INTER_EVENT_GAP || identity.previousEventId !== target.id) {
+        violations.push(`gap closure ${plan.identityKey} does not describe a gap after its target ${target.id}`);
+        continue;
+      }
+      const next = beforeById.get(identity.nextEventId);
+      if (!exactlyEqual(identity.start, target.end)) {
+        violations.push(`gap closure ${plan.identityKey} starts at ${identity.start}, but its target ${target.id} ends at ${target.end}`);
+      }
+      if (!next || next.role !== target.role || !exactlyEqual(identity.end, next.start)) {
+        violations.push(`gap closure ${plan.identityKey} does not end at the onset of the following span of ${target.role}`);
+      }
+      if (!exactlyEqual(plan.after?.start, target.start)) {
+        violations.push(`gap closure ${plan.identityKey} moves the start of ${target.id}`);
+      }
+      if (!exactlyEqual(plan.after?.end, identity.end)) {
+        violations.push(`gap closure ${plan.identityKey} extends ${target.id} to ${plan.after?.end}, not to the interval end ${identity.end}`);
+      }
+      if (plan.absorbedEventId) violations.push(`gap closure ${plan.identityKey} absorbs ${plan.absorbedEventId}; a gap closure removes no event`);
+    } else if (plan.operation === REPAIR_OPERATIONS.COALESCE_CONTIGUOUS_RESTS) {
+      if (identity?.type !== INTERVAL_TYPES.EVENT_DURATION || identity.eventId !== target.id
+        || !exactlyEqual(identity.start, target.start) || !exactlyEqual(identity.end, target.end)) {
+        violations.push(`rest coalesce ${plan.identityKey} does not describe the duration of its target ${target.id}`);
+        continue;
+      }
+      const absorbedRest = beforeById.get(plan.absorbedEventId);
+      if (!absorbedRest || absorbedRest.kind !== 'rest' || absorbedRest.role !== target.role || !exactlyEqual(absorbedRest.end, target.start)) {
+        violations.push(`rest coalesce ${plan.identityKey} does not absorb the contiguous preceding rest of ${target.role}`);
+      } else if (!exactlyEqual(plan.after?.start, absorbedRest.start) || !exactlyEqual(plan.after?.end, target.end)) {
+        violations.push(`rest coalesce ${plan.identityKey} does not span exactly ${absorbedRest.id} and ${target.id}`);
+      }
+    } else {
+      violations.push(`repair ${plan.identityKey} states operation ${plan.operation}, which this layer does not implement`);
     }
   }
 
@@ -763,32 +874,77 @@ export function verifyRepairInvariants(before, after, plans) {
       if (!absorbed.has(restEvent.id)) violations.push(`rest ${restEvent.id} disappeared without an absorption plan`);
       continue;
     }
+    if (absorbed.has(restEvent.id)) violations.push(`rest ${restEvent.id} was to be absorbed but is still present`);
     const plan = byKeyTarget.get(restEvent.id);
     if (!plan) {
       if (!exactlyEqual(restEvent.start, now.start) || !exactlyEqual(restEvent.end, now.end)) {
         violations.push(`rest ${restEvent.id} moved without a repair plan`);
+      } else if (canonicalJson(restEvent) !== canonicalJson(now)) {
+        violations.push(`rest ${restEvent.id} changed without a repair plan: its role, voice, provenance, tags or metadata differ`);
       }
       continue;
     }
-    if (!exactlyEqual(now.start, plan.after.start) || !exactlyEqual(now.end, plan.after.end)) {
+    if (!exactlyEqual(now.start, plan.after?.start) || !exactlyEqual(now.end, plan.after?.end)) {
       violations.push(`rest ${restEvent.id} does not match its plan`);
+    }
+    if (repairedRestShape(restEvent) !== repairedRestShape(now)) {
+      violations.push(`rest ${restEvent.id} changed beyond its timing: its kind, role, voice, tags or metadata differ`);
+    }
+    const absorbedRest = plan.absorbedEventId ? beforeById.get(plan.absorbedEventId) : null;
+    const expectedSourceIds = sortedIds([...new Set([...(restEvent.sourceIds ?? []), ...(absorbedRest?.sourceIds ?? [])])]);
+    const expectedSourceEventIds = sortedIds([...new Set([...(restEvent.sourceEventIds ?? []), ...(absorbedRest?.sourceEventIds ?? [])])]);
+    if (canonicalJson(sortedIds(now.sourceIds)) !== canonicalJson(expectedSourceIds)
+      || canonicalJson(sortedIds(now.sourceEventIds)) !== canonicalJson(expectedSourceEventIds)) {
+      violations.push(`rest ${restEvent.id} provenance is not its own plus that of the rest it absorbed`);
+    }
+    const record = now.metadata?.technicalTimingRepair;
+    if (!record || record.intervalKey !== plan.identityKey || record.operation !== plan.operation) {
+      violations.push(`rest ${restEvent.id} does not carry the provenance record of its repair`);
     }
   }
   for (const [id] of afterRestById) {
     if (!beforeRests.some(event => event.id === id)) violations.push(`rest ${id} was invented`);
   }
 
+  // Any other event is never a repair target either.
+  for (const event of before.events) {
+    if (SPAN_KINDS.has(event.kind)) continue;
+    const now = afterById.get(event.id);
+    if (!now || canonicalJson(now) !== canonicalJson(event)) violations.push(`${event.kind} event ${event.id} changed`);
+  }
+
+  // The input's events, in the input's order, less the absorbed rests.
+  const expectedOrder = before.events.map(event => event.id).filter(id => !absorbed.has(id));
+  if (canonicalJson(after.events.map(event => event.id)) !== canonicalJson(expectedOrder)) {
+    violations.push('event order changed: the repaired project lists the input events in their order, less the absorbed rests');
+  }
+
   for (const event of after.events) {
     if (f(event.end).cmp(event.start) <= 0) violations.push(`${event.id} has a non-positive duration`);
   }
 
-  // The Tempo Map, the meter map, the source set and the decision record are
-  // never a repair target. A silent edit to any of them is a violation here.
-  const controlsBefore = JSON.stringify([...before.tempoEvents].map(controlShape).concat([...before.meterEvents].map(controlShape)));
-  const controlsAfter = JSON.stringify([...after.tempoEvents].map(controlShape).concat([...after.meterEvents].map(controlShape)));
-  if (controlsBefore !== controlsAfter) violations.push('tempo or meter map changed');
+  // No span of a role may overlap another span of that role unless the two
+  // already overlapped in the input: a plan that extends a rest over a note,
+  // or grows one over another span, is caught here even when it agrees with
+  // itself.
+  const overlapsBefore = overlappingSpanPairs(before);
+  for (const pair of overlappingSpanPairs(after)) {
+    if (overlapsBefore.has(pair)) continue;
+    const [role, first, second] = pair.split('\u0000');
+    violations.push(`${first} and ${second} overlap in ${role} after the repair`);
+  }
+
+  // The Tempo Map, the meter map, the source set, the decision record and the
+  // project metadata (the Source-Faithful Baseline included) are never a repair
+  // target. A silent edit to any of them is a violation here; the repair adds
+  // only its own `technicalTimingRepair` record to the project metadata.
+  const controls = project => canonicalJson([...project.tempoEvents, ...project.meterEvents]);
+  if (controls(before) !== controls(after)) violations.push('tempo or meter map changed');
   if (JSON.stringify(before.sources) !== JSON.stringify(after.sources)) violations.push('source set changed');
   if (JSON.stringify(before.decisions) !== JSON.stringify(after.decisions)) violations.push('decision record changed');
+  const { technicalTimingRepair: _recordBefore, ...metadataBefore } = before.metadata ?? {};
+  const { technicalTimingRepair: _recordAfter, ...metadataAfter } = after.metadata ?? {};
+  if (canonicalJson(metadataBefore) !== canonicalJson(metadataAfter)) violations.push('project metadata changed beyond the repair record');
   if (before.id === after.id) violations.push('the repaired candidate is indistinguishable from the input project');
 
   return violations;

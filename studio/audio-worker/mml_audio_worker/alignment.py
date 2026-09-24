@@ -330,13 +330,20 @@ def _control_points(
 
     points: list[dict[str, Any]] = []
     mapped_seconds = np.interp(mapped_audio_frame, np.arange(len(audio_times)), audio_times)
+    point_beats = []
     for beat in targets:
         score_index = int(np.clip(np.searchsorted(beat_positions, beat, side="left"), 0, len(beat_positions) - 1))
+        point_beats.append(float(beat_positions[score_index]))
         points.append({
             "beat": round(float(beat_positions[score_index]), 9),
             "seconds": round(float(mapped_seconds[score_index]), 9),
             "expected_bpm": _expected_tempo_at(project, float(beat_positions[score_index])),
         })
+    # The measured BPM averages over [previous, current] beat, so the expected
+    # BPM must average the source tempo map over the same interval. Sampling the
+    # tempo at one endpoint reports false drift at, or across, a tempo change.
+    # The first point (no interval) keeps the tempo in effect at its beat.
+    point_score_seconds = _score_seconds(project, np.asarray(point_beats, dtype=np.float64))
 
     for index in range(1, len(points)):
         previous, current = points[index - 1], points[index]
@@ -344,7 +351,12 @@ def _control_points(
         delta_seconds = current["seconds"] - previous["seconds"]
         local_bpm = 60.0 * delta_beats / delta_seconds if delta_beats > 0 and delta_seconds > 1e-9 else None
         current["local_bpm_from_alignment"] = round(local_bpm, 6) if local_bpm else None
+        interval_beats = point_beats[index] - point_beats[index - 1]
+        interval_seconds = float(point_score_seconds[index] - point_score_seconds[index - 1])
         expected = current.get("expected_bpm")
+        if interval_beats > 0 and interval_seconds > 1e-12:
+            expected = 60.0 * interval_beats / interval_seconds
+            current["expected_bpm"] = round(expected, 6)
         current["tempo_drift_percent"] = (
             round((local_bpm - expected) / expected * 100.0, 6)
             if local_bpm and expected and expected > 0
