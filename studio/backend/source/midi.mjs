@@ -31,10 +31,48 @@ import {
   createCanonicalProject,
 } from '../canonical/index.mjs';
 import { createTimingProvenance } from '../canonical/timing.mjs';
+import { EFFECTIVE_RULESET } from '../rules/index.mjs';
 import { decodeMidiFile, toBytes } from './midi-file.mjs';
 import { sha256Hex } from './sha256.mjs';
 
 const MIDI_ADAPTER = 'studio/backend/source/midi.mjs';
+
+const MICROSECONDS_PER_MINUTE = 60000000;
+
+// A Standard MIDI File cannot state a tempo in BPM. It stores whole
+// microseconds per quarter note, so a writer holding an integer Tempo T stores
+// Math.round(60,000,000 / T) -- the repository's own `writeMidi` does exactly
+// that -- and T130 arrives as 461,538 us, which divides back to
+// 130.00013000013. That fraction is the storage format's rounding, not a tempo
+// the source states. Read as the Canonical bpm it made the Final emitter refuse
+// every such file (it writes an integer T and will not round one), and it made
+// the file disagree with a score stating the same integer at the same beat,
+// since control maps compare tempi exactly.
+//
+// The stored value is therefore read back through that encoding: when exactly
+// one integer tempo in the ruleset's Tempo range is stored as this microsecond
+// value, that integer is what the file states. A value no integer is stored as
+// is a genuinely fractional tempo and keeps its exact rate, so the emitter
+// still refuses it by name. The range is the one the Final writes
+// (MOBILE_SYNTAX §7), read from the executable ruleset rather than restated.
+export const SMF_INTEGER_TEMPO_ENCODING = 'SMF_INTEGER_US_ROUNDTRIP';
+
+export function integerTempoForMicroseconds(microsecondsPerQuarter, {
+  min = EFFECTIVE_RULESET.mobileSyntax.tempoMin,
+  max = EFFECTIVE_RULESET.mobileSyntax.tempoMax,
+} = {}) {
+  if (!Number.isSafeInteger(microsecondsPerQuarter) || microsecondsPerQuarter <= 0) return null;
+  // Only an integer within half a microsecond of the stored value can round to
+  // it. The window is widened by one on each side so that the exact
+  // Math.round comparison below decides, never this float bound.
+  const low = Math.max(min, Math.floor(MICROSECONDS_PER_MINUTE / (microsecondsPerQuarter + 0.5)) - 1);
+  const high = Math.min(max, Math.ceil(MICROSECONDS_PER_MINUTE / Math.max(microsecondsPerQuarter - 0.5, 0.5)) + 1);
+  const matches = [];
+  for (let bpm = low; bpm <= high; bpm++) {
+    if (Math.round(MICROSECONDS_PER_MINUTE / bpm) === microsecondsPerQuarter) matches.push(bpm);
+  }
+  return matches.length === 1 ? matches[0] : null;
+}
 
 // General MIDI reserves channel 10 (index 9) for percussion. `MASTER_RULES.md`
 // §8 is explicit that these note numbers are drum-kit selectors, not pitches,
@@ -330,10 +368,18 @@ export function ingestMIDI(input, options = {}) {
   if (projectEvents) {
     for (const point of tempoPoints) {
       const sourceEventIds = [eventRef(point.trackIndex, point.eventIndex)];
-      // 60,000,000 microseconds per minute. Kept as a float because BPM is a
-      // rate, not a position; the exact source integer is preserved in
-      // metadata so nothing depends on this rounding.
-      const bpm = 60000000 / point.microsecondsPerQuarter;
+      // 60,000,000 microseconds per minute. The rate is a float because BPM is
+      // a rate, not a position; the exact source integer is preserved in
+      // metadata so nothing depends on this division.
+      const rate = MICROSECONDS_PER_MINUTE / point.microsecondsPerQuarter;
+      // The integer the file's microsecond encoding states, when there is one
+      // (see integerTempoForMicroseconds). A rate that is already that integer
+      // (500,000 us is exactly 120) is left exactly as it always was, so only
+      // a value the encoding had to round is read, and only such an event is
+      // marked as read.
+      const integer = integerTempoForMicroseconds(point.microsecondsPerQuarter);
+      const read = integer !== null && integer !== rate;
+      const bpm = read ? integer : rate;
       if (!Number.isFinite(bpm) || bpm <= CANONICAL_LIMITS.bpm.min || bpm > CANONICAL_LIMITS.bpm.max) {
         // A legal SMF tempo can sit outside the Canonical BPM range. Clamping
         // it would invent a tempo the source never stated, so the source value
@@ -355,7 +401,14 @@ export function ingestMIDI(input, options = {}) {
         bpm,
         sourceIds: [source.id],
         sourceEventIds,
-        metadata: { tick: point.tick, microsecondsPerQuarter: point.microsecondsPerQuarter, trackIndex: point.trackIndex },
+        metadata: {
+          tick: point.tick,
+          microsecondsPerQuarter: point.microsecondsPerQuarter,
+          trackIndex: point.trackIndex,
+          // Provenance of a read value: how it was read, and the unrounded
+          // rate the stored microseconds divide to.
+          ...(read ? { tempoEncoding: SMF_INTEGER_TEMPO_ENCODING, rawBpm: rate } : {}),
+        },
       }), { trackIndex: point.trackIndex, tick: point.tick, sourceEventIds, target: 'tempo' }, unsupported);
       if (event) tempoEvents.push(event);
     }

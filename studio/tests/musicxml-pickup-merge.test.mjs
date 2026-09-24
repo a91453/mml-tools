@@ -131,6 +131,20 @@ test('merged sources with the same tempo at the same beat keep one tempo: no TEM
   assert.equal(codes.includes(EMIT_DIAGNOSTICS.EVENT_ROLE_UNASSIGNED), false);
 });
 
+test('a MIDI at 130 merged with a MusicXML at 130 states one tempo: no TEMPO_CONFLICT_AT_POSITION', () => {
+  // The MIDI can only store T130 as 461,538 us per quarter. Read back as the
+  // float 130.00013 it was a different value from the score's 130 at beat 0,
+  // and the merge reported a conflict between two sources that agree.
+  const merged = mergeCanonicalProjects([xmlProject({ tempo: 130 }), midiProject({ bpm: 130 })], { id: 'merged' });
+  assert.deepEqual(merged.metadata.controlMap.conflicts, []);
+  assert.equal(merged.metadata.unsupported.some(item => item.code === 'TEMPO_CONFLICT_AT_POSITION'), false);
+  assert.deepEqual(merged.tempoEvents.map(event => [event.beat, event.bpm, event.sourceIds]), [['0', 130, ['xml', 'midi']]]);
+  const result = emitFinalMml(finalCandidate(merged));
+  const codes = result.diagnostics.map(item => item.code);
+  assert.equal(codes.includes(EMIT_DIAGNOSTICS.TEMPO_NOT_INTEGER), false);
+  assert.equal(codes.includes(EMIT_DIAGNOSTICS.TEMPO_POSITION_NOT_STRICTLY_INCREASING), false);
+});
+
 test('different tempi at one beat stay a named, blocking disagreement', () => {
   const merged = mergeCanonicalProjects([xmlProject(), midiProject({ bpm: 100 })], { id: 'merged' });
   assert.deepEqual(merged.tempoEvents.map(event => [event.beat, event.bpm]), [['0', 120], ['0', 100]]);

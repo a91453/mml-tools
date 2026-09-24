@@ -7,7 +7,7 @@
 // and this module produces that baseline.
 
 export { decodeMidiFile, toBytes, META_TYPES } from './midi-file.mjs';
-export { ingestMIDI, midiFragmentToProject } from './midi.mjs';
+export { ingestMIDI, midiFragmentToProject, integerTempoForMicroseconds, SMF_INTEGER_TEMPO_ENCODING } from './midi.mjs';
 export { sha256Hex } from './sha256.mjs';
 
 // Factual capability record for this adapter. `false` means the adapter does
@@ -24,6 +24,11 @@ export const MIDI_INGESTION_STATUS = Object.freeze({
   restruckNoteFifoMatching: true,
   exactRationalBeats: true,
   tempoMap: true,
+  // A stored microseconds-per-quarter value that exactly one integer Tempo in
+  // the ruleset range is written as reads back as that integer (T130 is stored
+  // as 461,538 us), marked SMF_INTEGER_US_ROUNDTRIP with the stored value and
+  // the unrounded rate beside it. Any other value keeps its exact rate.
+  integerTempoFromMicrosecondRoundTrip: true,
   timeSignatureMap: true,
   // The program is snapshotted at each note-on, so a later program change on
   // the same channel cannot rewrite an earlier note's provenance, and program

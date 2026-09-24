@@ -185,6 +185,7 @@ behavior, which was unavailable.
 | Program after release | A later program change never rewrites a finished note |
 | Program across tracks | Two tracks on the same channel do not share program state |
 | Unrepresentable event | Pitch > 127, out-of-range BPM and meter are refused, not clamped |
+| SMF integer Tempo | A stored microseconds-per-quarter value that exactly one integer Tempo in the ruleset range (`T32–T255`) is written as reads back as that integer (T130 is stored as 461,538 us), marked `SMF_INTEGER_US_ROUNDTRIP` with the stored value and the unrounded rate; any other value keeps its exact rate and is still refused by the Final emitter |
 | Mixed valid/invalid file | One bad event never removes the file's other evidence |
 | Unknown chunk / stray bytes | Raw body and trailing bytes kept verbatim |
 | Format above 2 | Refused — undefined by the spec, track relationship unknown |
@@ -203,6 +204,7 @@ traceable to a Canonical rule — not gaps.
 | Emit rests for gaps between notes | Never | A gap is not an asserted notated rest; §7 protects meaningful rests |
 | Drop or clamp zero-length notes | Recorded as unsupported | `MOBILE_SYNTAX.md` §4 forbids zero-duration; widening invents data |
 | Clamp an out-of-range tempo or meter to the nearest legal value | Recorded as unsupported with the source value | Clamping states a tempo/meter the source never gave |
+| Round every tempo to the nearest integer BPM | Only a value the file's whole-microsecond encoding had to round is read as the integer it encodes; a fractional tempo stays fractional | The fraction in 60,000,000 / 461,538 is the storage format's, not the source's; rounding a stated fraction would invent a tempo |
 | Mask a corrupt pitch byte to 7 bits | Recorded as unsupported | Masking silently invents a different pitch |
 | Abort the import on one unrepresentable event | Event refused, rest of the file projected | Gate 2 needs the surviving evidence |
 | Leave `source.sha256` unset | Computed from the parsed bytes | An absent digest makes later provenance claims unverifiable |
