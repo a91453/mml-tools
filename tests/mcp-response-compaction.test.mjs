@@ -27,6 +27,7 @@ import { MACHINE_DELIVERY_SCHEMA_V2 } from '../studio/backend/final/delivery-eva
 import { handleMcp } from '../server/mcp.mjs';
 import { STUDIO_MCP_TOOLS } from '../server/mcp-studio.mjs';
 import { RESPONSE_COMPACTION, compactStudioResponse } from '../server/mcp-compaction.mjs';
+import { readReportPage } from '../server/report-page.mjs';
 
 const OWNER = 'owner:compaction';
 const LIMIT = 128 * 1024;
@@ -275,4 +276,48 @@ test('clients are told never to retry a succeeded call whose response was too la
   assert.equal(error.code, 'PAYLOAD_TOO_LARGE');
   assert.equal(error.details.operation, 'succeeded');
   assert.match(error.details.recovery_notice, /already taken effect, so never retry it/);
+});
+
+// A ledger phase list holds the per-release lists step 1 always summarizes.
+// When the response is still over budget, the size pass summarizes the phase
+// list too, and its summary used to describe the half-compacted view: its
+// sha256 was not report_page's value_sha256, and response_compaction still
+// listed the inner paths the outer summary had replaced. Observed live on
+// studio_artifact_get for a delivered Final.
+test('a list summarized around earlier summaries describes the stored list, and every listed path is in the view', () => {
+  const releases = count => Array.from({ length: count }, (_, index) => ({
+    event_id: `midi:sha256:${'a'.repeat(64)}:note:0:${index}`, role: 'Melody', release: `${index}/480`, rendered_release: `${index}`, representation: 'EXTEND_TO_NEXT_GRID',
+  }));
+  const entry = gate => ({ gate, classification: 'NON_BLOCKING_PENDING', status: 'PENDING', blockers: [`X_${gate}`], provisional_releases: releases(300) });
+  const ledger = () => ({
+    schema: 'mabinogi-mobile-mml-studio/machine-delivery@2',
+    blocking: [],
+    non_blocking_pending: [...'abcdefg'].map(entry),
+    post_delivery: [],
+    unresolved_evidence_ledger: [...'abcdefghi'].map(entry),
+  });
+  const result = { operation: 'succeeded', artifact: {
+    readiness_summary: { machine_delivery: ledger() }, machine_delivery: ledger(), run: { machine_delivery: ledger() },
+    bulk: releases(1500).map(item => ({ ...item, note: 'x'.repeat(40) })),
+  } };
+  const view = compactStudioResponse('studio_artifact_get', { artifact_id: `art_${'b'.repeat(64)}` }, result);
+  const listed = view.response_compaction.compacted;
+  assert.ok(listed.some(item => item.path.at(-1) === 'unresolved_evidence_ledger' || item.path.at(-1) === 'non_blocking_pending'),
+    'the fixture needs the size pass to summarize a ledger phase list');
+  for (const { path, total } of listed) {
+    let node = view;
+    for (const key of path) {
+      assert.ok(node !== null && typeof node === 'object' && key in node, `listed path ${path.join('.')} is in the view`);
+      node = node[key];
+    }
+    assert.equal(node.compacted, true, path.join('.'));
+    let stored = result;
+    for (const key of path) stored = stored[key];
+    assert.equal(total, stored.length, path.join('.'));
+    assert.equal(node.total, stored.length, path.join('.'));
+    assert.equal(node.sha256, hash(JSON.stringify(stored)), `${path.join('.')} sha256 is the stored list's`);
+    const page = readReportPage(result, { path: node.report_page.path, offset: 0, length: 16000 });
+    assert.equal(page.report_page.value_sha256, node.sha256, `${path.join('.')} sha256 is report_page's value_sha256`);
+    for (const [index, item] of node.first.entries()) assert.deepEqual(item, stored[index], `${path.join('.')} first[${index}] is the stored item`);
+  }
 });

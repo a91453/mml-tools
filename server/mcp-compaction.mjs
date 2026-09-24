@@ -194,6 +194,15 @@ const setAt = (root, path, value) => {
 
 const isPrefix = (prefix, path) => prefix.length <= path.length && prefix.every((key, index) => path[index] === key);
 
+const valueAt = (root, path) => {
+  let node = root;
+  for (const key of path) {
+    if (node === null || typeof node !== 'object') return undefined;
+    node = node[key];
+  }
+  return node;
+};
+
 // Every machine-delivery ledger in the result, wherever it is embedded: a run,
 // a readiness report, a Final, an artifact, a continuation snapshot.
 function ledgerLists(value, path, out) {
@@ -249,9 +258,20 @@ export function compactStudioResponse(name, args, result) {
       for (const entry of [...candidates].sort((a, b) => b.size - a.size)) {
         if (estimate <= RESPONSE_COMPACTION.budgetBytes) break;
         if (compacted.some(done => isPrefix(done.path, entry.path)) || dominated(entry)) continue;
-        const summary = summarize(entry.value, { keep: RESPONSE_COMPACTION.firstItems, name, args, result, path: entry.path });
+        // A list can hold lists summarized earlier (a ledger phase holds the
+        // per-release lists step 1 summarized). Its summary describes the
+        // stored list, as report_page serves it, not the half-compacted view
+        // of it: otherwise `sha256` is not report_page's `value_sha256` and
+        // `first` holds summaries instead of items. Nothing outside a summary
+        // is ever replaced, so the same path in `result` is that list.
+        const stored = valueAt(result, entry.path);
+        const summary = summarize(Array.isArray(stored) ? stored : entry.value, { keep: RESPONSE_COMPACTION.firstItems, name, args, result, path: entry.path });
         setAt(view, entry.path, summary);
         estimate -= entry.size - JSON.stringify(summary).length;
+        // The summaries inside it are gone from the view, and so are their paths.
+        for (let index = compacted.length - 1; index >= 0; index -= 1) {
+          if (isPrefix(entry.path, compacted[index].path)) compacted.splice(index, 1);
+        }
         record(entry.path, summary);
       }
     }
