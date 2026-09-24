@@ -143,6 +143,14 @@ jobs:
       - run: npx playwright install --with-deps chromium webkit
       - run: npm run build:studio-web
       - run: npm run test:studio-web
+      # The in-chat listening player's browser tests skip themselves where no
+      # Chromium is installed, and the only job that ran them (`symbolic`, via
+      # npm test) installs none, so they never ran in CI. This job installs
+      # Chromium, so it runs them and refuses a silent skip.
+      - name: In-chat listening player browser tests
+        env:
+          STUDIO_REQUIRE_BROWSER_TESTS: '1'
+        run: node --test tests/listen-widget-browser.test.mjs
       - name: Upload Studio browser evidence
         id: upload_studio_browser_evidence
         uses: actions/upload-artifact@v4
