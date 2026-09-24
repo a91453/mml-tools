@@ -56,7 +56,7 @@ Permanent Studio Web 的釘選發布與驗證機制記錄於 [ops/permanent/](op
 
 Sites 版本依賴 Sites 的私人存取閘道。Worker 僅在閘道提供可信身分標頭後接受 MCP 呼叫；不可將 Worker 直接放到會接受任意身分標頭的公開主機。Railway 版本則使用 `railway/server.mjs` 與自己的 OAuth，不信任 Sites 身分標頭。兩者的正式 MCP URL 與 OAuth resource 不可混用；本機路由測試不能證明使用者 OAuth 連接已完成。
 
-傳輸支援 2025-03-26、2025-06-18、2025-11-25 協定版本的此服務所需子集：initialize、ping、tools/list、tools/call、初始化與取消通知。2025-03-26 要求伺服器能接收 JSON-RPC 批次，因此在該版本（未帶 `MCP-Protocol-Version` 標頭的請求依規定也視為 2025-03-26）接受最多 16 則訊息的批次：每則套用與單則訊息相同的檢查、分派與拒絕記錄，回傳回應陣列，全為通知時回 202；含 initialize 的批次整批拒絕。2025-06-18 起協定已移除批次，這些版本的陣列請求一律以 400 拒絕。不宣告資源、提示詞、工作排程、通知串流或工作階段能力。GET /mcp 回應 405 是預期行為；需 POST 才能進行協定測試。MCP SDK 2.x 的預設連線策略會先以 2026-07-28 送出 `server/discover` 探測，本服務以 400 與 -32022（附 `supported` 清單）拒絕後，用戶端改走 initialize 交握；因此 Railway HTTP 記錄裡每次 Claude／ChatGPT 連線開頭的一筆 400 是預期的協定回退，服務端會以 `MCP_REQUEST_REJECTED` 記錄原因。
+傳輸支援 2025-03-26、2025-06-18、2025-11-25 協定版本的此服務所需子集：initialize、ping、tools/list、tools/call、初始化與取消通知。2025-03-26 要求伺服器能接收 JSON-RPC 批次，因此在該版本（未帶 `MCP-Protocol-Version` 標頭的請求依規定也視為 2025-03-26）接受最多 16 則訊息的批次：每則套用與單則訊息相同的檢查、分派與拒絕記錄，回傳各請求的回應陣列（通知不回應，未接受的通知只記錄拒絕原因）；全為通知時，全部接受回 202，任一未接受則回 400；含 initialize 的批次整批拒絕。2025-06-18 起協定已移除批次，這些版本的陣列請求一律以 400 拒絕。不宣告資源、提示詞、工作排程、通知串流或工作階段能力。GET /mcp 回應 405 是預期行為；需 POST 才能進行協定測試。MCP SDK 2.x 的預設連線策略會先以 2026-07-28 送出 `server/discover` 探測，本服務以 400 與 -32022（附 `supported` 清單）拒絕後，用戶端改走 initialize 交握；因此 Railway HTTP 記錄裡每次 Claude／ChatGPT 連線開頭的一筆 400 是預期的協定回退，服務端會以 `MCP_REQUEST_REJECTED` 記錄原因。
 
 ## 使用
 

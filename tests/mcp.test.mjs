@@ -135,10 +135,46 @@ test('a 2025-03-26 batch of notifications alone is accepted with 202 and no body
   const response = await handleMcp(req([{ jsonrpc: '2.0', method: 'notifications/initialized' }, { jsonrpc: '2.0', method: 'notifications/cancelled', params: { requestId: 1 } }], at2025_03_26));
   assert.equal(response.status, 202);
   assert.equal(await response.text(), '');
-  // A notification this server does not accept is refused inside a batch too.
+  // Input of notifications alone that the server cannot accept is refused with
+  // 400 and a JSON-RPC error without an id, as a single refused one is.
   const refused = await handleMcp(req([{ jsonrpc: '2.0', method: 'notifications/initialized' }, { jsonrpc: '2.0', method: 'tools/call', params: { name: 'mml_validate', arguments: simple } }], at2025_03_26));
   assert.equal(refused.status, 400);
-  assert.deepEqual(await refused.json(), [{ jsonrpc: '2.0', id: null, error: { code: -32600, message: 'Unsupported notification' } }]);
+  assert.deepEqual(await refused.json(), { jsonrpc: '2.0', id: null, error: { code: -32600, message: 'Unsupported notification' } });
+});
+test('a notification the server does not accept adds no entry to a batch that carries requests', async () => {
+  // JSON-RPC 2.0 never answers a notification, inside a batch or not, so the
+  // reply holds the request's response alone; the refusal is still logged.
+  const rejected = [];
+  const response = await handleMcp(req([
+    { jsonrpc: '2.0', method: 'notifications/roots/list_changed' },
+    { jsonrpc: '2.0', id: 7, method: 'ping' },
+    { jsonrpc: '2.0', method: 'tools/call', params: { name: 'mml_validate', arguments: simple } },
+  ], at2025_03_26), { rejectLog: entry => rejected.push(entry) });
+  assert.equal(response.status, 200);
+  assert.deepEqual(await response.json(), [{ jsonrpc: '2.0', id: 7, result: {} }]);
+  assert.deepEqual(rejected.map(entry => [entry.reason, entry.method, entry.batch_index]), [
+    ['Unsupported notification', 'notifications/roots/list_changed', 0],
+    ['Unsupported notification', 'tools/call', 2],
+  ]);
+  // A malformed element is still answered, with id null, as JSON-RPC requires.
+  const malformed = await handleMcp(req([{ jsonrpc: '2.0', id: 8, method: 'ping' }, { jsonrpc: '2.0', method: 5 }], at2025_03_26));
+  assert.deepEqual(await malformed.json(), [{ jsonrpc: '2.0', id: 8, result: {} }, { jsonrpc: '2.0', id: null, error: { code: -32600, message: 'Invalid JSON-RPC request' } }]);
+});
+test('batch elements run one after another in their order', async () => {
+  // A tool call may write, so an element starts only once the one before it
+  // has finished, even when the earlier one is the slower.
+  const events = [];
+  const application = { getArtifact: async (_owner, id) => {
+    events.push(`start ${id[0]}`);
+    await new Promise(resolve => setTimeout(resolve, id[0] === 'a' ? 30 : 0));
+    events.push(`end ${id[0]}`);
+    return { artifact: { artifact_id: id } };
+  } };
+  const call = (id, artifact_id) => ({ jsonrpc: '2.0', id, method: 'tools/call', params: { name: 'studio_artifact_get', arguments: { artifact_id } } });
+  const response = await handleMcp(req([call(1, 'a'.repeat(68)), call(2, 'b'.repeat(68))], at2025_03_26), { application, owner: 'owner:batch-order' });
+  assert.equal(response.status, 200);
+  assert.deepEqual((await response.json()).map(reply => [reply.id, reply.result.isError ?? false]), [[1, false], [2, false]]);
+  assert.deepEqual(events, ['start a', 'end a', 'start b', 'end b']);
 });
 test('a batch carrying initialize is refused whole', async () => {
   const rejected = [];

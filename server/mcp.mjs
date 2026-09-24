@@ -333,7 +333,8 @@ export async function handleMcp(request, { application = null, owner = null, all
 // limit as a single message. Each element then passes the same envelope
 // checks, dispatch, response cap and refusal log as a single message, one
 // after another in order, since a tool call may write. The reply is the array
-// of the responses the elements produce, or 202 when none produces one.
+// of the responses to its requests; notifications are never answered, so a
+// batch of notifications alone gets 202, or 400 when one is refused.
 async function mcpBatch(messages, env, refusal, reject) {
   if (!messages.length) return reject(-32600, 'Invalid JSON-RPC request', 400);
   const { protocol } = env;
@@ -345,16 +346,25 @@ async function mcpBatch(messages, env, refusal, reject) {
   // Nothing may run before initialization completes, so a batch carrying
   // initialize is refused whole rather than partly dispatched.
   if (messages.some(message => message?.method === 'initialize')) return reject(-32600, 'initialize must not be part of a JSON-RPC batch', 400, 'initialize');
-  const outcomes = [];
+  const outcomes = [], refusedNotifications = [];
   for (const [index, message] of messages.entries()) {
     const outcome = await mcpMessage(message, env, refusal({ batch_index: index }));
-    if (outcome) outcomes.push(outcome);
+    // JSON-RPC 2.0 never answers a notification, inside a batch or not, so
+    // a well-formed element without an id adds no entry to the reply; its
+    // refusal is still logged. A malformed element is answered with id null.
+    if (outcome) (mcpIsNotification(message) ? refusedNotifications : outcomes).push(outcome);
   }
-  if (!outcomes.length) return mcpAccepted();
+  // Input of notifications alone is accepted with 202, or refused with 400
+  // when one of them is, as the Streamable HTTP transport requires.
+  if (!outcomes.length) return refusedNotifications.length ? mcpReply(refusedNotifications[0].body, 400) : mcpAccepted();
   // Any dispatched request makes this an ordinary answer carrying each
-  // element's own result or error. Input with nothing dispatched and an element
-  // refused is refused with 400, as a single refused message is.
+  // request's own result or error. Requests all refused before dispatch are
+  // refused with 400, as a single refused message is.
   return mcpReply(outcomes.map(outcome => outcome.body), outcomes.some(outcome => outcome.status === 200) ? 200 : 400);
+}
+
+function mcpIsNotification(message) {
+  return Boolean(message) && typeof message === 'object' && !Array.isArray(message) && message.jsonrpc === '2.0' && typeof message.method === 'string' && !Object.hasOwn(message, 'id');
 }
 
 // One JSON-RPC message: its outcome ({ status, body }), or null for an
