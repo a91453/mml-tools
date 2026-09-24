@@ -1825,12 +1825,14 @@ export function createProposalService({ canonical, projects, store, operations, 
           // never succeed: the proposal was stuck `accepted` for good.
           //
           // Sending no precondition at all fixed that and opened a worse hole.
-          // A retry also skips the policy gate, so an acceptance whose
-          // application was interrupted became a standing permission: whatever
-          // the run had since become -- a different reviewer's decision set, a
-          // different candidate, a request that was no longer open -- the retry
-          // reached `runs.resume` anyway and the proposal was recorded
-          // `applied`, naming an advancement it had not caused.
+          // A retry whose application may have reached the run also skips the
+          // policy gate, so an acceptance whose application was interrupted
+          // became a standing permission: whatever the run had since become --
+          // a different reviewer's decision set, a different candidate, a
+          // request that was no longer open -- the retry reached `runs.resume`
+          // anyway and the proposal was recorded `applied`, naming an
+          // advancement it had not caused. (A retry none of whose attempts
+          // reached the run goes back through the policy; see phase 1.)
           //
           // So the precondition is carried forward instead, to the revision the
           // interrupted attempt LEFT the run at, which phase 3 records under the
