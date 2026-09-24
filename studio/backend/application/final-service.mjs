@@ -137,7 +137,10 @@ export function createFinalService({ canonical, projects, review, store }) {
         fail(ERROR_CODES.INVALID_REQUEST, 'technical_timing_repair must be true or false. There is no automatic mode: the repair transforms the musical candidate and stays an explicit opt-in.');
       }
       const barInputs = { pickup: barInput(pickup, 'pickup'), final_partial: barInput(finalPartial, 'final_partial') };
-      if (confirmations) review.record(owner, projectId, confirmations, { candidateId });
+      if (confirmations) {
+        review.requireCandidate(owner, projectId, candidateId);
+        review.record(owner, projectId, confirmations, { candidateId });
+      }
 
       const ctx = await review.context(owner, projectId, candidateId);
       const { engines, record, baseline, entry, application, baselineProject, project, parent, confirmations: recorded } = ctx;

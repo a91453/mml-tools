@@ -196,3 +196,24 @@ test('a player readback PASS that names an MML digest only counts for that exact
   assert.equal(right.mml, draft.mml);
   assert.equal(right.player_readback_binding.matched, true);
 });
+
+test('a review or finalize naming an unknown candidate records none of the confirmations it carried', async () => {
+  // Both used to save the confirmations first and refuse the candidate after,
+  // so a refused call still moved the source and audio gates of the real one.
+  const service = app();
+  const run = await applyKeepOnlyCandidate(service, OWNER);
+  const before = (await service.reviewCandidate(OWNER, run.projectId, { candidateId: run.candidateId })).review;
+  assert.equal(before.gates.source, 'PENDING');
+  const unknown = `g11d:rev:${'0'.repeat(64)}`;
+  for (const candidateId of [unknown, 'bogus']) {
+    await rejects(service.reviewCandidate(OWNER, run.projectId, { candidateId, confirmations: baselineConfirmations }), ERROR_CODES.CANDIDATE_NOT_FOUND);
+    await rejects(service.finalize(OWNER, run.projectId, { candidateId, confirmations: baselineConfirmations }), ERROR_CODES.CANDIDATE_NOT_FOUND);
+  }
+  const after = (await service.reviewCandidate(OWNER, run.projectId, { candidateId: run.candidateId })).review;
+  assert.equal(after.gates.source, 'PENDING', 'nothing a refused call carried was recorded');
+  assert.equal(after.gates.audio, before.gates.audio);
+  assert.deepEqual(after.confirmations, before.confirmations);
+  // The same confirmations on the real candidate are recorded as before.
+  const recorded = (await service.reviewCandidate(OWNER, run.projectId, { candidateId: run.candidateId, confirmations: baselineConfirmations })).review;
+  assert.equal(recorded.gates.source, 'PASS');
+});

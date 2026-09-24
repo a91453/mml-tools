@@ -403,10 +403,23 @@ export function createReviewService({ canonical, projects, intake, arrangement, 
     return Object.freeze({ confirmations: Object.freeze({ ...next }) });
   }
 
+  /**
+   * Refuse an unknown candidate before anything is recorded about it. Review
+   * and finalize record their confirmations first, so a call naming a
+   * candidate that does not exist used to answer CANDIDATE_NOT_FOUND after the
+   * confirmations it carried were already saved, and they then moved the gates
+   * of every other candidate they applied to.
+   */
+  const requireCandidate = (owner, projectId, candidateId) => {
+    if (!isCandidateId(candidateId)) fail(ERROR_CODES.CANDIDATE_NOT_FOUND, 'Unknown candidate', { candidate_id: String(candidateId).slice(0, 96) });
+    arrangement.loadCandidate(projects.load(owner, projectId), candidateId);
+  };
+
   return Object.freeze({
     context,
     audioKey,
     record,
+    requireCandidate,
     effectiveConfirmations,
 
     /**
@@ -731,7 +744,10 @@ export function createReviewService({ canonical, projects, intake, arrangement, 
      * silently substituted for the other.
      */
     async review(owner, projectId, { candidateId, confirmations = null } = {}) {
-      if (confirmations) record(owner, projectId, confirmations, { candidateId });
+      if (confirmations) {
+        requireCandidate(owner, projectId, candidateId);
+        record(owner, projectId, confirmations, { candidateId });
+      }
       const ctx = await context(owner, projectId, candidateId);
       const { engines, application, baselineProject, confirmations: recorded, project, parent } = ctx;
       const core3ApprovedChanges = ctx.core3Approvals;

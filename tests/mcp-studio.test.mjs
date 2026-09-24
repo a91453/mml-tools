@@ -529,9 +529,10 @@ test('structured payloads are still accepted, still bounded and still refuse pro
   });
   assert.equal(accepted.isError, true);
   // It reached the Application Service and came back in that layer's own
-  // vocabulary — this project has no baseline yet. What matters here is that
-  // the transport schema did not refuse the structured payload on the way in.
-  assert.equal(accepted.structuredContent.error.code, 'SOURCE_INCOMPLETE', 'the transport schema must not have refused this');
+  // vocabulary — the candidate it names does not exist, which is checked
+  // before any confirmation is recorded. What matters here is that the
+  // transport schema did not refuse the structured payload on the way in.
+  assert.equal(accepted.structuredContent.error.code, 'CANDIDATE_NOT_FOUND', 'the transport schema must not have refused this');
 
   // Prototype pollution stays refused inside the open object — at the top
   // level, nested, and inside an array item. It is refused as invalid params
