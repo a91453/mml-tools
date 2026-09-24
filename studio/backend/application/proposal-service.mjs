@@ -63,13 +63,16 @@
 // not written, which is an application interrupted inside `advance`, a process
 // that died there included — is told apart by the run's own record, not by
 // guessing. The run records, with every revision it takes, which request's
-// write produced it (`revision_written_by`: the idempotency key and the request
-// fingerprint). A retry continues from the run's current revision only when
-// that record says the latest write was this acceptance's own application, and
-// the run's own reconciliation then settles whatever step it left pending. When
-// anything else has written since, the retry carries the revision the
-// acceptance observed, the run refuses it at its precondition, and that is
-// recorded as the conflict it is; the proposal is not marked applied.
+// write produced it (`revision_written_by`: the idempotency key, the request
+// fingerprint and the revision that write produced). A retry continues from
+// the run's current revision only when that record was written for the
+// revision the run is at and says the latest write was this acceptance's own
+// application, and the run's own reconciliation then settles whatever step it
+// left pending. When anything else has written since -- a build that does not
+// know the record included, which carries it onto a revision of its own -- the
+// retry carries the revision the acceptance observed, the run refuses it at
+// its precondition, and that is recorded as the conflict it is; the proposal
+// is not marked applied.
 //
 // Between the two, `runs.resume` calls back into this service once, inside the
 // run's OWN first lock hold, after every refusal that hold makes and before its
@@ -333,22 +336,35 @@ export function createProposalService({ canonical, projects, store, operations, 
    * application.
    *
    * The run records, with every revision it takes and in the same save, which
-   * request's write produced it (`run.revision_written_by`: the idempotency key
-   * and the request fingerprint). This acceptance's application is one key
-   * (`application.idempotency_key`) and one request, the one the run's
-   * admission recorded (`application.admitted_request_fingerprint`). When both
-   * match, nothing else has written to the run since this application last
-   * did: not another acceptance, not a reviewer's resume, and not a caller who
-   * reused this key with another payload. That holds after a restart too,
-   * because it is read from the run's own record rather than from anything an
-   * attempt kept in memory. Anything else -- another writer, a run record
-   * written before the run kept this, an application no admission recorded --
-   * reads as `false`: the answer that refuses the retry, not the one that
-   * guesses.
+   * request's write produced it (`run.revision_written_by`: the idempotency
+   * key, the request fingerprint, and the revision that write produced). This
+   * acceptance's application is one key (`application.idempotency_key`) and
+   * one request, the one the run's admission recorded
+   * (`application.admitted_request_fingerprint`). When both match, and the
+   * record is the one written for the revision the run is at now, nothing else
+   * has written to the run since this application last did: not another
+   * acceptance, not a reviewer's resume, and not a caller who reused this key
+   * with another payload. That holds after a restart too, because it is read
+   * from the run's own record rather than from anything an attempt kept in
+   * memory.
+   *
+   * The revision check is what keeps it true across builds. A build that does
+   * not know the field -- the release a rollback returns to -- writes the run
+   * by spreading the record it read and bumping the revision, so it carries
+   * this application's record onto a revision of its own: a reviewer's resume
+   * through it would otherwise read as this application's latest write, and a
+   * retry would continue onto the reviewer's run past a policy grading it
+   * STALE. A record whose revision is not the run's names nobody.
+   *
+   * Anything else -- another writer, a record carried onto a later revision, a
+   * run record written before the run kept this, an application no admission
+   * recorded -- reads as `false`: the answer that refuses the retry, not the
+   * one that guesses.
    */
   const lastWrittenByThisApplication = (run, application) => {
     const writer = run?.revision_written_by ?? null;
     return writer !== null
+      && Number.isInteger(run.revision) && writer.revision === run.revision
       && typeof application?.idempotency_key === 'string' && writer.idempotency_key === application.idempotency_key
       && typeof application.admitted_request_fingerprint === 'string' && writer.request_fingerprint === application.admitted_request_fingerprint;
   };
@@ -1788,8 +1804,9 @@ export function createProposalService({ canonical, projects, store, operations, 
         };
         // Where a retry of an application the run has already admitted
         // continues from: the run's current revision, read here under the
-        // lock -- when, and only when, the run's own record says its latest
-        // write was this application's (`lastWrittenByThisApplication`).
+        // lock -- when, and only when, the run's own record, written for that
+        // revision, says its latest write was this application's
+        // (`lastWrittenByThisApplication`).
         // Nothing else then has moved the run since this application last
         // wrote to it, whether the attempt that wrote it was interrupted by a
         // fault, stopped by a process that died inside the run and recorded

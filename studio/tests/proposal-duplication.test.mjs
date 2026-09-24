@@ -487,7 +487,10 @@ test('after a process died inside the run, a retry is refused once another write
 // A proposal accepted and admitted before the run recorded who wrote each of
 // its revisions carries what that version recorded: a revision phase 3 read
 // from the run, and a marker with no request beside it. Neither is proof of
-// anything the run did, and neither is trusted past what it proves.
+// anything the run did, and neither is trusted past what it proves. Nor is a
+// run record written by a build that does not know the run's writer record:
+// every write it makes carries the record of the write before it onto its own
+// revision.
 
 /** Rewrite one stored proposal in place, as a record an earlier version left. */
 const rewriteStoredProposal = async (directory, proposalId, edit) => {
@@ -502,6 +505,31 @@ const rewriteStoredProposal = async (directory, proposalId, edit) => {
     rewritten = true;
   }
   assert.ok(rewritten, 'the stored proposal record was found and rewritten');
+};
+
+/** The stored run record, as it is on disk, with every field the run keeps. */
+const storedRunOf = async (directory, runId) => {
+  for (const name of await readdir(join(directory, 'records'))) {
+    const record = JSON.parse(await readFile(join(directory, 'records', name), 'utf8'));
+    const run = (record.runs ?? []).find(entry => entry.run_id === runId);
+    if (run) return run;
+  }
+  return assert.fail('the stored run record was found');
+};
+
+/** Rewrite one stored run in place, as a write another build made. */
+const rewriteStoredRun = async (directory, runId, edit) => {
+  let rewritten = false;
+  for (const name of await readdir(join(directory, 'records'))) {
+    const path = join(directory, 'records', name);
+    const record = JSON.parse(await readFile(path, 'utf8'));
+    const index = (record.runs ?? []).findIndex(entry => entry.run_id === runId);
+    if (index === -1) continue;
+    record.runs[index] = edit(record.runs[index]);
+    await writeFile(path, JSON.stringify(record));
+    rewritten = true;
+  }
+  assert.ok(rewritten, 'the stored run record was found and rewritten');
 };
 
 test('a revision an earlier version recorded as where an attempt stopped is never carried as a retry\'s precondition', async () => {
@@ -593,6 +621,90 @@ test('a marker an earlier version set without recording the request is completed
     assert.equal(retry.result.proposal.state, PROPOSAL_STATE.APPLIED);
     assert.equal((await candidatesOf(restarted, context.fixture.projectId)).length, 1, 'one acceptance, one application');
   });
+});
+
+test('a writer record an older build carried onto its own revision is never read as this application\'s', async () => {
+  // Rolling the service back to the release before the run recorded its
+  // writers, and forward again, is a documented procedure. That release's
+  // `bumpRun` spreads the run it read and bumps the revision, so every write
+  // it makes carries the writer record of the revision before it onto its own
+  // revision. After an admitted, interrupted attempt, a reviewer's resume
+  // through that build leaves the run naming this application as the writer of
+  // the reviewer's revision; the retry used to read it so, skip the policy,
+  // pass its precondition and be recorded `applied` onto the reviewer's run
+  // while the policy graded it STALE. The record names the revision it was
+  // written for and is trusted for that revision only, so any write by a build
+  // that does not know the field makes it read as nobody's.
+  const theirs = project => runDecisionsFor(project, { acceptedBy: 'a-different-reviewer' })
+    .map(decision => (decision.fromRole === 'Chord5'
+      ? { ...decision, id: `omit:${decision.id}`, type: 'OMIT_FROM_SIX', reason: 'The reviewer dropped this role.' }
+      : decision));
+  // What the older build's own writes leave on the stored run: the record of
+  // the write before them, carried along.
+  const olderBuild = {
+    // A reviewer's resume with a decision set of their own.
+    'reviewer-resume': async (app, context, carried) => {
+      await app.resumeRun(OWNER, context.fixture.projectId, context.run.run_id, {
+        decisions: theirs(context.fixture.project), accepted_by: 'a-different-reviewer',
+      });
+      return run => ({ ...run, revision_written_by: carried });
+    },
+    // A bare write, in exactly that build's shape: `{ ...run, ...changes,
+    // revision: run.revision + 1, updated_at }`.
+    'bare-write': async () => run => ({ ...run, revision: run.revision + 1, updated_at: new Date().toISOString() }),
+  };
+  for (const [writer, write] of Object.entries(olderBuild)) {
+    await withDirectory(async directory => {
+      let armed = true;
+      const app = createStudioApplication({
+        dataDirectory: directory,
+        durability: 'persistent',
+        runHooks: { beforeEffect: ({ step }) => { if (armed && step === RUN_STEP.APPLY_DECISIONS) { armed = false; throw Error('stopped before the effect'); } } },
+      });
+      const context = await submitted(app);
+      const first = await acceptIn(app, context);
+      assert.equal(first.ok, false, writer);
+      assert.equal(first.error.details.admitted_by_run, true, writer);
+      const application = (await app.getProposal(OWNER, context.fixture.projectId, context.proposal.proposal_id)).proposal.application;
+      const own = await storedRunOf(directory, context.run.run_id);
+      assert.equal(own.revision_written_by?.idempotency_key, application.idempotency_key, `${writer}: the attempt's own write is the run's latest`);
+      assert.equal(own.revision_written_by?.request_fingerprint, application.admitted_request_fingerprint, writer);
+
+      const edit = await write(app, context, own.revision_written_by);
+      await rewriteStoredRun(directory, context.run.run_id, edit);
+      const written = await storedRunOf(directory, context.run.run_id);
+      assert.ok(written.revision > own.revision, `${writer}: the older build moved the run`);
+      assert.deepEqual(written.revision_written_by, own.revision_written_by, `${writer}: and carried the attempt's writer record onto its own revision`);
+
+      const restarted = createStudioApplication({ dataDirectory: directory, durability: 'persistent' });
+      const graded = (await restarted.getProposal(OWNER, context.fixture.projectId, context.proposal.proposal_id)).proposal;
+      assert.equal(graded.agent_review.verdict, 'STALE', writer);
+      const runBefore = (await restarted.getRun(OWNER, context.fixture.projectId, context.run.run_id)).run;
+      const candidatesBefore = await candidatesOf(restarted, context.fixture.projectId);
+
+      for (let round = 0; round < 2; round += 1) {
+        const retry = await acceptIn(restarted, context);
+        assert.equal(retry.ok, false, `${writer}: retry ${round + 1} may not finish the acceptance onto a run another build moved`);
+        assert.equal(retry.error.code, 'RUN_CONFLICT', `${writer}: ${retry.error.code}: ${retry.error.message}`);
+        assert.equal(retry.error.details.admitted_by_run, false, writer);
+      }
+      const runAfter = (await restarted.getRun(OWNER, context.fixture.projectId, context.run.run_id)).run;
+      assert.equal(runAfter.revision, runBefore.revision, `${writer}: the refused retries did not touch the run`);
+      assert.equal(runAfter.candidate_id, runBefore.candidate_id, writer);
+      assert.deepEqual(await candidatesOf(restarted, context.fixture.projectId), candidatesBefore, `${writer}: and minted nothing`);
+      const settled = (await restarted.getProposal(OWNER, context.fixture.projectId, context.proposal.proposal_id)).proposal;
+      assert.equal(settled.state, PROPOSAL_STATE.ACCEPTED, `${writer}: not recorded as applied`);
+      await assert.rejects(
+        restarted.resolveProposal(OWNER, context.fixture.projectId, context.proposal.proposal_id, { resolution: 'withdraw', reason: 'Another build moved the run.' }),
+        error => error.code === 'PROPOSAL_CONFLICT',
+        `${writer}: its application reached the run, so it is not withdrawable`,
+      );
+
+      // Why: the record names the revision it was written for, and that is no
+      // longer the run's.
+      assert.equal(own.revision_written_by.revision, own.revision, `${writer}: the writer record names the revision it was written for`);
+    });
+  }
 });
 
 test('a rejection after an acceptance is refused, because the run may already have it', async () => {

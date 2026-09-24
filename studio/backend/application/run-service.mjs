@@ -671,11 +671,20 @@ export function createRunService({ canonical, projects, store, operations, seria
   //
   // Every revision the run takes records the request whose write produced it,
   // as `revision_written_by`: that request's idempotency key (null when it sent
-  // none) and its request fingerprint (`requestFingerprintOf`). It is set by
-  // `bumpRun`, in the same save as the revision it describes, so it is exactly
-  // as durable as that write: a process that dies after a write leaves, on the
-  // record, which request made it. A write made outside a request's hold
-  // records null, which names no request.
+  // none), its request fingerprint (`requestFingerprintOf`), and the revision
+  // that write produced. It is set by `bumpRun`, in the same save as the
+  // revision it describes, so it is exactly as durable as that write: a
+  // process that dies after a write leaves, on the record, which request made
+  // it. A write made outside a request's hold records null, which names no
+  // request.
+  //
+  // The revision inside it is what makes it a record of ONE revision rather
+  // than of whatever the run was last saved as. A build that predates the
+  // field -- the one a rollback returns to -- still writes the run by
+  // spreading the record it read and bumping the revision, so it carries the
+  // writer of the revision before its own onto its own revision. The record
+  // then names a revision that is no longer the run's, and a reader trusts it
+  // only when `revision_written_by.revision === run.revision`.
   //
   // It is what lets a caller finishing an interrupted application tell,
   // truthfully and after a restart, whether the run's LATEST write was that
@@ -706,12 +715,13 @@ export function createRunService({ canonical, projects, store, operations, seria
 
   const bumpRun = (owner, projectId, run, changes) => {
     const request = holds.get(String(projectId)) ?? null;
+    const revision = run.revision + 1;
     const written = putRun(owner, projectId, {
       ...run,
       ...changes,
-      revision: run.revision + 1,
+      revision,
       updated_at: now(),
-      revision_written_by: request ? { ...request.writtenBy } : null,
+      revision_written_by: request ? { ...request.writtenBy, revision } : null,
     });
     // Reported to the request's own caller, under this lock, only once the
     // write has been made. See `resume`'s `wrote`.
@@ -3453,7 +3463,7 @@ export function createRunService({ canonical, projects, store, operations, seria
         if (normalized.target_candidate_id !== null) refuseCandidateFromAnotherSnapshot(record, normalized.target_candidate_id, provenance, 'target_candidate_id');
         const selection = assetSelection(record, normalized.asset_ids);
         const run = newRun(owner, record, normalized, { canonicalProvenance: provenance, fingerprint, selection });
-        return { run: putRun(owner, projectId, { ...run, revision_written_by: { ...request.writtenBy } }), replayed: false };
+        return { run: putRun(owner, projectId, { ...run, revision_written_by: { ...request.writtenBy, revision: run.revision } }), replayed: false };
       });
 
       if (created.replayed) {
