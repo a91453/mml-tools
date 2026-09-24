@@ -5,17 +5,21 @@
 // already settled attempt sends nothing, so the count tells the two apart
 // where the page's own messages cannot.
 //
-// Installed on the live page (again after every navigation); returns a
-// function that reads the count.
+// Run bankSendCounter in the page: page.addInitScript(bankSendCounter) to
+// count from the moment a page loads (a synth made at boot), or
+// countBankSends(page), which installs it on the live page (again after every
+// navigation) and returns a function that reads the count.
+export function bankSendCounter() {
+  if (Number.isInteger(window.bankSends)) return;
+  window.bankSends = 0;
+  const post = MessagePort.prototype.postMessage;
+  MessagePort.prototype.postMessage = function (message, ...rest) {
+    if (message?.type === 'soundBankManager' && message?.data?.type === 'addSoundBank') window.bankSends += 1;
+    return post.call(this, message, ...rest);
+  };
+}
+
 export async function countBankSends(page) {
-  await page.evaluate(() => {
-    if (Number.isInteger(window.bankSends)) return;
-    window.bankSends = 0;
-    const post = MessagePort.prototype.postMessage;
-    MessagePort.prototype.postMessage = function (message, ...rest) {
-      if (message?.type === 'soundBankManager' && message?.data?.type === 'addSoundBank') window.bankSends += 1;
-      return post.call(this, message, ...rest);
-    };
-  });
+  await page.evaluate(bankSendCounter);
   return () => page.evaluate(() => window.bankSends);
 }

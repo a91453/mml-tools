@@ -627,7 +627,8 @@ export function describe(err, headline) {
 // than every pick: once any bank has been picked it is never applied, not
 // even when the pick came while the engine was still booting and its own
 // store write has not finished (or failed), leaving the older bank in the
-// store for this read to find.
+// store for this read to find. A kept bank that does not load says why in the
+// log, as a pick's does, unless a pick has been made since.
 export async function loadStoredBank() {
   const picked = () => bankPicks > 0;
   if (picked()) return;
@@ -638,7 +639,9 @@ export async function loadStoredBank() {
   try { await queueBank(() => picked() ? undefined : loadBank(stored.bytes, stored.name, false, null)); }
   catch (err) {
     console.warn("[Workshop] stored bank failed to load:", err);
-    if (!picked()) $("#dlsName").textContent = i18n.t("ui.bankFailed");
+    if (picked()) return;
+    $("#dlsName").textContent = i18n.t("ui.bankFailed");
+    say(describe(err, i18n.t("ui.bankLoadError")));
   }
 }
 

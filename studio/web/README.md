@@ -239,7 +239,9 @@ exact timing, event identity and the evidence boundaries. See
     context running (a context still waiting for a user gesture is not
     timed), stops the load with 「音色試聽引擎無法啟動，已停止載入」 or
     「音色試聽引擎在 20 秒內沒有就緒，已停止載入」 (the Workshop says it in
-    its page language), and the next load starts a new synth.
+    its page language), and the next load starts a new synth. When the
+    bank kept on the device fails to load as the Workshop opens, its log
+    says why, as it does for a pick.
   - **The default bank.** A General MIDI subset of FluidR3Mono_GM.sf3 (MIT).
     It is not in this repository and not in the build: the upstream file asks
     not to be redistributed. Nothing is downloaded when the page loads. The
