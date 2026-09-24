@@ -477,9 +477,12 @@ test('an attempt interrupted by a fault, then a retry whose process dies inside 
       const pinned = (await read(faulted)).application.run_revision_at_attempt;
       assert.equal(pinned, (await faulted.getRun(OWNER, context.fixture.projectId, context.run.run_id)).run.revision, `${hook}: the fault recorded where the attempt left the run`);
 
+      // The retry must get into the run for its process to die there. One the
+      // run refuses settles instead of stopping, and is reported as such
+      // rather than waited on for good.
       const dying = dyingInside(directory, hook);
-      acceptIn(dying.app, context);
-      await dying.stopped;
+      const settledFirst = await Promise.race([dying.stopped.then(() => null), acceptIn(dying.app, context)]);
+      assert.equal(settledFirst, null, `${hook}: the retry must be admitted and stop inside the run, got ${settledFirst?.error?.code}: ${settledFirst?.error?.message}`);
 
       const restarted = createStudioApplication({ dataDirectory: directory, durability: 'persistent' });
       const mid = await read(restarted);
