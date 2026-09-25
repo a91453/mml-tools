@@ -25,6 +25,17 @@ needs a Dashboard click, give the owner exact steps.
 - (a) A pasted, valid MML delivery stays VALIDATED. Only readiness / machine delivery of a Studio-generated Final must agree with the emitter.
 - (b) Decisions an imported project marks "accepted" are demoted to pending (as Studio Web already does).
 
+## Status update (~11:55 UTC) — FINAL, supersedes everything below
+All fix PRs are merged: #97 #98 #99 #100 #101 #102 #103 (paste MML into listening) #104 #105. main = 5dbf42a.
+The claude/wip-* branches are stale; ignore them.
+Left to do:
+1. Studio Web v7 durable release of the new main (steps in "Studio Web v7 release" below); the owner clicks Deploy once.
+2. Low leftovers never fixed (fix rounds stopped on a usage limit), optional:
+   - #101: every Web analysis re-runs the emitter while a valid pasted delivery is loaded (~0.26-0.85 s on the rare refusal shape; cache per workspace revision or correct the section 5b cost note); a VALIDATED pasted delivery now shows a whole-song finalEmission listening marker nobody can resolve; a run test title overstates what it asserts.
+   - #100: one low from its review; the Final-preview-preempts-listening path has no browser scenario.
+   - #99: two lows from its review.
+3. Owner decisions still open: TTR option through Finalize, Web vs service Lead grading, baseline id depends on project title, lockfile pinning, WebKit coverage of Worker boot.
+
 ## Status update (~11:05 UTC) — newest, read this first
 Merged: #97, #98, #99, #101. Only two PRs remain:
 - #100 claude/p3-bank-races — CI green. Before merge fix the Codex P2 review thread: in studio/web/listen-ui.mjs play() (~:184) replace `state.stopNote = null;` with `status('');` so a restarted listening play clears the persisted "試聽已停止…" text; add a browser or unit check (preempt listening, play again, #listen-status is empty). Reply on the Codex thread and resolve it, push, merge when green.
