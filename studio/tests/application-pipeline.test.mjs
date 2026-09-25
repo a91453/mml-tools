@@ -13,11 +13,16 @@ import { join } from 'node:path';
 
 import { ERROR_CODES, createStudioApplication } from '../backend/application/index.mjs';
 import { blobName } from '../backend/application/store.mjs';
+import { analyzeCrossSourceHarmony } from '../backend/arbitration/harmony.mjs';
+import { createArbitrationDecision, createCanonicalNoteEvent, createCanonicalProject } from '../backend/canonical/index.mjs';
+import { MICRO_TIMING_KEEP_ACTION, createIntervalIdentity } from '../backend/canonical/micro-timing.mjs';
 import { sixSourceVoices } from './fixtures/midi-fixtures.mjs';
 import {
+  FIXTURE_SOURCE_ID,
   applyKeepOnlyCandidate,
   canonicalProjectBytes,
   keepEveryRole,
+  selfResolvedConflictBaseline,
   sixRoleBaseline,
 } from './fixtures/application-fixtures.mjs';
 import { MACHINE_DELIVERY_ACTIVE, assertFinalWithheldOrDeliveredUnresolved } from './support/loaded-release.mjs';
@@ -114,6 +119,83 @@ test('an imported Canonical IR cannot assert a gate it has not earned', async ()
 
   const { baseline } = await service.analyzeSources(OWNER, project.project_id);
   assert.equal(baseline.source_complete, false, 'an uploaded file must not be able to confirm its own source completeness');
+});
+
+/** Upload one Canonical IR file, keep every role, and review the candidate. */
+async function reviewImported(file, title) {
+  const service = app();
+  const project = (await service.createProject(OWNER, { title })).project;
+  await service.uploadAsset(OWNER, project.project_id, {
+    kind: 'canonical_project', filename: 'imported.json', mediaType: 'application/json', bytes: canonicalProjectBytes(file),
+  });
+  await service.analyzeSources(OWNER, project.project_id);
+  const candidateId = (await service.applyDecisions(OWNER, project.project_id, { decisions: keepEveryRole(file) })).decisions.candidate_id;
+  return (await service.reviewCandidate(OWNER, project.project_id, { candidateId })).review;
+}
+
+/** Studio Web's reading of the same file, as baseline and candidate. */
+async function webReading(file, title) {
+  const { newWorkspace, intake, analyzeWorkspace } = await import('../web/model.mjs');
+  const text = JSON.stringify(file);
+  return analyzeWorkspace({
+    ...newWorkspace(),
+    title,
+    settings: { meterText: '0 4/4', recording: 'synthetic', offset: '0', end: '4', audioRequired: 'no', preview: 'none' },
+    assets: { baseline: intake({ name: 'b.json', content: text, id: 'b' }), candidate: intake({ name: 'c.json', content: text, id: 'c' }) },
+  });
+}
+
+test('an imported Canonical IR cannot resolve its own cross-source conflict, and Studio Web reads the file the same way', async () => {
+  const file = selfResolvedConflictBaseline();
+  // Trusted as written, the file's own decision would resolve the conflict.
+  assert.equal(analyzeCrossSourceHarmony(file).conflictCount, 1);
+  assert.equal(analyzeCrossSourceHarmony(file).status, 'PASS');
+
+  const review = await reviewImported(file, 'Self-resolved');
+  // Gate 5 still has the conflict to answer. The decision is not dropped: it is
+  // kept as an open decision, so readiness blocks on it until it is reviewed.
+  assert.equal(review.harmony.status, 'PENDING');
+  assert.equal(review.harmony.unresolvedCount, 1);
+  assert.equal(review.readiness.gates.crossSourceHarmony.status, 'PENDING');
+  assert.ok(review.blockers.includes('crossSourceHarmony'));
+  assert.deepEqual(review.pending_decisions, ['imported:doubling']);
+  assert.deepEqual(review.readiness.gates.pendingDecisions.decisionIds, ['imported:doubling']);
+
+  // Studio Web, handed the same file, reaches the same two gate verdicts.
+  const web = await webReading(file, 'Self-resolved');
+  assert.deepEqual(web.gates.crossSourceHarmony, review.readiness.gates.crossSourceHarmony);
+  assert.deepEqual(web.gates.pendingDecisions, review.readiness.gates.pendingDecisions);
+});
+
+test('an imported accepted micro-timing keep is held pending, as Studio Web holds it', async () => {
+  // A sub-grid note the file itself declares kept as source-supported, with
+  // evidence naming the official source. Accepted, that keep would classify
+  // the interval SOURCE_SUPPORTED_MICROTIMING; imported, it is a claim.
+  const source = sixRoleBaseline();
+  const subGrid = createCanonicalNoteEvent({ id: 'chord5-z', pitch: 50, start: '479/480', end: '1', role: 'Chord5', voice: 'chord5', volume: null, sourceIds: [FIXTURE_SOURCE_ID], sourceEventIds: [`${FIXTURE_SOURCE_ID}#chord5-z`] });
+  const file = createCanonicalProject({
+    ...source,
+    events: [...source.events.map(event => (event.id === 'chord5-1' ? createCanonicalNoteEvent({ ...event, end: '479/480' }) : event)), subGrid],
+    decisions: [createArbitrationDecision({
+      id: 'imported:keep',
+      eventIds: ['chord5-z'],
+      action: MICRO_TIMING_KEEP_ACTION,
+      status: 'accepted',
+      reason: 'The file says this note is notated as written.',
+      evidence: ['official MIDI, bar 1'],
+      metadata: { evidenceSourceIds: [FIXTURE_SOURCE_ID], intervalIdentity: createIntervalIdentity({ type: 'event-duration', eventId: 'chord5-z', start: '479/480', end: '1' }) },
+    })],
+  });
+
+  const review = await reviewImported(file, 'Self-kept');
+  assert.equal(review.readiness.gates.microTiming.sourceSupportedCount, 0);
+  assert.deepEqual(review.pending_decisions, ['imported:keep']);
+
+  const web = await webReading(file, 'Self-kept');
+  assert.equal(web.gates.microTiming.status, review.readiness.gates.microTiming.status);
+  assert.equal(web.gates.microTiming.sourceSupportedCount, review.readiness.gates.microTiming.sourceSupportedCount);
+  assert.deepEqual(web.gates.microTiming.blockers, review.readiness.gates.microTiming.blockers);
+  assert.deepEqual(web.gates.pendingDecisions, review.readiness.gates.pendingDecisions);
 });
 
 // ─── suggestion is not acceptance ───────────────────────────────────────────

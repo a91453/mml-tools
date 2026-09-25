@@ -23,8 +23,13 @@
 
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 
 import { createStudioApplication, ERROR_CODES, READINESS_BLOCKER_WITHOUT_OPERATION, RUN_STATE, RUN_STEP, RUN_STEP_STATUS } from '../backend/application/index.mjs';
+import { blobName } from '../backend/application/store.mjs';
+import { baselineIdentityOf } from '../backend/arrangement/decision-application.mjs';
 import { createArbitrationDecision, createCanonicalNoteEvent, createCanonicalProject, createCanonicalRestEvent } from '../backend/canonical/index.mjs';
 import { MICRO_TIMING_KEEP_ACTION, createIntervalIdentity } from '../backend/canonical/micro-timing.mjs';
 import { enginesWith } from './support/real-engines.mjs';
@@ -465,6 +470,35 @@ test('a micro-timing boundary Final cannot reach names no operation, says why, a
   assert.ok(caps.runs.refuses.some(entry => entry.includes(BOUNDARY) && entry.includes('lists no operation')), JSON.stringify(caps.runs.refuses));
 });
 
+// A keep claim that stands, in the Source-Faithful Baseline this service
+// stored itself.
+//
+// An uploaded Canonical IR cannot bring one any more: intake holds every
+// decision a file declares as pending, whatever status the file gives it. The
+// baseline the service stored is its own record and is read back with its
+// decisions as written, so a keep accepted there -- in a baseline stored before
+// imports were held pending, say -- still stands, and what such a keep makes of
+// a run is what the cases below pin. So the project is ingested as a file, and
+// the stored baseline then holds the file's decisions as written, filed under
+// its content identity the way intake files one.
+async function withStoredDecisions(project, work) {
+  const directory = mkdtempSync(join(tmpdir(), 'mml-run-blocking-'));
+  try {
+    const isolated = createStudioApplication({ dataDirectory: directory });
+    const own = await projectWithSymbolicAsset(isolated, OWNER, { project });
+    await isolated.analyzeSources(OWNER, own.projectId, { assetIds: [own.assetId] });
+    const baselinePath = join(directory, 'blobs', `${blobName(`baseline:${own.projectId}`)}.bin`);
+    const stored = { ...JSON.parse(readFileSync(baselinePath, 'utf8')), decisions: project.decisions };
+    writeFileSync(baselinePath, JSON.stringify(stored));
+    const recordPath = join(directory, 'records', `${own.projectId.slice(-32)}.json`);
+    const record = JSON.parse(readFileSync(recordPath, 'utf8'));
+    writeFileSync(recordPath, JSON.stringify({ ...record, baseline: { ...record.baseline, baseline_id: `bas:${baselineIdentityOf(stored).contentDigest}` } }));
+    return await work(isolated, own);
+  } finally {
+    rmSync(directory, { recursive: true, force: true });
+  }
+}
+
 test('a release no release representation can move names no operation in a run, whatever follows it, and one it can move keeps the hint', async () => {
   // Chord5 of the six-role fixture is [0,1) [1,2) [2,4). Each case puts one of
   // its releases one 480-tick short of the 1/64 grid:
@@ -500,14 +534,13 @@ test('a release no release representation can move names no operation in a run, 
       metadata: { intervalIdentity: createIntervalIdentity(shape.identity) },
     })] : [];
     const project = createCanonicalProject({ ...source, events, decisions });
-    const isolated = createStudioApplication({});
-    const own = await projectWithSymbolicAsset(isolated, OWNER, { project });
-    await isolated.analyzeSources(OWNER, own.projectId, { assetIds: [own.assetId] });
-    // An arrangement decision targets notes only; the explicit rest is carried.
-    const notes = new Set(project.events.filter(event => event.kind === 'note').map(event => event.id));
-    const accepted = runDecisionsFor(own.project).map(decision => ({ ...decision, target: { ...decision.target, eventIds: decision.target.eventIds.filter(id => notes.has(id)) } }));
-    const candidate = (await isolated.applyDecisions(OWNER, own.projectId, { decisions: accepted })).decisions.candidate_id;
-    return (await isolated.startRun(OWNER, own.projectId, { target_candidate_id: candidate, confirmations: FIXTURE_CONFIRMATIONS })).run;
+    return withStoredDecisions(project, async (isolated, own) => {
+      // An arrangement decision targets notes only; the explicit rest is carried.
+      const notes = new Set(project.events.filter(event => event.kind === 'note').map(event => event.id));
+      const accepted = runDecisionsFor(own.project).map(decision => ({ ...decision, target: { ...decision.target, eventIds: decision.target.eventIds.filter(id => notes.has(id)) } }));
+      const candidate = (await isolated.applyDecisions(OWNER, own.projectId, { decisions: accepted })).decisions.candidate_id;
+      return (await isolated.startRun(OWNER, own.projectId, { target_candidate_id: candidate, confirmations: FIXTURE_CONFIRMATIONS })).run;
+    });
   };
   const none = request => request.detail.unsupportedBoundaries.filter(entry => entry.coverage === 'none')
     .map(entry => [entry.role, entry.eventId, entry.kind, entry.boundary, entry.position, entry.reason]);
@@ -591,13 +624,12 @@ test('a kept sub-grid rest at a release no representation can move does not let 
     metadata: { evidenceSourceIds: [FIXTURE_SOURCE_ID], intervalIdentity: createIntervalIdentity({ type: 'event-duration', eventId: 'chord5-breath', start: '719/480', end: '3/2' }) },
   })];
   const project = createCanonicalProject({ ...source, events, decisions });
-  const isolated = createStudioApplication({});
-  const own = await projectWithSymbolicAsset(isolated, OWNER, { project });
-  await isolated.analyzeSources(OWNER, own.projectId, { assetIds: [own.assetId] });
-  const notes = new Set(project.events.filter(event => event.kind === 'note').map(event => event.id));
-  const accepted = runDecisionsFor(own.project).map(decision => ({ ...decision, target: { ...decision.target, eventIds: decision.target.eventIds.filter(id => notes.has(id)) } }));
-  const candidate = (await isolated.applyDecisions(OWNER, own.projectId, { decisions: accepted })).decisions.candidate_id;
-  const { run } = await isolated.startRun(OWNER, own.projectId, { target_candidate_id: candidate, confirmations: FIXTURE_CONFIRMATIONS });
+  const run = await withStoredDecisions(project, async (isolated, own) => {
+    const notes = new Set(project.events.filter(event => event.kind === 'note').map(event => event.id));
+    const accepted = runDecisionsFor(own.project).map(decision => ({ ...decision, target: { ...decision.target, eventIds: decision.target.eventIds.filter(id => notes.has(id)) } }));
+    const candidate = (await isolated.applyDecisions(OWNER, own.projectId, { decisions: accepted })).decisions.candidate_id;
+    return (await isolated.startRun(OWNER, own.projectId, { target_candidate_id: candidate, confirmations: FIXTURE_CONFIRMATIONS })).run;
+  });
 
   assert.notEqual(run.state, RUN_STATE.COMPLETED);
   assert.equal(run.final_artifact_id, null);
@@ -644,13 +676,12 @@ test('kept sub-grid material no Final token can carry holds the run at microTimi
       ...added,
     ];
     const project = createCanonicalProject({ ...source, events, decisions });
-    const isolated = createStudioApplication({});
-    const own = await projectWithSymbolicAsset(isolated, OWNER, { project });
-    await isolated.analyzeSources(OWNER, own.projectId, { assetIds: [own.assetId] });
-    const notes = new Set(project.events.filter(event => event.kind === 'note').map(event => event.id));
-    const accepted = runDecisionsFor(own.project).map(decision => ({ ...decision, target: { ...decision.target, eventIds: decision.target.eventIds.filter(id => notes.has(id)) } }));
-    const candidate = (await isolated.applyDecisions(OWNER, own.projectId, { decisions: accepted })).decisions.candidate_id;
-    return (await isolated.startRun(OWNER, own.projectId, { target_candidate_id: candidate, confirmations: FIXTURE_CONFIRMATIONS })).run;
+    return withStoredDecisions(project, async (isolated, own) => {
+      const notes = new Set(project.events.filter(event => event.kind === 'note').map(event => event.id));
+      const accepted = runDecisionsFor(own.project).map(decision => ({ ...decision, target: { ...decision.target, eventIds: decision.target.eventIds.filter(id => notes.has(id)) } }));
+      const candidate = (await isolated.applyDecisions(OWNER, own.projectId, { decisions: accepted })).decisions.candidate_id;
+      return (await isolated.startRun(OWNER, own.projectId, { target_candidate_id: candidate, confirmations: FIXTURE_CONFIRMATIONS })).run;
+    });
   };
   const chord5z = createCanonicalNoteEvent({ id: 'chord5-z', pitch: 50, start: '479/480', end: '1', role: 'Chord5', voice: 'chord5', volume: null, sourceIds: [FIXTURE_SOURCE_ID], sourceEventIds: [`${FIXTURE_SOURCE_ID}#chord5-z`] });
   const cases = {

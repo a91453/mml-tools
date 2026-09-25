@@ -72,8 +72,8 @@ const allowlisted = () => read('.dockerignore')
 /**
  * The image filesystem as Railway delivers it: every allowlisted path, and no
  * `.git`. Dependencies are linked rather than reinstalled; the Dockerfile's
- * `npm install --omit=dev` resolves the single pinned runtime dependency and
- * that is not what is under test here.
+ * `npm install --omit=dev` resolves the pinned runtime dependencies and that
+ * is not what is under test here.
  */
 function imageWithoutGitMetadata(t) {
   const dir = temporary(t, 'mml-image-');

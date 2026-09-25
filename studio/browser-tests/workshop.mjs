@@ -288,37 +288,53 @@ export async function runWorkshopChecks({ page, base, idle, file, screenshot, pr
   // older than any pick. On a slow device the pick can come while the synth
   // processor is still loading and before its own store write has landed (a
   // big bank hashes slowly; one over the store's limit is refused), so the
-  // boot-time read still finds saw.sf2. Here the processor is held until the
-  // pick is made, and the pick's store write is refused.
+  // boot-time read still finds saw.sf2. Here the processor's module load is
+  // held in the page until the pick is made, and the pick's store write is
+  // refused. (Playwright does not route an AudioWorklet's module request, so
+  // a page.route for processor.js sees nothing and holds nothing; the load
+  // is held at Worklet.addModule instead, armed for one load.)
   await page.addInitScript(() => {
     if (sessionStorage.getItem('workshopRefuseBankStore') !== 'yes') return;
     sessionStorage.removeItem('workshopRefuseBankStore');
     crypto.subtle.digest = () => Promise.reject(Error('bank store write refused (browser check)'));
   });
-  const PROCESSOR = '**/vendor/spessasynth/processor.js';
-  let releaseProcessor;
-  const processorHeld = new Promise(resolve => { releaseProcessor = resolve; });
-  await page.route(PROCESSOR, async route => { await processorHeld; await route.continue(); });
-  await page.evaluate(() => sessionStorage.setItem('workshopRefuseBankStore', 'yes'));
+  await page.addInitScript(() => {
+    if (sessionStorage.getItem('workshopHoldProcessor') !== 'yes') return;
+    sessionStorage.removeItem('workshopHoldProcessor');
+    const addModule = Worklet.prototype.addModule;
+    let release;
+    const released = new Promise(resolve => { release = resolve; });
+    window.processorHold = { held: 0, release: () => release() };
+    Worklet.prototype.addModule = function (url, ...rest) {
+      if (!String(url).endsWith('/vendor/spessasynth/processor.js')) return addModule.call(this, url, ...rest);
+      window.processorHold.held += 1;
+      return released.then(() => addModule.call(this, url, ...rest));
+    };
+  });
+  await page.evaluate(() => { sessionStorage.setItem('workshopRefuseBankStore', 'yes'); sessionStorage.setItem('workshopHoldProcessor', 'yes'); });
   await page.reload(); await page.locator('#unverified').waitFor();
+  await page.waitForFunction(() => window.processorHold?.held === 1);
+  // No synth exists while the processor is held, so the count starts at 0.
+  const bootSends = await countBankSends(page);
   await page.evaluate(() => {
     const label = document.querySelector('#dlsName');
     window.bankLabels = [];
     new MutationObserver(() => window.bankLabels.push(label.textContent)).observe(label, { childList: true, characterData: true, subtree: true });
   });
+  assert.equal(await page.locator('#engine').textContent(), `${await t('engine.step.worklet')}…`, 'the pick is made while the engine loads its processor');
+  assert.ok(!(await page.locator('#dlsName').textContent()).startsWith('saw.sf2'), 'and before the kept bank is loaded');
   await page.locator('#dls').setInputFiles({ name: 'picked.sf2', mimeType: 'application/octet-stream', buffer: Buffer.from(BasicSoundBank.getSampleSoundBankFile()) });
-  releaseProcessor();
+  await page.evaluate(() => window.processorHold.release());
   await page.waitForFunction(() => window.bankLabels.some(text => text.startsWith('picked.sf2')));
   // The stored bank never replaces a pick, however late it is asked for. A
   // stored-bank load queued behind the pick would run before this one ends,
   // so every label the page showed is recorded by the time it returns.
   await page.evaluate(async () => (await import('./ui.mjs')).loadStoredBank());
   const labels = await page.evaluate(() => window.bankLabels);
-  const sincePick = labels.slice(labels.findIndex(text => text.startsWith('picked.sf2')));
-  assert.ok(sincePick.every(text => text.startsWith('picked.sf2')), `the bank picked during boot is never replaced: ${labels.join(' → ')}`);
+  assert.ok(labels.every(text => !text.startsWith('saw.sf2')), `the bank picked during boot is never replaced: ${labels.join(' → ')}`);
   assert.match(await page.locator('#dlsName').textContent(), /^picked\.sf2 /, 'the bank picked during boot is the one loaded');
+  assert.equal(await bootSends(), 1, 'the picked bank is the only one sent to the synth');
   assert.equal(await page.evaluate(async () => (await (await import('../preview/soundbank-store.mjs')).loadBank())?.name), 'saw.sf2', 'the refused pick left saw.sf2 in the store');
-  await page.unroute(PROCESSOR);
 
   // ── a synth that never reports ready ends the load ───────────────────────
   // With the processor's first reply withheld, as from one that never

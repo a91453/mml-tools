@@ -839,8 +839,8 @@ Remaining, recorded rather than fixed:
 * **P3 — arbitration decisions already on the baseline are trusted.** Narrowed
   by "Residual D": a carried decision stays current only while every event it
   names is present with the same role and was not duplicated. A baseline's own
-  decisions are still the caller's (backend) or forced to `pending` on import
-  (Web).
+  decisions are forced to `pending` on import, by backend intake and by Web
+  alike; only a baseline the backend stored itself keeps them as written.
 
 ## Residual hardening (PR #28 follow-up)
 

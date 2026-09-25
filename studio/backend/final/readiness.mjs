@@ -1,7 +1,10 @@
 import { EFFECTIVE_RULESET, studioFinalBlockers } from '../rules/index.mjs';
 import { compareCanonicalVersions } from '../compare/version-drift.mjs';
 import { enforceMicroGaps } from './micro-gap-enforcement.mjs';
-import { LISTEN_FIRST_CODES, evaluateMachineDelivery } from './delivery-evaluator.mjs';
+import { LISTEN_FIRST_CODES, deliveryBlockingGates, evaluateMachineDelivery, machineDeliveryEmitOptions } from './delivery-evaluator.mjs';
+// The emitter reads a readiness *report* (an option it is handed), never this
+// module, so importing it here is no cycle; see the Final emission below.
+import { emitFinalMml } from './mml-emitter.mjs';
 import { LEAD_EVIDENCE_IDENTITY_MISMATCH, primaryEvidenceContradictsLead } from '../arbitration/lead-demotion.mjs';
 
 const PASS_LIKE = new Set(['PASS', 'N/A']);
@@ -541,8 +544,18 @@ export function evaluateProjectReadiness({
   // The Canonical identity the machine-delivery ledger is classified under: the
   // loaded release, unless a regression names another one explicitly.
   canonical = EFFECTIVE_RULESET.canonical,
+  // The Final emitter's answer for exactly what would be delivered, when the
+  // caller already has it: the result of its own delivery emission of this
+  // project. Reused rather than emitted again.
+  finalEmission = null,
+  // Otherwise, how the caller delivers: `(readiness) => emit result`, handed
+  // the report as it stands before the emission, called at most once and only
+  // when nothing else stops delivery. Omitted, readiness emits exactly as
+  // machine delivery does (`machineDeliveryEmitOptions`).
+  emitFinal = null,
 }) {
   if (!project || typeof project !== 'object') throw Error('Canonical project is required');
+  if (emitFinal !== null && typeof emitFinal !== 'function') throw Error('emitFinal must be a function');
 
   const implementationBlockers = studioFinalBlockers();
   const pendingDecisions = (project.decisions ?? []).filter(decision => decision.status === 'pending');
@@ -612,14 +625,13 @@ export function evaluateProjectReadiness({
   const preGameBlocking = preGameGateNames.filter(name => !PASS_LIKE.has(gates[name].status));
   const candidateReady = preGameBlocking.length === 0;
   const finalAccepted = candidateReady && gates.inGameAcceptance.status === 'PASS';
-  const machineDelivery = evaluateMachineDelivery(gates, { canonical });
   // ACCEPTANCE_CRITERIA "Final state vocabulary", stated rather than left for a
   // caller to reassemble from two booleans: VALIDATED is every required
   // non-game gate PASS/N-A; IN_GAME_ACCEPTED additionally needs the in-game gate,
   // which only the user or a controlled target-client test records.
   const songState = finalAccepted ? SONG_STATE.IN_GAME_ACCEPTED : candidateReady ? SONG_STATE.VALIDATED : SONG_STATE.CANDIDATE;
 
-  return Object.freeze({
+  const report = machineDelivery => Object.freeze({
     candidateReady,
     finalAccepted,
     songState,
@@ -628,6 +640,36 @@ export function evaluateProjectReadiness({
     machineDelivery,
     preGameBlocking: Object.freeze(preGameBlocking),
     gates,
-    notice: 'Module availability never certifies a song. Candidate readiness requires source completeness plus a real Source-Faithful Baseline snapshot whose event-level diff is computed against the candidate, an independent Gate 4 result for Core3 musical completeness that a clean source-continuity audit never supplies, evidence-backed review of any Lead removals/demotions and Lead additions/promotions, a source-aware micro-timing result with no confirmed technical residue and no unresolved sub-grid interval, audio/arbitration/technical/player evidence, an explicit evidence-backed Mobile adaptation review, and an explicit evidence-backed regression review. Named historical regressions without reproducible fixtures remain FIXTURE_PENDING and are never claimed as passed. finalAccepted additionally requires in-game acceptance.',
+    notice: READINESS_NOTICE,
   });
+
+  // The Final itself. Every gate above can clear while the Final emitter, run
+  // on exactly this project with the options delivery uses, refuses to write
+  // it: a release that drifted from its baseline with no release record, a
+  // Tempo position no Final token sequence reaches, a bounded duration search
+  // that found nothing. Machine delivery is ready only when the emitter
+  // returned an emitted Final, so it is asked -- once, and only when it is the
+  // one question left: nothing stops delivery under the rule this identity
+  // makes operative (`deliveryBlockingGates`), `technical` included. Asked
+  // earlier, it could only restate a blocking gate as READINESS_BLOCKED. A
+  // refusal is the delivery-level FINAL_EMISSION_REFUSED (or
+  // FINAL_EMISSION_PENDING) entry carrying the emitter's own diagnostics
+  // (final/delivery-evaluator.mjs); no gate above, no classification, no song
+  // state and no emitter answer changes. A caller that already emitted hands
+  // its result in and nothing is emitted twice.
+  const projection = evaluateMachineDelivery(gates, { canonical });
+  let emission = finalEmission;
+  if (emission === null) {
+    const before = report(projection);
+    if (deliveryBlockingGates(before).length === 0) {
+      emission = emitFinal
+        ? emitFinal(before)
+        : emitFinalMml(project, machineDeliveryEmitOptions(before, { releaseEvidenceRegistry, canonical }));
+      // An emission that returned nothing has not shown an emitted Final.
+      emission ??= Object.freeze({ status: null, diagnostics: Object.freeze([]) });
+    }
+  }
+  return report(emission === null ? projection : evaluateMachineDelivery(gates, { canonical, finalEmission: emission }));
 }
+
+const READINESS_NOTICE = 'Module availability never certifies a song. Candidate readiness requires source completeness plus a real Source-Faithful Baseline snapshot whose event-level diff is computed against the candidate, an independent Gate 4 result for Core3 musical completeness that a clean source-continuity audit never supplies, evidence-backed review of any Lead removals/demotions and Lead additions/promotions, a source-aware micro-timing result with no confirmed technical residue and no unresolved sub-grid interval, audio/arbitration/technical/player evidence, an explicit evidence-backed Mobile adaptation review, and an explicit evidence-backed regression review. Named historical regressions without reproducible fixtures remain FIXTURE_PENDING and are never claimed as passed. finalAccepted additionally requires in-game acceptance.';

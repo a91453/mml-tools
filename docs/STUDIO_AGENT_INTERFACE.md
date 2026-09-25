@@ -274,6 +274,18 @@ metadata keys `final/readiness.mjs` reads as gate evidence — `sourceComplete`,
 way in. An imported file cannot assert a gate it has not earned, exactly as
 `applyAcceptedArrangement` refuses to let a parent candidate inherit one.
 
+The same holds for the decisions (`decisions[]`) a file carries. Each one is
+kept — id, events, action, reason, evidence and metadata as uploaded — but as
+`pending`, whatever status the file gave it. A decision the file marks
+`accepted` therefore resolves no cross-source conflict (Gate 5 still reports the
+pair unresolved) and classifies no micro-timing interval; it is listed in a
+review's `pending_decisions`, and the `pendingDecisions` readiness gate blocks
+on it. No operation in this build accepts such a decision: it stays open until
+an applied arrangement omits an event it names, or the source is ingested again
+without it. A file's own word never clears a gate. Studio Web holds the same
+file the same way, so the two agree on it. Only the Source-Faithful Baseline
+this service stored itself is read back with its decisions as written.
+
 ## 7. Job lifecycle
 
 `queued → running → succeeded | failed`. Each transition is written with its own
@@ -588,7 +600,9 @@ Three things keep it from becoming a way around this interface's own rules:
   blocks. A blocker of a known gate that none of its hinted operations answers
   (`READINESS_BLOCKER_WITHOUT_OPERATION`; today
   `MICRO_TIMING_BOUNDARY_NOT_FINAL_REPRESENTABLE` and
-  `MICRO_TIMING_SOURCE_SUPPORTED_NOT_FINAL_REPRESENTABLE`) is stated in
+  `MICRO_TIMING_SOURCE_SUPPORTED_NOT_FINAL_REPRESENTABLE`, and the
+  machine-delivery `finalEmission` entry's `FINAL_EMISSION_REFUSED` and
+  `FINAL_EMISSION_PENDING`) is stated in
   `missing`, and a request carrying only such blockers names no operation. The pre-emission
   exemption is the Final service's own
   `PRE_EMISSION_EXEMPT_GATES`, imported rather than restated, so the run cannot
@@ -720,6 +734,22 @@ candidate's own meter events, never from a caller. Where the emitter passed and
 the parser then disagreed, the post-emission readiness wins — two modules
 contradicting each other is reported as the unsatisfied gate it is. Delivery
 requires the whole post-emission readiness, not only its technical row.
+
+**Machine delivery is ready only when the emitter wrote the Final.** Every
+readiness gate can clear while the emitter refuses the candidate (a release that
+drifted from its baseline with no release record, a Tempo position Final cannot
+reach, a bounded search that found nothing). Finalize emits once, with machine
+delivery's own options (`machineDeliveryEmitOptions`, the definition readiness
+checks with too), and hands that emission to both readiness readings, so
+nothing is emitted twice. When the emitter returns `FAIL` or `PENDING` and
+nothing else but `technical` blocks, machine delivery records the
+delivery-level `finalEmission` entry -- `FINAL_EMISSION_REFUSED`, or
+`FINAL_EMISSION_PENDING` -- carrying the emitter's own status and diagnostics
+unchanged, and the response's `blockers` read `["technical", "finalEmission"]`
+rather than a bare `technical`. A run halts at finalize with a `finalEmission`
+review request that carries those diagnostics and lists no operation. No gate,
+G10 verdict, classification, song state or emitter answer changes, and
+`PENDING` is never read as a Final. See `FINAL_MML_EMITTER.md` §5b.
 
 **Pieces that do not end on a bar line.** The Final parser accepts a
 source-confirmed `pickup` and `final_partial` (a non-negative integer, decimal
