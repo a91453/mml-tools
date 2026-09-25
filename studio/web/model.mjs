@@ -836,7 +836,17 @@ function analysisContext(w) {
   const playerReadback = playerReadbackGate(w, rawMml, technical, deliveryMatches);
   const audioPresent = Object.values(w.assets).some(a => a.project.sources.some(s => s.kind === 'original-audio')) || Boolean(w.audio);
   const audioRequired = audioPresent || w.settings.audioRequired !== 'no';
-  const readiness = evaluateProjectReadiness({ project, mmlValidation: technical, core3Report: core3, core3CompletenessReport: core3Completeness, harmonyReport: harmony, leadDemotionReports: leadReports, leadPromotionReports, lineageReport: lineage, versionDriftReviewed: reviewed(w, 'version'), originalAudioRequired: audioRequired, originalAudioReviewed: reviewed(w, 'audio'), playerReadback: playerReadback.status, mobileAdaptation: reviewed(w, 'adaptation') ? 'PASS' : 'PENDING', regressionReviewed: reviewed(w, 'regression') });
+  // Machine delivery is ready only when the Final emitter writes this project,
+  // so readiness asks it once nothing else stops machine delivery (the
+  // technical gate included, so only while a valid delivery is in hand) -- and
+  // asks it the way this Web delivers: exactly the call generation makes,
+  // handed the report as it stands. The answer is kept so generation reuses it
+  // instead of emitting twice. It is the machine-delivery answer only: a valid
+  // pasted delivery is still graded by the Web gates below, and a refusal to
+  // write the candidate does not change what they say about it.
+  let emission = null;
+  const emitFinal = before => (emission = emitWebFinal(project, before));
+  const readiness = evaluateProjectReadiness({ project, mmlValidation: technical, core3Report: core3, core3CompletenessReport: core3Completeness, harmonyReport: harmony, leadDemotionReports: leadReports, leadPromotionReports, lineageReport: lineage, versionDriftReviewed: reviewed(w, 'version'), originalAudioRequired: audioRequired, originalAudioReviewed: reviewed(w, 'audio'), playerReadback: playerReadback.status, mobileAdaptation: reviewed(w, 'adaptation') ? 'PASS' : 'PENDING', regressionReviewed: reviewed(w, 'regression'), emitFinal });
   const gates = { ...readiness.gates };
   gates.playerReadback = { ...gates.playerReadback, reason: playerReadback.reason };
   if (finalReductionError) gates.finalReductionIntegrity = pending(finalReductionError);
@@ -901,7 +911,7 @@ function analysisContext(w) {
     // The same projection over the verified G11-D head, when every recorded
     // decision applied. Display only: it is not the analysed candidate.
     acceptedRoll: acceptedRollOf(rawMidi) };
-  return { asset, candidate, project, readiness, gates, report };
+  return { asset, candidate, project, readiness, gates, report, emission };
 }
 
 function acceptedRollOf(rawMidi) {
@@ -927,6 +937,15 @@ export function analyzeWorkspace(w) {
 // readiness report can never by itself authorize generation.
 export const PRE_EMISSION_EXEMPT_GATES = Object.freeze(['technical', 'deliveryIdentity']);
 export const STALE_FINAL_DELIVERY = 'STALE_FINAL_DELIVERY_DISCARDED';
+
+// The one call this Web writes a Final with: the emitter, handed the readiness
+// report and nothing else. The Web never opts into the machine-delivery path's
+// provisional release rendering or Tempo-restatement collapse
+// (final/emitter-contract.mjs): its delivery check reads the emitted string
+// back against the candidate as it stands. Readiness is asked about exactly
+// this call and generation makes exactly this call, so the two cannot disagree
+// about whether the emitter writes the candidate.
+const emitWebFinal = (project, readiness) => emitFinalMml(project, { readiness });
 
 // Integration-level diagnostics. They use the emitter's own severity vocabulary
 // and result shape rather than a second one, and they never restate an emitter
@@ -959,8 +978,10 @@ export function generateFinalDelivery(w) {
 
   // Readiness is always supplied. The backend contract allows it to be omitted;
   // omitting it here would let a song this analysis has already found unready be
-  // emitted anyway.
-  const emitted = emitFinalMml(context.project, { readiness: context.readiness });
+  // emitted anyway. When the analysis already asked the emitter -- the same
+  // call on the same project, handed the same report before its own answer was
+  // added, which the emitter does not read -- that answer is reused.
+  const emitted = context.emission ?? emitWebFinal(context.project, context.readiness);
   const carried = { roles: emitted.roles, characterCounts: emitted.characterCounts, microGap: emitted.microGap,
     roundTrip: emitted.roundTrip, canonical: emitted.canonical, diagnostics: [...emitted.diagnostics] };
   // The emitter's own refusals are reported exactly as it phrased them. A

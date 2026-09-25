@@ -96,7 +96,8 @@ export function createIntakeService({ canonical, projects, assets, store }) {
       }
       // A Canonical IR upload is rebuilt with the IR constructors rather than
       // trusted as JSON, so an imported project cannot assert a completeness,
-      // a gate result or an event the schema would not accept.
+      // a gate result, an accepted decision or an event the schema would not
+      // accept.
       const { content } = assets.text(owner, projectId, asset.asset_id);
       return { project: rebuildCanonicalProject(engines, content), fragment: null, format: 'Canonical IR' };
     } catch (error) {
@@ -124,6 +125,18 @@ export function createIntakeService({ canonical, projects, assets, store }) {
     });
     const metadata = { ...(value.metadata ?? {}) };
     if (!trusted) for (const key of IMPORTED_GATE_EVIDENCE_KEYS) delete metadata[key];
+    // A decision's status is the same kind of claim. An uploaded file that
+    // marks its own cross-source conflict `accepted` would clear Gate 5 with no
+    // review (`arbitration/harmony.mjs` counts any accepted decision naming the
+    // pair), so every imported decision is kept -- id, events, action, reason,
+    // evidence and metadata as uploaded -- but as `pending`: evidence a reviewer
+    // can read, never a resolution. Studio Web holds the same file the same way
+    // (`web/model.mjs` analysisContext). Only the baseline this service stored
+    // itself is read back with its decisions as written.
+    const decision = input => {
+      const rebuilt = createArbitrationDecision(input);
+      return trusted ? rebuilt : createArbitrationDecision({ ...rebuilt, status: 'pending' });
+    };
     return createCanonicalProject({
       ...value,
       metadata,
@@ -131,7 +144,7 @@ export function createIntakeService({ canonical, projects, assets, store }) {
       events,
       tempoEvents: (value.tempoEvents ?? []).map(createCanonicalTempoEvent),
       meterEvents: (value.meterEvents ?? []).map(createCanonicalMeterEvent),
-      decisions: (value.decisions ?? []).map(createArbitrationDecision),
+      decisions: (value.decisions ?? []).map(decision),
     });
   };
 

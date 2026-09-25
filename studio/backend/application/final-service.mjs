@@ -31,7 +31,7 @@ import { ERROR_CODES, GATE_STATUS, OPERATION_STATUS, fail, requireString } from 
 import { sha256Of } from './store.mjs';
 import { gatesFrom, unresolvedGatesFrom } from './review-service.mjs';
 import { migrateMachineDeliveryState } from './machine-delivery-migration.mjs';
-import { MACHINE_DELIVERY_SCHEMA_V2, deliveryBlockingGates } from '../final/delivery-evaluator.mjs';
+import { deliveryBlockingGates, machineDeliveryEmitOptions } from '../final/delivery-evaluator.mjs';
 
 const now = () => new Date().toISOString();
 const encoder = new TextEncoder();
@@ -255,27 +255,19 @@ export function createFinalService({ canonical, projects, review, store }) {
       // One call. The emitter owns micro-gap enforcement, the optional repair,
       // serialization and the round-trip readback, in that order.
       //
-      // Provisional release rendering is asked for only when the authoritative
-      // ledger already delivers micro-timing for listening first
-      // (ACCEPTANCE_CRITERIA "Delivered first, flagged for listening"). Asking
-      // grants nothing: the emitter renders only when the same schema
-      // classifies its own fresh micro-timing result NON_BLOCKING_PENDING.
-      // Under a release without that classification it is never asked.
-      //
-      // Same-value Tempo restatements are collapsed where the authoritative
-      // ledger was classified under the schema that carries that sentence
-      // (MOBILE_SYNTAX §7, 2026-09-23-v3); the emitter re-checks it too.
-      const listenFirstReleases = readiness.machineDelivery?.authoritative === true
-        && readiness.machineDelivery.non_blocking_pending.some(entry => entry.gate === 'microTiming');
-      const collapseTempoRestatements = readiness.machineDelivery?.authoritative === true
-        && readiness.machineDelivery.schema === MACHINE_DELIVERY_SCHEMA_V2;
-      const emitted = engines.final.emitFinalMml(project, {
-        readiness,
+      // The options are machine delivery's own (`machineDeliveryEmitOptions`),
+      // the single definition readiness checks a Final with too: provisional
+      // release rendering only where the authoritative ledger already delivers
+      // micro-timing for listening first (ACCEPTANCE_CRITERIA "Delivered first,
+      // flagged for listening"), same-value Tempo restatements collapsed only
+      // under the schema that carries that sentence (MOBILE_SYNTAX §7,
+      // 2026-09-23-v3), and the repair exactly as the caller asked. Asking
+      // grants nothing: the emitter re-checks both against its own fresh
+      // results.
+      const emitted = engines.final.emitFinalMml(project, machineDeliveryEmitOptions(readiness, {
         technicalTimingRepair,
         releaseEvidenceRegistry: ctx.releaseEvidenceRegistry,
-        provisionalReleaseRendering: listenFirstReleases,
-        collapseTempoRestatements,
-      });
+      }));
       const emitStatus = emitted.status;
       const passed = emitStatus === engines.final.EMIT_STATUS.PASS;
 
@@ -314,13 +306,21 @@ export function createFinalService({ canonical, projects, review, store }) {
       // passed and the parser then disagreed: two modules contradicting each
       // other is reported as the unsatisfied gate it is, not resolved in favour
       // of the more convenient one.
+      //
+      // Both readings are handed this emission, so readiness never emits a
+      // second time. When the emitter refused, every gate stays exactly as
+      // before emission and machine delivery gains the delivery-level
+      // FINAL_EMISSION_REFUSED (or FINAL_EMISSION_PENDING) entry carrying the
+      // emitter's own diagnostics, rather than reading as blocked on
+      // `technical` alone.
       const finalReadiness = passed
         ? engines.final.evaluateProjectReadiness({
           ...readinessInputs,
           playerReadback: readbackMatched === false ? 'NOT_RUN' : readinessInputs.playerReadback,
           mmlValidation,
+          finalEmission: emitted,
         })
-        : readiness;
+        : engines.final.evaluateProjectReadiness({ ...readinessInputs, mmlValidation: null, finalEmission: emitted });
       // The emitter reports no repair block at all when the repair was not
       // requested. The opt-in state is exactly what a caller needs to see, so
       // it is always reported rather than left as a null a reader has to guess
@@ -508,7 +508,7 @@ export function createFinalService({ canonical, projects, review, store }) {
 // sentence for every non-delivery would tell a caller the parser rejected MML
 // the parser never saw.
 function nonDeliveryNotice({ passed, emitStatus, mmlValidation, readbackMatched }) {
-  if (!passed) return `No Final was delivered. The Final emitter reported ${emitStatus} for this candidate, so nothing was emitted and the authoritative Final parser did not run. in_game is unaffected and remains PENDING.`;
+  if (!passed) return `No Final was delivered. The Final emitter reported ${emitStatus} for this candidate, so nothing was emitted and the authoritative Final parser did not run. When nothing but the ungraded technical gate blocks, machine delivery records the refusal as its finalEmission entry, which carries the emitter's own status and diagnostics. in_game is unaffected and remains PENDING.`;
   if (mmlValidation === null) return 'No Final was delivered. The candidate declares no meter events, so the emitted MML could not be re-validated under the authoritative Final parser; the technical gate stays NOT_RUN and no MML and no artifact were returned. in_game is unaffected and remains PENDING.';
   if (!mmlValidation.ok) return 'No Final was delivered. The emitted MML did not satisfy the technical gate under the authoritative Final parser, so no MML and no artifact were returned. If the piece does not end on a bar line, state the source-confirmed pickup and final_partial. in_game is unaffected and remains PENDING.';
   if (readbackMatched === false) return 'No Final was delivered. The recorded player readback names a different MML than the one emitted for this candidate, so the readback gate stays NOT_RUN and no MML and no artifact were returned. in_game is unaffected and remains PENDING.';

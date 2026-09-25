@@ -52,7 +52,14 @@ export {
   AUTOMATED_VALIDATED,
   DELIVERY_FLAG,
   LISTEN_FIRST_CODES,
+  // Machine delivery is ready only when the Final emitter, run on exactly what
+  // would be delivered with the options delivery uses, returns an emitted Final.
+  FINAL_EMISSION_GATE,
+  FINAL_EMISSION_CODES,
+  deliveryBlockingGates,
   deliveryClassOf,
+  isEmittedFinal,
+  machineDeliveryEmitOptions,
   machineDeliverySchemaOf,
 } from './delivery-evaluator.mjs';
 

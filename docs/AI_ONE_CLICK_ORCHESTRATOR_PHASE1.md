@@ -103,7 +103,7 @@ does when its input is missing is the interesting part:
 | `final_reduction` | no accepted reduction decisions | derives the **read-only** plan. If the plan's own accounting shows every source event already retained and no blocker, the step is `skipped` — the reduction stage itself refuses that apply as `REDUCTION_NOTHING_TO_APPLY`, so minting a revision would be a no-op revision. Otherwise it halts with `REDUCTION_DECISIONS_REQUIRED`, carrying the plan id, the ledger's non-`KEEP` outcomes and the plan's own warnings. |
 | `mobile_adaptation` | no Mobile profile | `skipped`. **This is not a Gate 8 result.** The Gate 8 review stays a separate candidate-bound, evidence-backed statement, and a run that changed nothing still needs it. No instrument range and no volume is invented. |
 | `review` | — | always runs on the current candidate, recording only the confirmations a caller stated. |
-| `finalize` | — | reached only when the review's own `preGameBlocking`, minus the Final service's own `PRE_EMISSION_EXEMPT_GATES`, is empty. That list is **imported**, not restated, so the run can never become a second exemption policy and cannot extend the exemption. |
+| `finalize` | — | reached only when the review's own `preGameBlocking`, minus the Final service's own `PRE_EMISSION_EXEMPT_GATES`, is empty. That list is **imported**, not restated, so the run can never become a second exemption policy and cannot extend the exemption. It completes only when the Final emitter writes the Final: a refusal with every gate clear halts it on the machine-delivery `finalEmission` entry (`FINAL_EMISSION_REFUSED` / `FINAL_EMISSION_PENDING`), whose review request carries the emitter's own diagnostics and lists no operation. |
 | `report` | — | files a `run_report` artifact naming the exact final candidate and the exact Final artifact id. |
 
 `technical_timing_repair` stays `false` by default and is passed through exactly
@@ -166,8 +166,8 @@ There is **no allow-list gate**. A run proceeds only while
 reported with `known: false`, gets no operation hint, and still blocks.
 `READINESS_GATE_OPERATIONS` is a hint table and decides nothing. A known gate
 can carry a blocker none of its hinted operations answers;
-`READINESS_BLOCKER_WITHOUT_OPERATION` lists those. Today there are two, both
-microTiming: `MICRO_TIMING_BOUNDARY_NOT_FINAL_REPRESENTABLE` (an onset, a rest
+`READINESS_BLOCKER_WITHOUT_OPERATION` lists those. Today there are two
+microTiming ones, `MICRO_TIMING_BOUNDARY_NOT_FINAL_REPRESENTABLE` (an onset, a rest
 boundary, or a release under a keep claim or with no valid representation,
 that Final cannot reach and nothing in this build moves; a role's earliest
 onset after a silence shorter than any Final token is one) and
@@ -194,6 +194,13 @@ carries the emitter's blocking diagnostic codes (severity `error` or `pending`)
 in `detail.emitter_blockers`. Both still block, and a new candidate or
 Canonical release expires them. A finalize refused before emission, or by the
 Final parser or a later gate after it, keeps its hints.
+The machine-delivery `finalEmission` entry also has two blockers without an
+operation: `FINAL_EMISSION_REFUSED` and `FINAL_EMISSION_PENDING`. The emitter
+ran on exactly what would be delivered with delivery's options and wrote no
+Final. The entry retains its status and diagnostics; the request reads it from
+`readiness.machineDelivery.blocking`, names no operation, and still blocks.
+
+
 
 Phase 2 adds the AI Proposal protocol and an agent review policy. Phase 1
 connects no model, and a fixture's human confirmations are not a permission a

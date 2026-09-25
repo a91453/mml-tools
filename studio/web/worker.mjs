@@ -1,7 +1,7 @@
 import { canonical, canonicalDigest } from './published.mjs';
 import { verifyCanonicalPackage } from './canonical-package.mjs';
 
-let model, initializationError, initializationRetryable = false;
+let model, listen, listenError, initializationError, initializationRetryable = false;
 // Verification stays fail-closed, but it must not run as top-level await: a
 // module worker's message queue is enabled while its top-level await is still
 // pending, so a handler installed afterwards silently drops every request
@@ -25,6 +25,19 @@ const initialized = (async () => {
     initializationRetryable = error instanceof TypeError;
     return;
   }
+  // The listen model is imported here as well, not on its first request: the
+  // browser keeps a failed import for the Worker's lifetime, so a first
+  // request whose fetch failed would fail every later session, and replacing
+  // a Worker that analyses fine for it costs analysis too while the connection
+  // is down and no service worker serves the Worker's script. Here its failed
+  // fetch is retried as the model's is, before any request has run, and a
+  // Worker that started opens sessions offline. A listen model that fetched
+  // but does not load fails listening only.
+  try { listen = await import('./listen-model.mjs'); }
+  catch (error) {
+    if (!(error instanceof TypeError)) listenError = error.message;
+    else { initializationError = `CANONICAL_NOT_LOADED: ${error.message}`; initializationRetryable = true; return; }
+  }
   if (JSON.stringify(runtime.PUBLISHED_CANONICAL) !== JSON.stringify(canonical)) initializationError = 'CANONICAL_NOT_LOADED: Runtime Canonical differs from verified package';
 })();
 self.onmessage = async ({ data }) => {
@@ -42,7 +55,7 @@ self.onmessage = async ({ data }) => {
     // must not be reachable unless the published Canonical package verified.
     // Listening sessions: read an MML string with the repository parser. It
     // reads a string and returns a song; it never sees a workspace.
-    else if (data.action === 'parseListening') result = (await import('./listen-model.mjs')).parseListening(...data.args);
+    else if (data.action === 'parseListening') { if (!listen) throw Error(listenError); result = listen.parseListening(...data.args); }
     else if (['newWorkspace', 'intake', 'intakeMxl', 'intakeMidi', 'analyzeWorkspace', 'invalidate', 'importWorkspace', 'recordReview', 'recordLeadEvidence', 'recordLeadPromotionEvidence', 'recordAcceptedDecision', 'previewAcceptedDecision', 'acceptPreviewedDecision', 'clearAcceptedDecisions', 'recordAcceptance', 'recordPlayerReadback', 'clearPlayerReadback', 'generateFinalDelivery', 'applyFinalDelivery', 'previewMobileAdaptation', 'applyWorkspaceMobileAdaptation', 'clearMobileAdaptation', 'previewFinalReduction', 'applyWorkspaceFinalReduction', 'clearFinalReduction'].includes(data.action)) result = model[data.action](...data.args);
     else throw Error('UNSUPPORTED: worker action');
     self.postMessage({ id: data.id, result });

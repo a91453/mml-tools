@@ -29,6 +29,7 @@ import { BOUNDARY_COVERAGE, FINAL_REPRESENTABILITY_PROOFS, LEADING_ONSET_REASON,
 import { POSITION_CLASS, classifyPosition } from '../canonical/release-timing.mjs';
 import {
   DELIVERY_CLASS,
+  FINAL_EMISSION_GATE,
   MACHINE_DELIVERY_SCHEMA_V2,
   deliveryBlockingGates,
   deliveryClassOf,
@@ -984,11 +985,12 @@ function evaluateGates(project, options) {
   }
 
   // The emitter must never become a readiness bypass. When the caller supplies a
-  // readiness report, every blocking gate counts except `technical` — that one
-  // grades the MML this emitter has not produced yet, so requiring it here would
-  // be circular.
+  // readiness report, every blocking gate counts except the two that grade this
+  // emitter's own output: `technical` grades the MML this emitter has not
+  // produced yet, and the delivery-level `finalEmission` entry records this
+  // emitter's own answer. Requiring either here would be circular.
   if (options.readiness) {
-    const blocking = deliveryBlockingGates(options.readiness).filter(name => name !== 'technical');
+    const blocking = deliveryBlockingGates(options.readiness).filter(name => name !== 'technical' && name !== FINAL_EMISSION_GATE);
     if (blocking.length) {
       diagnostics.push(diagnostic(
         EMIT_DIAGNOSTICS.READINESS_BLOCKED,

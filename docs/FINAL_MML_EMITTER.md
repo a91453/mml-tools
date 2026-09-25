@@ -155,7 +155,7 @@ const result = emitFinalMml(canonicalProject, options);
 | Option | Meaning |
 | --- | --- |
 | `cautionLengthOptIn` | admit `FINAL_ALLOWED_WITH_CAUTION` plain lengths (1–64 outside the preferred set) into the token lattice. Default `false`. |
-| `readiness` | a report from `evaluateProjectReadiness()`. When supplied, any blocking gate other than `technical` (which needs this emitter's own output) blocks emission. |
+| `readiness` | a report from `evaluateProjectReadiness()`. When supplied, any blocking gate other than `technical` (which needs this emitter's own output) and the delivery-level `finalEmission` entry (this emitter's own answer, §5b) blocks emission. |
 | `budget` | node budget for the duration search. Exhaustion fails closed. |
 | `maxTieSegments` | maximum tie segments per attack. Exhaustion fails closed. |
 
@@ -190,6 +190,10 @@ It does **not** mean the song is Canonical-compliant, source-complete, ready, or
 accepted in game. `evaluateProjectReadiness()` remains the readiness authority,
 and `IN_GAME_ACCEPTED` remains the user's to set. An emitter that succeeds has
 verified an implementation, not certified a rule.
+
+The converse does hold for machine delivery: it is never ready unless this
+emitter, run on exactly what would be delivered with the options delivery uses,
+returned an emitted Final. Readiness asks it (§5b).
 
 ## 4. Representability policy
 
@@ -366,7 +370,7 @@ search-policy limit; raising only the bound makes the same candidate emit.
 | G10 reports unproven sub-grid material | `PENDING` — never acted on, with or without the repair opt-in |
 | G10 reports an onset (including an onset after a leading silence shorter than any Final token), a rest boundary, or a note release no release representation can move (under a keep claim, or with no valid representation), that the role must reach and no admitted token sequence can (`MICRO_TIMING_BOUNDARY_NOT_FINAL_REPRESENTABLE`) | `FAIL` with `MICRO_GAP_BOUNDARY_NOT_FINAL_REPRESENTABLE` — a proof, not unproven material, naming each boundary by role, event and beat (§5); no attack, rest or such release is moved to make it writable |
 | G10 preserves source-supported sub-grid material (G10 itself is `PENDING` with `MICRO_TIMING_SOURCE_SUPPORTED_NOT_FINAL_REPRESENTABLE`) | `FAIL` with `SOURCE_SUPPORTED_INTERVAL_NOT_REPRESENTABLE` — provably unrepresentable (every admitted token is at least one safe-grid unit), and refusing is the only answer that does not damage it; the G10 code is kept out of `MICRO_GAP_BLOCKED_PENDING` |
-| a supplied readiness report blocks on any gate but `technical` | `PENDING` |
+| a supplied readiness report blocks on any gate other than `technical` and its own `finalEmission` entry (§5b) | `PENDING` |
 | a pending arbitration decision exists | `PENDING` |
 | the round-trip readback does not match | `FAIL` |
 
@@ -469,7 +473,9 @@ the boundary list it publishes, without re-deriving any threshold:
   cannot decompose (`DURATION_SEARCH_*`, `completenessProven: false`, which
   `classifyPosition` calls representable in principle); and a candidate note
   whose timing drifted from its Source-Faithful origin without a release record
-  (the release analysis reads the baseline's release, Layer A).
+  (the release analysis reads the baseline's release, Layer A). G10 keeps these
+  verdicts; machine delivery answers them instead, by asking this emitter
+  (§5b).
 
   `FAIL` rather than `PENDING`, because `PENDING` (severity `pending`) is
   reserved for an unresolved Canonical or evidence question and `error` is "this
@@ -545,6 +551,110 @@ pre-repair timing stays in `result.technicalTimingRepair` and
 
 Full design, refusal taxonomy and mutation table:
 [TECHNICAL_TIMING_REPAIR.md](TECHNICAL_TIMING_REPAIR.md).
+
+## 5b. Machine delivery is ready only when this emitter wrote the Final
+
+Every readiness gate, G10 included, can clear while this emitter refuses the
+candidate. Three classes were found that way. Nothing wrong was ever delivered,
+because the emitter refused, but readiness and the machine-delivery ledger
+(`@1` and `@2`) reported the song ready until someone tried to emit:
+
+- **a release that drifted from its Source-Faithful Baseline with no release
+  record** -- `x[0,479/480)` at the role end, whose baseline is `x[0,1/32)`: G10
+  raises no release target, and serialization meets the position as
+  `BOUNDARY_NOT_FINAL_REPRESENTABLE`;
+- **a Tempo position no Final token sequence reaches** -- G10 does not read the
+  Tempo Map, and §4b assigns such a position to serialization (a Tempo past a
+  role's end, `TEMPO_POSITION_BEYOND_ROLE_END`, is the same shape);
+- **a caution-denominator position, or a search limit** -- the bounded search
+  finds nothing (`DURATION_SEARCH_POLICY_LIMIT`, for example a release at
+  `478/480`) or runs out of budget (`DURATION_SEARCH_BUDGET_EXHAUSTED`).
+
+The answer is one catch-all at the delivery level, not a rule per class, and
+G10's own verdicts are unchanged. `ACCEPTANCE_CRITERIA.md` "Machine delivery"
+already lists *Final round-trip* among the `BLOCKING` items; nothing asked it.
+
+**The entry.** `evaluateMachineDelivery(gates, { finalEmission })`
+(`final/delivery-evaluator.mjs`) takes this emitter's result. When nothing but
+`technical` blocks and the result is not an emitted Final (`isEmittedFinal`:
+`PASS` with its MML string), the ledger gains one `BLOCKING` entry, `gate:
+"finalEmission"`:
+
+| emitter says | entry `status` | entry `blockers` |
+| --- | --- | --- |
+| `FAIL` (or anything that is not an emitted Final) | `FAIL` | `FINAL_EMISSION_REFUSED` |
+| `PENDING` | `PENDING` | `FINAL_EMISSION_PENDING` |
+
+It carries `emitter_status` and `emitter_diagnostics` -- the emitter's own
+diagnostic objects, codes, severities and proofs, verbatim and in order --
+bounded at 50 with `emitter_diagnostic_count` and
+`emitter_diagnostics_truncated`. `technical` is left out of "nothing else
+blocks" because it grades the MML this emitter writes: after a refusal it is
+`NOT_RUN`, and the refusal is recorded beside it. When another gate blocks, the
+ledger is exactly what it was. The entry is not a readiness gate: no gate's
+status, no G10 result, no classification, no song state (`candidateReady`,
+`songState`) and no answer of this emitter changes. `deliveryBlockingGates`
+lists it with or without machine-delivery authority, and this emitter skips it
+in a supplied report, as it skips `technical`, so its answer never depends on
+itself.
+
+**When it is asked.** `evaluateProjectReadiness()` asks this emitter once, and
+only when nothing stops delivery under the rule the Canonical identity makes
+operative (`deliveryBlockingGates` of the report as it stands is empty,
+`technical` included). A pre-emission report (`technical` `NOT_RUN`) and a
+report another gate blocks therefore cost nothing. Under an identity without
+machine-delivery authority that means every pre-game gate: asked earlier, the
+emitter could only restate a blocking gate as `READINESS_BLOCKED`. The emitter
+is handed the report as it stands, and a missing answer fails closed as a
+refusal.
+
+**With which options.** `machineDeliveryEmitOptions(readiness, ...)` is the one
+definition of the options machine delivery emits with: provisional release
+rendering only where the authoritative ledger delivers micro-timing for
+listening first, Tempo restatements collapsed only under `@2`, the release
+evidence registry readiness graded G10 with, and the repair as the caller
+asked. Each caller's check is its own delivery call:
+
+- Readiness called with nothing in hand emits with those options.
+- The Final service emits once with them and hands that result, as
+  `finalEmission`, to both of its readiness readings, so nothing is emitted
+  twice. A refusal there is reported as `blockers: ["technical",
+  "finalEmission"]`, and a run halts at finalize with a `finalEmission` review
+  request that carries the diagnostics and lists no operation
+  (`READINESS_BLOCKER_WITHOUT_OPERATION`).
+- Studio Web passes `emitFinal`, exactly the call its generation makes
+  (`{ readiness }`; the Web never opts into provisional rendering or
+  restatement collapse, because its delivery check reads the emitted string
+  back against the candidate as it stands), and generation reuses that answer
+  rather than emitting again. So the Web's `readiness.machineDelivery` says
+  what the Web's own generation would say. It is the machine-delivery answer
+  only: a pasted delivery that validates and reads back as the candidate is
+  graded by the Web gates and stays `VALIDATED` while this emitter refuses the
+  candidate (the 100-beat sustain of §4b is the pinned case), with the refusal
+  recorded in the ledger beside it.
+
+**Cost.** Measured on synthetic songs (`syntheticSongMml`, every other gate
+ready, an idle 4-core machine): at 110 bars (1,967 events) readiness takes
+about 28 ms with the emission in hand and about 72 ms when it emits itself; at
+160 bars (2,860 events), about 42 ms and 104 ms. One emission, only when
+everything else lets the song through; none while another gate blocks, none
+before emission, none extra in the Final service, and none extra at Studio Web
+generation after an analysis that asked. The search is bounded by `budget`:
+with the delivery options it fails in milliseconds, and only a caller that opts
+into caution lengths can spend the whole budget.
+
+**Regressions.** `studio/tests/final-emission-delivery.test.mjs` reproduces each
+class (on the tree before this change: delivery `READY` while `emitFinalMml`
+returns `FAIL`), the budget and `PENDING` paths, the registry, finalize and the
+run. `studio/tests/final-emission-property.test.mjs` is a fixed-seed
+differential over generated projects (delivery ready implies an emitted Final,
+and every candidate this emitter writes keeps its exact delivery answer), the
+evaluator's contract, the question left unasked without authority, and the
+single emission in finalize with machine delivery's options.
+`studio/tests/web-final-delivery.test.mjs` pins the Studio Web side: a pasted
+delivery stays `VALIDATED` beside a recorded refusal, and the Web's check is
+its generation call, not the Final service's options (a same-value Tempo
+restatement one tick before a beat tells the two apart).
 
 ## 6. Determinism and idempotence
 
