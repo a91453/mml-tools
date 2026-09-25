@@ -213,17 +213,38 @@ exact timing, event identity and the evidence boundaries. See
     free default bank.
   - **Where your bank lives.** In its own IndexedDB database on that device. It
     is never uploaded, never in a project backup, and never in the build, and
-    it always takes precedence over the default bank. When picks overlap
-    (each is checked first, and a big bank takes longer), the last choice
-    wins, and removing the bank is a choice too. A pick still being checked
-    when a newer choice is made is not kept. A pick overtaken by a newer
-    choice shows nothing and does not reset the engine, whatever became of
-    it. A newer choice cannot stop an older pick whose write to the store
-    has already been sent, but the page still names only the bank the store
-    keeps: a newer pick that is kept writes after it, a removal deletes
-    after it and says 「已移除你的音色庫；試聽改用預設音色。」, and a newer
-    pick that is refused shows the bank the store keeps. A removal that
-    fails leaves the bank in place, and the page goes on naming it.
+    it always takes precedence over the default bank. This bank store is the
+    single source of truth for your bank, and the Workshop shares it.
+  - **Picking or removing a bank** (`preview/bank-choices.mjs`). A choice (a
+    pick, or removing the bank) only decides what the store keeps. A pick is
+    checked first (below), then written only while it is still your latest
+    choice; a removal deletes only while it is. When your latest choice ends,
+    the page says its own outcome (「已載入音色庫 …；只保存在這台裝置。」,
+    「已移除你的音色庫；試聽改用預設音色。」, or why the bank was refused or
+    not removed). Then it reads the store again and names exactly the bank the
+    store keeps, or the default bank. The engine plays only the bank the page
+    names: when that bank changes, the engine is let go, and the next play
+    loads the kept one. A choice overtaken by a newer one says nothing, and
+    the page names, loads and plays nothing because of it, whatever became of
+    it. A newer choice cannot stop an older pick whose write to the store had
+    already been sent (IndexedDB cannot cancel it). That write lands before
+    your latest choice's own write or delete, and before the store is read
+    again, so the store goes on keeping that bank only if your latest choice
+    changes nothing, and then the page names it once that choice has ended.
+    So, for example, a newer pick that is refused leaves the page naming the
+    older pick, which the store kept. A play asked for while a
+    choice is still pending waits until the choice has ended and the page
+    names what the store keeps, then plays that bank. An engine load begun
+    before a newer choice is destroyed when it ends, never used, and the play
+    that asked for it says
+    「載入期間又選擇或移除了音色庫，這次的載入已停止；請再按一次播放。」. A
+    removal that fails leaves the bank in place, and the page goes on naming
+    it. Another tab, or the Workshop, may write a different bank to the store.
+    This page names that bank after your next choice here, or when a play that
+    has to load the engine finds it: that play says
+    「音色庫已更換，請再按一次播放。」 and plays nothing. Until then, the page
+    goes on naming the bank it named, and an engine already loaded goes on
+    playing it.
   - **A damaged bank.** Before a picked bank is kept, a Worker parses it with
     the vendored spessasynth_core (`preview/bank-check.mjs`), the loader the
     synth worklet runs on it. One that does not parse, such as a file cut

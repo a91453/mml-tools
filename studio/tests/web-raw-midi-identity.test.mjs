@@ -7,6 +7,7 @@ import * as model from '../web/model.mjs';
 import { MIDI_SOURCE_ID_PREFIX, midiSourceId } from '../web/midi-source.mjs';
 import { createTaskQueue } from '../web/task-queue.mjs';
 import { createSourceRequestLedger } from '../web/source-requests.mjs';
+import { createBankChoices, sameBank } from '../web/preview/bank-choices.mjs';
 import { mergeCanonicalProjects } from '../backend/canonical/merge.mjs';
 import * as fixtures from './fixtures/midi-fixtures.mjs';
 
@@ -58,7 +59,7 @@ function studio({ intercept = null } = {}) {
   };
   const context = vm.createContext({
     document: { querySelector: node, querySelectorAll: selector => collections.get(selector) ?? [] },
-    createTaskQueue, createSourceRequestLedger,
+    createTaskQueue, createSourceRequestLedger, createBankChoices, sameBank,
     createWorkerClient: () => ({ call: (...args) => context.workerCall(...args) }),
     Worker: function () {}, URL, structuredClone, crypto, TextEncoder, TextDecoder, btoa, atob,
     FormData: class { constructor(form) { return Object.entries(form.fields); } },

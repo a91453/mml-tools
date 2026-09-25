@@ -4,6 +4,7 @@ import vm from 'node:vm';
 import { readFile } from 'node:fs/promises';
 import { createTaskQueue } from '../web/task-queue.mjs';
 import { createSourceRequestLedger } from '../web/source-requests.mjs';
+import { createBankChoices, sameBank } from '../web/preview/bank-choices.mjs';
 
 const source = (await readFile(new URL('../web/app.mjs', import.meta.url), 'utf8')).replace(/\r\n/g, '\n');
 const deferred = () => { let resolve; const promise = new Promise(r => { resolve = r; }); return { promise, resolve }; };
@@ -38,7 +39,7 @@ function controller() {
   const saved = [];
   const context = vm.createContext({
     document: { querySelector: node, querySelectorAll: selector => collections.get(selector) ?? [] },
-    createTaskQueue, createSourceRequestLedger, createWorkerClient: () => ({ call: (...args) => context.workerCall(...args) }),
+    createTaskQueue, createSourceRequestLedger, createBankChoices, sameBank, createWorkerClient: () => ({ call: (...args) => context.workerCall(...args) }),
     Worker: function () {}, URL, structuredClone, crypto,
     FormData: class { constructor(form) { return Object.entries(form.fields); } },
     setTimeout: () => 0, clearTimeout() {}, navigator: {},

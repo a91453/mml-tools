@@ -9,6 +9,7 @@ import { PROBES, buildObservation, summarize } from './engine-probe.mjs';
 import { compareReadback, normalizeCapture } from './preview/readback.mjs';
 import { DEFAULT_BANK_LABEL, DEFAULT_BANK_NAME, DEFAULT_INSTRUMENT, instrumentOptions, resolveRoleVoices, uniformProgram } from './preview/instruments.mjs';
 import { DEFAULT_BANK_DOWNLOAD_NOTICE, DEFAULT_BANK_SUBSET, loadDefaultBank } from './preview/default-bank.mjs';
+import { createBankChoices, sameBank } from './preview/bank-choices.mjs';
 import { createListening } from './listen-ui.mjs';
 import { markersFromReport, sanitizeStoredNotes } from './listen-notes.mjs';
 // Request identity only. The MIDI decoder, the Canonical conversion and the
@@ -920,7 +921,14 @@ function bindEngineProbes() {
 // playback from the start, the user may record the engine's processed events
 // as the Gate 6 player readback, which the Worker re-checks against the exact
 // MML on every analysis.
-const preview = { voices: 0, bank: undefined, bankChecked: false, bankPicks: 0, defaultCached: undefined, download: null, context: null, engine: null, engineLoading: null, engineToken: 0, transport: null, songKey: null, choices: null, choicesKind: null, position: 0, muted: [false, false, false, false, false, false], busy: false, error: null, playBinding: null, lastCapture: null, owner: 'final', listenHandlers: null };
+//
+// The user's bank lives in the bank store, the single source of truth that
+// the Workshop shares (preview/bank-choices.mjs). Picking or removing a bank
+// is a choice that only decides what the store keeps; `preview.bank`, the
+// engine, both bank lines and the instrument pickers follow from the store,
+// by reconcileBank, once the latest choice has ended.
+const preview = { voices: 0, bank: undefined, bankChecked: false, defaultCached: undefined, download: null, context: null, engine: null, engineLoading: null, engineToken: 0, transport: null, songKey: null, choices: null, choicesKind: null, position: 0, muted: [false, false, false, false, false, false], busy: false, error: null, playBinding: null, lastCapture: null, owner: 'final', listenHandlers: null };
+const bankChoices = createBankChoices({ reconcile: reconcileBank });
 // Re-render only the preview card: a full render() would discard whatever the
 // user is typing in another form.
 function refreshPreview() { listening?.refreshAudio(); const card = $('#timbre-preview'); if (!card) return; card.outerHTML = timbrePreviewCard(); bindTimbrePreview(); }
@@ -990,33 +998,68 @@ function claimTransport(owner, handlers = null) {
   preview.listenHandlers = owner === 'listen' ? handlers : null;
 }
 // Created and resumed before the first await: iOS Safari only unlocks audio
-// inside the user's gesture.
+// inside the user's gesture. `preview.context` is the context of the engine
+// (loaded or loading), or the one the next engine will be built on. A play
+// asked for while a bank choice is pending may find, once that choice has
+// been reconciled, that the reconcile let go of that engine and of its
+// context with it; such a play is given a context of its own here, in its
+// click, for the engine it may then build (ensurePreviewEngine).
 function startAudioContext() {
-  if (!preview.context) {
-    const AudioContextClass = globalThis.AudioContext ?? globalThis.webkitAudioContext;
-    if (!AudioContextClass) throw Error('此瀏覽器不支援 Web Audio，無法試聽音色');
-    preview.context = new AudioContextClass({ latencyHint: 'interactive' });
-  }
+  const AudioContextClass = globalThis.AudioContext ?? globalThis.webkitAudioContext;
+  if (!AudioContextClass) throw Error('此瀏覽器不支援 Web Audio，無法試聽音色');
+  const make = () => { const context = new AudioContextClass({ latencyHint: 'interactive' }); context.resume?.(); return context; };
+  if (!preview.context) { preview.context = make(); return null; }
   preview.context.resume?.();
+  return bankChoices.pending() && (preview.transport || preview.engineLoading) ? make() : null;
 }
-// Both players may ask at once (a first download takes a while), so one
-// load is shared; a bank change while it runs discards its result.
-function ensurePreviewEngine() {
-  if (preview.transport) return Promise.resolve();
-  if (!preview.engineLoading) {
-    const loading = buildPreviewEngine(preview.engineToken).finally(() => { if (preview.engineLoading === loading) preview.engineLoading = null; });
-    preview.engineLoading = loading;
-  }
-  return preview.engineLoading;
+// The engine plays only the bank a reconcile installed as the page's bank
+// (preview.bank, reconcileBank). A play asked for while a bank choice is
+// pending waits until that choice has been reconciled, and then plays the
+// bank the page names. Both players may ask at once (a first download takes
+// a while), so one load is shared. A load begun before a newer choice was
+// made, or before the engine was reset, is discarded when it ends: its
+// engine is destroyed, never installed, and every play that waited for it
+// says so. `spare` is the context startAudioContext made for this play: it
+// is used if the engine has to be built, and closed otherwise.
+const BANK_CHANGED = '音色庫已更換，請再按一次播放。';
+const CHOICE_DURING_LOAD = '載入期間又選擇或移除了音色庫，這次的載入已停止；請再按一次播放。';
+async function ensurePreviewEngine(spare = null) {
+  await bankChoices.settled();
+  if (preview.transport || preview.engineLoading) { spare?.close?.(); return preview.engineLoading ?? undefined; }
+  if (preview.context) spare?.close?.(); else preview.context = spare;
+  // Not reached by a play from a click: its context, or its spare, is here.
+  if (!preview.context) throw Error(BANK_CHANGED);
+  const loading = buildPreviewEngine(preview.engineToken, bankChoices.latest()).finally(() => { if (preview.engineLoading === loading) preview.engineLoading = null; });
+  preview.engineLoading = loading;
+  return loading;
 }
-async function buildPreviewEngine(token) {
-  const { loadBank } = await import('./preview/soundbank-store.mjs');
+async function buildPreviewEngine(token, choice) {
+  const context = preview.context, named = preview.bank;
+  const discarded = () => choice !== bankChoices.latest() ? Error(CHOICE_DURING_LOAD) : token !== preview.engineToken ? Error(BANK_CHANGED) : null;
+  // A build that stops closes the context it was begun on: no other build
+  // uses it (a reset hands the next build another one).
+  const stop = error => { context.close?.(); if (preview.context === context) preview.context = null; throw error; };
+  const { loadBank, describe } = await import('./preview/soundbank-store.mjs');
   const { createPreviewEngine, createTransport } = await import('./preview/player.mjs');
   // The user's own bank takes precedence; without one, the free default bank.
-  const bank = await loadBank() ?? await loadDefaultPreviewBank();
-  if (token !== preview.engineToken) throw Error('音色庫已更換，請再按一次播放。');
-  try { preview.engine = await createPreviewEngine(bank, preview.context); preview.engine.isDefault = Boolean(bank.isDefault); }
-  catch (error) { preview.engine = null; preview.context = null; throw error; }
+  // It must still be the bank the page names: one another page or tab wrote
+  // since is named first, by a reconcile, and played only on the next play.
+  const stored = await loadBank();
+  if (discarded()) stop(discarded());
+  if (!sameBank(stored ? describe(stored) : null, named)) { await bankChoices.refresh(); stop(discarded() ?? Error(BANK_CHANGED)); }
+  const bank = stored ?? await loadDefaultPreviewBank();
+  if (discarded()) stop(discarded());
+  let engine;
+  // On failure createPreviewEngine has closed the context.
+  try { engine = await createPreviewEngine(bank, context); }
+  catch (error) { if (preview.context === context) preview.context = null; throw error; }
+  const stale = discarded();
+  if (stale) {
+    try { engine.synth.destroy?.(); } catch (error) { console.warn('[preview] discarded engine:', error); }
+    stop(stale);
+  }
+  preview.engine = engine;
+  preview.engine.isDefault = Boolean(bank.isDefault);
   preview.transport = createTransport(preview.engine, {
     onPosition: (position, duration, voices = 0) => {
       if (preview.owner === 'listen') return preview.listenHandlers?.onPosition?.(position, duration, voices);
@@ -1117,9 +1160,9 @@ const listenAudio = {
   instruments: () => { const picker = instrumentPicker(); return { options: picker.options, choices: [...(preview.choices ?? [])], defaultBank: picker.defaultBank, uniform: uniformProgram(resolveRoleVoices(preview.choices)) !== null }; },
   setInstrument,
   async play({ key, song, from, until, muted, handlers }) {
-    startAudioContext();
+    const spare = startAudioContext();
     claimTransport('listen', handlers);
-    await ensurePreviewEngine();
+    await ensurePreviewEngine(spare);
     if (preview.owner !== 'listen' || preview.listenHandlers !== handlers) return;
     if (preview.songKey !== key) { preview.transport.load(song); preview.songKey = key; }
     muted.forEach((value, role) => preview.transport.setMuted(role, value));
@@ -1129,40 +1172,20 @@ const listenAudio = {
   stop() { if (preview.owner === 'listen') { preview.listenHandlers = null; preview.transport?.stop(); refreshPreview(); } },
   setMuted(role, value) { if (preview.owner === 'listen') preview.transport?.setMuted(role, value); },
   state: () => (preview.owner === 'listen' ? preview.transport?.state ?? null : null),
-  async pickBank(file) {
-    // The last choice wins. Picks can overlap, since each is checked off the
-    // main thread and a big bank takes longer than a small one, and removing
-    // the bank (the timbre card) is a choice too. A pick overtaken by a newer
-    // choice is not kept, and whatever became of it (kept or refused) is
-    // neither shown nor allowed to reset the engine.
-    const pick = ++preview.bankPicks;
-    const current = () => pick === preview.bankPicks;
-    const { storeBank } = await import('./preview/soundbank-store.mjs');
-    // Checked (parsed off the main thread) and kept before the engine is
-    // reset, so a refused bank leaves the engine and the kept bank as they were.
-    let stored;
-    try { stored = await storeBank(file, { current }); }
-    catch (error) {
-      if (!current()) return;
-      // Refused: this pick changes nothing. An older pick it overtook may
-      // still have been written, though, if that write had been sent before
-      // this pick was made (storeBank). The page shows the bank the store
-      // keeps, never the one it showed before that write.
-      await showKeptBank(current);
-      throw error;
-    }
-    // Written, but overtaken while the write was under way: the write
-    // request had been sent before the newer choice was made, so it could
-    // not be stopped. IndexedDB runs the newer choice's own write or delete
-    // after it, so the store ends on that choice, which shows its own result
-    // (a refused pick shows the bank the store keeps). This pick shows
-    // nothing and resets nothing.
-    if (!current()) return;
-    resetPreviewEngine();
-    preview.bank = stored;
-    preview.error = null;
-    message(`已載入音色庫 ${file.name}；只保存在這台裝置。`);
-    refreshPreview();
+  // A pick only decides what the store keeps (bankChoices): it is checked off
+  // the main thread and written only while it is still the latest choice.
+  // Once it ends, if it is still the latest, its outcome is said and the
+  // reconcile names and plays exactly what the store keeps. Resolves once
+  // the pick has been reconciled or overtaken; a refusal is shown here.
+  pickBank(file) {
+    return bankChoices.choose(async current => {
+      const { storeBank } = await import('./preview/soundbank-store.mjs');
+      return storeBank(file, { current });
+    }, error => {
+      preview.error = error ? error.message : null;
+      if (error) message(error.message, true);
+      else message(`已載入音色庫 ${file.name}；只保存在這台裝置。`);
+    });
   },
   clearDefaultBank: () => clearDefaultPreviewBank(),
 };
@@ -1185,10 +1208,10 @@ function bindTimbrePreview() {
   $('#preview-play').onclick = async () => {
     if (!song) return;
     try {
-      startAudioContext();
+      const spare = startAudioContext();
       claimTransport('final');
       preview.busy = true; preview.error = null; refreshPreview();
-      await ensurePreviewEngine();
+      await ensurePreviewEngine(spare);
       if (preview.songKey !== songKey) { preview.transport.load(song); preview.songKey = songKey; preview.position = 0; }
       // A listening session may have left its own mutes on the shared transport.
       preview.muted.forEach((value, role) => preview.transport.setMuted(role, value));
@@ -1232,63 +1255,70 @@ function bindTimbrePreview() {
     listenAudio.pickBank(file).catch(fail);
   };
   const clear = $('#bank-clear');
-  if (clear) clear.onclick = async () => {
-    // Removing the bank is a newer choice than any pick still being checked
-    // or written (pickBank). IndexedDB runs this delete after a write such a
-    // pick had already sent, so the store is empty once it has run, and the
-    // page says so; a pick made since writes after it and shows its own
-    // result.
-    const choice = ++preview.bankPicks;
+  // Removing the bank is a choice too, newer than any pick still being
+  // checked or written: it deletes only while it is the latest choice, and
+  // IndexedDB runs its delete after any write such a pick had already sent.
+  if (clear) clear.onclick = () => bankChoices.choose(async current => {
     const { clearBank } = await import('./preview/soundbank-store.mjs');
-    resetPreviewEngine();
-    try { await clearBank(); }
-    catch (error) {
-      // Not removed: the page goes on naming the bank the store keeps.
-      message(error.message, true);
-      await showKeptBank(() => choice === preview.bankPicks);
-      return;
-    }
-    preview.bank = null;
-    message('已移除你的音色庫；試聽改用預設音色。');
-    refreshPreview();
-  };
+    await clearBank({ current });
+  }, error => {
+    if (error) message(error.message, true);
+    else { preview.error = null; message('已移除你的音色庫；試聽改用預設音色。'); }
+  });
   const clearDefault = $('#default-bank-clear');
   if (clearDefault) clearDefault.onclick = () => clearDefaultPreviewBank().catch(error => message(error.message, true));
 }
+// Lets go of the engine, installed or still loading, and stops whatever it
+// plays; a load let go of is discarded when it ends (buildPreviewEngine).
+// A listening session that was playing is told it stopped; one whose play
+// is waiting on a bank choice keeps the transport and plays once the engine
+// is built again. The engine's context goes with it. A context made for a
+// play still waiting for its first engine, with none loaded or loading, is
+// kept for that play.
 function resetPreviewEngine() {
-  claimTransport('final');
-  preview.transport?.destroy();
-  preview.transport = null; preview.engine = null; preview.context = null; preview.songKey = null; preview.position = 0;
+  if (preview.transport) { if (preview.transport.playing) claimTransport('final'); preview.transport.destroy(); }
+  if (preview.transport || preview.engineLoading) preview.context = null;
+  preview.transport = null; preview.engine = null; preview.songKey = null; preview.position = 0;
   preview.engineLoading = null; preview.engineToken += 1;
 }
-// Reads only what is stored; nothing is downloaded until a playback needs it.
-async function loadStoredBankInfo() {
-  preview.bankChecked = true;
-  try {
-    const { loadBank, describe, hasDefaultSubset } = await import('./preview/soundbank-store.mjs');
-    const stored = await loadBank();
-    preview.bank = stored ? describe(stored) : null;
-    preview.defaultCached = await hasDefaultSubset(DEFAULT_BANK_SUBSET.sha256).catch(() => false);
-  } catch (error) { preview.bank = null; preview.error = `音色庫讀取失敗：${error.message}`; }
-  refreshPreview();
-}
-// Shows the bank the store keeps where a choice that changed nothing cannot
-// tell otherwise: a refused pick, or a removal that failed, may come after an
-// older pick's write it could not stop (pickBank). The engine is reset only
-// when that is not the bank the page showed. Nothing changes once a newer
-// choice has been made (`current`), whose own result follows, or when the
-// store cannot be read.
-async function showKeptBank(current) {
-  let kept;
+// The one step that follows the latest bank choice (bank-choices.mjs), and
+// the page's first read of the store: re-reads the store and makes the page
+// match exactly the bank it keeps, or the free default bank when it keeps
+// none. The engine is let go when that is not the bank the page named, so
+// the next play loads the kept one; otherwise a playback goes on. A load
+// still under way was begun before this choice was made, since plays wait
+// for a pending choice: it is let go too, never installed, so a play waiting
+// on this choice builds the engine afresh. Nothing is downloaded here. Once a
+// newer choice has been made it changes nothing.
+async function reconcileBank(current) {
+  let kept, failure = null;
   try {
     const { loadBank, describe } = await import('./preview/soundbank-store.mjs');
     const stored = await loadBank();
     kept = stored ? describe(stored) : null;
-  } catch { return; }
+  } catch (error) { failure = error; }
   if (!current()) return;
-  const same = (a, b) => (a?.sha256 ?? null) === (b?.sha256 ?? null) && (a?.savedAt ?? null) === (b?.savedAt ?? null);
-  if (!same(kept, preview.bank)) resetPreviewEngine();
-  preview.bank = kept;
+  if (failure) {
+    // The store cannot be read: no bank of the user's is named or played
+    // (a play reads the store again, and stops if it still cannot).
+    resetPreviewEngine();
+    preview.bank = null;
+    preview.error = `音色庫讀取失敗：${failure.message}`;
+  } else {
+    if (!sameBank(kept, preview.bank) || preview.engineLoading) resetPreviewEngine();
+    preview.bank = kept;
+  }
+  refreshPreview();
+}
+// Reads only what is stored; nothing is downloaded until a playback needs it.
+async function loadStoredBankInfo() {
+  preview.bankChecked = true;
+  const opened = bankChoices.open();
+  try {
+    const { hasDefaultSubset } = await import('./preview/soundbank-store.mjs');
+    preview.defaultCached = await hasDefaultSubset(DEFAULT_BANK_SUBSET.sha256).catch(() => false);
+  } catch { preview.defaultCached = false; }
+  await opened;
   refreshPreview();
 }
 // ─── Six-role review roll ───────────────────────────────────────────────────

@@ -52,12 +52,20 @@ export async function runPlayerReadbackChecks({ page, idle, file }) {
     });
     db.close();
   }, [...truncated]);
-  // Each play loads the bank again. A play handed the first play's failed
-  // load back would show the same message but send the engine nothing, so
-  // the banks sent to the worklet are counted. Pressing play clears the
-  // card's error before anything is awaited, so the message waited for is
-  // this play's.
+  // Written straight into the store, as another tab would, it is not the bank
+  // the card names: the first play plays nothing, names the bank the store
+  // now keeps, and asks for play again (the page plays only the bank it
+  // names). Then each play loads the bank again. A play handed the first
+  // play's failed load back would show the same message but send the engine
+  // nothing, so the banks sent to the worklet are counted. Pressing play
+  // clears the card's error before anything is awaited, so the message
+  // waited for is this play's.
   const bankSends = await countBankSends(page);
+  const beforeNamed = await bankSends();
+  await page.locator('#preview-play').click();
+  await page.locator('#timbre-preview .note').filter({ hasText: '音色庫已更換，請再按一次播放。' }).waitFor();
+  assert.match(await page.locator('#bank-status').textContent(), /^truncated\.sf2 /, 'the card now names the bank the store keeps');
+  assert.equal(await bankSends(), beforeNamed, 'a bank the card did not name was never sent to the engine');
   for (const attempt of ['first play', 'retry']) {
     const sent = await bankSends();
     await page.locator('#preview-play').click();
