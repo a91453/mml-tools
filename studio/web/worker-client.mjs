@@ -29,8 +29,9 @@ export function createWorkerClient({ spawn, timeoutMs = 45000, maxRestarts = 3 }
   function attach() {
     const instance = spawn();
     instance.onmessage = ({ data }) => {
-      // An instance that has been replaced answers nothing: its requests were
-      // rejected with it, or moved to its replacement.
+      // An instance that has been replaced is not heard again, by message or
+      // by error: its requests were rejected with it, or moved to its
+      // replacement.
       if (instance !== worker) return;
       const request = pending.get(data?.id);
       if (!request) return;
@@ -42,7 +43,10 @@ export function createWorkerClient({ spawn, timeoutMs = 45000, maxRestarts = 3 }
       restarts = 0;
       data.error ? request.reject(Error(data.error)) : request.resolve(data.result);
     };
-    instance.onerror = () => recycle(WORKER_UNAVAILABLE);
+    // Chromium still delivers an error event from an instance after terminate(),
+    // though it drops its messages, so a late error must not take down the
+    // replacement.
+    instance.onerror = () => { if (instance === worker) recycle(WORKER_UNAVAILABLE); };
     return instance;
   }
 
