@@ -695,16 +695,33 @@ build leaves it — its retry's request sent through the run's public entry poin
 exactly as its proposal layer sends it, with the writer fields its `bumpRun`
 carries in place of the ones this build writes, and its last phase's record of a
 thrown failure — and require the rejection and the withdrawal to be refused, the
-retry refused as `STALE`, and nothing written: after a fault and after a process
-death, each alone and followed by a reviewer's resume through this build. Others
-put a bare write in that build's shape after the acceptance, alone, followed by
-one and by two resumes through this build, and between two of them, and require
-the withdrawal to be refused for the same reason; require an acceptance that
-never reached the run to stay
-withdrawable when that build's write, or a run record kept before the field, is
-one the acceptance observed, including when a reviewer's resume through this
-build follows the acceptance; and require the open-proposal cap to stop counting
-such an acceptance as one that can be withdrawn.
+retry refused as `STALE`, and nothing written: on a run this build started,
+after a fault and after a process death, each alone and followed by a reviewer's
+resume through this build. Others put a bare write in that build's shape after
+the acceptance on a run this build started, alone, followed by one and by two
+resumes through this build, and between two of them, and require the withdrawal
+to be refused for the same reason. Two more start from runs those do not: one
+with no writer record at all, and one whose record of unattributed writes is
+already set when the acceptance observes it. On a run record kept before the run
+recorded writers — every run on the record when this build is first deployed —
+the acceptance is followed by a bare write in that build's shape, by its retry
+stopped by a fault, by its retry stopped by a process death, and by that last
+followed by a reviewer's resume through this build, which adopts the candidate
+the application minted. And on a run that already holds a
+`latest_unattributed_revision` from before the acceptance — that build's write,
+or a run record kept before the field, followed by a resume through this build —
+the acceptance is followed by a bare write in that build's shape and by its
+retry stopped by a fault or by a process death, each alone, and the bare write
+and the process death each followed by a resume through this build. In each case
+of both, the rejection and the withdrawal are refused, and the refusal names
+that build's latest write as the unattributed revision and the revision the
+acceptance observed; nothing is written; the retry is refused as `STALE` with
+the run untouched; and the withdrawal is still refused after it. Others require
+an acceptance that never reached the run to stay withdrawable when that build's
+write, or a run record kept before the field, is one the acceptance observed,
+including when a reviewer's resume through this build follows the acceptance;
+and require the open-proposal cap to stop counting such an acceptance as one
+that can be withdrawn.
 
 Nor does it hand the standing permission back one round later. A retry the run
 refuses writes nothing, so the run's latest writer stays whoever moved it, and
@@ -1071,7 +1088,7 @@ four tests in the file go through the service as above.
 | `studio/tests/proposal-agent-review-policy.test.mjs` | the Lead evidence boundary, Gate 8, Gate 9, the ladder, recomputation |
 | `studio/tests/proposal-duplication.test.mjs` | one acceptance, one application — across retries, concurrency, a crash in the window, a second interruption, a process that dies inside the run, and an interruption by a fault followed by a retry whose process dies inside the run; a retry continues only from a run whose latest write is its own application's, and is refused once any other writer — a reviewer, the same payload without the key, the same key with another payload — has moved it; a pin or a marker an earlier version recorded is not trusted past what it proves, and a writer record a build that predates it carried onto its own revision is not read as this application's |
 | `studio/tests/proposal-adversarial.test.mjs` | the four escalations an independent adversarial review found, and the two storage bounds the same pass found saying something that was not true (§9), each kept in the shape it was found in |
-| `studio/tests/proposal-untranslatable.test.mjs` | a proposal the acceptance could never translate is `INVALID` before it is accepted, and one whose plan cannot be derived from the stored material is `STALE`; an acceptance the run never admitted — failed before the run, or refused by the run before it wrote anything, because another acceptance or a reviewer moved it first — can be withdrawn, race-free, is graded again on a retry, and pins no revision — nor does a refused twin of an attempt of the same acceptance the run admitted first; one that may have reached it cannot be withdrawn; an admitted attempt records where its own request left the run, never a revision a reviewer's resume produced after it, and that reviewer's move leaves its retry refused; an attempt whose only write is the run's first hold records that write as its own and is finished by its retry; a retry that would carry another request under the same key is refused before the run writes; an acceptance the release a rollback returns to may have applied — any write since the acceptance that records no writer, alone or followed by writes that do — cannot be rejected or withdrawn, and the open cap does not count it as one that can, while such a write the acceptance observed leaves it withdrawable |
+| `studio/tests/proposal-untranslatable.test.mjs` | a proposal the acceptance could never translate is `INVALID` before it is accepted, and one whose plan cannot be derived from the stored material is `STALE`; an acceptance the run never admitted — failed before the run, or refused by the run before it wrote anything, because another acceptance or a reviewer moved it first — can be withdrawn, race-free, is graded again on a retry, and pins no revision — nor does a refused twin of an attempt of the same acceptance the run admitted first; one that may have reached it cannot be withdrawn; an admitted attempt records where its own request left the run, never a revision a reviewer's resume produced after it, and that reviewer's move leaves its retry refused; an attempt whose only write is the run's first hold records that write as its own and is finished by its retry; a retry that would carry another request under the same key is refused before the run writes; an acceptance the release a rollback returns to may have applied cannot be withdrawn once that release has written to the run since the acceptance — a bare write in its shape, or its retry of the acceptance stopped by a fault or by a process death (the cases §7 lists) — on a run this build started, on one kept before the run recorded writers, and on one that already kept an unattributed revision from before the acceptance, including when writes through this build that record their writer follow; every case but the bare writes on a run this build started also checks that the rejection is refused, that the refusal names that release's latest write, and that the retry is refused as `STALE`; the open cap does not count such an acceptance as one that can be withdrawn, while such a write the acceptance observed leaves it withdrawable |
 | `studio/tests/proposal-plan-derivation-memo.test.mjs` | the policy derives a plan once per set of inputs, and a held outcome is never served for any other: each input moved on its own, and a derivation a change may have raced, is derived afresh (`studio/tests/application-store-regressions.test.mjs` pins that every store write method moves the write count that guard reads, and no read does) |
 | `tests/proposal-transport.test.mjs` | HTTP/MCP parity, and what Phase 2 did not add |
 
