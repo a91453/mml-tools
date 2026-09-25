@@ -79,6 +79,9 @@ export async function runGameStyleBankChecks({ browser, base, profile }) {
     await page.locator('[data-preview-group="front"]').selectOption('violin');
     for (const role of [0, 1, 2]) assert.equal(await page.locator(`[data-listen-instrument="${role}"]`).inputValue(), 'violin');
     await page.locator('#preview-program').selectOption('lute');
+    // The group pickers fit a phone's width in both players.
+    await page.locator('[data-listen-instrument="4"]').selectOption('flute');
+    assert.ok(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth + 1), 'no horizontal overflow with the group pickers');
     assert.ok(!(await page.locator('body').textContent()).includes('Fury'), 'the bank is never named by its file');
     assert.equal(bankRequests.length, 0, 'nothing is downloaded on choosing');
 
