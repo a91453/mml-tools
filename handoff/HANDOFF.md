@@ -25,6 +25,18 @@ needs a Dashboard click, give the owner exact steps.
 - (a) A pasted, valid MML delivery stays VALIDATED. Only readiness / machine delivery of a Studio-generated Final must agree with the emitter.
 - (b) Decisions an imported project marks "accepted" are demoted to pending (as Studio Web already does).
 
+## Status update (~11:00 UTC) — read this first
+Merged: #97 (p1 listening recovery), #98 (p2 imported decisions pending).
+Open PRs — what each still needs:
+| PR | Branch | Needs |
+|---|---|---|
+| #99 | claude/p3-ops-and-test-hygiene | Reviewed OK. Merge when CI is green. |
+| #100 | claude/p3-bank-races | Merge when CI is green (low risk). Review may add fixes. |
+| #101 | claude/p2-ready-means-writable | Changes readiness semantics: do an adversarial review (does each of the three song kinds now block readiness, pasted MML stays VALIDATED, Web and service use the same emit options, no G10 verdict changed), fix problems, then merge when green. |
+| #102 | claude/p1-run-finalize-guidance | Known MEDIUM bug to fix before merge: after an emitter refusal the run says no operation answers it (run-service.mjs ~:2433, capabilities.mjs ~:231, docs AI_ONE_CLICK_ORCHESTRATOR_PHASE1.md ~:187, STUDIO_AGENT_INTERFACE.md ~:746), but a new final_reduction does answer EVENT_ROLE_UNASSIGNED (a PASS reduction with ACCEPT_OVERFLOW keeps overflow events with role null; fixture g12 baselineWithOverflowLane). Name final_reduction when the refusal is EVENT_ROLE_UNASSIGNED (or any code a reduction answers); keep "no operation" only for refusals nothing answers. Add a test. |
+Low follow-ups (optional, small PR after the above): listen — offline with no service worker the Worker replacement budget can run out on a listen-model failure (add a delay or keep the old Worker for non-listen calls); openFromProject still reports success when the session did not open (listen-ui.mjs ~:125); importPayload reads shared state.error after open() (make open() return its error). Gate 5 docs: say baselines stored before #98 keep a file's own accepted decision.
+If a claude/wip-<key> branch is ahead of the merged/open PR branch, it holds later fix-round commits: diff it and carry them over.
+
 ## Fix branches (priority order)
 Final branches appear on origin only when fixed + adversarially verified. If the session ran out before that,
 the latest work-in-progress is on `claude/wip-<key>` (pushed every 10 minutes; may be partial — read its
