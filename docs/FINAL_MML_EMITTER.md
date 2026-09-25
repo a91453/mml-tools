@@ -445,9 +445,11 @@ the boundary list it publishes, without re-deriving any threshold:
   boundary by role, event id, kind, boundary, beat and reason — at most 20, with
   `unreachableBoundaryCount` the true count and `unreachableBoundariesTruncated`.
   Its message states the arithmetic that applies: a position whose whole-note
-  denominator does not divide the admitted lcm, and, for a leading-onset entry,
-  that no admitted token is shorter than 1/16 beat. Nothing is emitted, and no
-  attack, rest or release is moved.
+  denominator does not divide the admitted lcm (beat 49/32 is 49/128 of a whole
+  note, and it is 128 that fails, not 32), and, for a leading-onset entry, that
+  no admitted token is shorter than 1/16 beat. It names at most 20 positions of
+  each kind and counts the rest. Nothing is emitted, and no attack, rest or
+  release is moved.
 
   Both G10 proof codes (`FINAL_REPRESENTABILITY_PROOFS`:
   `MICRO_TIMING_BOUNDARY_NOT_FINAL_REPRESENTABLE` and

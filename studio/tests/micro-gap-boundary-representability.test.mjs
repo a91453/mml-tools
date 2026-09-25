@@ -27,7 +27,7 @@ import {
   createCanonicalProject,
 } from '../backend/canonical/index.mjs';
 import { MICRO_TIMING_KEEP_ACTION, MICRO_TIMING_TECHNICAL_ACTIONS, SAFE_GRID, createIntervalIdentity } from '../backend/canonical/micro-timing.mjs';
-import { POSITION_CLASS, RELEASE_REFUSAL, REPRESENTATION, TARGET_STATUS, analyzeReleaseTiming, classifyPosition, planReleaseRepresentation } from '../backend/canonical/release-timing.mjs';
+import { FINAL_LENGTH_LCM, POSITION_CLASS, RELEASE_REFUSAL, REPRESENTATION, TARGET_STATUS, analyzeReleaseTiming, classifyPosition, planReleaseRepresentation } from '../backend/canonical/release-timing.mjs';
 import { BOUNDARY_COVERAGE, LEADING_ONSET_REASON, MICRO_GAP_BLOCKERS, SHORTEST_ADMITTED_TOKEN_BEATS, enforceMicroGaps } from '../backend/final/micro-gap-enforcement.mjs';
 import { evaluateProjectReadiness } from '../backend/final/readiness.mjs';
 import { emitFinalMml } from '../backend/final/mml-emitter.mjs';
@@ -1223,11 +1223,44 @@ test('a leading-onset proof beside a denominator proof states both arithmetic fa
     ['Chord1', '1/480', 'ONSET_NOT_FINAL_REPRESENTABLE'],
     ['Melody', '1/24', LEADING],
   ]);
-  assert.ok(proof.message.includes('so every position it reaches is a sum of admitted token lengths, whose whole-note denominator divides the lcm of the admitted token denominators; the denominator of 1/480 does not; and no admitted Final token is shorter than 1/16 beat (1/64 of a whole note), so no position after beat 0 and before beat 1/16 is reached; 1/24 is such a position. This is a proof about those positions'), proof.message);
+  assert.ok(proof.message.includes('so every position it reaches is a sum of admitted token lengths, whose whole-note denominator divides the lcm of the admitted token denominators; the whole-note denominator of beat 1/480 (1/1920 of a whole note) does not; and no admitted Final token is shorter than 1/16 beat (1/64 of a whole note), so no position after beat 0 and before beat 1/16 is reached; 1/24 is such a position. This is a proof about those positions'), proof.message);
 
   // No leading entry: the message is exactly the one this proof always carried.
   assert.equal(proofOf(emitFinalMml(project([note('1/480', 1, { id: 'a' })]))).message,
     'G10 (MICRO_TIMING_BOUNDARY_NOT_FINAL_REPRESENTABLE): Melody event a (note start) at beat 1/480 is an onset its Final role has to reach, and no admitted Final token sequence reaches it. A role is written as consecutive tokens from beat 0, so every position it reaches is a sum of admitted token lengths, whose whole-note denominator divides the lcm of the admitted token denominators; this position\'s does not. This is a proof about the position, not a search limit and not an unproven question: no search bound, budget, caution opt-in or evidence changes where it is, and nothing is moved to make the role writable -- no attack, no rest, and no release that release representation refuses (one under a keep claim, or one with no valid representation). This candidate cannot be Final-emitted as it stands; the emitter fails closed.');
+});
+
+test('beside a leading onset the denominator fact names the whole-note denominator, and the positions it names are bounded', () => {
+  // Beat 49/32 is 49/128 of a whole note. 32 divides the admitted lcm and 128
+  // does not, so the proof is the whole-note denominator's. The message used to
+  // say "the denominator of 49/32 does not", which is false as stated.
+  assert.equal(FINAL_LENGTH_LCM % 32n, 0n);
+  assert.notEqual(FINAL_LENGTH_LCM % 128n, 0n);
+  const single = proofOf(emitFinalMml(project([
+    note('1/24', 2, { id: 'c', role: 'Chord1', pitch: 64 }),
+    note(0, 1, { id: 'm0', pitch: 72 }),
+    note('49/32', 2, { id: 'm', pitch: 72 }),
+  ])));
+  assert.deepEqual(single.unreachableBoundaries.map(item => [item.eventId, item.position, item.reason]), [
+    ['c', '1/24', LEADING],
+    ['m', '49/32', 'ONSET_NOT_FINAL_REPRESENTABLE'],
+  ]);
+  assert.ok(single.message.includes('; the whole-note denominator of beat 49/32 (49/128 of a whole note) does not; and no admitted Final token is shorter than'), single.message);
+  assert.equal(single.message.includes('the denominator of 49/32'), false, single.message);
+
+  // 400 unreachable onsets and a leading one: the message names as many
+  // positions as unreachableBoundaries lists and counts the rest, rather than
+  // growing with the song.
+  const many = project([
+    ...Array.from({ length: 400 }, (_, index) => note(`${960 * index + 1}/480`, 2 * index + 1, { id: `m${index}`, pitch: 60 + (index % 12) })),
+    note('1/24', 1, { id: 'c0', role: 'Chord1', pitch: 64 }),
+  ]);
+  const proof = proofOf(emitFinalMml(many));
+  assert.equal(proof.unreachableBoundaryCount, 401);
+  assert.equal(proof.unreachableBoundaries.length, 20);
+  assert.ok(proof.message.includes('18241/480 (18241/1920 of a whole note) and 380 more do not; and'), proof.message);
+  assert.equal(proof.message.includes('19201/480'), false, 'the 21st position is counted, not named');
+  assert.ok(proof.message.length < 2500, `the message is bounded: ${proof.message.length} characters`);
 });
 
 test('a leading silence the shortest token reaches, a rest-first role and an already-refused onset add no leading entry', () => {
