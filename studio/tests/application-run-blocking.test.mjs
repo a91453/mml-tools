@@ -24,7 +24,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 
-import { createStudioApplication, ERROR_CODES, READINESS_BLOCKER_WITHOUT_OPERATION, RUN_STATE, RUN_STEP, RUN_STEP_STATUS } from '../backend/application/index.mjs';
+import { createStudioApplication, ERROR_CODES, READINESS_BLOCKER_WITHOUT_OPERATION, READINESS_GATE_OPERATION_REACH, RUN_STATE, RUN_STEP, RUN_STEP_STATUS } from '../backend/application/index.mjs';
 import { createArbitrationDecision, createCanonicalNoteEvent, createCanonicalProject, createCanonicalRestEvent, createCanonicalTempoEvent } from '../backend/canonical/index.mjs';
 import { MICRO_TIMING_KEEP_ACTION, createIntervalIdentity } from '../backend/canonical/micro-timing.mjs';
 import { enginesWith } from './support/real-engines.mjs';
@@ -702,6 +702,43 @@ test('kept sub-grid material no Final token can carry holds the run at microTimi
   const caps = await createStudioApplication({}).capabilities();
   assert.ok(caps.runs.refuses.some(entry => entry.includes(SOURCE_SUPPORTED) && entry.includes('MICRO_TIMING_BOUNDARY_NOT_FINAL_REPRESENTABLE')
     && entry.includes('lists no operation')), JSON.stringify(caps.runs.refuses));
+});
+
+test('an unclassified sub-grid gap no release representation can close names no operation, and says where it is answered', async () => {
+  // chord5-2 attacks one 480-tick after chord5-1's release on the beat, and
+  // nothing classifies the gap between them. chord5-1's release is one Final
+  // reaches, so no release awaits a representation decision and release
+  // representation refuses every event here. The request used to name
+  // planMobileAdaptation and applyMobileAdaptation.release_representation all
+  // the same, and said nothing of what would answer it.
+  const CLASSIFICATION_UNKNOWN = 'MICRO_TIMING_CLASSIFICATION_UNKNOWN';
+  const source = sixRoleBaseline();
+  const project = createCanonicalProject({
+    ...source,
+    events: source.events.map(event => (event.id === 'chord5-2' ? createCanonicalNoteEvent({ ...event, start: '481/480' }) : event)),
+  });
+  const isolated = createStudioApplication({});
+  const own = await projectWithSymbolicAsset(isolated, OWNER, { project });
+  await isolated.analyzeSources(OWNER, own.projectId, { assetIds: [own.assetId] });
+  const candidate = (await isolated.applyDecisions(OWNER, own.projectId, { decisions: runDecisionsFor(own.project) })).decisions.candidate_id;
+  const { run } = await isolated.startRun(OWNER, own.projectId, { target_candidate_id: candidate, confirmations: FIXTURE_CONFIRMATIONS });
+
+  assert.notEqual(run.state, RUN_STATE.COMPLETED);
+  const request = gateRequest(run, 'microTiming');
+  assert.ok(request, JSON.stringify(run.review_requests.map(entry => entry.gate)));
+  assert.deepEqual(request.blockers, [CLASSIFICATION_UNKNOWN]);
+  assert.deepEqual(request.available_operations, [], 'no operation is offered that cannot answer the gate');
+  assert.deepEqual(request.missing, [READINESS_GATE_OPERATION_REACH.microTiming.unreached([CLASSIFICATION_UNKNOWN])]);
+  assert.match(request.missing[0], /decisionRequiredCount is 0/);
+  assert.match(request.missing[0], /answered in the Canonical source itself/);
+  assert.match(request.missing[0], /The gate still blocks/);
+  const review = await isolated.reviewCandidate(OWNER, own.projectId, { candidateId: candidate });
+  assert.equal(review.review.readiness.gates.microTiming.releaseTiming.decisionRequiredCount, 0, 'the report the request reads says so');
+  assert.deepEqual((await isolated.nextRun(OWNER, own.projectId, run.run_id, {})).reviewer_operations, []);
+
+  // The capability record says the same thing a request does.
+  const caps = await createStudioApplication({}).capabilities();
+  assert.ok(caps.runs.refuses.some(entry => entry.includes('decisionRequiredCount') && entry.includes('lists no operation')), JSON.stringify(caps.runs.refuses));
 });
 
 test('a role that starts after a silence shorter than any Final token holds the run at microTiming and names no operation', async () => {

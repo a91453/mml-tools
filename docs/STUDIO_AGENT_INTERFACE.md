@@ -589,7 +589,12 @@ Three things keep it from becoming a way around this interface's own rules:
   (`READINESS_BLOCKER_WITHOUT_OPERATION`; today
   `MICRO_TIMING_BOUNDARY_NOT_FINAL_REPRESENTABLE` and
   `MICRO_TIMING_SOURCE_SUPPORTED_NOT_FINAL_REPRESENTABLE`) is stated in
-  `missing`, and a request carrying only such blockers names no operation. A
+  `missing`, and a request carrying only such blockers names no operation.
+  Nor does a microTiming request while no note release awaits a
+  representation decision (`releaseTiming.decisionRequiredCount` 0,
+  `READINESS_GATE_OPERATION_REACH`): release representation moves only such a
+  release, so an unclassified sub-grid interval with no such release behind it
+  is stated in `missing` as answered in the Canonical source itself. A
   finalize the Final emitter refused names no operation either: its
   `FINALIZE_BLOCKED` and `technical` requests list none, and
   `FINALIZE_BLOCKED` carries the emitter's blocking codes in

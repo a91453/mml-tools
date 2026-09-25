@@ -206,7 +206,9 @@ export const READINESS_GATE_OPERATIONS = freeze({
   // send a caller to an operation that cannot answer. A sub-grid interval with
   // no non-representable release behind it (a sub-grid note, or a gap after a
   // release Final can express) has no application operation in this build; an
-  // open one is answered in the Canonical source itself. A preserved one
+  // open one is answered in the Canonical source itself, and while no release
+  // awaits a representation decision these operations are not offered at all
+  // (READINESS_GATE_OPERATION_REACH below). A preserved one
   // (source-supported, MICRO_TIMING_SOURCE_SUPPORTED_NOT_FINAL_REPRESENTABLE)
   // is answered by nothing in this build, so that blocker is listed in
   // READINESS_BLOCKER_WITHOUT_OPERATION below. Nor has a position Final cannot
@@ -246,6 +248,36 @@ export const READINESS_BLOCKER_WITHOUT_OPERATION = freeze({
   microTiming: freeze({
     MICRO_TIMING_BOUNDARY_NOT_FINAL_REPRESENTABLE: 'MICRO_TIMING_BOUNDARY_NOT_FINAL_REPRESENTABLE: a position a Final role has to reach sits where no admitted Final token sequence reaches, and nothing in this build moves it. It is an onset, a rest boundary, or a note release no release representation can move (one under a keep claim, or one whose every representation is invalid); readiness.gates.microTiming.unsupportedBoundaries names each one with coverage "none" by role, event, boundary, beat and reason. No operation in this build answers it. An onset is an attack and is never moved; applyMobileAdaptation refuses to move an onset or remove a rest, and its release_representation moves only a note release and refuses one under a keep claim (RELEASE_EVENT_HAS_A_SOURCE_SUPPORTED_KEEP_CLAIM) and any option not valid for its release (RELEASE_REPRESENTATION_NOT_VALID_FOR_EVENT); applyDecisions and applyFinalReduction change no event timing; and the finalize-time Technical Timing Repair reaches only classified sub-grid intervals and never runs past a blocked microTiming gate. Omitting a note that starts or ends there, or moving it to another role, would change the boundary only by changing the arrangement, which is an arrangement decision on its own evidence and not an answer to this gate, so it is not suggested. The positions come from the sources the Source-Faithful Baseline was built from, and a keep claim from the decisions the Canonical project carries, so it is answered in the Canonical source itself: a baseline analysed from sources that put the boundary where Final reaches does not carry it, and a release no keep claim covers that has a valid representation is answered by release representation instead. Until then this candidate cannot become a Final, and the gate still blocks.',
     MICRO_TIMING_SOURCE_SUPPORTED_NOT_FINAL_REPRESENTABLE: 'MICRO_TIMING_SOURCE_SUPPORTED_NOT_FINAL_REPRESENTABLE: a sub-grid interval is classified SOURCE_SUPPORTED_MICROTIMING (an accepted keep decision with admissible evidence), so it must be kept exactly: never deleted, shortened, quantized, absorbed or moved (MASTER_RULES §7, MOBILE_SYNTAX §11 step 1). No admitted Final token is shorter than 1/64 of a whole note (MOBILE_SYNTAX §2, §3, §4), so no Final writes it as the interval it is, and the Final emitter refuses the candidate (SOURCE_SUPPORTED_INTERVAL_NOT_REPRESENTABLE). readiness.gates.microTiming.preservedIntervalKeys names each interval, and its enforcement entry gives the type, event ids, start, end, length and keep decision. No operation in this build answers it. applyMobileAdaptation refuses to move an onset or remove a rest, and its release_representation refuses a release under a keep claim (RELEASE_EVENT_HAS_A_SOURCE_SUPPORTED_KEEP_CLAIM) and any option not valid for its release (RELEASE_REPRESENTATION_NOT_VALID_FOR_EVENT); applyDecisions and applyFinalReduction change no event timing; the provisional hold never applies beside source-supported material; and the finalize-time Technical Timing Repair never runs past a blocked microTiming gate. Withdrawing or rejecting the keep decision would change the interval\'s classification, which is decided only on its own evidence (SOURCE_POLICY), and omitting a note or moving it to another role is an arrangement decision on its own evidence; neither is an answer to this gate, so neither is suggested. The loaded Canonical gives no Final representation for source-supported material finer than 1/64, so it stays PENDING/UNSUPPORTED (ACCEPTANCE_CRITERIA Gate 2): this candidate cannot become a Final under it, and the gate still blocks.',
+  }),
+});
+
+/**
+ * Whether a gate's hinted operations can act on this candidate at all, read
+ * from the gate's own report.
+ *
+ * Release representation, the only operation this build has for microTiming,
+ * moves a note release that awaits a representation decision and refuses every
+ * other event (RELEASE_EVENT_IS_NOT_A_REPRESENTATION_TARGET,
+ * RELEASE_EVENT_HAS_A_SOURCE_SUPPORTED_KEEP_CLAIM,
+ * RELEASE_REPRESENTATION_NOT_VALID_FOR_EVENT). G10 counts those releases in
+ * `releaseTiming.decisionRequiredCount`. While there are none, the gate's
+ * operations cannot change any blocker it carries -- an unclassified sub-grid
+ * note, a gap after a release Final can express, technical residue, a policy
+ * or stream finding -- so a request for it names no operation, and `missing`
+ * states every blocker READINESS_BLOCKER_WITHOUT_OPERATION does not already
+ * state, in the words below. Like the tables above this decides nothing: the
+ * gate blocks exactly as readiness says.
+ */
+export const READINESS_GATE_OPERATION_REACH = freeze({
+  microTiming: freeze({
+    reaches: gate => (gate?.releaseTiming?.decisionRequiredCount ?? 0) > 0,
+    unreached: codes => [
+      `${codes.join(', ')}: readiness.gates.microTiming reports no note release awaiting a representation decision (releaseTiming.decisionRequiredCount is 0, or no release analysis ran), and release representation, the only operation this build has for this gate, moves only such a release and refuses every other event (RELEASE_EVENT_IS_NOT_A_REPRESENTATION_TARGET), so planMobileAdaptation and applyMobileAdaptation.release_representation are not offered: neither can change these blockers.`,
+      codes.includes('MICRO_TIMING_CLASSIFICATION_UNKNOWN')
+        ? ' An unclassified sub-grid interval with no such release behind it (a sub-grid note, or a gap after a release Final can express; readiness.gates.microTiming.unknownIntervals names each) is classified only by a micro-timing decision the Canonical project carries, on its own evidence (SOURCE_POLICY), and no operation in this build records one: applyDecisions and applyFinalReduction change no event timing, and the finalize-time Technical Timing Repair never runs past a blocked microTiming gate. It is answered in the Canonical source itself.'
+        : '',
+      ' The gate still blocks.',
+    ].join(''),
   }),
 });
 

@@ -79,6 +79,7 @@ import { CONFIRMATIONS } from './review-service-core.mjs';
 import { CALLER_DECISION_KEYS } from './arrangement-service.mjs';
 import {
   READINESS_BLOCKER_WITHOUT_OPERATION,
+  READINESS_GATE_OPERATION_REACH,
   READINESS_GATE_OPERATIONS,
   RUN_AUTHORITY_NOTICE,
   RUN_EXECUTION_MODE,
@@ -635,6 +636,11 @@ function readinessRequests(readiness, {
       : null;
     const codes = [...new Set(blockers.map(blockerCode))];
     const withoutOperation = unanswerable ? codes.filter(code => Object.hasOwn(unanswerable, code)) : [];
+    // A gate whose operations can act only on something its own report says
+    // this candidate does not have: none is offered, and every blocker the
+    // table above leaves unstated is stated in the reach table's words.
+    const reach = known && Object.hasOwn(READINESS_GATE_OPERATION_REACH, gate) ? READINESS_GATE_OPERATION_REACH[gate] : null;
+    const unreached = reach && !reach.reaches(entry) ? codes.filter(code => !withoutOperation.includes(code)) : null;
     return reviewRequest({
       code: RUN_REVIEW_REQUEST.READINESS_GATE_BLOCKED,
       step,
@@ -648,11 +654,12 @@ function readinessRequests(readiness, {
       // `unanswered` is the caller's statement that no operation reaches any of
       // these gates as they stand -- the Final emitter refused the candidate --
       // so no gate hint is offered beside it.
-      availableOperations: unanswered || (withoutOperation.length && withoutOperation.length === codes.length) ? [] : null,
+      availableOperations: unanswered || unreached || (withoutOperation.length && withoutOperation.length === codes.length) ? [] : null,
       missing: [
         ...(known
           ? withoutOperation.map(code => unanswerable[code])
           : ['This readiness gate is not in the run orchestrator hint table, so no operation is suggested. It still blocks, and it is answered through the module that owns it.']),
+        ...(unreached?.length ? [reach.unreached(unreached)] : []),
         ...(unanswered ? [unanswered] : []),
       ],
       invalidatedBy: ['candidate', 'canonical'],

@@ -174,7 +174,15 @@ onset after a silence shorter than any Final token is one) and
 `MICRO_TIMING_SOURCE_SUPPORTED_NOT_FINAL_REPRESENTABLE` (a sub-grid interval
 classified source-supported, which must be kept exactly and which no admitted
 Final token can carry). The request states each one it carries in `missing`,
-names no operation when they are all it carries, and still blocks.
+names no operation when they are all it carries, and still blocks. A gate's
+operations can also have nothing to act on: release representation, the only
+microTiming operation, moves a note release that awaits a representation
+decision and refuses every other event, so while the gate's own
+`releaseTiming.decisionRequiredCount` is 0 (`READINESS_GATE_OPERATION_REACH`) a
+microTiming request names no operation, and `missing` states its remaining
+blockers -- an unclassified sub-grid note or a gap after a release Final can
+express (`MICRO_TIMING_CLASSIFICATION_UNKNOWN`) is answered in the Canonical
+source itself.
 
 A finalize the Final emitter refused (`operation: "failed"`) is answered by no
 operation either. Every gate finalize grades before emission was already
