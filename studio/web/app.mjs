@@ -1015,8 +1015,17 @@ async function buildPreviewEngine(token) {
   // The user's own bank takes precedence; without one, the free default bank.
   const bank = await loadBank() ?? await loadDefaultPreviewBank();
   if (token !== preview.engineToken) throw Error('音色庫已更換，請再按一次播放。');
-  try { preview.engine = await createPreviewEngine(bank, preview.context); preview.engine.isDefault = Boolean(bank.isDefault); }
-  catch (error) { preview.engine = null; preview.context = null; throw error; }
+  let engine;
+  try { engine = await createPreviewEngine(bank, preview.context); }
+  catch (error) {
+    // After a bank change the context may already be a newer build's.
+    if (token === preview.engineToken) { preview.engine = null; preview.context = null; }
+    throw error;
+  }
+  // The bank changed while the engine was built: it holds the old bank, so
+  // it is closed, not installed.
+  if (token !== preview.engineToken) { engine.context.close?.(); throw Error('音色庫已更換，請再按一次播放。'); }
+  preview.engine = engine; preview.engine.isDefault = Boolean(bank.isDefault);
   preview.transport = createTransport(preview.engine, {
     onPosition: (position, duration, voices = 0) => {
       if (preview.owner === 'listen') return preview.listenHandlers?.onPosition?.(position, duration, voices);

@@ -238,6 +238,42 @@ export async function runDefaultBankChecks({ browser, base, profile }) {
     await page.locator('#listen-bank-file').setInputFiles({ name: 'saw.sf2', mimeType: 'application/octet-stream', buffer: sample });
     await page.locator('#listen-bank').filter({ hasText: 'saw.sf2' }).waitFor();
 
+    // A bank picked while a play is still building the engine: the engine
+    // built from the old bank is closed, not installed. That play says the
+    // bank changed, and the next play builds its engine from the new bank.
+    // The new synth's ready message (synth-ready.mjs) is held in the page
+    // until the pick has been kept. (Playwright does not route an
+    // AudioWorklet's module request, so the processor cannot be held.)
+    await page.evaluate(() => {
+      const onmessage = Object.getOwnPropertyDescriptor(MessagePort.prototype, 'onmessage');
+      const ready = data => data?.type === 'isFullyInitialized' && data?.data?.type === 'sf3Decoder';
+      window.heldReady = [];
+      Object.defineProperty(MessagePort.prototype, 'onmessage', {
+        configurable: true,
+        enumerable: onmessage.enumerable,
+        get() { return onmessage.get.call(this); },
+        set(handler) {
+          onmessage.set.call(this, typeof handler !== 'function' ? handler : function (event) {
+            if (window.heldReady && ready(event?.data)) { window.heldReady.push(() => handler.call(this, event)); return undefined; }
+            return handler.call(this, event);
+          });
+        },
+      });
+    });
+    const sentBeforeBuild = await bankSends();
+    await page.locator('#listen-play').click();
+    await page.waitForFunction(() => window.heldReady.length === 1);
+    await page.locator('#bank-file').setInputFiles({ name: 'second.sf2', mimeType: 'application/octet-stream', buffer: sample });
+    await page.locator('#message').filter({ hasText: '已載入音色庫 second.sf2' }).waitFor();
+    await page.evaluate(() => { const held = window.heldReady; window.heldReady = null; held.forEach(deliver => deliver()); });
+    await page.waitForFunction(sent => window.bankSends === sent, sentBeforeBuild + 1);
+    await page.locator('#listen-status').filter({ hasText: '無法播放：音色庫已更換，請再按一次播放。' }).waitFor({ timeout: 10000 });
+    await page.locator('#listen-play').click();
+    await played();
+    assert.equal(await bankSends(), sentBeforeBuild + 2, 'the next play builds its engine from the bank picked, not the one built before the pick');
+    await page.evaluate(() => document.querySelector('#listen-stop:enabled')?.click());
+    await page.locator('#listen-position[data-state="stopped"]').waitFor();
+
     // Overlapping picks: the last choice wins. Each pick is checked off the
     // main thread first, and a big bank takes longer than a small one: here
     // the first pick's check is held until the second pick has been checked,
