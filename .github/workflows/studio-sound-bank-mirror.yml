@@ -38,7 +38,6 @@ jobs:
           pins=ops/permanent/sound-banks.json
           bank="$(jq -ce --arg id "$BANK" '.banks[] | select(.id == $id)' "$pins")"
           release="$(jq -r '.source.release' <<<"$bank")"
-          zip_sha="$(jq -r '.source.zipSha256' <<<"$bank")"
           info="$(gh api --paginate "repos/$GITHUB_REPOSITORY/releases" | jq -cs --arg tag "$release" '[.[][] | select(.tag_name == $tag)] | first')"
           test "$info" != null || { echo "Release $release not found"; exit 1; }
           mkdir -p /tmp/bank
@@ -51,17 +50,20 @@ jobs:
             test -n "$link" || { echo "Release $release carries no ZIP"; exit 1; }
             curl -fsSL -o /tmp/bank/source.zip "$link"
           fi
-          test "$(sha256sum /tmp/bank/source.zip | cut -d' ' -f1)" = "$zip_sha" || { echo "Release ZIP does not match its pin"; exit 1; }
+          # The ZIP itself is not pinned (re-packing changes it); each file
+          # taken from it must match its own pin below.
+          echo "Release ZIP: $(stat -c %s /tmp/bank/source.zip) bytes, sha256 $(sha256sum /tmp/bank/source.zip | cut -d' ' -f1)"
           mkdir /tmp/bank/unzipped
           unzip -q /tmp/bank/source.zip -d /tmp/bank/unzipped
           mkdir /tmp/bank/out
           jq -c '.files[]' <<<"$bank" | while read -r pin; do
             ext="$(jq -r .extension <<<"$pin")"
-            mapfile -t found < <(find /tmp/bank/unzipped -type f -iname "*$ext")
+            mapfile -t found < <(find /tmp/bank/unzipped -type f -iname "*$ext" -not -path '*/__MACOSX/*' -not -name '._*')
             test "${#found[@]}" = 1 || { echo "Expected exactly one $ext in the ZIP"; exit 1; }
             out="/tmp/bank/out/$(jq -r .sha256 <<<"$pin")$ext"
             cp "${found[0]}" "$out"
-            test "$(sha256sum "$out" | cut -d' ' -f1)" = "$(jq -r .sha256 <<<"$pin")"
+            echo "$ext: $(stat -c %s "$out") bytes, sha256 $(sha256sum "$out" | cut -d' ' -f1)"
+            test "$(sha256sum "$out" | cut -d' ' -f1)" = "$(jq -r .sha256 <<<"$pin")" || { echo "$ext does not match its pin"; exit 1; }
             test "$(stat -c %s "$out")" = "$(jq -r .bytes <<<"$pin")"
           done
           echo "$bank" > /tmp/bank/pins.json

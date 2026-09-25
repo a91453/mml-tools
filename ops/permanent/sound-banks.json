@@ -4,8 +4,7 @@
     {
       "id": "game-style",
       "source": {
-        "release": "sound-bank-game-style-v150",
-        "zipSha256": "96f8b270ce2e6d4e6e9a0cedf71e2bb4b9d4dc35a0742c0a5c753c60b410712b"
+        "release": "sound-bank-game-style-v150"
       },
       "files": [
         {

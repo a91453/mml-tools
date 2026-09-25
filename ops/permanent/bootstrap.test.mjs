@@ -142,7 +142,7 @@ test('the committed sound bank pins are well formed', async () => {
   const pins = JSON.parse(await readFile(new URL('./sound-banks.json', import.meta.url), 'utf8'));
   assert.equal(pins.schema, 'studio-sound-banks-v1');
   for (const bank of pins.banks) {
-    assert.match(bank.source.zipSha256, /^[a-f0-9]{64}$/);
+    assert.match(bank.source.release, /^[a-z0-9.-]+$/);
     assert.deepEqual(bank.files.map(pin => pin.extension).sort(), ['.def', '.dls']);
     for (const pin of bank.files) {
       assert.equal(pin.path, `banks/${bank.id}/${pin.sha256}${pin.extension}`);
