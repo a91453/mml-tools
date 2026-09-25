@@ -47,6 +47,7 @@ import * as storage from "./storage.mjs";
 import { setIcon } from "./icons.mjs";
 import * as studio from "./studio-bridge.mjs";
 import * as bankStore from "../preview/soundbank-store.mjs";
+import { createBankChoices, sameBank } from "../preview/bank-choices.mjs";
 import { buildRoles, withSelection, renderHTML, runAt, MAX_HL_CHARS } from "./mml-highlight.mjs";
 
 let rawPresets = [];
@@ -70,11 +71,16 @@ function rememberHintDefaults() {
 
 const resetHint = id => { const el = $(id); if (el) el.textContent = hintDefaults.get(id) ?? ""; };
 
+// While a pick is being checked and kept, the label goes on naming the bank
+// the synth holds and plays (if any), followed by "reading".
+let bankReading = false;
 function updateHints() {
-  if (!bankLabel || bankBuiltin) resetHint("#dlsName");
+  const reading = bankReading ? i18n.t("ui.bankReading") : "";
+  if (!bankLabel || bankBuiltin) { if (reading) $("#dlsName").textContent = reading; else resetHint("#dlsName"); }
   else $("#dlsName").textContent =
     i18n.t("ui.bankLabel", { bank: bankLabel, n: presets.length })
-    + (filterNote ? i18n.t("ui.filterNoteWrap", { note: filterNote }) : "");
+    + (filterNote ? i18n.t("ui.filterNoteWrap", { note: filterNote }) : "")
+    + (reading ? ` · ${reading}` : "");
 
   if (!defLabel || defBuiltin) { resetHint("#defName"); return; }
   const matched = rawPresets.length ? presets.filter(p => defMap.has(p.program)).length : null;
@@ -106,43 +112,151 @@ function fillPresets() {
   tracks.fillInstruments(presets, defMap, defNames, bankLabel.split(" · ")[0]);
 }
 
-let bankFile = null;
-
-// Bank loads run one at a time, and a load goes on only while nothing newer
-// was asked for, so the synth, the label and the bank store end on the last
-// choice. A pick takes its number the moment it is made, before any file is
-// read; the stored bank read at boot counts as older than any pick: otherwise
-// a slow boot load finishing last would replace the bank just chosen. That
-// is asked when the load starts, again before the pick's store write
-// (storeBank asks after the check and inside the write's transaction), and
-// again right before the bank is sent to the synth, once the engine has
-// booted and its synth is ready. So a pick overtaken before then is neither
-// kept (unless its write request had already been sent, which cannot be
-// stopped; the newer pick's own write comes after it), nor sent, nor shown.
-let bankQueue = Promise.resolve();
-let bankPicks = 0;
-function queueBank(task) {
-  const run = bankQueue.then(task);
-  bankQueue = run.catch(() => {});
+// ─── The sound bank ─────────────────────────────────────────────────────────
+// The bank is the one kept in Studio's local bank store, the single source of
+// truth that the Studio timbre preview shares (preview/bank-choices.mjs). A
+// pick only decides what the store keeps: it is checked and written only
+// while it is still the latest choice. Once the latest choice has ended its
+// outcome is said, and reconcileBank re-reads the store and makes the synth,
+// the bank label, the instrument lists, the play button and export's bank
+// match exactly the bank the store keeps, or none. The page's first read of
+// the store (loadStoredBank, at boot) is a reconcile older than every pick.
+// A choice overtaken by a newer one says nothing and changes nothing more.
+// Play, audition, the metronome and export wait for, or refuse during, a
+// choice still pending, so they only use the bank a reconcile installed.
+//
+// `held` is what the synth holds: the store's description of the last bank
+// it loaded (engine.loadBank), or null. `installed` is what the page names
+// and plays: `held` once a reconcile has shown it, null otherwise.
+let held = null, heldPresets = [], heldMb = "0.0";
+let installed = null;
+const bankChoices = createBankChoices({ reconcile: reconcileBank });
+// Reconciles touch the synth one at a time, so `held` is only read and
+// changed by one of them at once, and a load overtaken while it was sent
+// ends before the next one compares with what the synth holds.
+let bankWork = Promise.resolve();
+function serially(task) {
+  const run = bankWork.then(task);
+  bankWork = run.catch(() => {});
   return run;
 }
+const bankUsable = () => Boolean(installed) && !bankChoices.pending();
 
-// `current` is asked right before the bank is sent to the synth (engine.mjs):
-// a load no longer wanted sends nothing and shows nothing. Once sent, the
-// synth plays that bank, so the page shows it.
-async function loadBank(buf, name, builtin = false, file = null, current = () => true) {
-  const loaded = await engine.loadBank(buf, { current });
-  if (!loaded) return;
-  const { list, mb } = loaded;
-  bankLabel = `${name} · ${mb} MB`;
-  setPresets(list);
-  bankBuiltin = !!builtin;
-  bankFile = file;
+// Only a reconcile that is still the latest shows its result, so the choice
+// being read has ended: the label stops saying "reading".
+function showBank(record) {
+  installed = record;
+  bankReading = false;
+  bankLabel = `${record.name} · ${heldMb} MB`;
+  bankBuiltin = false;
+  setPresets(heldPresets);
   updateHints();
   $("#play").disabled = $("#stop").disabled = false;
   filebox.setBankReady(true);
   tracks.enableInstruments();
   applyMutes();
+  syncTempoTry();
+}
+// No bank to name: nothing is playable and nothing is exported. `failed`
+// says the kept bank could not be read or loaded (the log says why).
+function showNoBank(failed) {
+  installed = null;
+  bankReading = false;
+  bankLabel = "";
+  setPresets([]);
+  updateHints();
+  if (failed) $("#dlsName").textContent = i18n.t("ui.bankFailed");
+  $("#play").disabled = $("#stop").disabled = true;
+  filebox.setBankReady(false);
+  syncTempoTry();
+}
+// Whatever the synth is sounding stops before its bank changes or goes.
+function silence() {
+  if (player.isPlaying()) player.stop();
+  auditionOff();
+  stopClicks();
+}
+function letGo() {
+  silence();
+  engine.dropSynth();
+  held = null; heldPresets = [];
+}
+
+async function reconcileBank(current) {
+  let stored = null, unreadable = null;
+  try { stored = await bankStore.loadBank(); } catch (err) { unreadable = err; }
+  if (!current()) return;
+  await serially(async () => {
+    if (!current()) return;
+    if (unreadable) {
+      console.warn("[Workshop] stored bank:", unreadable);
+      letGo();
+      showNoBank(true);
+      say(describe(unreadable, i18n.t("ui.bankLoadError")));
+      return;
+    }
+    if (!stored) { letGo(); showNoBank(false); return; }
+    const want = bankStore.describe(stored);
+    if (sameBank(want, held)) { showBank(want); return; }
+    // Another bank: nothing sounds and nothing is named while the synth
+    // changes banks.
+    silence();
+    installed = null;
+    bankLabel = "";
+    setPresets([]);
+    $("#play").disabled = true;
+    $("#dlsName").textContent = i18n.t("ui.bankReading");
+    let loaded;
+    try { loaded = await engine.loadBank(stored.bytes, { current }); }
+    catch (err) {
+      // The engine has let go of the synth (engine.loadBank), or never had one.
+      held = null; heldPresets = [];
+      console.warn("[Workshop] stored bank failed to load:", err);
+      if (!current()) return;
+      showNoBank(true);
+      say(describe(err, i18n.t("ui.bankLoadError")));
+      return;
+    }
+    // Overtaken before it was sent: the synth still holds what it held.
+    if (!loaded) return;
+    // Sent and loaded: the synth holds it now, shown or not.
+    held = want; heldPresets = loaded.list; heldMb = loaded.mb;
+    if (!current()) return;
+    showBank(want);
+  });
+}
+
+// A pick refused before anything was kept or loaded, in the page language.
+function refusalLine(err) {
+  const words = {
+    BANK_CHECK_TIMEOUT: () => i18n.t("ui.bankCheckTimeout", { s: Math.round(err.timeoutMs / 1000) }),
+    BANK_CHECKER_LOAD_TIMEOUT: () => i18n.t("ui.bankCheckerLoadTimeout", { s: Math.round(err.timeoutMs / 1000) }),
+    BANK_DOES_NOT_PARSE: () => i18n.t("ui.bankUnparsable", { detail: err.detail ?? "" }),
+    BANK_CHECK_UNAVAILABLE: () => i18n.t("ui.bankCheckUnavailable", { detail: err.detail ?? "" }),
+    BANK_NOT_A_BANK: () => i18n.t("ui.bankNotBank"),
+    BANK_TOO_LARGE: () => i18n.t("ui.bankTooLarge", { mib: Math.round(err.maxBytes / 1048576) }),
+    BANK_NOT_STORED: () => i18n.t("ui.bankNotKept", { detail: err.detail ?? "" }),
+  }[err?.code];
+  return describe(words ? Error(words()) : err, i18n.t("ui.bankLoadError"));
+}
+
+// The bytes an export renders: those of the bank the page names, once no
+// choice is pending, read from the store. A choice made meanwhile is waited
+// for in turn. The store must still keep exactly that bank: if another page
+// or tab changed it, a reconcile names what it keeps now and the export
+// stops and says so.
+async function installedBankBytes() {
+  for (;;) {
+    await bankChoices.settled();
+    const want = installed, choice = bankChoices.latest();
+    if (!want) throw Object.assign(Error("no sound bank"), { code: "nobank" });
+    const stored = await bankStore.loadBank();
+    if (choice !== bankChoices.latest()) continue;
+    if (sameBank(stored && bankStore.describe(stored), want)) return stored.bytes;
+    await bankChoices.refresh();
+    if (choice !== bankChoices.latest()) continue;
+    throw Object.assign(Error("the kept sound bank changed"), { code: "bankChanged" });
+  }
 }
 
 let selRanges = [];
@@ -281,6 +395,8 @@ let auditionMidi = -1, auditionTimer = null;
 
 function auditionStart(midi, vel) {
   auditionOff();
+  // Only the bank the page names sounds: none while a bank choice is pending.
+  if (!bankUsable()) return;
   engine.resume();
   engine.unmute();
   const p = tracks.presetOf(tracks.activeTrack());
@@ -315,10 +431,15 @@ function applyInstruments(trackIdx) {
   }
 }
 
-// The bank for offline rendering: the file just picked, or the copy kept in
-// Studio's local bank store (preview/soundbank-store.mjs). Never a URL.
-const bankSource = () => (rawPresets.length
-  ? (bankFile ? { kind: "file", file: bankFile } : { kind: "store" })
+// The bank for offline rendering: the bank the page names, read from
+// Studio's local bank store (preview/soundbank-store.mjs) when the render
+// starts, after any bank choice still pending has been reconciled, and only
+// while the store still keeps exactly that bank (installedBankBytes). Never a
+// URL, never a file the store does not keep. With no bank named, an export
+// waits only for a pick still pending, never for the page's first read of
+// the store (an engine that never boots never reads it).
+const bankSource = () => (installed || (bankChoices.latest() > 0 && bankChoices.pending())
+  ? { kind: "installed", bytes: installedBankBytes }
   : null);
 
 function applyMutes() {
@@ -476,7 +597,25 @@ function captureSel() {
   return ta ? { ch: tracks.activeTrack(), ranges: selRanges.map(r => [...r]) } : null;
 }
 
+// A play (or a resume) asked for while a bank choice is pending waits until
+// that choice has ended and been reconciled, then plays the bank the page
+// names then, if there is one. The audio context is resumed inside the click
+// itself; a stop, or another play, drops the wait.
+let playWait = 0;
 function onPlayClick() {
+  const pausing = player.isPlaying() && !player.isPaused();
+  if (!pausing && bankChoices.pending()) {
+    engine.resume();
+    const wait = ++playWait;
+    bankChoices.settled().then(() => { if (wait === playWait && installed && !(player.isPlaying() && !player.isPaused())) playNow(); });
+    return;
+  }
+  playWait++;
+  if (!pausing && !installed) return;
+  playNow();
+}
+
+function playNow() {
   if (player.isPlaying()) {
     if (player.isPaused()) leavePause();
     else { player.pause(); enterPause(); }
@@ -632,28 +771,14 @@ export function describe(err, headline) {
   return i18n.t("ui.errorLine", { headline, step: s, msg: escHtml(err.message), hint });
 }
 
-// The sound bank is the one the user keeps in Studio Web's local bank store
-// (the same store the Studio timbre preview reads). Nothing is fetched.
-// It is asked for at boot, before the user can pick anything, so it is older
-// than every pick: once any bank has been picked it is never applied, not
-// even when the pick came while the engine was still booting and its own
-// store write has not finished (or failed), leaving the older bank in the
-// store for this read to find. A kept bank that does not load says why in the
-// log, as a pick's does, unless a pick has been made since.
+// The page's first read of the bank store, at boot (the same store the Studio
+// timbre preview reads; nothing is fetched): a reconcile older than every
+// pick. Once any bank has been picked it changes nothing, however late it is
+// asked for or ends, and the pick's own reconcile names and loads what the
+// store keeps then. A kept bank that does not load says why in the log, as
+// every reconcile does, unless a pick has been made since.
 export async function loadStoredBank() {
-  const picked = () => bankPicks > 0;
-  if (picked()) return;
-  let stored = null;
-  try { stored = await bankStore.loadBank(); }
-  catch (err) { console.warn("[Workshop] stored bank:", err); }
-  if (!stored) return;
-  try { await queueBank(() => picked() ? undefined : loadBank(stored.bytes, stored.name, false, null, () => !picked())); }
-  catch (err) {
-    console.warn("[Workshop] stored bank failed to load:", err);
-    if (picked()) return;
-    $("#dlsName").textContent = i18n.t("ui.bankFailed");
-    say(describe(err, i18n.t("ui.bankLoadError")));
-  }
+  await bankChoices.open();
 }
 
 let warnedComments = false;
@@ -2176,7 +2301,7 @@ function stopClicks() {
 
 function canClick() {
   if (sounding()) return false;
-  if (!presets.length) return false;
+  if (!presets.length || !bankUsable()) return false;
   return true;
 }
 
@@ -3183,7 +3308,6 @@ export function init() {
   rememberHintDefaults();
 
   engine.setStatusHandler(text => { $("#engine").textContent = text; });
-  engine.setPresetListHandler(list => setPresets(list));
   player.setStopHandler(onStopped);
   player.setKeyMapper((t, midi) => soundingKey(tracks.presetOf(t), midi));
   storage.setSavedHandler(showStore);
@@ -3334,13 +3458,14 @@ export function init() {
     showStore(tracks.restoredAt(), i18n.t("ui.store.restored"));
 
   $("#play").addEventListener("click", onPlayClick);
-  $("#stop").addEventListener("click", player.stop);
+  const stopPlay = () => { playWait++; player.stop(); };
+  $("#stop").addEventListener("click", stopPlay);
   addEventListener("keydown", onTransportKey);
 
   mediakeys.init({
     onPlay:  () => { if (!sounding() && !$("#play").disabled) onPlayClick(); },
     onPause: () => { if (sounding()) onPlayClick(); },
-    onStop:  player.stop,
+    onStop:  stopPlay,
     onSeekBars: n => { if (player.isPlaying()) moveHead(tickPlusBars(headTick(), n)); },
   });
   initLoop();
@@ -3355,42 +3480,28 @@ export function init() {
 
   initDrawers();
 
-  $("#dls").addEventListener("change", async e => {
+  // A pick is kept in Studio's local bank store (never uploaded), so the
+  // Studio preview and the next Workshop visit use the same bank. It decides
+  // only what the store keeps: checked, and written only while it is still
+  // the latest choice. A pick that is refused (a bank that does not parse, a
+  // check that ran out of time or whose checker did not load, a store that
+  // would not keep it) is never handed to the synth; the log says why, and
+  // the page goes on naming the bank the store keeps. Its outcome is said
+  // only if it is still the latest choice when it ends; then reconcileBank
+  // names and loads what the store keeps.
+  $("#dls").addEventListener("change", e => {
     const f = e.target.files[0]; if (!f) return;
     e.target.value = "";
-    const pick = ++bankPicks;
-    const current = () => pick === bankPicks;
     if (defBuiltin) { defMap = new Map(); defNames = new Map(); defLabel = ""; defBuiltin = false; }
-  $("#dlsName").textContent = i18n.t("ui.bankReading");
-    // Kept in Studio's local bank store (never uploaded) so the Studio preview
-    // and the next Workshop visit use the same bank.
-    try {
-      await queueBank(async () => {
-        if (!current()) return;
-        // A pick overtaken while it is checked is not written: storeBank
-        // rejects with BANK_SUPERSEDED, which is only logged here.
-        await bankStore.storeBank(f, { current }).catch(err => {
-          // A bank whose check ran out of time is refused, not handed to the
-          // synth, whose worklet would run the same parse on it. So is one
-          // that could not be checked because the checker did not load in time.
-          if (err?.code === "BANK_CHECK_TIMEOUT") throw Error(i18n.t("ui.bankCheckTimeout", { s: Math.round(err.timeoutMs / 1000) }));
-          if (err?.code === "BANK_CHECKER_LOAD_TIMEOUT") throw Error(i18n.t("ui.bankCheckerLoadTimeout", { s: Math.round(err.timeoutMs / 1000) }));
-          console.warn("[Workshop] bank not stored:", err);
-        });
-        // Asked again right before the bank is sent to the synth (loadBank):
-        // a pick overtaken while it was checked or kept, or while the engine
-        // boots or its synth gets ready, is neither sent nor shown. The newer
-        // pick's load is queued behind this one.
-        await loadBank(await f.arrayBuffer(), f.name, false, f, current);
-      });
-    }
-    catch (err) {
-      console.error(err);
-      // A newer pick is loading or loaded; its label and errors are the ones shown.
-      if (pick !== bankPicks) return;
-    $("#dlsName").textContent = i18n.t("ui.bankFailed");
-    say(describe(err, i18n.t("ui.bankLoadError")));
-    }
+    const choice = bankChoices.choose(current => bankStore.storeBank(f, { current }), err => {
+      if (!err) return;
+      console.warn("[Workshop] bank not stored:", err);
+      say(refusalLine(err));
+    });
+    bankReading = true;
+    updateHints();
+    syncTempoTry();
+    choice.catch(err => console.error(err));
   });
 
   $("#def").addEventListener("change", async e => {

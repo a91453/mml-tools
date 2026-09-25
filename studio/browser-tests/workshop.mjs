@@ -1,11 +1,6 @@
 import assert from 'node:assert/strict';
 import { crc32 } from 'node:zlib';
-import { BasicSoundBank } from 'spessasynth_core';
-import { BANK_CHECKER_LOAD_TIMEOUT_MS, bankCheckTimeoutMs } from '../web/preview/soundbank-store.mjs';
-import { SYNTH_READY_TIMEOUT_MS } from '../web/preview/bank-check.mjs';
-import { bankSendCounter, countBankSends } from './bank-sends.mjs';
-import { readyGate, withholdSynthReady } from './synth-ready.mjs';
-import { bankSendHold, keptBankReadHold, processorHold, synthReadyHold } from './workshop-boot.mjs';
+import { runWorkshopBankChecks, workshopDriver } from './workshop-bank.mjs';
 
 // The Workshop editor (studio/web/workshop/), end to end in a real browser:
 // open a Studio MML as a copy, language switch, dark/light theme, a bank
@@ -60,56 +55,15 @@ async function download(page, action) {
 
 export async function runWorkshopChecks({ page, base, idle, file, screenshot, profile = {} }) {
   // A touch profile is driven the way a phone or tablet user drives the page:
-  // taps, not mouse clicks.
-  const press = locator => (profile.hasTouch ? locator.tap() : locator.click());
-  // On a phone the header commands (Studio, clipboard, file, settings, about)
-  // sit behind the menu button, so they are reached through it, as a phone
-  // user reaches them. The button has to show its icon: an empty square is
-  // not something a user can be expected to find.
-  const command = async id => {
-    const toggle = page.locator('#navToggle');
-    if (await toggle.isVisible()) {
-      assert.ok((await toggle.locator('svg').boundingBox())?.width > 0, 'the menu button shows its icon');
-      await press(toggle);
-      await page.locator('#navMenu').waitFor();
-    }
-    await press(page.locator(id));
-  };
+  // taps, not mouse clicks. On a phone the header commands (Studio,
+  // clipboard, file, settings, about) sit behind the menu button, so they are
+  // reached through it, as a phone user reaches them (workshopDriver).
+  const { press, command } = workshopDriver({ page, profile });
   // A mobile browser widens its layout viewport to fit what overflows, so
   // innerWidth would hide an overflow there; compare with the profile's width.
   const fitsWidth = async what => {
     const width = profile.viewport?.width ?? await page.evaluate(() => innerWidth);
     assert.ok(await page.evaluate(w => document.documentElement.scrollWidth <= w + 1, width), `${what}: no horizontal page scroll at ${width}px`);
-  };
-  // The settings drawer slides out; on a phone it covers nearly the whole
-  // width until it has gone, so wait for that rather than tap through it.
-  const closeSettings = async () => {
-    await (profile.hasTouch ? press(page.locator('#settingsClose')) : page.keyboard.press('Escape'));
-    await page.waitForFunction(() => document.querySelector('#settings').getBoundingClientRect().left >= innerWidth - 1);
-  };
-  // Waits for the bank label to name `name`. A load that never lands says
-  // where it stopped -- still reading, a refused load, the engine's own boot
-  // step, the audio context, the bank in the store -- instead of only that a
-  // 30 s wait ran out (desktop Chromium, once in CI on 2b5fe41).
-  const bankLoaded = async name => {
-    try {
-      await page.waitForFunction(name => document.querySelector('#dlsName')?.textContent.startsWith(name), name);
-    } catch (error) {
-      const seen = await page.evaluate(async () => {
-        const engine = await import('./engine.mjs').catch(e => ({ unreadable: e.message }));
-        const stored = await import('../preview/soundbank-store.mjs').then(store => store.loadBank()).then(bank => bank?.name ?? null, e => `unreadable: ${e.message}`);
-        return {
-          url: location.href,
-          label: document.querySelector('#dlsName')?.textContent,
-          engine_status: document.querySelector('#engine')?.textContent,
-          audio_context: engine.context ? engine.context()?.state ?? 'not created' : engine,
-          play_enabled: document.querySelector('#play')?.disabled === false,
-          log: document.querySelector('#log')?.textContent?.trim().slice(0, 500),
-          stored_bank: stored,
-        };
-      }).catch(e => ({ unreadable: e.message }));
-      throw Object.assign(new Error(`The Workshop never showed ${name} as its bank: ${JSON.stringify(seen)}`), { cause: error });
-    }
   };
   // ── Studio → Workshop: the candidate MML opens as a copy ─────────────────
   // A project of its own, so the hand-back below touches no other fixture.
@@ -179,340 +133,12 @@ export async function runWorkshopChecks({ page, base, idle, file, screenshot, pr
   await screenshot('workshop-dark');
 
   // ── the user's bank, kept in Studio's local bank store ────────────────────
-  await command('#gear');
-  await page.locator('#dls').setInputFiles({ name: 'saw.sf2', mimeType: 'application/octet-stream', buffer: Buffer.from(BasicSoundBank.getSampleSoundBankFile()) });
-  await bankLoaded('saw.sf2');
-
-  // A truncated bank (its RIFF header intact) is not kept in the store, and
-  // the synth's parse error ends the load with the page's message instead of
-  // leaving it, and every bank load queued behind it, reading forever. The
-  // next pick loads.
-  const t = (key, vars = null) => page.evaluate(([key, vars]) => import('./i18n.mjs').then(i18n => i18n.t(key, vars)), [key, vars]);
-  const storedBankName = () => page.evaluate(async () => (await (await import('../preview/soundbank-store.mjs')).loadBank())?.name);
-  const sawBank = Buffer.from(BasicSoundBank.getSampleSoundBankFile());
-  await page.locator('#dls').setInputFiles({ name: 'truncated.sf2', mimeType: 'application/octet-stream', buffer: sawBank.subarray(0, sawBank.length >> 1) });
-  await page.locator('#dlsName').filter({ hasText: await t('ui.bankFailed') }).waitFor({ timeout: 20000 });
-  const shown = await page.locator('#logMsg').textContent();
-  const unparsable = (await t('engine.bankUnparsable', { detail: '\u0001' })).split('\u0001')[0];
-  assert.ok(shown.includes(await t('ui.bankLoadError')) && shown.includes(unparsable) && shown.includes('SF parsing error'), `the parse error is shown: ${shown}`);
-  assert.equal(await storedBankName(), 'saw.sf2', 'the truncated bank is not kept');
-  await page.locator('#dls').setInputFiles({ name: 'saw.sf2', mimeType: 'application/octet-stream', buffer: sawBank });
-  await bankLoaded('saw.sf2');
-  // The engine's error quotes the bank's own bytes (a chunk name), and the
-  // log line is HTML: a chunk name written as markup is shown as text.
-  const marked = Buffer.from(sawBank);
-  marked.write('<b>A', 12, 'latin1');
-  await page.locator('#dls').setInputFiles({ name: 'marked.sf2', mimeType: 'application/octet-stream', buffer: marked });
-  await page.locator('#dlsName').filter({ hasText: await t('ui.bankFailed') }).waitFor({ timeout: 20000 });
-  const quoted = await page.locator('#logMsg').textContent();
-  assert.ok(quoted.includes('got "<b>a"'), `the bank's bytes are quoted as text: ${quoted}`);
-  assert.equal(await page.locator('#logMsg b').count(), 0, 'nothing from the bank becomes markup');
-  await page.locator('#dls').setInputFiles({ name: 'saw.sf2', mimeType: 'application/octet-stream', buffer: sawBank });
-  await bankLoaded('saw.sf2');
-
-  // A pick whose check does not answer in time (a damaged bank can keep the
-  // parser allocating until the tab crashes; here a stand-in check Worker
-  // loads and then never answers) is refused in the page language, saying
-  // only that it could not be checked: the check's Worker is stopped,
-  // nothing is kept, nothing is sent to the synth, and the bank queue goes on
-  // to the next pick. So is one whose check Worker never loads its parser (a
-  // download that hangs), with its own message, and the bank is never handed
-  // to it. Only the limit that ends each case is shortened for the run: it is
-  // the one timer the page arms with that delay.
-  const bankSends = await countBankSends(page);
-  const checkLimit = bankCheckTimeoutMs(sawBank.length);
-  for (const [stage, loads, limit, refusal] of [
-    ['check', true, checkLimit, await t('ui.bankCheckTimeout', { s: Math.round(checkLimit / 1000) })],
-    ['checker load', false, BANK_CHECKER_LOAD_TIMEOUT_MS, await t('ui.bankCheckerLoadTimeout', { s: BANK_CHECKER_LOAD_TIMEOUT_MS / 1000 })],
-  ]) {
-    await page.evaluate(([loads, limit]) => {
-      const RealWorker = window.Worker, realSetTimeout = window.setTimeout;
-      window.checks = { stopped: 0, handed: 0 };
-      window.Worker = function (url, options) {
-        if (!String(url).endsWith('/preview/bank-check-worker.mjs')) return new RealWorker(url, options);
-        const worker = { postMessage() { window.checks.handed += 1; }, terminate() { worker.stopped = true; window.checks.stopped += 1; } };
-        if (loads) realSetTimeout(() => { if (!worker.stopped) worker.onmessage?.({ data: { loaded: true } }); }, 1);
-        return worker;
-      };
-      window.setTimeout = (callback, ms, ...rest) => realSetTimeout(callback, ms === limit ? 200 : ms, ...rest);
-      window.restoreBankCheck = () => { window.Worker = RealWorker; window.setTimeout = realSetTimeout; };
-    }, [loads, limit]);
-    const sentBefore = await bankSends();
-    await page.locator('#dls').setInputFiles({ name: 'unchecked.sf2', mimeType: 'application/octet-stream', buffer: sawBank });
-    // Settled: no longer reading, and no longer the bank loaded before.
-    await page.waitForFunction(reading => {
-      const label = document.querySelector('#dlsName')?.textContent ?? '';
-      return label !== reading && !label.startsWith('saw.sf2');
-    }, await t('ui.bankReading'));
-    assert.equal(await page.locator('#dlsName').textContent(), await t('ui.bankFailed'), `${stage}: a bank that could not be checked is not loaded`);
-    const notChecked = await page.locator('#logMsg').textContent();
-    assert.ok(notChecked.includes(refusal), `${stage}: the refusal says why the bank could not be checked: ${notChecked}`);
-    assert.ok(!notChecked.includes(unparsable), `${stage}: and does not call it damaged`);
-    assert.deepEqual(await page.evaluate(() => window.checks), { stopped: 1, handed: loads ? 1 : 0 }, `${stage}: the check Worker is stopped, and is handed the bank only once it has loaded`);
-    assert.equal(await bankSends(), sentBefore, `${stage}: the bank is never sent to the synth`);
-    assert.equal(await storedBankName(), 'saw.sf2', `${stage}: nor kept`);
-    await page.evaluate(() => window.restoreBankCheck());
-    await page.locator('#dls').setInputFiles({ name: 'saw.sf2', mimeType: 'application/octet-stream', buffer: sawBank });
-    await bankLoaded('saw.sf2');
-  }
-
-  // Picks that overlap: the check of the first pick is held in the page (its
-  // Worker's answer waits for release; its loaded message does not) until a
-  // second pick has been made, which queues behind it. Once released, the
-  // first pick has been overtaken: it is not written to the store, not sent
-  // to the synth, and its name is never shown. The second pick is kept, sent
-  // and shown.
-  await page.evaluate(() => {
-    const RealWorker = window.Worker, put = IDBObjectStore.prototype.put;
-    // The native accessor, below any Worker subclass installed over it (the
-    // suite's installWorkerControls, audit.mjs).
-    let proto = RealWorker.prototype, onmessage;
-    while (!(onmessage = Object.getOwnPropertyDescriptor(proto, 'onmessage'))) proto = Object.getPrototypeOf(proto);
-    let release, armed = true;
-    const hold = window.heldCheck = { held: 0, released: new Promise(resolve => { release = resolve; }), release: () => release() };
-    window.Worker = function (url, options) {
-      const worker = new RealWorker(url, options);
-      if (!armed || !String(url).endsWith('/preview/bank-check-worker.mjs')) return worker;
-      armed = false;
-      Object.defineProperty(worker, 'onmessage', {
-        configurable: true,
-        get() { return onmessage.get.call(this); },
-        set(handler) {
-          onmessage.set.call(this, typeof handler !== 'function' ? handler : function (event) {
-            if (event.data?.loaded) return handler.call(this, event);
-            hold.held += 1;
-            hold.released.then(() => handler.call(this, event));
-            return undefined;
-          });
-        },
-      });
-      return worker;
-    };
-    // Every write of the kept bank, by name.
-    window.bankWrites = [];
-    IDBObjectStore.prototype.put = function (value, key, ...rest) {
-      if (key === 'current') window.bankWrites.push(value?.name);
-      return put.call(this, value, key, ...rest);
-    };
-    const label = document.querySelector('#dlsName');
-    window.bankLabels = [];
-    const labels = new MutationObserver(() => window.bankLabels.push(label.textContent));
-    labels.observe(label, { childList: true, characterData: true, subtree: true });
-    window.restoreOverlap = () => { window.Worker = RealWorker; IDBObjectStore.prototype.put = put; labels.disconnect(); };
-  });
-  const sentBeforeOverlap = await bankSends();
-  await page.locator('#dls').setInputFiles({ name: 'first.sf2', mimeType: 'application/octet-stream', buffer: sawBank });
-  await page.waitForFunction(() => window.heldCheck.held === 1);
-  await page.locator('#dls').setInputFiles({ name: 'second.sf2', mimeType: 'application/octet-stream', buffer: sawBank });
-  await page.evaluate(() => window.heldCheck.release());
-  await bankLoaded('second.sf2');
-  const overlap = await page.evaluate(() => ({ labels: window.bankLabels, writes: window.bankWrites }));
-  assert.ok(overlap.labels.every(text => !text.startsWith('first.sf2')), `the overtaken pick is never shown: ${overlap.labels.join(' → ')}`);
-  assert.deepEqual(overlap.writes, ['second.sf2'], 'the overtaken pick is never written to the store');
-  assert.equal(await bankSends(), sentBeforeOverlap + 1, 'only the later pick is sent to the synth');
-  assert.equal(await storedBankName(), 'second.sf2');
-  await page.evaluate(() => window.restoreOverlap());
-  await page.locator('#dls').setInputFiles({ name: 'saw.sf2', mimeType: 'application/octet-stream', buffer: sawBank });
-  await bankLoaded('saw.sf2');
-  await closeSettings();
-  await press(page.locator('#log button'));
+  // Picks, refusals, overlapping choices, plays and exports while a choice is
+  // pending, and picks during the engine's boot (workshop-bank.mjs). From
+  // here on bankProbe follows every note and render the page plays.
+  const { banks } = await runWorkshopBankChecks({ page, profile });
+  if (await page.locator('#log').isVisible()) await press(page.locator('#log button'));
   assert.equal(await page.locator('#play').isEnabled(), true);
-
-  // ── a bank picked while the engine boots is not replaced ─────────────────
-  // At boot the Workshop loads the bank kept in the store (saw.sf2), which is
-  // older than any pick. On a slow device the pick can come while the synth
-  // processor is still loading, or once the engine is ready but while the
-  // kept bank is still being read, and before the pick's own store write has
-  // landed (a big bank hashes slowly; one over the store's limit is refused),
-  // so the boot-time read still finds saw.sf2. Each case holds that step in
-  // the page (workshop-boot.mjs) until the pick has been made, and the pick's
-  // store write is refused. The pick is never replaced, not even by a stored
-  // bank asked for after it, and saw.sf2 is never sent to the synth.
-  await page.addInitScript(() => {
-    if (sessionStorage.getItem('workshopRefuseBankStore') !== 'yes') return;
-    sessionStorage.removeItem('workshopRefuseBankStore');
-    crypto.subtle.digest = () => Promise.reject(Error('bank store write refused (browser check)'));
-  });
-  await page.addInitScript(processorHold);
-  await page.addInitScript(keptBankReadHold);
-  await page.addInitScript(bankSendCounter);
-  const workletStep = `${await t('engine.step.worklet')}…`;
-  const pickWhileHeld = async (flag, hold) => {
-    await page.evaluate(flag => { sessionStorage.setItem('workshopRefuseBankStore', 'yes'); sessionStorage.setItem(flag, 'yes'); }, flag);
-    await page.reload(); await page.locator('#unverified').waitFor();
-    await page.waitForFunction(hold => window[hold]?.held === 1, hold);
-    await page.evaluate(() => {
-      const label = document.querySelector('#dlsName');
-      window.bankLabels = [];
-      new MutationObserver(() => window.bankLabels.push(label.textContent)).observe(label, { childList: true, characterData: true, subtree: true });
-    });
-    const held = await page.evaluate(() => ({ label: document.querySelector('#dlsName')?.textContent ?? '', engine: document.querySelector('#engine')?.textContent, sends: window.bankSends }));
-    assert.ok(!held.label.startsWith('saw.sf2'), `${hold}: no bank is loaded yet when the pick is made: ${held.label}`);
-    assert.equal(held.sends, 0, `${hold}: no bank has been sent to a synth yet`);
-    await page.locator('#dls').setInputFiles({ name: 'picked.sf2', mimeType: 'application/octet-stream', buffer: sawBank });
-    await page.evaluate(hold => window[hold].release(), hold);
-    await page.waitForFunction(() => window.bankLabels.some(text => text.startsWith('picked.sf2')));
-    // The stored bank never replaces a pick, however late it is asked for. A
-    // stored-bank load queued behind the pick would run before this one ends,
-    // so every label the page showed is recorded by the time it returns.
-    await page.evaluate(async () => (await import('./ui.mjs')).loadStoredBank());
-    const labels = await page.evaluate(() => window.bankLabels);
-    assert.ok(labels.every(text => !text.startsWith('saw.sf2')), `${hold}: the bank picked during boot is never replaced: ${labels.join(' → ')}`);
-    assert.match(await page.locator('#dlsName').textContent(), /^picked\.sf2 /, `${hold}: the bank picked during boot is the one loaded`);
-    assert.equal(await page.evaluate(() => window.bankSends), 1, `${hold}: the picked bank is the only one sent to the synth`);
-    assert.equal(await storedBankName(), 'saw.sf2', `${hold}: the refused pick left saw.sf2 in the store`);
-    return held;
-  };
-  // The processor is still loading: the engine is at its worklet step.
-  const booting = await pickWhileHeld('holdProcessor', 'processorHold');
-  assert.equal(booting.engine, workletStep, 'the pick is made while the engine loads its processor');
-  // The engine is ready and the kept bank has been asked for, not read yet.
-  const reading = await pickWhileHeld('holdKeptBankRead', 'keptBankReadHold');
-  const hz = await page.evaluate(async () => (await import('./engine.mjs')).context().sampleRate);
-  assert.equal(reading.engine, await t('engine.ready', { hz }), 'the engine has booted before this pick');
-
-  // A pick overtaken while it waits for the engine: its bank has been checked
-  // and kept, but the processor is still loading, so it has not been sent.
-  // A newer pick is made then. Once the processor loads, the older pick's
-  // bank is not sent to the synth and never shown; the newer pick's is.
-  const watchLabels = () => page.evaluate(() => {
-    const label = document.querySelector('#dlsName');
-    window.bankLabels = [];
-    new MutationObserver(() => window.bankLabels.push(label.textContent)).observe(label, { childList: true, characterData: true, subtree: true });
-  });
-  await page.evaluate(() => sessionStorage.setItem('holdProcessor', 'yes'));
-  await page.reload(); await page.locator('#unverified').waitFor();
-  await page.waitForFunction(() => window.processorHold?.held === 1);
-  await watchLabels();
-  // The pick reads its file twice: for the check, then right before its
-  // load. Once that second read has been answered, and the page has run
-  // everything that follows it without waiting, the pick waits on the boot.
-  await page.evaluate(() => {
-    const arrayBuffer = File.prototype.arrayBuffer;
-    let reads = 0;
-    File.prototype.arrayBuffer = function () {
-      const read = arrayBuffer.call(this);
-      if (this.name === 'waiting.sf2' && ++reads === 2) read.then(() => setTimeout(() => { window.waitingOnBoot = true; }));
-      return read;
-    };
-  });
-  await page.locator('#dls').setInputFiles({ name: 'waiting.sf2', mimeType: 'application/octet-stream', buffer: sawBank });
-  await page.waitForFunction(() => window.waitingOnBoot === true);
-  assert.equal(await page.locator('#engine').textContent(), workletStep, 'the older pick waits for the processor');
-  assert.equal(await storedBankName(), 'waiting.sf2', 'the older pick was kept before the newer one was made');
-  await page.locator('#dls').setInputFiles({ name: 'newer.sf2', mimeType: 'application/octet-stream', buffer: sawBank });
-  await page.evaluate(() => window.processorHold.release());
-  await bankLoaded('newer.sf2');
-  const waited = await page.evaluate(() => window.bankLabels);
-  assert.ok(waited.every(text => !text.startsWith('waiting.sf2')), `the pick overtaken while the engine booted is never shown: ${waited.join(' → ')}`);
-  assert.equal(await page.evaluate(() => window.bankSends), 1, 'only the newer pick is sent to the synth');
-  assert.equal(await storedBankName(), 'newer.sf2');
-
-  // A pick made while the boot-time load of the kept bank waits for the new
-  // synth to be ready (its first reply is held, workshop-boot.mjs): once the
-  // synth is ready, the kept bank is not sent and never shown; the pick,
-  // queued behind that load, is.
-  const keptName = await storedBankName();
-  await page.addInitScript(synthReadyHold);
-  await page.evaluate(() => sessionStorage.setItem('holdSynthReady', 'yes'));
-  await page.reload(); await page.locator('#unverified').waitFor();
-  await page.waitForFunction(() => window.synthReadyHold?.held === 1);
-  await watchLabels();
-  await page.locator('#dls').setInputFiles({ name: 'picked.sf2', mimeType: 'application/octet-stream', buffer: sawBank });
-  await page.evaluate(() => window.synthReadyHold.release());
-  await bankLoaded('picked.sf2');
-  const readied = await page.evaluate(() => window.bankLabels);
-  assert.ok(readied.every(text => !text.startsWith(keptName)), `the kept bank ${keptName} never replaces a pick made while the synth got ready: ${readied.join(' → ')}`);
-  assert.equal(await page.evaluate(() => window.bankSends), 1, 'only the pick is sent to the synth');
-
-  // A kept bank that fails to load at boot after a pick has been made says
-  // nothing: the pick's own result is the one shown. The kept bank is one
-  // stored before banks were checked (cut short behind an intact header);
-  // its send to the synth is held (workshop-boot.mjs) until the pick has been
-  // made, which queues behind that load. The synth's parse error then ends
-  // the boot-time load, and the pick loads.
-  await page.addInitScript(bankSendHold);
-  await page.evaluate(async bytes => {
-    const db = await new Promise((resolve, reject) => { const request = indexedDB.open('mml-studio-soundbank', 1); request.onsuccess = () => resolve(request.result); request.onerror = () => reject(request.error); });
-    const buffer = new Uint8Array(bytes).buffer;
-    const sha256 = [...new Uint8Array(await crypto.subtle.digest('SHA-256', buffer))].map(b => b.toString(16).padStart(2, '0')).join('');
-    await new Promise((resolve, reject) => {
-      const tx = db.transaction('banks', 'readwrite');
-      tx.objectStore('banks').put({ name: 'kept-truncated.sf2', size: buffer.byteLength, sha256, format: 'sfbk', savedAt: new Date().toISOString(), bytes: buffer }, 'current');
-      tx.oncomplete = resolve; tx.onerror = () => reject(tx.error);
-    });
-    db.close();
-  }, [...sawBank.subarray(0, sawBank.length >> 1)]);
-  const bootWarnings = [];
-  const onConsole = message => { if (message.type() === 'warning') bootWarnings.push(message.text()); };
-  page.on('console', onConsole);
-  await page.evaluate(() => sessionStorage.setItem('holdBankSend', 'yes'));
-  await page.reload(); await page.locator('#unverified').waitFor();
-  await page.waitForFunction(() => window.bankSendHold?.held === 1);
-  await watchLabels();
-  await page.evaluate(() => { document.querySelector('#logMsg').textContent = ''; });
-  await page.locator('#dls').setInputFiles({ name: 'saw.sf2', mimeType: 'application/octet-stream', buffer: sawBank });
-  await page.evaluate(() => window.bankSendHold.release());
-  await bankLoaded('saw.sf2');
-  page.off('console', onConsole);
-  assert.ok(bootWarnings.some(text => text.includes('[Workshop] stored bank failed to load')), `the kept bank did fail to load at boot: ${bootWarnings.join(' | ')}`);
-  const afterPick = await page.evaluate(() => ({ labels: window.bankLabels, log: document.querySelector('#logMsg')?.textContent ?? '' }));
-  const failedLabel = await t('ui.bankFailed');
-  assert.ok(afterPick.labels.every(text => text !== failedLabel), `the boot-time failure does not replace the pick's label: ${afterPick.labels.join(' → ')}`);
-  assert.equal(afterPick.log, '', 'nor write to the log once a pick has been made');
-  assert.equal(await page.evaluate(() => window.bankSends), 2, 'the kept bank and then the pick were sent');
-  assert.equal(await storedBankName(), 'saw.sf2');
-
-  // ── a synth that never reports ready ends the load ───────────────────────
-  // With the processor's first reply withheld, as from one that never
-  // finishes starting (synth-ready.mjs), the boot-time load of the kept
-  // bank and then a pick each end as a failed load with the page's
-  // not-ready message in the log, instead of leaving the label reading and
-  // every bank load queued behind them waiting, and no bank is sent to a
-  // synth that is not ready; each load tries a new synth. Only the readiness
-  // limit is shortened for the run: it is the one timer the page arms with
-  // that delay.
-  await page.addInitScript(readyGate);
-  await withholdSynthReady(page, true);
-  await page.addInitScript(limit => {
-    if (sessionStorage.getItem('workshopShortReadyLimit') !== 'yes') return;
-    sessionStorage.removeItem('workshopShortReadyLimit');
-    const realSetTimeout = window.setTimeout;
-    window.setTimeout = (callback, ms, ...rest) => realSetTimeout(callback, ms === limit ? 300 : ms, ...rest);
-  }, SYNTH_READY_TIMEOUT_MS);
-  await page.evaluate(() => sessionStorage.setItem('workshopShortReadyLimit', 'yes'));
-  await page.reload(); await page.locator('#unverified').waitFor();
-  // The limit counts only while the audio context runs, and one made as the
-  // page loads may wait for a user gesture first: a tap on a button that
-  // only resumes it, as the page's own play or audition would.
-  await page.waitForFunction(async () => Boolean((await import('./engine.mjs')).context()));
-  await page.evaluate(async () => {
-    const engine = await import('./engine.mjs');
-    const button = Object.assign(document.createElement('button'), { id: 'resumeAudio', type: 'button', textContent: 'resume audio' });
-    button.style.cssText = 'position:fixed;left:0;top:0;z-index:2147483647';
-    button.onclick = () => { engine.resume(); button.remove(); };
-    document.body.append(button);
-  });
-  await press(page.locator('#resumeAudio'));
-  await page.waitForFunction(async () => (await import('./engine.mjs')).context().state === 'running');
-  // The boot-time load of the kept bank: the banks sent are counted from the
-  // moment the page loaded (bankSendCounter, installed above for every load).
-  await page.waitForFunction(failed => document.querySelector('#dlsName')?.textContent === failed, await t('ui.bankFailed'));
-  const notReady = await t('engine.synthTimeout', { s: SYNTH_READY_TIMEOUT_MS / 1000 });
-  const bootShown = await page.locator('#logMsg').textContent();
-  assert.ok(bootShown.includes(await t('ui.bankLoadError')) && bootShown.includes(notReady), `the boot-time load says why it stopped: ${bootShown}`);
-  const readySends = await countBankSends(page);
-  assert.equal(await readySends(), 0, 'the kept bank is not sent to a synth that is not ready');
-  // Then a pick; the log is emptied first, so the message waited for is the pick's.
-  await page.evaluate(() => { document.querySelector('#logMsg').textContent = ''; });
-  await page.locator('#dls').setInputFiles({ name: 'saw.sf2', mimeType: 'application/octet-stream', buffer: sawBank });
-  await page.waitForFunction(text => document.querySelector('#logMsg')?.textContent.includes(text), notReady);
-  assert.equal(await page.locator('#dlsName').textContent(), await t('ui.bankFailed'), 'the pick ends as a failed load');
-  assert.equal(await readySends(), 0, 'no bank is sent to a synth that is not ready');
-  await withholdSynthReady(page, false);
-  await page.reload(); await page.locator('#unverified').waitFor();
-  await bankLoaded('saw.sf2');
-  await page.locator('#play:enabled').waitFor();
 
   // ── draw a note on the roll, then undo / redo ─────────────────────────────
   const original = (await texts(page))[0];
@@ -625,6 +251,10 @@ export async function runWorkshopChecks({ page, base, idle, file, screenshot, pr
   assert.ok(previewDrawn, `the waterfall preview is drawn: ${await page.evaluate(`(${litPixels})()`)} lit pixels after 15 s`);
   await screenshot('workshop-video');
   await page.locator('#videoClose').click();
+
+  // Every note and render since the last reload used the bank the page named.
+  const exports = await banks.check('the Workshop exports');
+  assert.ok(exports.renders >= 2, 'the WAV export and the video preview were followed');
 
   // ── Workshop → Studio: a derived candidate, never a verified one ─────────
   await command('#studioSend');

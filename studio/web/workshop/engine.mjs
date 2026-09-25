@@ -8,9 +8,7 @@ import { addSoundBankOrFail, synthReadyOrFail } from "../preview/bank-check.mjs"
 let ctx = null, synth = null, out = null, WorkletSynthesizer = null, booting = null;
 
 let onStatus = () => {};
-let onPresetList = () => {};
 export const setStatusHandler     = fn => { onStatus = fn; };
-export const setPresetListHandler = fn => { onPresetList = fn; };
 
 async function step(id, fn) {
   const name = i18n.t(`engine.step.${id}`);
@@ -45,10 +43,24 @@ export function boot() {
   return booting;
 }
 
-// `current` says whether this bank is still the one wanted. It is asked once
-// the engine has booted and its synth is ready, right before the bank is
-// sent, with nothing awaited in between: a load no longer wanted stops there,
-// sends nothing and resolves to null.
+// Lets go of the synth and whatever bank it holds; the next load makes a new
+// one. The page does this when the bank store keeps no bank it could load
+// (ui.mjs), so nothing it no longer names can sound.
+export function dropSynth() {
+  if (!synth) return;
+  try { synth.destroy(); } catch (err) { console.warn("[Workshop] synth not destroyed:", err); }
+  out?.disconnect();
+  synth = null; out = null;
+}
+
+// Loads a bank the page read from the bank store. Loads are run one at a
+// time by the page (ui.mjs reconcile). `current` says whether this bank is
+// still the one wanted. It is asked once the engine has booted and its synth
+// is ready, right before the bank is sent, with nothing awaited in between:
+// a load no longer wanted stops there, sends nothing and resolves to null.
+// A bank that was sent and failed to load leaves no synth behind (dropSynth),
+// so the synth never goes on playing a bank the page no longer names.
+// Resolves to the bank's preset list, as the synth reports it for this bank.
 export async function loadBank(buf, { current = () => true } = {}) {
   const mb = (buf.byteLength / 1048576).toFixed(1);
   await boot();
@@ -57,11 +69,10 @@ export async function loadBank(buf, { current = () => true } = {}) {
     const gain = ctx.createGain();
     gain.connect(ctx.destination);
     made.connect(gain);
-    made.eventHandler.addEvent("presetListChange", "ui", list => onPresetList(list));
     // isReady waits for the processor's first reply. One that fails to start,
-    // or never finishes setting up, would leave this load, and every bank
-    // load queued behind it, waiting forever. A synth that is not ready is
-    // dropped, so the next load starts a new one.
+    // or never finishes setting up, would leave this load, and every later
+    // load (the page runs them one at a time), waiting forever. A synth that
+    // is not ready is dropped, so the next load starts a new one.
     try { await synthReadyOrFail(made, ctx); }
     catch (err) {
       try { made.destroy(); } catch (e) { console.warn("[Workshop] synth not destroyed:", e); }
@@ -75,16 +86,27 @@ export async function loadBank(buf, { current = () => true } = {}) {
     synth.addNewChannel();
   }
   if (!current()) return null;
+  // The preset list the synth reports once it has taken this bank (it can
+  // arrive after the load's own reply); after 4 s, whatever it lists then.
+  const loading = synth;
+  let listed;
+  const list = new Promise(resolve => { listed = resolve; });
+  loading.eventHandler.addEvent("presetListChange", "workshop-load", presets => listed(presets));
   // A bank the worklet cannot parse is reported only as an event; without the
-  // guard this load, and every bank load queued behind it, would never end.
-  // The synth keeps the bank it had.
-  try { await addSoundBankOrFail(synth, buf, "main"); }
+  // guard this load, and every later load, would never end.
+  try { await addSoundBankOrFail(loading, buf, "main"); }
   catch (err) {
+    loading.eventHandler.removeEvent("presetListChange", "workshop-load");
+    if (synth === loading) dropSynth();
     if (err?.code === "BANK_UNPARSABLE") throw Error(i18n.t("engine.bankUnparsable", { detail: err.message }));
     if (err?.code === "BANK_LOAD_TIMEOUT") throw Error(i18n.t("engine.bankTimeout", { s: Math.round(err.timeoutMs / 1000) }));
     throw err;
   }
-  return { list: synth.presetList, mb };
+  let timer = 0;
+  const presets = await Promise.race([list, new Promise(resolve => { timer = setTimeout(() => resolve(loading.presetList), 4000); })]);
+  clearTimeout(timer);
+  loading.eventHandler.removeEvent("presetListChange", "workshop-load");
+  return { list: presets ?? loading.presetList, mb };
 }
 
 export const context = () => ctx;

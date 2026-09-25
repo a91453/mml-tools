@@ -260,34 +260,43 @@ exact timing, event identity and the evidence boundaries. See
     a Worker that has not loaded by then is stopped and the bank refused
     with 「檢查音色庫的程式在 30 秒內沒有載入，音色庫沒有檢查，也沒有儲存」.
     A bank the store will not keep (a full disk, say) is refused with
-    「音色庫無法存進這台裝置，沒有儲存（…）」.
-    The Workshop keeps its picks in the same store, which refuses them the
-    same way; it still hands a bank that does not parse to its synth, whose
-    parse error is what it shows, but a pick whose check ran out of time, or
-    whose checker did not load, is refused in the page language and never
-    reaches the synth, which would run the same parse. If the engine
-    still cannot load a bank (the worklet reports a parse error, or nothing
-    arrives within 60 s), the load stops with 「音色庫無法解析，已停止載入」 or
-    the timeout message, the player leaves its loading state, and the next
-    play tries again. The Workshop's bank loads stop the same way. Before
-    any bank is sent, a new synth must report ready: its processor answers
-    once its decoder is set up, and one that fails to start or never does
-    would leave the load, and in the Workshop every bank load queued behind
-    it, waiting. A processor error, or no answer within 20 s of the audio
-    context running (a context still waiting for a user gesture is not
-    timed), stops the load with 「音色試聽引擎無法啟動，已停止載入」 or
-    「音色試聽引擎在 20 秒內沒有就緒，已停止載入」 (the Workshop says it in
-    its page language), and the next load starts a new synth. When the
-    bank kept on the device fails to load as the Workshop opens, its log
-    says why, as it does for a pick, unless a pick has been made since:
-    that pick's own result is the one shown. The Workshop loads one bank
-    at a time, and the last pick wins there too: a pick overtaken by a newer
-    one before its bank is sent to the synth (while it is checked or kept,
-    or while the engine boots or its synth gets ready) is not written to the
-    store, unless its write had already been sent, and is never sent to the
-    synth or shown. Neither is the kept bank once a pick has been made. A
-    bank already sent is shown, since the synth plays it, until the newer
-    pick's own load replaces it.
+    「音色庫無法存進這台裝置，沒有儲存（…）」. The Workshop keeps its picks in
+    the same store, which refuses them the same way, and says why in its
+    page language; a refused pick is never handed to its synth. If the
+    engine still cannot load a bank the store keeps (one kept before banks
+    were checked: the worklet reports a parse error, or nothing arrives
+    within 60 s), the load stops with 「音色庫無法解析，已停止載入」 or the
+    timeout message, the player leaves its loading state, and the next play
+    tries again. The Workshop's bank loads stop the same way. Before any
+    bank is sent, a new synth must report ready: its processor answers once
+    its decoder is set up, and one that fails to start or never does would
+    leave the load waiting, and every later one with it. A processor error,
+    or no answer within 20 s of the audio context running (a context still
+    waiting for a user gesture is not timed), stops the load with
+    「音色試聽引擎無法啟動，已停止載入」 or 「音色試聽引擎在 20 秒內沒有就緒，已停止載入」
+    (the Workshop says it in its page language), and the next load starts a
+    new synth.
+  - **The Workshop's bank** follows the same rule (`workshop/ui.mjs`). When
+    your latest pick ends, the Workshop reads the store and makes its synth,
+    bank label, instrument lists, play button and WAV/video export use exactly
+    the bank the store keeps, or none. The bank it reads as it opens counts as
+    older than any pick. If that kept bank fails to load, the log says why,
+    unless a pick has been made since: that pick's own result is the one
+    shown. A pick overtaken by a newer one says nothing, and the Workshop
+    names, loads and plays nothing because of it, whether it is being checked
+    or kept, waiting for the engine to boot or its synth to get ready, or
+    already being sent; one overtaken before its bank is sent is never sent.
+    As in Studio, a store write it had already sent may leave its bank in the
+    store (when the newer pick is refused, say), and then the Workshop names
+    and loads that bank once your latest pick has ended, because the store
+    keeps it. While a pick is pending, the label goes on naming
+    the bank the page had, followed by 「讀取中…」 (in the page language), and
+    says only 「讀取中…」 while the synth takes another bank. A play or an
+    export asked for then waits for the pick to end, then uses the bank the
+    page names; audition and the metronome do nothing until then. An export
+    reads that bank from the store when it starts. If another page or tab has
+    changed the kept bank since the Workshop named it, the export stops and
+    says so, and the Workshop names the bank the store keeps.
   - **The default bank.** A General MIDI subset of FluidR3Mono_GM.sf3 (MIT).
     It is not in this repository and not in the build: the upstream file asks
     not to be redistributed. Nothing is downloaded when the page loads. The

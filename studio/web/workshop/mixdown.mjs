@@ -5,7 +5,6 @@
 // Workshop edits sit outside the Canonical/verified pipeline and are never evidence.
 import { buildEvents, buildSetup } from "./mixnotes.mjs";
 import { peakOf, gainFor, trimTail, encodeWav } from "./mixmath.mjs";
-import { loadBank } from "../preview/soundbank-store.mjs";
 
 export const SAMPLE_RATE = 44100;
 
@@ -34,13 +33,11 @@ function run(url, msg, transfer, onMessage, signal) {
   });
 }
 
-// The bank bytes: a file the user just picked, or Studio's local bank store.
+// The bank bytes: the bank the editor names, from Studio's local bank store
+// (ui.mjs installedBankBytes: once no bank choice is pending, and only while
+// the store still keeps that very bank). Nothing else is ever rendered.
 async function bankBytes(bank) {
-  if (bank?.kind === "file") return bank.file.arrayBuffer();
-  if (bank?.kind === "store") {
-    const stored = await loadBank();
-    if (stored) return stored.bytes;
-  }
+  if (bank?.kind === "installed") return bank.bytes();
   throw fail("nobank", "no sound bank");
 }
 
