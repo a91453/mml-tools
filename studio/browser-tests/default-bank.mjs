@@ -365,7 +365,9 @@ export async function runDefaultBankChecks({ browser, base, profile }) {
     await holdNextBankCheck(page);
     await page.locator('#bank-file').setInputFiles({ name: 'late.sf2', mimeType: 'application/octet-stream', buffer: sample });
     await page.waitForFunction(() => window.heldBankCheck?.handed);
-    await page.locator('#bank-clear').click();
+    // Clicked in the page: the timbre card sits in section 06, away from the
+    // listening player this context has open.
+    await page.evaluate(() => document.querySelector('#bank-clear').click());
     await page.locator('#bank-status').filter({ hasText: LABEL }).waitFor();
     await page.evaluate(() => window.heldBankCheck.release());
     await page.waitForFunction(() => window.heldBankCheck.stopped);
