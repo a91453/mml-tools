@@ -981,11 +981,12 @@ function timbrePreviewCard() {
 // The engine and its one transport are shared by the Final preview (this card)
 // and listening sessions (listen-ui.mjs). `preview.owner` says whose playback
 // the transport is running, so position and end reports reach that player
-// only; a player that takes the transport tells the other one it stopped.
+// only; a player that takes the transport tells the other one it stopped,
+// and why (`reason` 'bank' when a bank change stops it).
 function previewTimeText() { const el = $('#preview-time'); if (el) el.textContent = `${clock(preview.owner === 'final' ? preview.position : 0)} / ${clock(preview.owner === 'final' ? preview.transport?.duration ?? 0 : 0)}${preview.owner === 'final' && preview.transport?.playing ? ` · 發聲 ${preview.voices}` : ''}`; }
 function previewSeekSync() { const el = $('#preview-seek'); if (el && preview.transport?.duration) el.value = String(Math.round((preview.position / preview.transport.duration) * 1000)); }
-function claimTransport(owner, handlers = null) {
-  if (preview.owner === 'listen' && (owner !== 'listen' || handlers !== preview.listenHandlers)) preview.listenHandlers?.onPreempt?.();
+function claimTransport(owner, handlers = null, reason = null) {
+  if (preview.owner === 'listen' && (owner !== 'listen' || handlers !== preview.listenHandlers)) preview.listenHandlers?.onPreempt?.(reason);
   preview.owner = owner;
   preview.listenHandlers = owner === 'listen' ? handlers : null;
 }
@@ -1245,7 +1246,7 @@ function bindTimbrePreview() {
   if (clearDefault) clearDefault.onclick = () => clearDefaultPreviewBank().catch(error => message(error.message, true));
 }
 function resetPreviewEngine() {
-  claimTransport('final');
+  claimTransport('final', null, 'bank');
   preview.transport?.destroy();
   preview.transport = null; preview.engine = null; preview.context = null; preview.songKey = null; preview.position = 0;
   preview.engineLoading = null; preview.engineToken += 1;

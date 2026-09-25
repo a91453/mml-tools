@@ -235,6 +235,7 @@ export async function runDefaultBankChecks({ browser, base, profile }) {
     await page.waitForTimeout(1000);
     assert.equal(await page.evaluate(() => window.schedulers.size), 0, 'no playback runs on the engine the bank change destroyed');
     assert.equal(await page.locator('#listen-position').getAttribute('data-state'), 'stopped');
+    assert.equal(await page.locator('#listen-status').textContent(), '試聽已停止：音色庫已變更。', 'the player says the bank changed');
     await page.locator('#listen-bank-file').setInputFiles({ name: 'saw.sf2', mimeType: 'application/octet-stream', buffer: sample });
     await page.locator('#listen-bank').filter({ hasText: 'saw.sf2' }).waitFor();
 
@@ -326,6 +327,19 @@ export async function runDefaultBankChecks({ browser, base, profile }) {
     assert.ok((await page.locator('#listen-bank').textContent()).includes('other-tab.sf2'), `the listening player names the bank it plays: ${await page.locator('#listen-bank').textContent()}`);
     assert.ok((await page.locator('#bank-status').textContent()).includes('other-tab.sf2'), 'and so does the timbre card');
     await page.locator('#listen-stop').click();
+
+    // A bank picked while a listening playback runs stops it, and the player
+    // says why, also once the bank change has redrawn it: a pick on the
+    // timbre card redraws the player's card, and one on the player redraws
+    // the whole session.
+    for (const [input, name] of [['#bank-file', 'card.sf2'], ['#listen-bank-file', 'player.sf2']]) {
+      await page.locator('#listen-play').click();
+      await played();
+      await page.locator(input).setInputFiles({ name, mimeType: 'application/octet-stream', buffer: sample });
+      await page.locator('#listen-bank').filter({ hasText: name }).waitFor();
+      await page.locator('#listen-position[data-state="stopped"]').waitFor();
+      assert.equal(await page.locator('#listen-status').textContent(), '試聽已停止：音色庫已變更。', `${input}: the player says the bank changed`);
+    }
 
     // Overlapping picks: the last choice wins. Each pick is checked off the
     // main thread first, and a big bank takes longer than a small one: here
