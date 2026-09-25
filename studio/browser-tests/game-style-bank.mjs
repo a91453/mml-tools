@@ -152,7 +152,10 @@ export async function runWorkshopGameStyleChecks({ browser, base, profile }) {
     // A server without the bank says so and loads nothing.
     mode = 'absent';
     await page.goto(url); await page.locator('#unverified').waitFor();
-    await page.locator('#engine').filter({ hasText: '引擎就緒' }).waitFor({ timeout: 60000 });
+    // The page's handlers are bound once it has translated itself (main.mjs);
+    // the engine boots on the bank load itself, as on a phone it may only
+    // after a gesture.
+    await page.waitForFunction(() => !document.documentElement.hasAttribute('data-i18n-pending'));
     await page.evaluate(() => document.querySelector('#gameStyleBank').click());
     await page.locator('#log').filter({ hasText: '這個網站沒有提供遊戲風格音色' }).waitFor();
     assert.equal(await label(), '載入失敗');
