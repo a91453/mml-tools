@@ -201,12 +201,19 @@ test('an error from a replaced instance does not take down its replacement', asy
 // worker.mjs itself, one context per instance with its imports doubled, so
 // what it answers is checked against the client that acts on it. As in a
 // browser, an instance keeps the outcome of each import for its lifetime, and
-// every message crosses in a task of its own.
+// every message crosses in a task of its own. While offline, as on a page no
+// service worker controls, a new instance's own script cannot be fetched.
 const workerSource = (await readFile(new URL('../web/worker.mjs', import.meta.url), 'utf8')).replace(/^import .*$/gm, '').replaceAll('import(', 'load(');
 const canonical = { metadata: { fixture: 1 }, documents: [] };
-function realWorkers({ listen }) {
+function realWorkers({ listen, online = () => true }) {
   const instances = [], ran = [];
   const spawn = () => {
+    if (!online()) {
+      const unloaded = { onmessage: null, onerror: null, postMessage() {}, terminate() {} };
+      setTimeout(() => unloaded.onerror?.({ message: 'worker.mjs could not be fetched' }));
+      instances.push(unloaded);
+      return unloaded;
+    }
     const number = instances.length, imports = new Map();
     const instance = {
       onmessage: null,
@@ -234,25 +241,38 @@ function realWorkers({ listen }) {
   return { instances, ran, spawn };
 }
 const listenModel = { parseListening: mml => ({ ok: true, mml }) };
+const unfetched = ({ TypeError }) => Promise.reject(new TypeError('Failed to fetch dynamically imported module: listen-model.mjs'));
 
-// The listen model is imported on a Worker's first listening request, not at
-// initialization. One dropped request for it used to fail every listening
-// session until the page was reloaded.
-test('a Worker that could not fetch the listen model is replaced, and no request it ran is run again', async () => {
-  const { instances, ran, spawn } = realWorkers({ listen: (number, { TypeError }) => (number === 0 ? Promise.reject(new TypeError('Failed to fetch dynamically imported module: listen-model.mjs')) : Promise.resolve(listenModel)) });
+// The listen model used to be imported on a Worker's first listening request.
+// A fetch of it that failed then failed every later session, and replacing the
+// Worker for that while the connection was still down spent the client's
+// budget on replacements that could not start, so analysis stopped as well.
+test('a Worker that started opens a listening session after the connection drops, and keeps analysing', async () => {
+  let online = true;
+  const { instances, ran, spawn } = realWorkers({ online: () => online, listen: (number, realm) => (online ? Promise.resolve(listenModel) : unfetched(realm)) });
   const client = createWorkerClient({ spawn, timeoutMs: 5000 });
   assert.deepEqual(await client.call('newWorkspace'), { id: 'fixture' });
-  // Dispatched after the failed import, before the client replaced the instance.
-  const parsed = client.call('parseListening', 'MML@c;');
-  const fresh = client.call('newWorkspace');
-  assert.deepEqual(await parsed, { ok: true, mml: 'MML@c;' });
-  assert.deepEqual(await fresh, { id: 'fixture' });
-  assert.equal(instances.length, 2);
-  assert.deepEqual(ran, [['newWorkspace', 0], ['newWorkspace', 1]], 'an answered request is not replayed, and one the broken instance refused runs once, on its replacement');
+  online = false;
+  assert.deepEqual(await client.call('parseListening', 'MML@c;'), { ok: true, mml: 'MML@c;' });
+  assert.deepEqual(await client.call('newWorkspace'), { id: 'fixture' });
+  assert.equal(instances.length, 1, 'nothing is replaced');
+  assert.deepEqual(ran, [['newWorkspace', 0], ['newWorkspace', 0]]);
   assert.deepEqual(client.state, { pending: 0, restarts: 0, givenUp: false, running: true });
 });
 
-test('a listen model that fetched but does not load, or a parse that throws, is answered as it is and the Worker is kept', async () => {
+test('a Worker that could not fetch the listen model is replaced before it runs a request, and each request runs once', async () => {
+  const { instances, ran, spawn } = realWorkers({ listen: (number, realm) => (number === 0 ? unfetched(realm) : Promise.resolve(listenModel)) });
+  const client = createWorkerClient({ spawn, timeoutMs: 5000 });
+  const fresh = client.call('newWorkspace');
+  const parsed = client.call('parseListening', 'MML@c;');
+  assert.deepEqual(await fresh, { id: 'fixture' });
+  assert.deepEqual(await parsed, { ok: true, mml: 'MML@c;' });
+  assert.equal(instances.length, 2);
+  assert.deepEqual(ran, [['newWorkspace', 1]], 'the instance that could not start ran nothing, and its replacement ran each request once');
+  assert.deepEqual(client.state, { pending: 0, restarts: 0, givenUp: false, running: true });
+});
+
+test('a listen model that fetched but does not load, or a parse that throws, fails listening only and the Worker is kept', async () => {
   for (const listen of [
     (number, { SyntaxError }) => Promise.reject(new SyntaxError("Unexpected token '='")),
     (number, { TypeError }) => Promise.resolve({ parseListening: () => { throw new TypeError('parse failed'); } }),

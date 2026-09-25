@@ -12,8 +12,10 @@ import { encodeListenLink } from '../web/listen-link.mjs';
 export async function runWorkerBootChecks({ browser, base }) {
   // With a listen link, boot and the session the link opens are both awaited,
   // and the actions the page posted to its Workers and every status line it
-  // showed are recorded (a later line, or the timeout, may replace one).
-  const boot = async (pattern, handle, { listen = null } = {}) => {
+  // showed are recorded (a later line, or the timeout, may replace one), as
+  // they are when `then` goes on to use the page that booted.
+  const listened = page => page.waitForFunction(() => { const root = document.querySelector('#listening'); return root && !root.hidden && !root.textContent.includes('正在讀取試聽內容') && (root.querySelector('#listen-head') || root.querySelector('.empty')); }, null, { timeout: 60000 });
+  const boot = async (pattern, handle, { listen = null, then = null } = {}) => {
     const context = await browser.newContext({ serviceWorkers: 'block' });
     let requests = 0, page = null;
     await context.route(pattern, route => handle(route, ++requests, page));
@@ -22,7 +24,7 @@ export async function runWorkerBootChecks({ browser, base }) {
     page.on('worker', worker => { if (new URL(worker.url()).pathname === '/studio/web/worker.mjs') workers++; });
     const errors = [];
     page.on('pageerror', error => errors.push(error.message));
-    if (listen) {
+    if (listen || then) {
       await page.addInitScript(() => {
         const post = Worker.prototype.postMessage;
         window.postedActions = [];
@@ -33,7 +35,8 @@ export async function runWorkerBootChecks({ browser, base }) {
     }
     await page.goto(listen ? `${base}/?listen=${listen}` : base);
     await page.waitForFunction(() => document.querySelector('#boot')?.className === 'boot-error' || (document.querySelector('#app h1') && document.querySelector('#app')?.getAttribute('aria-busy') === 'false'), null, { timeout: 60000 });
-    if (listen) await page.waitForFunction(() => { const root = document.querySelector('#listening'); return root && !root.hidden && !root.textContent.includes('正在讀取試聽內容') && (root.querySelector('#listen-head') || root.querySelector('.empty')); }, null, { timeout: 60000 });
+    if (listen) await listened(page);
+    const after = then ? await then(page, context) : {};
     const seen = await page.evaluate(() => ({
       boot_error: document.querySelector('#boot')?.className === 'boot-error', boot: document.querySelector('#boot')?.textContent, app_hidden: document.querySelector('#app')?.hidden,
       ...(document.querySelector('#listening')?.hidden === false ? {
@@ -42,7 +45,7 @@ export async function runWorkerBootChecks({ browser, base }) {
       } : {}),
     }));
     await context.close();
-    return { ...seen, requests, workers, errors };
+    return { ...seen, ...after, requests, workers, errors };
   };
   const refuse = when => (route, n) => (when(n) ? route.abort('failed') : route.continue());
 
@@ -88,9 +91,10 @@ export async function runWorkerBootChecks({ browser, base }) {
   assert.equal(verify.workers, 1, `a package that fails verification is not retried: ${JSON.stringify(verify)}`);
   assert.match(verify.boot, /^CANONICAL_NOT_LOADED: /);
 
-  // A listen link opened on a fresh load. The listen model is imported on the
-  // Worker's first listening request rather than at boot, so a failed fetch of
-  // it used to fail that session and every later one until a reload.
+  // A listen link opened on a fresh load. The listen model is imported when
+  // the Worker starts, so a failed fetch of it is retried as the model's is.
+  // Fetched on the first listening request instead, it used to fail that
+  // session and every later one until a reload.
   const listen = await encodeListenLink({ schema: 'mml-studio/listen-link@1', mml: 'MML@t120o4l4cdef,,,,,;', title: 'Worker 載入試聽' }, { deflateRaw: bytes => new Uint8Array(zlib.deflateRawSync(bytes)) });
   const opened = '已從試聽連結建立新的試聽工作階段；按「播放」才會發出聲音。沒有建立或覆寫任何專案。';
   const listenOnce = await boot('**/studio/web/listen-model.mjs', refuse(n => n === 1), { listen });
@@ -100,6 +104,27 @@ export async function runWorkerBootChecks({ browser, base }) {
   assert.equal(listenOnce.workers, 2);
   assert.equal(listenOnce.boot_error, false);
   assert.deepEqual(listenOnce.errors, []);
+  // A link opened offline, on a page no service worker controls (a first
+  // visit before one takes control, or a browser without them), opens in the
+  // Worker that started, and analysis goes on. Were the listen model fetched
+  // for the link, that fetch would fail, and so would every replacement's
+  // fetch of its own script, spending the budget: analysis would stop too.
+  const offline = await boot('**/studio/web/listen-model.mjs', route => route.continue(), { then: async (page, context) => {
+    await context.setOffline(true);
+    await page.evaluate(payload => { location.hash = `listen=${payload}`; }, listen);
+    await listened(page);
+    const before = await page.locator('#projects option').count();
+    await page.click('#new-project');
+    await page.waitForFunction(before => document.querySelectorAll('#projects option').length > before || window.messages.some(text => text.includes('Worker')), before, { timeout: 60000 });
+    return { projects: [before, await page.locator('#projects option').count()] };
+  } });
+  assert.equal(offline.listen_title, 'Worker 載入試聽', `a link opened offline opens in the Worker that started: ${JSON.stringify(offline)}`);
+  assert.ok(offline.messages.includes(opened));
+  assert.deepEqual(offline.projects, [1, 2], `a new project is analysed offline after the link: ${JSON.stringify(offline)}`);
+  assert.equal(offline.requests, 1, 'the listen model was fetched once, when the Worker started');
+  assert.equal(offline.workers, 1);
+  assert.equal(offline.boot_error, false);
+  assert.deepEqual(offline.errors, []);
   // A listen model that fetched but does not parse is not retried, and the
   // page says the link did not open rather than that it did. The session is
   // saved and listed, so it can be opened again.
