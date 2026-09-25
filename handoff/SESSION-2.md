@@ -3,6 +3,9 @@
 Read HANDOFF.md first (owner preferences, policies, v7 steps). This file only
 adds what the second session owns.
 
+## ~11:15 UTC
+- PR #103 MERGED (d4cff30). Task B is done. Remaining: #100 and #102 (first session), then task C (v7), then D.
+
 ## ~11:10 UTC
 - main = 7afe9e0 (#97, #98, #99, #101 merged). #100 and #102 are still driven by
   the first session (see HANDOFF.md "Status update ~11:05").
