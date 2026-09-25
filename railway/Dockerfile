@@ -48,8 +48,10 @@ RUN apt-get update \
 WORKDIR /app
 
 # Dependencies first, so a source-only change does not re-resolve them. The
-# single runtime dependency is exactly pinned in package.json, install scripts
-# stay disabled, and nothing here contacts a paid service.
+# three runtime dependencies are exactly pinned in package.json, but no lockfile
+# is committed, so the versions of their own dependencies are resolved when the
+# image is built. Install scripts stay disabled, and nothing here contacts a
+# paid service.
 COPY package.json ./package.json
 RUN npm install --omit=dev --ignore-scripts --no-audit --no-fund
 
