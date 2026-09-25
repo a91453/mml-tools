@@ -370,6 +370,11 @@ export async function runWorkshopChecks({ page, base, idle, file, screenshot, pr
   await page.waitForFunction(failed => document.querySelector('#dlsName')?.textContent === failed, await t('ui.bankFailed'));
   const readySends = await countBankSends(page);
   const notReady = await t('engine.synthTimeout', { s: SYNTH_READY_TIMEOUT_MS / 1000 });
+  // The boot-time load of the kept bank says why it stopped on the page, as
+  // a failed pick does, not only in the console.
+  const bootShown = await page.locator('#logMsg').textContent();
+  assert.ok(bootShown.includes(await t('ui.bankLoadError')) && bootShown.includes(notReady), `the boot-time load says why it stopped: ${bootShown}`);
+  await page.evaluate(() => { document.querySelector('#logMsg').textContent = ''; });
   await page.locator('#dls').setInputFiles({ name: 'saw.sf2', mimeType: 'application/octet-stream', buffer: sawBank });
   await page.waitForFunction(text => document.querySelector('#logMsg')?.textContent.includes(text), notReady);
   assert.equal(await page.locator('#dlsName').textContent(), await t('ui.bankFailed'), 'the pick ends as a failed load');
@@ -378,6 +383,59 @@ export async function runWorkshopChecks({ page, base, idle, file, screenshot, pr
   await page.reload(); await page.locator('#unverified').waitFor();
   await bankLoaded('saw.sf2');
   await page.locator('#play:enabled').waitFor();
+
+  // ── a kept bank that fails at boot after a pick says nothing ─────────────
+  // A bank stored before banks were checked (cut short behind an intact
+  // header) is written straight into the store, and its send to the synth at
+  // boot is held until a pick has been made. The synth's parse error then
+  // ends the boot-time load; the pick's label and log are the ones shown.
+  await page.addInitScript(() => {
+    if (sessionStorage.getItem('workshopHoldBankSend') !== 'yes') return;
+    sessionStorage.removeItem('workshopHoldBankSend');
+    const post = MessagePort.prototype.postMessage;
+    let release;
+    const released = new Promise(resolve => { release = resolve; });
+    window.bankSendHold = { held: 0, release: () => release() };
+    MessagePort.prototype.postMessage = function (message, ...rest) {
+      if (message?.type !== 'soundBankManager' || message?.data?.type !== 'addSoundBank' || window.bankSendHold.held) return post.call(this, message, ...rest);
+      window.bankSendHold.held += 1;
+      released.then(() => post.call(this, message, ...rest));
+      return undefined;
+    };
+  });
+  const truncatedBank = sawBank.subarray(0, sawBank.length >> 1);
+  await page.evaluate(bytes => new Promise((resolve, reject) => {
+    const data = new Uint8Array(bytes).buffer;
+    const open = indexedDB.open('mml-studio-soundbank', 1);
+    open.onerror = () => reject(open.error);
+    open.onsuccess = () => {
+      const tx = open.result.transaction('banks', 'readwrite');
+      tx.objectStore('banks').put({ name: 'kept-truncated.sf2', size: data.byteLength, sha256: '0'.repeat(64), format: 'sfbk', savedAt: new Date().toISOString(), bytes: data }, 'current');
+      tx.oncomplete = () => { open.result.close(); resolve(); };
+      tx.onerror = () => reject(tx.error);
+    };
+  }), [...truncatedBank]);
+  const bootWarnings = [];
+  const onBootConsole = message => { if (message.type() === 'warning') bootWarnings.push(message.text()); };
+  page.on('console', onBootConsole);
+  await page.evaluate(() => sessionStorage.setItem('workshopHoldBankSend', 'yes'));
+  await page.reload(); await page.locator('#unverified').waitFor();
+  await page.waitForFunction(() => window.bankSendHold?.held === 1);
+  await page.evaluate(() => {
+    const label = document.querySelector('#dlsName');
+    window.bankLabels = [];
+    new MutationObserver(() => window.bankLabels.push(label.textContent)).observe(label, { childList: true, characterData: true, subtree: true });
+    document.querySelector('#logMsg').textContent = '';
+  });
+  await page.locator('#dls').setInputFiles({ name: 'saw.sf2', mimeType: 'application/octet-stream', buffer: sawBank });
+  await page.evaluate(() => window.bankSendHold.release());
+  await bankLoaded('saw.sf2');
+  page.off('console', onBootConsole);
+  assert.ok(bootWarnings.some(text => text.includes('[Workshop] stored bank failed to load')), `the kept bank did fail to load at boot: ${bootWarnings.join(' | ')}`);
+  const afterPick = await page.evaluate(() => ({ labels: window.bankLabels, log: document.querySelector('#logMsg')?.textContent ?? '' }));
+  const failedLabel = await t('ui.bankFailed');
+  assert.ok(afterPick.labels.every(text => text !== failedLabel), `the boot-time failure does not replace the pick's label: ${afterPick.labels.join(' → ')}`);
+  assert.equal(afterPick.log, '', 'nor writes to the log once a pick has been made');
 
   // ── draw a note on the roll, then undo / redo ─────────────────────────────
   const original = (await texts(page))[0];

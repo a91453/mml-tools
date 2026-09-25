@@ -638,7 +638,11 @@ export async function loadStoredBank() {
   try { await queueBank(() => picked() ? undefined : loadBank(stored.bytes, stored.name, false, null)); }
   catch (err) {
     console.warn("[Workshop] stored bank failed to load:", err);
-    if (!picked()) $("#dlsName").textContent = i18n.t("ui.bankFailed");
+    // Said on the page, as a failed pick is, unless a pick has been made
+    // since: that pick's own label and message are the ones shown.
+    if (picked()) return;
+    $("#dlsName").textContent = i18n.t("ui.bankFailed");
+    say(describe(err, i18n.t("ui.bankLoadError")));
   }
 }
 
