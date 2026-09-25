@@ -44,6 +44,28 @@ export const LISTEN_FIRST_CODES = Object.freeze({
   LEAD_PROMOTION_PRIMARY_EVIDENCE_MISSING: 'LEAD_PROMOTION_PRIMARY_EVIDENCE_MISSING',
 });
 
+// The delivery-level entry for the Final itself. ACCEPTANCE_CRITERIA "Machine
+// delivery" lists "Final round-trip" among the BLOCKING items, and no readiness
+// gate asks it: every gate, G10 included, can clear while the Final emitter,
+// run on exactly what would be delivered with the options delivery uses,
+// refuses to write it (a release that drifted from its baseline with no
+// release record, a Tempo position the Final cannot reach, a bounded duration
+// search that found nothing). This entry is that question. It is not a
+// readiness gate: it reclassifies nothing, changes no gate's status and
+// changes no emitter answer. It is recorded only when nothing else blocks
+// except `technical`, which grades the emitted MML and so cannot pass while
+// nothing was emitted, and it carries the emitter's own diagnostics unchanged.
+export const FINAL_EMISSION_GATE = 'finalEmission';
+export const FINAL_EMISSION_CODES = Object.freeze({
+  // The emitter returned FAIL (or anything that is not an emitted Final).
+  REFUSED: 'FINAL_EMISSION_REFUSED',
+  // The emitter returned PENDING. Said as PENDING, never as PASS.
+  PENDING: 'FINAL_EMISSION_PENDING',
+});
+// Bounded like every other list a filed record carries, with the true count
+// beside it.
+export const MAX_FINAL_EMISSION_DIAGNOSTICS = 50;
+
 const PASS_LIKE = new Set(['PASS', 'N/A']);
 const CLASS_BY_GATE = Object.freeze({
   implementation: DELIVERY_CLASS.BLOCKING,
@@ -256,7 +278,12 @@ export function machineDeliveryAuthority(canonical) {
 export function deliveryBlockingGates(readiness) {
   const preGame = Array.isArray(readiness?.preGameBlocking) ? readiness.preGameBlocking : [];
   const projection = readiness?.machineDelivery;
-  if (projection?.authoritative !== true) return Object.freeze([...preGame]);
+  if (projection?.authoritative !== true) {
+    // Without machine-delivery authority delivery keys on the pre-game gates,
+    // and a Final the emitter refused is not delivered under either answer.
+    const refused = (Array.isArray(projection?.blocking) ? projection.blocking : []).some(entry => entry?.gate === FINAL_EMISSION_GATE);
+    return Object.freeze([...preGame, ...(refused ? [FINAL_EMISSION_GATE] : [])]);
+  }
   const blocking = projection.blocking.map(entry => entry.gate);
   const ledger = new Set([...projection.blocking, ...projection.non_blocking_pending, ...projection.post_delivery].map(entry => entry.gate));
   return Object.freeze([...blocking, ...preGame.filter(name => !ledger.has(name))]);
@@ -267,17 +294,82 @@ function missingRequiredGates(gates) {
 }
 
 /**
+ * The emit options machine delivery uses for one readiness result: the single
+ * definition the Final service emits with and readiness checks with, so the
+ * Final that readiness asks about is the Final delivery would write.
+ *
+ * Provisional release rendering is asked for only when the authoritative
+ * ledger already delivers micro-timing for listening first, and same-value
+ * Tempo restatements are collapsed only under the schema that carries that
+ * sentence (ACCEPTANCE_CRITERIA "Delivered first, flagged for listening";
+ * MOBILE_SYNTAX §7). Asking grants nothing: the emitter re-derives both from
+ * its own fresh results under `canonical` (null is the loaded release).
+ * Technical Timing Repair stays the caller's explicit opt-in.
+ */
+export function machineDeliveryEmitOptions(readiness, { technicalTimingRepair = false, releaseEvidenceRegistry = null, canonical = null } = {}) {
+  const projection = readiness?.machineDelivery;
+  const authoritative = projection?.authoritative === true;
+  const pending = Array.isArray(projection?.non_blocking_pending) ? projection.non_blocking_pending : [];
+  return Object.freeze({
+    readiness,
+    technicalTimingRepair: technicalTimingRepair === true,
+    releaseEvidenceRegistry,
+    provisionalReleaseRendering: authoritative && pending.some(entry => entry?.gate === 'microTiming'),
+    collapseTempoRestatements: authoritative && projection.schema === MACHINE_DELIVERY_SCHEMA_V2,
+    canonical,
+  });
+}
+
+/**
+ * Whether an emit result is an emitted Final: PASS, with the paste-ready string
+ * it claims. Anything else -- FAIL, PENDING, a malformed or missing result, a
+ * PASS carrying no MML -- is not one, and fails closed.
+ */
+export function isEmittedFinal(result) {
+  return result?.status === 'PASS' && typeof result.combinedMml === 'string' && result.combinedMml.length > 0;
+}
+
+// The emitter's answer, as the emitter gave it: its status and every diagnostic
+// object it returned, in its order, never paraphrased.
+function finalEmissionEntry(result) {
+  const status = typeof result?.status === 'string' ? result.status : null;
+  const pending = status === 'PENDING';
+  const diagnostics = Array.isArray(result?.diagnostics) ? result.diagnostics : [];
+  return unresolvedEntry(
+    FINAL_EMISSION_GATE,
+    { status: pending ? 'PENDING' : 'FAIL', blockers: [pending ? FINAL_EMISSION_CODES.PENDING : FINAL_EMISSION_CODES.REFUSED] },
+    DELIVERY_CLASS.BLOCKING,
+    {
+      emitter_status: status,
+      emitter_diagnostic_count: diagnostics.length,
+      emitter_diagnostics: Object.freeze(diagnostics.slice(0, MAX_FINAL_EMISSION_DIAGNOSTICS)),
+      emitter_diagnostics_truncated: diagnostics.length > MAX_FINAL_EMISSION_DIAGNOSTICS,
+    },
+  );
+}
+
+/**
  * One evaluator used by readiness, Final, reports, UI and MCP projections.
  *
  * projection_ready is the candidate-policy answer. ready/AUTOMATED_VALIDATED
  * are authoritative only after Published Canonical explicitly activates a
  * machine-delivery schema. This keeps an unpublished candidate from changing
  * delivery, and the schema the identity declares decides the classification.
+ *
+ * `finalEmission` is the Final emitter's result for exactly what would be
+ * delivered, with the options that delivery uses. When it is supplied,
+ * nothing but `technical` blocks, and it is not an emitted Final, the ledger
+ * gains one BLOCKING `finalEmission` entry -- FINAL_EMISSION_REFUSED, or
+ * FINAL_EMISSION_PENDING when the emitter said PENDING -- carrying the
+ * emitter's status and diagnostics unchanged. Without it the projection
+ * answers the gate map alone, as it always has; readiness supplies it
+ * (final/readiness.mjs).
  */
 export function evaluateMachineDelivery(gates, {
   preEmission = false,
   canonical = null,
   requireCompleteGateMap = false,
+  finalEmission = null,
 } = {}) {
   if (!gates || typeof gates !== 'object' || Array.isArray(gates)) throw Error('gates are required');
 
@@ -301,6 +393,14 @@ export function evaluateMachineDelivery(gates, {
       DELIVERY_CLASS.BLOCKING,
       { missing_gates: Object.freeze([...missingGates]) },
     ));
+  }
+
+  // Everything else says ready -- no BLOCKING entry but `technical`, the row
+  // that grades the MML the emitter writes -- and the emitter wrote no Final.
+  if (finalEmission !== null && finalEmission !== undefined
+    && !ledger.some(entry => entry.classification === DELIVERY_CLASS.BLOCKING && entry.gate !== 'technical')
+    && !isEmittedFinal(finalEmission)) {
+    ledger.push(finalEmissionEntry(finalEmission));
   }
 
   const blocking = ledger.filter(entry => entry.classification === DELIVERY_CLASS.BLOCKING

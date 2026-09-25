@@ -32,7 +32,7 @@ import { mkdtemp, readdir, readFile, rm, unlink, writeFile } from 'node:fs/promi
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
-import { AGENT_REVIEW, LIMITS, PROPOSAL_KIND, PROPOSAL_STATE, RUN_STEP, createStudioApplication } from '../backend/application/index.mjs';
+import { AGENT_REVIEW, LIMITS, PROPOSAL_KIND, PROPOSAL_STATE, RUN_HALT, RUN_STATE, RUN_STEP, createStudioApplication } from '../backend/application/index.mjs';
 import { blobName } from '../backend/application/store.mjs';
 import { baselineWithUnassignedRole, FIXTURE_SOURCE_ID } from './fixtures/g12-fixtures.mjs';
 import { RUN_REVIEWER, mobileProfile, projectWithSymbolicAsset, runDecisionsFor, sixRoleBaseline } from './fixtures/run-fixtures.mjs';
@@ -1580,6 +1580,48 @@ test('a write the run could not attribute before the acceptance does not hide an
         await assertNotTakenBack(directory, accepted, unattributed);
       }));
     }
+  }
+});
+
+/**
+ * The stored run after `advance`'s step-budget hold, written outside any
+ * request's hold: `bumpRun` then records `revision_written_by: null`, which
+ * names no request. That hold is written in the request's hold, as every write
+ * this build makes is, and no test reaches it, so it is written here as it
+ * would be left.
+ */
+const budgetHoldRecordingNoWriter = run => {
+  const at = new Date().toISOString();
+  return {
+    ...run,
+    state: RUN_STATE.BLOCKED,
+    halt: { reason: RUN_HALT.STEP_BUDGET_EXHAUSTED, step: null, at },
+    revision: run.revision + 1,
+    updated_at: at,
+    revision_written_by: null,
+  };
+};
+
+test('a write that records no writer after the acceptance keeps it from being withdrawn, as an older build\'s write does', async t => {
+  // A write that names no request is one the run cannot attribute, whoever
+  // made it, so after an acceptance that never reached the run it may have
+  // been that acceptance's application for all the run can say. It keeps the
+  // acceptance from being taken back straight after it, and once this build
+  // has written over it.
+  const variants = {
+    'the write alone': [],
+    'the write, then a reviewer\'s resume through this build': ['resume'],
+  };
+  for (const [label, after] of Object.entries(variants)) {
+    await t.test(label, () => withDirectory(async directory => {
+      const accepted = await acceptedShortOfTheRun(directory, []);
+      await rewriteStoredRun(directory, accepted.context.run.run_id, budgetHoldRecordingNoWriter);
+      const written = await storedRunOf(directory, accepted.context.run.run_id);
+      assert.equal(written.revision, accepted.acceptedAt + 1, 'the write came after the acceptance');
+      assert.equal(written.revision_written_by, null, 'and names no request');
+      for (const step of after) await writeToRun(directory, accepted.context, step);
+      await assertNotTakenBack(directory, accepted, written.revision);
+    }));
   }
 });
 
