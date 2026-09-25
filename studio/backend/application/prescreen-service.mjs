@@ -26,7 +26,7 @@ import { GAME_INSTRUMENT_IDS } from '../audio/instruments.mjs';
 import { createSoundBankProvider, bankCacheDirectory, FREE_GM_BANK, SoundBankError } from '../audio/prescreen/sound-bank.mjs';
 import { createRenderPool } from '../audio/prescreen/render-pool.mjs';
 import {
-  MAX_BARS, meterFromCanonical, meterFromText, meterText, performanceFromCanonical, performanceFromTracks,
+  MAX_BARS, TEMPO_NOT_EXACT, meterFromCanonical, meterFromText, meterText, performanceFromCanonical, performanceFromTracks,
   referenceFromCanonical, referenceFromPerformance,
 } from '../audio/prescreen/performance.mjs';
 import { normalizeThresholds, VERDICT } from '../audio/prescreen/decision.mjs';
@@ -262,7 +262,16 @@ export function createPrescreenService({ canonical, projects, intake, arrangemen
         alternatives.push({ label: entry.label, source: { kind: 'mml' }, mml_sha256: sha256Of(new TextEncoder().encode(entry.id)), performance: parseMml(engines, entry.id, `alternative ${entry.label}`, entry.instruments) });
       } else if (entry.kind === 'candidate_id') {
         const { candidate } = arrangement.loadCandidate(record, entry.id);
-        const performance = performanceFromCanonical(candidate, { instruments: entry.instruments });
+        let performance;
+        try {
+          performance = performanceFromCanonical(candidate, { instruments: entry.instruments });
+        } catch (error) {
+          // A Tempo the clock cannot hold exactly is a fact about this
+          // candidate, refused by name rather than left to surface as an
+          // internal error.
+          if (error?.code !== TEMPO_NOT_EXACT) throw error;
+          refuse(`alternative ${entry.label}: ${error.message}`, { candidate_id: entry.id, reason: TEMPO_NOT_EXACT, beat: error.beat, bpm: error.bpm });
+        }
         alternatives.push({ label: entry.label, source: { kind: 'candidate', id: entry.id }, mml_sha256: null, performance });
         meters.push({ label: entry.label, meter: meterFromCanonical(candidate) });
         candidatesInOrder.push(entry.id);
