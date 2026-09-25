@@ -1218,6 +1218,17 @@ const carriedFrom = before => run => {
 /** A write in exactly the older build's `bumpRun` shape, with no changes of its own. */
 const olderBuildBump = run => ({ ...run, revision: run.revision + 1, updated_at: new Date().toISOString() });
 
+/**
+ * The stored run as a build that never kept the writer fields leaves it: none
+ * of them at all. Every run on the record when this build is first deployed
+ * is such a run.
+ */
+const legacy = run => {
+  const written = { ...run };
+  for (const field of WRITER_FIELDS) delete written[field];
+  return written;
+};
+
 /** A service over the same store, as after a restart or a redeploy. */
 const reopened = directory => createStudioApplication({ dataDirectory: directory, durability: 'persistent' });
 
@@ -1399,16 +1410,184 @@ test('any write by the older build after the acceptance keeps it from being with
   }
 });
 
+// Whether a write since the acceptance recorded no writer is read from two
+// places: the writer record, which speaks for the run's current revision
+// alone, and which a run kept before the field existed does not carry at all;
+// and `latest_unattributed_revision`, which may already hold a revision from
+// before the acceptance. The two tests below start from each of those states,
+// which the tests above never do, and put the older build's write after the
+// acceptance.
+
+/**
+ * Write one step to the run, and answer the run's revision after it when the
+ * older build made it (null otherwise). The steps, by name:
+ *
+ *   * 'resume': a reviewer's plain resume through this build, which records
+ *     its own writer;
+ *   * 'older write': a bare write in the older build's `bumpRun` shape;
+ *   * 'older retry, fault' and 'older retry, death': the older build's retry
+ *     of the acceptance, stopped inside the run (`olderBuildRetry`);
+ *   * 'legacy': the writer fields removed, as on a run kept before they
+ *     existed. It writes no revision.
+ */
+async function writeToRun(directory, context, step, proposal = null) {
+  const runId = context.run.run_id;
+  if (step === 'resume') {
+    const resumed = await reopened(directory).resumeRun(OWNER, context.fixture.projectId, runId, {});
+    const stored = await storedRunOf(directory, runId);
+    assert.equal(stored.revision, resumed.run.revision);
+    assert.equal(stored.revision_written_by?.revision, stored.revision, 'a resume through this build records its own writer');
+    return null;
+  }
+  if (step === 'legacy') {
+    await rewriteStoredRun(directory, runId, legacy);
+    return null;
+  }
+  if (step === 'older write') await rewriteStoredRun(directory, runId, olderBuildBump);
+  else if (step === 'older retry, fault') await olderBuildRetry(directory, context, proposal, 'fault');
+  else if (step === 'older retry, death') await olderBuildRetry(directory, context, proposal, 'death');
+  else assert.fail(`no such step: ${step}`);
+  return (await storedRunOf(directory, runId)).revision;
+}
+
+/**
+ * A run awaiting its reduction, with the given steps written to it, and then
+ * a proposal accepted on it whose first attempt stopped before the run.
+ */
+async function acceptedShortOfTheRun(directory, before) {
+  const started = await runAwaitingReduction(reopened(directory));
+  for (const step of before) await writeToRun(directory, started, step);
+  const { app, fault } = translationFaulted({ dataDirectory: directory, durability: 'persistent' });
+  const run = await runOf(app, started);
+  const targets = await app.proposalTargets(OWNER, started.fixture.projectId, run.run_id);
+  const context = { ...started, run, target: targets.targets.find(entry => entry.code === 'REDUCTION_DECISIONS_REQUIRED') };
+  const submitted = (await proposeReduction(app, context, { decisions: REDUCTION_DECISIONS })).proposal;
+  fault.armed = true;
+  const first = await accept(app, context, submitted.proposal_id);
+  assert.equal(first.ok, false);
+  assert.equal(first.error.details.run_resume_called, false, 'this build\'s attempt stopped before the run');
+  const acceptedAt = (await app.getProposal(OWNER, context.fixture.projectId, submitted.proposal_id)).proposal.application.expected_run_revision;
+  assert.equal(acceptedAt, run.revision);
+  const atAcceptance = await storedRunOf(directory, run.run_id);
+  assert.equal(atAcceptance.revision, acceptedAt, 'the acceptance wrote nothing to the run');
+  return { context, submitted, acceptedAt, atAcceptance };
+}
+
+/**
+ * Rolled forward: the acceptance can be neither rejected nor withdrawn, each
+ * refusal names the older build's latest write and the revision the
+ * acceptance observed, and nothing is written; its retry is graded by the
+ * policy again and refused as STALE, touching nothing; and after that it
+ * still cannot be withdrawn.
+ */
+async function assertNotTakenBack(directory, { context, submitted, acceptedAt }, unattributed) {
+  const projectId = context.fixture.projectId;
+  const forward = reopened(directory);
+  const mid = (await forward.getProposal(OWNER, projectId, submitted.proposal_id)).proposal;
+  assert.equal(mid.state, PROPOSAL_STATE.ACCEPTED);
+  assert.equal(mid.application.run_resume_called, false, 'the older build recorded no admission');
+  const runBefore = await storedRunOf(directory, context.run.run_id);
+
+  for (const resolution of ['withdraw', 'reject']) {
+    const taken = await forward.resolveProposal(OWNER, projectId, submitted.proposal_id, { resolution, reason: 'Taking it back after rolling forward.' })
+      .then(result => ({ ok: true, result }), error => ({ ok: false, error }));
+    assert.equal(taken.ok, false, `${resolution} must be refused, got ${taken.result?.proposal?.state}: ${taken.result?.notice}`);
+    assert.equal(taken.error.code, 'PROPOSAL_CONFLICT', `${resolution}: ${taken.error.code}: ${taken.error.message}`);
+    assert.equal(taken.error.details.run_resume_called, false, resolution);
+    assert.equal(taken.error.details.run_revision_at_acceptance, acceptedAt, resolution);
+    assert.equal(taken.error.details.unattributed_run_revision, unattributed, `${resolution}: the refusal names the older build's latest write`);
+    assert.match(taken.error.message, /does not record which request made it/, resolution);
+  }
+  const refused = (await forward.getProposal(OWNER, projectId, submitted.proposal_id)).proposal;
+  assert.equal(refused.state, PROPOSAL_STATE.ACCEPTED, 'still accepted');
+  assert.equal(refused.revision, mid.revision, 'and the refusals wrote nothing');
+
+  const retry = await accept(forward, context, submitted.proposal_id);
+  assert.equal(retry.ok, false, 'the retry must be refused');
+  assert.equal(retry.error.code, 'PROPOSAL_REFUSED', `${retry.error.code}: ${retry.error.message}`);
+  assert.equal(retry.error.details.agent_review.verdict, AGENT_REVIEW.STALE);
+  assert.equal((await storedRunOf(directory, context.run.run_id)).revision, runBefore.revision, 'nothing here touched the run');
+  await assert.rejects(
+    forward.resolveProposal(OWNER, projectId, submitted.proposal_id, { resolution: 'withdraw', reason: 'After the refused retry.' }),
+    error => error.code === 'PROPOSAL_CONFLICT',
+    'nor does a refused retry make it withdrawable',
+  );
+}
+
+test('on a run kept before the writer record existed, an older build\'s write after the acceptance keeps it from being withdrawn', async t => {
+  // Every run on the record when this build is first deployed was last written
+  // by the release before it, so it carries no writer record at all: not the
+  // record of an earlier revision, but none. Rolled back after an acceptance,
+  // that release's writes add none. A missing record names no writer, so each
+  // of those writes is one the run cannot attribute, exactly as on a run this
+  // build started; read as an attributed write, it would let an acceptance
+  // that release applied be withdrawn.
+  const variants = {
+    'a bare write by the older build': ['older write'],
+    'the older build\'s retry, stopped by a fault': ['older retry, fault'],
+    'the older build\'s retry, stopped by its process dying': ['older retry, death'],
+    'the older build\'s retry, stopped by its process dying, then a reviewer\'s resume through this build': ['older retry, death', 'resume'],
+  };
+  for (const [label, after] of Object.entries(variants)) {
+    await t.test(label, () => withDirectory(async directory => {
+      const accepted = await acceptedShortOfTheRun(directory, ['legacy']);
+      for (const field of WRITER_FIELDS) {
+        assert.equal(Object.hasOwn(accepted.atAcceptance, field), false, `the run the acceptance observed has no ${field}`);
+      }
+      let unattributed = null;
+      for (const step of after) unattributed = (await writeToRun(directory, accepted.context, step, accepted.submitted)) ?? unattributed;
+      assert.ok(unattributed > accepted.acceptedAt, 'the older build wrote after the acceptance');
+      const stored = await storedRunOf(directory, accepted.context.run.run_id);
+      if (after.at(-1) === 'resume') {
+        assert.notEqual(stored.candidate_id, accepted.context.run.candidate_id, 'the reviewer\'s resume adopted what the older build\'s application minted');
+      } else {
+        assert.equal(Object.hasOwn(stored, 'revision_written_by'), false, 'and recorded no writer');
+      }
+      await assertNotTakenBack(directory, accepted, unattributed);
+    }));
+  }
+});
+
+test('a write the run could not attribute before the acceptance does not hide an older build\'s write after it', async t => {
+  // Once this build has written over a write it could not attribute, the run
+  // keeps that write's revision in `latest_unattributed_revision`, so the
+  // acceptance finds one there already, below the revision it observed, and
+  // rightly not counted. The older build's write after the acceptance is the
+  // one that counts. The run must answer with the later of the two, not with
+  // the one it already kept, both straight after that write and once this
+  // build has written over it in turn.
+  const before = {
+    'an older build\'s write, then a resume through this build': ['older write', 'resume'],
+    'a run kept before the writer record existed, then a resume through this build': ['legacy', 'resume'],
+  };
+  const after = {
+    'a bare write by the older build': ['older write'],
+    'a bare write by the older build, then a resume through this build': ['older write', 'resume'],
+    'the older build\'s retry, stopped by a fault': ['older retry, fault'],
+    'the older build\'s retry, stopped by its process dying': ['older retry, death'],
+    'the older build\'s retry, stopped by its process dying, then a resume through this build': ['older retry, death', 'resume'],
+  };
+  for (const [earlierLabel, earlier] of Object.entries(before)) {
+    for (const [laterLabel, later] of Object.entries(after)) {
+      await t.test(`${earlierLabel}; accepted; ${laterLabel}`, () => withDirectory(async directory => {
+        const accepted = await acceptedShortOfTheRun(directory, earlier);
+        const kept = accepted.atAcceptance.latest_unattributed_revision;
+        assert.ok(Number.isInteger(kept) && kept < accepted.acceptedAt, `the run kept a revision from before the acceptance that it could not attribute, got ${kept}`);
+        assert.equal(accepted.atAcceptance.revision_written_by?.revision, accepted.acceptedAt, 'and this build wrote the revision the acceptance observed');
+        let unattributed = null;
+        for (const step of later) unattributed = (await writeToRun(directory, accepted.context, step, accepted.submitted)) ?? unattributed;
+        assert.ok(unattributed > accepted.acceptedAt, 'the older build wrote after the acceptance');
+        await assertNotTakenBack(directory, accepted, unattributed);
+      }));
+    }
+  }
+});
+
 test('an older build\'s write the acceptance already saw does not keep an acceptance that never reached the run from being withdrawn', async () => {
   // A write the acceptance observed was made before it and is no part of its
   // application. Refusing every acceptance on a run an older build ever wrote
   // would be simpler, and would take away the withdrawal that exists for an
   // acceptance nothing of which reached the run.
-  const legacy = run => {
-    const written = { ...run };
-    for (const field of WRITER_FIELDS) delete written[field];
-    return written;
-  };
   const variants = {
     'nothing but this build': { before: [], after: [] },
     'a reviewer\'s resume through this build after the acceptance': { before: [], after: ['resume'] },
