@@ -4,7 +4,8 @@
 // never part of a project, a backup export or an import, and never travels
 // with a workspace. Nothing here makes a network request: the bytes come from
 // a file the user picks and stay in this browser. The free default bank's
-// verified subset (default-bank.mjs) is kept here too, under its own key.
+// verified subset (default-bank.mjs) and the game-style bank
+// (game-style-bank.mjs) are kept here too, each under its own key.
 import { bankErrorDetail } from './bank-check.mjs';
 
 const DB = 'mml-studio-soundbank';
@@ -164,5 +165,20 @@ export async function storeDefaultSubset(record) {
 }
 export async function clearDefaultSubsets() {
   await transact('readwrite', store => request(store.delete(IDBKeyRange.bound(SUBSET_PREFIX, `${SUBSET_PREFIX}\uffff`))));
+}
+// Banks the site offers besides the default (game-style-bank.mjs), each
+// keyed by its SHA-256. Removing the user's bank leaves them.
+const PRESET_PREFIX = 'preset-bank:';
+export async function loadPresetBank(sha256) {
+  return (await transact('readonly', store => request(store.get(`${PRESET_PREFIX}${sha256}`)))) ?? null;
+}
+export async function hasPresetBank(sha256) {
+  return (await transact('readonly', store => request(store.count(`${PRESET_PREFIX}${sha256}`)))) > 0;
+}
+export async function storePresetBank(record) {
+  await transact('readwrite', store => request(store.put(record, `${PRESET_PREFIX}${record.sha256}`)));
+}
+export async function clearPresetBanks() {
+  await transact('readwrite', store => request(store.delete(IDBKeyRange.bound(PRESET_PREFIX, `${PRESET_PREFIX}\uffff`))));
 }
 export const describe = record => ({ name: record.name, size: record.size, sha256: record.sha256, format: record.format, savedAt: record.savedAt });

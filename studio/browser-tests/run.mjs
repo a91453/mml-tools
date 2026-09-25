@@ -13,6 +13,7 @@ import { runPlayerReadbackChecks } from './player-readback.mjs';
 import { runDecisionComposerChecks } from './decision-composer.mjs';
 import { runListeningChecks } from './listening.mjs';
 import { runDefaultBankChecks } from './default-bank.mjs';
+import { runGameStyleBankChecks } from './game-style-bank.mjs';
 import { DEFAULT_BANK_UPSTREAM } from '../web/preview/default-bank.mjs';
 import { runWorkshopChecks } from './workshop.mjs';
 import { runWorkerBootChecks } from './worker-boot.mjs';
@@ -180,6 +181,7 @@ try {
       // dedicated Worker's requests is only proven here for Chromium.
       if(profile.engineName==='chromium')await runWorkerBootChecks({browser,base});
       await runDefaultBankChecks({browser,base,profile});
+      await runGameStyleBankChecks({browser,base,profile});
       await runPlayerReadbackChecks({page,idle,file});
       await runListeningChecks({page,base});
       await runDecisionComposerChecks({page,idle,screenshot:()=>page.locator('#review').screenshot({path:fileURLToPath(new URL(`${profile.name}-decision-composer.png`,out))})});

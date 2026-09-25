@@ -480,8 +480,9 @@ export function createListening({ root, call, message, copyText, audio, saveProj
     const info = audio.status();
     if (info.bank === undefined) return '讀取音色庫中…';
     if (info.bank) return `音色庫：${esc(info.bank.name)}（你選擇的音色庫，只保存在這台裝置）`;
-    // The free default bank: whether it is on this device, or what the first
-    // playback will download, and that download's progress (app.mjs).
+    // The site bank chosen (free default or game-style): whether it is on
+    // this device, or what the first playback will download, and that
+    // download's progress (app.mjs).
     return info.fallback ? `音色庫：<strong>${esc(info.fallback)}</strong>${info.fallbackNote ? `<br><span data-default-bank-note>${esc(info.fallbackNote)}</span>` : ''}` : '尚未選擇音色庫。選擇後才能試聽；音色庫只保存在這台裝置，不會上傳。';
   }
   const instruments = () => audio.instruments?.() ?? { options: [], choices: [], defaultBank: false };
@@ -492,7 +493,7 @@ export function createListening({ root, call, message, copyText, audio, saveProj
     const instrument = i => `<select data-listen-instrument="${i}" aria-label="${ROLES[i]} 音色" ${inst.options.length ? '' : 'disabled'}>${inst.options.length ? inst.options.map(o => `<option value="${esc(o.value)}" ${o.value === inst.choices[i] ? 'selected' : ''}>${esc(o.label)}</option>`).join('') : '<option>按播放後載入音色清單</option>'}</select>`;
     const roles = ROLES.map((role, i) => `<div class="listen-role"><span class="listen-role-name">${role}</span>${instrument(i)}<button type="button" class="quiet" data-listen-mute="${i}" aria-pressed="${state.muted[i]}" aria-label="${role} 靜音">靜音</button><button type="button" class="quiet" data-listen-solo="${i}" aria-pressed="${state.solo[i]}" aria-label="${role} 獨奏">獨奏</button></div>`).join('');
     return `<div class="card" id="listen-player" data-ready="${Boolean(info.bank || info.fallback)}" data-default-cached="${Boolean(info.defaultCached)}" data-instruments="${esc(inst.options.map(o => o.value).join(','))}"><h3>播放</h3>
-      <div class="listen-row"><span class="meta" id="listen-bank">${bankLine()}</span><label class="file-button quiet">${info.bank ? '更換音色庫' : '選擇自己的音色庫'}<input type="file" id="listen-bank-file" accept=".dls,.sf2,.sf3" aria-label="選擇音色庫檔案"></label>${info.defaultCached ? '<button type="button" class="quiet" id="listen-default-bank-clear">刪除這台裝置上的免費音色</button>' : ''}</div>
+      <div class="listen-row"><span class="meta" id="listen-bank">${bankLine()}</span><label class="file-button quiet">${info.bank ? '更換音色庫' : '選擇自己的音色庫'}<input type="file" id="listen-bank-file" accept=".dls,.sf2,.sf3" aria-label="選擇音色庫檔案"></label>${!info.bank && info.fallback && audio.presetBankSelect ? audio.presetBankSelect('id="listen-preset-bank"') : ''}${info.defaultCached ? '<button type="button" class="quiet" id="listen-default-bank-clear">刪除這台裝置上的免費音色</button>' : ''}${info.gameStyleCached ? '<button type="button" class="quiet" id="listen-game-style-bank-clear">刪除這台裝置上的遊戲風格音色</button>' : ''}</div>
       <p class="listen-position" id="listen-position" aria-live="off"></p>
       <div class="actions listen-transport" id="listen-transport"></div>
       <p class="meta" id="listen-cue"></p>
@@ -693,6 +694,10 @@ export function createListening({ root, call, message, copyText, audio, saveProj
     if (bankFile) bankFile.onchange = () => { const file = bankFile.files?.[0]; bankFile.value = ''; if (file) Promise.resolve(audio.pickBank(file)).then(() => render(), error => message(error.message, true)); };
     const clearDefault = root.querySelector('#listen-default-bank-clear');
     if (clearDefault) clearDefault.onclick = () => { stop({ quiet: true }); Promise.resolve(audio.clearDefaultBank?.()).then(() => render(), error => message(error.message, true)); };
+    const clearGameStyle = root.querySelector('#listen-game-style-bank-clear');
+    if (clearGameStyle) clearGameStyle.onclick = () => { stop({ quiet: true }); Promise.resolve(audio.clearGameStyleBank?.()).then(() => render(), error => message(error.message, true)); };
+    const presetBank = root.querySelector('#listen-preset-bank');
+    if (presetBank) presetBank.onchange = () => { stop({ quiet: true }); audio.setPresetBank?.(presetBank.value); render(); };
     root.querySelector('#listen-from-bar').onsubmit = event => {
       event.preventDefault();
       try {
