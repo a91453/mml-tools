@@ -75,15 +75,18 @@ import {
   analyzeProjectMicroTiming,
 } from '../canonical/micro-timing.mjs';
 import {
+  POSITION_CLASS,
   REPRESENTATION,
   TARGET_STATUS,
   analyzeReleaseTiming,
+  classifyPosition,
   isNotVisibleToIntervalAnalyzer,
   releaseOffsetKeyOf,
   releaseEvidenceRequirement,
   summarizeReleaseTiming,
   verifyReleaseRepresentation,
 } from '../canonical/release-timing.mjs';
+import { buildTokenLattice } from './duration-plan.mjs';
 
 export const MICRO_GAP_ENFORCEMENT = Object.freeze({
   PRESERVE: 'preserve-source-supported',
@@ -139,6 +142,14 @@ export const MICRO_GAP_BLOCKERS = Object.freeze({
   // of at least the grid, a legato join at an off-grid point or an off-grid role
   // end leaves no interval, and this gate used to PASS while the Final emitter
   // could not write the role.
+  //
+  // A role's earliest note that starts after beat 0 and before the shortest
+  // admitted token (SHORTEST_ADMITTED_TOKEN_BEATS, 1/16 beat) is such a
+  // position too, whatever its denominator: the role is written from beat 0,
+  // no token is that short, so no sum of tokens lands there
+  // (LEADING_ONSET_REASON). classifyPosition calls a position like 1/24
+  // CAUTION_REPRESENTABLE, since its denominator divides the admitted lcm, so
+  // the release analysis does not report it; this gate adds it.
   //
   // Raised only for a boundary no other outcome here already decides: one an
   // analysed interval in its role starts or ends at keeps that interval's
@@ -206,6 +217,13 @@ export const FINAL_REPRESENTABILITY_PROOFS = Object.freeze([
   MICRO_GAP_BLOCKERS.SOURCE_SUPPORTED_NOT_FINAL_REPRESENTABLE,
 ]);
 
+// The shortest token any Final lattice admits, caution lengths included, in IR
+// beats: derived from the executable contract (final/duration-plan.mjs), never
+// restated here. Under the published contract it is the plain length 64, 1/16
+// beat, which is 1/64 of a whole note (SAFE_GRID); no dotted base is shorter.
+export const SHORTEST_ADMITTED_TOKEN_BEATS = buildTokenLattice({ cautionLengthOptIn: true }).tokens
+  .reduce((shortest, token) => (shortest === null || token.duration.cmp(shortest) < 0 ? token.duration : shortest), null);
+
 // ACCEPTANCE_CRITERIA "Delivered first, flagged for listening", rule 1
 // (2026-09-23-v3): the executable echo of its systematic-export-offset
 // precondition. A symbolic source qualifies when one sub-grid offset before the
@@ -242,7 +260,10 @@ export const BOUNDARY_COVERAGE = Object.freeze({
   // A rest boundary where no note of its role starts or ends and the role does
   // not end: it lies inside one silence, which a Final writes as one exact span.
   INSIDE_SILENCE: 'inside-silence',
-  // A position the Final role has to reach and nothing here decides.
+  // A position the Final role has to reach and nothing here decides. Always
+  // the coverage of a leading onset (LEADING_ONSET_REASON): it is an attack, so
+  // no outcome of an interval moves it, and no hold or repair shortens the
+  // silence before it.
   NONE: 'none',
 });
 
@@ -436,16 +457,23 @@ function provisionalReleasePlan({ project, blockers, unknown, preserved, rejecte
   });
 }
 
+// The `reason` of an `unsupportedBoundaries` entry for a role's earliest note
+// when it starts after beat 0 and before SHORTEST_ADMITTED_TOKEN_BEATS: the
+// silence before it is shorter than any Final token, so no token sequence
+// reaches its onset.
+export const LEADING_ONSET_REASON = 'LEADING_SILENCE_SHORTER_THAN_ANY_FINAL_TOKEN';
+
 const positionKey = (role, beat) => `${role}\u0000${f(beat).toString()}`;
 const isAssignedSpan = event => event && (event.kind === 'note' || event.kind === 'rest')
   && event.id && event.start != null && event.end != null && ROLES.includes(event.role);
 
 /**
  * Each onset or rest boundary no admitted Final token sequence can reach
- * (`canonical/release-timing.mjs#classifyPosition`), with how this gate covers it
- * (BOUNDARY_COVERAGE), and each note release there that no release
- * representation can move and nothing else here decides. Positions are compared
- * per role and as exact rationals.
+ * (`canonical/release-timing.mjs#classifyPosition`), each role's earliest note
+ * onset after a silence shorter than any admitted token (LEADING_ONSET_REASON),
+ * with how this gate covers it (BOUNDARY_COVERAGE), and each note release there
+ * that no release representation can move and nothing else here decides.
+ * Positions are compared per role and as exact rationals.
  *
  * A Final role is written as consecutive tokens from beat 0, so it has to reach
  * every position where one of its notes starts or ends, and the position where
@@ -453,14 +481,41 @@ const isAssignedSpan = event => event && (event.kind === 'note' || event.kind ==
  * candidate holds there. Nothing here moves a boundary or reads its meaning.
  */
 function coverUnsupportedBoundaries(project, microTiming, releaseAnalysis) {
-  const boundaries = releaseAnalysis.unsupportedBoundaries;
+  const spans = (Array.isArray(project?.events) ? project.events : []).filter(isAssignedSpan);
+  // Every position a role reaches is a sum of admitted token lengths from beat
+  // 0, and no admitted token is shorter than SHORTEST_ADMITTED_TOKEN_BEATS, so
+  // no position after beat 0 and before it is reached, whatever its
+  // denominator. The role's earliest note onset is the one such position the
+  // role has to reach that nothing else here may see: any other position there
+  // ends a span of the role shorter than the grid, which the interval analyzer
+  // reports (a note overlapping another is role polyphony), and
+  // classifyPosition reports a position only when its denominator does not
+  // divide the admitted lcm. A NOT_FINAL_REPRESENTABLE onset is already the
+  // analysis's own entry, so it is not added twice.
+  const earliestNotes = new Map();
+  for (const event of spans) {
+    if (event.kind !== 'note') continue;
+    const current = earliestNotes.get(event.role);
+    const order = current ? f(event.start).cmp(current.start) : -1;
+    if (order < 0 || (order === 0 && cmpText(event.id, current.id) < 0)) earliestNotes.set(event.role, event);
+  }
+  const leading = [...earliestNotes.values()]
+    .filter(event => f(event.start).cmp(0) > 0 && f(event.start).cmp(SHORTEST_ADMITTED_TOKEN_BEATS) < 0
+      && classifyPosition(event.start) !== POSITION_CLASS.NOT_FINAL_REPRESENTABLE)
+    .map(event => Object.freeze({
+      eventId: event.id, role: event.role, kind: 'note', boundary: 'start', position: f(event.start).toString(), reason: LEADING_ONSET_REASON,
+    }));
+  // In role and beat order; the sort is stable. With no leading entry the list
+  // is the analysis's own.
+  const boundaries = leading.length
+    ? [...releaseAnalysis.unsupportedBoundaries, ...leading].sort((a, b) => cmpText(a.role, b.role) || f(a.position).cmp(b.position))
+    : releaseAnalysis.unsupportedBoundaries;
   // Releases no release representation can move (RELEASE_BOUNDARY_REASON).
   const unmovable = releaseAnalysis.targets.filter(target => Object.hasOwn(RELEASE_BOUNDARY_REASON, target.status));
   // No entry and no such release, no change: the report keeps the analysis's
   // own frozen list.
   if (!boundaries.length && !unmovable.length) return boundaries;
 
-  const spans = (Array.isArray(project?.events) ? project.events : []).filter(isAssignedSpan);
   const byId = new Map(spans.map(event => [event.id, event]));
 
   const intervalEnds = new Set();
@@ -518,7 +573,11 @@ function coverUnsupportedBoundaries(project, microTiming, releaseAnalysis) {
   const covered = boundaries.map(boundary => {
     const key = positionKey(boundary.role, boundary.position);
     let coverage = BOUNDARY_COVERAGE.NONE;
-    if (intervalEnds.has(key)) coverage = BOUNDARY_COVERAGE.ANALYSED_INTERVAL;
+    // A leading onset is decided by nothing here: it is an attack, no outcome
+    // of any interval moves it, and no hold or repair shortens the silence
+    // before it, so an interval that starts or ends there decides only itself.
+    if (boundary.reason === LEADING_ONSET_REASON) coverage = BOUNDARY_COVERAGE.NONE;
+    else if (intervalEnds.has(key)) coverage = BOUNDARY_COVERAGE.ANALYSED_INTERVAL;
     else if (releaseTargets.has(key)) coverage = BOUNDARY_COVERAGE.RELEASE_TARGET;
     else if (!reached.has(key)) coverage = BOUNDARY_COVERAGE.INSIDE_SILENCE;
     return Object.freeze({ ...boundary, coverage });
@@ -822,10 +881,12 @@ export function enforceMicroGaps(project, { mobileSyntax, releaseEvidenceRegistr
       registryChecked: releaseRecords.registryChecked === true,
       violations: Object.freeze([...releaseRecords.violations]),
     }),
-    // Every onset or rest boundary Final cannot reach, and every release there
-    // no release representation can move that nothing else here decides
-    // (RELEASE_BOUNDARY_REASON), each with its `coverage` (BOUNDARY_COVERAGE);
-    // NONE is what raised BOUNDARY_NOT_FINAL_REPRESENTABLE.
+    // Every onset or rest boundary Final cannot reach (a role's earliest onset
+    // after a silence shorter than any Final token among them,
+    // LEADING_ONSET_REASON), and every release there no release representation
+    // can move that nothing else here decides (RELEASE_BOUNDARY_REASON), each
+    // with its `coverage` (BOUNDARY_COVERAGE); NONE is what raised
+    // BOUNDARY_NOT_FINAL_REPRESENTABLE.
     unsupportedBoundaries,
     // With RELEASE_PROVISIONAL: every release a delivery may hold to the
     // following attack or next grid point, and the UNKNOWN interval keys each

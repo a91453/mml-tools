@@ -704,6 +704,38 @@ test('kept sub-grid material no Final token can carry holds the run at microTimi
     && entry.includes('lists no operation')), JSON.stringify(caps.runs.refuses));
 });
 
+test('a role that starts after a silence shorter than any Final token holds the run at microTiming and names no operation', async () => {
+  // Chord5's first note attacks at 1/240 of a beat. No admitted token is
+  // shorter than 1/16 beat, so the role cannot reach it, although its
+  // denominator divides the admitted lcm. G10 used to PASS it, and the run
+  // went on to a finalize the emitter refused, halting with FINALIZE_BLOCKED
+  // and a technical request that named finalize again.
+  const BOUNDARY = 'MICRO_TIMING_BOUNDARY_NOT_FINAL_REPRESENTABLE';
+  const source = sixRoleBaseline();
+  const project = createCanonicalProject({
+    ...source,
+    events: source.events.map(event => (event.id === 'chord5-1' ? createCanonicalNoteEvent({ ...event, start: '1/240' }) : event)),
+  });
+  const isolated = createStudioApplication({});
+  const own = await projectWithSymbolicAsset(isolated, OWNER, { project });
+  await isolated.analyzeSources(OWNER, own.projectId, { assetIds: [own.assetId] });
+  const candidate = (await isolated.applyDecisions(OWNER, own.projectId, { decisions: runDecisionsFor(own.project) })).decisions.candidate_id;
+  const { run } = await isolated.startRun(OWNER, own.projectId, { target_candidate_id: candidate, confirmations: FIXTURE_CONFIRMATIONS });
+
+  assert.notEqual(run.state, RUN_STATE.COMPLETED);
+  assert.equal(run.final_artifact_id, null);
+  assert.equal(run.review_requests.some(entry => entry.code === 'FINALIZE_BLOCKED' || entry.gate === 'technical'), false,
+    `the run stops at microTiming, before finalize: ${JSON.stringify(run.review_requests.map(entry => [entry.code, entry.gate]))}`);
+  const request = gateRequest(run, 'microTiming');
+  assert.ok(request, JSON.stringify(run.review_requests.map(entry => entry.gate)));
+  assert.deepEqual(request.blockers, [BOUNDARY]);
+  assert.deepEqual(request.available_operations, [], 'no operation moves an attack');
+  assert.deepEqual(request.missing, [READINESS_BLOCKER_WITHOUT_OPERATION.microTiming[BOUNDARY]]);
+  assert.deepEqual(request.detail.unsupportedBoundaries.map(entry => [entry.role, entry.eventId, entry.kind, entry.boundary, entry.position, entry.reason, entry.coverage]), [
+    ['Chord5', 'chord5-1', 'note', 'start', '1/240', 'LEADING_SILENCE_SHORTER_THAN_ANY_FINAL_TOKEN', 'none'],
+  ], 'the request says where, and why');
+});
+
 // ─── an unknown blocker still blocks ────────────────────────────────────────
 
 test('a readiness blocker the run has never heard of is reported and still stops it', async () => {

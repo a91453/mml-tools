@@ -52,7 +52,12 @@ export const EMIT_DIAGNOSTICS = Object.freeze({
   // has to reach -- an onset, a rest boundary, or a note release no release
   // representation can move (one under a keep claim, or one with no valid
   // representation) -- sits where no admitted Final token sequence reaches,
-  // and no other G10 outcome decides it. An error, not pending: a proof about
+  // and no other G10 outcome decides it. Two arithmetic facts prove it, and the
+  // message states the ones that apply: the position's whole-note denominator
+  // does not divide the lcm of the admitted token denominators, or it is a
+  // role's earliest onset after beat 0 and before the shortest admitted token
+  // (reason LEADING_SILENCE_SHORTER_THAN_ANY_FINAL_TOKEN), which no sum of
+  // tokens reaches whatever its denominator. An error, not pending: a proof about
   // this candidate that no evidence or search setting changes and nothing in
   // this build moves, so it is never folded into MICRO_GAP_BLOCKED_PENDING's
   // "unproven" wording. It carries `unreachableBoundaries` (role, eventId,
