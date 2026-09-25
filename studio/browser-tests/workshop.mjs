@@ -4,6 +4,7 @@ import { BasicSoundBank } from 'spessasynth_core';
 import { BANK_CHECKER_LOAD_TIMEOUT_MS, bankCheckTimeoutMs } from '../web/preview/soundbank-store.mjs';
 import { SYNTH_READY_TIMEOUT_MS } from '../web/preview/bank-check.mjs';
 import { countBankSends } from './bank-sends.mjs';
+import { holdNextBankCheck } from './bank-check-hold.mjs';
 import { readyGate, withholdSynthReady } from './synth-ready.mjs';
 
 // The Workshop editor (studio/web/workshop/), end to end in a real browser:
@@ -254,6 +255,30 @@ export async function runWorkshopChecks({ page, base, idle, file, screenshot, pr
     await page.locator('#dls').setInputFiles({ name: 'saw.sf2', mimeType: 'application/octet-stream', buffer: sawBank });
     await bankLoaded('saw.sf2');
   }
+
+  // Overlapping picks: the last pick wins. Each pick is checked inside the
+  // bank queue, and a big bank takes longer than a small one: here the first
+  // pick's check is held while a second pick is made. Once released, the
+  // first pick is neither kept nor loaded, and the second one is.
+  await holdNextBankCheck(page);
+  await page.evaluate(() => {
+    const label = document.querySelector('#dlsName');
+    window.overlapLabels = [];
+    new MutationObserver(() => window.overlapLabels.push(label.textContent)).observe(label, { childList: true, characterData: true, subtree: true });
+  });
+  const sentBeforeOverlap = await bankSends();
+  await page.locator('#dls').setInputFiles({ name: 'first.sf2', mimeType: 'application/octet-stream', buffer: sawBank });
+  await page.waitForFunction(() => window.heldBankCheck?.handed);
+  await page.locator('#dls').setInputFiles({ name: 'second.sf2', mimeType: 'application/octet-stream', buffer: sawBank });
+  await page.evaluate(() => window.heldBankCheck.release());
+  await bankLoaded('second.sf2');
+  const overlapLabels = await page.evaluate(() => window.overlapLabels);
+  assert.ok(!overlapLabels.some(text => text.startsWith('first.sf2')), `the overtaken pick is never loaded: ${overlapLabels.join(' → ')}`);
+  assert.equal(await bankSends(), sentBeforeOverlap + 1, 'only the last pick is sent to the synth');
+  assert.equal(await storedBankName(), 'second.sf2', 'and kept');
+  assert.equal(await page.evaluate(() => window.heldBankCheck.stopped), true, 'the overtaken pick\'s check was answered and stopped');
+  await page.locator('#dls').setInputFiles({ name: 'saw.sf2', mimeType: 'application/octet-stream', buffer: sawBank });
+  await bankLoaded('saw.sf2');
   await closeSettings();
   await press(page.locator('#log button'));
   assert.equal(await page.locator('#play').isEnabled(), true);

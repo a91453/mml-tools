@@ -8,6 +8,7 @@ import { DEFAULT_BANK_DOWNLOAD_NOTICE, DEFAULT_BANK_SUBSET, DEFAULT_BANK_UPSTREA
 import { trimDefaultBank } from '../web/preview/default-bank-trim.mjs';
 import { syntheticUpstreamBank } from '../tests/support/synthetic-soundbank.mjs';
 import { countBankSends } from './bank-sends.mjs';
+import { holdNextBankCheck } from './bank-check-hold.mjs';
 
 // The free default preview bank through the real page, Worker and engine, in a
 // browser context of its own: its storage starts empty, and the upstream URL
@@ -205,6 +206,39 @@ export async function runDefaultBankChecks({ browser, base, profile }) {
     await page.locator('#listen-stop').click();
     assert.equal(upstreamRequests.length, 3, 'the user bank plays without contacting the upstream');
     assert.ok((await page.locator('[data-listen-instrument="0"] option').allTextContents()).every(text => /^\d{3} /.test(text)), 'the picker lists the user bank\'s presets');
+
+    // Overlapping picks: the last choice wins. Each pick is checked off the
+    // main thread first, and a big bank takes longer than a small one: here
+    // the first pick's check is held until the second pick has been checked,
+    // kept and shown. Once released, the first pick is neither kept nor shown,
+    // and says nothing.
+    await holdNextBankCheck(page);
+    await page.locator('#bank-file').setInputFiles({ name: 'first.sf2', mimeType: 'application/octet-stream', buffer: sample });
+    await page.waitForFunction(() => window.heldBankCheck?.handed);
+    await page.locator('#bank-file').setInputFiles({ name: 'second.sf2', mimeType: 'application/octet-stream', buffer: sample });
+    await page.locator('#message').filter({ hasText: '已載入音色庫 second.sf2' }).waitFor();
+    await page.locator('#bank-status').filter({ hasText: 'second.sf2' }).waitFor();
+    await page.evaluate(() => window.heldBankCheck.release());
+    await page.waitForFunction(() => window.heldBankCheck.stopped);
+    // Time for a write and a redraw the page must not make.
+    await page.waitForTimeout(1000);
+    assert.equal(await storedUserBank(), 'second.sf2', 'the overtaken pick is not kept');
+    assert.ok((await page.locator('#bank-status').textContent()).includes('second.sf2'), 'the card still names the last pick');
+    assert.ok((await page.locator('#listen-bank').textContent()).includes('second.sf2'), 'and so does the listening player');
+    assert.ok(!(await page.locator('#message').textContent()).includes('first.sf2'), 'the overtaken pick says nothing');
+    // Removing the bank is a newer choice too: a pick still being checked
+    // then is not kept once the removal has run.
+    await holdNextBankCheck(page);
+    await page.locator('#bank-file').setInputFiles({ name: 'late.sf2', mimeType: 'application/octet-stream', buffer: sample });
+    await page.waitForFunction(() => window.heldBankCheck?.handed);
+    await page.locator('#bank-clear').click();
+    await page.locator('#bank-status').filter({ hasText: LABEL }).waitFor();
+    await page.evaluate(() => window.heldBankCheck.release());
+    await page.waitForFunction(() => window.heldBankCheck.stopped);
+    await page.waitForTimeout(1000);
+    assert.equal(await storedUserBank(), null, 'a pick overtaken by the removal is not kept');
+    assert.ok((await page.locator('#bank-status').textContent()).includes(LABEL), 'the card names the default bank');
+    assert.ok(!(await page.locator('#message').textContent()).includes('late.sf2'), 'the overtaken pick says nothing');
     assert.deepEqual(errors, []);
     return { upstream: fixture.real ? 'pinned upstream file' : 'synthetic stand-in with swapped pins' };
   } finally {

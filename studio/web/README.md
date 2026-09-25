@@ -213,7 +213,13 @@ exact timing, event identity and the evidence boundaries. See
     free default bank.
   - **Where your bank lives.** In its own IndexedDB database on that device. It
     is never uploaded, never in a project backup, and never in the build, and
-    it always takes precedence over the default bank.
+    it always takes precedence over the default bank. When picks overlap
+    (each is checked first, and a big bank takes longer), the last choice
+    wins, and removing the bank is a choice too: a pick overtaken before it
+    is written is not kept and says nothing, in the Studio and in the
+    Workshop, which does not load it either. A newer choice cannot stop an
+    older pick whose write has already been sent; the page then names that
+    bank, which the store keeps, until the newer choice's own result.
   - **A damaged bank.** Before a picked bank is kept, a Worker parses it with
     the vendored spessasynth_core (`preview/bank-check.mjs`), the loader the
     synth worklet runs on it. One that does not parse, such as a file cut

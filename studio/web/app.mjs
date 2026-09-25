@@ -920,7 +920,7 @@ function bindEngineProbes() {
 // playback from the start, the user may record the engine's processed events
 // as the Gate 6 player readback, which the Worker re-checks against the exact
 // MML on every analysis.
-const preview = { voices: 0, bank: undefined, bankChecked: false, defaultCached: undefined, download: null, context: null, engine: null, engineLoading: null, engineToken: 0, transport: null, songKey: null, choices: null, choicesKind: null, position: 0, muted: [false, false, false, false, false, false], busy: false, error: null, playBinding: null, lastCapture: null, owner: 'final', listenHandlers: null };
+const preview = { voices: 0, bank: undefined, bankChecked: false, bankPicks: 0, defaultCached: undefined, download: null, context: null, engine: null, engineLoading: null, engineToken: 0, transport: null, songKey: null, choices: null, choicesKind: null, position: 0, muted: [false, false, false, false, false, false], busy: false, error: null, playBinding: null, lastCapture: null, owner: 'final', listenHandlers: null };
 // Re-render only the preview card: a full render() would discard whatever the
 // user is typing in another form.
 function refreshPreview() { listening?.refreshAudio(); const card = $('#timbre-preview'); if (!card) return; card.outerHTML = timbrePreviewCard(); bindTimbrePreview(); }
@@ -1130,14 +1130,26 @@ const listenAudio = {
   setMuted(role, value) { if (preview.owner === 'listen') preview.transport?.setMuted(role, value); },
   state: () => (preview.owner === 'listen' ? preview.transport?.state ?? null : null),
   async pickBank(file) {
+    // The last choice wins. Picks can overlap, since each is checked off the
+    // main thread and a big bank takes longer than a small one, and removing
+    // the bank is a choice too. A pick overtaken before it is written is not
+    // kept, and whatever became of it (refused or superseded) says nothing.
+    const pick = ++preview.bankPicks;
+    const current = () => pick === preview.bankPicks;
     const { storeBank } = await import('./preview/soundbank-store.mjs');
     // Checked (parsed off the main thread) and kept before the engine is
     // reset, so a refused bank leaves the engine and the kept bank as they were.
-    const stored = await storeBank(file);
+    let stored;
+    try { stored = await storeBank(file, { current }); }
+    catch (error) { if (current()) throw error; return; }
+    // Written. A newer choice made while the write was under way could not
+    // stop it; its own result follows (IndexedDB runs its write or delete
+    // after this one), so until then the page names this bank, the one the
+    // store keeps, without announcing it.
     resetPreviewEngine();
     preview.bank = stored;
     preview.error = null;
-    message(`已載入音色庫 ${file.name}；只保存在這台裝置。`);
+    if (current()) message(`已載入音色庫 ${file.name}；只保存在這台裝置。`);
     refreshPreview();
   },
   clearDefaultBank: () => clearDefaultPreviewBank(),
@@ -1209,6 +1221,8 @@ function bindTimbrePreview() {
   };
   const clear = $('#bank-clear');
   if (clear) clear.onclick = async () => {
+    // A newer choice than any pick still being checked (pickBank).
+    preview.bankPicks += 1;
     const { clearBank } = await import('./preview/soundbank-store.mjs');
     resetPreviewEngine();
     await clearBank().catch(error => message(error.message, true));

@@ -109,7 +109,17 @@ export function checkBankInWorker(bytes, { timeoutMs = bankCheckTimeoutMs(bytes.
 // Workshop can say it in its own language. `check` receives a copy of
 // the bytes; tests pass one that runs the npm spessasynth_core in-process
 // instead of the Worker.
-export async function storeBank(file, { check = checkBankInWorker } = {}) {
+//
+// `current` says whether this bank is still the one wanted. A page where
+// picks can overlap (each is checked first, and a big bank takes longer)
+// passes it so that the last choice wins. It is asked inside the write's own
+// transaction, right before the write request, with nothing awaited in
+// between; a pick overtaken by then is not written, and the call rejects
+// with code BANK_SUPERSEDED. A newer choice made after that request has been
+// sent cannot stop it, but IndexedDB runs that choice's own write or delete
+// after it, so the store still ends on the newer choice.
+export const BANK_SUPERSEDED = 'BANK_SUPERSEDED';
+export async function storeBank(file, { check = checkBankInWorker, current = () => true } = {}) {
   const name = String(file?.name ?? '');
   if (!BANK_EXTENSIONS.some(ext => name.toLowerCase().endsWith(ext))) throw Error('音色庫需為 .dls、.sf2 或 .sf3 檔案');
   if (file.size > MAX_BANK_BYTES) throw Error(`音色庫超過 ${MAX_BANK_BYTES / 1048576} MiB 上限`);
@@ -126,7 +136,10 @@ export async function storeBank(file, { check = checkBankInWorker } = {}) {
     throw Error(detail ? `${why}（${detail}）` : why);
   }
   const record = { name, size: bytes.byteLength, sha256: await sha256Hex(bytes), format: form.trim(), savedAt: new Date().toISOString(), bytes };
-  await transact('readwrite', store => request(store.put(record, KEY)));
+  await transact('readwrite', store => {
+    if (!current()) throw Object.assign(Error('已選擇較新的音色庫，這個音色庫沒有儲存'), { code: BANK_SUPERSEDED });
+    return request(store.put(record, KEY));
+  });
   return describe(record);
 }
 export async function loadBank() {

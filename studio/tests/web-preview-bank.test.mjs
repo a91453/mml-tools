@@ -111,6 +111,33 @@ test('storeBank refuses a bank that does not parse before anything is written, a
   });
 });
 
+test('storeBank writes a pick only while it is still the one wanted, asked right before the write', async () => {
+  await withMemoryIndexedDB(async memory => {
+    // Overtaken before its write: asked once, inside the write's own
+    // transaction (the store is open, nothing is written yet), and refused.
+    const asked = [];
+    const overtaken = () => { asked.push(memory.log.map(([kind]) => kind)); return false; };
+    const refusal = await storeBank(new File([bank], 'first.sf2'), { check, current: overtaken }).then(() => null, error => error);
+    assert.equal(refusal?.code, 'BANK_SUPERSEDED');
+    assert.equal(refusal.message, '已選擇較新的音色庫，這個音色庫沒有儲存');
+    assert.deepEqual(asked.map(kinds => kinds.includes('open') && !kinds.includes('put')), [true], 'asked once, after the store opened and before any write');
+    assert.equal(memory.log.filter(([kind]) => kind === 'put').length, 0, 'nothing is written');
+
+    // Overtaken after its check, while its bytes are hashed and the store
+    // opens: still not written.
+    let wanted = true;
+    const checkThenOvertake = bytes => { setTimeout(() => { wanted = false; }, 0); return check(bytes); };
+    await assert.rejects(storeBank(new File([bank], 'second.sf2'), { check: checkThenOvertake, current: () => wanted }), { code: 'BANK_SUPERSEDED' });
+    assert.equal(memory.log.filter(([kind]) => kind === 'put').length, 0, 'a pick overtaken during its write\'s preparation is not written');
+    assert.equal(await loadBank(), null);
+
+    // Still wanted: kept.
+    const kept = await storeBank(new File([bank], 'third.sf2'), { check, current: () => true });
+    assert.equal(kept.name, 'third.sf2');
+    assert.equal((await loadBank()).name, 'third.sf2');
+  });
+});
+
 // A stand-in for the spessasynth_lib WorkletSynthesizer as the preview and the
 // Workshop use it: addSoundBank waits for the worklet's reply, and a bank the
 // worklet cannot parse is only reported through the `soundBankError` event
