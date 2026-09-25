@@ -3,6 +3,13 @@
 Read HANDOFF.md first (owner preferences, policies, v7 steps). This file only
 adds what the second session owns.
 
+## ~12:55 UTC — DONE (read this first)
+- v7 deployed by the owner 12:17 UTC, startup log verified; records merged in PR #106 (main 11f9e0b).
+- MCP control plane redeployed at 5dbf42a (it had stuck at #101 because #100's deploy was SKIPPED after
+  superseding #102's); SUCCESS 12:18 UTC.
+- Open for the owner: delete RELEASE_S3_* GitHub secrets (keep the Railway function variables); real-browser
+  check of the permanent site; decide which stale branches to delete (merged ones listed in chat).
+
 ## ~12:10 UTC — v7 in progress (read this first)
 - All fix PRs merged; main = 5dbf42a (source of v7). v6 WAS deployed by the owner at 10:33 UTC.
 - Branch `claude/studio-v7-release`: pins committed (buildId f654796859ea…, cacheId b3fe1d4d…, 157 assets,
