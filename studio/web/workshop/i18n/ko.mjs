@@ -275,6 +275,7 @@ export default {
   "ui.bankFailed": "불러오기 실패",
   "ui.bankLoadError": "사운드뱅크를 불러올 수 없습니다",
   "ui.bankCheckTimeout": "사운드뱅크 확인이 {s}초 안에 끝나지 않아 불러오지도 저장하지도 않았습니다",
+  "ui.bankCheckerLoadTimeout": "사운드뱅크 확인 프로그램이 {s}초 안에 로드되지 않아 확인하지 못했으며, 불러오지도 저장하지도 않았습니다",
   "ui.defUnparsed": "이 .def의 <code>[Instrument presets]</code> 구역을 인식하지 못했습니다. 앞의 몇 줄을 보내주시면 파서를 맞추겠습니다.",
   "ui.defNoMatch": "이 .def의 번호 {n}개가 지금 사운드뱅크의 어느 것과도 맞지 않습니다. 사운드뱅크 조합이 잘못되었을 가능성이 큽니다. 드롭다운은 그대로 둡니다.",
   "mark.menu.add": "구간 표시 추가",

@@ -104,7 +104,12 @@ test('the timbre preview engine is vendored from npm, self-contained, licensed a
     assert.ok(sw.includes(`./${path}`), `offline asset missing: ${path}`);
   }
   assert.match(await read('studio/web/preview/default-bank-worker.mjs'), /from '\.\.\/\.\.\/\.\.\/vendor\/spessasynth\/core\.js'/, 'the subset is made with the vendored engine, nothing else');
-  assert.match(await read('studio/web/preview/bank-check-worker.mjs'), /from '\.\.\/\.\.\/\.\.\/vendor\/spessasynth\/core\.js'/, 'a picked bank is parsed with the vendored engine, nothing else');
+  const bankChecker = await read('studio/web/preview/bank-check-worker.mjs');
+  assert.match(bankChecker, /from '\.\.\/\.\.\/\.\.\/vendor\/spessasynth\/core\.js'/, 'a picked bank is parsed with the vendored engine, nothing else');
+  // It says it has loaded from its top level, which runs only once that
+  // static import has: the check's clock waits for this (soundbank-store.mjs).
+  assert.match(bankChecker, /^self\.postMessage\(\{ loaded: true \}\);$/m, 'the bank checker says when its parser has loaded');
+  assert.doesNotMatch(bankChecker, /\bimport\(/, 'and loads nothing later');
   // Every precached file must have a type the static hosts serve, or the
   // whole Service Worker install fails and the app never works offline.
   const servable = new Set(['.html', '.mjs', '.js', '.css', '.json', '.webmanifest', '.svg', '.png']);

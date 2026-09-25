@@ -3354,8 +3354,10 @@ export function init() {
         if (pick !== bankPicks) return;
         await bankStore.storeBank(f).catch(err => {
           // A bank whose check ran out of time is refused, not handed to the
-          // synth, whose worklet would run the same parse on it.
+          // synth, whose worklet would run the same parse on it. So is one
+          // that was never checked because the checker did not load in time.
           if (err?.code === "BANK_CHECK_TIMEOUT") throw Error(i18n.t("ui.bankCheckTimeout", { s: Math.round(err.timeoutMs / 1000) }));
+          if (err?.code === "BANK_CHECKER_LOAD_TIMEOUT") throw Error(i18n.t("ui.bankCheckerLoadTimeout", { s: Math.round(err.timeoutMs / 1000) }));
           console.warn("[Workshop] bank not stored:", err);
         });
         await loadBank(await f.arrayBuffer(), f.name, false, f);
