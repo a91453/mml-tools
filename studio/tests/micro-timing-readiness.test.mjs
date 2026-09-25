@@ -6,6 +6,13 @@
 // short, and "short" is never by itself a PASS either. These regressions pin
 // the four outcomes the readiness gate must keep apart, and pin what a
 // microTiming PASS does *not* mean.
+//
+// A source-supported sub-grid interval keeps its classification and is
+// preserved, but no admitted Final token is shorter than 1/64, so the gate is
+// PENDING with exactly MICRO_TIMING_SOURCE_SUPPORTED_NOT_FINAL_REPRESENTABLE
+// (ACCEPTANCE_CRITERIA Gate 2: PENDING/UNSUPPORTED, not guessed). The
+// evidence-binding tests below therefore tell a genuine keep from a defective
+// one by the exact blocker list and counts, never by "not PASS" alone.
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { f, F } from '../backend/mml/index.mjs';
@@ -27,6 +34,7 @@ import {
   intervalIdentityLabel,
 } from '../backend/canonical/micro-timing.mjs';
 import { evaluateProjectReadiness } from '../backend/final/readiness.mjs';
+import { MICRO_GAP_BLOCKERS, MICRO_GAP_ENFORCEMENT } from '../backend/final/micro-gap-enforcement.mjs';
 import {
   STUDIO_IMPLEMENTATION,
   STUDIO_FINAL_MODULE_BLOCKERS,
@@ -34,6 +42,7 @@ import {
 } from '../backend/rules/index.mjs';
 
 const KEEP = MICRO_TIMING_KEEP_ACTION;
+const NOT_FINAL = MICRO_GAP_BLOCKERS.SOURCE_SUPPORTED_NOT_FINAL_REPRESENTABLE;
 const TECHNICAL = MICRO_TIMING_TECHNICAL_ACTIONS[0];
 const JUST_BELOW = new F(1, 17);
 const EXACT_GRID = new F(1, 16);
@@ -223,6 +232,26 @@ function subGridDurationProject({ decisions = [], sources = [OFFICIAL], sourceId
   };
 }
 
+// A genuine source-supported keep: classified SOURCE_SUPPORTED_MICROTIMING and
+// preserved, nothing unknown or residue, and the gate blocks only because the
+// Final cannot carry it.
+function assertSourceSupportedOnly(gate, count = 1) {
+  assert.equal(gate.status, 'PENDING');
+  assert.deepEqual(gate.blockers, [NOT_FINAL]);
+  assert.equal(gate.sourceSupportedCount, count);
+  assert.equal(gate.unknownCount, 0);
+  assert.equal(gate.technicalResidueCount, 0);
+  assert.equal(gate.enforcement.length, count);
+  for (const item of gate.enforcement) {
+    assert.equal(item.classification, MICRO_TIMING_CLASSIFICATIONS.SOURCE_SUPPORTED_MICROTIMING);
+    assert.equal(item.classificationBasis, 'accepted-keep-decision');
+    assert.equal(item.enforcement, MICRO_GAP_ENFORCEMENT.PRESERVE);
+  }
+  assert.deepEqual(gate.preservedIntervalKeys, gate.enforcement.map(item => item.identityKey));
+  assert.deepEqual(gate.sourceSupportedIntervalKeys, gate.preservedIntervalKeys);
+  assert.equal(gate.finalRepresentable, null);
+}
+
 // ---------------------------------------------------------------------------
 // 1-2. PASS: nothing sub-grid, and the 1/64 boundary itself
 // ---------------------------------------------------------------------------
@@ -252,47 +281,45 @@ test('C2B-2 exactly 1/64 is not treated as a forbidden sub-grid interval', () =>
 });
 
 // ---------------------------------------------------------------------------
-// 3-5. PASS through proven source support
+// 3-5. Proven source support: classified and preserved, and it blocks only on
+// Final representability
 // ---------------------------------------------------------------------------
 
-test('C2B-3 an official-symbolic source-supported keep is microTiming PASS', () => {
+test('C2B-3 an official-symbolic source-supported keep is classified source-supported and blocks only on Final representability', () => {
   const { project } = subGridDurationProject({ decisions: [event => keepDecision({ event })] });
   const result = readiness(project);
-  assert.equal(result.gates.microTiming.status, 'PASS');
+  assertSourceSupportedOnly(result.gates.microTiming);
   assert.equal(result.gates.microTiming.candidateCount, 1);
-  assert.equal(result.gates.microTiming.sourceSupportedCount, 1);
-  assert.equal(result.gates.microTiming.unknownCount, 0);
-  assert.equal(result.candidateReady, true);
+  assert.equal(result.candidateReady, false);
+  assert.deepEqual(result.preGameBlocking, ['microTiming']);
 });
 
-test('C2B-3b a source-supported sub-grid interval is kept, not quantized away, to reach PASS', () => {
+test('C2B-3b a source-supported sub-grid interval is kept, not quantized away, and still blocks', () => {
   const { project } = subGridDurationProject({ decisions: [event => keepDecision({ event })] });
   const before = timingSnapshot(project);
   const result = readiness(project);
-  assert.equal(result.gates.microTiming.status, 'PASS');
+  assertSourceSupportedOnly(result.gates.microTiming);
   assert.deepEqual(timingSnapshot(project), before);
   assert.equal(project.events[0].end, JUST_BELOW.toString());
 });
 
-test('C2B-4 an original-audio source-supported keep is microTiming PASS', () => {
+test('C2B-4 an original-audio source-supported keep is classified source-supported and blocks only on Final representability', () => {
   const { project } = subGridDurationProject({
     sources: [OFFICIAL, OFFICIAL_AUDIO],
     sourceId: 'audio',
     decisions: [event => keepDecision({ event, evidenceSourceIds: ['audio'], evidence: ['original audio A/B at 00:42'] })],
   });
   const result = readiness(project);
-  assert.equal(result.gates.microTiming.status, 'PASS');
-  assert.equal(result.gates.microTiming.sourceSupportedCount, 1);
+  assertSourceSupportedOnly(result.gates.microTiming);
 });
 
-test('C2B-5 a supporting third-party source alongside a genuine cited primary is microTiming PASS', () => {
+test('C2B-5 a supporting third-party source alongside a genuine cited primary is classified source-supported', () => {
   const { project } = subGridDurationProject({
     sources: [OFFICIAL, SUPPORTING_THIRD_PARTY],
     decisions: [event => keepDecision({ event, evidenceSourceIds: ['third', 'official'] })],
   });
   const result = readiness(project);
-  assert.equal(result.gates.microTiming.status, 'PASS');
-  assert.equal(result.gates.microTiming.sourceSupportedCount, 1);
+  assertSourceSupportedOnly(result.gates.microTiming);
 });
 
 // ---------------------------------------------------------------------------
@@ -340,7 +367,11 @@ test('C2B-8b an accepted keep citing no source at all is microTiming PENDING', (
   const { project } = subGridDurationProject({
     decisions: [event => keepDecision({ event, evidenceSourceIds: [] })],
   });
-  assert.equal(readiness(project).gates.microTiming.status, 'PENDING');
+  const gate = readiness(project).gates.microTiming;
+  assert.equal(gate.status, 'PENDING');
+  // A genuine keep is PENDING too, so the blocker list is what tells them apart.
+  assert.deepEqual(gate.blockers, ['MICRO_TIMING_CLASSIFICATION_UNKNOWN']);
+  assert.equal(gate.sourceSupportedCount, 0);
 });
 
 test('C2B-9 a pending keep decision is microTiming PENDING', () => {
@@ -501,7 +532,8 @@ test('C2B-15b a role-null event far from every peer fabricates no blocker', () =
 test('C2B-16 source-supported micro-timing never sets finalRepresentable', () => {
   const { project } = subGridDurationProject({ decisions: [event => keepDecision({ event })] });
   const gate = readiness(project).gates.microTiming;
-  assert.equal(gate.status, 'PASS');
+  // The gate-level answer is the blocker; the per-interval field stays unset.
+  assertSourceSupportedOnly(gate);
   assert.equal(gate.finalRepresentable, null);
   assert.notEqual(gate.finalRepresentable, true);
 });
@@ -511,11 +543,21 @@ test('C2B-17 source-supported micro-timing does not bypass a failing MML technic
   const result = readiness(project, {
     mmlValidation: { ok: false, errors: [{ message: 'Strict Mobile rejects c128' }] },
   });
-  assert.equal(result.gates.microTiming.status, 'PASS');
+  assertSourceSupportedOnly(result.gates.microTiming);
   assert.equal(result.gates.technical.status, 'FAIL');
   assert.equal(result.candidateReady, false);
-  assert.ok(result.preGameBlocking.includes('technical'));
-  assert.ok(!result.preGameBlocking.includes('microTiming'));
+  // Two separate gates, each blocking for its own reason.
+  assert.deepEqual([...result.preGameBlocking].sort(), ['microTiming', 'technical']);
+  assert.deepEqual(result.gates.technical.errors, [{ message: 'Strict Mobile rejects c128' }]);
+
+  // With nothing sub-grid, the failing technical gate still blocks on its own.
+  const plain = readiness(candidate({ events: [note({ id: 'plain', start: '0', end: '1' })] }), {
+    mmlValidation: { ok: false, errors: [{ message: 'Strict Mobile rejects c128' }] },
+  });
+  assert.equal(plain.gates.microTiming.status, 'PASS');
+  assert.equal(plain.gates.technical.status, 'FAIL');
+  assert.deepEqual(plain.preGameBlocking, ['technical']);
+  assert.equal(plain.candidateReady, false);
 });
 
 test('C2B-17b the technical MML gate and the micro-timing gate stay separate results', () => {
@@ -549,19 +591,33 @@ test('C2B-19 microTiming FAIL blocks candidateReady', () => {
 });
 
 test('C2B-20 microTiming PASS does not imply finalAccepted', () => {
-  const { project } = subGridDurationProject({ decisions: [event => keepDecision({ event })] });
+  const project = candidate({ events: [note({ id: 'plain', start: '0', end: '1' })] });
   const result = readiness(project);
   assert.equal(result.gates.microTiming.status, 'PASS');
   assert.equal(result.candidateReady, true);
   assert.equal(result.finalAccepted, false);
   assert.equal(result.gates.inGameAcceptance.status, 'PENDING');
+
+  // A kept sub-grid interval blocks before in-game acceptance is even asked.
+  const { project: kept } = subGridDurationProject({ decisions: [event => keepDecision({ event })] });
+  const keptResult = readiness(kept);
+  assertSourceSupportedOnly(keptResult.gates.microTiming);
+  assert.equal(keptResult.candidateReady, false);
+  assert.equal(keptResult.finalAccepted, false);
 });
 
 test('C2B-21 finalAccepted still requires explicit in-game acceptance', () => {
-  const { project } = subGridDurationProject({ decisions: [event => keepDecision({ event })] });
+  const project = candidate({ events: [note({ id: 'plain', start: '0', end: '1' })] });
   assert.equal(readiness(project, { inGameAcceptance: 'PASS' }).finalAccepted, true);
   assert.equal(readiness(project, { inGameAcceptance: 'PENDING' }).finalAccepted, false);
   assert.equal(readiness(project, { inGameAcceptance: 'FAIL' }).finalAccepted, false);
+
+  // In-game acceptance does not buy off a kept sub-grid interval no Final can carry.
+  const { project: kept } = subGridDurationProject({ decisions: [event => keepDecision({ event })] });
+  const keptAccepted = readiness(kept, { inGameAcceptance: 'PASS' });
+  assertSourceSupportedOnly(keptAccepted.gates.microTiming);
+  assert.equal(keptAccepted.candidateReady, false);
+  assert.equal(keptAccepted.finalAccepted, false);
 
   // A FAIL micro-timing result cannot be bought off with in-game acceptance.
   const { project: failing } = subGridDurationProject({ decisions: [event => technicalDecision({ event })] });
@@ -707,7 +763,7 @@ test('C2B a keep decision only clears the exact interval it targets', () => {
   assert.deepEqual(gate.sourceSupportedIntervalKeys, [intervalIdentityKey(durationIdentity(target))]);
 });
 
-test('C2B an assigned-role sub-grid gap can be cleared by a gap-targeted keep', () => {
+test('C2B an assigned-role sub-grid gap can be classified by a gap-targeted keep', () => {
   const first = note({ id: 'gap-left', start: '0', end: '1' });
   const second = note({ id: 'gap-right', start: f(1).add(JUST_BELOW).toString(), end: '2', pitch: 62 });
   const identity = gapIdentity(first, second);
@@ -715,9 +771,8 @@ test('C2B an assigned-role sub-grid gap can be cleared by a gap-targeted keep', 
     events: [first, second],
     decisions: [keepDecision({ event: first, identity })],
   })).gates.microTiming;
-  assert.equal(gate.status, 'PASS');
+  assertSourceSupportedOnly(gate);
   assert.equal(gate.candidateCount, 1);
-  assert.equal(gate.sourceSupportedCount, 1);
   assert.deepEqual(gate.sourceSupportedIntervalKeys, [intervalIdentityKey(identity)]);
 });
 
@@ -800,7 +855,10 @@ test('C2B the micro-timing gate exposes the full structured diagnostic set', () 
     'MICRO_TIMING_TECHNICAL_RESIDUE_PRESENT',
     'MICRO_TIMING_CLASSIFICATION_UNKNOWN',
     'MICRO_TIMING_STREAM_IDENTITY_UNRESOLVED',
+    // The preserved interval stays visible behind the FAIL.
+    NOT_FINAL,
   ]);
+  assert.deepEqual(gate.preservedIntervalKeys, [intervalIdentityKey(durationIdentity(supported))]);
   assert.equal(gate.safeGrid, '1/16');
 });
 
@@ -883,17 +941,16 @@ test('C2B-A1 a genuine primary source that carries none of the interval\'s event
   assert.equal(readiness(project).candidateReady, false);
 });
 
-test('C2B-A2 an interval bound to its own cited primary source stays microTiming PASS', () => {
+test('C2B-A2 an interval bound to its own cited primary source stays source-supported', () => {
   // Same shape, but the cited primary source is the one the note actually came
-  // from. Containment must not cost a legitimate keep its PASS.
+  // from. Containment must not cost a legitimate keep its classification.
   const { project } = subGridDurationProject({
     sources: [OFFICIAL, SUPPORTING_THIRD_PARTY],
     sourceId: 'official',
     decisions: [event => keepDecision({ event, evidenceSourceIds: ['third', 'official'] })],
   });
   const gate = readiness(project).gates.microTiming;
-  assert.equal(gate.status, 'PASS');
-  assert.equal(gate.sourceSupportedCount, 1);
+  assertSourceSupportedOnly(gate);
 });
 
 test('C2B-A3 an inter-event gap needs a primary source from the events that bound it', () => {
@@ -1019,42 +1076,39 @@ test('C2B-B2 a gap whose previous event has no cited primary provenance is PENDI
   );
 });
 
-test('C2B-B3 a gap whose events share one cited primary source is PASS', () => {
+test('C2B-B3 a gap whose events share one cited primary source is source-supported', () => {
   const gate = gapGate({
     previousSourceIds: ['official'],
     nextSourceIds: ['official'],
     evidenceSourceIds: ['official'],
     sources: [OFFICIAL],
   });
-  assert.equal(gate.status, 'PASS');
-  assert.equal(gate.sourceSupportedCount, 1);
+  assertSourceSupportedOnly(gate);
 });
 
 // Two different primary sources, each cited and each backing its own side.
 // Provenance coverage only -- this says nothing about whether the two sources
 // are musically compatible, which is not this gate's question.
-test('C2B-B4 a gap backed by a different cited primary source on each side is PASS', () => {
+test('C2B-B4 a gap backed by a different cited primary source on each side is source-supported', () => {
   const gate = gapGate({
     previousSourceIds: ['official'],
     nextSourceIds: ['official-b'],
     evidenceSourceIds: ['official', 'official-b'],
     sources: [OFFICIAL, ANOTHER_OFFICIAL],
   });
-  assert.equal(gate.status, 'PASS');
-  assert.equal(gate.sourceSupportedCount, 1);
+  assertSourceSupportedOnly(gate);
 });
 
 // A mixed-provenance event is not rejected for also carrying a supporting
 // source: what matters is that each event intersects a cited admissible primary.
-test('C2B-B5 mixed provenance is PASS when every event still intersects the cited primary', () => {
+test('C2B-B5 mixed provenance is source-supported when every event still intersects the cited primary', () => {
   const gate = gapGate({
     previousSourceIds: ['official', 'third'],
     nextSourceIds: ['official'],
     evidenceSourceIds: ['official'],
     sources: [OFFICIAL, SUPPORTING_THIRD_PARTY],
   });
-  assert.equal(gate.status, 'PASS');
-  assert.equal(gate.sourceSupportedCount, 1);
+  assertSourceSupportedOnly(gate);
 });
 
 // Citing a primary source that backs neither side stays unbound, even though
@@ -1071,15 +1125,14 @@ test('C2B-B6 a cited primary backing neither side of the gap is PENDING', () => 
 });
 
 // The single-event path must be unaffected by per-event evaluation.
-test('C2B-B7 an event-duration interval bound to its own cited primary stays PASS', () => {
+test('C2B-B7 an event-duration interval bound to its own cited primary stays source-supported', () => {
   const { project } = subGridDurationProject({
     sources: [OFFICIAL],
     sourceId: 'official',
     decisions: [event => keepDecision({ event, evidenceSourceIds: ['official'] })],
   });
   const gate = readiness(project).gates.microTiming;
-  assert.equal(gate.status, 'PASS');
-  assert.equal(gate.sourceSupportedCount, 1);
+  assertSourceSupportedOnly(gate);
 });
 
 // A supporting-only event citing an adjacent-but-unrelated primary stays unbound.

@@ -38,7 +38,14 @@ import { emitFinalMml } from '../backend/final/mml-emitter.mjs';
 import { EMIT_DIAGNOSTICS, parserFacts } from '../backend/final/emitter-contract.mjs';
 import { projectFromFinalReadback, silenceSpansOf } from '../backend/final/round-trip.mjs';
 import { evaluateProjectReadiness } from '../backend/final/readiness.mjs';
-import { REPAIR_STATUS } from '../backend/final/technical-timing-repair.mjs';
+import { REPAIR_DIAGNOSTICS, REPAIR_STATUS, repairTechnicalTiming } from '../backend/final/technical-timing-repair.mjs';
+import { MICRO_GAP_BLOCKERS, enforceMicroGaps } from '../backend/final/micro-gap-enforcement.mjs';
+import {
+  MACHINE_DELIVERY_GATE_NAMES,
+  MACHINE_DELIVERY_SCHEMA_V1,
+  MACHINE_DELIVERY_SCHEMA_V2,
+  evaluateMachineDelivery,
+} from '../backend/final/delivery-evaluator.mjs';
 
 const RESIDUE = new F(1, 256);
 const OFFICIAL = createSource({ id: 'official', label: 'Official MusicXML', kind: 'official-musicxml', authority: 'primary-symbolic' });
@@ -459,4 +466,104 @@ test('TTRE-16 the emit result keeps the pre-repair and post-repair verdicts apar
     )),
   );
   assert.notEqual(result.microGap.gradedProjectId, result.technicalTimingRepair.baselineProjectId);
+});
+
+// ─── preserved material and the repair's own verification ──────────────────
+//
+// G10 now raises MICRO_TIMING_SOURCE_SUPPORTED_NOT_FINAL_REPRESENTABLE for any
+// preserved interval, so the re-grade of a repaired candidate that still holds
+// one is PENDING with exactly that code where it used to be PASS. "Verification
+// clean" means PASS, or PENDING whose only blocker is that code: the repair
+// reports the preserved interval itself (PRESERVED_INTERVAL_PRESENT) and is
+// still never Final-eligible beside it. Any other PENDING is still not clean.
+
+const SOURCE_SUPPORTED = 'MICRO_TIMING_SOURCE_SUPPORTED_NOT_FINAL_REPRESENTABLE';
+const quietNote = ({ id, pitch = 60, start, end, role = 'Melody' }) => note({ id, pitch, start, end, role, volume: null });
+
+// Melody a[0,1) b[49/48,2) with the sub-grid gap kept as notated; Chord1 has a
+// rest that stops one 480-tick before c2's attack, a technical hole the repair
+// closes into the rest. `withUnknown` adds a Chord2 sub-grid gap nobody claimed.
+function preservedBesideRepairable({ withUnknown = false } = {}) {
+  const a = quietNote({ id: 'mix-a', start: 0, end: 1 });
+  const b = quietNote({ id: 'mix-b', pitch: 62, start: '49/48', end: 2 });
+  const c1 = quietNote({ id: 'mix-c1', start: 0, end: 1, role: 'Chord1', pitch: 48 });
+  const cr = rest({ id: 'mix-cr', start: 1, end: '959/480', role: 'Chord1' });
+  const c2 = quietNote({ id: 'mix-c2', start: 2, end: 3, role: 'Chord1', pitch: 48 });
+  const extra = withUnknown
+    ? [quietNote({ id: 'mix-d1', start: 0, end: 1, role: 'Chord2', pitch: 52 }), quietNote({ id: 'mix-d2', start: '481/480', end: 2, role: 'Chord2', pitch: 52 })]
+    : [];
+  return project({ events: [a, b, c1, cr, c2, ...extra], decisions: [keepDecision(gapIdentity(a, b)), technicalDecision(gapIdentity(cr, c2))] });
+}
+
+test('TTRE the repair\'s verification stays clean beside preserved material, which still keeps the candidate out of Final', () => {
+  const candidate = preservedBesideRepairable();
+  const enforcement = enforceMicroGaps(candidate);
+  assert.deepEqual([enforcement.status, enforcement.blockers], ['FAIL', [MICRO_GAP_BLOCKERS.TECHNICAL_RESIDUE_PRESENT, SOURCE_SUPPORTED]]);
+
+  const repaired = repairTechnicalTiming(candidate, { enforcement });
+  assert.deepEqual([repaired.verification.status, repaired.verification.blockers], ['PENDING', [SOURCE_SUPPORTED]]);
+  // As before the preserved-material code existed: the repair itself passes,
+  // says what it left, and is not Final-eligible.
+  assert.equal(repaired.status, REPAIR_STATUS.PASS);
+  assert.equal(repaired.finalEmissionEligible, false);
+  assert.ok(codes(repaired).includes(REPAIR_DIAGNOSTICS.PRESERVED_INTERVAL_PRESENT));
+  assert.equal(codes(repaired).includes(REPAIR_DIAGNOSTICS.VERIFICATION_NOT_CLEAR), false);
+
+  const emitted = emitFinalMml(candidate, { technicalTimingRepair: true });
+  assert.equal(emitted.status, 'FAIL');
+  assert.equal(emitted.combinedMml, null);
+  const unavailable = emitted.diagnostics.find(item => item.code === EMIT_DIAGNOSTICS.TECHNICAL_TIMING_REPAIR_UNAVAILABLE);
+  assert.equal(unavailable?.repairStatus, REPAIR_STATUS.PASS);
+  assert.deepEqual(emitted.diagnostics.filter(item => item.severity !== 'notice').map(item => item.code), [
+    EMIT_DIAGNOSTICS.MICRO_GAP_TECHNICAL_RESIDUE,
+    EMIT_DIAGNOSTICS.SOURCE_SUPPORTED_INTERVAL_NOT_REPRESENTABLE,
+  ]);
+  assert.deepEqual(emitted.diagnostics.find(item => item.code === EMIT_DIAGNOSTICS.MICRO_GAP_TECHNICAL_RESIDUE).blockers,
+    [MICRO_GAP_BLOCKERS.TECHNICAL_RESIDUE_PRESENT, SOURCE_SUPPORTED]);
+
+  // With an unclaimed sub-grid gap beside them, the verification is not clean:
+  // only the preserved-material code on its own is.
+  const open = preservedBesideRepairable({ withUnknown: true });
+  const openRepaired = repairTechnicalTiming(open, { enforcement: enforceMicroGaps(open) });
+  assert.deepEqual([openRepaired.verification.status, openRepaired.verification.blockers],
+    ['PENDING', [MICRO_GAP_BLOCKERS.CLASSIFICATION_UNKNOWN, SOURCE_SUPPORTED]]);
+  assert.equal(openRepaired.status, REPAIR_STATUS.PENDING);
+  assert.ok(codes(openRepaired).includes(REPAIR_DIAGNOSTICS.VERIFICATION_NOT_CLEAR));
+  assert.equal(openRepaired.finalEmissionEligible, false);
+});
+
+test('TTRE a kept sub-grid rest before a technical hole: G10 adds its code behind the FAIL, and the repair path writes what it wrote', () => {
+  // a[0,1), r[1,509/480) kept as notated, then a technical hole of one
+  // 480-tick to b[17/16,2). G10 was FAIL on the residue before, and readiness
+  // and machine delivery blocked on it; they still do, with the
+  // preserved-material code now visible beside it.
+  //
+  // Disclosed, not changed here (TECHNICAL_TIMING_REPAIR.md): the repair closes
+  // the hole into the preceding rest, which lengthens the preserved rest from
+  // 1/480 short of the grid to exactly 1/16, so the repaired candidate holds no
+  // preserved interval and the opt-in path writes "r64". Refusing that would
+  // stop the emitter writing a candidate it writes today; it is an owner
+  // decision. Finalize never reaches it, because it refuses a FAIL gate first.
+  const a = quietNote({ id: 'o5-a', start: 0, end: 1 });
+  const r = rest({ id: 'o5-r', start: 1, end: '509/480' });
+  const b = quietNote({ id: 'o5-b', start: '17/16', end: 2 });
+  const candidate = project({ events: [a, r, b], decisions: [keepDecision(durationIdentity(r)), technicalDecision(gapIdentity(r, b))] });
+
+  const g10 = enforceMicroGaps(candidate);
+  assert.deepEqual([g10.status, g10.blockers], ['FAIL', [MICRO_GAP_BLOCKERS.TECHNICAL_RESIDUE_PRESENT, SOURCE_SUPPORTED]]);
+  assert.deepEqual(g10.preservedIntervalKeys, [intervalIdentityKey(durationIdentity(r))]);
+  const readiness = evaluateProjectReadiness({ project: candidate });
+  assert.deepEqual([readiness.gates.microTiming.status, readiness.gates.microTiming.blockers], ['FAIL', g10.blockers]);
+  for (const schema of [MACHINE_DELIVERY_SCHEMA_V1, MACHINE_DELIVERY_SCHEMA_V2]) {
+    const identity = Object.freeze({ canonical_version: 'x', canonical_status: 'PUBLISHED', rules_snapshot_sha: 'f'.repeat(40), machine_delivery_schema: schema });
+    const gates = { ...Object.fromEntries(MACHINE_DELIVERY_GATE_NAMES.map(name => [name, { status: 'PASS' }])), microTiming: { status: g10.status, blockers: g10.blockers } };
+    assert.deepEqual(evaluateMachineDelivery(gates, { canonical: identity, requireCompleteGateMap: true }).blocking.map(entry => entry.gate), ['microTiming'], schema);
+  }
+
+  const plain = emitFinalMml(candidate);
+  assert.equal(plain.status, 'FAIL');
+  const withRepair = emitFinalMml(candidate, { technicalTimingRepair: true });
+  assert.equal(withRepair.status, 'PASS');
+  assert.equal(withRepair.combinedMml, 'MML@t120o4cr64c8.&c32.,,,,,;');
+  assert.deepEqual(withRepair.microGap.blockers, []);
 });

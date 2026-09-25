@@ -200,6 +200,16 @@ Two independent guards stand between an unrepaired interval and `PASS`: the
 worklist must be empty, **and** re-running `enforceMicroGaps` on the repaired
 candidate must agree. Dropping an interval from the worklist cannot buy a pass.
 
+**Verification clean** means the re-grade rejected nothing and is either
+`PASS`, or `PENDING` whose only blocker is
+`MICRO_TIMING_SOURCE_SUPPORTED_NOT_FINAL_REPRESENTABLE`. G10 raises that code
+exactly when a source-supported interval is preserved, and it never makes G10
+`FAIL`, so this is true exactly where the re-grade would be `PASS` without it
+(the definition before G10 raised it was `status === 'PASS'`). A preserved
+interval is this layer's own notice (`PRESERVED_INTERVAL_PRESENT`) and still
+keeps `finalEmissionEligible` false; any other `PENDING` — an unproven interval
+beside it, for example — is still not clean and gives `VERIFICATION_NOT_CLEAR`.
+
 `PASS` is an implementation result. It certifies no Canonical gate, does not make
 a song `VALIDATED`, and never implies `IN_GAME_ACCEPTED`.
 
@@ -365,6 +375,21 @@ no amount of implementer convenience can authorise it.
    exactly what this PR's first revision did wrong.
 
 Neither route has been taken here, and **no Canonical rule source was modified**.
+
+**Open item (2026-09-25), for an owner decision.** Closing a technical hole
+into the preceding rest can lengthen an explicit rest that is itself preserved
+source-supported material. Reproduced: `a[0,1)`, a rest `r[1,509/480)` kept as
+notated with admissible evidence, and a technical hole to `b[17/16,2)`. The
+repair extends `r` to `17/16`, exactly 1/64 of a whole note, so the repaired
+candidate holds no preserved interval, and the `technicalTimingRepair` path
+emits `MML@t120o4cr64c8.&c32.,,,,,;` (`r64`). The preserved rest was never
+presented for repair; the hole after it was. G10 is `FAIL` on the original
+(technical residue beside the preserved rest), so readiness and machine delivery
+block it and Finalize, which refuses a blocked micro-timing gate before the
+emitter runs, never reaches this path. It is left unchanged: refusing it would
+stop the emitter writing a candidate it writes today. A regression pins the
+current behaviour (`technical-timing-repair-emitter.test.mjs`, "a kept sub-grid
+rest before a technical hole").
 
 Case 1 is the narrowest and most likely to matter in practice: it is the shape a
 MIDI ingest produces when a note-off lands a few ticks before the next note-on.

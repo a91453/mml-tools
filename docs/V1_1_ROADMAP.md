@@ -216,6 +216,22 @@ edge forms) remain open, and a `microTiming` `PASS` certifies source-supported
 musical meaning only — it makes no Final representability claim, which needs its
 own mechanism, and it never substitutes for the separate technical MML gate.
 
+> **Note (2026-09-25), superseding the planning claim above for preserved
+> material.** A `microTiming` `PASS` no longer sits beside source-supported
+> sub-grid material. Every such interval must be kept exactly, and no admitted
+> Final token is shorter than 1/64, so the Final emitter always refuses it
+> (`SOURCE_SUPPORTED_INTERVAL_NOT_REPRESENTABLE`). G10 now says so itself with
+> `MICRO_TIMING_SOURCE_SUPPORTED_NOT_FINAL_REPRESENTABLE` (`PENDING`, `BLOCKING`
+> under every machine-delivery schema) instead of clearing a candidate the Final
+> cannot write, and it lists a role's earliest onset after a silence shorter
+> than any Final token as an unreachable boundary. The classification is
+> unchanged. The authority is ACCEPTANCE_CRITERIA 2026-09-23-v3: Gate 2
+> ("Unsupported source constructs remain `PENDING/UNSUPPORTED`, not guessed")
+> and Machine delivery ("what a machine can determine blocks", rule 1's "Still
+> BLOCKING" list). See [FINAL_MML_EMITTER.md](FINAL_MML_EMITTER.md) §5. This
+> record stays a planning record; the executable contract is the code and its
+> tests.
+
 **Out of scope, deliberately.** The complete Final MML emitter is the next
 project. G10 stops at classification, enforcement and diagnostics; it performs no
 normalization rewrite, because an exact rewrite to a canonical note/tie/rest

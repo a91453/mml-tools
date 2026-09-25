@@ -226,7 +226,15 @@ With the preferred lattice alone, the shortest token is `64` = `4/64` IR beats =
 emitted component can ever fall below it. This direction *is* provable: since
 every admitted token is at least `SAFE_GRID` and all are positive, no sum of them
 can be shorter than `SAFE_GRID`, which is why a G10-preserved sub-grid interval
-is genuinely unrepresentable rather than merely unfound.
+is genuinely unrepresentable rather than merely unfound. Caution lengths do not
+change this: every plain length is at most `64`, so the shortest token of any
+lattice the emitter builds is `4/64` IR beats too
+(`SHORTEST_ADMITTED_TOKEN_BEATS` in `micro-gap-enforcement.mjs`, derived from
+`buildTokenLattice({ cautionLengthOptIn: true })`). G10 therefore raises
+`MICRO_TIMING_SOURCE_SUPPORTED_NOT_FINAL_REPRESENTABLE` for every preserved
+interval instead of clearing it, and, since a role is written from beat 0, the
+same bound means no role reaches any position after beat 0 and before
+`SHORTEST_ADMITTED_TOKEN_BEATS` (§4b).
 
 Everything else fails closed without such a proof. Nothing is ever rounded,
 snapped, or approximated to the nearest legal token.
@@ -288,7 +296,23 @@ denominator divides the lcm of the admitted token denominators; that position's
 does not, so no bound, budget or `cautionLengthOptIn` changes the answer. It is a
 claim about a position, never about a duration, and an off-grid position
 `classifyPosition` calls `CAUTION_REPRESENTABLE` keeps the search's own code.
-G10 already refuses positions of that kind before any serialization. An onset
+G10 already refuses positions of that kind before any serialization. It also
+refuses the one position below the shortest token that the denominator test
+misses. A role's earliest note (ties broken by event id) that starts after beat
+0 and before `SHORTEST_ADMITTED_TOKEN_BEATS` (1/16 beat, 1/64 of a whole note)
+is an `unsupportedBoundaries` entry with reason
+`LEADING_SILENCE_SHORTER_THAN_ANY_FINAL_TOKEN` and coverage always `none`, and
+raises the boundary code. The arithmetic: every position a role reaches is 0 or
+a sum of at least one admitted token, and every admitted token lasts at least
+1/16 beat, so no position in (0, 1/16) is reached whatever its denominator;
+1/24 beat (1/96 of a whole note) passes the denominator test and is still never
+reached. Only the earliest note needs this: any other position in (0, 1/16) a
+role has to reach ends a span of that role shorter than the grid, which the
+interval analyzer reports, and an onset `classifyPosition` already refuses keeps
+its own `ONSET_NOT_FINAL_REPRESENTABLE` entry and is not listed twice. Its
+coverage is `none` even when an analysed interval (a sub-grid leading rest)
+ends there: it is an attack, no outcome of that interval moves it, and no hold
+or repair shortens the silence before it. An onset
 or rest boundary a role has to reach raises
 `MICRO_TIMING_BOUNDARY_NOT_FINAL_REPRESENTABLE` unless an analysed sub-grid
 interval of the role starts or ends there and decides it. A note release no
@@ -340,8 +364,8 @@ search-policy limit; raising only the bound makes the same candidate emit.
 | any role exceeds the 2,400-character budget | `FAIL` with role, count, overage and attack count — no note, attack or rest is removed |
 | G10 reports confirmed technical residue | `FAIL` — unless `technicalTimingRepair` is opted into *and* the repair layer normalizes it exactly (§5a) |
 | G10 reports unproven sub-grid material | `PENDING` — never acted on, with or without the repair opt-in |
-| G10 reports an onset, a rest boundary, or a note release no release representation can move (under a keep claim, or with no valid representation), that the role must reach and no admitted token sequence can (`MICRO_TIMING_BOUNDARY_NOT_FINAL_REPRESENTABLE`) | `FAIL` with `MICRO_GAP_BOUNDARY_NOT_FINAL_REPRESENTABLE` — a proof, not unproven material, naming each boundary by role, event and beat (§5); no attack, rest or such release is moved to make it writable |
-| G10 preserves source-supported sub-grid material | `FAIL` — provably unrepresentable (every admitted token is at least one safe-grid unit), and refusing is the only answer that does not damage it |
+| G10 reports an onset (including an onset after a leading silence shorter than any Final token), a rest boundary, or a note release no release representation can move (under a keep claim, or with no valid representation), that the role must reach and no admitted token sequence can (`MICRO_TIMING_BOUNDARY_NOT_FINAL_REPRESENTABLE`) | `FAIL` with `MICRO_GAP_BOUNDARY_NOT_FINAL_REPRESENTABLE` — a proof, not unproven material, naming each boundary by role, event and beat (§5); no attack, rest or such release is moved to make it writable |
+| G10 preserves source-supported sub-grid material (G10 itself is `PENDING` with `MICRO_TIMING_SOURCE_SUPPORTED_NOT_FINAL_REPRESENTABLE`) | `FAIL` with `SOURCE_SUPPORTED_INTERVAL_NOT_REPRESENTABLE` — provably unrepresentable (every admitted token is at least one safe-grid unit), and refusing is the only answer that does not damage it; the G10 code is kept out of `MICRO_GAP_BLOCKED_PENDING` |
 | a supplied readiness report blocks on any gate but `technical` | `PENDING` |
 | a pending arbitration decision exists | `PENDING` |
 | the round-trip readback does not match | `FAIL` |
@@ -356,7 +380,16 @@ the boundary list it publishes, without re-deriving any threshold:
   no admitted token is shorter than the grid, a preserved sub-grid interval is
   **not representable** — provably, since every admitted token is at least one
   safe-grid unit — so the emitter fails closed with
-  `SOURCE_SUPPORTED_INTERVAL_NOT_REPRESENTABLE` rather than damaging it.
+  `SOURCE_SUPPORTED_INTERVAL_NOT_REPRESENTABLE` rather than damaging it. G10
+  says the same thing itself: whenever this list is non-empty it raises
+  `MICRO_TIMING_SOURCE_SUPPORTED_NOT_FINAL_REPRESENTABLE`, keyed on the
+  classification alone and never on coverage. That code alone makes G10
+  `PENDING` (never `FAIL`), it stays visible beside a `FAIL`, it is `BLOCKING`
+  under every machine-delivery schema, and the classification, the key lists
+  and `finalRepresentable` (still `null`) are unchanged. ACCEPTANCE_CRITERIA
+  Gate 2 keeps an unsupported source construct `PENDING/UNSUPPORTED`, not
+  guessed, and rule 1 of "Machine delivery" keeps an open source-supported
+  claim and anything else the micro-timing gate reports `BLOCKING`.
 - `rejectedIntervalKeys` — confirmed technical residue. `enforceMicroGaps`
   returns `FAIL` for these and the emitter refuses to emit, unless Technical
   Timing Repair is opted into and normalizes them exactly (§5a). A correct
@@ -366,10 +399,18 @@ the boundary list it publishes, without re-deriving any threshold:
 - `blockedIntervalKeys` — unproven. The emitter returns `PENDING` and emits
   nothing. The repair layer cannot reach these at all.
 - `unsupportedBoundaries` — every onset or rest boundary that
-  `classifyPosition` proves no admitted token sequence reaches, each with the
+  `classifyPosition` proves no admitted token sequence reaches, and each role's
+  earliest onset after a silence shorter than any Final token
+  (`LEADING_SILENCE_SHORTER_THAN_ANY_FINAL_TOKEN`, §4b), each with the
   `coverage` G10 decided it by. A boundary an analysed interval of its role
   starts or ends at (`analysed-interval`) is answered by that interval's outcome
-  above; one at a release of its role that raises
+  above, and every outcome of an analysed interval blocks (unproven is
+  `PENDING`, residue `FAIL`, preserved raises
+  `MICRO_TIMING_SOURCE_SUPPORTED_NOT_FINAL_REPRESENTABLE`), so an
+  `analysed-interval` entry never sits beside a G10 `PASS`. The coverage rules
+  are asymmetric on purpose: an onset `classifyPosition` refuses keeps its
+  coverage by interval (the interval's own answer blocks), while a leading-onset
+  entry is always `none`; one at a release of its role that raises
   `MICRO_TIMING_RELEASE_NOT_FINAL_REPRESENTABLE` (`release-target`) by the
   release-side handling; one inside a silence (`inside-silence`) needs nothing,
   because the silence is written as one exact span. The list also carries every
@@ -403,7 +444,30 @@ the boundary list it publishes, without re-deriving any threshold:
   `error`, `completenessProven: true`, and `unreachableBoundaries` naming each
   boundary by role, event id, kind, boundary, beat and reason — at most 20, with
   `unreachableBoundaryCount` the true count and `unreachableBoundariesTruncated`.
-  Nothing is emitted, and no attack, rest or release is moved.
+  Its message states the arithmetic that applies: a position whose whole-note
+  denominator does not divide the admitted lcm, and, for a leading-onset entry,
+  that no admitted token is shorter than 1/16 beat. Nothing is emitted, and no
+  attack, rest or release is moved.
+
+  Both G10 proof codes (`FINAL_REPRESENTABILITY_PROOFS`:
+  `MICRO_TIMING_BOUNDARY_NOT_FINAL_REPRESENTABLE` and
+  `MICRO_TIMING_SOURCE_SUPPORTED_NOT_FINAL_REPRESENTABLE`) are kept out of
+  `MICRO_GAP_BLOCKED_PENDING`, which is raised only while an open blocker
+  remains or no proof is present, so it never carries a proof and is never
+  empty. A run names no operation for either
+  (`READINESS_BLOCKER_WITHOUT_OPERATION`), and a request that carries only
+  them lists no operation.
+
+  **Scope.** A G10 `PASS` now means the emitter meets no micro-timing refusal
+  G10 owns: no preserved interval, no unproven or residue interval, and no
+  position a role has to reach that G10 can prove unreachable. Still outside
+  G10, and disclosed: an off-grid Tempo position that splits a span (the
+  serialization proof `BOUNDARY_NOT_FINAL_REPRESENTABLE`, which also depends on
+  the `collapseTempoRestatements` option); caution positions the bounded search
+  cannot decompose (`DURATION_SEARCH_*`, `completenessProven: false`, which
+  `classifyPosition` calls representable in principle); and a candidate note
+  whose timing drifted from its Source-Faithful origin without a release record
+  (the release analysis reads the baseline's release, Layer A).
 
   `FAIL` rather than `PENDING`, because `PENDING` (severity `pending`) is
   reserved for an unresolved Canonical or evidence question and `error` is "this
@@ -442,8 +506,9 @@ the boundary list it publishes, without re-deriving any threshold:
   whether the candidate is waiting on an answer (`PENDING`) or cannot be
   written as it stands (`FAIL`). No operation in this build answers the
   boundary code either, so a run's microTiming review request says so in
-  `missing` and names no operation when that code is all the gate carries
-  (`READINESS_BLOCKER_WITHOUT_OPERATION` in `application/run-contracts.mjs`).
+  `missing` and names no operation when that code and the preserved-material
+  code are all the gate carries (`READINESS_BLOCKER_WITHOUT_OPERATION` in
+  `application/run-contracts.mjs`).
   A gate that also carries the release code keeps its hint, and release
   representation can answer every release that code stands for.
 
@@ -457,7 +522,11 @@ decision rather than a side effect of asking for MML.
 When it is on and G10 rejected something, `final/technical-timing-repair.mjs`
 runs between the enforcement pass and the gates. The repaired candidate is used
 only when the repair returns `PASS` **and** the same `enforceMicroGaps` re-grades
-the repaired candidate clean **and** nothing preserved remains. Otherwise nothing
+the repaired candidate clean **and** nothing preserved remains. "Clean" is
+`PASS`, or `PENDING` whose only blocker is
+`MICRO_TIMING_SOURCE_SUPPORTED_NOT_FINAL_REPRESENTABLE`, with nothing rejected:
+exactly where the re-grade would be `PASS` without that code
+([TECHNICAL_TIMING_REPAIR.md](TECHNICAL_TIMING_REPAIR.md) §8). Otherwise nothing
 changes: the original verdict stands and the refusal is recorded as
 `TECHNICAL_TIMING_REPAIR_UNAVAILABLE`.
 

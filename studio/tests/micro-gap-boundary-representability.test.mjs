@@ -26,9 +26,9 @@ import {
   createCanonicalTempoEvent,
   createCanonicalProject,
 } from '../backend/canonical/index.mjs';
-import { MICRO_TIMING_KEEP_ACTION, createIntervalIdentity } from '../backend/canonical/micro-timing.mjs';
+import { MICRO_TIMING_KEEP_ACTION, MICRO_TIMING_TECHNICAL_ACTIONS, SAFE_GRID, createIntervalIdentity } from '../backend/canonical/micro-timing.mjs';
 import { POSITION_CLASS, RELEASE_REFUSAL, REPRESENTATION, TARGET_STATUS, analyzeReleaseTiming, classifyPosition, planReleaseRepresentation } from '../backend/canonical/release-timing.mjs';
-import { BOUNDARY_COVERAGE, MICRO_GAP_BLOCKERS, enforceMicroGaps } from '../backend/final/micro-gap-enforcement.mjs';
+import { BOUNDARY_COVERAGE, LEADING_ONSET_REASON, MICRO_GAP_BLOCKERS, SHORTEST_ADMITTED_TOKEN_BEATS, enforceMicroGaps } from '../backend/final/micro-gap-enforcement.mjs';
 import { evaluateProjectReadiness } from '../backend/final/readiness.mjs';
 import { emitFinalMml } from '../backend/final/mml-emitter.mjs';
 import { EMIT_DIAGNOSTICS } from '../backend/final/emitter-contract.mjs';
@@ -40,6 +40,9 @@ import {
 } from '../backend/final/delivery-evaluator.mjs';
 
 const BOUNDARY = MICRO_GAP_BLOCKERS.BOUNDARY_NOT_FINAL_REPRESENTABLE;
+// Raised for preserved source-supported material, beside the boundary code
+// when both apply; never inside MICRO_GAP_BLOCKED_PENDING.
+const SOURCE_SUPPORTED = 'MICRO_TIMING_SOURCE_SUPPORTED_NOT_FINAL_REPRESENTABLE';
 const SEARCH_CODES = [EMIT_DIAGNOSTICS.DURATION_SEARCH_POLICY_LIMIT, EMIT_DIAGNOSTICS.DURATION_SEARCH_BUDGET_EXHAUSTED];
 const OFFICIAL = createSource({ id: 'official', label: 'Official score', kind: 'official-musicxml', authority: 'primary-symbolic' });
 
@@ -413,17 +416,17 @@ const planFor = (analysis, representation) => planReleaseRepresentation({
 // What G10, the readiness microTiming gate, the machine-delivery schemas and
 // the emitter (alone and with the readiness report) each say about a candidate
 // they must agree on.
-function assertBoundaryAgreement(candidate, expectedNone, label) {
+function assertBoundaryAgreement(candidate, expectedNone, label, expectedBlockers = [BOUNDARY]) {
   const g10 = enforceMicroGaps(candidate);
   assert.equal(g10.status, 'PENDING', label);
-  assert.deepEqual(g10.blockers, [BOUNDARY], label);
+  assert.deepEqual(g10.blockers, expectedBlockers, label);
   assert.deepEqual(noneEntries(g10), expectedNone, label);
   assert.equal(g10.provisionalReleases.length, 0, `${label}: nothing is held provisionally`);
 
   const readiness = evaluateProjectReadiness({ project: candidate });
   const micro = readiness.gates.microTiming;
   assert.equal(micro.status, 'PENDING', label);
-  assert.deepEqual(micro.blockers, [BOUNDARY], label);
+  assert.deepEqual(micro.blockers, expectedBlockers, label);
   assert.deepEqual(micro.unsupportedBoundaries, g10.unsupportedBoundaries, `${label}: readiness republishes G10`);
   assert.ok(readiness.preGameBlocking.includes('microTiming'), label);
 
@@ -563,10 +566,13 @@ test('a release an analysed interval decides is not reported again, and a releas
       assert.equal(analyzeReleaseTiming({ candidate }).targets[0].status, TARGET_STATUS.SOURCE_SUPPORTED_NOT_REPRESENTABLE, tag);
       const g10 = enforceMicroGaps(candidate);
       // The interval's own outcome decides: preserved when the claim is
-      // accepted with admissible evidence, UNKNOWN while it is pending.
+      // accepted with admissible evidence, UNKNOWN while it is pending. Either
+      // way it blocks: preserved material no Final token can carry raises its
+      // own code.
       assert.deepEqual(g10.enforcement.map(item => [item.identity.start, item.identity.end, item.classification]),
         [[identity.start, identity.end, status === 'accepted' ? 'SOURCE_SUPPORTED_MICROTIMING' : 'UNKNOWN']], tag);
-      assert.deepEqual(g10.blockers, status === 'accepted' ? [] : [MICRO_GAP_BLOCKERS.CLASSIFICATION_UNKNOWN], tag);
+      assert.equal(g10.status, 'PENDING', tag);
+      assert.deepEqual(g10.blockers, status === 'accepted' ? [SOURCE_SUPPORTED] : [MICRO_GAP_BLOCKERS.CLASSIFICATION_UNKNOWN], tag);
       assert.deepEqual(g10.unsupportedBoundaries, [], `${tag}: the release is not reported a second time`);
       const emitted = emitFinalMml(candidate);
       assert.deepEqual(emitted.diagnostics.filter(item => item.severity !== 'notice').map(item => item.code), status === 'accepted'
@@ -633,7 +639,7 @@ test('a sub-grid rest that starts at a release no representation can move decide
     assert.deepEqual(analysis.targets.map(target => [target.eventId, target.status, target.analysis.followingShape]),
       [['x', targetStatus, 'explicit-rest-at-release']], tag);
     assert.ok(analysis.targets[0].options.every(option => !option.valid), `${tag}: neither representation is valid`);
-    const { g10, emitted } = assertBoundaryAgreement(candidate, [X_RELEASE(reason)], tag);
+    const { g10, emitted } = assertBoundaryAgreement(candidate, [X_RELEASE(reason)], tag, [BOUNDARY, SOURCE_SUPPORTED]);
     assert.deepEqual(g10.enforcement.map(item => [item.identity.type, item.identity.eventId, item.classification]),
       [['event-duration', 'r', 'SOURCE_SUPPORTED_MICROTIMING']], `${tag}: the rest's own interval is preserved`);
     assert.deepEqual(coverage(g10), [REST_START_DECIDED, X_RELEASE_NONE], `${tag}: the rest's start is decided by its interval, x's release is not`);
@@ -689,8 +695,9 @@ test('a sub-grid rest that starts at a release no representation can move decide
 // evidence, then y[1,2) -- and add one such interval each: another role's gap
 // starting at the beat, and another note of the role ending there. Letting
 // either decide x brings back the looseness the previous test pins. With that
-// interval kept with evidence, G10 and readiness PASS while the emitter fails.
-// With it still open, x's release hides behind CLASSIFICATION_UNKNOWN and the
+// interval kept with evidence, G10 and readiness then name no proof for x (and
+// before preserved material raised its own code they PASSed) while the emitter
+// fails. With it still open, x's release hides behind CLASSIFICATION_UNKNOWN and the
 // emitter names no proof for it; once the rest is open too, the emitter
 // answers PENDING although no answer to either open question moves x.
 async function assertAnotherSpanDecidesNothing(t, { events, other, otherIds, otherTarget, otherRole }) {
@@ -717,7 +724,8 @@ async function assertAnotherSpanDecidesNothing(t, { events, other, otherIds, oth
   ];
 
   // The other interval kept with admissible evidence: both intervals are
-  // preserved and raise nothing, so x's release is all G10 has left to raise.
+  // preserved and raise only the preserved-material code, so x's release is
+  // the only boundary G10 raises.
   await t.test('the other interval kept with evidence', () => {
     const tag = 'kept with evidence';
     const candidate = project(events(), undefined, [keepRest(), keepOther('accepted', true)]);
@@ -730,7 +738,7 @@ async function assertAnotherSpanDecidesNothing(t, { events, other, otherIds, oth
     // Its own interval decides it, so it is not listed.
     const otherRelease = releaseOf(analysis, otherTarget);
     assert.deepEqual([otherRelease.role, otherRelease.status], [otherRole, TARGET_STATUS.SOURCE_SUPPORTED_NOT_REPRESENTABLE], tag);
-    const { g10, emitted } = assertBoundaryAgreement(candidate, [X_RELEASE(NO_VALID_REASON)], tag);
+    const { g10, emitted } = assertBoundaryAgreement(candidate, [X_RELEASE(NO_VALID_REASON)], tag, [BOUNDARY, SOURCE_SUPPORTED]);
     assert.deepEqual(g10.enforcement.map(item => [item.identity.type, item.classification]),
       [['event-duration', 'SOURCE_SUPPORTED_MICROTIMING'], [other.type, 'SOURCE_SUPPORTED_MICROTIMING']], `${tag}: both intervals are preserved`);
     assert.deepEqual(coverage(g10), EXPECTED_COVERAGE, `${tag}: the other interval decides its own span, not x's release`);
@@ -760,7 +768,11 @@ async function assertAnotherSpanDecidesNothing(t, { events, other, otherIds, oth
       assert.deepEqual(report.enforcement.map(item => [item.identity.type, item.classification]),
         [['event-duration', restClassification], [other.type, 'UNKNOWN']], label);
       assert.equal(report.status, 'PENDING', label);
-      assert.deepEqual(report.blockers, [MICRO_GAP_BLOCKERS.CLASSIFICATION_UNKNOWN, BOUNDARY], label);
+      assert.deepEqual(report.blockers, [
+        MICRO_GAP_BLOCKERS.CLASSIFICATION_UNKNOWN,
+        BOUNDARY,
+        ...(restClassification === PRESERVED ? [SOURCE_SUPPORTED] : []),
+      ], label);
       assert.deepEqual(coverage(report), EXPECTED_COVERAGE, label);
       const readiness = evaluateProjectReadiness({ project: open }).gates.microTiming;
       assert.deepEqual([readiness.status, readiness.blockers], ['PENDING', report.blockers], label);
@@ -814,4 +826,434 @@ test('another note of the role whose sub-grid duration ends at a release no repr
     otherTarget: 'w',
     otherRole: 'Melody',
   });
+});
+
+// ─── preserved source-supported material never clears G10 ──────────────────
+//
+// FINAL_MML_EMITTER §4/§5: every admitted Final token is at least 1/64 of a
+// whole note, so a sub-grid interval classified SOURCE_SUPPORTED_MICROTIMING,
+// which must be kept exactly, is provably unwritable, and the emitter always
+// FAILs on it (SOURCE_SUPPORTED_INTERVAL_NOT_REPRESENTABLE). G10 counted
+// preserved material as raising nothing, so G10, readiness microTiming and
+// machine delivery (@1 and @2) PASSed candidates the emitter must refuse --
+// with or without an unreachable boundary beside it: a boundary an analysed
+// interval decides was 'analysed-interval' whatever that interval's
+// classification, and several shapes have no unreachable boundary at all. G10
+// now raises MICRO_TIMING_SOURCE_SUPPORTED_NOT_FINAL_REPRESENTABLE for any
+// preserved interval, keyed on the classification alone, which it leaves
+// unchanged (ACCEPTANCE_CRITERIA Gate 2: PENDING/UNSUPPORTED, not guessed).
+
+const THIRD_PARTY = createSource({ id: 'third', label: 'Community MIDI', kind: 'third-party-midi', authority: 'supporting' });
+const TEMPO = () => [createCanonicalTempoEvent({ id: 't0', beat: '0', bpm: 120, sourceIds: ['official'] })];
+// Every readiness gate but microTiming passes, so microTiming is the only
+// variable; the Source-Faithful Baseline carries the candidate's own events.
+const readyProject = (events, decisions = []) => {
+  const baseline = createCanonicalProject({
+    id: `baseline:${++counter}`, title: 'Source-Faithful Baseline', sources: [OFFICIAL, THIRD_PARTY], events, tempoEvents: TEMPO(),
+    metadata: { sourceComplete: true, baselineKind: 'source-faithful' },
+  });
+  return createCanonicalProject({
+    id: `preserved:${++counter}`, title: 'preserved material fixture', sources: [OFFICIAL, THIRD_PARTY], events, tempoEvents: TEMPO(), decisions,
+    metadata: { sourceComplete: true, sourceFaithfulBaseline: { snapshot: baseline }, audioAlignmentEvidence: [{ sourceId: 'original-audio', warnings: [], metrics: { confidence: 0.9 } }] },
+  });
+};
+const fullReadiness = candidate => evaluateProjectReadiness({
+  project: candidate,
+  mmlValidation: { ok: true, errors: [] },
+  core3Report: { status: 'PASS', blockers: [] },
+  core3CompletenessReport: { status: 'PASS', blockers: [] },
+  harmonyReport: { status: 'PASS', unresolvedCount: 0 },
+  playerReadback: 'PASS',
+  originalAudioRequired: true,
+  originalAudioReviewed: true,
+  mobileAdaptation: 'PASS',
+  regressionReviewed: true,
+  inGameAcceptance: 'PENDING',
+});
+// "kept" is an accepted keep with admissible official evidence; the others are
+// the claims that leave the interval UNKNOWN.
+const CLAIM = Object.freeze({
+  kept: { status: 'accepted', evidence: ['official bar 1'], sources: ['official'] },
+  pending: { status: 'pending', evidence: ['official bar 1'], sources: ['official'] },
+  'accepted without evidence': { status: 'accepted', evidence: [], sources: ['official'] },
+  'third-party only': { status: 'accepted', evidence: ['community MIDI bar 1'], sources: ['third'] },
+  rejected: { status: 'rejected', evidence: ['official bar 1'], sources: ['official'] },
+  absent: null,
+});
+const claimOn = (kind, identity) => {
+  const claim = CLAIM[kind];
+  if (!claim) return [];
+  const eventIds = identity.type === 'event-duration' ? [identity.eventId] : [identity.previousEventId, identity.nextEventId];
+  return [createArbitrationDecision({
+    id: `claim-${kind.replaceAll(' ', '-')}`, eventIds, action: MICRO_TIMING_KEEP_ACTION, status: claim.status, reason: 'notated',
+    evidence: claim.evidence, metadata: { evidenceSourceIds: claim.sources, intervalIdentity: createIntervalIdentity(identity) },
+  })];
+};
+const durationOf = (eventId, start, end) => ({ type: 'event-duration', eventId, start, end });
+const gapOf = (previousEventId, nextEventId, start, end) => ({ type: 'inter-event-gap', previousEventId, nextEventId, start, end });
+const keyOf = identity => (identity.type === 'event-duration'
+  ? JSON.stringify(['event-duration', identity.eventId, identity.start, identity.end])
+  : JSON.stringify(['inter-event-gap', identity.previousEventId, identity.nextEventId, identity.start, identity.end]));
+const entriesOf = report => report.unsupportedBoundaries.map(item => `${item.role}/${item.eventId}/${item.kind}/${item.boundary}@${item.position}:${item.reason}:${item.coverage}`);
+const V2_IDENTITY = Object.freeze({ canonical_version: 'x', canonical_status: 'PUBLISHED', rules_snapshot_sha: 'f'.repeat(40), machine_delivery_schema: MACHINE_DELIVERY_SCHEMA_V2 });
+const EMIT_PATHS = Object.freeze({
+  default: {},
+  cautionLengthOptIn: { cautionLengthOptIn: true },
+  technicalTimingRepair: { technicalTimingRepair: true },
+  provisionalReleaseRendering: { provisionalReleaseRendering: true, canonical: V2_IDENTITY },
+});
+const nonNotice = result => result.diagnostics.filter(item => item.severity !== 'notice').map(item => item.code);
+const deliveryOf = (gate, schema) => {
+  const identity = Object.freeze({ canonical_version: 'x', canonical_status: 'PUBLISHED', rules_snapshot_sha: 'f'.repeat(40), machine_delivery_schema: schema });
+  const gates = { ...Object.fromEntries(MACHINE_DELIVERY_GATE_NAMES.map(name => [name, { status: 'PASS' }])), microTiming: gate };
+  const delivery = evaluateMachineDelivery(gates, { canonical: identity, requireCompleteGateMap: true });
+  return { ready: delivery.ready, blocking: delivery.blocking.map(entry => entry.gate), nonBlocking: delivery.non_blocking_pending.map(entry => entry.gate) };
+};
+
+const P = '479/480';
+// Each shape: its events, the interval a claim names, and what G10 reported
+// for it before this change (classification aside): the unsupportedBoundaries
+// entries with their coverage. Those, and the classification, must not move.
+// `heldIfUnproven` marks a shape whose release the provisional hold covers
+// once the claim leaves the interval UNKNOWN only for missing evidence.
+const PRESERVED_SHAPES = Object.freeze({
+  // The owner's example 1: x legato into a sub-grid note z whose duration is kept.
+  'x legato into a kept sub-grid note z (example 1)': {
+    events: () => [note(0, P, { id: 'x' }), note(P, 1, { id: 'z', pitch: 62 }), note(2, 3, { id: 'y' })],
+    identity: durationOf('z', P, '1'),
+    entries: [
+      `Melody/x/note/end@${P}:RELEASE_SHARED_WITH_AN_UNREPRESENTABLE_ONSET:analysed-interval`,
+      `Melody/z/note/start@${P}:ONSET_NOT_FINAL_REPRESENTABLE:analysed-interval`,
+    ],
+  },
+  // The owner's example 2, and the same at 961/960.
+  'an onset after a kept sub-grid gap (example 2)': {
+    events: () => [note(0, 1, { id: 'a' }), note('481/480', 2, { id: 'b', pitch: 62 })],
+    identity: gapOf('a', 'b', '1', '481/480'),
+    entries: ['Melody/b/note/start@481/480:ONSET_NOT_FINAL_REPRESENTABLE:analysed-interval'],
+  },
+  'an onset after a kept sub-grid gap at 961/960': {
+    events: () => [note(0, 1, { id: 'a' }), note('961/960', 2, { id: 'b', pitch: 62 })],
+    identity: gapOf('a', 'b', '1', '961/960'),
+    entries: ['Melody/b/note/start@961/960:ONSET_NOT_FINAL_REPRESENTABLE:analysed-interval'],
+  },
+  // No unreachable boundary at all: both ends are caution positions.
+  'a kept sub-grid note between caution positions': {
+    events: () => [note(0, 1, { id: 'a' }), note(1, '25/24', { id: 'z', pitch: 62 }), note('25/24', 2, { id: 'b' })],
+    identity: durationOf('z', '1', '25/24'),
+    entries: [],
+  },
+  'a kept sub-grid gap to a caution position': {
+    events: () => [note(0, 1, { id: 'a' }), note('49/48', 2, { id: 'b', pitch: 62 })],
+    identity: gapOf('a', 'b', '1', '49/48'),
+    entries: [],
+  },
+  // A release no representation can move, decided by the kept interval itself.
+  'a kept sub-grid gap after an unreachable release': {
+    events: () => [note(0, P, { id: 'x' }), note(1, 2, { id: 'y', pitch: 62 })],
+    identity: gapOf('x', 'y', P, '1'),
+    entries: [],
+    heldIfUnproven: true,
+  },
+  'a kept sub-grid note whose own duration ends at its release': {
+    events: () => [note(0, '29/480', { id: 'x' }), note(1, 2, { id: 'y', pitch: 62 })],
+    identity: durationOf('x', '0', '29/480'),
+    entries: [],
+    heldIfUnproven: true,
+  },
+  'a kept sub-grid note after a grid onset': {
+    events: () => [note(0, 1, { id: 'a' }), note(1, '481/480', { id: 'x', pitch: 62 }), note(2, 3, { id: 'y' })],
+    identity: durationOf('x', '1', '481/480'),
+    entries: [],
+    heldIfUnproven: true,
+  },
+  // A kept sub-grid rest followed by another rest: one silence.
+  'a kept sub-grid rest inside one silence': {
+    events: () => [note(0, 1, { id: 'a' }), rest(1, '481/480', { id: 'r1' }), rest('481/480', 2, { id: 'r2' }), note(2, 3, { id: 'b' })],
+    identity: durationOf('r1', '1', '481/480'),
+    entries: ['Melody/r2/rest/start@481/480:REST_START_NOT_FINAL_REPRESENTABLE:analysed-interval'],
+  },
+  // In no role at all: the interval is still analysed and still preserved.
+  'a kept role-less sub-grid note': {
+    events: () => [note(0, '1/32', { id: 'u', role: null, pitch: 67 }), note(0, 2, { id: 'm' })],
+    identity: durationOf('u', '0', '1/32'),
+    entries: [],
+  },
+  'a kept sub-grid gap in Chord1 beside a Melody note': {
+    events: () => [note(0, 2, { id: 'm' }), note(0, 1, { id: 'c1', role: 'Chord1', pitch: 48 }), note('25/24', 2, { id: 'c2', role: 'Chord1', pitch: 48 })],
+    identity: gapOf('c1', 'c2', '1', '25/24'),
+    entries: [],
+  },
+});
+
+test('G10 never PASSes preserved source-supported material the emitter must refuse, and leaves its classification alone', () => {
+  for (const [label, shape] of Object.entries(PRESERVED_SHAPES)) {
+    const candidate = readyProject(shape.events(), claimOn('kept', shape.identity));
+    const g10 = enforceMicroGaps(candidate);
+    // The Canonical classification and everything else G10 reported are unchanged.
+    assert.deepEqual(g10.enforcement.map(item => [item.identityKey, item.classification, item.classificationBasis, item.enforcement]),
+      [[keyOf(shape.identity), 'SOURCE_SUPPORTED_MICROTIMING', 'accepted-keep-decision', 'preserve-source-supported']], label);
+    assert.deepEqual(g10.preservedIntervalKeys, [keyOf(shape.identity)], label);
+    assert.deepEqual(g10.sourceSupportedIntervalKeys, [keyOf(shape.identity)], label);
+    assert.deepEqual([g10.sourceSupportedCount, g10.unknownCount, g10.technicalResidueCount], [1, 0, 0], label);
+    assert.deepEqual(entriesOf(g10), shape.entries, `${label}: the boundary entries and their coverage are unchanged`);
+    assert.equal(g10.finalRepresentable, null, label);
+    assert.deepEqual(g10.provisionalReleases, [], label);
+    // What changes: the gate says it cannot clear the candidate.
+    assert.equal(g10.status, 'PENDING', label);
+    assert.deepEqual(g10.blockers, [SOURCE_SUPPORTED], label);
+
+    const readiness = fullReadiness(candidate);
+    assert.deepEqual([readiness.gates.microTiming.status, readiness.gates.microTiming.blockers], ['PENDING', [SOURCE_SUPPORTED]], label);
+    assert.deepEqual(readiness.preGameBlocking, ['microTiming'], `${label}: microTiming is the only gate that blocks`);
+    assert.equal(readiness.candidateReady, false, label);
+
+    const gate = { status: readiness.gates.microTiming.status, blockers: readiness.gates.microTiming.blockers };
+    for (const schema of [MACHINE_DELIVERY_SCHEMA_V1, MACHINE_DELIVERY_SCHEMA_V2]) {
+      assert.deepEqual(deliveryOf(gate, schema), { ready: false, blocking: ['microTiming'], nonBlocking: [] }, `${label} ${schema}`);
+    }
+
+    // The emitter's answer is unchanged: the proof it always gave, and no
+    // "unproven" diagnostic for a proof.
+    for (const [path, options] of Object.entries(EMIT_PATHS)) {
+      const emitted = emitFinalMml(candidate, options);
+      assert.equal(emitted.status, 'FAIL', `${label} ${path}`);
+      assert.equal(emitted.combinedMml, null, `${label} ${path}`);
+      assert.deepEqual(nonNotice(emitted), [EMIT_DIAGNOSTICS.SOURCE_SUPPORTED_INTERVAL_NOT_REPRESENTABLE], `${label} ${path}`);
+      assert.deepEqual(emitted.microGap.blockers, [SOURCE_SUPPORTED], `${label} ${path}`);
+    }
+    const provisional = emitFinalMml(candidate, EMIT_PATHS.provisionalReleaseRendering).provisionalReleaseRendering;
+    assert.deepEqual([provisional.applied, provisional.reason], [false, `micro-timing is BLOCKING under ${MACHINE_DELIVERY_SCHEMA_V2}`], label);
+    const withReadiness = emitFinalMml(candidate, { readiness });
+    assert.deepEqual(nonNotice(withReadiness), [EMIT_DIAGNOSTICS.SOURCE_SUPPORTED_INTERVAL_NOT_REPRESENTABLE, EMIT_DIAGNOSTICS.READINESS_BLOCKED], label);
+  }
+
+  // A listen-first ledger cannot carry it either: beside every code @2 admits,
+  // the preserved-material code keeps microTiming BLOCKING.
+  const forged = { status: 'PENDING', blockers: [
+    MICRO_GAP_BLOCKERS.CLASSIFICATION_UNKNOWN, MICRO_GAP_BLOCKERS.RELEASE_NOT_FINAL_REPRESENTABLE, SOURCE_SUPPORTED, MICRO_GAP_BLOCKERS.RELEASE_PROVISIONAL,
+  ] };
+  assert.deepEqual(deliveryOf(forged, MACHINE_DELIVERY_SCHEMA_V2), { ready: false, blocking: ['microTiming'], nonBlocking: [] });
+  const withoutIt = { status: 'PENDING', blockers: forged.blockers.filter(code => code !== SOURCE_SUPPORTED) };
+  assert.deepEqual(deliveryOf(withoutIt, MACHINE_DELIVERY_SCHEMA_V2).nonBlocking, ['microTiming'], 'the same gate without the code is listen-first');
+  assert.equal(MICRO_GAP_BLOCKERS.SOURCE_SUPPORTED_NOT_FINAL_REPRESENTABLE, SOURCE_SUPPORTED);
+});
+
+test('an interval a claim leaves UNKNOWN keeps its own answer and never raises the preserved-material code', () => {
+  for (const [label, shape] of Object.entries(PRESERVED_SHAPES)) {
+    for (const kind of ['pending', 'accepted without evidence', 'third-party only', 'rejected', 'absent']) {
+      const tag = `${label}, claim ${kind}`;
+      const candidate = readyProject(shape.events(), claimOn(kind, shape.identity));
+      const g10 = enforceMicroGaps(candidate);
+      assert.deepEqual(g10.enforcement.map(item => [item.identityKey, item.classification]), [[keyOf(shape.identity), 'UNKNOWN']], tag);
+      assert.deepEqual(g10.preservedIntervalKeys, [], tag);
+      assert.deepEqual(entriesOf(g10), shape.entries, tag);
+      // Only a claim that leaves nothing but missing evidence lets the
+      // provisional hold take a release, exactly as before.
+      const held = shape.heldIfUnproven && (kind === 'rejected' || kind === 'absent');
+      assert.equal(g10.status, 'PENDING', tag);
+      assert.deepEqual(g10.blockers, held
+        ? [MICRO_GAP_BLOCKERS.CLASSIFICATION_UNKNOWN, MICRO_GAP_BLOCKERS.RELEASE_PROVISIONAL]
+        : [MICRO_GAP_BLOCKERS.CLASSIFICATION_UNKNOWN], tag);
+      const emitted = emitFinalMml(candidate);
+      assert.equal(emitted.status, 'PENDING', tag);
+      assert.deepEqual(nonNotice(emitted), [
+        EMIT_DIAGNOSTICS.MICRO_GAP_BLOCKED_PENDING,
+        ...(kind === 'pending' ? [EMIT_DIAGNOSTICS.PENDING_DECISIONS_PRESENT] : []),
+      ], tag);
+    }
+  }
+});
+
+test('a project with no sub-grid interval gets exactly the report it always had', () => {
+  const candidate = project([note(0, 1, { id: 'a' }), note(2, 3, { id: 'b' })]);
+  assert.equal(JSON.stringify(enforceMicroGaps(candidate)), '{"status":"PASS","blockers":[],"policy":{"declaredSafeDenominator":64,"declaredSafeGrid":"1/16","analyzerSafeGrid":"1/16","rejectTechnicalMicroGapsBelow64":true,"preserveMeaningfulRests":true,"conformant":true,"blockers":[]},"policyBlockers":[],"safeGrid":"1/16","candidateCount":0,"sourceSupportedCount":0,"technicalResidueCount":0,"unknownCount":0,"unresolvedStreamIssueCount":0,"hasUnknown":false,"hasUnresolvedStreamAnalysis":false,"technicalResidueIntervals":[],"unknownIntervals":[],"sourceSupportedIntervalKeys":[],"unresolvedStreamIssues":[],"enforcement":[],"preservedIntervalKeys":[],"rejectedIntervalKeys":[],"blockedIntervalKeys":[],"finalRepresentable":null,"releaseTiming":{"schema":"mml-studio/release-timing-analysis@1#summary","releaseCount":2,"targetCount":0,"decisionRequiredCount":0,"sourceSupportedNotRepresentableCount":0,"noValidRepresentationCount":0,"representedCount":0,"unsupportedBoundaryCount":0,"notVisibleToIntervalAnalyzerCount":0,"samePitchRepeatedAttackTargets":0,"followingShapes":{},"byRole":{},"windowCount":0,"encodingObservations":[]},"releaseEvidenceRequirement":null,"releaseRepresentationRecords":{"recordCount":0,"registryChecked":false,"violations":[]},"unsupportedBoundaries":[],"provisionalReleases":[],"provisionalReleaseIntervalKeys":[],"releaseOffsetSources":[]}');
+  const ready = readyProject([note(0, 1, { id: 'a' }), note(2, 3, { id: 'b' })]);
+  const readiness = fullReadiness(ready);
+  assert.deepEqual([readiness.gates.microTiming.status, readiness.preGameBlocking, readiness.candidateReady], ['PASS', [], true]);
+  assert.equal(emitFinalMml(ready).status, 'PASS');
+});
+
+test('preserved material beside another G10 outcome: every code stays visible, and only open questions are unproven', () => {
+  const keptGap = claimOn('kept', gapOf('a', 'b', '1', '481/480'));
+  const melody = () => [note(0, 1, { id: 'a' }), note('481/480', 2, { id: 'b', pitch: 62 })];
+
+  // Beside an UNKNOWN interval: PENDING with both codes; the emitter's pending
+  // diagnostic carries only the open question.
+  const withUnknown = readyProject([...melody(), note(0, 1, { id: 'c1', role: 'Chord1', pitch: 48 }), note('481/480', 2, { id: 'c2', role: 'Chord1', pitch: 48 })], keptGap);
+  const unknownReport = enforceMicroGaps(withUnknown);
+  assert.deepEqual([unknownReport.status, unknownReport.blockers], ['PENDING', [MICRO_GAP_BLOCKERS.CLASSIFICATION_UNKNOWN, SOURCE_SUPPORTED]]);
+  const unknownEmitted = emitFinalMml(withUnknown);
+  assert.equal(unknownEmitted.status, 'FAIL');
+  assert.deepEqual(nonNotice(unknownEmitted), [EMIT_DIAGNOSTICS.MICRO_GAP_BLOCKED_PENDING, EMIT_DIAGNOSTICS.SOURCE_SUPPORTED_INTERVAL_NOT_REPRESENTABLE]);
+  assert.deepEqual(unknownEmitted.diagnostics.find(item => item.code === EMIT_DIAGNOSTICS.MICRO_GAP_BLOCKED_PENDING).blockers, [MICRO_GAP_BLOCKERS.CLASSIFICATION_UNKNOWN]);
+
+  // Beside an unreachable boundary nothing decides: both proofs.
+  const restAtRelease = readyProject([note(0, P, { id: 'x' }), rest(P, 1, { id: 'r' }), note(1, 2, { id: 'y' })], claimOn('kept', durationOf('r', P, '1')));
+  const boundaryReport = enforceMicroGaps(restAtRelease);
+  assert.deepEqual([boundaryReport.status, boundaryReport.blockers], ['PENDING', [BOUNDARY, SOURCE_SUPPORTED]]);
+  assert.deepEqual(nonNotice(emitFinalMml(restAtRelease)), [
+    EMIT_DIAGNOSTICS.MICRO_GAP_BOUNDARY_NOT_FINAL_REPRESENTABLE,
+    EMIT_DIAGNOSTICS.SOURCE_SUPPORTED_INTERVAL_NOT_REPRESENTABLE,
+  ]);
+
+  // Beside confirmed technical residue: FAIL, and the preserved code is not
+  // hidden behind it.
+  const technical = createArbitrationDecision({
+    id: 'technical-c', eventIds: ['c1', 'c2'], action: MICRO_TIMING_TECHNICAL_ACTIONS[0], status: 'accepted', reason: 'export pad',
+    evidence: ['converter log'], metadata: { intervalIdentity: createIntervalIdentity(gapOf('c1', 'c2', '1', '481/480')) },
+  });
+  const withResidue = readyProject([...melody(), note(0, 1, { id: 'c1', role: 'Chord1', pitch: 48 }), note('481/480', 2, { id: 'c2', role: 'Chord1', pitch: 48 })], [...keptGap, technical]);
+  const residueReport = enforceMicroGaps(withResidue);
+  assert.deepEqual([residueReport.status, residueReport.blockers], ['FAIL', [MICRO_GAP_BLOCKERS.TECHNICAL_RESIDUE_PRESENT, SOURCE_SUPPORTED]]);
+  const residueEmitted = emitFinalMml(withResidue);
+  assert.deepEqual(nonNotice(residueEmitted), [EMIT_DIAGNOSTICS.MICRO_GAP_TECHNICAL_RESIDUE, EMIT_DIAGNOSTICS.SOURCE_SUPPORTED_INTERVAL_NOT_REPRESENTABLE]);
+  assert.deepEqual(residueEmitted.diagnostics[0].blockers, [MICRO_GAP_BLOCKERS.TECHNICAL_RESIDUE_PRESENT, SOURCE_SUPPORTED]);
+
+  // Beside a release a representation can move: the release code keeps its
+  // hint, but the provisional hold never applies beside preserved material,
+  // so @2 does not deliver it for listening.
+  const withRelease = readyProject([...melody(), note(0, P, { id: 'c1', role: 'Chord1', pitch: 48 }), note(2, 3, { id: 'c2', role: 'Chord1', pitch: 48 })], keptGap);
+  const releaseReport = enforceMicroGaps(withRelease);
+  assert.deepEqual([releaseReport.status, releaseReport.blockers], ['PENDING', [MICRO_GAP_BLOCKERS.RELEASE_NOT_FINAL_REPRESENTABLE, SOURCE_SUPPORTED]]);
+  assert.deepEqual(releaseReport.provisionalReleases, []);
+  assert.deepEqual(deliveryOf({ status: releaseReport.status, blockers: releaseReport.blockers }, MACHINE_DELIVERY_SCHEMA_V2), { ready: false, blocking: ['microTiming'], nonBlocking: [] });
+  const releaseEmitted = emitFinalMml(withRelease, EMIT_PATHS.provisionalReleaseRendering);
+  assert.deepEqual(nonNotice(releaseEmitted), [EMIT_DIAGNOSTICS.MICRO_GAP_BLOCKED_PENDING, EMIT_DIAGNOSTICS.SOURCE_SUPPORTED_INTERVAL_NOT_REPRESENTABLE]);
+  assert.deepEqual(releaseEmitted.diagnostics.find(item => item.code === EMIT_DIAGNOSTICS.MICRO_GAP_BLOCKED_PENDING).blockers, [MICRO_GAP_BLOCKERS.RELEASE_NOT_FINAL_REPRESENTABLE]);
+  // Without the kept gap the same Chord1 release is held for listening.
+  const releaseOnly = enforceMicroGaps(readyProject([note(0, 1, { id: 'a' }), note(0, P, { id: 'c1', role: 'Chord1', pitch: 48 }), note(2, 3, { id: 'c2', role: 'Chord1', pitch: 48 })]));
+  assert.deepEqual(releaseOnly.blockers, [MICRO_GAP_BLOCKERS.RELEASE_NOT_FINAL_REPRESENTABLE, MICRO_GAP_BLOCKERS.RELEASE_PROVISIONAL]);
+});
+
+// ─── a role's leading silence shorter than any Final token ─────────────────
+//
+// A role is written as consecutive tokens from beat 0, and no admitted token --
+// caution lengths included -- is shorter than 1/64 of a whole note (1/16 beat),
+// so no position after beat 0 and before 1/16 is reached, whatever its
+// denominator. classifyPosition calls 1/24 CAUTION_REPRESENTABLE (its
+// denominator divides the admitted lcm), the release analysis reports nothing
+// there, and a role's first onset after an implicit silence leaves no interval,
+// so G10, readiness and machine delivery PASSed a[1/24,1) while every emitter
+// path FAILed. G10 now lists a role's earliest note onset in (0, 1/16) that
+// classifyPosition does not already refuse, with reason
+// LEADING_SILENCE_SHORTER_THAN_ANY_FINAL_TOKEN and coverage always 'none', and
+// raises the boundary code: ACCEPTANCE_CRITERIA rule 1 keeps "attack or onset
+// timing ... sub-1/64 silence" BLOCKING, and no operation moves an attack.
+
+const LEADING = 'LEADING_SILENCE_SHORTER_THAN_ANY_FINAL_TOKEN';
+const leadingEntry = (role, eventId, position) => ({ eventId, role, kind: 'note', boundary: 'start', position, reason: LEADING, coverage: BOUNDARY_COVERAGE.NONE });
+const proofOf = result => result.diagnostics.find(item => item.code === EMIT_DIAGNOSTICS.MICRO_GAP_BOUNDARY_NOT_FINAL_REPRESENTABLE) ?? null;
+const withoutCoverage = ({ coverage, ...rest }) => rest;
+
+test('the shortest admitted token is derived from the contract lattice, and is the safe grid under the published contract', () => {
+  assert.equal(SHORTEST_ADMITTED_TOKEN_BEATS.toString(), '1/16');
+  assert.equal(SHORTEST_ADMITTED_TOKEN_BEATS.cmp(SAFE_GRID), 0);
+  assert.equal(LEADING_ONSET_REASON, LEADING);
+});
+
+test('a role\'s earliest onset after a silence shorter than any Final token is a boundary G10, readiness, delivery and every emitter path agree on', () => {
+  const cases = {
+    'Melody a[1/24,1)': { events: () => [note('1/24', 1, { id: 'a' })], entry: leadingEntry('Melody', 'a', '1/24') },
+    // Per role: Melody starts on beat 0, and Chord1's first onset still counts.
+    'Melody m[0,2), Chord1 c[1/240,2)': { events: () => [note(0, 2, { id: 'm' }), note('1/240', 2, { id: 'c', role: 'Chord1', pitch: 48 })], entry: leadingEntry('Chord1', 'c', '1/240') },
+  };
+  for (const [label, shape] of Object.entries(cases)) {
+    assert.equal(classifyPosition(shape.entry.position), POSITION_CLASS.CAUTION_REPRESENTABLE, `${label}: not a position classifyPosition refuses`);
+    const candidate = project(shape.events());
+    assert.deepEqual(analyzeReleaseTiming({ candidate }).unsupportedBoundaries, [], `${label}: the release analysis reports nothing`);
+    const g10 = enforceMicroGaps(candidate);
+    assert.deepEqual([g10.status, g10.blockers], ['PENDING', [BOUNDARY]], label);
+    assert.deepEqual(g10.unsupportedBoundaries, [shape.entry], label);
+    const micro = evaluateProjectReadiness({ project: candidate }).gates.microTiming;
+    assert.deepEqual([micro.status, micro.blockers, micro.unsupportedBoundaries], ['PENDING', [BOUNDARY], g10.unsupportedBoundaries], label);
+    for (const schema of [MACHINE_DELIVERY_SCHEMA_V1, MACHINE_DELIVERY_SCHEMA_V2]) {
+      assert.deepEqual(deliveryOf({ status: micro.status, blockers: micro.blockers }, schema), { ready: false, blocking: ['microTiming'], nonBlocking: [] }, `${label} ${schema}`);
+    }
+    for (const [path, options] of Object.entries(EMIT_PATHS)) {
+      const emitted = emitFinalMml(candidate, options);
+      assert.equal(emitted.status, 'FAIL', `${label} ${path}`);
+      assert.equal(emitted.combinedMml, null, `${label} ${path}`);
+      assert.deepEqual(nonNotice(emitted), [EMIT_DIAGNOSTICS.MICRO_GAP_BOUNDARY_NOT_FINAL_REPRESENTABLE], `${label} ${path}`);
+      const proof = proofOf(emitted);
+      assert.deepEqual([proof.severity, proof.completenessProven, proof.unreachableBoundaryCount, proof.unreachableBoundaries],
+        ['error', true, 1, [withoutCoverage(shape.entry)]], `${label} ${path}`);
+      assert.ok(proof.message.includes(`${shape.entry.role} event ${shape.entry.eventId} (note start) at beat ${shape.entry.position} is an onset its Final role has to reach`), `${label} ${path}`);
+      assert.ok(proof.message.includes('no admitted Final token is shorter than 1/16 beat (1/64 of a whole note), so no position after beat 0 and before beat 1/16 is reached;'
+        + ` ${shape.entry.position} is such a position.`), `${label} ${path}: ${proof.message}`);
+      // The denominator argument is false for this position, so it is not made.
+      assert.equal(proof.message.includes('whole-note denominator'), false, `${label} ${path}`);
+    }
+  }
+
+  // The same leading silence as an explicit rest: the rest's own sub-grid
+  // interval ends at the onset, but no outcome of it moves an attack, so it
+  // decides only itself and the onset keeps coverage 'none'.
+  const explicit = claims => project([rest(0, '1/24', { id: 'r' }), note('1/24', 1, { id: 'a' })], undefined, claims);
+  const open = enforceMicroGaps(explicit([]));
+  assert.deepEqual([open.status, open.blockers], ['PENDING', [MICRO_GAP_BLOCKERS.CLASSIFICATION_UNKNOWN, BOUNDARY]]);
+  assert.deepEqual(open.unsupportedBoundaries, [leadingEntry('Melody', 'a', '1/24')]);
+  const openEmitted = emitFinalMml(explicit([]));
+  assert.equal(openEmitted.status, 'FAIL');
+  assert.deepEqual(nonNotice(openEmitted), [EMIT_DIAGNOSTICS.MICRO_GAP_BLOCKED_PENDING, EMIT_DIAGNOSTICS.MICRO_GAP_BOUNDARY_NOT_FINAL_REPRESENTABLE]);
+  assert.deepEqual(openEmitted.diagnostics.find(item => item.code === EMIT_DIAGNOSTICS.MICRO_GAP_BLOCKED_PENDING).blockers, [MICRO_GAP_BLOCKERS.CLASSIFICATION_UNKNOWN]);
+  const kept = enforceMicroGaps(explicit(claimOn('kept', durationOf('r', '0', '1/24'))));
+  assert.deepEqual([kept.status, kept.blockers], ['PENDING', [BOUNDARY, SOURCE_SUPPORTED]]);
+  assert.deepEqual(kept.unsupportedBoundaries, [leadingEntry('Melody', 'a', '1/24')]);
+
+  // A sub-grid note after the leading silence: its release was held for
+  // listening under @2 (NON_BLOCKING_PENDING) while its onset could not be
+  // written. The onset now blocks, so nothing is held.
+  const held = project([note('1/24', '49/480', { id: 'a' })]);
+  const heldReport = enforceMicroGaps(held);
+  assert.deepEqual([heldReport.status, heldReport.blockers], ['PENDING', [MICRO_GAP_BLOCKERS.CLASSIFICATION_UNKNOWN, BOUNDARY]]);
+  assert.deepEqual(heldReport.provisionalReleases, []);
+  assert.deepEqual(deliveryOf({ status: heldReport.status, blockers: heldReport.blockers }, MACHINE_DELIVERY_SCHEMA_V2), { ready: false, blocking: ['microTiming'], nonBlocking: [] });
+  assert.equal(emitFinalMml(held, EMIT_PATHS.provisionalReleaseRendering).provisionalReleaseRendering.applied, false);
+  // The control: the same sub-grid note from beat 0 is still held.
+  const fromZero = enforceMicroGaps(project([note(0, '29/480', { id: 'a' })]));
+  assert.deepEqual(fromZero.blockers, [MICRO_GAP_BLOCKERS.CLASSIFICATION_UNKNOWN, MICRO_GAP_BLOCKERS.RELEASE_PROVISIONAL]);
+  assert.equal(deliveryOf({ status: fromZero.status, blockers: fromZero.blockers }, MACHINE_DELIVERY_SCHEMA_V2).nonBlocking[0], 'microTiming');
+});
+
+test('a leading-onset proof beside a denominator proof states both arithmetic facts, and a denominator-only proof keeps its message', () => {
+  const mixed = emitFinalMml(project([note('1/24', 1, { id: 'a' }), note('1/480', 1, { id: 'c', role: 'Chord1', pitch: 48 })]));
+  const proof = proofOf(mixed);
+  assert.deepEqual(proof.unreachableBoundaries.map(item => [item.role, item.position, item.reason]), [
+    ['Chord1', '1/480', 'ONSET_NOT_FINAL_REPRESENTABLE'],
+    ['Melody', '1/24', LEADING],
+  ]);
+  assert.ok(proof.message.includes('so every position it reaches is a sum of admitted token lengths, whose whole-note denominator divides the lcm of the admitted token denominators; the denominator of 1/480 does not; and no admitted Final token is shorter than 1/16 beat (1/64 of a whole note), so no position after beat 0 and before beat 1/16 is reached; 1/24 is such a position. This is a proof about those positions'), proof.message);
+
+  // No leading entry: the message is exactly the one this proof always carried.
+  assert.equal(proofOf(emitFinalMml(project([note('1/480', 1, { id: 'a' })]))).message,
+    'G10 (MICRO_TIMING_BOUNDARY_NOT_FINAL_REPRESENTABLE): Melody event a (note start) at beat 1/480 is an onset its Final role has to reach, and no admitted Final token sequence reaches it. A role is written as consecutive tokens from beat 0, so every position it reaches is a sum of admitted token lengths, whose whole-note denominator divides the lcm of the admitted token denominators; this position\'s does not. This is a proof about the position, not a search limit and not an unproven question: no search bound, budget, caution opt-in or evidence changes where it is, and nothing is moved to make the role writable -- no attack, no rest, and no release that release representation refuses (one under a keep claim, or one with no valid representation). This candidate cannot be Final-emitted as it stands; the emitter fails closed.');
+});
+
+test('a leading silence the shortest token reaches, a rest-first role and an already-refused onset add no leading entry', () => {
+  // Reports unchanged, and each candidate emits exactly where it did.
+  const passes = {
+    'onset on the grid at 1/16': { events: () => [note('1/16', 1, { id: 'a' })], emitsOn: ['default', 'cautionLengthOptIn'] },
+    // 1/12 is the caution length 48; only the caution lattice writes it.
+    'onset at 1/12, no shorter than the shortest token': { events: () => [note('1/12', 1, { id: 'a' })], emitsOn: ['cautionLengthOptIn'] },
+    'onset at beat 0': { events: () => [note(0, 1, { id: 'a' })], emitsOn: ['default', 'cautionLengthOptIn'] },
+    // The first span is a rest: the silence before the first note is one span.
+    'a rest first, then the first note on a beat': { events: () => [rest('1/24', 1, { id: 'r' }), note(1, 2, { id: 'a' })], emitsOn: ['default', 'cautionLengthOptIn'] },
+  };
+  for (const [label, shape] of Object.entries(passes)) {
+    const candidate = project(shape.events());
+    const g10 = enforceMicroGaps(candidate);
+    assert.deepEqual([g10.status, g10.blockers, g10.unsupportedBoundaries], ['PASS', [], []], label);
+    for (const path of ['default', 'cautionLengthOptIn']) {
+      assert.equal(emitFinalMml(candidate, EMIT_PATHS[path]).status, shape.emitsOn.includes(path) ? 'PASS' : 'FAIL', `${label} ${path}`);
+    }
+  }
+  // Positions classifyPosition already refuses keep their own single entry.
+  for (const position of ['1/480', '1/32']) {
+    assert.equal(classifyPosition(position), POSITION_CLASS.NOT_FINAL_REPRESENTABLE, position);
+    const g10 = enforceMicroGaps(project([note(position, 1, { id: 'a' })]));
+    assert.deepEqual(g10.unsupportedBoundaries.map(item => [item.eventId, item.position, item.reason, item.coverage]),
+      [['a', position, 'ONSET_NOT_FINAL_REPRESENTABLE', BOUNDARY_COVERAGE.NONE]], position);
+    assert.deepEqual(g10.blockers, [BOUNDARY], position);
+  }
 });

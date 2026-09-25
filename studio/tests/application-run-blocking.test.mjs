@@ -574,8 +574,10 @@ test('a kept sub-grid rest at a release no representation can move does not let 
   // interval decides only the rest's start. Before, that interval was counted
   // as covering the release: microTiming passed, and the run went on to a
   // finalize the emitter could not write and halted on the technical gate,
-  // whose request named finalize again.
+  // whose request named finalize again. The kept rest is itself preserved
+  // material no Final token can carry, so the gate states that too.
   const BOUNDARY = 'MICRO_TIMING_BOUNDARY_NOT_FINAL_REPRESENTABLE';
+  const SOURCE_SUPPORTED = 'MICRO_TIMING_SOURCE_SUPPORTED_NOT_FINAL_REPRESENTABLE';
   const source = sixRoleBaseline();
   const events = source.events.map(event => (event.id === 'chord5-2' ? createCanonicalNoteEvent({ ...event, end: '719/480' }) : event));
   events.push(createCanonicalRestEvent({ id: 'chord5-breath', start: '719/480', end: '3/2', role: 'Chord5', voice: 'chord5', sourceIds: [FIXTURE_SOURCE_ID], sourceEventIds: [`${FIXTURE_SOURCE_ID}#chord5-breath`] }));
@@ -603,13 +605,135 @@ test('a kept sub-grid rest at a release no representation can move does not let 
     `the run stops at microTiming, before finalize: ${JSON.stringify(run.review_requests.map(entry => [entry.code, entry.gate]))}`);
   const request = gateRequest(run, 'microTiming');
   assert.ok(request, JSON.stringify(run.review_requests.map(entry => entry.gate)));
-  assert.deepEqual(request.blockers, [BOUNDARY]);
+  assert.deepEqual(request.blockers, [BOUNDARY, SOURCE_SUPPORTED]);
   assert.deepEqual(request.available_operations, [], 'no operation is offered that cannot answer the gate');
-  assert.deepEqual(request.missing, [READINESS_BLOCKER_WITHOUT_OPERATION.microTiming[BOUNDARY]]);
+  assert.deepEqual(request.missing, [
+    READINESS_BLOCKER_WITHOUT_OPERATION.microTiming[BOUNDARY],
+    READINESS_BLOCKER_WITHOUT_OPERATION.microTiming[SOURCE_SUPPORTED],
+  ]);
   assert.deepEqual(request.detail.unsupportedBoundaries.map(entry => [entry.role, entry.eventId, entry.kind, entry.boundary, entry.position, entry.coverage]), [
     ['Chord5', 'chord5-breath', 'rest', 'start', '719/480', 'analysed-interval'],
     ['Chord5', 'chord5-2', 'note', 'end', '719/480', 'none'],
   ], 'the rest\'s start is decided by its interval; the release is the position nothing decides');
+});
+
+test('kept sub-grid material no Final token can carry holds the run at microTiming and names no operation', async () => {
+  // The owner's two shapes in Chord5 of the six-role fixture, each kept as
+  // notated with admissible evidence: (a) chord5-2 attacks one 480-tick after
+  // chord5-1's release on the beat, and the sub-grid gap between them is kept;
+  // (b) chord5-1 releases one 480-tick short of the beat into a legato sub-grid
+  // note chord5-z whose own duration is kept. Every position either one has to
+  // reach is decided by the kept interval ('analysed-interval'), and preserved
+  // material used to raise nothing, so microTiming passed and the run went on
+  // to a finalize the emitter refused (SOURCE_SUPPORTED_INTERVAL_NOT_REPRESENTABLE),
+  // halting on the technical gate with a request that named finalize again.
+  const SOURCE_SUPPORTED = 'MICRO_TIMING_SOURCE_SUPPORTED_NOT_FINAL_REPRESENTABLE';
+  const keep = (id, eventIds, identity) => createArbitrationDecision({
+    id,
+    eventIds,
+    action: MICRO_TIMING_KEEP_ACTION,
+    status: 'accepted',
+    reason: 'notated',
+    evidence: ['official MIDI, bar 1: notated as written'],
+    metadata: { evidenceSourceIds: [FIXTURE_SOURCE_ID], intervalIdentity: createIntervalIdentity(identity) },
+  });
+  const runOn = async ({ changes = {}, added = [], decisions }) => {
+    const source = sixRoleBaseline();
+    const events = [
+      ...source.events.map(event => (changes[event.id] ? createCanonicalNoteEvent({ ...event, ...changes[event.id] }) : event)),
+      ...added,
+    ];
+    const project = createCanonicalProject({ ...source, events, decisions });
+    const isolated = createStudioApplication({});
+    const own = await projectWithSymbolicAsset(isolated, OWNER, { project });
+    await isolated.analyzeSources(OWNER, own.projectId, { assetIds: [own.assetId] });
+    const notes = new Set(project.events.filter(event => event.kind === 'note').map(event => event.id));
+    const accepted = runDecisionsFor(own.project).map(decision => ({ ...decision, target: { ...decision.target, eventIds: decision.target.eventIds.filter(id => notes.has(id)) } }));
+    const candidate = (await isolated.applyDecisions(OWNER, own.projectId, { decisions: accepted })).decisions.candidate_id;
+    return (await isolated.startRun(OWNER, own.projectId, { target_candidate_id: candidate, confirmations: FIXTURE_CONFIRMATIONS })).run;
+  };
+  const chord5z = createCanonicalNoteEvent({ id: 'chord5-z', pitch: 50, start: '479/480', end: '1', role: 'Chord5', voice: 'chord5', volume: null, sourceIds: [FIXTURE_SOURCE_ID], sourceEventIds: [`${FIXTURE_SOURCE_ID}#chord5-z`] });
+  const cases = {
+    'a kept sub-grid gap before an unreachable onset': {
+      changes: { 'chord5-2': { start: '481/480' } },
+      decisions: [keep('keep-gap', ['chord5-1', 'chord5-2'], { type: 'inter-event-gap', previousEventId: 'chord5-1', nextEventId: 'chord5-2', start: '1', end: '481/480' })],
+      entries: [['Chord5', 'chord5-2', 'note', 'start', '481/480', 'analysed-interval']],
+    },
+    'a legato join into a kept sub-grid note': {
+      changes: { 'chord5-1': { end: '479/480' } },
+      added: [chord5z],
+      decisions: [keep('keep-z', ['chord5-z'], { type: 'event-duration', eventId: 'chord5-z', start: '479/480', end: '1' })],
+      entries: [
+        ['Chord5', 'chord5-1', 'note', 'end', '479/480', 'analysed-interval'],
+        ['Chord5', 'chord5-z', 'note', 'start', '479/480', 'analysed-interval'],
+      ],
+    },
+  };
+  for (const [label, shape] of Object.entries(cases)) {
+    const run = await runOn(shape);
+    assert.notEqual(run.state, RUN_STATE.COMPLETED, label);
+    assert.equal(run.final_artifact_id, null, label);
+    assert.equal(run.review_requests.some(entry => entry.code === 'FINALIZE_BLOCKED' || entry.gate === 'technical'), false,
+      `${label}: the run stops at microTiming, before finalize: ${JSON.stringify(run.review_requests.map(entry => [entry.code, entry.gate]))}`);
+    const request = gateRequest(run, 'microTiming');
+    assert.ok(request, `${label}: ${JSON.stringify(run.review_requests.map(entry => entry.gate))}`);
+    assert.deepEqual(request.blockers, [SOURCE_SUPPORTED], label);
+    assert.deepEqual(request.available_operations, [], `${label}: no operation is offered that cannot answer the gate`);
+    assert.deepEqual(request.missing, [READINESS_BLOCKER_WITHOUT_OPERATION.microTiming[SOURCE_SUPPORTED]], label);
+    assert.match(request.missing[0], /No operation in this build answers it/, label);
+    assert.match(request.missing[0], /the gate still blocks/, label);
+    assert.deepEqual(request.detail.unsupportedBoundaries.map(entry => [entry.role, entry.eventId, entry.kind, entry.boundary, entry.position, entry.coverage]),
+      shape.entries, `${label}: the entries and their coverage are what they were`);
+    assert.equal(request.detail.preservedIntervalKeys.length, 1, label);
+  }
+
+  // Beside a blocker release representation does answer -- the sub-grid gap an
+  // unreachable Melody release leaves before the next attack -- the gate keeps
+  // its hint, and the preserved material is still said to have no answer.
+  const legato = cases['a legato join into a kept sub-grid note'];
+  const mixed = await runOn({ ...legato, changes: { ...legato.changes, 'melody-1': { end: '479/480' } } });
+  const both = gateRequest(mixed, 'microTiming');
+  assert.ok(both, JSON.stringify(mixed.review_requests.map(entry => entry.gate)));
+  assert.deepEqual(both.blockers, ['MICRO_TIMING_CLASSIFICATION_UNKNOWN', SOURCE_SUPPORTED, 'MICRO_TIMING_RELEASE_EVIDENCE_REQUIRED']);
+  assert.deepEqual(both.available_operations, ['planMobileAdaptation', 'applyMobileAdaptation.release_representation']);
+  assert.deepEqual(both.missing, [READINESS_BLOCKER_WITHOUT_OPERATION.microTiming[SOURCE_SUPPORTED]]);
+
+  // The capability record says the same thing a request does.
+  const caps = await createStudioApplication({}).capabilities();
+  assert.ok(caps.runs.refuses.some(entry => entry.includes(SOURCE_SUPPORTED) && entry.includes('MICRO_TIMING_BOUNDARY_NOT_FINAL_REPRESENTABLE')
+    && entry.includes('lists no operation')), JSON.stringify(caps.runs.refuses));
+});
+
+test('a role that starts after a silence shorter than any Final token holds the run at microTiming and names no operation', async () => {
+  // Chord5's first note attacks at 1/240 of a beat. No admitted token is
+  // shorter than 1/16 beat, so the role cannot reach it, although its
+  // denominator divides the admitted lcm. G10 used to PASS it, and the run
+  // went on to a finalize the emitter refused, halting with FINALIZE_BLOCKED
+  // and a technical request that named finalize again.
+  const BOUNDARY = 'MICRO_TIMING_BOUNDARY_NOT_FINAL_REPRESENTABLE';
+  const source = sixRoleBaseline();
+  const project = createCanonicalProject({
+    ...source,
+    events: source.events.map(event => (event.id === 'chord5-1' ? createCanonicalNoteEvent({ ...event, start: '1/240' }) : event)),
+  });
+  const isolated = createStudioApplication({});
+  const own = await projectWithSymbolicAsset(isolated, OWNER, { project });
+  await isolated.analyzeSources(OWNER, own.projectId, { assetIds: [own.assetId] });
+  const candidate = (await isolated.applyDecisions(OWNER, own.projectId, { decisions: runDecisionsFor(own.project) })).decisions.candidate_id;
+  const { run } = await isolated.startRun(OWNER, own.projectId, { target_candidate_id: candidate, confirmations: FIXTURE_CONFIRMATIONS });
+
+  assert.notEqual(run.state, RUN_STATE.COMPLETED);
+  assert.equal(run.final_artifact_id, null);
+  assert.equal(run.review_requests.some(entry => entry.code === 'FINALIZE_BLOCKED' || entry.gate === 'technical'), false,
+    `the run stops at microTiming, before finalize: ${JSON.stringify(run.review_requests.map(entry => [entry.code, entry.gate]))}`);
+  const request = gateRequest(run, 'microTiming');
+  assert.ok(request, JSON.stringify(run.review_requests.map(entry => entry.gate)));
+  assert.deepEqual(request.blockers, [BOUNDARY]);
+  assert.deepEqual(request.available_operations, [], 'no operation moves an attack');
+  assert.deepEqual(request.missing, [READINESS_BLOCKER_WITHOUT_OPERATION.microTiming[BOUNDARY]]);
+  assert.deepEqual(request.detail.unsupportedBoundaries.map(entry => [entry.role, entry.eventId, entry.kind, entry.boundary, entry.position, entry.reason, entry.coverage]), [
+    ['Chord5', 'chord5-1', 'note', 'start', '1/240', 'LEADING_SILENCE_SHORTER_THAN_ANY_FINAL_TOKEN', 'none'],
+  ], 'the request says where, and why');
 });
 
 // ─── an unknown blocker still blocks ────────────────────────────────────────

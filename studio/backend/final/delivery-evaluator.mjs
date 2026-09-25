@@ -94,7 +94,10 @@ export const MACHINE_DELIVERY_GATE_NAMES = Object.freeze(Object.keys(CLASS_BY_GA
 //     rest and holds only a release with a valid extension and no keep claim,
 //     and the gate never adds the listen-first code beside it, so there is
 //     nothing to deliver -- the same answer RELEASE_NOT_FINAL_REPRESENTABLE
-//     gets without that code;
+//     gets without that code. MICRO_TIMING_SOURCE_SUPPORTED_NOT_FINAL_REPRESENTABLE
+//     is left out on purpose too: a preserved source-supported interval is
+//     never held provisionally (the gate never adds the listen-first code
+//     beside it), and nothing renders it;
 //   * leadPromotion -- every pending promotion is missing primary evidence and
 //     nothing else. Demotion is another gate and is not touched; invalid
 //     evidence, an origin outside the baseline, an ungraded promotion and an

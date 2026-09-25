@@ -227,7 +227,7 @@ export function buildCapabilities({ canonical, storage, jobs, transports = [] })
         'minting a no-op revision when no transformation is needed, and treating that as a gate result',
         'rewriting the content or identity of a Final artifact, or presenting an earlier candidate\'s MML as a later run output',
         'proceeding past a readiness blocker it does not recognise',
-        'naming an operation for a readiness blocker none in this build answers: MICRO_TIMING_BOUNDARY_NOT_FINAL_REPRESENTABLE (an onset, a rest boundary, or a release under a keep claim or with no valid representation, that Final cannot reach) is stated in the review request\'s missing, and a microTiming request that carries only it lists no operation; it still blocks',
+        'naming an operation for a readiness blocker none in this build answers: MICRO_TIMING_BOUNDARY_NOT_FINAL_REPRESENTABLE (an onset, a rest boundary, or a release under a keep claim or with no valid representation, that Final cannot reach) and MICRO_TIMING_SOURCE_SUPPORTED_NOT_FINAL_REPRESENTABLE (a source-supported sub-grid interval no Final token can carry) are stated in the review request\'s missing, and a microTiming request that carries only them lists no operation; it still blocks',
         'advancing because a proposal exists: a stored proposal is an external agent\'s statement, and only its explicit acceptance reaches a resume',
       ]),
       execution_notice: RUN_EXECUTION_NOTICE,

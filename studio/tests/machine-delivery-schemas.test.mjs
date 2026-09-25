@@ -114,6 +114,33 @@ test('mixed or unmarked micro-timing blocks under both schemas', () => {
   }
 });
 
+test('preserved source-supported material no Final token can carry blocks under both schemas, even beside the listen-first code', () => {
+  // G10 raises it for any sub-grid interval classified SOURCE_SUPPORTED_MICROTIMING.
+  // It is not a release the provisional hold can take, so @2 leaves it out on
+  // purpose, and nothing beside it makes the gate listen-first.
+  const PRESERVED = MICRO_GAP_BLOCKERS.SOURCE_SUPPORTED_NOT_FINAL_REPRESENTABLE;
+  assert.equal(PRESERVED, 'MICRO_TIMING_SOURCE_SUPPORTED_NOT_FINAL_REPRESENTABLE');
+  const cases = {
+    'the preserved-material code alone': gate('PENDING', [PRESERVED]),
+    'the preserved-material code beside the boundary code': gate('PENDING', [MICRO_GAP_BLOCKERS.BOUNDARY_NOT_FINAL_REPRESENTABLE, PRESERVED]),
+    'the listen-first code beside preserved material': gate('PENDING', [
+      MICRO_GAP_BLOCKERS.CLASSIFICATION_UNKNOWN, MICRO_GAP_BLOCKERS.RELEASE_NOT_FINAL_REPRESENTABLE, PRESERVED, MICRO_GAP_BLOCKERS.RELEASE_PROVISIONAL,
+    ], { provisionalReleases: RELEASE_ONLY.provisionalReleases, releaseOffsetSources: RELEASE_ONLY.releaseOffsetSources }),
+    'beside technical residue': gate('FAIL', [MICRO_GAP_BLOCKERS.TECHNICAL_RESIDUE_PRESENT, PRESERVED]),
+  };
+  for (const [label, value] of Object.entries(cases)) {
+    for (const canonical of [AT1, AT2]) {
+      const result = evaluate({ microTiming: value }, canonical);
+      assert.equal(phaseOf(result, 'microTiming'), 'BLOCKING', `${label} (${canonical.machine_delivery_schema})`);
+      assert.equal(result.ready, false, label);
+      assert.deepEqual(result.delivery_flags, [], label);
+      assert.equal(deliveryClassOf('microTiming', value, { canonical }), DELIVERY_CLASS.BLOCKING, label);
+    }
+  }
+  // The control: the same listen-first gate without the preserved-material code.
+  assert.equal(phaseOf(evaluate({ microTiming: RELEASE_ONLY }, AT2), 'microTiming'), 'NON_BLOCKING_PENDING');
+});
+
 test('Lead promotion missing only primary evidence is NON_BLOCKING_PENDING under @2, flagged Lead unverified', () => {
   const underAt2 = evaluate({ leadPromotion: LEAD_MISSING }, AT2);
   assert.equal(phaseOf(underAt2, 'leadPromotion'), 'NON_BLOCKING_PENDING');

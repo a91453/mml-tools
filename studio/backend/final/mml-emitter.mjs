@@ -25,7 +25,7 @@
 // user, not to a serializer.
 import { F, f, ROLES } from '../mml/index.mjs';
 import { EFFECTIVE_RULESET, studioFinalBlockers } from '../rules/index.mjs';
-import { BOUNDARY_COVERAGE, MICRO_GAP_BLOCKERS, enforceMicroGaps } from './micro-gap-enforcement.mjs';
+import { BOUNDARY_COVERAGE, FINAL_REPRESENTABILITY_PROOFS, LEADING_ONSET_REASON, MICRO_GAP_BLOCKERS, SHORTEST_ADMITTED_TOKEN_BEATS, enforceMicroGaps } from './micro-gap-enforcement.mjs';
 import { POSITION_CLASS, classifyPosition } from '../canonical/release-timing.mjs';
 import {
   DELIVERY_CLASS,
@@ -837,12 +837,20 @@ function evaluateGates(project, options) {
     }
   }
 
-  // G10's boundary code is a proof about this candidate, not an open question,
-  // so it is kept out of MICRO_GAP_BLOCKED_PENDING (whose "unproven" wording
-  // would be false for it) and reported below as the confirmed negative it is.
-  // Every other G10 blocker keeps exactly the diagnostic it had.
+  // G10's two proof codes (FINAL_REPRESENTABILITY_PROOFS) are proofs about this
+  // candidate, not open questions: MICRO_TIMING_BOUNDARY_NOT_FINAL_REPRESENTABLE
+  // (a position no admitted token sequence reaches) and
+  // MICRO_TIMING_SOURCE_SUPPORTED_NOT_FINAL_REPRESENTABLE (preserved
+  // source-supported material no admitted token can carry). They are kept out of
+  // MICRO_GAP_BLOCKED_PENDING (whose "unproven" wording would be false for them)
+  // and reported below as the confirmed negatives they are:
+  // MICRO_GAP_BOUNDARY_NOT_FINAL_REPRESENTABLE and
+  // SOURCE_SUPPORTED_INTERVAL_NOT_REPRESENTABLE. Every other G10 blocker keeps
+  // exactly the diagnostic it had, and MICRO_GAP_BLOCKED_PENDING is never raised
+  // with an empty list.
   const boundaryProven = microGap.blockers.includes(MICRO_GAP_BLOCKERS.BOUNDARY_NOT_FINAL_REPRESENTABLE);
-  const openBlockers = microGap.blockers.filter(code => code !== MICRO_GAP_BLOCKERS.BOUNDARY_NOT_FINAL_REPRESENTABLE);
+  const anyProof = microGap.blockers.some(code => FINAL_REPRESENTABILITY_PROOFS.includes(code));
+  const openBlockers = microGap.blockers.filter(code => !FINAL_REPRESENTABILITY_PROOFS.includes(code));
   if (microGap.status === 'FAIL') {
     diagnostics.push(diagnostic(
       EMIT_DIAGNOSTICS.MICRO_GAP_TECHNICAL_RESIDUE,
@@ -851,7 +859,7 @@ function evaluateGates(project, options) {
       { blockers: microGap.blockers, rejectedIntervalKeys: microGap.rejectedIntervalKeys },
     ));
     status = EMIT_STATUS.FAIL;
-  } else if (microGap.status !== 'PASS' && (openBlockers.length || !boundaryProven)) {
+  } else if (microGap.status !== 'PASS' && (openBlockers.length || !anyProof)) {
     diagnostics.push(diagnostic(
       EMIT_DIAGNOSTICS.MICRO_GAP_BLOCKED_PENDING,
       DIAGNOSTIC_SEVERITY.PENDING,
@@ -861,9 +869,10 @@ function evaluateGates(project, options) {
     if (status !== EMIT_STATUS.FAIL) status = EMIT_STATUS.PENDING;
   }
 
-  // A position a role has to reach -- an onset, a rest boundary, or a note
-  // release no release representation can move -- that G10 proves no admitted
-  // Final token sequence reaches and that no other G10 outcome decides
+  // A position a role has to reach -- an onset (a role's earliest onset after
+  // a silence shorter than any Final token among them), a rest boundary, or a
+  // note release no release representation can move -- that G10 proves no
+  // admitted Final token sequence reaches and that no other G10 outcome decides
   // (coverage NONE). FAIL, not PENDING. DIAGNOSTIC_SEVERITY.ERROR is "a
   // confirmed negative: this candidate cannot be Final-emitted as it stands",
   // and PENDING is "an unresolved Canonical/evidence question"; this is the
@@ -899,10 +908,28 @@ function evaluateGates(project, options) {
     const named = count === 1
       ? `${where(unreachable[0])} is ${what(unreachable[0])} its Final role has to reach, and no admitted Final token sequence reaches it`
       : `${count} ${unreachable.some(isRelease) ? 'onset, note release or rest boundaries' : 'onset or rest boundaries'} a Final role has to reach sit where no admitted Final token sequence reaches${count ? `, the first ${where(unreachable[0])}; unreachableBoundaries lists ${count > MAX_REPORTED_BOUNDARIES ? `the first ${MAX_REPORTED_BOUNDARIES}` : 'them'}` : ''}`;
+    // Two arithmetic facts back these entries, and the message states the ones
+    // that apply. A position whose whole-note denominator does not divide the
+    // lcm of the admitted token denominators is never a sum of token lengths;
+    // a role's earliest onset after beat 0 and before the shortest admitted
+    // token (LEADING_ONSET_REASON) is not either, whatever its denominator.
+    // With no leading-onset entry the sentence is exactly the one this proof
+    // has always carried.
+    const leading = unreachable.filter(item => item.reason === LEADING_ONSET_REASON);
+    const byDenominator = unreachable.filter(item => item.reason !== LEADING_ONSET_REASON);
+    const shortest = SHORTEST_ADMITTED_TOKEN_BEATS;
+    const arithmetic = !leading.length
+      ? `, whose whole-note denominator divides the lcm of the admitted token denominators; ${count > 1 ? 'none of these positions\' does' : 'this position\'s does not'}`
+      : [
+        byDenominator.length
+          ? `, whose whole-note denominator divides the lcm of the admitted token denominators; ${byDenominator.length > 1 ? `the denominators of ${byDenominator.map(item => item.position).join(', ')} do not` : `the denominator of ${byDenominator[0].position} does not`}; and`
+          : ',',
+        ` no admitted Final token is shorter than ${shortest.toString()} beat (${shortest.div(4).toString()} of a whole note), so no position after beat 0 and before beat ${shortest.toString()} is reached; ${leading.map(item => item.position).join(', ')} ${leading.length > 1 ? 'are such positions' : 'is such a position'}`,
+      ].join('');
     diagnostics.push(diagnostic(
       EMIT_DIAGNOSTICS.MICRO_GAP_BOUNDARY_NOT_FINAL_REPRESENTABLE,
       DIAGNOSTIC_SEVERITY.ERROR,
-      `G10 (${MICRO_GAP_BLOCKERS.BOUNDARY_NOT_FINAL_REPRESENTABLE}): ${named}. A role is written as consecutive tokens from beat 0, so every position it reaches is a sum of admitted token lengths, whose whole-note denominator divides the lcm of the admitted token denominators; ${count > 1 ? 'none of these positions\' does' : 'this position\'s does not'}. This is a proof about ${count > 1 ? 'those positions' : 'the position'}, not a search limit and not an unproven question: no search bound, budget, caution opt-in or evidence changes where ${count > 1 ? 'they are' : 'it is'}, and nothing is moved to make the role writable -- no attack, no rest, and no release that release representation refuses (one under a keep claim, or one with no valid representation). This candidate cannot be Final-emitted as it stands; the emitter fails closed.`,
+      `G10 (${MICRO_GAP_BLOCKERS.BOUNDARY_NOT_FINAL_REPRESENTABLE}): ${named}. A role is written as consecutive tokens from beat 0, so every position it reaches is a sum of admitted token lengths${arithmetic}. This is a proof about ${count > 1 ? 'those positions' : 'the position'}, not a search limit and not an unproven question: no search bound, budget, caution opt-in or evidence changes where ${count > 1 ? 'they are' : 'it is'}, and nothing is moved to make the role writable -- no attack, no rest, and no release that release representation refuses (one under a keep claim, or one with no valid representation). This candidate cannot be Final-emitted as it stands; the emitter fails closed.`,
       {
         blocker: MICRO_GAP_BLOCKERS.BOUNDARY_NOT_FINAL_REPRESENTABLE,
         unreachableBoundaryCount: count,
@@ -923,7 +950,10 @@ function evaluateGates(project, options) {
 
   // A source-supported sub-grid interval must survive untouched, and no admitted
   // Final token is shorter than the grid, so it cannot be written at all. The
-  // emitter refuses instead of shortening, absorbing or quantizing it.
+  // emitter refuses instead of shortening, absorbing or quantizing it. This is
+  // the emitter's answer to G10's
+  // MICRO_TIMING_SOURCE_SUPPORTED_NOT_FINAL_REPRESENTABLE, which G10 raises
+  // exactly when `preservedIntervalKeys` is non-empty.
   if (microGap.preservedIntervalKeys?.length) {
     diagnostics.push(diagnostic(
       EMIT_DIAGNOSTICS.SOURCE_SUPPORTED_INTERVAL_NOT_REPRESENTABLE,
