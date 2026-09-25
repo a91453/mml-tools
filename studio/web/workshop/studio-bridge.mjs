@@ -9,6 +9,7 @@
 // project VALIDATED or accepted.
 import * as i18n from "./i18n.mjs";
 import { $, say } from "./util.mjs";
+import * as release from "./release.mjs";
 import { listProjectSummaries, loadProject } from "../storage.mjs";
 import { projectSources, parseWorkshopHash, putReturn } from "../workshop-link.mjs";
 import { studioToWorkshop, workshopToStudio } from "./studio-mml.mjs";
@@ -51,6 +52,8 @@ const box = () => $("#studioBox");
 const showErr = msg => { const e = $("#studioErr"); e.textContent = msg; e.hidden = !msg; };
 
 async function openBox() {
+  // Studio's project database belongs to the release the worker now serves.
+  if (release.blocked()) return;
   showErr("");
   box().classList.add("on");
   const sel = $("#studioProject");
@@ -75,6 +78,7 @@ async function showProject(id) {
   const rows = $("#studioRows");
   rows.replaceChildren();
   showErr("");
+  if (release.isStale()) { current = null; showErr(i18n.t("pwa.stale")); return; }
   try { current = await loadProject(id); }
   catch (err) { current = null; showErr(i18n.t("studio.dbFailed", { msg: err?.message ?? "" })); return; }
   const sources = projectSources(current);
@@ -131,6 +135,7 @@ function describeWarning(w) {
 }
 
 function openSend() {
+  if (release.blocked()) return;
   pending = workshopToStudio(hooks.getTexts());
   const empty = pending.mml === "MML@,,,,,;";
   $("#studioSendText").value = pending.mml;
@@ -147,6 +152,7 @@ function openSend() {
 }
 
 function send() {
+  if (release.blocked()) return;
   if (!pending) return;
   let id;
   try {

@@ -46,6 +46,7 @@ import * as select from "./select.mjs";
 import * as storage from "./storage.mjs";
 import { setIcon } from "./icons.mjs";
 import * as studio from "./studio-bridge.mjs";
+import * as release from "./release.mjs";
 import * as bankStore from "../preview/soundbank-store.mjs";
 import { GameStyleBankError, loadGameStyleBank, loadGameStyleDef } from "../preview/game-style-bank.mjs";
 import { buildRoles, withSelection, renderHTML, runAt, MAX_HL_CHARS } from "./mml-highlight.mjs";
@@ -3195,11 +3196,24 @@ function renderSetup(parsed) {
   };
 }
 
+// The exporters, once loaded: a reload for a new release waits while one runs.
+let wavExport = null, videoExport = null;
+
+// What a reload would lose, or null. Autosave (flushed first) keeps the score
+// unless it is off or cannot write; then only a score equal to the library's
+// copy is safe.
+export function leaveBlocker() {
+  if (wavExport?.isBusy() || videoExport?.isBusy()) return i18n.t("pwa.busyExport");
+  if ((!storage.isAutosaveOn() || storage.isBroken()) && !savebox.isSaved()) return i18n.t("pwa.unsaved");
+  return null;
+}
+
 // Offline WAV mixdown (lazy: the exporter and its worker load on first use).
 function openWav() {
   const parsed = hasSound();
   if (!parsed) return false;
-  import("./audio-export.mjs").then(m => m.open(renderSetup(parsed)))
+  if (release.blocked()) return true;
+  import("./audio-export.mjs").then(m => { wavExport = m; m.open(renderSetup(parsed)); })
     .catch(err => say(describe(err, i18n.t("wav.failed"))));
   return true;
 }
@@ -3208,7 +3222,8 @@ function openWav() {
 function openVideo() {
   const parsed = hasSound();
   if (!parsed) return false;
-  import("./video.mjs").then(m => m.open(renderSetup(parsed)))
+  if (release.blocked()) return true;
+  import("./video.mjs").then(m => { videoExport = m; m.open(renderSetup(parsed)); })
     .catch(err => say(describe(err, i18n.t("waterfall.err.unknown"))));
   return true;
 }

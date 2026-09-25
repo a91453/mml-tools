@@ -69,6 +69,8 @@ async function go() {
 }
 
 // The most recent export, for the page's own checks (browser tests).
+export const isBusy = () => busy !== null;
+
 export let lastExport = null;
 
 function close() {

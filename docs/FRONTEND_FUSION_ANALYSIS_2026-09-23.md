@@ -804,3 +804,19 @@ Date: 2026-09-23
 單元測試 `studio/tests/workshop-*.test.mjs`；瀏覽器測試 `studio/browser-tests/workshop.mjs`
 （Chromium：從 Studio 開啟、語言切換、深淺主題、捲軸畫音符與復原、3MLE 匯出再匯入、WAV、
 影片預覽、送回 Studio 成為候選且不是 VALIDATED）。
+
+### 14.4 工作坊的新版提示（2026-09-25）
+
+§14.2 移植時沒有帶上早期前端的「更新到新版」（`pwaUpdateBtn`）。工作坊和 Studio 其他頁面共用同一份
+cache-first 的 Service Worker 快取，所以開著的工作坊分頁會一直跑舊版，直到重新載入。
+`studio/web/workshop/release.mjs` 改用 Studio 的 `pwa-update.mjs`，行為與 Studio 主頁一致：
+
+- **新版已下載**：標題列出現「套用新版」。按下後先寫出自動暫存，只重新載入這個分頁；其他開著的
+  Studio 分頁會標為 stale。
+- **其他分頁已套用新版**：這個分頁標為 stale，按鈕改成「重新載入」。WAV／影片匯出、`.mxl` 讀取、
+  從 Studio 開啟、送回 Studio 都會拒絕，因為這些操作會載入新版模組，或讀寫 Studio 的專案資料庫。
+- **重新載入會遺失資料時拒絕**：正在匯出 WAV／影片時拒絕；自動暫存關閉或無法寫入，而且樂譜與歌曲庫
+  存的版本不同時，也拒絕。
+
+驗證：`studio/browser-tests/workshop-update.mjs`（Chromium，實際的 Service Worker 更新）。
+它另外提供一份建置副本，在副本的 `sw.js` 改快取名稱來發布新版。

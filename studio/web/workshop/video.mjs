@@ -786,6 +786,8 @@ function initOnce() {
 
 const pumpFrames = () => { if (!framing) framing = requestAnimationFrame(frame); };
 
+export const isBusy = () => busy !== null;
+
 export function close() {
   if (busy) return;
   setupToken++;
