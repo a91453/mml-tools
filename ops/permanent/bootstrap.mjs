@@ -69,7 +69,7 @@ async function syncDirectory(path) {
   try { await dir.sync(); } finally { await dir.close(); }
 }
 
-export async function bootstrapStudio({ lock, trustZip, fetchArchive, cacheRoot = '/studio-cache', recoverCorrupt = false, port = 8080, host = '0.0.0.0', log = logDefault }) {
+export async function bootstrapStudio({ lock, trustZip, fetchArchive, soundBanks = null, cacheRoot = '/studio-cache', recoverCorrupt = false, port = 8080, host = '0.0.0.0', log = logDefault }) {
   need(lock.schema === 'studio-durable-release-v1', 'Release lock schema missing');
   need(/^[a-f0-9]{64}$/.test(lock.buildId) && lock.trust.sourceSha === lock.sourceSha, 'Release/trust pins missing');
   const parent = resolve(cacheRoot, 'durable-v1');
@@ -149,20 +149,58 @@ export async function bootstrapStudio({ lock, trustZip, fetchArchive, cacheRoot 
     await rename(markerTemp, ready); await syncDirectory(releaseRoot);
     log('READY_MARKER_WRITTEN_AFTER_VERIFICATION', receipt);
     const health = Buffer.from(JSON.stringify({ status: 'ready', bootstrap: mode, ...receipt }));
+    // Sound banks are never part of the reviewed artifact (its verifier
+    // rejects them). They are pinned separately, read from the private bucket
+    // on first request, checked against their pins and kept in memory; a
+    // failed read answers 503 and is retried by the next request.
+    const banks = new Map();
+    if (soundBanks) {
+      need(soundBanks.schema === 'studio-sound-banks-v1' && Array.isArray(soundBanks.banks), 'Sound bank pin schema missing');
+      for (const bank of soundBanks.banks) for (const pin of bank.files) {
+        need(/^banks\/[a-z0-9-]+\/[a-f0-9]{64}\.[a-z0-9]+$/.test(pin.path) && pin.path.includes(pin.sha256) && Number.isSafeInteger(pin.bytes) && pin.bytes > 0 && typeof pin.objectKey === 'string' && pin.objectKey, `Invalid sound bank pin: ${pin.path}`);
+        need(!files.has(pin.path) && !banks.has(pin.path), `Sound bank path collides: ${pin.path}`);
+        banks.set(pin.path, { pin, bytes: null, pending: null });
+      }
+    }
+    const bankBytes = entry => {
+      if (entry.bytes) return Promise.resolve(entry.bytes);
+      if (!entry.pending) {
+        entry.pending = (async () => {
+          const bytes = Buffer.from(await fetchArchive(entry.pin));
+          need(bytes.length === entry.pin.bytes && hash(bytes) === entry.pin.sha256, `Sound bank SHA256 mismatch: ${entry.pin.path}`);
+          log('SOUND_BANK_VERIFIED', { path: entry.pin.path, sha256: entry.pin.sha256, bytes: bytes.length });
+          return (entry.bytes = bytes);
+        })();
+        entry.pending.catch(error => log('SOUND_BANK_UNAVAILABLE', { path: entry.pin.path, reason: error.message }))
+          .then(() => { entry.pending = null; });
+      }
+      return entry.pending;
+    };
     const types = { '.html': 'text/html; charset=utf-8', '.mjs': 'application/javascript; charset=utf-8', '.js': 'application/javascript; charset=utf-8', '.css': 'text/css; charset=utf-8', '.json': 'application/json', '.webmanifest': 'application/manifest+json', '.svg': 'image/svg+xml', '.png': 'image/png' };
-    const server = createServer((req, res) => {
+    // Studio Web keeps the user's projects in same-origin IndexedDB and has
+    // state-changing UI, and it never frames itself, so no page may frame
+    // it (clickjacking). X-Frame-Options covers engines without CSP 3.
+    const secure = { 'X-Content-Type-Options': 'nosniff', 'Content-Security-Policy': "frame-ancestors 'none'", 'X-Frame-Options': 'DENY' };
+    const server = createServer(async (req, res) => {
       if (!['GET', 'HEAD'].includes(req.method)) { res.writeHead(405); res.end(); return; }
-      try {
-        const path = decodeURIComponent(new URL(req.url, 'http://localhost').pathname);
-        const name = path === '/' ? 'index.html' : path.slice(1);
-        const bytes = path === '/health' ? health : files.get(name);
-        if (!bytes) { res.writeHead(404, { 'Cache-Control': 'no-store' }); res.end('Not found'); return; }
-        // Studio Web keeps the user's projects in same-origin IndexedDB and has
-        // state-changing UI, and it never frames itself, so no page may frame
-        // it (clickjacking). X-Frame-Options covers engines without CSP 3.
-        res.writeHead(200, { 'Content-Type': path === '/health' ? 'application/json' : (types[extname(name)] ?? 'application/octet-stream'), 'Content-Length': bytes.length, 'Cache-Control': 'no-store', 'X-Content-Type-Options': 'nosniff', 'Content-Security-Policy': "frame-ancestors 'none'", 'X-Frame-Options': 'DENY' });
+      let path;
+      try { path = decodeURIComponent(new URL(req.url, 'http://localhost').pathname); }
+      catch { res.writeHead(400); res.end('Bad request'); return; }
+      const name = path === '/' ? 'index.html' : path.slice(1);
+      const bank = banks.get(name);
+      if (bank) {
+        let bytes;
+        try { bytes = await bankBytes(bank); }
+        catch { res.writeHead(503, { 'Cache-Control': 'no-store', 'Retry-After': '30', ...secure }); res.end('Sound bank unavailable'); return; }
+        // The path carries the SHA-256, so the bytes behind it never change.
+        res.writeHead(200, { 'Content-Type': bank.pin.contentType ?? 'application/octet-stream', 'Content-Length': bytes.length, 'Cache-Control': 'public, max-age=31536000, immutable', ...secure });
         res.end(req.method === 'HEAD' ? undefined : bytes);
-      } catch { res.writeHead(400); res.end('Bad request'); }
+        return;
+      }
+      const bytes = path === '/health' ? health : files.get(name);
+      if (!bytes) { res.writeHead(404, { 'Cache-Control': 'no-store' }); res.end('Not found'); return; }
+      res.writeHead(200, { 'Content-Type': path === '/health' ? 'application/json' : (types[extname(name)] ?? 'application/octet-stream'), 'Content-Length': bytes.length, 'Cache-Control': 'no-store', ...secure });
+      res.end(req.method === 'HEAD' ? undefined : bytes);
     });
     await new Promise((resolve, reject) => { server.once('error', reject); server.listen(port, host, resolve); });
     log('SERVER_STARTED', { port: server.address().port, bootstrap: mode, buildId: lock.buildId, cacheId: lock.cacheId });

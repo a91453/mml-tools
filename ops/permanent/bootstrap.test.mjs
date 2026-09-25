@@ -79,3 +79,74 @@ test('bad transport bytes and bad trust bytes never commit ready or start a serv
     } finally { await rm(cacheRoot, { recursive: true, force: true }); }
   }
 });
+
+test('pinned sound banks are read on first request, verified, kept, and a failed read is retried', async () => {
+  const cacheRoot = await mkdtemp(resolve(tmpdir(), 'studio-bank-test-'));
+  const { createHash } = await import('node:crypto');
+  const good = Buffer.from('RIFF fixture bank bytes');
+  const sha256 = createHash('sha256').update(good).digest('hex');
+  const pin = { extension: '.dls', path: `banks/test/${sha256}.dls`, objectKey: `banks/test/${sha256}.dls`, sha256, bytes: good.length, contentType: 'application/octet-stream' };
+  const soundBanks = { schema: 'studio-sound-banks-v1', banks: [{ id: 'test', files: [pin] }] };
+  const events = [];
+  const answers = [Error('bucket down'), Buffer.from('RIFF fixture bank bytez'), good];
+  let bankReads = 0;
+  const fetchArchive = async requested => {
+    if (requested.objectKey === lock.artifact.objectKey) return archive;
+    assert.equal(requested.objectKey, pin.objectKey);
+    const answer = answers[bankReads++];
+    if (answer instanceof Error) throw answer;
+    return answer;
+  };
+  let server;
+  try {
+    ({ server } = await bootstrapStudio({ lock, trustZip, cacheRoot, soundBanks, port: 0, host: '127.0.0.1', log: (event, data) => events.push({ event, ...data }), fetchArchive }));
+    const url = `http://127.0.0.1:${server.address().port}/${pin.path}`;
+    for (const reason of ['bucket down', 'SHA256 mismatch']) {
+      const refused = await fetch(url);
+      assert.equal(refused.status, 503);
+      assert.equal(refused.headers.get('cache-control'), 'no-store');
+      await refused.arrayBuffer();
+      assert.ok(events.some(x => x.event === 'SOUND_BANK_UNAVAILABLE' && x.reason.includes(reason)), reason);
+    }
+    const served = await Promise.all([fetch(url), fetch(url)]);
+    for (const response of served) {
+      assert.equal(response.status, 200);
+      assert.equal(response.headers.get('cache-control'), 'public, max-age=31536000, immutable');
+      assert.equal(response.headers.get('x-content-type-options'), 'nosniff');
+      assert.equal(response.headers.get('x-frame-options'), 'DENY');
+      assert.deepEqual(Buffer.from(await response.arrayBuffer()), good);
+    }
+    const head = await fetch(url, { method: 'HEAD' });
+    assert.equal(head.status, 200); assert.equal(head.headers.get('content-length'), String(good.length));
+    assert.equal(bankReads, 3, 'two refusals, then one read shared by every later request');
+    assert.equal((await fetch(`http://127.0.0.1:${server.address().port}/banks/test/${'0'.repeat(64)}.dls`)).status, 404);
+  } finally {
+    if (server) await close(server);
+    await rm(cacheRoot, { recursive: true, force: true });
+  }
+});
+
+test('a sound bank pin that could shadow the artifact or escape banks/ refuses to start', async () => {
+  for (const path of ['index.html', `banks/../x/${'a'.repeat(64)}.dls`]) {
+    const cacheRoot = await mkdtemp(resolve(tmpdir(), 'studio-bank-pin-test-'));
+    const soundBanks = { schema: 'studio-sound-banks-v1', banks: [{ id: 'x', files: [{ path, objectKey: 'k', sha256: 'a'.repeat(64), bytes: 1 }] }] };
+    const events = [];
+    try {
+      await assert.rejects(bootstrapStudio({ lock, trustZip, cacheRoot, soundBanks, port: 0, host: '127.0.0.1', log: event => events.push(event), fetchArchive: async () => archive }), /Invalid sound bank pin/);
+      assert.ok(!events.includes('SERVER_STARTED'));
+    } finally { await rm(cacheRoot, { recursive: true, force: true }); }
+  }
+});
+
+test('the committed sound bank pins are well formed', async () => {
+  const pins = JSON.parse(await readFile(new URL('./sound-banks.json', import.meta.url), 'utf8'));
+  assert.equal(pins.schema, 'studio-sound-banks-v1');
+  for (const bank of pins.banks) {
+    assert.match(bank.source.zipSha256, /^[a-f0-9]{64}$/);
+    assert.deepEqual(bank.files.map(pin => pin.extension).sort(), ['.def', '.dls']);
+    for (const pin of bank.files) {
+      assert.equal(pin.path, `banks/${bank.id}/${pin.sha256}${pin.extension}`);
+      assert.equal(pin.objectKey, pin.path);
+    }
+  }
+});

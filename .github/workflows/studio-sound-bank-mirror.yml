@@ -1,0 +1,101 @@
+name: Studio sound bank mirror
+
+# Copies a pinned sound bank from the owner's draft Release into the private
+# Railway bucket at the objectKeys in ops/permanent/sound-banks.json. The
+# bank is never committed to Git and never enters the reviewed artifact; the
+# Studio Web function reads it from the bucket and serves it same-origin.
+# Run on demand only. Never overwrites: an existing object is only read back
+# and must already match its pin.
+
+on:
+  workflow_dispatch:
+    inputs:
+      bank:
+        description: Bank id in ops/permanent/sound-banks.json
+        required: true
+        default: game-style
+
+concurrency:
+  group: studio-sound-bank-mirror
+  cancel-in-progress: false
+
+permissions:
+  # Draft Releases are only visible to a token that can write contents.
+  contents: write
+
+jobs:
+  mirror:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Fetch the bank from its Release and verify the pins
+        env:
+          GH_TOKEN: ${{ github.token }}
+          BANK: ${{ inputs.bank }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          pins=ops/permanent/sound-banks.json
+          bank="$(jq -ce --arg id "$BANK" '.banks[] | select(.id == $id)' "$pins")"
+          release="$(jq -r '.source.release' <<<"$bank")"
+          zip_sha="$(jq -r '.source.zipSha256' <<<"$bank")"
+          info="$(gh api --paginate "repos/$GITHUB_REPOSITORY/releases" | jq -cs --arg tag "$release" '[.[][] | select(.tag_name == $tag)] | first')"
+          test "$info" != null || { echo "Release $release not found"; exit 1; }
+          mkdir -p /tmp/bank
+          asset="$(jq -r '[.assets[] | select(.name | endswith(".zip"))] | first | .url // empty' <<<"$info")"
+          if [ -n "$asset" ]; then
+            curl -fsSL -H "Authorization: Bearer $GH_TOKEN" -H 'Accept: application/octet-stream' -o /tmp/bank/source.zip "$asset"
+          else
+            # A ZIP dropped into the Release description is an attachment link.
+            link="$(jq -r '.body // ""' <<<"$info" | grep -oE 'https://github\.com/user-attachments/files/[0-9]+/[A-Za-z0-9._-]+\.zip' | head -n1)"
+            test -n "$link" || { echo "Release $release carries no ZIP"; exit 1; }
+            curl -fsSL -o /tmp/bank/source.zip "$link"
+          fi
+          test "$(sha256sum /tmp/bank/source.zip | cut -d' ' -f1)" = "$zip_sha" || { echo "Release ZIP does not match its pin"; exit 1; }
+          mkdir /tmp/bank/unzipped
+          unzip -q /tmp/bank/source.zip -d /tmp/bank/unzipped
+          mkdir /tmp/bank/out
+          jq -c '.files[]' <<<"$bank" | while read -r pin; do
+            ext="$(jq -r .extension <<<"$pin")"
+            mapfile -t found < <(find /tmp/bank/unzipped -type f -iname "*$ext")
+            test "${#found[@]}" = 1 || { echo "Expected exactly one $ext in the ZIP"; exit 1; }
+            out="/tmp/bank/out/$(jq -r .sha256 <<<"$pin")$ext"
+            cp "${found[0]}" "$out"
+            test "$(sha256sum "$out" | cut -d' ' -f1)" = "$(jq -r .sha256 <<<"$pin")"
+            test "$(stat -c %s "$out")" = "$(jq -r .bytes <<<"$pin")"
+          done
+          echo "$bank" > /tmp/bank/pins.json
+      - name: Mirror into the durable bucket without overwriting, then read back
+        env:
+          AWS_ACCESS_KEY_ID: ${{ secrets.RELEASE_S3_ACCESS_KEY_ID }}
+          AWS_SECRET_ACCESS_KEY: ${{ secrets.RELEASE_S3_SECRET_ACCESS_KEY }}
+          AWS_DEFAULT_REGION: ${{ secrets.RELEASE_S3_REGION }}
+          ENDPOINT: ${{ secrets.RELEASE_S3_ENDPOINT }}
+          BUCKET: ${{ secrets.RELEASE_S3_BUCKET }}
+          AWS_REQUEST_CHECKSUM_CALCULATION: when_required
+          AWS_RESPONSE_CHECKSUM_VALIDATION: when_required
+        shell: bash
+        run: |
+          set -euo pipefail
+          for name in AWS_ACCESS_KEY_ID AWS_SECRET_ACCESS_KEY AWS_DEFAULT_REGION ENDPOINT BUCKET; do
+            test -n "${!name}" || { echo "Missing bucket secret for $name"; exit 1; }
+          done
+          # The production bootstrap reads the bucket with Bun.S3Client's
+          # default path-style addressing; use the same here.
+          aws configure set default.s3.addressing_style path
+          jq -c '.files[]' /tmp/bank/pins.json | while read -r pin; do
+            sha="$(jq -r .sha256 <<<"$pin")"
+            bytes="$(jq -r .bytes <<<"$pin")"
+            key="$(jq -r .objectKey <<<"$pin")"
+            file="/tmp/bank/out/$sha$(jq -r .extension <<<"$pin")"
+            if aws s3api head-object --bucket "$BUCKET" --key "$key" --endpoint-url "$ENDPOINT" > /dev/null 2>&1; then
+              uploaded=false
+            else
+              aws s3api put-object --bucket "$BUCKET" --key "$key" --body "$file" --content-type "$(jq -r .contentType <<<"$pin")" --endpoint-url "$ENDPOINT" > /dev/null
+              uploaded=true
+            fi
+            aws s3api get-object --bucket "$BUCKET" --key "$key" --endpoint-url "$ENDPOINT" "$file.readback" > /dev/null
+            test "$(sha256sum "$file.readback" | cut -d' ' -f1)" = "$sha"
+            test "$(stat -c %s "$file.readback")" = "$bytes"
+            echo "{\"status\":\"SOUND_BANK_MIRROR_VERIFIED\",\"objectKey\":\"$key\",\"sha256\":\"$sha\",\"bytes\":$bytes,\"uploaded\":$uploaded}"
+          done
