@@ -93,7 +93,13 @@ export async function runWorkshopChecks({ page, base, idle, file, screenshot, pr
   // 30 s wait ran out (desktop Chromium, once in CI on 2b5fe41).
   const bankLoaded = async name => {
     try {
-      await page.waitForFunction(name => document.querySelector('#dlsName')?.textContent.startsWith(name), name);
+      // Named and not followed by "reading" (a pick still being read names
+      // the bank it had).
+      const reading = await page.evaluate(() => import('./i18n.mjs').then(i18n => i18n.t('ui.bankReading')));
+      await page.waitForFunction(([name, reading]) => {
+        const text = document.querySelector('#dlsName')?.textContent ?? '';
+        return text.startsWith(name) && !text.endsWith(reading);
+      }, [name, reading]);
     } catch (error) {
       const seen = await page.evaluate(async () => {
         const engine = await import('./engine.mjs').catch(e => ({ unreadable: e.message }));
@@ -269,6 +275,10 @@ export async function runWorkshopChecks({ page, base, idle, file, screenshot, pr
   const sentBeforeOverlap = await bankSends();
   await page.locator('#dls').setInputFiles({ name: 'first.sf2', mimeType: 'application/octet-stream', buffer: sawBank });
   await page.waitForFunction(() => window.heldBankCheck?.handed);
+  // While the pick is checked, play still uses the bank the synth holds, and
+  // the label names that bank, followed by "reading".
+  const pendingLabel = await page.locator('#dlsName').textContent();
+  assert.ok(pendingLabel.startsWith('saw.sf2 · ') && pendingLabel.endsWith(await t('ui.bankReading')), `a pending pick keeps naming the bank that plays: ${pendingLabel}`);
   await page.locator('#dls').setInputFiles({ name: 'second.sf2', mimeType: 'application/octet-stream', buffer: sawBank });
   await page.evaluate(() => window.heldBankCheck.release());
   await bankLoaded('second.sf2');

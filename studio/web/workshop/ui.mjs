@@ -70,11 +70,14 @@ function rememberHintDefaults() {
 
 const resetHint = id => { const el = $(id); if (el) el.textContent = hintDefaults.get(id) ?? ""; };
 
+// The bank the synth holds, as the label names it; empty when none is named.
+const namedBank = () => (!bankLabel || bankBuiltin ? "" :
+  i18n.t("ui.bankLabel", { bank: bankLabel, n: presets.length })
+  + (filterNote ? i18n.t("ui.filterNoteWrap", { note: filterNote }) : ""));
+
 function updateHints() {
   if (!bankLabel || bankBuiltin) resetHint("#dlsName");
-  else $("#dlsName").textContent =
-    i18n.t("ui.bankLabel", { bank: bankLabel, n: presets.length })
-    + (filterNote ? i18n.t("ui.filterNoteWrap", { note: filterNote }) : "");
+  else $("#dlsName").textContent = namedBank();
 
   if (!defLabel || defBuiltin) { resetHint("#defName"); return; }
   const matched = rawPresets.length ? presets.filter(p => defMap.has(p.program)).length : null;
@@ -3355,7 +3358,10 @@ export function init() {
     e.target.value = "";
     const pick = ++bankPicks;
     if (defBuiltin) { defMap = new Map(); defNames = new Map(); defLabel = ""; defBuiltin = false; }
-  $("#dlsName").textContent = i18n.t("ui.bankReading");
+    // While the pick is read, play and audition still use the bank the synth
+    // holds, so the label keeps naming it, followed by "reading".
+    const had = namedBank();
+    $("#dlsName").textContent = had ? `${had} · ${i18n.t("ui.bankReading")}` : i18n.t("ui.bankReading");
     // Kept in Studio's local bank store (never uploaded) so the Studio preview
     // and the next Workshop visit use the same bank.
     try {
