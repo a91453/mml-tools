@@ -42,7 +42,25 @@ self.onmessage = async ({ data }) => {
     // must not be reachable unless the published Canonical package verified.
     // Listening sessions: read an MML string with the repository parser. It
     // reads a string and returns a song; it never sees a workspace.
-    else if (data.action === 'parseListening') result = (await import('./listen-model.mjs')).parseListening(...data.args);
+    // The listen model is imported on first use, after initialization, but a
+    // failed fetch of it (a TypeError, as for model.mjs) breaks this instance
+    // the same way: the browser keeps the failed import for the Worker's
+    // lifetime, so every later session would get it back. From then on the
+    // instance answers as one that could not initialize, without running this
+    // request or any later one, so the client replaces it and moves what it
+    // held. None of that has run: an answer posted before this one reaches the
+    // client first, and a request dispatched after it is refused above.
+    else if (data.action === 'parseListening') {
+      let listen;
+      try { listen = await import('./listen-model.mjs'); }
+      catch (error) {
+        if (!(error instanceof TypeError)) throw error;
+        initializationError = error.message;
+        initializationRetryable = true;
+        return self.postMessage({ id: data.id, error: initializationError, initializationRetryable });
+      }
+      result = listen.parseListening(...data.args);
+    }
     else if (['newWorkspace', 'intake', 'intakeMxl', 'intakeMidi', 'analyzeWorkspace', 'invalidate', 'importWorkspace', 'recordReview', 'recordLeadEvidence', 'recordLeadPromotionEvidence', 'recordAcceptedDecision', 'previewAcceptedDecision', 'acceptPreviewedDecision', 'clearAcceptedDecisions', 'recordAcceptance', 'recordPlayerReadback', 'clearPlayerReadback', 'generateFinalDelivery', 'applyFinalDelivery', 'previewMobileAdaptation', 'applyWorkspaceMobileAdaptation', 'clearMobileAdaptation', 'previewFinalReduction', 'applyWorkspaceFinalReduction', 'clearFinalReduction'].includes(data.action)) result = model[data.action](...data.args);
     else throw Error('UNSUPPORTED: worker action');
     self.postMessage({ id: data.id, result });
