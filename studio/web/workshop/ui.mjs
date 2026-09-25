@@ -304,8 +304,11 @@ function applyInstruments(trackIdx) {
   }
 }
 
-// The bank for offline rendering: the file just picked, or the copy kept in
-// Studio's local bank store (preview/soundbank-store.mjs). Never a URL.
+// The bank for offline rendering: exactly the bytes the synth was loaded
+// with, whether picked here or read from Studio's local bank store at boot
+// (preview/soundbank-store.mjs), so an export renders the bank the page names
+// even after another tab or an overtaken pick changed what the store keeps.
+// The store itself is read only when no such copy exists. Never a URL.
 const bankSource = () => (rawPresets.length
   ? (bankFile ? { kind: "file", file: bankFile } : { kind: "store" })
   : null);
@@ -635,7 +638,9 @@ export async function loadStoredBank() {
   try { stored = await bankStore.loadBank(); }
   catch (err) { console.warn("[Workshop] stored bank:", err); }
   if (!stored) return;
-  try { await queueBank(() => picked() ? undefined : loadBank(stored.bytes, stored.name, false, null)); }
+  // A copy of the bytes the synth gets, taken before they are handed over, is
+  // what an export renders (bankSource).
+  try { await queueBank(() => picked() ? undefined : loadBank(stored.bytes, stored.name, false, new Blob([stored.bytes]))); }
   catch (err) {
     console.warn("[Workshop] stored bank failed to load:", err);
     // Said on the page, as a failed pick is, unless a pick has been made

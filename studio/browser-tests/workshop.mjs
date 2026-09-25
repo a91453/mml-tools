@@ -529,6 +529,25 @@ export async function runWorkshopChecks({ page, base, idle, file, screenshot, pr
   assert.ok(peak > 100, 'the render is not silent');
   await page.locator('#wavCancel').click();
 
+  // An export renders the bank the page plays, even when the store no longer
+  // keeps it (another tab removed or replaced it): a bank read from the store
+  // at boot is kept as the bytes the synth was given, not read back later.
+  await page.reload(); await page.locator('#unverified').waitFor();
+  await bankLoaded('saw.sf2');
+  await page.evaluate(async () => (await import('../preview/soundbank-store.mjs')).clearBank());
+  await command('#file');
+  await page.locator('#mixGo').click();
+  await page.locator('#wavBox.on').waitFor();
+  const kept = await download(page, () => page.locator('#wavGo').click());
+  assert.equal(kept.bytes.subarray(8, 12).toString('latin1'), 'WAVE', 'the export still renders the bank the page names');
+  assert.ok(kept.bytes.length > 44 + 44100, 'a non-empty render from the bank the synth holds');
+  await page.locator('#wavCancel').click();
+  // Keep the bank in the store again for the checks below.
+  await command('#gear');
+  await page.locator('#dls').setInputFiles({ name: 'saw.sf2', mimeType: 'application/octet-stream', buffer: Buffer.from(BasicSoundBank.getSampleSoundBankFile()) });
+  await bankLoaded('saw.sf2');
+  await closeSettings();
+
   // ── the video dialog renders its audio and draws a frame ──────────────────
   await command('#file');
   await page.locator('#videoOpen').click();
