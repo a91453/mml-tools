@@ -1596,7 +1596,13 @@ function mirrorListeningNote(projectId,op){
     resolve();
   }catch(error){reject(error);}},{revisionBound:false,projectBound:false});});
 }
-listening=createListening({root:$('#listening'),call,message,copyText,audio:listenAudio,saveProjectNote:mirrorListeningNote});
+// A link on the page address is opened while boot is still starting the
+// Worker, so a first Worker that fails to start rejects its parse with
+// WORKER_UNAVAILABLE too. parseListening changes nothing either, so listening
+// asks again as boot does below, until the client's replacement budget is
+// spent (WORKER_GIVEN_UP).
+const listenCall=(action,...args)=>call(action,...args).catch(error=>{if(error.message!==WORKER_UNAVAILABLE)throw error;return listenCall(action,...args);});
+listening=createListening({root:$('#listening'),call:listenCall,message,copyText,audio:listenAudio,saveProjectNote:mirrorListeningNote});
 $('#open-listening').onclick=()=>listening.showSessions().catch(error=>message(error.message,true));
 listening.importFromLocation().catch(error=>message(error.message,true));
 addEventListener('hashchange',()=>listening.importFromLocation().catch(error=>message(error.message,true)));

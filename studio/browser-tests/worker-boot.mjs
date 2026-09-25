@@ -11,19 +11,22 @@ import { encodeListenLink } from '../web/listen-link.mjs';
 // route, and the counts below are the analysis Workers' own requests.
 export async function runWorkerBootChecks({ browser, base }) {
   // With a listen link, boot and the session the link opens are both awaited,
-  // and every status line the page showed is recorded (a later line, or the
-  // timeout, may replace one).
+  // and the actions the page posted to its Workers and every status line it
+  // showed are recorded (a later line, or the timeout, may replace one).
   const boot = async (pattern, handle, { listen = null } = {}) => {
     const context = await browser.newContext({ serviceWorkers: 'block' });
-    let requests = 0;
-    await context.route(pattern, route => handle(route, ++requests));
-    const page = await context.newPage();
+    let requests = 0, page = null;
+    await context.route(pattern, route => handle(route, ++requests, page));
+    page = await context.newPage();
     let workers = 0;
     page.on('worker', worker => { if (new URL(worker.url()).pathname === '/studio/web/worker.mjs') workers++; });
     const errors = [];
     page.on('pageerror', error => errors.push(error.message));
     if (listen) {
       await page.addInitScript(() => {
+        const post = Worker.prototype.postMessage;
+        window.postedActions = [];
+        Worker.prototype.postMessage = function (message, ...rest) { if (message?.action) window.postedActions.push(message.action); return post.call(this, message, ...rest); };
         window.messages = [];
         new MutationObserver(() => { const text = document.querySelector('#message')?.textContent; if (text && window.messages.at(-1) !== text) window.messages.push(text); }).observe(document, { subtree: true, childList: true, characterData: true });
       });
@@ -108,4 +111,18 @@ export async function runWorkerBootChecks({ browser, base }) {
   assert.ok(listenParse.messages.includes(listenParse.listen_error), 'the status line reports the failure the panel shows');
   assert.equal(listenParse.listen_sessions, 1);
   assert.equal(listenParse.boot_error, false, 'analysis is unaffected');
+  // The first Worker fails to start after the link asked it to parse: the
+  // parse is rejected with WORKER_UNAVAILABLE alongside boot's identity, and
+  // is asked again of the replacement as identity is.
+  const listenStatic = await boot('**/studio/web/canonical-package.mjs', async (route, n, page) => {
+    if (n !== 1) return route.continue();
+    await page.waitForFunction(() => window.postedActions.includes('parseListening'));
+    return route.abort('failed');
+  }, { listen });
+  assert.equal(listenStatic.listen_title, 'Worker 載入試聽', `a link opened while the first Worker fails to start still opens: ${JSON.stringify(listenStatic)}`);
+  assert.ok(listenStatic.messages.includes(opened));
+  assert.equal(listenStatic.requests, 2);
+  assert.equal(listenStatic.workers, 2);
+  assert.equal(listenStatic.boot_error, false);
+  assert.deepEqual(listenStatic.errors, []);
 }
