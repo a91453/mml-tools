@@ -1,0 +1,551 @@
+{
+ "open": [
+  {
+   "title": "Readiness and machine delivery can say 'ready' for a song the Final emitter refuses to write",
+   "source_pr": "#91 -> #95 (listed out of scope) + parked-branch claude/delivery-emission-check-parked",
+   "kind": "bug",
+   "severity": "medium",
+   "status": "open",
+   "user_impact": "Three kinds of song pass G10 and show machine delivery ready, then fail only when Finalize runs: a note that drifted from its baseline with no release record, a Tempo change at a position Final cannot reach (or past a role's end), and a duration the bounded search cannot write (e.g. 478/480). A pasted valid MML of these kinds shows VALIDATED in Studio Web; no wrong Final is ever delivered.",
+   "evidence": "Disclosed at docs/FINAL_MML_EMITTER.md:463-470 ('Still outside G10, and disclosed'); PR #95 body 'Out of scope (unchanged): baseline drift, off-grid Tempo, caution denominators, search limits'. studio/backend/final/readiness.mjs:615 computes machineDelivery from the gates only. I ran the parked branch's studio/tests/final-emission-delivery.test.mjs against an origin/main 42f38f6 snapshot: all three class tests pass their preconditions (G10 PASS, gate map ready, emitter FAIL with BOUNDARY_NOT_FINAL_REPRESENTABLE / DURATION_SEARCH_POLICY_LIMIT) and fail only at line 139 (machineDelivery.ready expected false, actual true).",
+   "fix_size": "medium",
+   "note": "Merged from 5 candidates: baseline drift, off-grid Tempo, caution denominators, the parked catch-all, and the 'readiness says READY' item. The fix exists on branch origin/claude/delivery-emission-check-parked (40f1f08) but is unmerged; see the parked-branch item and the VALIDATED->CANDIDATE owner decision. This is disclosed, not a decided by-design rule."
+  },
+  {
+   "title": "When Finalize is refused by the emitter, the run offers operations that cannot fix it",
+   "source_pr": "parked-branch review (pre-existing on main)",
+   "kind": "bug",
+   "severity": "medium",
+   "status": "open",
+   "user_impact": "When Finalize fails because the emitter refuses (e.g. the three classes above), the run tells an agent to call reviewCandidate, recordConfirmations, approveCore3SourceChange, reviewLeadEvidence or attachAudioAlignment, and its technical request says 'finalize'. None of these changes the refusal, so an agent can loop, and the request detail does not carry the emitter's error code.",
+   "evidence": "studio/backend/application/run-service.mjs:2414 hard-codes those five operations for every non-delivered finalize; the detail at :2416-2420 carries only emit_status, technical_validation and player_readback_binding. studio/backend/application/run-contracts.mjs:197 maps technical -> ['finalize']. The parked branch still has the same hard-coded list (branch run-service.mjs:2419).",
+   "fix_size": "small",
+   "note": "Merged from 2 candidates. Separate from the READY item: it affects the normal run path today."
+  },
+  {
+   "title": "An imported Canonical IR's own 'accepted' decisions clear the blocking cross-source harmony gate (Gate 5)",
+   "source_pr": "#90 ('Needs an owner decision (not changed)')",
+   "kind": "bug",
+   "severity": "medium",
+   "status": "open",
+   "user_impact": "An MCP or API caller can upload a canonical_project with a self-declared accepted decision naming the conflicting events, and Gate 5 reads PASS with no review. Studio Web demotes the same decisions to pending, so the two surfaces disagree on the same file.",
+   "evidence": "studio/backend/application/intake-service.mjs:108-135: an untrusted import strips gate-evidence metadata keys but rebuilds decisions verbatim through createArbitrationDecision (studio/backend/canonical/index.mjs:157-173, which accepts status 'accepted' with evidence []). studio/backend/arbitration/harmony.mjs:90-96 counts any accepted decision naming both ids as resolved. studio/web/model.mjs:755 forces imported decisions to 'pending'. PR #90 body lists it under 'Needs an owner decision'.",
+   "fix_size": "medium",
+   "note": "Merged from 2 candidates. Blocked on an owner decision: demoting imported decisions would leave such projects blocked, because the service has no operation to re-accept a decision."
+  },
+  {
+   "title": "One dropped request for listen-model.mjs breaks every listening session until the page is reloaded",
+   "source_pr": "#93",
+   "kind": "bug",
+   "severity": "medium",
+   "status": "open",
+   "user_impact": "If the listen model's module request fails once (for example on the first visit from a studio_listen link, before a service worker controls the page), every listen link and saved session afterwards fails with 'Failed to fetch dynamically imported module …/listen-model.mjs' until the user reloads by hand.",
+   "evidence": "studio/web/worker.mjs:45 imports ./listen-model.mjs per request, outside the init path, and its failure is returned at :49 as a plain error without initializationRetryable, so studio/web/worker-client.mjs:38 never replaces the Worker (and :43 resets the restart budget). I re-ran scratchpad/pr93-open/dyn-cache.mjs in Chromium 141.0.7390.37: 3 imports, 1 request, 3 TypeErrors, so the failed import is cached for the Worker's lifetime.",
+   "fix_size": "small",
+   "note": "Same failure class #91/#93 fixed for model.mjs. Fix options: import listen-model.mjs during init, or treat a TypeError from that import as a reason to replace the Worker."
+  },
+  {
+   "title": "The Technical Timing Repair option cannot take effect through Finalize, runs, the API or MCP",
+   "source_pr": "#90 ('Needs an owner decision (not changed)')",
+   "kind": "bug",
+   "severity": "low",
+   "status": "open",
+   "user_impact": "A caller who sends technical_timing_repair: true still gets Finalize refused on micro-timing when there is residue to repair, and nothing changes when there is none. The option is advertised but does nothing.",
+   "evidence": "studio/backend/application/final-service.mjs:247-253 refuses any blocking gate (microTiming included) before emitFinalMml at :261. It is advertised at server/mcp-studio.mjs:344, server/api.mjs:369 and capabilities.mjs:138. The code's own comments confirm it never reaches the repair: run-contracts.mjs:201-204 and docs/TECHNICAL_TIMING_REPAIR.md:388-389.",
+   "fix_size": "medium",
+   "note": "Merged from 2 candidates. Safe, because nothing wrong is emitted. Owner decision: grade the repaired candidate in readiness, or remove the option from these surfaces."
+  },
+  {
+   "title": "Overlapping sound bank picks are not ordered, so Studio can keep the older pick",
+   "source_pr": "#90 (follow-up list) / #94 (closed)",
+   "kind": "bug",
+   "severity": "low",
+   "status": "open",
+   "user_impact": "If a user picks a large bank and then a small one before the first check finishes, Studio can end up storing and showing the first bank. In the Workshop, a pick that has been overtaken is still stored and loaded briefly before the newer pick replaces it.",
+   "evidence": "studio/web/app.mjs:1132-1142: pickBank awaits storeBank(file) and then sets preview.bank, with no pick sequence number. studio/web/workshop/ui.mjs:3347-3361: `pick !== bankPicks` is checked only when the queued task starts, not after storeBank. The fixes (0d60edd, 398c7fd) exist only on the unmerged branch origin/claude/sound-bank-reconcile (9519a13), and main has no bank commits after d7ec3c6.",
+   "fix_size": "small",
+   "note": "Merged from 3 candidates. The page never names a bank it did not keep."
+  },
+  {
+   "title": "The bank check's time limit includes the Worker's first download of its parser",
+   "source_pr": "#90 (follow-up list) / #94 (closed)",
+   "kind": "bug",
+   "severity": "low",
+   "status": "open",
+   "user_impact": "On a slow, uncached first visit, a valid .sf2 or .dls can be refused with 'could not be checked in time'. Retries fail too until the service worker has cached the 743 KB parser, because terminate() cancels the download each time.",
+   "evidence": "studio/web/preview/soundbank-store.mjs:55 (5 s + 1 s per 2 MiB) and :67-69: the timer starts right after new Worker(...), before bank-check-worker.mjs has loaded vendor/spessasynth/core.js. The comment at :48-49 counts the parser load inside the 5 s. The fixes (93cfeac, e6cf6ff) exist only on the unmerged sound-bank-reconcile branch.",
+   "fix_size": "small",
+   "note": "Merged from 3 candidates. It fails closed with a truthful message: nothing is stored and nothing hangs."
+  },
+  {
+   "title": "A preview engine build that is overtaken by a bank change still installs the old bank",
+   "source_pr": "#90 (corrupt-bank not_done) / #94 (3d67671)",
+   "kind": "bug",
+   "severity": "low",
+   "status": "open",
+   "user_impact": "If the user picks or removes a bank while a play is still building the engine, playback keeps using the old bank while the card names the new one, until the next bank change or a reload.",
+   "evidence": "studio/web/app.mjs:1016-1018: engineToken is checked only before `await createPreviewEngine(...)`. After that await, preview.engine and preview.transport are set without re-checking, even if resetPreviewEngine (app.mjs:1221-1225) has run.",
+   "fix_size": "small",
+   "note": "Merged from 2 candidates. The window is the engine construction only (the token is checked after the bank load)."
+  },
+  {
+   "title": "Studio reads the stored bank's name once but builds the engine from whatever the store holds at play time",
+   "source_pr": "#94 (3d67671, 011469f)",
+   "kind": "bug",
+   "severity": "low",
+   "status": "open",
+   "user_impact": "Pick a bank in a Workshop tab and then press play for the first time in a Studio tab that was already open: Studio plays the Workshop's bank but still shows the old name.",
+   "evidence": "studio/web/app.mjs:1228-1233: loadStoredBankInfo reads the store once per page and assigns preview.bank after its await, even if a pick landed first. app.mjs:1016 builds from a fresh loadBank(). studio/web/workshop/ui.mjs:310: Workshop export falls back to {kind:'store'}.",
+   "fix_size": "medium",
+   "note": "PR #94 left live cross-tab notification out of scope on purpose. What stays open on main is the wrong label."
+  },
+  {
+   "title": "A listen link import reports success even when opening the session failed",
+   "source_pr": "#93",
+   "kind": "bug",
+   "severity": "low",
+   "status": "open",
+   "user_impact": "The status line says '已從試聽連結建立新的試聽工作階段…' while the listening panel shows an error, for example after a Worker failure or a failed listen-model import.",
+   "evidence": "studio/web/listen-ui.mjs:129-145: open() catches every error and only sets state.error (line 141). importPayload then always shows the success message (lines 99-100).",
+   "fix_size": "small"
+  },
+  {
+   "title": "A listen link opened while the first Worker fails to boot shows WORKER_UNAVAILABLE instead of the song",
+   "source_pr": "#93 (deferred in bca0cf2)",
+   "kind": "bug",
+   "severity": "low",
+   "status": "open",
+   "user_impact": "When a link is opened on a failing first boot, the panel shows '本機分析 Worker 無法啟動，請重新開啟'. The session is saved, and reopening it from the list works.",
+   "evidence": "studio/web/app.mjs:1601 calls listening.importFromLocation() without the WORKER_UNAVAILABLE retry that boot has at app.mjs:1608. The bca0cf2 commit message records this as not changed.",
+   "fix_size": "small"
+  },
+  {
+   "title": "Picking a bank stops a running listening play and gives the wrong reason or none",
+   "source_pr": "#94 (main form of round-5 medium A)",
+   "kind": "bug",
+   "severity": "low",
+   "status": "open",
+   "user_impact": "If a bank pick finishes while a listening session is playing, playback stops. The card then says '試聽已停止：音色試聽被其他播放器使用', which is the wrong reason, or shows nothing once the card is redrawn.",
+   "evidence": "studio/web/app.mjs:1137 pickBank -> resetPreviewEngine -> claimTransport('final') (app.mjs:987-988) -> onPreempt (studio/web/listen-ui.mjs:228-233). refreshPreview (app.mjs:926) -> refreshAudio (listen-ui.mjs:718-724) redraws #listen-player, which holds #listen-status (listen-ui.mjs:337).",
+   "fix_size": "small"
+  },
+  {
+   "title": "A bank change during transport.play's await leaves a ghost playback running on the destroyed engine",
+   "source_pr": "#94 (round-5 review)",
+   "kind": "bug",
+   "severity": "low",
+   "status": "open",
+   "user_impact": "This needs rare timing: a bank pick or removal inside the up-to-0.4 s wait after a quick restart. The leftover transport keeps its timer and animation loop running and sends position updates to whichever player owns the engine.",
+   "evidence": "studio/web/preview/player.mjs:219 and :224 await context.resume() and the settle wait. Afterwards, play() sets playing=true and starts setInterval (lines 237-240) without checking whether destroy() (line 248) ran. studio/web/app.mjs:1221-1225 destroys the transport. Reproduced by the reviewer on 2712d6c (scratchpad bank-r5-review0.json, problem 2), whose player.mjs matches main's.",
+   "fix_size": "small"
+  },
+  {
+   "title": "Audio prescreen fails with a generic internal error on a candidate with a truly fractional tempo",
+   "source_pr": "#90 (left out of scope by the MIDI-tempo fixer, wf_83a6fc2b-08a)",
+   "kind": "bug",
+   "severity": "low",
+   "status": "open",
+   "user_impact": "studio_audio_prescreen on a candidate_id from a MIDI whose tempo is not a whole BPM (e.g. 461000 µs = 130.15) gets an internal error instead of a named refusal.",
+   "evidence": "studio/backend/audio/prescreen/performance.mjs:23 and :29 call new F(bpm) on a float. studio/backend/application/prescreen-service.mjs:265 calls performanceFromCanonical with no catch. I reproduced it on a 42f38f6 snapshot: RangeError 'The number 130.1518438177874 cannot be converted to a BigInt'. MIDI intake deliberately keeps such tempi (studio/tests/midi-integer-tempo.test.mjs:88-92).",
+   "fix_size": "small"
+  },
+  {
+   "title": "A micro-timing CLASSIFICATION_UNKNOWN request still suggests release_representation, which cannot answer it",
+   "source_pr": "#91 (G10 not-done) / #95 judge out_of_scope",
+   "kind": "bug",
+   "severity": "low",
+   "status": "open",
+   "user_impact": "An agent whose run stops on an unclaimed sub-grid note is told to try planMobileAdaptation and applyMobileAdaptation.release_representation, which refuse it, and nothing says what would work.",
+   "evidence": "studio/backend/application/run-contracts.mjs:219 maps microTiming to those two operations. The comment at :207-210 says such an interval 'has no application operation in this build', but MICRO_TIMING_CLASSIFICATION_UNKNOWN is not in READINESS_BLOCKER_WITHOUT_OPERATION (:246-249), so run-service.mjs:628-632 keeps the operations.",
+   "fix_size": "medium",
+   "note": "Merged from 2 candidates. Fixers noted that a sound fix needs per-interval release status."
+  },
+  {
+   "title": "Studio Web grades its own Lead evidence without resolving the cited source, unlike the service",
+   "source_pr": "#90 ('Needs an owner decision (not changed)')",
+   "kind": "bug",
+   "severity": "low",
+   "status": "open",
+   "user_impact": "In the local Studio Web app, a free-text citation counts as positive Lead evidence (Gate 3), while the service grades against the source it cites. The same review can PASS in the web app and stay PENDING on the service.",
+   "evidence": "studio/web/model.mjs:795 evaluateLeadDemotion({ ...e, event }) and :830 evaluateLeadPromotion(...) grade the web records directly. The PR #90 body asks 'Should the web app match the service?', and no answer is recorded.",
+   "fix_size": "medium",
+   "note": "Merged from 2 candidates. Needs an owner decision first."
+  },
+  {
+   "title": "A multi-source baseline id depends on the project id and title",
+   "source_pr": "#90 ('Needs an owner decision (not changed)')",
+   "kind": "bug",
+   "severity": "low",
+   "status": "open",
+   "user_impact": "The same source files ingested in another project, or under another title, get a different baseline_id. Decisions, runs and candidates bound to the old id then read as changed.",
+   "evidence": "studio/backend/application/intake-service.mjs:194 merges with { id: `${record.project_id}:baseline`, title: record.title }. :203 uses baselineIdentityOf, whose contentDigest hashes id and title (studio/backend/arrangement/decision-application.mjs:269-270, 295). That contradicts the comment at :279-280 ('nothing here reads … a caller-supplied id').",
+   "fix_size": "medium",
+   "note": "Merged from 2 candidates. PR #90 also names selection order; I did not verify that part. Changing this re-mints existing baseline ids, so it needs an owner decision."
+  },
+  {
+   "title": "Transitive dependency versions are not pinned, so image builds are not reproducible",
+   "source_pr": "#90 ('Needs an owner decision (not changed)')",
+   "kind": "ops",
+   "severity": "low",
+   "status": "open",
+   "user_impact": "Two builds of the same commit can ship different transitive package versions.",
+   "evidence": ".gitignore:15 ignores package-lock.json. railway/Dockerfile:54 runs `npm install --omit=dev` with no lockfile, and its comment at :50-51 wrongly says 'single runtime dependency' while package.json lists three exact-pinned direct dependencies. CI installs with --package-lock=false.",
+   "fix_size": "small",
+   "note": "Merged from 2 candidates. Policy choice for the owner: tracking a lockfile means switching to npm ci."
+  },
+  {
+   "title": "A refused retry can write a stale 'conflict' onto a proposal that is already APPLIED",
+   "source_pr": "#91 (stuck-proposal rounds, 'pre-existing, unchanged')",
+   "kind": "bug",
+   "severity": "low",
+   "status": "open",
+   "user_impact": "If two attempts at the same acceptance race, studio_proposal_status can show a leftover conflict record on an applied proposal. Its state is still correct.",
+   "evidence": "studio/backend/application/proposal-service.mjs:2107 returns early only for WITHDRAWN or REJECTED; :2139-2147 then writes application.conflict onto any other state, including APPLIED. Listed as pre-existing in fixer notes wf_4b3082f5 and wf_a46ddfe9 item 4.",
+   "fix_size": "small"
+  },
+  {
+   "title": "Two pre-existing proposal retry edge cases were left unchanged",
+   "source_pr": "#91 (stuck-proposal rounds 4-6 not-done)",
+   "kind": "bug",
+   "severity": "low",
+   "status": "open",
+   "user_impact": "(a) A retry that skips the policy does not notice material changes that leave the run revision unmoved, so the run halts and the proposal is recorded applied-with-halt. (b) If the run completed but the process died before the receipt was written, the retry hits the audit-closed guard and the proposal stays accepted.",
+   "evidence": "Fixer notes wf_053776ca items 3-4 and wf_a46ddfe9 item 4 ('pre-existing and unchanged'). The audit-closed checks are at proposal-service.mjs:1004 and run-service.mjs:2988-3037. docs/AI_ONE_CLICK_ORCHESTRATOR_PHASE2.md:772-781 relies on the run's own safety and does not call out either case as by-design.",
+   "fix_size": "medium",
+   "note": "Not reproduced here; the evidence is the fixers' notes plus the code paths."
+  },
+  {
+   "title": "A plan refusal caused by moved material is labelled INVALID instead of STALE",
+   "source_pr": "#91 (stuck-proposal followups review note)",
+   "kind": "bug",
+   "severity": "low",
+   "status": "open",
+   "user_impact": "An agent whose proposal fails because the candidate no longer matches is told INVALID, which blames the proposal, instead of STALE. The remedy, a fresh proposal, is the same.",
+   "evidence": "studio/backend/application/proposal-service.mjs:880-885 maps any derived.refusal to AGENT_REVIEW.INVALID.",
+   "fix_size": "small"
+  },
+  {
+   "title": "A #95 emitter error message states wrong arithmetic and has no length limit",
+   "source_pr": "#95 (post-merge review wf_5c7365cd, in progress)",
+   "kind": "bug",
+   "severity": "low",
+   "status": "open",
+   "user_impact": "Anyone who calls emitFinalMml directly can get a MICRO_GAP_BOUNDARY_NOT_FINAL_REPRESENTABLE message that is tens of KB long, or that quotes a beat value as if its denominator failed when it does not. Finalize and Studio Web never show this text, and no verdict is wrong.",
+   "evidence": "studio/backend/final/mml-emitter.mjs:921-927 at origin/main: `byDenominator.map(item => item.position).join(', ')` has no cap, unlike unreachableBoundaries (MAX_REPORTED_BOUNDARIES, :79), and it prints beat positions against a whole-note denominator rule. Two verifiers in workflow wf_5c7365cd-10c confirmed both on 42f38f6.",
+   "fix_size": "small",
+   "note": "Newly found by the #95 post-merge review, which is still running."
+  },
+  {
+   "title": "#90's final diff never got its whole-PR adversarial review",
+   "source_pr": "#90 (session-review wf_af21433e-c0b)",
+   "kind": "test-gap",
+   "severity": "low",
+   "status": "open",
+   "user_impact": "None shown so far. Fixes the orchestrator made itself, outside the reviewed workflow batches, merged with no second review.",
+   "evidence": "workflows/wf_af21433e-c0b.json: review:app-runs-proposals, intake-engines, studio-web, workshop, listen-audio and server-transport, and all railway-ci verifiers, 'failed: You've hit your session limit'. No later whole-diff review workflow exists; the remaining workflows are per-topic fix runs. The PR #90 body says 'Fixes made by delegated agents were each reviewed by two independent reviewers', which is true only for the workflow batches.",
+   "fix_size": "medium",
+   "note": "Merged from 2 candidates. The one completed area (railway-ci) had its finding fixed in the PR."
+  },
+  {
+   "title": "#95 (G10 tightening) merged with no completed review; the post-merge review is still running",
+   "source_pr": "#95",
+   "kind": "test-gap",
+   "severity": "low",
+   "status": "open",
+   "user_impact": "The rule that decides whether micro-timing blocks delivery changed on CI results alone. v6 would put it on the web site as well.",
+   "evidence": "get_reviews on PR #95 returns []. Its only comment is the Codex usage-limit notice (https://github.com/a91453/mml-tools/pull/95#issuecomment-5828336641). Both round-1 reviewers in wf_f002aed7-5ff failed on the session limit. Post-merge review subagents/workflows/wf_5c7365cd-10c was still writing at 07:57Z.",
+   "fix_size": "n/a",
+   "note": "Merged from 2 candidates. So far it has confirmed two low findings (the emitter message item above) and refuted three. Closes when that review reports."
+  },
+  {
+   "title": "#93 merged five minutes after opening, with no independent review",
+   "source_pr": "#93",
+   "kind": "test-gap",
+   "severity": "low",
+   "status": "open",
+   "user_impact": "No second reviewer has checked the boot retry loop in app.mjs or the onerror stale-instance guard; only the author's mutants and CI cover them.",
+   "evidence": "get_reviews on PR #93 returns []. The only comment is the Codex usage-limit bot (https://github.com/a91453/mml-tools/pull/93#issuecomment-5825502250). Created 02:02:17Z, merged 02:07:09Z. No review workflow covers bca0cf2 (wf_ec6748da-ef8 reviewed d8ede04).",
+   "fix_size": "small"
+  },
+  {
+   "title": "Worker boot recovery is tested only in Chromium, with the service worker blocked",
+   "source_pr": "#91 / #93",
+   "kind": "test-gap",
+   "severity": "low",
+   "status": "open",
+   "user_impact": "Nothing checks that recovery works on iOS Safari or for returning PWA users under a controlling service worker, which was the actual CI failure condition. Why Chromium dropped the module request in CI is still unknown.",
+   "evidence": "studio/browser-tests/run.mjs:179-181 runs runWorkerBootChecks only when profile.engineName==='chromium'. studio/browser-tests/worker-boot.mjs:12 boots every context with serviceWorkers:'block'. The d8ede04/#91 body says the cause is not known. The CI failures were run 36026384503 (ca0ec23) and run 36080719408 (2b01b79), with none on main since. There is also no Worker-side test that a Canonical mismatch (worker.mjs:28) is never retried; only a hand-made client test covers it (studio/tests/web-worker-client.test.mjs:166).",
+   "fix_size": "medium",
+   "note": "Merged from 4 candidates: WebKit-only gap, controlling-SW gap, unknown CI cause, and the Canonical mismatch test gap."
+  },
+  {
+   "title": "The Workshop 'bank picked during boot' browser check does not actually hold the engine",
+   "source_pr": "#90 (follow-up list) / #94 (e5f3f7b, c0edf08)",
+   "kind": "test-gap",
+   "severity": "low",
+   "status": "open",
+   "user_impact": "None directly. A regression in how a pick made during engine boot is ordered, or in the boot-failure label guard, could pass CI.",
+   "evidence": "studio/browser-tests/workshop.mjs:264-267 routes '**/vendor/spessasynth/processor.js', which Playwright does not intercept for AudioWorklet modules (PR #90 body; e5f3f7b probe routed 0 requests). The guard at studio/web/workshop/ui.mjs:641 `if (!picked())` survived a mutant in c0edf08's review.",
+   "fix_size": "small",
+   "note": "Merged from 3 candidates."
+  },
+  {
+   "title": "Stuck-proposal tests: two process-death tests can hang, and the null-writer hold has no test",
+   "source_pr": "#91 (stuck-proposal rounds 5-7 not-done)",
+   "kind": "test-gap",
+   "severity": "low",
+   "status": "open",
+   "user_impact": "None for users. A regression there would hang CI rather than fail it, or go unnoticed.",
+   "evidence": "studio/tests/proposal-duplication.test.mjs:415 and :530 `await dying.stopped` with no Promise.race (the :484 test has one). No test for the BLOCKED hold written with a null writer (fixer note wf_f9cba9c8 / wf_a46ddfe9 item 6).",
+   "fix_size": "small"
+  },
+  {
+   "title": "The cross-source harmony timing test can fail on a heavily loaded machine",
+   "source_pr": "#90 (PR 'Tests' section)",
+   "kind": "flaky-test",
+   "severity": "low",
+   "status": "open",
+   "user_impact": "None for users. A heavily loaded local or CI run can fail on elapsed time alone.",
+   "evidence": "studio/tests/harmony-arbitration.test.mjs:153 asserts elapsedMs < 5000. The PR #90 body notes it. Main Studio CI has been green on every merge since (latest run 36106397968 at 42f38f6).",
+   "fix_size": "small",
+   "note": "Merged from 2 candidates."
+  },
+  {
+   "title": "verify_deployed.py has not been run against the permanent URL for any release since the migration",
+   "source_pr": "#92 / #96",
+   "kind": "test-gap",
+   "severity": "low",
+   "status": "open",
+   "user_impact": "No HTTP check has compared what the public URL serves against the release lock for any recent release.",
+   "evidence": "ops/permanent/README.md:121 (runbook step 9) is the only instruction, and no workflow runs it. The records say it was not run: RELEASE_2026-09-23.md:54, -v2.md:61, -v3.md:61, -v4.md:59 and -v5.md:49 (the container cannot reach *.up.railway.app).",
+   "fix_size": "small",
+   "note": "A workflow_dispatch job on a GitHub runner could run it after the v6 deploy. The function also checks every asset hash before serving, which lowers the risk."
+  },
+  {
+   "title": "The v6 release record and the README 'current release' pointer have not been written",
+   "source_pr": "#96",
+   "kind": "docs",
+   "severity": "low",
+   "status": "open",
+   "user_impact": "Once v6 is live, the repository will still say v5 is current and will have no v6 startup log or rollback steps.",
+   "evidence": "ops/permanent/README.md:5 says 'Current release: main 25b8acd2ed21 (v5)'. There is no ops/permanent/RELEASE_*-v6.md at origin/main.",
+   "fix_size": "small",
+   "note": "Blocked until the owner deploys v6."
+  },
+  {
+   "title": "The durable release workflows still have push triggers for old branches",
+   "source_pr": "#96",
+   "kind": "ops",
+   "severity": "low",
+   "status": "open",
+   "user_impact": "Nothing today. A push to one of those old branches would start an unexpected mirror or release run.",
+   "evidence": ".github/workflows/studio-durable-mirror.yml:11-16 has a push trigger on claude/interface-fusion-logic-a9iai6 (a branch that still exists) with an outdated 'Until then' comment. .github/workflows/studio-durable-release.yml:4-5 has a push trigger on studio-permanent-durable-migration.",
+   "fix_size": "small"
+  },
+  {
+   "title": "Committing the staged Railway function through the API times out on every release",
+   "source_pr": "#92 / #96",
+   "kind": "ops",
+   "severity": "low",
+   "status": "open",
+   "user_impact": "Every Studio Web release waits for the owner to click Deploy in the Dashboard.",
+   "evidence": "ops/permanent/RELEASE_2026-09-25-v5.md:35 ('Committing through the API timed out, as for v3 and v4'). v6 is again staged and waiting (patch de911e38).",
+   "fix_size": "n/a",
+   "note": "Nobody has investigated the cause. Railway Agent is prohibited here (CLAUDE.md), so the Dashboard click stays the documented fallback."
+  },
+  {
+   "title": "Workshop browser check 'a synth that never reports ready' failed after its last reload on the parked #94 branch",
+   "source_pr": "#94 (parked branch only)",
+   "kind": "flaky-test",
+   "severity": "low",
+   "status": "open",
+   "user_impact": "It has never failed on main. If the cause is in the app, a Workshop tab reloaded at the wrong moment could stay on '引擎待命' with no error.",
+   "evidence": "Run https://github.com/a91453/mml-tools/actions/runs/36086806496 (head 9519a13, conclusion failure). The same steps are on main at studio/browser-tests/workshop.mjs:327-329. Every main Studio CI run since d7ec3c6 succeeded (e.g. 36106397968).",
+   "fix_size": "medium",
+   "note": "Root cause unknown; the final-round fixer (wf_96610976-555) died on the session limit."
+  },
+  {
+   "title": "The parked delivery-safeguard branch cannot be merged as it stands",
+   "source_pr": "parked-branch (claude/delivery-emission-check-parked)",
+   "kind": "ops",
+   "severity": "low",
+   "status": "open",
+   "user_impact": "No main user is affected. It blocks the fix for the 'ready while the emitter refuses' item.",
+   "evidence": "git merge-tree origin/main origin/claude/delivery-emission-check-parked conflicts in docs/FINAL_MML_EMITTER.md and studio/backend/application/capabilities.mjs (both rewritten by #95). The branch has never run CI. Open review findings (scratchpad delivery-emits-result.json) include a medium: no test that Studio Web's check uses the same emit options as its generation (branch studio/web/model.mjs:844 and :980). Lows: a false FINAL_EMISSION_PENDING under a non-authoritative Canonical (branch readiness.mjs:653); a surviving releaseEvidenceRegistry-drop mutant (:657); branch docs/FINAL_MML_EMITTER.md:351 misstating the PENDING condition; and §5b contradicting itself (:525).",
+   "fix_size": "small",
+   "note": "Merged from 4 parked-only candidates. The branch's reproduction tests still see G10 PASS for all three classes on main (verified above)."
+  },
+  {
+   "title": "The parked #94 sound-bank branch still has two open round-5 findings, and #94 was closed with no explanation",
+   "source_pr": "#94 / parked-branch (claude/sound-bank-reconcile)",
+   "kind": "bug",
+   "severity": "low",
+   "status": "open",
+   "user_impact": "No main user is affected. If the branch is revived, a listening play queued behind a pending pick can end silently, and a Workshop play stopped with ArrowDown still starts later. Readers of GitHub cannot tell why #94 was closed or that main lacks its bank fixes.",
+   "evidence": "Branch 9519a13: studio/web/app.mjs:1279 preempts, then :1166 returns without a message; studio/web/workshop/ui.mjs:748 ArrowDown lacks the playWait++ of the Stop button (:3461). See scratchpad bank-r5-review0.json. PR #94 get_comments returns [], and there is no text record on main. The branch's CI was red at 9519a13.",
+   "fix_size": "small",
+   "note": "Merged from 3 candidates. Main has no playWait at all. The main-side bank bugs are listed as separate items above."
+  }
+ ],
+ "owner_actions": [
+  {
+   "title": "Deploy v6 on studio-web-permanent (Dashboard Deploy click)",
+   "source_pr": "#96",
+   "kind": "owner-action",
+   "severity": "high",
+   "status": "owner-action",
+   "user_impact": "The site still runs v5 (main 25b8acd), so users lack #93's Worker boot recovery and #95's G10 tightening, while the MCP control plane already runs 8613d0c. The two apply different G10 rules until v6 is live.",
+   "evidence": "I checked Railway get-staged-changes just now: patch de911e38 is STAGED since 2026-09-25T07:10:57Z, with 1 change (studio-web-permanent deploy.startCommand) and destructive:false. list-deployments shows the newest deployment is 93658506 (SUCCESS, 01:46:57Z), which is v5.",
+   "fix_size": "n/a",
+   "note": "Not destructive: one field changes, and the v5 cache stays for rollback. Whether to wait for the in-progress #95 review first is the owner's call."
+  },
+  {
+   "title": "Check the permanent Studio Web site in a real browser",
+   "source_pr": "#90 / #91 / #96",
+   "kind": "owner-action",
+   "severity": "medium",
+   "status": "owner-action",
+   "user_impact": "On the live site, nobody has confirmed the Workshop, bank picks and damaged-bank refusal, video preview, listening sessions, or the refusal to load inside a frame. No browser is recorded as having loaded v5.",
+   "evidence": "ops/permanent/RELEASE_2026-09-25-v5.md:47-52 and RELEASE_2026-09-24-v4.md:59 ('A real-browser check by the owner is still open'). The session container cannot reach *.up.railway.app.",
+   "fix_size": "n/a",
+   "note": "Merged from 3 candidates. Best done right after the v6 deploy. Opening one studio_listen link also confirms that STUDIO_WEB_ORIGIN points at the permanent site."
+  },
+  {
+   "title": "Decide whether a valid pasted delivery the emitter cannot reproduce should drop from VALIDATED to CANDIDATE",
+   "source_pr": "parked-branch (claude/delivery-emission-check-parked)",
+   "kind": "owner-action",
+   "severity": "medium",
+   "status": "owner-action",
+   "user_impact": "This blocks the fix for 'ready while the emitter refuses'. If the branch lands as written, a user who pastes a valid MML the emitter cannot write (e.g. a 100-beat hand-tied sustain) sees CANDIDATE instead of VALIDATED.",
+   "evidence": "On main, studio/tests/web-final-delivery.test.mjs:504 and :517 assert 'VALIDATED' for that case, and studio/web/model.mjs:928 exempts only ['technical','deliveryIdentity']. The branch changes both. The session parked it at 03:23Z as needing the owner's decision.",
+   "fix_size": "n/a"
+  },
+  {
+   "title": "Delete the RELEASE_S3_* GitHub repository secrets after the v6 mirror",
+   "source_pr": "#91 / #96",
+   "kind": "owner-action",
+   "severity": "low",
+   "status": "owner-action",
+   "user_impact": "If they are still set, the bucket's write credentials stay in GitHub secrets, against the runbook rule to delete them after each transfer.",
+   "evidence": "ops/permanent/README.md:89-91 ('repository secrets for the transfer only; delete them afterwards'). The v6 mirror run 36105988893 succeeded, and it needs all five secrets. The owner was asked three times, per the transcript. Their current state cannot be read from here.",
+   "fix_size": "n/a",
+   "note": "Merged from 2 candidates. Delete only the GitHub repo secrets, not the same-named variables on the Railway service studio-web-permanent."
+  },
+  {
+   "title": "Decide on the Technical Timing Repair case that lengthens a kept sub-grid rest and writes 'r64'",
+   "source_pr": "#95",
+   "kind": "owner-action",
+   "severity": "low",
+   "status": "owner-action",
+   "user_impact": "Normal runs never reach this, because Finalize refuses the FAIL gate first. A direct library call with the repair on gets MML that changes a rest the source says to keep.",
+   "evidence": "docs/TECHNICAL_TIMING_REPAIR.md:379-392 ('Open item (2026-09-25), for an owner decision'); pinned by studio/tests/technical-timing-repair-emitter.test.mjs:535-567 (expects 'MML@t120o4cr64c8.&c32.,,,,,;').",
+   "fix_size": "n/a"
+  },
+  {
+   "title": "Record in docs/PENDING.md that source-supported timing finer than 1/64 can never become a Final",
+   "source_pr": "#95",
+   "kind": "owner-action",
+   "severity": "low",
+   "status": "owner-action",
+   "user_impact": "A song with a kept sub-grid ornament or gap is permanently blocked with no operation that answers it, and the Canonical pending register does not say so.",
+   "evidence": "docs/PENDING.md lists only P1-P17, with no micro-timing entry. studio/backend/application/run-contracts.mjs:249 says this material 'stays PENDING/UNSUPPORTED (ACCEPTANCE_CRITERIA Gate 2)'. The #95 judge (out_of_scope item 8) leaves it to owner change control.",
+   "fix_size": "n/a"
+  }
+ ],
+ "by_design_or_fixed": [
+  {
+   "title": "G10 passing positions the Final cannot represent (deferred from #90, split out of #91)",
+   "status": "fixed-since",
+   "why": "Fixed in #91 (MICRO_TIMING_BOUNDARY_NOT_FINAL_REPRESENTABLE) and #95 (8613d0c: commits 3cadc62 and 9cc32dc, preserved sub-grid material and sub-token leading silence), with studio/tests/micro-gap-final-agreement.test.mjs. The remaining classes are the open 'ready while the emitter refuses' item."
+  },
+  {
+   "title": "An accepted proposal that can never apply stays stuck (deferred from #90)",
+   "status": "fixed-since",
+   "why": "Fixed in #91: an untranslatable proposal is refused before acceptance, and an acceptance that never reached the run can be withdrawn."
+  },
+  {
+   "title": "After a rollback to an older build, affected proposals stay accepted and cannot be withdrawn",
+   "status": "by-design",
+   "why": "Documented as the conservative rule at docs/AI_ONE_CLICK_ORCHESTRATOR_PHASE2.md:678-691 and :785-798. The #91 body lists it as 'Known and documented, not changed'. The remedy is a fresh proposal."
+  },
+  {
+   "title": "Plan-derivation memo cannot see a change made and undone by another process",
+   "status": "by-design",
+   "why": "studio/backend/application/plan-derivation-memo.mjs:59-63: the service runs as one process and reports cross_process_run_coordination: false."
+  },
+  {
+   "title": "Worker-recovery review lows from #91 (static-import drop, onerror guard, never-retried cases)",
+   "status": "fixed-since",
+   "why": "Fixed in #93 (bca0cf2, merged as 4e6479d): boot retries until WORKER_GIVEN_UP (app.mjs:1608), the onerror stale-instance guard (worker-client.mjs:49), and browser checks for the parse and verify failures."
+  },
+  {
+   "title": "#90 owner actions: re-render the permanent function for the framing headers and ship a durable release",
+   "status": "fixed-since",
+   "why": "The v4 release of d7ec3c6 carries frame-ancestors 'none' and X-Frame-Options: DENY and was deployed (ops/permanent/RELEASE_2026-09-24-v4.md); v5 kept them (RELEASE_2026-09-25-v5.md:33)."
+  },
+  {
+   "title": "v5 durable release of the #91 merge",
+   "status": "fixed-since",
+   "why": "Deployed with SUCCESS (Railway deployment 93658506); recorded in ops/permanent/RELEASE_2026-09-25-v5.md by #96 (34c74ec)."
+  },
+  {
+   "title": "PR #92's 'add the v5 record' step was left undone at merge",
+   "status": "fixed-since",
+   "why": "The record landed in #96 (34c74ec) as ops/permanent/RELEASE_2026-09-25-v5.md."
+  },
+  {
+   "title": "MCP protocol 2026-07-28 not spoken, so each connector session opens with one 400",
+   "status": "by-design",
+   "why": "server/mcp.mjs:22 and :301-308 document the 400-then-200 pair as expected. #90 added the -32022 data so clients fall back cleanly."
+  },
+  {
+   "title": "3 npm test failures in a shallow clone",
+   "status": "by-design",
+   "why": "They need Git history that a shallow clone lacks. CI uses fetch-depth: 0 (.github/workflows/studio-ci.yml:24,82,138), and docs/STUDIO_AGENT_INTERFACE.md:1189-1194 explains why."
+  },
+  {
+   "title": "No in-page recovery after WORKER_GIVEN_UP or another boot error; the user must reload",
+   "status": "by-design",
+   "why": "worker-client.mjs:20-22 and :89: the given-up state is permanent and the message tells the user to reopen the page. The PR #93 body: 'Any other error stops boot as before.'"
+  },
+  {
+   "title": "Module load failures that will always recur (404, wrong MIME, top-level TypeError) are retried until the budget is spent",
+   "status": "by-design",
+   "why": "Documented at studio/web/worker.mjs:21-23; reviewer A of #91 measured it and accepted it. The result is the same boot error, only slower."
+  },
+  {
+   "title": "An onset Final cannot reach, decided by an unclassified interval, gets PENDING instead of a proven FAIL",
+   "status": "by-design",
+   "why": "docs/FINAL_MML_EMITTER.md:411 says the coverage rules 'are asymmetric on purpose'. Changing it would rewrite the pinned coverage tests and needs its own owner decision (#95 judge out_of_scope item 5)."
+  },
+  {
+   "title": "docs/ACCEPTANCE_CRITERIA.md not changed to say 'ready means the emitter wrote it'",
+   "status": "by-design",
+   "why": "docs/ACCEPTANCE_CRITERIA.md:145 already lists 'Final round-trip' as BLOCKING for machine delivery, and the file is a Published Canonical rule source that changes only through a Canonical release."
+  },
+  {
+   "title": "GitHub native Release immutability is off",
+   "status": "by-design",
+   "why": "ops/permanent/README.md:35-40 says so explicitly: content is anchored by Git identities and the SHA-256 pins in release-lock.json, so a replaced asset would not be accepted. Turning it on is optional."
+  }
+ ],
+ "rejected": [
+  {
+   "title": "A rejected init promise in worker.mjs would make every request wait out the 45 s timeout",
+   "why": "Speculative. It needs a module or verifier to throw null or undefined (so that error.message throws inside the catch at worker.mjs:11/24), and nothing on main does that. The reviewer who raised it said it 'cannot happen today'."
+  },
+  {
+   "title": "G15: the emitter and the Web validator disagree on final-bar completeness",
+   "why": "Out of scope. It predates #90-#95 (docs/V1_1_ROADMAP.md:418 has it as an existing OPEN roadmap row) and is not a leftover of these PRs."
+  },
+  {
+   "title": "Remaining G10-PASS / emitter-refuse cases are by-design",
+   "why": "The by-design label does not hold. docs/FINAL_MML_EMITTER.md:463-470 only discloses them, the owner was told they were left to decide later, and a fix is parked. Kept as the open 'ready while the emitter refuses' item."
+  },
+  {
+   "title": "Sound-bank follow-ups split out of #91 were never merged (umbrella item)",
+   "why": "Not a separate problem. Each main-side consequence is listed as its own open item (overlapping picks, parser-download time limit, overtaken engine build, stale label, boot-race test), and the branch's own state is in the parked #94 item."
+  }
+ ],
+ "gaps_in_coverage": "I could not list the repository's GitHub secrets, so I don't know whether the RELEASE_S3_* secrets have been deleted. I could not reach *.up.railway.app, so I have not confirmed anything about the live site. I did not re-run the Studio listen-drop browser probe; I re-ran only the minimal dyn-cache probe, which confirmed that Chromium 141 caches a failed dynamic import. I did not re-run the collectors' run-level probes (the finalize-halt operations, the CLASSIFICATION_UNKNOWN request, the Gate 5 import); I verified those from the code at origin/main. I did re-run the parked branch's three reproduction tests against an origin/main snapshot, and they confirm the READY-while-emitter-refuses gap. The two proposal retry edge cases and the phase-3 conflict are backed only by the fixers' notes and a code read, not a reproduction. I did not verify the 'selection order' part of the baseline-id claim. I did not re-read the #91 or #96 PR bodies; I relied on the docs and code they cite. The #95 post-merge review (subagents/workflows/wf_5c7365cd-10c) was still running at 07:57Z and may add findings. The Workshop CI flake's root cause is unknown. Railway state is as of about 07:57Z: v6 still STAGED, and v5 deployment 93658506 is live."
+}
