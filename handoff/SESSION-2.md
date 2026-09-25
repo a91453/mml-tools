@@ -3,6 +3,17 @@
 Read HANDOFF.md first (owner preferences, policies, v7 steps). This file only
 adds what the second session owns.
 
+## ~12:10 UTC — v7 in progress (read this first)
+- All fix PRs merged; main = 5dbf42a (source of v7). v6 WAS deployed by the owner at 10:33 UTC.
+- Branch `claude/studio-v7-release`: pins committed (buildId f654796859ea…, cacheId b3fe1d4d…, 157 assets,
+  runtime ZIP 8666b6b8…, trust ZIP 28bdb56b… unchanged, rendered function 9afd162e…), plus RELEASE_2026-09-25-v6.md.
+- Release run 36132530795 and mirror run 36132589479 succeeded (dispatched on the branch while main == 5dbf42a).
+- The v7 function is STAGED on Railway (patch 85babe52…); read back byte-identical (sha 9afd162e…); only Source Code, not destructive.
+- WAITING: the owner clicks Deploy in the Railway Dashboard. Then: get-logs on the new deployment, write
+  RELEASE_2026-09-25-v7.md (template: v6/v5 records; RENDERED_SOURCE_VERIFIED should show 5b746a472c3c…),
+  point the README "Current release" at v7 (add v6 to the list), open the PR, merge when CI is green.
+  Do NOT merge the branch before the deploy is verified. Then task D.
+
 ## ~11:15 UTC
 - PR #103 MERGED (d4cff30). Task B is done. Remaining: #100 and #102 (first session), then task C (v7), then D.
 
