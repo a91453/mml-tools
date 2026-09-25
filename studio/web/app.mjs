@@ -1010,11 +1010,14 @@ function ensurePreviewEngine() {
   return preview.engineLoading;
 }
 async function buildPreviewEngine(token) {
-  const { loadBank } = await import('./preview/soundbank-store.mjs');
+  const { loadBank, describe } = await import('./preview/soundbank-store.mjs');
   const { createPreviewEngine, createTransport } = await import('./preview/player.mjs');
   // The user's own bank takes precedence; without one, the free default bank.
   const bank = await loadBank() ?? await loadDefaultPreviewBank();
   if (token !== preview.engineToken) throw Error('音色庫已更換，請再按一次播放。');
+  // The page names the bank the engine is built from. The page read the
+  // store once, and another tab (the Workshop) may have picked a bank since.
+  preview.bank = bank.isDefault ? null : describe(bank);
   let engine;
   try { engine = await createPreviewEngine(bank, preview.context); }
   catch (error) {
@@ -1253,9 +1256,11 @@ async function loadStoredBankInfo() {
   try {
     const { loadBank, describe, hasDefaultSubset } = await import('./preview/soundbank-store.mjs');
     const stored = await loadBank();
-    preview.bank = stored ? describe(stored) : null;
+    // A pick, a removal or an engine build that landed meanwhile has named a
+    // newer bank than this read.
+    if (preview.bank === undefined) preview.bank = stored ? describe(stored) : null;
     preview.defaultCached = await hasDefaultSubset(DEFAULT_BANK_SUBSET.sha256).catch(() => false);
-  } catch (error) { preview.bank = null; preview.error = `音色庫讀取失敗：${error.message}`; }
+  } catch (error) { if (preview.bank === undefined) preview.bank = null; preview.error = `音色庫讀取失敗：${error.message}`; }
   refreshPreview();
 }
 // ─── Six-role review roll ───────────────────────────────────────────────────

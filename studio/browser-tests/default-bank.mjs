@@ -274,6 +274,59 @@ export async function runDefaultBankChecks({ browser, base, profile }) {
     await page.evaluate(() => document.querySelector('#listen-stop:enabled')?.click());
     await page.locator('#listen-position[data-state="stopped"]').waitFor();
 
+    // The page names the bank the store keeps, however the reads and writes
+    // interleave. Its first read of the store, made as the card is drawn,
+    // is held here until a pick has been kept: the older read's result must
+    // not replace the pick's name.
+    await page.addInitScript(() => {
+      if (sessionStorage.getItem('holdStoredBankRead') !== 'yes') return;
+      sessionStorage.removeItem('holdStoredBankRead');
+      const transaction = IDBDatabase.prototype.transaction;
+      let held = false;
+      IDBDatabase.prototype.transaction = function (...args) {
+        const tx = transaction.apply(this, args);
+        if (held || this.name !== 'mml-studio-soundbank' || args[1] === 'readwrite') return tx;
+        held = true;
+        let handler = null;
+        const gate = new Promise(resolve => { window.releaseStoredBankRead = resolve; });
+        Object.defineProperty(tx, 'oncomplete', { configurable: true, get: () => handler, set: fn => { handler = fn; } });
+        tx.addEventListener('complete', event => { gate.then(() => handler?.call(tx, event)); });
+        return tx;
+      };
+    });
+    await page.evaluate(() => sessionStorage.setItem('holdStoredBankRead', 'yes'));
+    await page.reload(); await settled();
+    await page.waitForFunction(() => typeof window.releaseStoredBankRead === 'function');
+    assert.equal(await storedUserBank(), 'second.sf2');
+    await page.locator('#bank-file').setInputFiles({ name: 'fresh.sf2', mimeType: 'application/octet-stream', buffer: sample });
+    await page.locator('#message').filter({ hasText: '已載入音色庫 fresh.sf2' }).waitFor();
+    await page.evaluate(() => window.releaseStoredBankRead());
+    // Time for the released read to finish and redraw.
+    await page.waitForTimeout(500);
+    assert.ok((await page.locator('#bank-status').textContent()).includes('fresh.sf2'), `the older read does not replace the pick's name: ${await page.locator('#bank-status').textContent()}`);
+    // Another tab (the Workshop) keeps a bank in the same store while this
+    // page is open: the first play here builds its engine from that bank, and
+    // the page names it.
+    await page.evaluate(async bytes => {
+      const db = await new Promise((resolve, reject) => { const request = indexedDB.open('mml-studio-soundbank', 1); request.onsuccess = () => resolve(request.result); request.onerror = () => reject(request.error); });
+      const buffer = new Uint8Array(bytes).buffer;
+      const sha256 = [...new Uint8Array(await crypto.subtle.digest('SHA-256', buffer))].map(b => b.toString(16).padStart(2, '0')).join('');
+      await new Promise((resolve, reject) => {
+        const tx = db.transaction('banks', 'readwrite');
+        tx.objectStore('banks').put({ name: 'other-tab.sf2', size: buffer.byteLength, sha256, format: 'sfbk', savedAt: new Date().toISOString(), bytes: buffer }, 'current');
+        tx.oncomplete = resolve; tx.onerror = () => reject(tx.error);
+      });
+      db.close();
+    }, [...sample]);
+    await page.locator('#open-listening').click();
+    await page.locator('#listen-head h3', { hasText: 'Long bank fixture' }).waitFor();
+    assert.ok((await page.locator('#listen-bank').textContent()).includes('fresh.sf2'), 'before a play, the page has not read the store again');
+    await page.locator('#listen-play').click();
+    await played();
+    assert.ok((await page.locator('#listen-bank').textContent()).includes('other-tab.sf2'), `the listening player names the bank it plays: ${await page.locator('#listen-bank').textContent()}`);
+    assert.ok((await page.locator('#bank-status').textContent()).includes('other-tab.sf2'), 'and so does the timbre card');
+    await page.locator('#listen-stop').click();
+
     // Overlapping picks: the last choice wins. Each pick is checked off the
     // main thread first, and a big bank takes longer than a small one: here
     // the first pick's check is held until the second pick has been checked,

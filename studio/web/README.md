@@ -220,6 +220,9 @@ exact timing, event identity and the evidence boundaries. See
     Workshop, which does not load it either. A newer choice cannot stop an
     older pick whose write has already been sent; the page then names that
     bank, which the store keeps, until the newer choice's own result.
+    The Studio reads the kept bank when it opens and again whenever it
+    builds its engine, and names the bank it read: a bank kept from another
+    tab (the Workshop) is named once a play here has loaded it.
   - **A damaged bank.** Before a picked bank is kept, a Worker parses it with
     the vendored spessasynth_core (`preview/bank-check.mjs`), the loader the
     synth worklet runs on it. One that does not parse, such as a file cut
