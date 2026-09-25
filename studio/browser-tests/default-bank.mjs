@@ -272,6 +272,7 @@ export async function runDefaultBankChecks({ browser, base, profile }) {
     await page.locator('#listen-play').click();
     await played();
     assert.equal(await bankSends(), sentBeforeBuild + 2, 'the next play builds its engine from the bank picked, not the one built before the pick');
+    assert.equal(await page.locator('#listen-status').textContent(), '', 'a play that starts clears the reason the last one stopped');
     await page.evaluate(() => document.querySelector('#listen-stop:enabled')?.click());
     await page.locator('#listen-position[data-state="stopped"]').waitFor();
 

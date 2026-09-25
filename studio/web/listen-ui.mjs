@@ -181,7 +181,9 @@ export function createListening({ root, call, message, copyText, audio, saveProj
     if (!playable(version)) { status(version === 'compare' ? '比較版本無法解析，不能播放。' : '這份 MML 有無法解析的內容，不能播放。'); return; }
     const song = version === 'compare' ? state.compare.parsed.song : state.parsed.song;
     state.lastPlan = { ...plan, version };
-    state.stopNote = null;
+    // A new play clears the reason the last one stopped, on the page too:
+    // the status line is not redrawn while the engine stays the same.
+    status('');
     state.queue = queue;
     state.version = version;
     state.playing = true;
