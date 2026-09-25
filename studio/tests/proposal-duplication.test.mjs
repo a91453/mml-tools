@@ -22,7 +22,7 @@ import { mkdtemp, readdir, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
-import { PROPOSAL_KIND, PROPOSAL_STATE, RUN_STEP, createStudioApplication } from '../backend/application/index.mjs';
+import { PROPOSAL_KIND, PROPOSAL_STATE, RUN_HALT, RUN_STATE, RUN_STEP, createStudioApplication } from '../backend/application/index.mjs';
 import { RUN_REVIEWER, projectWithSymbolicAsset, runDecisionsFor } from './fixtures/run-fixtures.mjs';
 
 const OWNER = 'owner:proposal-duplication';
@@ -410,9 +410,12 @@ test('a process that dies inside the run leaves an acceptance whose retry finish
       const app = createStudioApplication({ dataDirectory: directory, durability: 'persistent' });
       const context = await submitted(app);
 
+      // The acceptance must get into the run for its process to die there. One
+      // the run refuses settles instead of stopping, and is reported as such
+      // rather than waited on for good.
       const dying = dyingInside(directory, hook);
-      acceptIn(dying.app, context);
-      await dying.stopped;
+      const settledFirst = await Promise.race([dying.stopped.then(() => null), acceptIn(dying.app, context)]);
+      assert.equal(settledFirst, null, `${hook}: the acceptance must be admitted and stop inside the run, got ${settledFirst?.error?.code}: ${settledFirst?.error?.message}`);
 
       // A fresh service over the same store. The acceptance and the run's
       // admission of it are on the record; nothing after that is.
@@ -526,8 +529,8 @@ test('after a process died inside the run, a retry is refused once another write
       const app = createStudioApplication({ dataDirectory: directory, durability: 'persistent' });
       const context = await submitted(app);
       const dying = dyingInside(directory, 'beforeEffect');
-      acceptIn(dying.app, context);
-      await dying.stopped;
+      const settledFirst = await Promise.race([dying.stopped.then(() => null), acceptIn(dying.app, context)]);
+      assert.equal(settledFirst, null, `${writer}: the acceptance must be admitted and stop inside the run, got ${settledFirst?.error?.code}: ${settledFirst?.error?.message}`);
 
       let interruptOther = false;
       const restarted = createStudioApplication({
@@ -795,4 +798,76 @@ test('a writer record an older build carried onto its own revision is never read
       assert.equal(own.revision_written_by.revision, own.revision, `${writer}: the writer record names the revision it was written for`);
     });
   }
+});
+
+// ─── E. a write that records no writer ──────────────────────────────────────
+//
+// `bumpRun` records the request whose lock hold a write was made in, and a
+// write made outside any request's hold records `revision_written_by: null`,
+// which names no request. The step-budget hold `advance` writes once a run has
+// spent its steps is written in the request's hold, as every write this build
+// makes is, and no test reaches it, so the run is written here as that hold
+// would leave it written outside one.
+
+/** The stored run after `advance`'s step-budget hold, written outside any request's hold. */
+const budgetHoldRecordingNoWriter = run => {
+  const at = new Date().toISOString();
+  return {
+    ...run,
+    state: RUN_STATE.BLOCKED,
+    halt: { reason: RUN_HALT.STEP_BUDGET_EXHAUSTED, step: null, at },
+    revision: run.revision + 1,
+    updated_at: at,
+    revision_written_by: null,
+  };
+};
+
+test('a write that records no writer is never read as this application\'s, so a retry after it is refused', async () => {
+  // After a process died inside the run, the run's latest write is this
+  // application's own, and its retry continues from there (section C). A
+  // write on top of it that names no request is nobody's: the retry does not
+  // continue from it, the run refuses it at its precondition, and nothing
+  // moves. The run admitted the application, so it cannot be taken back
+  // either.
+  await withDirectory(async directory => {
+    const app = createStudioApplication({ dataDirectory: directory, durability: 'persistent' });
+    const context = await submitted(app);
+    const dying = dyingInside(directory, 'beforeEffect');
+    const settledFirst = await Promise.race([dying.stopped.then(() => null), acceptIn(dying.app, context)]);
+    assert.equal(settledFirst, null, `the acceptance must be admitted and stop inside the run, got ${settledFirst?.error?.code}: ${settledFirst?.error?.message}`);
+
+    const { application } = (await createStudioApplication({ dataDirectory: directory, durability: 'persistent' })
+      .getProposal(OWNER, context.fixture.projectId, context.proposal.proposal_id)).proposal;
+    const own = await storedRunOf(directory, context.run.run_id);
+    assert.equal(own.revision_written_by?.revision, own.revision, 'the dead application wrote the run\'s latest revision');
+    assert.equal(own.revision_written_by?.idempotency_key, application.idempotency_key);
+    assert.equal(own.revision_written_by?.request_fingerprint, application.admitted_request_fingerprint);
+
+    await rewriteStoredRun(directory, context.run.run_id, budgetHoldRecordingNoWriter);
+    const written = await storedRunOf(directory, context.run.run_id);
+    assert.equal(written.revision, own.revision + 1);
+    assert.equal(written.revision_written_by, null, 'the hold names no request');
+
+    const restarted = createStudioApplication({ dataDirectory: directory, durability: 'persistent' });
+    const runBefore = (await restarted.getRun(OWNER, context.fixture.projectId, context.run.run_id)).run;
+    const candidatesBefore = await candidatesOf(restarted, context.fixture.projectId);
+    for (let round = 0; round < 2; round += 1) {
+      const retry = await acceptIn(restarted, context);
+      assert.equal(retry.ok, false, `retry ${round + 1} may not continue from a write that names no request`);
+      assert.equal(retry.error.code, 'RUN_CONFLICT', `${retry.error.code}: ${retry.error.message}`);
+      assert.equal(retry.error.details.admitted_by_run, false);
+    }
+    const runAfter = (await restarted.getRun(OWNER, context.fixture.projectId, context.run.run_id)).run;
+    assert.equal(runAfter.revision, runBefore.revision, 'the refused retries did not touch the run');
+    assert.equal(runAfter.candidate_id, runBefore.candidate_id);
+    assert.deepEqual(await candidatesOf(restarted, context.fixture.projectId), candidatesBefore, 'and minted nothing');
+    const settled = (await restarted.getProposal(OWNER, context.fixture.projectId, context.proposal.proposal_id)).proposal;
+    assert.equal(settled.state, PROPOSAL_STATE.ACCEPTED, 'not recorded as applied');
+    assert.equal(settled.application.conflict.code, 'RUN_CONFLICT', 'the blocker is on the record');
+    await assert.rejects(
+      restarted.resolveProposal(OWNER, context.fixture.projectId, context.proposal.proposal_id, { resolution: 'withdraw', reason: 'A write that names no request moved the run.' }),
+      error => error.code === 'PROPOSAL_CONFLICT',
+      'its application reached the run, so it is not withdrawable',
+    );
+  });
 });
