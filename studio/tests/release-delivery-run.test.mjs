@@ -191,8 +191,7 @@ test('RDR-4 no parser, emitter, run or reviewer statement can set in-game accept
 });
 
 test('RDR-5 no executable module carries a song-specific identifier or bypass', () => {
-  // Resolved from this file, so the check holds in the repository and in the
-  // public export alike; a root the checkout does not carry has nothing to scan.
+  // Resolved from this file; a root the checkout does not carry has nothing to scan.
   const repository = fileURLToPath(new URL('../../', import.meta.url));
   const roots = ['studio/backend', 'server', 'railway'].map(dir => join(repository, dir)).filter(existsSync);
   assert.ok(roots.length >= 2, 'the backend and server sources are present');

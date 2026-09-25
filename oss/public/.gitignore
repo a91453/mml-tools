@@ -1,8 +1,0 @@
-node_modules/
-studio/web-build/
-studio/browser-results/
-.DS_Store
-*.log
-.env
-.env.*
-!.env.example

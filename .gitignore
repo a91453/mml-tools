@@ -10,7 +10,6 @@ __pycache__/
 *.sqlite
 *.sqlite-shm
 *.sqlite-wal
-.oss-export/
 .canonical-bootstrap.json
 package-lock.json
 .studio-agent/

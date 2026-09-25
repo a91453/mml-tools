@@ -10,7 +10,7 @@ Studio／repository Skill 共用 Manifest Bootstrap。更新本機 `origin/main`
 
 `railway/` 提供獨立的 Node HTTP 服務、單一擁有者 OAuth、Dockerfile 與部署說明；它沿用原有 MML 核心。此版本採用 OAuth DCR、公用客戶端與 PKCE S256，授權資料保存於獨立 SQLite volume，MML 不入庫。請依 `railway/README.md` 完成環境變數、持久磁碟及來源連接。
 
-私人 GitHub 程式庫為 `a91453/mml-tools`；Railway 目標（專案、環境與服務名稱）與進度記錄於 `railway/deployment-target.json`；資源 ID 不存於本程式庫，維運腳本於執行時以專案 token 的範圍依名稱解析，名稱不符即停止。部署使用 Railway 服務設定及 `railway/Dockerfile`，不使用新服務已停用的 `railway.toml` 設定方式；`railway/service-settings.json` 保存不含密碼的設定參考。本機 `npm test` 全數通過（撰寫時 1343 項），包括經由實際本機 HTTP 的 OAuth＋MCP 呼叫；本機測試、正式 HTTPS 檢查及使用者在 ChatGPT 的連接驗收分開記錄。
+公開 GitHub 程式庫為 `a91453/mml-tools`（含 Git 歷史；授權見下方「授權」）；Railway 目標（專案、環境與服務名稱）與進度記錄於 `railway/deployment-target.json`；資源 ID 不存於本程式庫，維運腳本於執行時以專案 token 的範圍依名稱解析，名稱不符即停止。部署使用 Railway 服務設定及 `railway/Dockerfile`，不使用新服務已停用的 `railway.toml` 設定方式；`railway/service-settings.json` 保存不含密碼的設定參考。本機 `npm test` 全數通過（撰寫時 1343 項），包括經由實際本機 HTTP 的 OAuth＋MCP 呼叫；本機測試、正式 HTTPS 檢查及使用者在 ChatGPT 的連接驗收分開記錄。
 
 Railway 已於 2026-09-08 22:48 UTC 完成部署，GitHub 來源為 `a91453/mml-tools` 的 `main`。已觀察到 `/healthz` 200、OAuth metadata 200、未登入 `/mcp` 401；完整使用者 OAuth 與授權後工具呼叫仍需另外驗收。正式工具網址為 `https://mml-tools-production.up.railway.app/mcp`，採 OAuth DCR。較早的「Application not found」是歷史部署狀態，不是目前的登入錯誤原因。
 
@@ -107,3 +107,7 @@ npm test              # legacy + Studio symbolic regression
 既有測試使用合成音符及假的AudioContext驗證排程契約，未執行瀏覽器UI或真實音訊硬體驗收。手機／iPad首次播放、音訊中斷恢復、長曲與實際音色需使用者試聽後繼續校正。
 
 原始碼下載包不包含任何使用者歌曲、音檔、登入資料或部署憑證。原始碼、事件格式與測試都可帶走；Sites上的原始碼亦已版本化。
+
+## 授權
+
+本程式庫以 [MIT License](LICENSE) 公開，含 Git 歷史。第三方元件保留各自的授權（例如 SpessaSynth 為 Apache-2.0），站方另外提供的遊戲風格音色不在 MIT 範圍內；詳見 [NOTICE.md](NOTICE.md)。程式庫不存放任何憑證，`scripts/scan-secrets.mjs` 會在每個 PR 與 push 檢查所有追蹤中的檔案，回報方式見 [SECURITY.md](SECURITY.md)。

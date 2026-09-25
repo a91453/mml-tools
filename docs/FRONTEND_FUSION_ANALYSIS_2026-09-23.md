@@ -40,7 +40,7 @@ Date: 2026-09-23
 
 1. **技術限制，與授權無關。** 對方的資料模型是 PPQ 480 整數 tick 加上浮點秒，而且有多處有損處理（見 §5）。這與 Canonical 的精確有理數時間、來源完整保存直接衝突，所以資料層仍然必須改寫。
 2. **擁有者授權涵蓋不到的第三方元件。** 例如 SpessaSynth、lamejs、Font Awesome、音色庫，詳見下表。
-3. **MIT 公開。** `scripts/export-oss.mjs` 會把整個 `studio/`、`dist/core.js` 與 `dist/player.js` 以 MIT（`oss/public/LICENSE`）匯出公開。移植進這些路徑的程式碼也會以 MIT 公開，這需要擁有者決定（§11.5）。
+3. **MIT 公開。** 當時 `scripts/export-oss.mjs` 會把整個 `studio/`、`dist/core.js` 與 `dist/player.js` 以 MIT（`oss/public/LICENSE`）匯出公開；2026-09-25 起整個程式庫直接公開並以根目錄 `LICENSE`（MIT）授權，匯出機制已移除。移植進這些路徑的程式碼也會以 MIT 公開，這需要擁有者決定（§11.5）。
 4. **註解中的 canary 字元。** 站方註解中散落與上下文無關的單個 CJK 字元（例如「竹」「卜」「月」「日」「水」「女」），看起來是擁有者放的指紋或 canary。移植時應該去除，或把註解改寫成摘要。
 
 **Vendor 授權調查結果**（以 npm 上游 tarball 比對；只作為未來決策依據，本次沒有加入任何相依）：

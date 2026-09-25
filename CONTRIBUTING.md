@@ -7,7 +7,7 @@ Contributions are welcome when they keep the project reproducible, source-aware,
 1. Use Node.js 22 or newer.
 2. Run `npm install --ignore-scripts --package-lock=false`.
 3. Run `npm test` before submitting changes.
-4. For Web/PWA changes, also run `npm run build` and the browser suite when available.
+4. For Studio Web/PWA changes, also run `npm run build:studio-web` and the browser suite (`npm run test:studio-web`) when available.
 
 ## Fixtures and source material
 

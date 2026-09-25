@@ -8,8 +8,8 @@ import { EFFECTIVE_RULESET } from '../backend/rules/index.mjs';
 import { FLAG, MAX_HL_CHARS, OFFICIAL_LENGTH_MAX, OFFICIAL_LENGTH_MIN, ROLE, ROLE_CHARACTER_LIMIT, buildRoles, diagnosticsFromValidation, renderHTML, roleCharacterCounts, scanTokens, segmentRoles } from '../web/mml-highlight.mjs';
 
 // Grammar-generated, parser-clean six-role strings: tempo, octave moves, ties
-// to the same pitch, dotted lengths, rests, volume and Nxx. Always available,
-// including in the public export, which ships no song files.
+// to the same pitch, dotted lengths, rests, volume and Nxx. Always available:
+// no song file is needed.
 function generatedSongs(count = 12, seed = 3) {
   let state = seed;
   const next = n => (state = (Math.imul(state, 1103515245) + 12345) >>> 0) % n;

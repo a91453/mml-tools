@@ -27,7 +27,8 @@ jobs:
           node --test \
             tests/railway-agent-policy.test.mjs \
             tests/ci-artifact-upload-policy.test.mjs \
-            tests/ci-classify-policy.test.mjs
+            tests/ci-classify-policy.test.mjs \
+            tests/secret-scan.test.mjs
       - name: Classify Railway-only changes
         id: paths
         shell: bash
