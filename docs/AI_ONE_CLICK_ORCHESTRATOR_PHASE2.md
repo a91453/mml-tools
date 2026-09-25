@@ -795,7 +795,11 @@ the run since, the retry is refused, the conflict is recorded on the proposal
 rather than swallowed, and the proposal is not marked applied. That state —
 accepted, not withdrawable, its blocker on the record — is the one a
 persistently refusing run already produces, and its remedy is the one it always
-had: a fresh proposal against the request as it stands.
+had: a fresh proposal against the request as it stands. A failing attempt
+records its conflict only on a proposal that is still `accepted`: one another
+attempt of the same acceptance applied meanwhile (a retry in another process,
+say), or one rejected or withdrawn before the run admitted anything, is left
+exactly as that write left it, and the failing caller is told which.
 
 ## 8. Identity and staleness
 

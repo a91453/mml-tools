@@ -976,6 +976,58 @@ test('a refused twin of an attempt the run already admitted pins nothing, and th
   assert.equal(minted.length, 1, 'one acceptance, one application');
 });
 
+test('an attempt that fails after another attempt of the same acceptance applied it leaves the applied record as it is', async () => {
+  // Two processes on one store, each with its own project lock. The first
+  // attempt is admitted and held inside the run before its effect; meanwhile
+  // the second process retries the same acceptance and applies it. The first
+  // attempt then fails, and its record step finds the proposal applied. It
+  // used to write its conflict onto the applied proposal all the same, so
+  // studio_proposal_status showed a failure on a proposal that had applied.
+  await withDirectory(async directory => {
+    const options = { dataDirectory: directory, durability: 'persistent' };
+    const hold = { armed: false, reached: null, release: null };
+    const reached = new Promise(resolve => { hold.reached = resolve; });
+    const released = new Promise(resolve => { hold.release = resolve; });
+    const first = createStudioApplication({
+      ...options,
+      runHooks: {
+        beforeEffect: async ({ step }) => {
+          if (!hold.armed || step !== RUN_STEP.FINAL_REDUCTION) return;
+          hold.armed = false;
+          hold.reached();
+          await released;
+          throw Error('the process stopped before the effect');
+        },
+      },
+    });
+    const second = createStudioApplication(options);
+    const context = await runAwaitingReduction(first);
+    const submitted = await proposeReduction(first, context, { decisions: REDUCTION_DECISIONS });
+    const proposalId = submitted.proposal.proposal_id;
+
+    hold.armed = true;
+    const held = accept(first, context, proposalId);
+    await reached;
+    const applied = await accept(second, context, proposalId);
+    assert.ok(applied.ok, `the retry in the other process applies it: ${applied.error?.code}: ${applied.error?.message}`);
+    assert.equal(applied.result.proposal.state, PROPOSAL_STATE.APPLIED);
+    const asApplied = (await second.getProposal(OWNER, context.fixture.projectId, proposalId)).proposal;
+
+    hold.release();
+    const stopped = await held;
+    assert.equal(stopped.ok, false);
+    assert.match(String(stopped.error.message), /stopped before the effect/);
+    assert.equal(stopped.error.details.proposal_state, PROPOSAL_STATE.APPLIED);
+    assert.match(stopped.error.details.notice, /Another attempt of this acceptance applied it/);
+
+    const settled = (await first.getProposal(OWNER, context.fixture.projectId, proposalId)).proposal;
+    assert.equal(settled.state, PROPOSAL_STATE.APPLIED);
+    assert.equal(settled.application.conflict, null, 'no conflict is written onto an applied proposal');
+    assert.equal(settled.revision, asApplied.revision, 'the failed attempt added no revision');
+    assert.deepEqual(settled.application, asApplied.application, 'and left the application record as the applying attempt wrote it');
+  });
+});
+
 test('a retry that would hand the run a different request than the one it admitted for this acceptance is refused before the run writes anything', async () => {
   // A retry finishes the application the run admitted: the same idempotency
   // key AND the same request. Here the plan the acceptance derives moves
