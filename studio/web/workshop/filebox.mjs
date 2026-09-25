@@ -16,6 +16,7 @@ import { parseMusicXML, MusicXmlError } from "./musicxml-in.mjs";
 import { toMml, toMmi, safeFileName, stripExt } from "./mml-out.mjs";
 import * as tracks from "./tracks.mjs";
 import * as i18n from "./i18n.mjs";
+import * as release from "./release.mjs";
 
 let onImport = () => {};
 let onMix = () => {};
@@ -249,6 +250,7 @@ function readText(buf, name) {
 // finds the score inside; it is loaded only when an archive is picked. The
 // score then reads like a .musicxml.
 async function readMxl(buf, name, token) {
+  if (release.blocked()) return;
   let xml;
   try {
     const { extractMusicXmlFromMxl } = await import("../../backend/score/mxl.mjs");

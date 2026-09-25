@@ -219,6 +219,7 @@ header .spacer{flex:1}
 #gear,
 #clip,
 #file,
+#pwaUpdate,
 #aboutBtn{
     display:inline-flex; align-items:center; gap:7px; align-self:center;
     background:var(--btn-bg); border:1px solid var(--line); border-radius:3px;
@@ -228,6 +229,9 @@ header .spacer{flex:1}
 #clip:hover,
 #file:hover,
 #aboutBtn:hover{border-color:var(--t2);color:var(--txt)}
+#pwaUpdate{border-color:rgba(var(--hl-rgb),.55);color:var(--t1)}
+#pwaUpdate[hidden]{display:none}
+#pwaUpdate:hover{border-color:var(--t1);color:var(--txt)}
 #navIo{display:contents}
 @media (display-mode: standalone) and (min-width: 529px) and (min-height: 481px),
          (display-mode: minimal-ui) and (min-width: 529px) and (min-height: 481px){

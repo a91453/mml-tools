@@ -57,6 +57,11 @@ function stats() {
 
 export function setHasNotes(has) { hasNotes = has; syncGo(); }
 
+// Nothing to lose on a reload that autosave cannot cover: the score is empty,
+// or equal to what was last saved to or opened from the library.
+export const isSaved = () => !hasNotes
+  || (savedFingerprint !== null && JSON.stringify(currentSnapshot()) === savedFingerprint);
+
 function syncGo() {
   const btn = $("#saveGo");
   if (!btn) return;

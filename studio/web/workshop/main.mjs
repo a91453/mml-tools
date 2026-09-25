@@ -6,6 +6,7 @@ import * as i18n from "./i18n.mjs";
 import { translatePage } from "./i18n-page.mjs";
 import * as engine from "./engine.mjs";
 import * as ui from "./ui.mjs";
+import * as release from "./release.mjs";
 
 await i18n.use(document.documentElement.lang);
 translatePage(document);
@@ -14,6 +15,7 @@ document.documentElement.removeAttribute("data-i18n-pending");
 $("#log button")?.addEventListener("click", () => { $("#log").style.display = "none"; });
 
 ui.init();
+release.init({ leaveBlocker: ui.leaveBlocker });
 
 if (location.protocol === "file:" || location.origin === "null") {
   $("#engine").textContent = i18n.t("main.needHttp");
