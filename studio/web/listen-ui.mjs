@@ -99,7 +99,8 @@ export function createListening({ root, call, message, copyText, audio, saveProj
       // open() keeps its failure on the page instead of throwing, so only a
       // session that opened is reported as one. It stays saved either way and
       // can be opened again from the list.
-      if (!await open(session.id)) throw Error(state.error);
+      const failure = await open(session.id);
+      if (failure !== null) throw Error(failure);
       message('已從試聽連結建立新的試聽工作階段；按「播放」才會發出聲音。沒有建立或覆寫任何專案。');
       return session;
     } catch (error) {
@@ -122,18 +123,22 @@ export function createListening({ root, call, message, copyText, audio, saveProj
       notes: notes.filter(note => note.mmlSha256 === sha),
       alternatives: alternatives.filter(item => typeof item?.mml === 'string' && item.mml.trim() && item.mml.trim() !== text).slice(0, 4).map(item => ({ label: String(item.label).slice(0, 80), mml: item.mml.trim().slice(0, LISTEN_LIMITS.mmlChars) })),
     });
-    await open(session.id);
+    const failure = await open(session.id);
     root.scrollIntoView?.({ block: 'start' });
+    // As for a link: saved either way, reported as opened only if it did.
+    if (failure !== null) throw Error(failure);
     message('已建立試聽工作階段；按「播放」開始聆聽。');
     return session;
   }
 
   // ─── opening a session ────────────────────────────────────────────────
-  // Resolves true when the session opened, false when it could not.
+  // Resolves null when the session opened, or the reason it could not. The
+  // reason is returned rather than read back from state.error, which another
+  // open() started meanwhile (from the list, say) may already have cleared.
   async function open(id) {
     stop({ quiet: true });
     state.loading = true; state.error = null; render();
-    let opened = false;
+    let failure = null;
     try {
       const session = await getSession(id);
       const parsed = await call('parseListening', session.mml);
@@ -142,14 +147,13 @@ export function createListening({ root, call, message, copyText, audio, saveProj
       layout();
       state.cue = { beat: startBeat(session.start) };
       state.position = { seconds: clock().secondsAt(state.cue.beat), beat: beatNumber(state.cue.beat) };
-      opened = true;
     } catch (error) {
-      state.session = null; state.error = error.message;
+      state.session = null; state.error = failure = error.message;
     }
     state.loading = false;
     await refreshSessions();
     render();
-    return opened;
+    return failure;
   }
   // Bars, clocks, markers and changes for what is loaded.
   function layout() {
