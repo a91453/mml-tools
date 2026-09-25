@@ -213,21 +213,35 @@ exact timing, event identity and the evidence boundaries. See
     free default bank.
   - **Where your bank lives.** In its own IndexedDB database on that device. It
     is never uploaded, never in a project backup, and never in the build, and
-    it always takes precedence over the default bank.
+    it always takes precedence over the default bank. When picks overlap
+    (each is checked first, and a big bank takes longer), the last choice
+    wins, and removing the bank is a choice too: a pick overtaken before it
+    is written is not kept and says nothing, in the Studio and in the
+    Workshop, which does not load it either. A newer choice cannot stop an
+    older pick whose write has already been sent; the page then names that
+    bank, which the store keeps, until the newer choice's own result.
+    The Studio reads the kept bank when it opens and again whenever it
+    builds its engine, and names the bank it read: a bank kept from another
+    tab (the Workshop) is named once a play here has loaded it.
   - **A damaged bank.** Before a picked bank is kept, a Worker parses it with
     the vendored spessasynth_core (`preview/bank-check.mjs`), the loader the
     synth worklet runs on it. One that does not parse, such as a file cut
     short behind an intact header, is refused with 「音色庫無法解析，沒有儲存」
     and nothing is stored; the kept bank stays as it was. The check has a
-    time limit, 5 s plus 1 s for every 2 MiB (37 s at the 64 MiB cap): a
-    damaged bank can instead keep the parser allocating until the tab
-    crashes, so a check still running then is stopped and the bank refused
-    with 「音色庫在 N 秒內沒有完成檢查，沒有儲存」, which does not call it
-    damaged. The Workshop keeps its picks in the same store, which refuses
-    them the same way; it still hands a bank that does not parse to its
-    synth, whose parse error is what it shows, but a pick whose check ran out
-    of time is refused in the page language and never reaches the synth,
-    which would run the same parse. If the engine
+    time limit, 5 s plus 1 s for every 2 MiB (37 s at the 64 MiB cap),
+    counted from the moment the Worker has loaded its parser: a damaged
+    bank can instead keep the parser allocating until the tab crashes, so a
+    check still running then is stopped and the bank refused with
+    「音色庫在 N 秒內沒有完成檢查，沒有儲存」, which does not call it
+    damaged. Loading the parser (about 740 KB, downloaded on a first visit
+    before the Service Worker has cached it) has a limit of its own, 30 s;
+    a Worker that has not loaded by then is stopped and the bank refused
+    with 「檢查音色庫的程式在 30 秒內沒有載入，音色庫沒有檢查，也沒有儲存」.
+    The Workshop keeps its picks in the same store, which refuses them the
+    same way; it still hands a bank that does not parse to its synth, whose
+    parse error is what it shows, but a pick whose check ran out of time, or
+    whose checker did not load, is refused in the page language and never
+    reaches the synth, which would run the same parse. If the engine
     still cannot load a bank (the worklet reports a parse error, or nothing
     arrives within 60 s), the load stops with 「音色庫無法解析，已停止載入」 or
     the timeout message, the player leaves its loading state, and the next

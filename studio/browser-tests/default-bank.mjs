@@ -7,7 +7,9 @@ import { encodeListenLink } from '../web/listen-link.mjs';
 import { DEFAULT_BANK_DOWNLOAD_NOTICE, DEFAULT_BANK_SUBSET, DEFAULT_BANK_UPSTREAM } from '../web/preview/default-bank.mjs';
 import { trimDefaultBank } from '../web/preview/default-bank-trim.mjs';
 import { syntheticUpstreamBank } from '../tests/support/synthetic-soundbank.mjs';
+import { TICK_MS } from '../web/preview/player.mjs';
 import { countBankSends } from './bank-sends.mjs';
+import { holdNextBankCheck } from './bank-check-hold.mjs';
 
 // The free default preview bank through the real page, Worker and engine, in a
 // browser context of its own: its storage starts empty, and the upstream URL
@@ -205,6 +207,175 @@ export async function runDefaultBankChecks({ browser, base, profile }) {
     await page.locator('#listen-stop').click();
     assert.equal(upstreamRequests.length, 3, 'the user bank plays without contacting the upstream');
     assert.ok((await page.locator('[data-listen-instrument="0"] option').allTextContents()).every(text => /^\d{3} /.test(text)), 'the picker lists the user bank\'s presets');
+
+    // The bank changes below happen while a playback runs, so they use a
+    // song that lasts a minute, not four seconds.
+    const long = await encodeListenLink({ schema: 'mml-studio/listen-link@1', title: 'Long bank fixture', mml: 'MML@t60o4l1cdefgabcdefgabc,,,,,;' }, codec);
+    await page.evaluate(value => { location.hash = `listen=${value}`; }, long);
+    await page.locator('#listen-head h3', { hasText: 'Long bank fixture' }).waitFor();
+
+    // A bank change while a quick restart waits for the stopped playback's
+    // queued notes to pass (up to 0.4 s): the waiting playback never starts
+    // on the destroyed engine, so no scheduler is left running behind it.
+    await page.evaluate(tick => {
+      const set = window.setInterval, clear = window.clearInterval;
+      window.schedulers = new Set();
+      window.setInterval = (callback, ms, ...rest) => { const id = set(callback, ms, ...rest); if (ms === tick) window.schedulers.add(id); return id; };
+      window.clearInterval = id => { window.schedulers.delete(id); return clear(id); };
+    }, TICK_MS);
+    await page.locator('#listen-play').click();
+    await played();
+    await page.evaluate(() => new Promise(resolve => {
+      document.querySelector('#listen-stop').click();
+      document.querySelector('#listen-play').click();
+      setTimeout(() => { document.querySelector('#bank-clear').click(); resolve(); }, 100);
+    }));
+    await page.locator('#bank-status').filter({ hasText: LABEL }).waitFor();
+    // Past the restart's wait, with time for a scheduler to start.
+    await page.waitForTimeout(1000);
+    assert.equal(await page.evaluate(() => window.schedulers.size), 0, 'no playback runs on the engine the bank change destroyed');
+    assert.equal(await page.locator('#listen-position').getAttribute('data-state'), 'stopped');
+    assert.equal(await page.locator('#listen-status').textContent(), '試聽已停止：音色庫已變更。', 'the player says the bank changed');
+    await page.locator('#listen-bank-file').setInputFiles({ name: 'saw.sf2', mimeType: 'application/octet-stream', buffer: sample });
+    await page.locator('#listen-bank').filter({ hasText: 'saw.sf2' }).waitFor();
+
+    // A bank picked while a play is still building the engine: the engine
+    // built from the old bank is closed, not installed. That play says the
+    // bank changed, and the next play builds its engine from the new bank.
+    // The new synth's ready message (synth-ready.mjs) is held in the page
+    // until the pick has been kept. (Playwright does not route an
+    // AudioWorklet's module request, so the processor cannot be held.)
+    await page.evaluate(() => {
+      const onmessage = Object.getOwnPropertyDescriptor(MessagePort.prototype, 'onmessage');
+      const ready = data => data?.type === 'isFullyInitialized' && data?.data?.type === 'sf3Decoder';
+      window.heldReady = [];
+      Object.defineProperty(MessagePort.prototype, 'onmessage', {
+        configurable: true,
+        enumerable: onmessage.enumerable,
+        get() { return onmessage.get.call(this); },
+        set(handler) {
+          onmessage.set.call(this, typeof handler !== 'function' ? handler : function (event) {
+            if (window.heldReady && ready(event?.data)) { window.heldReady.push(() => handler.call(this, event)); return undefined; }
+            return handler.call(this, event);
+          });
+        },
+      });
+    });
+    const sentBeforeBuild = await bankSends();
+    await page.locator('#listen-play').click();
+    await page.waitForFunction(() => window.heldReady.length === 1);
+    await page.locator('#bank-file').setInputFiles({ name: 'second.sf2', mimeType: 'application/octet-stream', buffer: sample });
+    await page.locator('#message').filter({ hasText: '已載入音色庫 second.sf2' }).waitFor();
+    await page.evaluate(() => { const held = window.heldReady; window.heldReady = null; held.forEach(deliver => deliver()); });
+    await page.waitForFunction(sent => window.bankSends === sent, sentBeforeBuild + 1);
+    await page.locator('#listen-status').filter({ hasText: '無法播放：音色庫已更換，請再按一次播放。' }).waitFor({ timeout: 10000 });
+    await page.locator('#listen-play').click();
+    await played();
+    assert.equal(await bankSends(), sentBeforeBuild + 2, 'the next play builds its engine from the bank picked, not the one built before the pick');
+    assert.equal(await page.locator('#listen-status').textContent(), '', 'a play that starts clears the reason the last one stopped');
+    await page.evaluate(() => document.querySelector('#listen-stop:enabled')?.click());
+    await page.locator('#listen-position[data-state="stopped"]').waitFor();
+
+    // The page names the bank the store keeps, however the reads and writes
+    // interleave. Its first read of the store, made as the card is drawn,
+    // is held here until a pick has been kept: the older read's result must
+    // not replace the pick's name.
+    await page.addInitScript(() => {
+      if (sessionStorage.getItem('holdStoredBankRead') !== 'yes') return;
+      sessionStorage.removeItem('holdStoredBankRead');
+      const transaction = IDBDatabase.prototype.transaction;
+      let held = false;
+      IDBDatabase.prototype.transaction = function (...args) {
+        const tx = transaction.apply(this, args);
+        if (held || this.name !== 'mml-studio-soundbank' || args[1] === 'readwrite') return tx;
+        held = true;
+        let handler = null;
+        const gate = new Promise(resolve => { window.releaseStoredBankRead = resolve; });
+        Object.defineProperty(tx, 'oncomplete', { configurable: true, get: () => handler, set: fn => { handler = fn; } });
+        tx.addEventListener('complete', event => { gate.then(() => handler?.call(tx, event)); });
+        return tx;
+      };
+    });
+    await page.evaluate(() => sessionStorage.setItem('holdStoredBankRead', 'yes'));
+    await page.reload(); await settled();
+    await page.waitForFunction(() => typeof window.releaseStoredBankRead === 'function');
+    assert.equal(await storedUserBank(), 'second.sf2');
+    await page.locator('#bank-file').setInputFiles({ name: 'fresh.sf2', mimeType: 'application/octet-stream', buffer: sample });
+    await page.locator('#message').filter({ hasText: '已載入音色庫 fresh.sf2' }).waitFor();
+    await page.evaluate(() => window.releaseStoredBankRead());
+    // Time for the released read to finish and redraw.
+    await page.waitForTimeout(500);
+    assert.ok((await page.locator('#bank-status').textContent()).includes('fresh.sf2'), `the older read does not replace the pick's name: ${await page.locator('#bank-status').textContent()}`);
+    // Another tab (the Workshop) keeps a bank in the same store while this
+    // page is open: the first play here builds its engine from that bank, and
+    // the page names it.
+    await page.evaluate(async bytes => {
+      const db = await new Promise((resolve, reject) => { const request = indexedDB.open('mml-studio-soundbank', 1); request.onsuccess = () => resolve(request.result); request.onerror = () => reject(request.error); });
+      const buffer = new Uint8Array(bytes).buffer;
+      const sha256 = [...new Uint8Array(await crypto.subtle.digest('SHA-256', buffer))].map(b => b.toString(16).padStart(2, '0')).join('');
+      await new Promise((resolve, reject) => {
+        const tx = db.transaction('banks', 'readwrite');
+        tx.objectStore('banks').put({ name: 'other-tab.sf2', size: buffer.byteLength, sha256, format: 'sfbk', savedAt: new Date().toISOString(), bytes: buffer }, 'current');
+        tx.oncomplete = resolve; tx.onerror = () => reject(tx.error);
+      });
+      db.close();
+    }, [...sample]);
+    await page.locator('#open-listening').click();
+    await page.locator('#listen-head h3', { hasText: 'Long bank fixture' }).waitFor();
+    assert.ok((await page.locator('#listen-bank').textContent()).includes('fresh.sf2'), 'before a play, the page has not read the store again');
+    await page.locator('#listen-play').click();
+    await played();
+    assert.ok((await page.locator('#listen-bank').textContent()).includes('other-tab.sf2'), `the listening player names the bank it plays: ${await page.locator('#listen-bank').textContent()}`);
+    assert.ok((await page.locator('#bank-status').textContent()).includes('other-tab.sf2'), 'and so does the timbre card');
+    await page.locator('#listen-stop').click();
+
+    // A bank picked while a listening playback runs stops it, and the player
+    // says why, also once the bank change has redrawn it: a pick on the
+    // timbre card redraws the player's card, and one on the player redraws
+    // the whole session.
+    for (const [input, name] of [['#bank-file', 'card.sf2'], ['#listen-bank-file', 'player.sf2']]) {
+      await page.locator('#listen-play').click();
+      await played();
+      await page.locator(input).setInputFiles({ name, mimeType: 'application/octet-stream', buffer: sample });
+      await page.locator('#listen-bank').filter({ hasText: name }).waitFor();
+      await page.locator('#listen-position[data-state="stopped"]').waitFor();
+      assert.equal(await page.locator('#listen-status').textContent(), '試聽已停止：音色庫已變更。', `${input}: the player says the bank changed`);
+    }
+
+    // Overlapping picks: the last choice wins. Each pick is checked off the
+    // main thread first, and a big bank takes longer than a small one: here
+    // the first pick's check is held until the second pick has been checked,
+    // kept and shown. Once released, the first pick is neither kept nor shown,
+    // and says nothing.
+    await holdNextBankCheck(page);
+    await page.locator('#bank-file').setInputFiles({ name: 'first.sf2', mimeType: 'application/octet-stream', buffer: sample });
+    await page.waitForFunction(() => window.heldBankCheck?.handed);
+    await page.locator('#bank-file').setInputFiles({ name: 'second.sf2', mimeType: 'application/octet-stream', buffer: sample });
+    await page.locator('#message').filter({ hasText: '已載入音色庫 second.sf2' }).waitFor();
+    await page.locator('#bank-status').filter({ hasText: 'second.sf2' }).waitFor();
+    await page.evaluate(() => window.heldBankCheck.release());
+    await page.waitForFunction(() => window.heldBankCheck.stopped);
+    // Time for a write and a redraw the page must not make.
+    await page.waitForTimeout(1000);
+    assert.equal(await storedUserBank(), 'second.sf2', 'the overtaken pick is not kept');
+    assert.ok((await page.locator('#bank-status').textContent()).includes('second.sf2'), 'the card still names the last pick');
+    assert.ok((await page.locator('#listen-bank').textContent()).includes('second.sf2'), 'and so does the listening player');
+    assert.ok(!(await page.locator('#message').textContent()).includes('first.sf2'), 'the overtaken pick says nothing');
+    // Removing the bank is a newer choice too: a pick still being checked
+    // then is not kept once the removal has run.
+    await holdNextBankCheck(page);
+    await page.locator('#bank-file').setInputFiles({ name: 'late.sf2', mimeType: 'application/octet-stream', buffer: sample });
+    await page.waitForFunction(() => window.heldBankCheck?.handed);
+    // Clicked in the page: the timbre card sits in section 06, away from the
+    // listening player this context has open.
+    await page.evaluate(() => document.querySelector('#bank-clear').click());
+    await page.locator('#bank-status').filter({ hasText: LABEL }).waitFor();
+    await page.evaluate(() => window.heldBankCheck.release());
+    await page.waitForFunction(() => window.heldBankCheck.stopped);
+    await page.waitForTimeout(1000);
+    assert.equal(await storedUserBank(), null, 'a pick overtaken by the removal is not kept');
+    assert.ok((await page.locator('#bank-status').textContent()).includes(LABEL), 'the card names the default bank');
+    assert.ok(!(await page.locator('#message').textContent()).includes('late.sf2'), 'the overtaken pick says nothing');
     assert.deepEqual(errors, []);
     return { upstream: fixture.real ? 'pinned upstream file' : 'synthetic stand-in with swapped pins' };
   } finally {

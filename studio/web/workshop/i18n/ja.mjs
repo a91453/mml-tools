@@ -275,6 +275,7 @@ export default {
   "ui.bankFailed": "読み込み失敗",
   "ui.bankLoadError": "サウンドバンクを読み込めません",
   "ui.bankCheckTimeout": "サウンドバンクの確認が {s} 秒以内に終わらなかったため、読み込みも保存もしていません",
+  "ui.bankCheckerLoadTimeout": "サウンドバンクの確認プログラムが {s} 秒以内に読み込まれなかったため、確認できず、読み込みも保存もしていません",
   "ui.defUnparsed": "この .def の <code>[Instrument presets]</code> セクションを認識できませんでした。先頭の数行を送っていただければ、パーサーを直します。",
   "ui.defNoMatch": "この .def の {n}個の番号が、今のサウンドバンクのどれとも一致しません。サウンドバンクの組み合わせが違う可能性が高いです。ドロップダウンはそのままにします。",
   "mark.menu.add": "セクション記号を追加",

@@ -106,6 +106,10 @@ export function createTransport(engine, { onPosition = () => {}, onEnd = () => {
   const pitchFor = event => voices[event.role]?.drumNote ?? event.pitch;
   const muted = [false, false, false, false, false, false];
   let events = [], duration = 0, index = 0, t0 = 0, timer = 0, frame = 0, playing = false, unmuteTimer = 0;
+  // Counts halts, so a play() still waiting when something halts the
+  // transport (a stop, another play, a new song, destroy) knows it was
+  // overtaken and does not start.
+  let halts = 0;
   // The range being played, in song seconds. `until` is null for "to the end".
   let from = 0, until = null;
   // Player readback capture: only for a playback that starts at 0. Anything
@@ -194,6 +198,7 @@ export function createTransport(engine, { onPosition = () => {}, onEnd = () => {
     }, (LOOKAHEAD_SEC + 0.08) * 1000);
   }
   function halt() {
+    halts += 1;
     clearInterval(timer); cancelAnimationFrame(frame);
     timer = 0; frame = 0;
     // A capture still open here was cut short: it is dropped, never kept.
@@ -216,12 +221,19 @@ export function createTransport(engine, { onPosition = () => {}, onEnd = () => {
     async play(position = 0, { until: stopAt = null } = {}) {
       if (!song) throw Error('沒有可試聽的 Final MML');
       halt();
-      await context.resume();
+      // Halted while waiting below (a bank change destroys the transport):
+      // this playback never starts, so no timer or animation loop is left
+      // running on a stopped or destroyed engine.
+      const run = halts;
+      const overtaken = () => run !== halts;
+      await context.resume().catch(error => { if (!overtaken()) throw error; });
+      if (overtaken()) return;
       const start = Math.min(Math.max(0, position), duration);
       // Notes queued by the previous playback cannot be withdrawn. A capture
       // waits until they have passed, so it records only this playback.
       const settle = haltedAt + LOOKAHEAD_SEC + 0.1 - context.currentTime;
       if (start === 0 && settle > 0) await new Promise(resolve => setTimeout(resolve, settle * 1000));
+      if (overtaken()) return;
       clearTimeout(unmuteTimer);
       synth.stopAll(true);
       out.gain.cancelScheduledValues(context.currentTime);

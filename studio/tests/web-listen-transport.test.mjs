@@ -19,15 +19,15 @@ function rig() {
   const out = { gain: { cancelScheduledValues() {}, setValueAtTime() {} } };
   const engine = { context, synth, out, presets: [{ program: 0, bankMSB: 0, name: 'fixture' }], bank: { name: 'fixture', sha256: '0'.repeat(64) } };
   const ends = [];
-  let tick = null;
+  let tick = null, frames = 0;
   const saved = { setInterval: globalThis.setInterval, clearInterval: globalThis.clearInterval, raf: globalThis.requestAnimationFrame, caf: globalThis.cancelAnimationFrame, setTimeout: globalThis.setTimeout };
   globalThis.setInterval = fn => { tick = fn; return 1; };
   globalThis.clearInterval = () => { tick = null; };
-  globalThis.requestAnimationFrame = () => 0;
+  globalThis.requestAnimationFrame = () => { frames += 1; return 0; };
   globalThis.cancelAnimationFrame = () => {};
   const restore = () => Object.assign(globalThis, { setInterval: saved.setInterval, clearInterval: saved.clearInterval, requestAnimationFrame: saved.raf, cancelAnimationFrame: saved.caf });
   const transport = createTransport(engine, { onEnd: (capture, info) => ends.push({ capture, info }) });
-  return { transport, context, sent, ends, step: () => tick?.(), get ticking() { return tick !== null; }, restore };
+  return { transport, context, sent, ends, step: () => tick?.(), get ticking() { return tick !== null; }, get frames() { return frames; }, restore };
 }
 // Eight quarter notes at 120 bpm: one every half second.
 const song = parseListening('MML@t120o4l4cdefgabc,,,,,;').song;
@@ -74,4 +74,39 @@ test('a ranged playback from the start is never a complete readback capture; an 
   assert.equal(r.ends.length, 2);
   assert.equal(r.ends[1].info.ranged, false);
   assert.deepEqual(r.ends[1].capture.incomplete, [], 'nothing about an unranged playback marks its capture incomplete');
+});
+
+test('a playback still waiting to start when the transport is stopped or destroyed never starts', async t => {
+  const r = rig();
+  t.after(r.restore);
+  r.transport.load(song);
+  const pause = ms => new Promise(resolve => setTimeout(resolve, ms));
+  for (const [what, end] of [['destroyed (a bank change)', () => r.transport.destroy()], ['stopped', () => r.transport.stop()]]) {
+    await r.transport.play(0);
+    assert.equal(r.ticking, true);
+    // A quick restart from the start waits (real timers, up to 0.4 s) for
+    // the stopped playback's queued notes to pass; it ends meanwhile.
+    r.transport.stop();
+    const restart = r.transport.play(0);
+    await pause(50);
+    const sentBefore = r.sent.length, framesBefore = r.frames;
+    end();
+    await restart;
+    assert.equal(r.transport.playing, false, `${what}: the playback did not start`);
+    assert.equal(r.ticking, false, `${what}: no scheduler interval is left running`);
+    assert.equal(r.frames, framesBefore, `${what}: no position loop was started`);
+    assert.equal(r.sent.length, sentBefore, `${what}: nothing was sent to the engine`);
+  }
+
+  // A context closed while it resumes rejects the resume (Chromium rejects
+  // a pending resume on close): a playback overtaken that way ends quietly.
+  const closing = rig();
+  t.after(closing.restore);
+  closing.transport.load(song);
+  closing.context.resume = () => new Promise((resolve, reject) => { closing.context.close = () => reject(Object.assign(Error('Audio context is going away'), { name: 'InvalidStateError' })); });
+  const starting = closing.transport.play(0.5);
+  closing.transport.destroy();
+  await starting;
+  assert.equal(closing.transport.playing, false);
+  assert.equal(closing.ticking, false);
 });

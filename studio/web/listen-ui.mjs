@@ -56,7 +56,7 @@ export function createListening({ root, call, message, copyText, audio, saveProj
     clocks: { current: null, compare: null }, changes: null, markers: [], cue: { beat: '0' }, lastPlan: null,
     playing: false, position: { seconds: 0, beat: 0 }, queue: null, version: 'current', highlight: null,
     muted: [false, false, false, false, false, false], solo: [false, false, false, false, false, false],
-    selectedEvent: null, editingNoteId: null, confirmDelete: false, loading: false, error: null,
+    selectedEvent: null, editingNoteId: null, confirmDelete: false, loading: false, error: null, stopNote: null,
     draft: emptyDraft(),
   };
   let roll = null;
@@ -184,7 +184,7 @@ export function createListening({ root, call, message, copyText, audio, saveProj
       const session = await getSession(id);
       const parsed = await call('parseListening', session.mml);
       const compare = session.compareMml ? { label: session.compareLabel ?? '比較版本', mml: session.compareMml, parsed: await call('parseListening', session.compareMml) } : null;
-      Object.assign(state, { session, parsed, compare, version: 'current', queue: null, highlight: null, selectedEvent: null, editingNoteId: null, confirmDelete: false, lastPlan: null });
+      Object.assign(state, { session, parsed, compare, version: 'current', queue: null, highlight: null, selectedEvent: null, editingNoteId: null, confirmDelete: false, lastPlan: null, stopNote: null });
       layout();
       state.cue = { beat: startBeat(session.start) };
       state.position = { seconds: clock().secondsAt(state.cue.beat), beat: beatNumber(state.cue.beat) };
@@ -233,6 +233,9 @@ export function createListening({ root, call, message, copyText, audio, saveProj
     if (!playable(version)) { status(version === 'compare' ? '比較版本無法解析，不能播放。' : '這份 MML 有無法解析的內容，不能播放。'); return; }
     const song = version === 'compare' ? state.compare.parsed.song : state.parsed.song;
     state.lastPlan = { ...plan, version };
+    // A new play clears the reason the last one stopped, on the page too:
+    // the status line is not redrawn while the engine stays the same.
+    status('');
     state.queue = queue;
     state.version = version;
     state.playing = true;
@@ -253,7 +256,7 @@ export function createListening({ root, call, message, copyText, audio, saveProj
   // One handlers object for every playback of this page, so replacing one
   // listening playback with the next is not mistaken for another player
   // taking the engine.
-  const handlers = Object.freeze({ onPosition: (...args) => onPosition(...args), onEnd: (...args) => onEnd(...args), onPreempt: () => onPreempt() });
+  const handlers = Object.freeze({ onPosition: (...args) => onPosition(...args), onEnd: (...args) => onEnd(...args), onPreempt: reason => onPreempt(reason) });
   function onPosition(seconds) {
     if (!state.playing) return;
     const beat = clock().beatAt(seconds);
@@ -276,12 +279,14 @@ export function createListening({ root, call, message, copyText, audio, saveProj
     returnToCue();
     status(queue ? '變更小節已全部播放完畢。' : '播放結束。');
   }
-  // Another player (the Final preview) took the engine.
-  function onPreempt() {
+  // Another player (the Final preview) took the engine, or a bank change
+  // stopped it. The page redraws the player on a bank change, so the reason
+  // is kept to be drawn again.
+  function onPreempt(reason) {
     if (!state.playing) return;
     state.playing = false; state.queue = null;
     returnToCue();
-    status('試聽已停止：音色試聽被其他播放器使用。');
+    status(reason === 'bank' ? '試聽已停止：音色庫已變更。' : '試聽已停止：音色試聽被其他播放器使用。', { keep: true });
   }
   function returnToCue() {
     const seconds = state.cue.seconds ?? clock().secondsAt(state.cue.beat);
@@ -313,7 +318,7 @@ export function createListening({ root, call, message, copyText, audio, saveProj
   // ─── rendering ────────────────────────────────────────────────────────
   function show() { root.hidden = false; }
   function hide() { stop({ quiet: true }); root.hidden = true; }
-  function status(text) { const el = root.querySelector('#listen-status'); if (el) el.textContent = text; }
+  function status(text, { keep = false } = {}) { state.stopNote = keep ? text : null; const el = root.querySelector('#listen-status'); if (el) el.textContent = text; }
 
   function render() {
     const keepScroll = root.querySelector('#listen-roll .roll-stage')?.scrollLeft ?? null;
@@ -498,7 +503,7 @@ export function createListening({ root, call, message, copyText, audio, saveProj
       </div>
       <div class="listen-roles" role="group" aria-label="角色音色、靜音與獨奏">${roles}</div>
       ${inst.defaultBank ? `<p class="meta">音色為${esc(info.fallback ?? '')}：以 GM 音色近似遊戲樂器名稱，只供聆聽。</p>` : ''}
-      <p class="meta" id="listen-status" role="status" aria-live="polite"></p></div>`;
+      <p class="meta" id="listen-status" role="status" aria-live="polite">${esc(state.stopNote ?? '')}</p></div>`;
   }
   function transportButtons() {
     const info = audio.status();

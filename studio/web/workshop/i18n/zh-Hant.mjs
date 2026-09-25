@@ -272,6 +272,7 @@ export default {
   "ui.bankFailed": "載入失敗",
   "ui.bankLoadError": "音色庫載不進來",
   "ui.bankCheckTimeout": "音色庫在 {s} 秒內沒有完成檢查，沒有載入也沒有儲存",
+  "ui.bankCheckerLoadTimeout": "檢查音色庫的程式在 {s} 秒內沒有載入，音色庫沒有檢查，沒有載入也沒有儲存",
   "ui.defUnparsed": "這個 .def 的 <code>[Instrument presets]</code> 區塊我沒認出來。把前幾行貼給我，我把 parser 調成對的。",
   "ui.defNoMatch": "這份 .def 的 {n} 個編號在目前的音色庫裡一個都找不到，八成是配錯音色庫了。下拉維持原樣。",
   "mark.menu.add": "加入段落標記",
