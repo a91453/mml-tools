@@ -7,6 +7,7 @@ import { encodeListenLink } from '../web/listen-link.mjs';
 import { DEFAULT_BANK_DOWNLOAD_NOTICE, DEFAULT_BANK_SUBSET, DEFAULT_BANK_UPSTREAM } from '../web/preview/default-bank.mjs';
 import { trimDefaultBank } from '../web/preview/default-bank-trim.mjs';
 import { syntheticUpstreamBank } from '../tests/support/synthetic-soundbank.mjs';
+import { TICK_MS } from '../web/preview/player.mjs';
 import { countBankSends } from './bank-sends.mjs';
 import { holdNextBankCheck } from './bank-check-hold.mjs';
 
@@ -206,6 +207,36 @@ export async function runDefaultBankChecks({ browser, base, profile }) {
     await page.locator('#listen-stop').click();
     assert.equal(upstreamRequests.length, 3, 'the user bank plays without contacting the upstream');
     assert.ok((await page.locator('[data-listen-instrument="0"] option').allTextContents()).every(text => /^\d{3} /.test(text)), 'the picker lists the user bank\'s presets');
+
+    // The bank changes below happen while a playback runs, so they use a
+    // song that lasts a minute, not four seconds.
+    const long = await encodeListenLink({ schema: 'mml-studio/listen-link@1', title: 'Long bank fixture', mml: 'MML@t60o4l1cdefgabcdefgabc,,,,,;' }, codec);
+    await page.evaluate(value => { location.hash = `listen=${value}`; }, long);
+    await page.locator('#listen-head h3', { hasText: 'Long bank fixture' }).waitFor();
+
+    // A bank change while a quick restart waits for the stopped playback's
+    // queued notes to pass (up to 0.4 s): the waiting playback never starts
+    // on the destroyed engine, so no scheduler is left running behind it.
+    await page.evaluate(tick => {
+      const set = window.setInterval, clear = window.clearInterval;
+      window.schedulers = new Set();
+      window.setInterval = (callback, ms, ...rest) => { const id = set(callback, ms, ...rest); if (ms === tick) window.schedulers.add(id); return id; };
+      window.clearInterval = id => { window.schedulers.delete(id); return clear(id); };
+    }, TICK_MS);
+    await page.locator('#listen-play').click();
+    await played();
+    await page.evaluate(() => new Promise(resolve => {
+      document.querySelector('#listen-stop').click();
+      document.querySelector('#listen-play').click();
+      setTimeout(() => { document.querySelector('#bank-clear').click(); resolve(); }, 100);
+    }));
+    await page.locator('#bank-status').filter({ hasText: LABEL }).waitFor();
+    // Past the restart's wait, with time for a scheduler to start.
+    await page.waitForTimeout(1000);
+    assert.equal(await page.evaluate(() => window.schedulers.size), 0, 'no playback runs on the engine the bank change destroyed');
+    assert.equal(await page.locator('#listen-position').getAttribute('data-state'), 'stopped');
+    await page.locator('#listen-bank-file').setInputFiles({ name: 'saw.sf2', mimeType: 'application/octet-stream', buffer: sample });
+    await page.locator('#listen-bank').filter({ hasText: 'saw.sf2' }).waitFor();
 
     // Overlapping picks: the last choice wins. Each pick is checked off the
     // main thread first, and a big bank takes longer than a small one: here
