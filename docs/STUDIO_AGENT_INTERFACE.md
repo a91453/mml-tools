@@ -284,7 +284,17 @@ on it. No operation in this build accepts such a decision: it stays open until
 an applied arrangement omits an event it names, or the source is ingested again
 without it. A file's own word never clears a gate. Studio Web holds the same
 file the same way, so the two agree on it. Only the Source-Faithful Baseline
-this service stored itself is read back with its decisions as written.
+this service stored itself is read back with its decisions as written. That
+includes a baseline stored before imported decisions were held pending: if its
+file marked its own decision `accepted`, the stored baseline still carries it
+as accepted (Gate 5 can still read PASS), and a run over the same sources
+reuses that baseline rather than ingesting again. Run `analyzeSources`
+(`studio_sources_analyze`) on the project again to rebuild the baseline with
+the decision held pending, and pass the same `asset_ids` and `meter_text` the
+baseline was built from: an omitted `asset_ids` ingests every symbolic asset in
+the project, and an omitted `meter_text` leaves an MML source without its
+source-confirmed meter map, so the rebuild would not describe the same sources.
+A new baseline drops the candidates derived from the old one.
 
 ## 7. Job lifecycle
 
