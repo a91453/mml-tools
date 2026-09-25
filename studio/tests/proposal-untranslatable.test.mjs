@@ -267,6 +267,43 @@ test('a plan that cannot be derived from the stored material is STALE, never INV
   });
 });
 
+test('a plan the operation refuses because the stored candidate no longer matches is STALE, not INVALID', async () => {
+  // The bindings all hold -- the run still names the candidate -- but the
+  // stored application under that id no longer agrees with the baseline, so
+  // the reduction plan operation refuses ("The candidate no longer matches
+  // the current baseline."). That refusal is about the material, not about
+  // the proposal, and it used to be graded INVALID all the same, which blames
+  // the proposal. A refusal of the action itself stays INVALID.
+  await withDirectory(async directory => {
+    const app = createStudioApplication({ dataDirectory: directory, durability: 'persistent' });
+    const context = await runAwaitingReduction(app);
+    const read = async id => (await app.getProposal(OWNER, context.fixture.projectId, id)).proposal.agent_review;
+    const submitted = await proposeReduction(app, context, { decisions: REDUCTION_DECISIONS });
+    assert.equal(submitted.proposal.agent_review.verdict, AGENT_REVIEW.REQUIRES_EXPLICIT_ACCEPTANCE);
+
+    const candidateBlob = join(directory, 'blobs', `${blobName(`application:${context.fixture.projectId}:${context.run.candidate_id}`)}.bin`);
+    const original = await readFile(candidateBlob, 'utf8');
+    await writeFile(candidateBlob, original.replace(/"pitch":(\d+)/, (_, pitch) => `"pitch":${Number(pitch) + 1}`));
+    const moved = await read(submitted.proposal.proposal_id);
+    assert.equal(moved.verdict, AGENT_REVIEW.STALE);
+    assert.deepEqual(moved.refusals, ['CANDIDATE_CHANGED']);
+    assert.deepEqual(moved.plan_refusal, {
+      operation: 'planFinalReduction',
+      code: 'INVALID_REQUEST',
+      reason: 'CANDIDATE_NO_LONGER_MATCHES_BASELINE',
+      message: 'The candidate no longer matches the current baseline.',
+    });
+    assert.match(moved.notice, /statement about the material, not about the proposal/);
+    const refused = await accept(app, context, submitted.proposal.proposal_id);
+    assert.equal(refused.ok, false);
+    assert.equal(refused.error.code, 'PROPOSAL_REFUSED');
+    assert.equal(refused.error.details.agent_review.verdict, AGENT_REVIEW.STALE);
+
+    await writeFile(candidateBlob, original);
+    assert.equal((await read(submitted.proposal.proposal_id)).verdict, AGENT_REVIEW.REQUIRES_EXPLICIT_ACCEPTANCE, 'and acceptable again once it matches');
+  });
+});
+
 test('a plan operation that answers with no plan id is INVALID, because there is nothing to apply', async () => {
   const empty = { armed: false };
   const app = createStudioApplication({

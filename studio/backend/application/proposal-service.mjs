@@ -848,6 +848,15 @@ export function createProposalService({ canonical, projects, store, operations, 
     }),
   });
 
+  // Plan operation refusals that are about the stored material rather than the
+  // action: the bound candidate no longer agrees with the current baseline, or
+  // was derived under another Canonical snapshot. Named by the operation's own
+  // `reason`, and graded like a failure to read that material (`planRefusal`).
+  const STALE_PLAN_REFUSALS = Object.freeze({
+    CANDIDATE_NO_LONGER_MATCHES_BASELINE: PROPOSAL_REFUSAL.CANDIDATE_CHANGED,
+    CANDIDATE_RULES_SNAPSHOT_DIFFERS: PROPOSAL_REFUSAL.CANONICAL_SNAPSHOT_CHANGED,
+  });
+
   /**
    * Would an acceptance be able to translate this proposal into the run's
    * input? `null` when it would; otherwise the verdict to grade it with.
@@ -877,6 +886,19 @@ export function createProposalService({ canonical, projects, store, operations, 
     let planId;
     try {
       const derived = await policyPlanDerivations.outcome(owner, record.project_id, planOperationInput(proposal, reviewer));
+      if (derived.refusal && Object.hasOwn(STALE_PLAN_REFUSALS, derived.refusal.reason ?? '')) {
+        // The material moved under the proposal, not the proposal: STALE, and
+        // the remedy is the same fresh proposal against the request as it
+        // stands, without blaming this one.
+        return {
+          verdict: AGENT_REVIEW.STALE,
+          refusals: [STALE_PLAN_REFUSALS[derived.refusal.reason]],
+          detail: {
+            plan_refusal: { operation: check.operation, code: derived.refusal.code, reason: derived.refusal.reason, message: derived.refusal.message },
+            notice: `${check.operation} refused because the stored material this proposal is bound to moved under it. That is a statement about the material, not about the proposal.`,
+          },
+        };
+      }
       if (derived.refusal) {
         return {
           verdict: AGENT_REVIEW.INVALID,

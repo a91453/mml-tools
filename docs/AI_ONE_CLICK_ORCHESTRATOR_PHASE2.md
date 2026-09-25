@@ -425,6 +425,13 @@ out. The one input the policy cannot know, the accepting reviewer, changes a
 reduction plan's id but not whether it can be derived. What the operation
 *reports* about an action it accepts — blockers, a Lead interlock, a `PENDING`
 event — is still not graded: that is its musical answer, reached at the run.
+Nor is a refusal that names the stored material rather than the action an
+accusation about the proposal: when the plan operation refuses because the
+bound candidate no longer matches the current baseline
+(`reason: CANDIDATE_NO_LONGER_MATCHES_BASELINE`) or was derived under another
+Canonical snapshot (`CANDIDATE_RULES_SNAPSHOT_DIFFERS`), the verdict is `STALE`
+(`CANDIDATE_CHANGED` / `CANONICAL_SNAPSHOT_CHANGED`), as it is when that
+material cannot be read at all.
 
 An **adaptation** plan id is bound to the candidate and the profile, both of
 which the proposal carries, so an agent *can* state it in advance. It is still

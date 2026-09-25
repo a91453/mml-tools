@@ -133,7 +133,7 @@ export function createPlanDerivationMemo({ canonical, store, planInputIdentity, 
         outcome = Object.freeze({ plan_id: await derive(owner, projectId, request), refusal: null });
       } catch (error) {
         if (error?.code !== ERROR_CODES.INVALID_REQUEST) throw error;
-        outcome = Object.freeze({ plan_id: null, refusal: Object.freeze({ code: error.code, message: String(error.message ?? '').slice(0, 500) }) });
+        outcome = Object.freeze({ plan_id: null, refusal: Object.freeze({ code: error.code, message: String(error.message ?? '').slice(0, 500), reason: error.details?.reason ?? null }) });
       }
 
       if (key !== null) {

@@ -301,8 +301,8 @@ export function createArrangementService({ canonical, projects, intake, store })
       const engines = await canonical.engines();
       const { record, baseline, project } = await intake.project(owner, projectId);
       const { application: parent } = loadCandidate(record, candidateId);
-      if (!engines.arrangement.applicationIntegrity(parent, project).ok) fail(ERROR_CODES.INVALID_REQUEST, 'The candidate no longer matches the current baseline.');
-      if (parent.revision.canonicalIdentity.rules_snapshot_sha !== engines.emitterContract.canonicalIdentity().rules_snapshot_sha) fail(ERROR_CODES.INVALID_REQUEST, 'The candidate belongs to a different Canonical snapshot.');
+      if (!engines.arrangement.applicationIntegrity(parent, project).ok) fail(ERROR_CODES.INVALID_REQUEST, 'The candidate no longer matches the current baseline.', { candidate_id: candidateId, reason: 'CANDIDATE_NO_LONGER_MATCHES_BASELINE' });
+      if (parent.revision.canonicalIdentity.rules_snapshot_sha !== engines.emitterContract.canonicalIdentity().rules_snapshot_sha) fail(ERROR_CODES.INVALID_REQUEST, 'The candidate belongs to a different Canonical snapshot.', { candidate_id: candidateId, reason: 'CANDIDATE_RULES_SNAPSHOT_DIFFERS' });
       // Which events a recovered Lead report re-checks the identity of. Read from
       // the whole stored lineage, because a promotion in one revision and a move
       // back in a later one leaves the baseline and candidate roles equal while
@@ -355,8 +355,8 @@ export function createArrangementService({ canonical, projects, intake, store })
       const engines = await canonical.engines();
       const { record, baseline, project } = await intake.project(owner, projectId);
       const { application: parent } = loadCandidate(record, candidateId);
-      if (!engines.arrangement.applicationIntegrity(parent, project).ok) fail(ERROR_CODES.INVALID_REQUEST, 'The candidate no longer matches the current baseline.');
-      if (parent.revision.canonicalIdentity.rules_snapshot_sha !== engines.emitterContract.canonicalIdentity().rules_snapshot_sha) fail(ERROR_CODES.INVALID_REQUEST, 'The candidate belongs to a different Canonical snapshot.');
+      if (!engines.arrangement.applicationIntegrity(parent, project).ok) fail(ERROR_CODES.INVALID_REQUEST, 'The candidate no longer matches the current baseline.', { candidate_id: candidateId, reason: 'CANDIDATE_NO_LONGER_MATCHES_BASELINE' });
+      if (parent.revision.canonicalIdentity.rules_snapshot_sha !== engines.emitterContract.canonicalIdentity().rules_snapshot_sha) fail(ERROR_CODES.INVALID_REQUEST, 'The candidate belongs to a different Canonical snapshot.', { candidate_id: candidateId, reason: 'CANDIDATE_RULES_SNAPSHOT_DIFFERS' });
       if (!Array.isArray(decisions)) fail(ERROR_CODES.INVALID_REQUEST, 'decisions must be an array of accepted reduction decisions.');
       if (decisions.length > LIMITS.maxDecisionsPerRequest) fail(ERROR_CODES.INVALID_REQUEST, `A reduction decision set is limited to ${LIMITS.maxDecisionsPerRequest} decisions.`, { received: decisions.length });
       const reviewer = apply ? requireString(acceptedBy, 'accepted_by', { max: 120 }) : (typeof acceptedBy === 'string' && acceptedBy.trim() ? requireString(acceptedBy, 'accepted_by', { max: 120 }) : 'reduction-preview');
