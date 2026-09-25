@@ -26,6 +26,14 @@ export const GAME_INSTRUMENTS = Object.freeze([
   Object.freeze({ id: 'cymbals', name: 'Cymbals', label: '鈸', program: 0, drumNotes: Object.freeze([49, 57]) }),
 ]);
 export const DEFAULT_INSTRUMENT = 'lute';
+// The game-style bank (game-style-bank.mjs, the owner's own recordings) holds
+// each of the 11 instruments as a melodic preset of its own, drums included,
+// at these 0-based programs (its instrument list names them 1-based).
+export const GAME_STYLE_BANK_NAME = '遊戲風格音色';
+export const GAME_STYLE_BANK_LABEL = '遊戲風格音色（模擬），不是實機';
+export const GAME_STYLE_PROGRAMS = Object.freeze({
+  lute: 0, mandolin: 2, flute: 5, chalumeau: 6, piano: 21, violin: 22, harp: 24, 'music-box': 30, 'bass-drum': 66, cymbals: 68, xylophone: 77,
+});
 export const DEFAULT_BANK_PROGRAMS = Object.freeze([...new Set(GAME_INSTRUMENTS.filter(item => !item.drumNotes).map(item => item.program))].sort((a, b) => a - b));
 export const DEFAULT_BANK_DRUM_NOTES = Object.freeze([...new Set(GAME_INSTRUMENTS.flatMap(item => item.drumNotes ?? []))].sort((a, b) => a - b));
 
@@ -37,14 +45,15 @@ const byId = new Map(GAME_INSTRUMENTS.map(item => [item.id, item]));
  * A choice is a game instrument id (default bank) or `p:<program>` (a preset
  * of the user's own bank). Anything else falls back to the default.
  */
-export function voiceFor(choice) {
+export function voiceFor(choice, { gameStyle = false } = {}) {
   const text = String(choice ?? '');
   const preset = /^p:(\d{1,3})$/.exec(text);
   if (preset && Number(preset[1]) <= 127) return { program: Number(preset[1]), drumNote: null, label: `${String(Number(preset[1]) + 1).padStart(3, '0')}` };
   const instrument = byId.get(text) ?? byId.get(DEFAULT_INSTRUMENT);
+  if (gameStyle) return { program: GAME_STYLE_PROGRAMS[instrument.id], drumNote: null, label: instrument.label, id: instrument.id };
   return { program: instrument.program, drumNote: instrument.drumNotes?.[0] ?? null, label: instrument.label, id: instrument.id };
 }
-export const resolveRoleVoices = choices => Array.from({ length: 6 }, (_, role) => voiceFor(choices?.[role]));
+export const resolveRoleVoices = (choices, options) => Array.from({ length: 6 }, (_, role) => voiceFor(choices?.[role], options));
 
 // Picker options: the 11 named instruments for the default bank, the bank's
 // own presets for a user bank (`presets` from the engine, once loaded).

@@ -14,7 +14,8 @@
 //   * the bank comes from a user-picked file kept in this browser
 //     (soundbank-store.mjs) — never uploaded, never part of a project — or,
 //     without one, from the free default bank this browser downloads from its
-//     upstream at first use and keeps (default-bank.mjs);
+//     upstream at first use and keeps (default-bank.mjs), or the game-style
+//     bank this site serves, when the user chooses it (game-style-bank.mjs);
 //   * this is a listening aid, never source, original-audio or in-game
 //     evidence. A playback from the start also captures the events the engine
 //     actually processed, which the page can record as a player readback
