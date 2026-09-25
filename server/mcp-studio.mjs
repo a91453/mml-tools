@@ -335,7 +335,7 @@ export const STUDIO_MCP_TOOLS = [
   {
     name: 'studio_finalize',
     title: 'Final MML 產出',
-    description: '在 readiness 通過後執行既有 Final 流程：micro-gap 判定與強制、可選的 Technical Timing Repair、Final MML 產生、回讀驗證，並產生 artifact。gate 未通過時不會產生任何 MML。產出成功不等於 IN_GAME_ACCEPTED。',
+    description: '在 readiness 通過後執行既有 Final 流程：micro-gap 判定與強制、可選的 Technical Timing Repair、Final MML 產生、回讀驗證，並產生 artifact。gate 未通過時不會產生任何 MML。可交付（machine_delivery.ready）只在 Final emitter 對要交付的同一候選、以交付所用的同一組選項實際產出 Final 時成立；emitter 回報 FAIL 或 PENDING 時，machine_delivery 以 finalEmission 項目（FINAL_EMISSION_REFUSED／FINAL_EMISSION_PENDING）阻擋交付，並原樣附上 emitter 自己的狀態與診斷，PENDING 不會被當成 PASS。產出成功不等於 IN_GAME_ACCEPTED。',
     inputSchema: {
       type: 'object',
       properties: {

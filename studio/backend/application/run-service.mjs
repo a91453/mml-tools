@@ -617,8 +617,13 @@ function readinessRequests(readiness, {
 }) {
   const sourceBlocking = blockingOverride ?? readiness?.preGameBlocking ?? [];
   const blocking = sourceBlocking.filter(name => !exempt.includes(name));
+  // A delivery-level entry (the Final emitter's refusal) is no readiness gate:
+  // it is read from the machine-delivery ledger that recorded it.
+  const ledger = Array.isArray(readiness?.machineDelivery?.blocking) ? readiness.machineDelivery.blocking : [];
   return blocking.slice(0, LIMITS.maxReviewRequestsPerRun).map(gate => {
-    const entry = readiness?.gates?.[gate] ?? null;
+    const gateEntry = readiness?.gates?.[gate] ?? null;
+    const deliveryEntry = gateEntry ? null : ledger.find(item => item?.gate === gate && !Object.hasOwn(readiness?.gates ?? {}, gate)) ?? null;
+    const entry = gateEntry ?? deliveryEntry;
     const known = Object.hasOwn(READINESS_GATE_OPERATIONS, gate);
     const raw = entry?.blockers;
     const blockers = Array.isArray(raw) ? raw : (raw === undefined || raw === null ? [] : [raw]);
@@ -636,7 +641,7 @@ function readinessRequests(readiness, {
       gate,
       known,
       blockers,
-      reportReference: `readiness.gates.${gate}`,
+      reportReference: deliveryEntry ? `readiness.machineDelivery.blocking.${gate}` : `readiness.gates.${gate}`,
       baselineId,
       candidateId,
       eventIds: entry?.eventIds ?? entry?.decisionIds ?? null,

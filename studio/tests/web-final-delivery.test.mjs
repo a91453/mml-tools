@@ -29,7 +29,7 @@ import {
 import {
   createSource, createCanonicalNoteEvent, createCanonicalTempoEvent, createCanonicalMeterEvent, createCanonicalProject,
 } from '../backend/canonical/index.mjs';
-import { evaluateProjectReadiness } from '../backend/final/index.mjs';
+import { evaluateProjectReadiness, emitFinalMml, machineDeliveryEmitOptions } from '../backend/final/index.mjs';
 import { PUBLISHED_CANONICAL } from '../backend/rules/index.mjs';
 
 const OFFICIAL = createSource({ id: 'official', label: 'Official MusicXML', kind: 'official-musicxml', authority: 'primary-symbolic' });
@@ -517,6 +517,75 @@ test('a refused generation leaves a valid pasted delivery in place and does not 
   assert.equal(after.state, 'VALIDATED', 'a refused attempt does not demote a workspace it never touched');
   assert.equal(after.deliveryOrigin, 'pasted');
   assert.equal(after.rawMml, tied);
+});
+
+// ── machine delivery asks the emitter the way this Web delivers ────────────
+
+test('a valid pasted delivery the emitter cannot write stays VALIDATED, and machine delivery records the refusal', () => {
+  // The owner's decision: the pasted delivery in hand is graded by the Web
+  // gates and keeps its state. What changes is the machine-delivery answer,
+  // which is about a Final the emitter would have to write: it is not ready,
+  // and it carries the emitter's own refusal, the one generation returns.
+  const events = [note({ id: 'long', pitch: 60, start: 0, end: 100 })];
+  const tied = `MML@t120o4${Array(25).fill('c1').join('&')},,,,,;`;
+  const w = { ...ready(events), deliveryMml: tied };
+  w.deliveryBinding = { revision: w.revision, origin: 'pasted' };
+
+  const report = analyzeWorkspace(w);
+  assert.equal(report.state, 'VALIDATED');
+  assert.deepEqual(report.blockers, []);
+  assert.equal(Object.hasOwn(report.gates, 'finalEmission'), false, 'no Web gate is added');
+  const machine = report.readiness.machineDelivery;
+  assert.equal(machine.ready, false, 'machine delivery is never ready while the emitter refuses');
+  const entry = machine.blocking.find(item => item.gate === 'finalEmission');
+  assert.deepEqual(entry.blockers, ['FINAL_EMISSION_REFUSED']);
+
+  const result = generateFinalDelivery(w);
+  assert.equal(result.status, 'FAIL');
+  assert.ok(codes(result).includes('DURATION_SEARCH_POLICY_LIMIT'));
+  assert.deepEqual(entry.emitter_diagnostics, result.diagnostics, 'the refusal machine delivery records is the one generation returns');
+});
+
+test('Studio Web checks the Final with exactly the call its generation makes, not with the Final service\'s options', () => {
+  // A same-value Tempo restatement one tick before beat 2. The Final service's
+  // machine-delivery options collapse it under the loaded release and write the
+  // Final; the call this Web generates with does not, and the emitter refuses
+  // the position. So the two calls disagree here, and whichever one the Web's
+  // readiness check used is visible: it has to be the one generation makes.
+  const events = [note({ id: 'm', pitch: 60, start: 0, end: 4 }), note({ id: 'c', pitch: 55, start: 0, end: 4, role: 'Chord1' })];
+  const tempoEvents = [
+    createCanonicalTempoEvent({ id: 't1', beat: '0', bpm: 150, sourceIds: ['official'] }),
+    createCanonicalTempoEvent({ id: 't2', beat: '959/480', bpm: 150, sourceIds: ['official'] }),
+  ];
+  const project = candidateProject(events, { tempoEvents });
+  const w = { ...reviewAll(workspaceFor(project)), deliveryMml: 'MML@t150o4c1,t150o3g1,,,,;' };
+  w.deliveryBinding = { revision: w.revision, origin: 'pasted' };
+
+  const report = analyzeWorkspace(w);
+  // The pasted string is valid, so every readiness gate lets the song through
+  // and the emitter is asked; it does not carry the restatement, so the Web's
+  // own identity gate is what it blocks on.
+  assert.equal(report.readiness.gates.technical.status, 'PASS');
+  assert.deepEqual(report.blockers, ['deliveryIdentity']);
+
+  // The Final service's options would write this candidate.
+  const serviceOptions = machineDeliveryEmitOptions(report.readiness);
+  assert.equal(serviceOptions.collapseTempoRestatements, true, 'the loaded release collapses restatements on the machine-delivery path');
+  const snapshot = candidateProject(events, { tempoEvents });
+  const byService = emitFinalMml(createCanonicalProject({ ...snapshot, metadata: { sourceComplete: true, sourceFaithfulBaseline: { snapshot } } }), serviceOptions);
+  assert.equal(byService.status, 'PASS', JSON.stringify(byService.diagnostics.map(item => item.code)));
+
+  // This Web's generation does not, and its readiness says exactly that.
+  const result = generateFinalDelivery(w);
+  assert.equal(result.status, 'FAIL');
+  assert.deepEqual(result.blockedGates, [], 'the emitter answered; no Web gate refused first');
+  assert.ok(codes(result).includes('BOUNDARY_NOT_FINAL_REPRESENTABLE'), JSON.stringify(codes(result)));
+  assert.equal(codes(result).includes('TEMPO_RESTATEMENTS_COLLAPSED'), false, 'generated with the Web call, never the service options');
+  const machine = report.readiness.machineDelivery;
+  assert.equal(machine.ready, false, 'never ready while this Web\'s generation refuses');
+  const entry = machine.blocking.find(item => item.gate === 'finalEmission');
+  assert.deepEqual(entry.blockers, ['FINAL_EMISSION_REFUSED']);
+  assert.deepEqual(entry.emitter_diagnostics, result.diagnostics, 'the check and generation are one call with one answer');
 });
 
 test('a pasted delivery with surrounding whitespace has one verified, acceptance-bound form', () => {

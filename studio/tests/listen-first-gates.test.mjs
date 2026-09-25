@@ -156,11 +156,15 @@ test('a sub-grid note whose release the hold resolves is release-side; attack ti
 
 // ── Lead promotion ─────────────────────────────────────────────────────────
 
+// With its Tempo at beat 0: machine delivery also needs the Final emitter to
+// write the candidate, and a project with no Tempo is one it refuses
+// (TEMPO_INITIAL_MISSING, recorded as FINAL_EMISSION_REFUSED).
 const promotion = () => {
   const before = createCanonicalNoteEvent({ id: 'p1', pitch: 67, start: '0', end: '1', sourceIds: ['official'], sourceEventIds: ['official#p1'], role: 'Chord1' });
-  const baseline = createCanonicalProject({ id: 'baseline:p', title: 'b', sources: [OFFICIAL], events: [before], metadata: { sourceComplete: true } });
+  const tempoEvents = [createCanonicalTempoEvent({ id: 't0', beat: '0', bpm: 120, sourceIds: ['official'] })];
+  const baseline = createCanonicalProject({ id: 'baseline:p', title: 'b', sources: [OFFICIAL], events: [before], tempoEvents, metadata: { sourceComplete: true } });
   return createCanonicalProject({
-    id: 'candidate:p', title: 'c', sources: [OFFICIAL], events: [{ ...before, role: 'Melody' }],
+    id: 'candidate:p', title: 'c', sources: [OFFICIAL], events: [{ ...before, role: 'Melody' }], tempoEvents,
     metadata: { sourceComplete: true, sourceFaithfulBaseline: { snapshot: baseline } },
   });
 };
