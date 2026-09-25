@@ -1,13 +1,6 @@
 name: Studio durable release
 
 on:
-  push:
-    branches: [studio-permanent-durable-migration]
-    paths:
-      - .github/workflows/studio-durable-release.yml
-      - ops/permanent/package_release.py
-      - ops/permanent/publish-release.mjs
-      - ops/permanent/release-lock.json
   workflow_dispatch:
 
 concurrency:
