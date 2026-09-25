@@ -182,6 +182,20 @@ test('a moved request keeps the deadline it was given', async t => {
   assert.equal(instances[1].alive, false, 'the replacement that never answered is terminated with the timeout');
 });
 
+// Chromium delivers an error event from a Worker after terminate(), though it
+// drops its messages.
+test('an error from a replaced instance does not take down its replacement', async () => {
+  const { instances, spawn } = fakeWorkers();
+  const client = createWorkerClient({ spawn, timeoutMs: 5000 });
+  const call = client.call('analyzeWorkspace', {});
+  instances[0].failInitialization();
+  instances[0].crash();
+  assert.equal(instances.length, 2, 'no second replacement');
+  assert.equal(instances[1].alive, true);
+  instances[1].answer({ state: 'CANDIDATE' });
+  assert.deepEqual(await call, { state: 'CANDIDATE' });
+});
+
 test('every failure message keeps the unfinished gates PENDING rather than claiming a result', () => {
   for (const reason of [WORKER_TIMEOUT, WORKER_UNAVAILABLE, WORKER_GIVEN_UP]) {
     assert.match(reason, /PENDING/);

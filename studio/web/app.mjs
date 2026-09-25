@@ -1,6 +1,6 @@
 import { listProjectSummaries, loadProject, requestPersistence, saveProject, storageHealth } from './storage.mjs';
 import { portableBackup, unzipFiles, zipFiles } from './backup-zip.mjs';
-import { createWorkerClient } from './worker-client.mjs';
+import { createWorkerClient, WORKER_UNAVAILABLE } from './worker-client.mjs';
 import { createTaskQueue } from './task-queue.mjs';
 import { createUpdateFlow } from './pwa-update.mjs';
 import { buildRoles, diagnosticsFromValidation, renderHTML, roleCharacterCounts, segmentRoles } from './mml-highlight.mjs';
@@ -1600,8 +1600,12 @@ listening=createListening({root:$('#listening'),call,message,copyText,audio:list
 $('#open-listening').onclick=()=>listening.showSessions().catch(error=>message(error.message,true));
 listening.importFromLocation().catch(error=>message(error.message,true));
 addEventListener('hashchange',()=>listening.importFromLocation().catch(error=>message(error.message,true)));
+// A Worker whose own script could not be fetched fails through onerror: the
+// client rejects what it held and starts a replacement. identity changes
+// nothing, so boot asks again until the client's replacement budget is spent
+// (WORKER_GIVEN_UP), rather than stopping on the first dropped request.
 try {
-  identity=await call('identity');
+  identity=await (function ask(){return call('identity').catch(error=>{if(error.message!==WORKER_UNAVAILABLE)throw error;return ask();});})();
   identity={...identity,provenance:await buildAudit()};
   try { projects=await listProjectSummaries(); } catch(error){message(error.message,true);}
   try { workspace=projects[0]?await loadProject(projects[0].id):null; } catch(error){message(error.message,true);workspace=null;}
