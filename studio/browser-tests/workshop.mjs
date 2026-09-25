@@ -323,7 +323,16 @@ export async function runWorkshopChecks({ page, base, idle, file, screenshot, pr
   });
   await page.evaluate(() => { sessionStorage.setItem('workshopRefuseBankStore', 'yes'); sessionStorage.setItem('workshopHoldProcessor', 'yes'); });
   await page.reload(); await page.locator('#unverified').waitFor();
-  await page.waitForFunction(() => window.processorHold?.held === 1);
+  // The processor is asked for only after the engine library has loaded and
+  // the audio context exists. In CI (desktop Chromium, run 36145326999) that
+  // once did not happen within 30 s and passed on a re-run; it has not been
+  // reproduced locally. The wait is longer and, if it still runs out, says
+  // which boot step the engine had reached, so a repeat names its cause.
+  try { await page.waitForFunction(() => window.processorHold?.held === 1, null, { timeout: 90000 }); }
+  catch (error) {
+    const seen = await page.evaluate(() => ({ engine: document.querySelector('#engine')?.textContent, hold: window.processorHold ?? null, log: document.querySelector('#logMsg')?.textContent })).catch(e => ({ unreadable: e.message }));
+    throw Object.assign(new Error(`The Workshop never asked for its processor while it was held: ${JSON.stringify(seen)}`), { cause: error });
+  }
   // No synth exists while the processor is held, so the count starts at 0.
   const bootSends = await countBankSends(page);
   await page.evaluate(() => {
