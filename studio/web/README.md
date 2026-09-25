@@ -238,6 +238,8 @@ exact timing, event identity and the evidence boundaries. See
     before the Service Worker has cached it) has a limit of its own, 30 s;
     a Worker that has not loaded by then is stopped and the bank refused
     with 「檢查音色庫的程式在 30 秒內沒有載入，音色庫沒有檢查，也沒有儲存」.
+    A bank the store will not keep (a full disk, say) is refused with
+    「音色庫無法存進這台裝置，沒有儲存（…）」.
     The Workshop keeps its picks in the same store, which refuses them the
     same way; it still hands a bank that does not parse to its synth, whose
     parse error is what it shows, but a pick whose check ran out of time, or

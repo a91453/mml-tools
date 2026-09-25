@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import { createHash } from 'node:crypto';
 import * as core from 'spessasynth_core';
 import { BANK_LOAD_TIMEOUT_MS, SYNTH_READY_TIMEOUT_MS, addSoundBankOrFail, checkSoundBank, synthReadyOrFail } from '../web/preview/bank-check.mjs';
-import { BANK_CHECKER_LOAD_TIMEOUT_MS, bankCheckTimeoutMs, checkBankInWorker, loadBank, storeBank } from '../web/preview/soundbank-store.mjs';
+import { BANK_CHECKER_LOAD_TIMEOUT_MS, MAX_BANK_BYTES, bankCheckTimeoutMs, checkBankInWorker, clearBank, loadBank, storeBank } from '../web/preview/soundbank-store.mjs';
 import { bankLoadMessage } from '../web/preview/player.mjs';
 
 // The real timer functions, for stand-ins that must keep time while a test
@@ -138,6 +138,58 @@ test('storeBank writes a bank only while it is still the one wanted', async () =
     // Still the one wanted: kept.
     assert.equal((await storeBank(new File([bank], 'wanted.sf2'), { check, current: () => true })).name, 'wanted.sf2');
     assert.equal((await loadBank()).name, 'wanted.sf2');
+  });
+});
+
+// Removing the bank is a choice too (preview/bank-choices.mjs): its delete is
+// sent only while it is still the latest choice.
+test('clearBank deletes the kept bank only while the removal is still the latest choice', async () => {
+  await withMemoryIndexedDB(async memory => {
+    await storeBank(new File([bank], 'kept.sf2'), { check });
+    let asked = 0;
+    const overtaken = await clearBank({ current: () => { asked += 1; return false; } }).then(() => null, error => error);
+    assert.equal(overtaken?.code, 'BANK_SUPERSEDED');
+    assert.equal(asked, 1, 'asked inside the delete\'s own transaction');
+    assert.deepEqual(memory.log.filter(([kind]) => kind === 'delete'), [], 'nothing was deleted');
+    assert.equal((await loadBank()).name, 'kept.sf2');
+    await clearBank({ current: () => true });
+    assert.equal(await loadBank(), null);
+    await clearBank();
+    assert.equal(await loadBank(), null, 'removing when nothing is kept keeps nothing');
+  });
+});
+
+// Every refusal carries a code, so a page can say it in its own language
+// (the Workshop's four) and never has to parse Studio's words.
+test('every refusal of a pick carries a code and what the page needs to say it', async () => {
+  await withMemoryIndexedDB(async memory => {
+    const refused = (file, options = {}) => storeBank(file, { check, ...options }).then(() => null, error => error);
+    const notBank = await refused(new File([bank], 'saw.txt'));
+    assert.deepEqual([notBank.code, notBank.message], ['BANK_NOT_A_BANK', '音色庫需為 .dls、.sf2 或 .sf3 檔案']);
+    const notRiff = await refused(new File([new Uint8Array(64)], 'zeros.sf2'));
+    assert.deepEqual([notRiff.code, notRiff.message], ['BANK_NOT_A_BANK', '檔案不是 RIFF DLS／SoundFont 音色庫']);
+    const huge = Object.defineProperty(new File([bank], 'huge.sf2'), 'size', { value: MAX_BANK_BYTES + 1 });
+    const tooLarge = await refused(huge);
+    assert.deepEqual([tooLarge.code, tooLarge.maxBytes, tooLarge.message], ['BANK_TOO_LARGE', MAX_BANK_BYTES, '音色庫超過 64 MiB 上限']);
+    const unparsable = await refused(new File([truncated], 'truncated.sf2'));
+    assert.equal(unparsable.code, 'BANK_DOES_NOT_PARSE');
+    assert.match(unparsable.detail, /^SF parsing error: Invalid chunk header!/);
+    assert.equal(unparsable.message, `音色庫無法解析，沒有儲存（${unparsable.detail}）`);
+    const unavailable = await refused(new File([bank], 'saw.sf2'), { check: () => Promise.reject(Object.assign(Error('Worker 無法啟動'), { code: 'BANK_CHECK_UNAVAILABLE' })) });
+    assert.deepEqual([unavailable.code, unavailable.detail], ['BANK_CHECK_UNAVAILABLE', 'Worker 無法啟動']);
+    for (const [code, timeoutMs] of [['BANK_CHECK_TIMEOUT', 7000], ['BANK_CHECKER_LOAD_TIMEOUT', 30000]]) {
+      const timedOut = await refused(new File([bank], 'saw.sf2'), { check: () => Promise.reject(Object.assign(Error('late'), { code, timeoutMs })) });
+      assert.deepEqual([timedOut.code, timedOut.timeoutMs], [code, timeoutMs]);
+    }
+    assert.deepEqual(memory.log, [], 'no refusal so far opened the store');
+    // A store that will not keep the bank (a full disk, a blocked database):
+    // refused as not kept, quoting the store, and nothing is left behind.
+    const realOpen = memory.indexedDB.open;
+    memory.indexedDB.open = () => { const request = {}; setTimeout(() => { request.error = new DOMException('quota exceeded (unit test)', 'QuotaExceededError'); request.onerror?.(); }, 0); return request; };
+    const notStored = await refused(new File([bank], 'saw.sf2'));
+    memory.indexedDB.open = realOpen;
+    assert.deepEqual([notStored.code, notStored.detail, notStored.message], ['BANK_NOT_STORED', 'quota exceeded (unit test)', '音色庫無法存進這台裝置，沒有儲存（quota exceeded (unit test)）']);
+    assert.equal(await loadBank(), null);
   });
 });
 
