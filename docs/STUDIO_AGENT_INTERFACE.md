@@ -619,9 +619,11 @@ Three things keep it from becoming a way around this interface's own rules:
   release representation moves only such a release, so an unclassified
   sub-grid interval with no such release behind it is stated in `missing` as
   answered in the Canonical source itself. A finalize the Final emitter refused
-  names no operation either: its `FINALIZE_BLOCKED` and `technical` requests
-  list none, and `FINALIZE_BLOCKED` carries the emitter's blocking codes in
-  `detail.emitter_blockers` (§10). The pre-emission
+  names no operation unless its sole blocking diagnostic is
+  `EVENT_ROLE_UNASSIGNED`: then a new, explicitly reviewed Final reduction may
+  assign the role, and its `FINALIZE_BLOCKED` and `technical` requests name
+  `planFinalReduction` / `applyFinalReduction`. `FINALIZE_BLOCKED` carries the
+  emitter's blocking codes in `detail.emitter_blockers` (§10). The pre-emission
   exemption is the Final service's own
   `PRE_EMISSION_EXEMPT_GATES`, imported rather than restated, so the run cannot
   become a second exemption policy or extend the exemption;

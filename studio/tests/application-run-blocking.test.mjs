@@ -855,6 +855,34 @@ test('a finalize the Final emitter refused names no operation and carries the em
   assert.ok(caps.runs.refuses.some(entry => entry.includes('Final emitter refused') && entry.includes('detail.emitter_blockers')), JSON.stringify(caps.runs.refuses));
 });
 
+test('a sole unassigned-role emitter refusal points to a new reviewed reduction', async () => {
+  // Wrap only the emitter result to exercise the run's diagnostic routing;
+  // the readiness and reduction engines remain real.
+  const isolated = createStudioApplication({ loadEngines: enginesWith(engines => ({
+    final: {
+      ...engines.final,
+      emitFinalMml: (project, options) => ({
+        ...engines.final.emitFinalMml(project, options),
+        status: engines.final.EMIT_STATUS.FAIL,
+        combinedMml: null,
+        diagnostics: [{ code: 'EVENT_ROLE_UNASSIGNED', severity: 'error', message: 'An event has no six-slot role.' }],
+      }),
+    },
+  })) });
+  const own = await projectWithSymbolicAsset(isolated, OWNER, { project: sixRoleBaseline({ id: 'fixture:unassigned-emitter' }) });
+  await isolated.analyzeSources(OWNER, own.projectId, { assetIds: [own.assetId] });
+  const candidate = (await isolated.applyDecisions(OWNER, own.projectId, { decisions: runDecisionsFor(own.project) })).decisions.candidate_id;
+  const { run } = await isolated.startRun(OWNER, own.projectId, { target_candidate_id: candidate, confirmations: FIXTURE_CONFIRMATIONS });
+  const blocked = requestFor(run, 'FINALIZE_BLOCKED');
+  assert.ok(blocked, JSON.stringify(run.review_requests));
+  assert.deepEqual(blocked.detail.emitter_blockers, ['EVENT_ROLE_UNASSIGNED']);
+  assert.deepEqual(blocked.available_operations, ['planFinalReduction', 'applyFinalReduction']);
+  assert.match(blocked.missing.join(' '), /explicit plan and accepted decisions/);
+  assert.equal(blocked.available_operations.includes('finalize'), false);
+  const delivery = gateRequest(run, 'finalEmission');
+  if (delivery) assert.deepEqual(delivery.available_operations, ['planFinalReduction', 'applyFinalReduction']);
+});
+
 test('a finalize the Final parser refused after emission keeps the operations that answer it', async () => {
   // Control. One extra Melody beat past the last full 4/4 bar: the emitter
   // writes it, the Final parser rejects the partial bar, and finalize with the

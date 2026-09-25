@@ -184,12 +184,13 @@ blockers -- an unclassified sub-grid note or a gap after a release Final can
 express (`MICRO_TIMING_CLASSIFICATION_UNKNOWN`) is answered in the Canonical
 source itself.
 
-A finalize the Final emitter refused (`operation: "failed"`) is answered by no
-operation either. Every gate finalize grades before emission was already
-satisfied, so no confirmation, approval, Lead review or audio alignment reaches
-the refusal, and finalizing the same candidate again returns it again. Its
-`FINALIZE_BLOCKED` request and the `technical` request it leaves `NOT_RUN`
-therefore name no operation, say why in `missing`, and `FINALIZE_BLOCKED`
+A finalize the Final emitter refused (`operation: "failed"`) cannot be fixed by
+repeating finalize: every gate it grades before emission was already satisfied.
+When `EVENT_ROLE_UNASSIGNED` is its sole blocking diagnostic, a new, explicitly
+reviewed Final reduction can assign a six-slot role; both `FINALIZE_BLOCKED` and
+the `technical` request point to `planFinalReduction` / `applyFinalReduction`.
+Other emitter refusals offer no operation. Both requests explain why in
+`missing`, and `FINALIZE_BLOCKED`
 carries the emitter's blocking diagnostic codes (severity `error` or `pending`)
 in `detail.emitter_blockers`. Both still block, and a new candidate or
 Canonical release expires them. A finalize refused before emission, or by the
