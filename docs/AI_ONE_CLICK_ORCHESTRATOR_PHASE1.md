@@ -173,13 +173,35 @@ that Final cannot reach and nothing in this build moves; a role's earliest
 onset after a silence shorter than any Final token is one) and
 `MICRO_TIMING_SOURCE_SUPPORTED_NOT_FINAL_REPRESENTABLE` (a sub-grid interval
 classified source-supported, which must be kept exactly and which no admitted
-Final token can carry), and the two of the machine-delivery `finalEmission`
-entry, `FINAL_EMISSION_REFUSED` and `FINAL_EMISSION_PENDING` (the Final
-emitter, run on exactly what would be delivered with the options delivery uses,
-wrote no Final; the entry carries its diagnostics, and the request reads it
-from `readiness.machineDelivery.blocking`). The request states each one it
-carries in `missing`, names no operation when they are all it carries, and
-still blocks.
+Final token can carry). The request states each one it carries in `missing`,
+names no operation when they are all it carries, and still blocks. A gate's
+operations can also have nothing to act on: release representation, the only
+microTiming operation, moves a note release that awaits a representation
+decision and refuses every other event, so while the gate's own
+`releaseTiming.decisionRequiredCount` is 0 (`READINESS_GATE_OPERATION_REACH`) a
+microTiming request names no operation, and `missing` states its remaining
+blockers -- an unclassified sub-grid note or a gap after a release Final can
+express (`MICRO_TIMING_CLASSIFICATION_UNKNOWN`) is answered in the Canonical
+source itself.
+
+A finalize the Final emitter refused (`operation: "failed"`) cannot be fixed by
+repeating finalize: every gate it grades before emission was already satisfied.
+When `EVENT_ROLE_UNASSIGNED` is its sole blocking diagnostic, a new, explicitly
+reviewed Final reduction can assign a six-slot role; both `FINALIZE_BLOCKED` and
+the `technical` request point to `planFinalReduction` / `applyFinalReduction`.
+Other emitter refusals offer no operation. Both requests explain why in
+`missing`, and `FINALIZE_BLOCKED`
+carries the emitter's blocking diagnostic codes (severity `error` or `pending`)
+in `detail.emitter_blockers`. Both still block, and a new candidate or
+Canonical release expires them. A finalize refused before emission, or by the
+Final parser or a later gate after it, keeps its hints.
+The machine-delivery `finalEmission` entry also has two blockers without an
+operation: `FINAL_EMISSION_REFUSED` and `FINAL_EMISSION_PENDING`. The emitter
+ran on exactly what would be delivered with delivery's options and wrote no
+Final. The entry retains its status and diagnostics; the request reads it from
+`readiness.machineDelivery.blocking`, names no operation, and still blocks.
+
+
 
 Phase 2 adds the AI Proposal protocol and an agent review policy. Phase 1
 connects no model, and a fixture's human confirmations are not a permission a

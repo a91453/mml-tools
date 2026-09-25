@@ -138,7 +138,8 @@ export function createListening({ root, call, message, copyText, audio, saveProj
         compareMml: second?.mml ?? null, compareLabel: second ? second.label : null,
         alternatives: [second, ...rest].filter(Boolean),
       });
-      if (!await open(session.id)) throw Error(state.error);
+      const failure = await open(session.id);
+      if (failure !== null) throw Error(failure);
       state.draft = emptyDraft();
       rerenderPaste();
       message(`已建立試聽工作階段（${prepared.versions.length} 個版本）；按「播放」才會發出聲音。沒有上傳，也沒有建立或覆寫任何專案。`);

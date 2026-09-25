@@ -848,6 +848,15 @@ export function createProposalService({ canonical, projects, store, operations, 
     }),
   });
 
+  // Plan operation refusals that are about the stored material rather than the
+  // action: the bound candidate no longer agrees with the current baseline, or
+  // was derived under another Canonical snapshot. Named by the operation's own
+  // `reason`, and graded like a failure to read that material (`planRefusal`).
+  const STALE_PLAN_REFUSALS = Object.freeze({
+    CANDIDATE_NO_LONGER_MATCHES_BASELINE: PROPOSAL_REFUSAL.CANDIDATE_CHANGED,
+    CANDIDATE_RULES_SNAPSHOT_DIFFERS: PROPOSAL_REFUSAL.CANONICAL_SNAPSHOT_CHANGED,
+  });
+
   /**
    * Would an acceptance be able to translate this proposal into the run's
    * input? `null` when it would; otherwise the verdict to grade it with.
@@ -877,6 +886,19 @@ export function createProposalService({ canonical, projects, store, operations, 
     let planId;
     try {
       const derived = await policyPlanDerivations.outcome(owner, record.project_id, planOperationInput(proposal, reviewer));
+      if (derived.refusal && Object.hasOwn(STALE_PLAN_REFUSALS, derived.refusal.reason ?? '')) {
+        // The material moved under the proposal, not the proposal: STALE, and
+        // the remedy is the same fresh proposal against the request as it
+        // stands, without blaming this one.
+        return {
+          verdict: AGENT_REVIEW.STALE,
+          refusals: [STALE_PLAN_REFUSALS[derived.refusal.reason]],
+          detail: {
+            plan_refusal: { operation: check.operation, code: derived.refusal.code, reason: derived.refusal.reason, message: derived.refusal.message },
+            notice: `${check.operation} refused because the stored material this proposal is bound to moved under it. That is a statement about the material, not about the proposal.`,
+          },
+        };
+      }
       if (derived.refusal) {
         return {
           verdict: AGENT_REVIEW.INVALID,
@@ -2105,6 +2127,11 @@ export function createProposalService({ canonical, projects, store, operations, 
           // record now, and a failure that reached nothing is not written over
           // it.
           if (proposal.state === PROPOSAL_STATE.WITHDRAWN || proposal.state === PROPOSAL_STATE.REJECTED) return proposal;
+          // So can another attempt of this same acceptance that applied it --
+          // a retry in another process, say, while this one was held inside the
+          // run. The application is settled and recorded as that attempt wrote
+          // it; this attempt's failure is not written over it as a conflict.
+          if (proposal.state === PROPOSAL_STATE.APPLIED) return proposal;
 
           // The acceptance stands and the application did not complete. The
           // proposal stays `accepted` so a retry re-issues the same key rather
@@ -2184,15 +2211,17 @@ export function createProposalService({ canonical, projects, store, operations, 
           // Whether the run let THIS attempt in; `run_resume_called` is
           // whether it let any attempt in.
           admitted_by_run: admitted,
-          notice: admitted
-            ? `The acceptance is recorded and the existing operation refused or could not run. Nothing was applied twice. ${retryNotice}`
-            : settled.state === PROPOSAL_STATE.WITHDRAWN || settled.state === PROPOSAL_STATE.REJECTED
-              ? `The acceptance's application stopped before it reached the run, and the proposal was ${settled.state} meanwhile. Nothing was applied and the run did not advance.`
-              : neverAdmitted
-                ? `The acceptance is recorded, and its application stopped before it reached the run: ${shortOfTheRun}, and the run has admitted no attempt of it, so nothing was applied and the run did not advance. A retry re-checks the proposal against the Agent Review Policy before trying again; it can also still be rejected or withdrawn, because nothing reached the run.`
-                : `This attempt stopped before it reached the run: ${shortOfTheRun}. ${settled.application?.run_resume_called === true
-                  ? 'Another attempt was admitted into the run'
-                  : 'This acceptance was recorded before this service kept track of whether an attempt reached the run'}, so its application may already have landed, and the proposal cannot be rejected or withdrawn. ${retryNotice}`,
+          notice: settled.state === PROPOSAL_STATE.APPLIED
+            ? 'Another attempt of this acceptance applied it while this attempt was failing, so the proposal is applied and nothing was applied twice. This attempt\'s failure is not recorded on it, and there is nothing to retry: read the proposal\'s application and the run for what was applied.'
+            : admitted
+              ? `The acceptance is recorded and the existing operation refused or could not run. Nothing was applied twice. ${retryNotice}`
+              : settled.state === PROPOSAL_STATE.WITHDRAWN || settled.state === PROPOSAL_STATE.REJECTED
+                ? `The acceptance's application stopped before it reached the run, and the proposal was ${settled.state} meanwhile. Nothing was applied and the run did not advance.`
+                : neverAdmitted
+                  ? `The acceptance is recorded, and its application stopped before it reached the run: ${shortOfTheRun}, and the run has admitted no attempt of it, so nothing was applied and the run did not advance. A retry re-checks the proposal against the Agent Review Policy before trying again; it can also still be rejected or withdrawn, because nothing reached the run.`
+                  : `This attempt stopped before it reached the run: ${shortOfTheRun}. ${settled.application?.run_resume_called === true
+                    ? 'Another attempt was admitted into the run'
+                    : 'This acceptance was recorded before this service kept track of whether an attempt reached the run'}, so its application may already have landed, and the proposal cannot be rejected or withdrawn. ${retryNotice}`,
         });
       }
 

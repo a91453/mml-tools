@@ -205,6 +205,14 @@ alternatives; never assumed), `pickup`, `instruments` (six ids), `bar_range`
 compaction and read in full with `report_page`; a prescreen report is cached in
 memory, so a page read does not re-render.
 
+Beats become seconds through exact rational arithmetic. A candidate Tempo that
+is not a whole BPM is played at its exact rate when MIDI intake recorded the
+whole microseconds per quarter it was read from (461,000 us plays at
+60,000,000/461,000 BPM, and its tempo point carries `bpmExact`); any other
+fractional BPM is refused with `INVALID_REQUEST`,
+`details.reason: "PRESCREEN_TEMPO_NOT_EXACT"`, and the Tempo's `beat` and `bpm`,
+rather than rounded.
+
 Limits (`PRESCREEN_LIMITS` in `prescreen-service.mjs`, advertised under
 `audio_prescreen.limits` in `studio_capabilities`): 40,000 MML characters,
 10,000 bars, and **1,200 s (20 minutes) of rendered audio per alternative** —

@@ -5,7 +5,7 @@ import { ingestMIDI, integerTempoForMicroseconds, midiFragmentToProject, MIDI_IN
 import { createCanonicalNoteEvent, createCanonicalProject } from '../backend/canonical/index.mjs';
 import { emitFinalMml, EMIT_DIAGNOSTICS } from '../backend/final/index.mjs';
 import { EFFECTIVE_RULESET } from '../backend/rules/index.mjs';
-import { performanceFromCanonical } from '../backend/audio/prescreen/performance.mjs';
+import { TEMPO_NOT_EXACT, performanceFromCanonical, tempoClock } from '../backend/audio/prescreen/performance.mjs';
 import { ingestMidiSource } from '../web/midi-source.mjs';
 import { buildMidi, buildTrack, setTempo, timeSig, notesToEntries } from './fixtures/midi-fixtures.mjs';
 
@@ -114,6 +114,27 @@ test('the audio prescreen can play a MIDI baseline at T130', () => {
   const performance = performanceFromCanonical(finalCandidate(ingestMIDI(tempoFile([[0, 461538]]))));
   assert.deepEqual(performance.tempo, [{ beat: '0', bpm: 130 }]);
   assert.ok(Math.abs(performance.durationSeconds - (8 * 60) / 130) < 1e-12);
+});
+
+test('the audio prescreen plays a MIDI Tempo that is not a whole BPM at its exact rate, and refuses a fractional BPM that names no microseconds', () => {
+  // 461,000 us is 130.15... BPM, a rate the file states and intake keeps. The
+  // prescreen clock used to turn that float into a rational and throw a
+  // RangeError; the microseconds the file stores make it exact.
+  const fragment = ingestMIDI(tempoFile([[0, 461538], [PPQ * 4, 461000]]));
+  const performance = performanceFromCanonical(finalCandidate(fragment));
+  assert.deepEqual(performance.tempo, [{ beat: '0', bpm: 130 }, { beat: '4', bpm: US_PER_MINUTE / 461000, bpmExact: '60000/461' }]);
+  // Four beats at T130, then four at 0.461 s each.
+  assert.ok(Math.abs(performance.durationSeconds - ((4 * 60) / 130 + 4 * 0.461)) < 1e-12, String(performance.durationSeconds));
+  // The same performance clocked again (as the prescreen does per bar) agrees.
+  assert.equal(tempoClock(performance.tempo).seconds('8'), performance.durationSeconds);
+
+  // A fractional BPM with no microseconds behind it, or microseconds that do
+  // not give it, is refused by name rather than guessed.
+  const project = finalCandidate(fragment);
+  for (const metadata of [{}, { microsecondsPerQuarter: 461001 }]) {
+    const stated = createCanonicalProject({ ...project, tempoEvents: [project.tempoEvents[0], { ...project.tempoEvents[1], metadata }] });
+    assert.throws(() => performanceFromCanonical(stated), error => error.code === TEMPO_NOT_EXACT && error.beat === '4' && error.bpm === US_PER_MINUTE / 461000, JSON.stringify(metadata));
+  }
 });
 
 test('Studio Web raw MIDI intake reads the same integer Tempo', () => {

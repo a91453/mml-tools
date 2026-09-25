@@ -47,7 +47,9 @@ async function panel(t, { call, hooks = {} }) {
   t.after(() => { if (had) globalThis.indexedDB = previous; else delete globalThis.indexedDB; });
   const elements = new Map();
   const element = selector => { if (!elements.has(selector)) elements.set(selector, { value: '', textContent: '', dataset: {} }); return elements.get(selector); };
-  const root = { hidden: true, innerHTML: '', querySelector: element, querySelectorAll: () => [], scrollIntoView() {} };
+  // These tests exercise session opening, not the paste form. The lightweight
+  // selector map must not pretend that form elements exist as plain objects.
+  const root = { hidden: true, innerHTML: '', querySelector: selector => selector.startsWith('#listen-mml-') ? null : element(selector), querySelectorAll: () => [], scrollIntoView() {} };
   const messages = [];
   const listening = createListening({ root, call, message: (text, error = false) => messages.push([text, error]), copyText() {}, audio: { stop() {} } });
   return { listening, root, element, messages, records: memory.records };

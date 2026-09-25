@@ -16,7 +16,8 @@ import { encodeWav16 } from '../backend/audio/prescreen/wav.mjs';
 import { createRenderPool } from '../backend/audio/prescreen/render-pool.mjs';
 import { createStudioApplication } from '../backend/application/index.mjs';
 import { PRESCREEN_LIMITS } from '../backend/application/prescreen-service.mjs';
-import { applyKeepOnlyCandidate, audioAlignmentReport } from './fixtures/application-fixtures.mjs';
+import { createCanonicalProject, createCanonicalTempoEvent } from '../backend/canonical/index.mjs';
+import { FIXTURE_SOURCE_ID, applyKeepOnlyCandidate, audioAlignmentReport, canonicalProjectBytes, keepEveryRole, sixRoleBaseline } from './fixtures/application-fixtures.mjs';
 import { syntheticSoundBank } from './support/synthetic-render-bank.mjs';
 import { syntheticSongMml, SYNTHETIC_METER } from './support/prescreen-fixtures.mjs';
 
@@ -106,6 +107,45 @@ test('APS-3 a bank that cannot be verified refuses the prescreen with its code',
     const offline = createStudioApplication({ audioPrescreen: { allowDownload: false, cacheDirectory: join(tmpdir(), `no-bank-${process.pid}`) } });
     await assert.rejects(offline.audioPrescreen(OWNER, null, { alternatives: [{ mml: 'MML@t120o4c1,,,,,;' }, { mml: 'MML@t120o4d1,,,,,;' }], meter_text: '0 4/4' }),
       error => error.code === 'AUDIO_BANK_UNAVAILABLE' && error.details.reason === 'DOWNLOAD_DISABLED');
+  } finally {
+    await service.releaseAudioWorkers();
+  }
+});
+
+test('APS-4b a candidate whose Tempo is not a whole BPM plays at its exact MIDI rate, or is refused by name', async () => {
+  // A Standard MIDI File states 461,000 us per quarter, which no integer Tempo
+  // is written as: 130.15... BPM, kept as the source states it. The prescreen
+  // clock used to make a rational of that float and failed with an internal
+  // error. A fractional BPM that names no microseconds cannot be made exact
+  // without guessing, so it is refused by name instead.
+  const service = createStudioApplication({ audioPrescreen: { bank: BANK, bytes: BANK_BYTES, poolSize: 1 } });
+  const withTempo = async (tempo, title) => {
+    const base = sixRoleBaseline();
+    const project = createCanonicalProject({
+      ...base,
+      tempoEvents: [...base.tempoEvents, createCanonicalTempoEvent({ id: 'tempo-2', beat: '2', sourceIds: [FIXTURE_SOURCE_ID], sourceEventIds: [`${FIXTURE_SOURCE_ID}#tempo-2`], ...tempo })],
+    });
+    const created = (await service.createProject(OWNER, { title })).project;
+    await service.uploadAsset(OWNER, created.project_id, { kind: 'canonical_project', filename: 'baseline.json', mediaType: 'application/json', bytes: canonicalProjectBytes(project) });
+    await service.analyzeSources(OWNER, created.project_id);
+    const candidateId = (await service.applyDecisions(OWNER, created.project_id, { decisions: keepEveryRole(project) })).decisions.candidate_id;
+    return { projectId: created.project_id, candidateId };
+  };
+  const mml = 'MML@t120o5c4c4c2,t120o4g4g4g2,t120o4e4e4e2,t120o4c4c4c2,t120o3g4g4g2,t120o3c4c4c2;';
+  try {
+    const midi = await withTempo({ bpm: 60_000_000 / 461_000, metadata: { tick: 960, microsecondsPerQuarter: 461_000, trackIndex: 0 } }, 'MIDI tempo');
+    const report = (await service.audioPrescreen(OWNER, midi.projectId, { alternatives: [{ candidate_id: midi.candidateId }, { mml }], meter_text: '0 4/4' })).prescreen;
+    assert.equal(report.alternatives.length, 2);
+
+    const stated = await withTempo({ bpm: 130.5 }, 'Fractional tempo');
+    await assert.rejects(
+      service.audioPrescreen(OWNER, stated.projectId, { alternatives: [{ candidate_id: stated.candidateId }, { mml }], meter_text: '0 4/4' }),
+      error => error.code === 'INVALID_REQUEST'
+        && error.details?.reason === 'PRESCREEN_TEMPO_NOT_EXACT'
+        && error.details.candidate_id === stated.candidateId
+        && error.details.beat === '2' && error.details.bpm === 130.5
+        && /Tempo 130\.5 at beat 2 is not a whole number of BPM/.test(error.message),
+    );
   } finally {
     await service.releaseAudioWorkers();
   }

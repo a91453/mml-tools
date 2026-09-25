@@ -11,22 +11,55 @@ export const PERFORMANCE_SCHEMA = 'mml-studio/prescreen-performance@1';
 export const MAX_BARS = 10000;
 
 const DEFAULT_TEMPO = 120;
+const US_PER_MINUTE = 60_000_000;
 
-/** Beat → seconds through a tempo map [{ beat, bpm }], exact until returned. */
+// A Tempo the clock cannot hold as an exact rational: a non-integer bpm that
+// names no whole number of microseconds per quarter it was read from.
+export const TEMPO_NOT_EXACT = 'PRESCREEN_TEMPO_NOT_EXACT';
+
+/**
+ * A tempo point's rate as an exact rational. An integer bpm is itself; a
+ * fractional one is exact only as `bpmExact`, which a Standard MIDI File's
+ * whole microseconds per quarter give (60,000,000 / us). A float is never
+ * turned into a rational by guessing: it is refused by name.
+ */
+function exactRate(point) {
+  if (typeof point.bpmExact === 'string') return f(point.bpmExact);
+  const bpm = Number(point.bpm);
+  if (Number.isSafeInteger(bpm) && bpm > 0) return new F(bpm);
+  throw Object.assign(Error(`the Tempo ${point.bpm} at beat ${point.beat} is not a whole number of BPM and states no microseconds per quarter it was read from, so the prescreen clock cannot hold it exactly`), {
+    code: TEMPO_NOT_EXACT, beat: String(point.beat), bpm: point.bpm,
+  });
+}
+
+/**
+ * The exact rate of a Canonical Tempo event, as `bpmExact`, when its bpm is
+ * fractional and MIDI intake recorded the whole microseconds per quarter it
+ * was read from; nothing otherwise.
+ */
+function exactRateOf(event) {
+  if (Number.isInteger(event.bpm)) return {};
+  const us = event.metadata?.microsecondsPerQuarter;
+  return Number.isSafeInteger(us) && us > 0 && US_PER_MINUTE / us === event.bpm
+    ? { bpmExact: new F(US_PER_MINUTE, us).toString() }
+    : {};
+}
+
+/** Beat → seconds through a tempo map [{ beat, bpm, bpmExact? }], exact until returned. */
 export function tempoClock(tempo) {
   const points = (tempo?.length ? tempo : [{ beat: '0', bpm: DEFAULT_TEMPO }])
-    .map(point => ({ beat: f(point.beat), bpm: Number(point.bpm) }))
+    .map(point => ({ beat: f(point.beat), bpm: Number(point.bpm), rate: exactRate(point) }))
     .sort((a, b) => a.beat.cmp(b.beat));
-  if (points[0].beat.cmp(0) > 0) points.unshift({ beat: f(0), bpm: points[0].bpm });
+  if (points[0].beat.cmp(0) > 0) points.unshift({ beat: f(0), bpm: points[0].bpm, rate: points[0].rate });
   const at = [f(0)];
   for (let i = 1; i < points.length; i++) {
-    at.push(at[i - 1].add(points[i].beat.sub(points[i - 1].beat).mul(new F(60)).div(new F(points[i - 1].bpm))));
+    at.push(at[i - 1].add(points[i].beat.sub(points[i - 1].beat).mul(new F(60)).div(points[i - 1].rate)));
   }
   const exact = beat => {
     const b = f(beat);
     let i = points.length - 1;
     while (i > 0 && points[i].beat.cmp(b) > 0) i--;
-    return at[i].add(b.sub(points[i].beat).mul(new F(60)).div(new F(points[i].bpm)));
+    return at[i].add(b.sub(points[i].beat).mul(new F(60)).div(points[i].rate));
   };
   return Object.freeze({
     seconds: beat => exact(beat).num(),
@@ -35,7 +68,11 @@ export function tempoClock(tempo) {
       while (i > 0 && at[i].num() > seconds) i--;
       return points[i].beat.num() + ((seconds - at[i].num()) * points[i].bpm) / 60;
     },
-    points: points.map(point => ({ beat: point.beat.toString(), bpm: point.bpm })),
+    points: points.map(point => ({
+      beat: point.beat.toString(),
+      bpm: point.bpm,
+      ...(Number.isInteger(point.bpm) ? {} : { bpmExact: point.rate.toString() }),
+    })),
   });
 }
 
@@ -122,7 +159,7 @@ export function performanceFromCanonical(project, { instruments = null } = {}) {
     roles[index].notes.push(noteOf(index, event.pitch, event.start, event.end, event.volume ?? null));
   }
   if (unassigned) warnings.push('UNASSIGNED_EVENTS_NOT_RENDERED');
-  const tempo = (project?.tempoEvents ?? []).map(event => ({ beat: event.beat, bpm: event.bpm }));
+  const tempo = (project?.tempoEvents ?? []).map(event => ({ beat: event.beat, bpm: event.bpm, ...exactRateOf(event) }));
   if (!tempo.length) warnings.push('DEFAULT_TEMPO_120_ASSUMED');
   const performance = finish(roles, tempo, warnings);
   return Object.freeze({ ...performance, unassignedNotes: unassigned });

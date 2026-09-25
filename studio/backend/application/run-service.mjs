@@ -79,6 +79,7 @@ import { CONFIRMATIONS } from './review-service-core.mjs';
 import { CALLER_DECISION_KEYS } from './arrangement-service.mjs';
 import {
   READINESS_BLOCKER_WITHOUT_OPERATION,
+  READINESS_GATE_OPERATION_REACH,
   READINESS_GATE_OPERATIONS,
   RUN_AUTHORITY_NOTICE,
   RUN_EXECUTION_MODE,
@@ -572,6 +573,11 @@ const boundedIds = (ids, limit = LIMITS.maxReviewRequestEventIds) => {
 
 const blockerCode = entry => (typeof entry === 'string' ? entry : entry?.code ?? 'UNKNOWN');
 
+// The Final emitter's diagnostic severities that refuse a candidate: `error`, a
+// confirmed negative, and `pending`, an open question (emitter-contract.mjs
+// DIAGNOSTIC_SEVERITY). A notice never blocks.
+const EMITTER_BLOCKING_SEVERITIES = Object.freeze(['error', 'pending']);
+
 function reviewRequest({
   code, step, gate = null, blockers = [], reportReference, baselineId = null, candidateId = null,
   eventIds = null, roles = null, existingEvidence = null, missing = [],
@@ -613,7 +619,7 @@ function reviewRequest({
  * says the blocker may be skipped.
  */
 function readinessRequests(readiness, {
-  baselineId, candidateId, step, exempt = [], blockingOverride = null,
+  baselineId, candidateId, step, exempt = [], blockingOverride = null, unanswered = null, recoveryOperations = [],
 }) {
   const sourceBlocking = blockingOverride ?? readiness?.preGameBlocking ?? [];
   const blocking = sourceBlocking.filter(name => !exempt.includes(name));
@@ -635,6 +641,11 @@ function readinessRequests(readiness, {
       : null;
     const codes = [...new Set(blockers.map(blockerCode))];
     const withoutOperation = unanswerable ? codes.filter(code => Object.hasOwn(unanswerable, code)) : [];
+    // A gate whose operations can act only on something its own report says
+    // this candidate does not have: none is offered, and every blocker the
+    // table above leaves unstated is stated in the reach table's words.
+    const reach = known && Object.hasOwn(READINESS_GATE_OPERATION_REACH, gate) ? READINESS_GATE_OPERATION_REACH[gate] : null;
+    const unreached = reach && !reach.reaches(entry) ? codes.filter(code => !withoutOperation.includes(code)) : null;
     return reviewRequest({
       code: RUN_REVIEW_REQUEST.READINESS_GATE_BLOCKED,
       step,
@@ -645,10 +656,17 @@ function readinessRequests(readiness, {
       baselineId,
       candidateId,
       eventIds: entry?.eventIds ?? entry?.decisionIds ?? null,
-      availableOperations: withoutOperation.length && withoutOperation.length === codes.length ? [] : null,
-      missing: known
-        ? withoutOperation.map(code => unanswerable[code])
-        : ['This readiness gate is not in the run orchestrator hint table, so no operation is suggested. It still blocks, and it is answered through the module that owns it.'],
+      // `unanswered` is the caller's statement that no operation reaches any of
+      // these gates as they stand -- the Final emitter refused the candidate --
+      // so no gate hint is offered beside it.
+      availableOperations: unanswered ? recoveryOperations : unreached || (withoutOperation.length && withoutOperation.length === codes.length) ? [] : null,
+      missing: [
+        ...(known
+          ? withoutOperation.map(code => unanswerable[code])
+          : ['This readiness gate is not in the run orchestrator hint table, so no operation is suggested. It still blocks, and it is answered through the module that owns it.']),
+        ...(unreached?.length ? [reach.unreached(unreached)] : []),
+        ...(unanswered && (gate !== 'finalEmission' || recoveryOperations.length) ? [unanswered] : []),
+      ],
       invalidatedBy: ['candidate', 'canonical'],
       detail: boundedGate(entry),
     });
@@ -2407,6 +2425,22 @@ export function createRunService({ canonical, projects, store, operations, seria
           effectAttemptId: attemptId,
         });
         const delivered = result.operation === OPERATION_STATUS.SUCCEEDED && result.artifact_id !== null;
+        // `failed` is finalize's answer exactly when the Final emitter ran and
+        // refused the candidate; a refusal before emission is `blocked`. Every
+        // gate finalize grades before emission was already satisfied, so no
+        // confirmation, approval, Lead review or audio alignment reaches the
+        // refusal, and finalizing the same candidate again returns it again.
+        // The requests then name no operation and carry the emitter's own codes.
+        const emitterBlockers = result.operation === OPERATION_STATUS.FAILED
+          ? [...new Set((result.diagnostics ?? []).filter(item => EMITTER_BLOCKING_SEVERITIES.includes(item?.severity)).map(blockerCode))]
+          : null;
+        // A new, explicitly reviewed reduction can assign a role to an
+        // overflow event. It cannot fix a different emitter diagnostic.
+        const reductionRecovery = emitterBlockers?.length === 1 && emitterBlockers[0] === 'EVENT_ROLE_UNASSIGNED'
+          ? ['planFinalReduction', 'applyFinalReduction'] : [];
+        const emitterRefusal = emitterBlockers
+          ? `No Final was delivered. The Final emitter refused this candidate (emit_status ${result.emit_status ?? 'unknown'}${emitterBlockers.length ? `: ${emitterBlockers.slice(0, LIMITS.maxReviewRequestEventIds).join(', ')}` : ''}), so nothing was emitted and the technical gate was never graded. Every gate finalize grades before emission was already satisfied. ${reductionRecovery.length ? 'A new Final reduction may assign the unassigned event to a six-slot role, subject to an explicit plan and accepted decisions; it must be reviewed before applying. Finalizing the same candidate again returns the same refusal.' : 'No operation in this build answers this refusal, and finalizing the same candidate again returns it again.'} A changed candidate or Published Canonical release expires this request.`
+          : null;
         const requests = delivered ? [] : [
           reviewRequest({
             code: RUN_REVIEW_REQUEST.FINALIZE_BLOCKED,
@@ -2415,11 +2449,12 @@ export function createRunService({ canonical, projects, store, operations, seria
             reportReference: 'finalize.readiness.preGameBlocking',
             baselineId: run.baseline_id,
             candidateId,
-            missing: ['No Final was delivered. A blocked finalize is an answer about the song, not a failure of the call: the orchestration ran and the listed readiness gates are unsatisfied. Each is answered through the module that owns it.'],
-            availableOperations: ['reviewCandidate', 'recordConfirmations', 'approveCore3SourceChange', 'reviewLeadEvidence', 'attachAudioAlignment'],
+            missing: [emitterRefusal ?? 'No Final was delivered. A blocked finalize is an answer about the song, not a failure of the call: the orchestration ran and the listed readiness gates are unsatisfied. Each is answered through the module that owns it.'],
+            availableOperations: emitterRefusal ? reductionRecovery : ['reviewCandidate', 'recordConfirmations', 'approveCore3SourceChange', 'reviewLeadEvidence', 'attachAudioAlignment'],
             invalidatedBy: ['candidate', 'canonical'],
             detail: {
               emit_status: result.emit_status ?? null,
+              ...(emitterBlockers ? { emitter_blockers: emitterBlockers.slice(0, LIMITS.maxReviewRequestEventIds) } : {}),
               technical_validation: result.technical_validation ?? null,
               player_readback_binding: result.player_readback_binding ?? null,
             },
@@ -2429,6 +2464,8 @@ export function createRunService({ canonical, projects, store, operations, seria
             candidateId,
             step: RUN_STEP.FINALIZE,
             blockingOverride: result.blockers ?? null,
+            unanswered: emitterRefusal,
+            recoveryOperations: reductionRecovery,
           }),
         ];
         return {

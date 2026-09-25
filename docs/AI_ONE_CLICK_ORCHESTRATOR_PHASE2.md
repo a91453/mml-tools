@@ -425,6 +425,13 @@ out. The one input the policy cannot know, the accepting reviewer, changes a
 reduction plan's id but not whether it can be derived. What the operation
 *reports* about an action it accepts — blockers, a Lead interlock, a `PENDING`
 event — is still not graded: that is its musical answer, reached at the run.
+Nor is a refusal that names the stored material rather than the action an
+accusation about the proposal: when the plan operation refuses because the
+bound candidate no longer matches the current baseline
+(`reason: CANDIDATE_NO_LONGER_MATCHES_BASELINE`) or was derived under another
+Canonical snapshot (`CANDIDATE_RULES_SNAPSHOT_DIFFERS`), the verdict is `STALE`
+(`CANDIDATE_CHANGED` / `CANONICAL_SNAPSHOT_CHANGED`), as it is when that
+material cannot be read at all.
 
 An **adaptation** plan id is bound to the candidate and the profile, both of
 which the proposal carries, so an agent *can* state it in advance. It is still
@@ -801,7 +808,11 @@ the run since, the retry is refused, the conflict is recorded on the proposal
 rather than swallowed, and the proposal is not marked applied. That state —
 accepted, not withdrawable, its blocker on the record — is the one a
 persistently refusing run already produces, and its remedy is the one it always
-had: a fresh proposal against the request as it stands.
+had: a fresh proposal against the request as it stands. A failing attempt
+records its conflict only on a proposal that is still `accepted`: one another
+attempt of the same acceptance applied meanwhile (a retry in another process,
+say), or one rejected or withdrawn before the run admitted anything, is left
+exactly as that write left it, and the failing caller is told which.
 
 ## 8. Identity and staleness
 

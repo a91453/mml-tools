@@ -915,17 +915,25 @@ function evaluateGates(project, options) {
     // a role's earliest onset after beat 0 and before the shortest admitted
     // token (LEADING_ONSET_REASON) is not either, whatever its denominator.
     // With no leading-onset entry the sentence is exactly the one this proof
-    // has always carried.
+    // has always carried. The denominator in question is the whole-note one: a
+    // beat position such as 49/32 has a denominator the lcm divides, and its
+    // whole-note position 49/128 one it does not. The positions the message
+    // names are bounded like the list the diagnostic carries, the rest counted.
     const leading = unreachable.filter(item => item.reason === LEADING_ONSET_REASON);
     const byDenominator = unreachable.filter(item => item.reason !== LEADING_ONSET_REASON);
     const shortest = SHORTEST_ADMITTED_TOKEN_BEATS;
+    const bounded = (items, describe) => {
+      const shown = items.slice(0, MAX_REPORTED_BOUNDARIES).map(describe).join(', ');
+      return items.length > MAX_REPORTED_BOUNDARIES ? `${shown} and ${items.length - MAX_REPORTED_BOUNDARIES} more` : shown;
+    };
+    const wholeNote = item => `${item.position} (${f(item.position).div(4).toString()} of a whole note)`;
     const arithmetic = !leading.length
       ? `, whose whole-note denominator divides the lcm of the admitted token denominators; ${count > 1 ? 'none of these positions\' does' : 'this position\'s does not'}`
       : [
         byDenominator.length
-          ? `, whose whole-note denominator divides the lcm of the admitted token denominators; ${byDenominator.length > 1 ? `the denominators of ${byDenominator.map(item => item.position).join(', ')} do not` : `the denominator of ${byDenominator[0].position} does not`}; and`
+          ? `, whose whole-note denominator divides the lcm of the admitted token denominators; ${byDenominator.length > 1 ? `the whole-note denominators of beats ${bounded(byDenominator, wholeNote)} do not` : `the whole-note denominator of beat ${wholeNote(byDenominator[0])} does not`}; and`
           : ',',
-        ` no admitted Final token is shorter than ${shortest.toString()} beat (${shortest.div(4).toString()} of a whole note), so no position after beat 0 and before beat ${shortest.toString()} is reached; ${leading.map(item => item.position).join(', ')} ${leading.length > 1 ? 'are such positions' : 'is such a position'}`,
+        ` no admitted Final token is shorter than ${shortest.toString()} beat (${shortest.div(4).toString()} of a whole note), so no position after beat 0 and before beat ${shortest.toString()} is reached; ${bounded(leading, item => item.position)} ${leading.length > 1 ? 'are such positions' : 'is such a position'}`,
       ].join('');
     diagnostics.push(diagnostic(
       EMIT_DIAGNOSTICS.MICRO_GAP_BOUNDARY_NOT_FINAL_REPRESENTABLE,
