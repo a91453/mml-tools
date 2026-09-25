@@ -7,7 +7,7 @@
 // completeness, version-drift review, player readback and audio evidence are
 // deliberately absent: a test that wants one states it.
 
-import { createCanonicalProject, createCanonicalMeterEvent, createCanonicalNoteEvent, createCanonicalTempoEvent, createSource } from '../../backend/canonical/index.mjs';
+import { createArbitrationDecision, createCanonicalProject, createCanonicalMeterEvent, createCanonicalNoteEvent, createCanonicalTempoEvent, createSource } from '../../backend/canonical/index.mjs';
 
 export const FIXTURE_SOURCE_ID = 'fixture:official-midi';
 export const FIXTURE_SHA256 = 'a'.repeat(64);
@@ -74,6 +74,44 @@ export function sixRoleBaseline({ id = 'fixture:application-baseline', title = '
 
 export const canonicalProjectBytes = (project = sixRoleBaseline()) =>
   new TextEncoder().encode(JSON.stringify(project));
+
+const SECOND_FIXTURE_SOURCE_ID = 'fixture:third-party-midi';
+
+/**
+ * The six-role fixture with one real cross-source conflict, which the file
+ * claims it has already resolved.
+ *
+ * chord3-1 comes from a second, third-party source at chord1-1's pitch over the
+ * same beat, so the two double one sounding pitch across sources: a Gate 5
+ * (cross-source harmony) conflict. The file then marks its own arbitration
+ * decision on that pair `accepted`. Nobody reviewed it; the status is exactly
+ * the claim an imported file must not be able to make count.
+ */
+export function selfResolvedConflictBaseline() {
+  const base = sixRoleBaseline({ id: 'fixture:self-resolved-conflict', title: 'Self-resolved conflict' });
+  return createCanonicalProject({
+    ...base,
+    sources: [...base.sources, createSource({
+      id: SECOND_FIXTURE_SOURCE_ID,
+      label: 'Fixture third-party MIDI',
+      kind: 'third-party-midi',
+      authority: 'supporting',
+      sha256: 'c'.repeat(64),
+      metadata: { format: 'fixture' },
+    })],
+    events: base.events.map(event => (event.id === 'chord3-1'
+      ? createCanonicalNoteEvent({ ...event, pitch: 67, sourceIds: [SECOND_FIXTURE_SOURCE_ID], sourceEventIds: [`${SECOND_FIXTURE_SOURCE_ID}#chord3-1`] })
+      : event)),
+    decisions: [createArbitrationDecision({
+      id: 'imported:doubling',
+      eventIds: ['chord1-1', 'chord3-1'],
+      action: 'keep',
+      status: 'accepted',
+      reason: 'The file says this doubling was reviewed and is intentional.',
+      evidence: ['self-declared in the uploaded file'],
+    })],
+  });
+}
 
 /**
  * A KEEP decision per role lane, with a stated reason and evidence.

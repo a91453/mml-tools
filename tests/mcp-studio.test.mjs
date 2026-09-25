@@ -13,7 +13,7 @@ import { STUDIO_MCP_TOOLS } from '../server/mcp-studio.mjs';
 import { LISTEN_MCP_TOOLS } from '../server/mcp-listen.mjs';
 import { API_PREFIX, createApiRouter } from '../server/api.mjs';
 import { createStudioApplication } from '../studio/backend/application/index.mjs';
-import { sixRoleBaseline, canonicalProjectBytes, keepEveryRole } from '../studio/tests/fixtures/application-fixtures.mjs';
+import { sixRoleBaseline, canonicalProjectBytes, keepEveryRole, selfResolvedConflictBaseline } from '../studio/tests/fixtures/application-fixtures.mjs';
 
 const ORIGIN = 'https://mml.example';
 const OWNER = 'owner:service';
@@ -484,6 +484,25 @@ test('a blocked finalize blocks identically on every transport', async () => {
     assert.equal(result.mml, null, `${name} must emit nothing`);
     assert.equal(result.artifact_id, null, `${name} must file no artifact`);
     assert.equal(result.emit_status, null, `${name} must not report an emitter verdict`);
+  }
+});
+
+test('an uploaded file cannot clear Gate 5 with its own accepted decision, over HTTP or MCP', async () => {
+  // The file doubles one pitch across two sources and marks its own decision on
+  // that pair accepted. Whichever door it comes through, the conflict stays
+  // open and the decision is held as pending: nobody here reviewed it.
+  const file = selfResolvedConflictBaseline();
+  for (const [name, runner] of [['http', httpRunner], ['mcp', mcpRunner]]) {
+    const run = runner(createStudioApplication({}));
+    const projectId = await run.createProject('Self-resolved');
+    await run.upload(projectId, canonicalProjectBytes(file));
+    await run.intake(projectId);
+    const decisions = await run.decisions(projectId, keepEveryRole(file));
+    const review = await run.review(projectId, decisions.candidate_id);
+    assert.equal(review.readiness.gates.crossSourceHarmony.status, 'PENDING', `${name}: Gate 5 must not PASS on the file's own word`);
+    assert.equal(review.readiness.gates.crossSourceHarmony.unresolvedCount, 1, name);
+    assert.ok(review.blockers.includes('crossSourceHarmony'), name);
+    assert.deepEqual(review.pending_decisions, ['imported:doubling'], `${name}: the decision is kept, as pending`);
   }
 });
 
