@@ -291,6 +291,32 @@ export const READINESS_GATE_OPERATION_REACH = freeze({
 });
 
 /**
+ * For each Final emitter refusal code, the existing operations that can answer
+ * it, with what a caller has to know.
+ *
+ * Finalize runs the emitter only when no gate it grades before emission blocks
+ * delivery, so no confirmation, approval, Lead review or audio alignment
+ * reaches the emitter's refusal. What can change it is a different candidate,
+ * and a code listed here is one an existing operation answers by producing
+ * that candidate. `FINALIZE_BLOCKED` and the `technical` request a refusal
+ * leaves `NOT_RUN` offer exactly the operations listed for the codes the
+ * emitter raised. Like the tables above this decides nothing: a code absent
+ * from here is stated with no operation, and it still blocks.
+ */
+export const EMITTER_REFUSAL_OPERATIONS = freeze({
+  // Material the Final reduction keeps outside the six roles -- OVERFLOW under
+  // an accepted ACCEPT_OVERFLOW decision, or PENDING -- reaches the emitter
+  // with no role, and the emitter never chooses one. Which role material
+  // belongs to is the reduction stage's decision, so a reduction of the refused
+  // candidate that places it or omits it on evidence is the answer, and a run
+  // takes one as resumeRun.final_reduction.
+  EVENT_ROLE_UNASSIGNED: freeze({
+    operations: freeze(['planFinalReduction', 'applyFinalReduction']),
+    missing: 'EVENT_ROLE_UNASSIGNED: note events in this candidate carry none of the six roles, and the Final emitter never chooses one for them. Material the Final reduction keeps outside the six roles (OVERFLOW under an accepted ACCEPT_OVERFLOW decision, or PENDING) reaches the emitter this way, and planFinalReduction on this candidate lists it with those outcomes. Which role material belongs to is decided at the Final reduction stage, so a reduction of this candidate that places that material in one of the six roles (REDISTRIBUTE) or omits it on evidence (OMIT) answers the refusal: derive the plan through planFinalReduction with the decisions and the accepted_by you intend to apply, and resume with final_reduction naming that plan id. A per-role character limit is never a reason to omit material, and unmapped General MIDI percussion is never assigned to a pitched role.',
+  }),
+});
+
+/**
  * Which input changes expire a review request.
  *
  * Reported on every request so a caller knows when the answer it is about to

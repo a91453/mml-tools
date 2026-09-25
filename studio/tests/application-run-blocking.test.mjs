@@ -27,7 +27,7 @@ import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
-import { createStudioApplication, ERROR_CODES, READINESS_BLOCKER_WITHOUT_OPERATION, READINESS_GATE_OPERATION_REACH, RUN_STATE, RUN_STEP, RUN_STEP_STATUS } from '../backend/application/index.mjs';
+import { createStudioApplication, EMITTER_REFUSAL_OPERATIONS, ERROR_CODES, READINESS_BLOCKER_WITHOUT_OPERATION, READINESS_GATE_OPERATION_REACH, RUN_STATE, RUN_STEP, RUN_STEP_STATUS } from '../backend/application/index.mjs';
 import { blobName } from '../backend/application/store.mjs';
 import { baselineIdentityOf } from '../backend/arrangement/decision-application.mjs';
 import { createArbitrationDecision, createCanonicalNoteEvent, createCanonicalProject, createCanonicalRestEvent, createCanonicalTempoEvent } from '../backend/canonical/index.mjs';
@@ -808,12 +808,13 @@ test('a role that starts after a silence shorter than any Final token holds the 
 
 test('a finalize the Final emitter refused names no operation and carries the emitter\'s own codes', async () => {
   // A real Tempo change one 480-tick before beat 3 of the six-role fixture. G10
-  // does not read the Tempo Map, so every gate finalize grades before emission
-  // is satisfied; the emitter then refuses to split the Chord notes the change
-  // crosses at a position no admitted token sequence reaches. The run used to
-  // name reviewCandidate, recordConfirmations, approveCore3SourceChange,
+  // does not read the Tempo Map, so no gate finalize grades before emission
+  // blocks delivery; the emitter then refuses to split the Chord notes the
+  // change crosses at a position no admitted token sequence reaches. The run
+  // used to name reviewCandidate, recordConfirmations, approveCore3SourceChange,
   // reviewLeadEvidence and attachAudioAlignment on FINALIZE_BLOCKED, and
-  // finalize again on the technical request. None of them changes the refusal.
+  // finalize again on the technical request. None of them changes the refusal,
+  // and the run has no operation hint for the emitter's code.
   const source = sixRoleBaseline({ id: 'fixture:unreachable-tempo' });
   const project = createCanonicalProject({
     ...source,
@@ -841,6 +842,7 @@ test('a finalize the Final emitter refused names no operation and carries the em
   assert.deepEqual(blocked.detail.emitter_blockers, ['BOUNDARY_NOT_FINAL_REPRESENTABLE'], 'the emitter\'s own code, so an agent can see why');
   assert.equal(blocked.detail.emit_status, 'FAIL');
   assert.match(blocked.missing.join(' '), /The Final emitter refused this candidate \(emit_status FAIL: BOUNDARY_NOT_FINAL_REPRESENTABLE\)/);
+  assert.match(blocked.missing.join(' '), /BOUNDARY_NOT_FINAL_REPRESENTABLE: the run orchestrator has no operation hint for this Final emitter code, so none is suggested/);
   const technical = gateRequest(run, 'technical');
   assert.ok(technical, JSON.stringify(run.review_requests.map(entry => entry.gate)));
   assert.deepEqual(technical.available_operations, [], 'finalizing the same candidate again returns the same refusal');
@@ -877,10 +879,80 @@ test('a sole unassigned-role emitter refusal points to a new reviewed reduction'
   assert.ok(blocked, JSON.stringify(run.review_requests));
   assert.deepEqual(blocked.detail.emitter_blockers, ['EVENT_ROLE_UNASSIGNED']);
   assert.deepEqual(blocked.available_operations, ['planFinalReduction', 'applyFinalReduction']);
-  assert.match(blocked.missing.join(' '), /explicit plan and accepted decisions/);
+  assert.ok(blocked.missing.includes(EMITTER_REFUSAL_OPERATIONS.EVENT_ROLE_UNASSIGNED.missing), JSON.stringify(blocked.missing));
   assert.equal(blocked.available_operations.includes('finalize'), false);
   const delivery = gateRequest(run, 'finalEmission');
   if (delivery) assert.deepEqual(delivery.available_operations, ['planFinalReduction', 'applyFinalReduction']);
+});
+
+test('an emitter refusal with role-less material among other codes still names the reduction, and states the others without one', async () => {
+  const isolated = createStudioApplication({ loadEngines: enginesWith(engines => ({
+    final: {
+      ...engines.final,
+      emitFinalMml: (project, options) => ({
+        ...engines.final.emitFinalMml(project, options),
+        status: engines.final.EMIT_STATUS.FAIL,
+        combinedMml: null,
+        diagnostics: [
+          { code: 'EVENT_ROLE_UNASSIGNED', severity: 'error', message: 'An event has no six-slot role.' },
+          { code: 'BOUNDARY_NOT_FINAL_REPRESENTABLE', severity: 'error', message: 'A boundary Final cannot write.' },
+        ],
+      }),
+    },
+  })) });
+  const own = await projectWithSymbolicAsset(isolated, OWNER, { project: sixRoleBaseline({ id: 'fixture:unassigned-emitter-mixed' }) });
+  await isolated.analyzeSources(OWNER, own.projectId, { assetIds: [own.assetId] });
+  const candidate = (await isolated.applyDecisions(OWNER, own.projectId, { decisions: runDecisionsFor(own.project) })).decisions.candidate_id;
+  const { run } = await isolated.startRun(OWNER, own.projectId, { target_candidate_id: candidate, confirmations: FIXTURE_CONFIRMATIONS });
+  const blocked = requestFor(run, 'FINALIZE_BLOCKED');
+  assert.ok(blocked, JSON.stringify(run.review_requests));
+  assert.deepEqual(blocked.detail.emitter_blockers, ['EVENT_ROLE_UNASSIGNED', 'BOUNDARY_NOT_FINAL_REPRESENTABLE']);
+  assert.deepEqual(blocked.available_operations, ['planFinalReduction', 'applyFinalReduction']);
+  assert.ok(blocked.missing.includes(EMITTER_REFUSAL_OPERATIONS.EVENT_ROLE_UNASSIGNED.missing));
+  assert.ok(blocked.missing.some(text => text.startsWith('BOUNDARY_NOT_FINAL_REPRESENTABLE: the run orchestrator has no operation hint')), JSON.stringify(blocked.missing));
+});
+
+test('a finalize the Final emitter refused for role-less material names the reduction that answers it', async () => {
+  // G12 may keep material outside the six roles: ACCEPT_OVERFLOW is a legitimate
+  // reduction outcome, and the three overflow events keep no role. No gate
+  // finalize grades before emission blocks on that, so the emitter is reached
+  // and refuses with EVENT_ROLE_UNASSIGNED. That refusal is answerable: a
+  // reduction of the refused candidate that places or omits the material. The
+  // run used to say no operation in this build answers it, and named none.
+  const app = createStudioApplication({});
+  const fixture = await projectWithSymbolicAsset(app, OWNER, { project: baselineWithOverflowLane() });
+  const started = await app.startRun(OWNER, fixture.projectId, { asset_ids: [fixture.assetId], decisions: runDecisionsFor(fixture.project), accepted_by: RUN_REVIEWER });
+  const runId = started.run.run_id;
+  const overflow = ['overflow-1', 'overflow-2', 'overflow-3'];
+  const reduce = async (candidateId, decisions) => {
+    const plan = (await app.planFinalReduction(OWNER, fixture.projectId, { candidateId, decisions, acceptedBy: RUN_REVIEWER })).reduction.plan;
+    assert.equal(plan.status, 'PASS', JSON.stringify(plan.blockers));
+    return { decisions, expected_plan_id: plan.id, accepted_by: RUN_REVIEWER };
+  };
+  const accept = [{ id: 'accept', action: 'ACCEPT_OVERFLOW', eventIds: overflow, evidence: [], reason: 'Stays outside the six roles for this delivery.' }];
+  await app.resumeRun(OWNER, fixture.projectId, runId, { final_reduction: await reduce(started.run.candidate_id, accept) });
+  const { run } = await app.resumeRun(OWNER, fixture.projectId, runId, { confirmations: FIXTURE_CONFIRMATIONS });
+
+  assert.equal(run.state, RUN_STATE.AWAITING_REVIEW, JSON.stringify(run.blockers));
+  const finalize = run.steps.find(entry => entry.step === RUN_STEP.FINALIZE);
+  assert.equal(finalize.detail.operation, 'failed', 'the emitter refused: finalize reports failed');
+  const blocked = requestFor(run, 'FINALIZE_BLOCKED');
+  assert.deepEqual(blocked.detail.emitter_blockers, ['EVENT_ROLE_UNASSIGNED']);
+  assert.deepEqual(blocked.available_operations, ['planFinalReduction', 'applyFinalReduction'], 'the reduction stage owns which role material belongs to');
+  assert.ok(blocked.missing.includes(EMITTER_REFUSAL_OPERATIONS.EVENT_ROLE_UNASSIGNED.missing), JSON.stringify(blocked.missing));
+  assert.doesNotMatch(blocked.missing.join(' '), /no operation in this build answers|already satisfied/);
+  const technical = gateRequest(run, 'technical');
+  assert.deepEqual(technical.available_operations, ['planFinalReduction', 'applyFinalReduction']);
+  assert.deepEqual(technical.missing, blocked.missing);
+  const next = await app.nextRun(OWNER, fixture.projectId, runId, {});
+  assert.deepEqual(next.reviewer_operations, ['planFinalReduction', 'applyFinalReduction']);
+
+  // And the named operation answers it: a reduction of the refused candidate
+  // that omits the overflow lane on evidence, taken by the run, delivers.
+  const omit = [{ id: 'omit', action: 'OMIT', eventIds: overflow, reason: 'Accepted removal: a doubling of an existing role.', evidence: [`${FIXTURE_SOURCE_ID}#doubling`] }];
+  const answered = (await app.resumeRun(OWNER, fixture.projectId, runId, { final_reduction: await reduce(run.candidate_id, omit) })).run;
+  assert.equal(answered.state, RUN_STATE.COMPLETED, JSON.stringify(answered.review_requests.map(entry => [entry.code, entry.gate, entry.missing])));
+  assert.notEqual(answered.final_artifact_id, null);
 });
 
 test('a finalize the Final parser refused after emission keeps the operations that answer it', async () => {
