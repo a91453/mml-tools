@@ -22,7 +22,7 @@ import { mkdtemp, readdir, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
-import { PROPOSAL_KIND, PROPOSAL_STATE, RUN_HALT, RUN_STATE, RUN_STEP, createStudioApplication } from '../backend/application/index.mjs';
+import { LIMITS, PROPOSAL_KIND, PROPOSAL_STATE, RUN_HALT, RUN_STATE, RUN_STEP, createStudioApplication } from '../backend/application/index.mjs';
 import { RUN_REVIEWER, projectWithSymbolicAsset, runDecisionsFor } from './fixtures/run-fixtures.mjs';
 
 const OWNER = 'owner:proposal-duplication';
@@ -806,8 +806,8 @@ test('a writer record an older build carried onto its own revision is never read
 // write made outside any request's hold records `revision_written_by: null`,
 // which names no request. The step-budget hold `advance` writes once a run has
 // spent its steps is written in the request's hold, as every write this build
-// makes is, and no test reaches it, so the run is written here as that hold
-// would leave it written outside one.
+// makes is: the last test here drives a run into that hold and requires it.
+// The first writes the run as that hold would leave it written outside one.
 
 /** The stored run after `advance`'s step-budget hold, written outside any request's hold. */
 const budgetHoldRecordingNoWriter = run => {
@@ -869,5 +869,39 @@ test('a write that records no writer is never read as this application\'s, so a 
       error => error.code === 'PROPOSAL_CONFLICT',
       'its application reached the run, so it is not withdrawable',
     );
+  });
+});
+
+test('the step-budget hold this build writes names the request whose advancement spent the budget', async () => {
+  // No run this build starts takes more steps than one advancement may, so
+  // the hooks stand in for a run that never finishes: each time the
+  // suggestion step has answered, its receipt is taken off the stored run,
+  // and the next step runs it again. They stop a few steps past the budget,
+  // so a build without one ends the run instead of this test.
+  await withDirectory(async directory => {
+    let effects = 0, reruns = 0;
+    const app = createStudioApplication({
+      dataDirectory: directory,
+      durability: 'persistent',
+      runHooks: {
+        beforeEffect: () => { effects += 1; },
+        beforeResponse: async ({ step, run }) => {
+          if (step !== RUN_STEP.SUGGEST || reruns > LIMITS.maxRunStepsPerAdvance) return;
+          reruns += 1;
+          await rewriteStoredRun(directory, run.run_id, stored => ({ ...stored, steps: stored.steps.filter(entry => entry.step !== RUN_STEP.SUGGEST) }));
+        },
+      },
+    });
+    const fixture = await projectWithSymbolicAsset(app, OWNER);
+    const key = 'step-budget-hold-writer';
+    const started = await app.startRun(OWNER, fixture.projectId, { asset_ids: [fixture.assetId], idempotency_key: key });
+    assert.equal(started.run.state, RUN_STATE.BLOCKED, `the run is held once its steps are spent, got ${started.run.state} (${started.run.halt?.reason})`);
+    assert.equal(started.run.halt?.reason, RUN_HALT.STEP_BUDGET_EXHAUSTED);
+    assert.equal(effects, LIMITS.maxRunStepsPerAdvance, 'after exactly the steps one advancement may take');
+
+    const stored = await storedRunOf(directory, started.run.run_id);
+    assert.equal(stored.halt?.reason, RUN_HALT.STEP_BUDGET_EXHAUSTED);
+    assert.deepEqual(stored.revision_written_by, { idempotency_key: key, request_fingerprint: stored.idempotency.request_fingerprint, revision: stored.revision },
+      'the hold is recorded as the start request\'s write, not as one that names no request');
   });
 });
