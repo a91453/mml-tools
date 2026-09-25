@@ -290,8 +290,11 @@ file marked its own decision `accepted`, the stored baseline still carries it
 as accepted (Gate 5 can still read PASS), and a run over the same sources
 reuses that baseline rather than ingesting again. Run `analyzeSources`
 (`studio_sources_analyze`) on the project again to rebuild the baseline with
-the decision held pending (a new baseline drops the candidates derived from
-the old one).
+the decision held pending, and pass the same `asset_ids` and `meter_text` the
+baseline was built from: an omitted `asset_ids` ingests every symbolic asset in
+the project, and an omitted `meter_text` leaves an MML source without its
+source-confirmed meter map, so the rebuild would not describe the same sources.
+A new baseline drops the candidates derived from the old one.
 
 ## 7. Job lifecycle
 
