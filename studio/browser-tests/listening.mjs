@@ -171,4 +171,79 @@ export async function runListeningChecks({ page, base }) {
   assert.ok(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth + 1), 'no horizontal overflow with the listening panel open');
   await page.locator('#listen-close').click();
   assert.equal(await page.locator('#listening').isHidden(), true);
+
+  await runPasteChecks({ page, projectsBefore });
+}
+
+// Raw MML pasted, picked and dropped straight into the listening panel: one
+// local session with A, B and a third selectable version; nothing uploaded, no
+// project made.
+const THIRD = 'MML@t120o4l4ddefgabcdefgabcdefgabc,t120o3l1ccccc,,,,;';
+async function runPasteChecks({ page, projectsBefore }) {
+  await page.locator('#open-listening').click();
+  // The panel reopens the newest session; wait for it so its render does not race the clicks below.
+  await page.locator('#listen-head').waitFor();
+  const sessionsBefore = await page.locator('#listen-session-select option').count();
+  // The form opens by itself only when there is nothing else to show.
+  if (await page.locator('#listen-mml-paste').getAttribute('open') === null) await page.locator('#listen-mml-paste summary').click();
+  await page.locator('[data-listen-vmml="0"]').waitFor();
+  // A text that is not a complete MML string is refused beside the form; no session is made.
+  await page.locator('[data-listen-vmml="0"]').fill('t120cde');
+  // Counts are painted on the next animation frame.
+  await page.waitForFunction(() => document.querySelector('[data-listen-vcounts="0"]')?.textContent === '尚未是完整的 MML@…; 字串。');
+  await page.locator('#listen-mml-open').click();
+  await page.locator('#listen-mml-error').filter({ hasText: '不是完整的 MML@…; 字串' }).waitFor();
+  assert.equal(await page.locator('#listen-session-select option').count(), sessionsBefore);
+  // Typed: highlighted, with the per-role counts of the project paste box.
+  await page.locator('[data-listen-vmml="0"]').fill(CURRENT);
+  await page.locator('[data-listen-vlabel="0"]').fill('我的版本');
+  await page.waitForFunction(() => document.querySelector('[data-listen-vcounts="0"]')?.textContent.startsWith('Melody 30／2400'));
+  assert.ok(await page.locator('[data-listen-vlayer="0"] span').count() > 0, 'the pasted MML is highlighted');
+  // Picked from a file: the label is the file name.
+  await page.locator('[data-listen-vfile="1"]').setInputFiles({ name: 'someone-else.mml', mimeType: 'text/plain', buffer: Buffer.from(`${PREVIOUS}\n`) });
+  await page.locator('[data-listen-vlabel="1"][value="someone-else"]').waitFor();
+  assert.equal(await page.locator('[data-listen-vmml="0"]').inputValue(), CURRENT, 'loading a file keeps what was typed in the other slots');
+  // Dropped onto a third slot.
+  await page.locator('#listen-mml-add').click();
+  const transfer = await page.evaluateHandle(text => { const dt = new DataTransfer(); dt.items.add(new File([text], 'third.txt', { type: 'text/plain' })); return dt; }, THIRD);
+  await page.locator('[data-listen-slot="2"]').dispatchEvent('drop', { dataTransfer: transfer });
+  await page.waitForFunction(value => document.querySelector('[data-listen-vmml="2"]')?.value === value, THIRD);
+  await page.locator('#listen-mml-form [name="title"]').fill('A/B 比較 <b>x</b>');
+  await page.locator('#listen-mml-form [name="meter"]').fill('0 4/4');
+  await page.locator('#listen-mml-open').click();
+  await page.locator('#listen-head h3', { hasText: 'A/B 比較 <b>x</b>' }).waitFor();
+  assert.equal(await page.locator('#listen-head b').count(), 0);
+  assert.equal(await page.locator('#listen-session-select option').count(), sessionsBefore + 1);
+  assert.deepEqual(await page.locator('#projects option').allTextContents(), projectsBefore, 'pasting MML neither creates nor replaces a project');
+  const stored = await page.evaluate(() => new Promise((resolve, reject) => {
+    const request = indexedDB.open('mml-studio-listening');
+    request.onsuccess = () => { const tx = request.result.transaction('sessions', 'readonly'); const all = tx.objectStore('sessions').getAll(); all.onsuccess = () => { request.result.close(); resolve(all.result); }; };
+    request.onerror = () => reject(request.error);
+  }));
+  const session = stored.find(item => item.origin?.kind === 'paste');
+  assert.equal(session.mml, CURRENT);
+  assert.equal(session.meterText, '0 4/4');
+  assert.equal(session.compareMml, PREVIOUS);
+  assert.deepEqual(session.alternatives.map(item => item.label), ['someone-else', 'third']);
+  assert.equal(await page.locator('#listen-meter-assumed').count(), 0, 'the given meter is used, not assumed');
+  // The pasted form is emptied once its session exists.
+  assert.equal(await page.locator('[data-listen-vmml="0"]').inputValue(), '');
+  // A/B, changed bars and ranged playback work as for a link.
+  assert.equal(await page.locator('[data-listen-version="current"]').textContent(), 'A 我的版本');
+  assert.equal(await page.locator('[data-listen-version="compare"]').textContent(), 'B someone-else');
+  assert.deepEqual(await page.locator('#listen-changed-bars li').allTextContents(), ['▶ 第 3 小節Melody · 修改 1']);
+  const position = page.locator('#listen-position');
+  await page.locator('#listen-play-changed').click();
+  await page.waitForFunction(() => document.querySelector('#listen-position')?.dataset.state === 'playing');
+  assert.equal(await position.getAttribute('data-from-seconds'), '2');
+  assert.equal(await position.getAttribute('data-until-seconds'), '6');
+  await page.locator('#listen-stop').click();
+  // The third version can be chosen as B.
+  await page.locator('#listen-changes details summary', { hasText: '改用其他前一版' }).click();
+  await page.locator('#listen-compare-form [name="compare"]').selectOption({ label: '貼上：third' });
+  await page.locator('#listen-compare-form button').click();
+  await page.locator('[data-listen-version="compare"]', { hasText: 'B third' }).waitFor();
+  assert.deepEqual(await page.locator('#listen-changed-bars li').allTextContents(), ['▶ 第 1 小節Melody · 修改 1']);
+  assert.ok(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth + 1), 'no horizontal overflow with the paste form');
+  await page.locator('#listen-close').click();
 }
