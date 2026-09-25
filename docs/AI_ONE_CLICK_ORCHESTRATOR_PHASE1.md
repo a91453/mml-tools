@@ -176,6 +176,17 @@ classified source-supported, which must be kept exactly and which no admitted
 Final token can carry). The request states each one it carries in `missing`,
 names no operation when they are all it carries, and still blocks.
 
+A finalize the Final emitter refused (`operation: "failed"`) is answered by no
+operation either. Every gate finalize grades before emission was already
+satisfied, so no confirmation, approval, Lead review or audio alignment reaches
+the refusal, and finalizing the same candidate again returns it again. Its
+`FINALIZE_BLOCKED` request and the `technical` request it leaves `NOT_RUN`
+therefore name no operation, say why in `missing`, and `FINALIZE_BLOCKED`
+carries the emitter's blocking diagnostic codes (severity `error` or `pending`)
+in `detail.emitter_blockers`. Both still block, and a new candidate or
+Canonical release expires them. A finalize refused before emission, or by the
+Final parser or a later gate after it, keeps its hints.
+
 Phase 2 adds the AI Proposal protocol and an agent review policy. Phase 1
 connects no model, and a fixture's human confirmations are not a permission a
 model can grant itself.

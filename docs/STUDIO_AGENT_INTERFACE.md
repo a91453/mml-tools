@@ -589,7 +589,11 @@ Three things keep it from becoming a way around this interface's own rules:
   (`READINESS_BLOCKER_WITHOUT_OPERATION`; today
   `MICRO_TIMING_BOUNDARY_NOT_FINAL_REPRESENTABLE` and
   `MICRO_TIMING_SOURCE_SUPPORTED_NOT_FINAL_REPRESENTABLE`) is stated in
-  `missing`, and a request carrying only such blockers names no operation. The pre-emission
+  `missing`, and a request carrying only such blockers names no operation. A
+  finalize the Final emitter refused names no operation either: its
+  `FINALIZE_BLOCKED` and `technical` requests list none, and
+  `FINALIZE_BLOCKED` carries the emitter's blocking codes in
+  `detail.emitter_blockers` (§10). The pre-emission
   exemption is the Final service's own
   `PRE_EMISSION_EXEMPT_GATES`, imported rather than restated, so the run cannot
   become a second exemption policy or extend the exemption;
@@ -734,7 +738,11 @@ reported failure and the parser never ran; the candidate declares no meter
 events so nothing was graded; the parser rejected the emitted MML; the recorded
 readback names a different MML. An emitter failure is `operation: "failed"` and
 a `failed` job; a blocked finalize is a completed job whose `result_operation`
-is `blocked`.
+is `blocked`. A run that reaches an emitter failure names no operation for it:
+every gate finalize grades before emission was already satisfied, so nothing
+but a new candidate or Canonical release changes the refusal, and the run's
+`FINALIZE_BLOCKED` request carries the emitter's blocking diagnostic codes in
+`detail.emitter_blockers` instead.
 
 The artifact records the MML, the candidate and project identity, the Canonical
 provenance, the readiness summary, the repair report, the round-trip report, the

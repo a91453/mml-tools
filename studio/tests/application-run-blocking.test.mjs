@@ -25,7 +25,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 
 import { createStudioApplication, ERROR_CODES, READINESS_BLOCKER_WITHOUT_OPERATION, RUN_STATE, RUN_STEP, RUN_STEP_STATUS } from '../backend/application/index.mjs';
-import { createArbitrationDecision, createCanonicalNoteEvent, createCanonicalProject, createCanonicalRestEvent } from '../backend/canonical/index.mjs';
+import { createArbitrationDecision, createCanonicalNoteEvent, createCanonicalProject, createCanonicalRestEvent, createCanonicalTempoEvent } from '../backend/canonical/index.mjs';
 import { MICRO_TIMING_KEEP_ACTION, createIntervalIdentity } from '../backend/canonical/micro-timing.mjs';
 import { enginesWith } from './support/real-engines.mjs';
 import { baselineWithOverflowLane, baselineWithPercussion, baselineWithoutLead, leadEvidenceFor, FIXTURE_SOURCE_ID } from './fixtures/g12-fixtures.mjs';
@@ -734,6 +734,84 @@ test('a role that starts after a silence shorter than any Final token holds the 
   assert.deepEqual(request.detail.unsupportedBoundaries.map(entry => [entry.role, entry.eventId, entry.kind, entry.boundary, entry.position, entry.reason, entry.coverage]), [
     ['Chord5', 'chord5-1', 'note', 'start', '1/240', 'LEADING_SILENCE_SHORTER_THAN_ANY_FINAL_TOKEN', 'none'],
   ], 'the request says where, and why');
+});
+
+// ─── a finalize the Final emitter refused ───────────────────────────────────
+
+test('a finalize the Final emitter refused names no operation and carries the emitter\'s own codes', async () => {
+  // A real Tempo change one 480-tick before beat 3 of the six-role fixture. G10
+  // does not read the Tempo Map, so every gate finalize grades before emission
+  // is satisfied; the emitter then refuses to split the Chord notes the change
+  // crosses at a position no admitted token sequence reaches. The run used to
+  // name reviewCandidate, recordConfirmations, approveCore3SourceChange,
+  // reviewLeadEvidence and attachAudioAlignment on FINALIZE_BLOCKED, and
+  // finalize again on the technical request. None of them changes the refusal.
+  const source = sixRoleBaseline({ id: 'fixture:unreachable-tempo' });
+  const project = createCanonicalProject({
+    ...source,
+    tempoEvents: [
+      ...source.tempoEvents,
+      createCanonicalTempoEvent({ id: 'tempo-2', beat: '1439/480', bpm: 100, sourceIds: [FIXTURE_SOURCE_ID], sourceEventIds: [`${FIXTURE_SOURCE_ID}#tempo-2`] }),
+    ],
+  });
+  const isolated = createStudioApplication({});
+  const own = await projectWithSymbolicAsset(isolated, OWNER, { project });
+  await isolated.analyzeSources(OWNER, own.projectId, { assetIds: [own.assetId] });
+  const candidate = (await isolated.applyDecisions(OWNER, own.projectId, { decisions: runDecisionsFor(own.project) })).decisions.candidate_id;
+  const { run } = await isolated.startRun(OWNER, own.projectId, { target_candidate_id: candidate, confirmations: FIXTURE_CONFIRMATIONS });
+
+  assert.equal(run.state, RUN_STATE.AWAITING_REVIEW, JSON.stringify(run.blockers));
+  assert.equal(run.final_artifact_id, null);
+  assert.equal(statusOf(run, RUN_STEP.FINALIZE), RUN_STEP_STATUS.BLOCKED);
+  const finalize = run.steps.find(entry => entry.step === RUN_STEP.FINALIZE);
+  assert.equal(finalize.detail.operation, 'failed', 'the emitter refused: finalize reports failed');
+  assert.equal(finalize.detail.emit_status, 'FAIL');
+
+  const blocked = requestFor(run, 'FINALIZE_BLOCKED');
+  assert.ok(blocked, JSON.stringify(run.review_requests.map(entry => entry.code)));
+  assert.deepEqual(blocked.available_operations, [], 'no operation answers the emitter\'s refusal');
+  assert.deepEqual(blocked.detail.emitter_blockers, ['BOUNDARY_NOT_FINAL_REPRESENTABLE'], 'the emitter\'s own code, so an agent can see why');
+  assert.equal(blocked.detail.emit_status, 'FAIL');
+  assert.match(blocked.missing.join(' '), /The Final emitter refused this candidate \(emit_status FAIL: BOUNDARY_NOT_FINAL_REPRESENTABLE\)/);
+  const technical = gateRequest(run, 'technical');
+  assert.ok(technical, JSON.stringify(run.review_requests.map(entry => entry.gate)));
+  assert.deepEqual(technical.available_operations, [], 'finalizing the same candidate again returns the same refusal');
+  assert.match(technical.missing.join(' '), /BOUNDARY_NOT_FINAL_REPRESENTABLE/);
+  assert.deepEqual(run.review_requests.flatMap(entry => entry.available_operations), [], 'the run names no operation at all');
+
+  // The read-only next-step projection says the same thing.
+  const next = await isolated.nextRun(OWNER, own.projectId, run.run_id, {});
+  assert.deepEqual(next.reviewer_operations, []);
+  // And so does the capability record.
+  const caps = await createStudioApplication({}).capabilities();
+  assert.ok(caps.runs.refuses.some(entry => entry.includes('Final emitter refused') && entry.includes('detail.emitter_blockers')), JSON.stringify(caps.runs.refuses));
+});
+
+test('a finalize the Final parser refused after emission keeps the operations that answer it', async () => {
+  // Control. One extra Melody beat past the last full 4/4 bar: the emitter
+  // writes it, the Final parser rejects the partial bar, and finalize with the
+  // source-confirmed final_partial is the answer that exists. A refusal that is
+  // not the emitter's keeps every hint it had.
+  const source = sixRoleBaseline({ id: 'fixture:partial-bar' });
+  const project = createCanonicalProject({
+    ...source,
+    events: [...source.events, createCanonicalNoteEvent({ id: 'melody-4', pitch: 74, start: '4', end: '5', sourceIds: [FIXTURE_SOURCE_ID], sourceEventIds: [`${FIXTURE_SOURCE_ID}#melody-4`], role: 'Melody', voice: 'melody', volume: null, metadata: {} })],
+  });
+  const isolated = createStudioApplication({});
+  const own = await projectWithSymbolicAsset(isolated, OWNER, { project });
+  await isolated.analyzeSources(OWNER, own.projectId, { assetIds: [own.assetId] });
+  const candidate = (await isolated.applyDecisions(OWNER, own.projectId, { decisions: runDecisionsFor(own.project) })).decisions.candidate_id;
+  const { run } = await isolated.startRun(OWNER, own.projectId, { target_candidate_id: candidate, confirmations: FIXTURE_CONFIRMATIONS });
+
+  assert.equal(run.state, RUN_STATE.AWAITING_REVIEW, JSON.stringify(run.blockers));
+  const finalize = run.steps.find(entry => entry.step === RUN_STEP.FINALIZE);
+  assert.equal(finalize.detail.operation, 'blocked');
+  assert.equal(finalize.detail.emit_status, 'PASS');
+  const blocked = requestFor(run, 'FINALIZE_BLOCKED');
+  assert.deepEqual(blocked.available_operations, ['reviewCandidate', 'recordConfirmations', 'approveCore3SourceChange', 'reviewLeadEvidence', 'attachAudioAlignment']);
+  assert.equal(Object.hasOwn(blocked.detail, 'emitter_blockers'), false);
+  assert.deepEqual(gateRequest(run, 'technical').available_operations, ['finalize']);
+  assert.deepEqual(gateRequest(run, 'technical').missing, []);
 });
 
 // ─── an unknown blocker still blocks ────────────────────────────────────────
