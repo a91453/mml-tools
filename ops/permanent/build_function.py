@@ -12,6 +12,7 @@ trust = (assets / lock['trust']['filename']).read_bytes()
 assert hashlib.sha256(trust).hexdigest() == lock['trust']['sha256']
 source = (here / 'bootstrap.mjs').read_text()
 source += '\nconst LOCK = ' + json.dumps(lock, separators=(',', ':')) + ';\n'
+source += 'const SOUND_BANKS = ' + json.dumps(json.loads((here / 'sound-banks.json').read_text()), separators=(',', ':')) + ';\n'
 source += 'const TRUST_ZIP = Buffer.from(' + json.dumps(base64.b64encode(trust).decode()) + ', "base64");\n'
 # The rendered source is carried into Railway by hand (a Function's code is a
 # string, not a file upload), so it proves its own integrity before anything
@@ -32,7 +33,7 @@ const RENDERED_SOURCE_SHA256 = '__RENDERED_SOURCE_SHA256__';
 }
 try {
   await bootstrapStudio({
-    lock: LOCK, trustZip: TRUST_ZIP,
+    lock: LOCK, trustZip: TRUST_ZIP, soundBanks: SOUND_BANKS,
     cacheRoot: process.env.CACHE_DIR || '/studio-cache',
     port: Number(process.env.PORT || 8080),
     recoverCorrupt: process.env.RELEASE_RECOVER_CORRUPT === '1',

@@ -1,0 +1,30 @@
+{
+  "schema": "studio-sound-banks-v1",
+  "banks": [
+    {
+      "id": "game-style",
+      "source": {
+        "release": "sound-bank-game-style-v150",
+        "zipSha256": "96f8b270ce2e6d4e6e9a0cedf71e2bb4b9d4dc35a0742c0a5c753c60b410712b"
+      },
+      "files": [
+        {
+          "extension": ".dls",
+          "path": "banks/game-style/7671125ed267c2ff9b0d05f10d64fe398d1606674d813fbcc3fbb3baa5a05983.dls",
+          "objectKey": "banks/game-style/7671125ed267c2ff9b0d05f10d64fe398d1606674d813fbcc3fbb3baa5a05983.dls",
+          "sha256": "7671125ed267c2ff9b0d05f10d64fe398d1606674d813fbcc3fbb3baa5a05983",
+          "bytes": 15324240,
+          "contentType": "application/octet-stream"
+        },
+        {
+          "extension": ".def",
+          "path": "banks/game-style/f224edf5b3c21bab3119e8c47230141dcdc6fb634b6c780779c4d8c20e137dc2.def",
+          "objectKey": "banks/game-style/f224edf5b3c21bab3119e8c47230141dcdc6fb634b6c780779c4d8c20e137dc2.def",
+          "sha256": "f224edf5b3c21bab3119e8c47230141dcdc6fb634b6c780779c4d8c20e137dc2",
+          "bytes": 4036,
+          "contentType": "text/plain; charset=utf-8"
+        }
+      ]
+    }
+  ]
+}

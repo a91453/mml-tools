@@ -125,6 +125,19 @@ one file. Set the flag back to `0` after recovery.
    `RELEASE_OFFLINE_ONLY=1`, restart with the same cache and verify success with
    no download event; restore `0` for normal durable recovery capability.
 
+## Sound banks
+
+A sound bank the owner provides (for example the game-style bank) is never
+committed and never enters the reviewed artifact, whose verifier rejects sound
+banks. `sound-banks.json` pins each file by SHA-256 and byte count, and
+`build_function.py` embeds those pins. `.github/workflows/studio-sound-bank-mirror.yml`
+copies the pinned files from the owner's draft Release into the private bucket
+(no overwrite, then read back). The function serves them at
+`/banks/<id>/<sha256>.<ext>`: it reads each from the bucket on first request,
+checks the pin, keeps the bytes in memory and serves them as immutable. A failed
+or mismatched read answers 503 and the next request tries again; it never
+affects the Studio artifact.
+
 ## Rollback
 
 The pre-migration production deployment is
