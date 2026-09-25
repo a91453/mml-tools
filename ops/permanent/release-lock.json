@@ -1,10 +1,10 @@
 {
   "schema": "studio-durable-release-v1",
   "repository": "a91453/mml-tools",
-  "tag": "studio-v1-durable-25b8acd2ed21",
-  "sourceSha": "25b8acd2ed21ae79710680d0be7b903e96a8fae9",
-  "buildId": "3675ac65a92b37d0eab3761f5b617ee968e55742e36168e95f96180735c91c9d",
-  "cacheId": "ad961b6def69e9a5629556305997d70b4d6dcf43c2e6ac76c5fe6c14ab07c615",
+  "tag": "studio-v1-durable-8613d0c40db2",
+  "sourceSha": "8613d0c40db207a71a9b3d1c6cb40e6aae4728c3",
+  "buildId": "9d0991bd36f076ff5d01724acd2963aa37f874d64b4c849452af7eddbddda4db",
+  "cacheId": "824c9d2d29542b9f22b9a8c593e04f12efd22f3100b7caab84c778ab368d1b3c",
   "canonical": {
     "canonical_version": "2026-09-23-v3",
     "canonical_status": "PUBLISHED",
@@ -14,25 +14,25 @@
   },
   "manifestCommit": "44f3f0082cf5c30328edf1c251398b844488ad0a",
   "runtimeBundleDigest": "8f01a836fefd2af1d1ca997e5124283ccb282d2b6ec8c60e4bfb34cde987703b",
-  "buildJsonSha256": "c8a837c8d161afe57154ad41be4303b8c047bb015850bb8a4cd2d20b8d125e52",
+  "buildJsonSha256": "9255e254d94b88a40a20f9507ad832f3fcd33151ae3e4ec1108e0f3afa488532",
   "assetCount": 156,
   "artifact": {
-    "filename": "mml-studio-3675ac65a92b37d0eab3761f5b617ee968e55742e36168e95f96180735c91c9d.zip",
-    "sha256": "908a8ae01d36d2d6eab40fb1f12928eed4f198caaa16c4fb0a627879aa413b32",
-    "bytes": 4224413,
-    "objectKey": "releases/studio-v1-durable-25b8acd2ed21/908a8ae01d36d2d6eab40fb1f12928eed4f198caaa16c4fb0a627879aa413b32/mml-studio-3675ac65a92b37d0eab3761f5b617ee968e55742e36168e95f96180735c91c9d.zip"
+    "filename": "mml-studio-9d0991bd36f076ff5d01724acd2963aa37f874d64b4c849452af7eddbddda4db.zip",
+    "sha256": "26f8fd2d92e15825eff01efcdb2c23c1bb1b842b9b87c44d6c5c36f1c9106c65",
+    "bytes": 4236940,
+    "objectKey": "releases/studio-v1-durable-8613d0c40db2/26f8fd2d92e15825eff01efcdb2c23c1bb1b842b9b87c44d6c5c36f1c9106c65/mml-studio-9d0991bd36f076ff5d01724acd2963aa37f874d64b4c849452af7eddbddda4db.zip"
   },
   "trust": {
-    "filename": "studio-trust-25b8acd2ed21ae79710680d0be7b903e96a8fae9.zip",
+    "filename": "studio-trust-8613d0c40db207a71a9b3d1c6cb40e6aae4728c3.zip",
     "sha256": "28bdb56bf792105fe310737d6bb3e93c971fe3c46e64d9d40a45294a147e5a5b",
     "bytes": 18984,
-    "sourceSha": "25b8acd2ed21ae79710680d0be7b903e96a8fae9",
+    "sourceSha": "8613d0c40db207a71a9b3d1c6cb40e6aae4728c3",
     "files": {
       "scripts/studio-artifact-identity.mjs": "05720058074423e445186b42ddc1b5c3ef6bf9953c4ff59d1fbb8a642db451f6",
       "scripts/verify-studio-artifact.mjs": "57117734dbe4ec9516690494e72c44a086284046bac10db5ee06f3fc10156fc9",
       "studio/web/canonical-contract.mjs": "1de173bdef33c70c92568dfb461ecc27427f45bade3dd7264cfa5e499389e7f4",
       "studio/web/sw.js": "95ccadafb613246ff8adc5e166b6a33cae7c3e24121b2828cc19792db2f1f84f"
     },
-    "objectKey": "releases/studio-v1-durable-25b8acd2ed21/28bdb56bf792105fe310737d6bb3e93c971fe3c46e64d9d40a45294a147e5a5b/studio-trust-25b8acd2ed21ae79710680d0be7b903e96a8fae9.zip"
+    "objectKey": "releases/studio-v1-durable-8613d0c40db2/28bdb56bf792105fe310737d6bb3e93c971fe3c46e64d9d40a45294a147e5a5b/studio-trust-8613d0c40db207a71a9b3d1c6cb40e6aae4728c3.zip"
   }
 }
