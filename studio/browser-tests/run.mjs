@@ -194,7 +194,10 @@ try {
       // The status line renders before the audio invalidation commit settles, and
       // subsequent assertions need the audio invalidation commit to settle.
       await idle();
-      {const offending=requests.filter(r=>!(r.method==='GET'&&r.url.startsWith(base)));assert.deepEqual(offending.slice(0,8).map(r=>`${r.method} ${r.url.slice(0,160)}`),[],`Symbolic intake and audio selection cause no upload or external request (${offending.length} did)`);}
+      // A same-origin blob: read is the page reading bytes it made itself (WebKit
+      // reports the media-keys WAV the Workshop plays through); it is neither an
+      // upload nor an external request, and no other URL is allowed.
+      {const offending=requests.filter(r=>!(r.method==='GET'&&(r.url.startsWith(base)||r.url.startsWith(`blob:${base}/`))));assert.deepEqual(offending.slice(0,8).map(r=>`${r.method} ${r.url.slice(0,160)}`),[],`Symbolic intake and audio selection cause no upload or external request (${offending.length} did)`);}
       await file('baseline',mxml.replace('<score-partwise>','<score-partwise xmlns:m="urn:fixture">').replace('<repeat ', '<m:repeat '),'repeat.musicxml');assert.ok((await page.locator('#gates').textContent()).includes('UNSUPPORTED'));
       // Service worker must cache the actual module graph for offline restart.
       await page.evaluate(()=>navigator.serviceWorker.ready);
