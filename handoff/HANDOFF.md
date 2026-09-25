@@ -25,6 +25,12 @@ needs a Dashboard click, give the owner exact steps.
 - (a) A pasted, valid MML delivery stays VALIDATED. Only readiness / machine delivery of a Studio-generated Final must agree with the emitter.
 - (b) Decisions an imported project marks "accepted" are demoted to pending (as Studio Web already does).
 
+## Status update (~11:05 UTC) — newest, read this first
+Merged: #97, #98, #99, #101. Only two PRs remain:
+- #100 claude/p3-bank-races — CI green. Before merge fix the Codex P2 review thread: in studio/web/listen-ui.mjs play() (~:184) replace `state.stopNote = null;` with `status('');` so a restarted listening play clears the persisted "試聽已停止…" text; add a browser or unit check (preempt listening, play again, #listen-status is empty). Reply on the Codex thread and resolve it, push, merge when green.
+- #102 claude/p1-run-finalize-guidance — first merge main into it (#101 touched run/readiness; resolve conflicts keeping both), then fix the MEDIUM described in the #102 row below, add a test, push, merge when green.
+If claude/wip-p3-bank or claude/wip-p1-backend has commits the PR branch lacks, they are later fix-round commits: carry them over first.
+
 ## Status update (~11:00 UTC) — read this first
 Merged: #97 (p1 listening recovery), #98 (p2 imported decisions pending).
 Open PRs — what each still needs:
