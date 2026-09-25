@@ -840,7 +840,9 @@ Remaining, recorded rather than fixed:
   by "Residual D": a carried decision stays current only while every event it
   names is present with the same role and was not duplicated. A baseline's own
   decisions are forced to `pending` on import, by backend intake and by Web
-  alike; only a baseline the backend stored itself keeps them as written.
+  alike; only a baseline the backend stored itself keeps them as written,
+  including one stored before that change, until its sources are analysed
+  again.
 
 ## Residual hardening (PR #28 follow-up)
 

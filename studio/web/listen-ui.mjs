@@ -14,6 +14,9 @@
 // creates, opens or overwrites a project, never plays by itself (audio needs a
 // user gesture) and removes the payload from the address bar once imported.
 // Every string from a link is untrusted and is escaped wherever it is shown.
+// Raw MML can also be pasted, picked or dropped here (listen-paste.mjs): one
+// to four versions become one local session the same way, A plus up to three
+// comparison versions, with no upload, no project and no gate.
 // Playback reuses the Final preview's engine and scheduler through `audio`
 // (app.mjs); listening passes no gate and records no review or readback.
 import { decodeListenLink, encodeListenLink, listenPayloadFromUrl, listenUrl, withoutListenPayload, LISTEN_LINK_SCHEMA, LISTEN_LIMITS } from './listen-link.mjs';
@@ -24,6 +27,8 @@ import {
 import { MARKER_KIND_LABELS, NOTE_KINDS, normalizeNote, notesAsMarkers, notesExportText, sortNotes } from './listen-notes.mjs';
 import { MAX_SESSIONS, deleteSession, getSession, listSessions, saveSession } from './listen-store.mjs';
 import { mountReviewRoll } from './review-roll.mjs';
+import { buildRoles, renderHTML, roleCharacterCounts, segmentRoles, ROLE_CHARACTER_LIMIT } from './mml-highlight.mjs';
+import { PASTE_MAX_FILE_BYTES, PASTE_MAX_VERSIONS, defaultVersionLabel, isPasteFile, labelFromFileName, preparePastedVersions } from './listen-paste.mjs';
 import { beatNumber, cmpBeat, parseBeat } from './roll-geometry.mjs';
 
 const esc = value => String(value ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
@@ -32,6 +37,8 @@ const PRE_ROLL_CHOICES = [0, 1, 2, 4];
 const hex = buffer => [...new Uint8Array(buffer)].map(b => b.toString(16).padStart(2, '0')).join('');
 export const mmlSha256 = async text => hex(await crypto.subtle.digest('SHA-256', new TextEncoder().encode(text)));
 const noteKindLabel = id => NOTE_KINDS.find(kind => kind.id === id)?.label ?? id;
+const P1_COUNT_NOTE = '字元單位為 JavaScript string length；與遊戲實際計數的等價性尚未驗證（PENDING P1），只供參考。';
+const emptyDraft = () => ({ open: false, title: '', meter: '', versions: [{ label: '', mml: '' }, { label: '', mml: '' }], error: null });
 const when = iso => { const d = new Date(iso); return Number.isNaN(d.getTime()) ? '' : d.toLocaleString(); };
 
 /**
@@ -50,6 +57,7 @@ export function createListening({ root, call, message, copyText, audio, saveProj
     playing: false, position: { seconds: 0, beat: 0 }, queue: null, version: 'current', highlight: null,
     muted: [false, false, false, false, false, false], solo: [false, false, false, false, false, false],
     selectedEvent: null, editingNoteId: null, confirmDelete: false, loading: false, error: null, stopNote: null,
+    draft: emptyDraft(),
   };
   let roll = null;
 
@@ -99,11 +107,44 @@ export function createListening({ root, call, message, copyText, audio, saveProj
       // open() keeps its failure on the page instead of throwing, so only a
       // session that opened is reported as one. It stays saved either way and
       // can be opened again from the list.
-      if (!await open(session.id)) throw Error(state.error);
+      const failure = await open(session.id);
+      if (failure !== null) throw Error(failure);
       message('已從試聽連結建立新的試聽工作階段；按「播放」才會發出聲音。沒有建立或覆寫任何專案。');
       return session;
     } catch (error) {
       state.loading = false; state.error = `試聽連結無法開啟：${error.message}`;
+      render(); message(state.error, true);
+      return null;
+    }
+  }
+  /**
+   * Open a new session from MML pasted, picked or dropped on this panel. The
+   * first filled version is A; the second is the comparison version B and
+   * every other one stays selectable as a comparison. Resolves to the
+   * session, or null with the reason shown beside the form.
+   */
+  async function importPasted(draft = state.draft) {
+    let prepared;
+    try { prepared = preparePastedVersions(draft); }
+    catch (error) { state.draft.error = error.message; renderPasteError(); return null; }
+    show();
+    stop({ quiet: true });
+    state.loading = true; render();
+    try {
+      const [first, second, ...rest] = prepared.versions;
+      const session = await createSession({
+        title: prepared.title, origin: { kind: 'paste', labels: prepared.versions.map(item => item.label) },
+        mml: first.mml, currentLabel: first.label, meterText: prepared.meterText,
+        compareMml: second?.mml ?? null, compareLabel: second ? second.label : null,
+        alternatives: [second, ...rest].filter(Boolean),
+      });
+      if (!await open(session.id)) throw Error(state.error);
+      state.draft = emptyDraft();
+      rerenderPaste();
+      message(`已建立試聽工作階段（${prepared.versions.length} 個版本）；按「播放」才會發出聲音。沒有上傳，也沒有建立或覆寫任何專案。`);
+      return session;
+    } catch (error) {
+      state.loading = false; state.error = `貼上的 MML 無法開啟：${error.message}`;
       render(); message(state.error, true);
       return null;
     }
@@ -122,18 +163,22 @@ export function createListening({ root, call, message, copyText, audio, saveProj
       notes: notes.filter(note => note.mmlSha256 === sha),
       alternatives: alternatives.filter(item => typeof item?.mml === 'string' && item.mml.trim() && item.mml.trim() !== text).slice(0, 4).map(item => ({ label: String(item.label).slice(0, 80), mml: item.mml.trim().slice(0, LISTEN_LIMITS.mmlChars) })),
     });
-    await open(session.id);
+    const failure = await open(session.id);
     root.scrollIntoView?.({ block: 'start' });
+    // As for a link: saved either way, reported as opened only if it did.
+    if (failure !== null) throw Error(failure);
     message('已建立試聽工作階段；按「播放」開始聆聽。');
     return session;
   }
 
   // ─── opening a session ────────────────────────────────────────────────
-  // Resolves true when the session opened, false when it could not.
+  // Resolves null when the session opened, or the reason it could not. The
+  // reason is returned rather than read back from state.error, which another
+  // open() started meanwhile (from the list, say) may already have cleared.
   async function open(id) {
     stop({ quiet: true });
     state.loading = true; state.error = null; render();
-    let opened = false;
+    let failure = null;
     try {
       const session = await getSession(id);
       const parsed = await call('parseListening', session.mml);
@@ -142,14 +187,13 @@ export function createListening({ root, call, message, copyText, audio, saveProj
       layout();
       state.cue = { beat: startBeat(session.start) };
       state.position = { seconds: clock().secondsAt(state.cue.beat), beat: beatNumber(state.cue.beat) };
-      opened = true;
     } catch (error) {
-      state.session = null; state.error = error.message;
+      state.session = null; state.error = failure = error.message;
     }
     state.loading = false;
     await refreshSessions();
     render();
-    return opened;
+    return failure;
   }
   // Bars, clocks, markers and changes for what is loaded.
   function layout() {
@@ -279,7 +323,7 @@ export function createListening({ root, call, message, copyText, audio, saveProj
     const keepScroll = root.querySelector('#listen-roll .roll-stage')?.scrollLeft ?? null;
     root.innerHTML = `<div class="section-heading"><h2 id="listening-title">試聽工作階段</h2><button type="button" class="quiet" id="listen-close">關閉試聽</button></div>
       ${sessionsCard()}
-      ${state.loading ? '<div class="card"><p class="meta" role="status">正在讀取試聽內容…</p></div>' : state.session ? sessionBody() : `<div class="card"><div class="empty">${state.error ? esc(state.error) : '尚未開啟試聽工作階段。<br>在第 06 節或第 07 節按「送到試聽」，或開啟一個試聽連結。'}</div></div>`}`;
+      ${state.loading ? '<div class="card"><p class="meta" role="status">正在讀取試聽內容…</p></div>' : state.session ? sessionBody() : `<div class="card"><div class="empty">${state.error ? esc(state.error) : '尚未開啟試聽工作階段。<br>在第 06 節或第 07 節按「送到試聽」、開啟一個試聽連結，或直接在上方貼上 MML。'}</div></div>`}`;
     bind();
     if (state.session && !state.loading) mountRoll(keepScroll);
   }
@@ -291,14 +335,126 @@ export function createListening({ root, call, message, copyText, audio, saveProj
       <div class="listen-row"><label class="listen-grow">已保存的試聽工作階段<select id="listen-session-select" ${state.sessions.length ? '' : 'disabled'}>${options || '<option>尚無試聽工作階段</option>'}</select></label>
         <button type="button" class="secondary" id="listen-session-open" ${state.sessions.length ? '' : 'disabled'}>開啟</button>
         <button type="button" class="quiet" id="listen-session-delete" ${state.session ? '' : 'disabled'} aria-live="polite">${state.confirmDelete ? '再按一次確認刪除' : '刪除目前工作階段'}</button></div>
+      ${pasteCard()}
       <details class="listen-paste"><summary>貼上試聽連結</summary><form id="listen-link-form"><label>試聽連結（含 #listen=）<input name="link" autocomplete="off" spellcheck="false" required></label><div class="actions"><button>開啟連結</button></div></form></details>
     </div>`;
+  }
+  function pasteCard() {
+    const d = state.draft;
+    const slot = (item, i) => `<fieldset class="listen-version" data-listen-slot="${i}"><legend>${i === 0 ? 'A' : String.fromCharCode(65 + i)} · ${i === 0 ? '主要版本' : '比較版本'}</legend>
+        <div class="listen-row"><label class="listen-grow">名稱<input data-listen-vlabel="${i}" maxlength="80" autocomplete="off" placeholder="${esc(defaultVersionLabel(i))}" value="${esc(item.label)}"></label>
+          <label class="file-button quiet">選擇 .mml／.txt<input type="file" data-listen-vfile="${i}" accept=".mml,.txt,text/plain" multiple aria-label="${esc(defaultVersionLabel(i))} 的 MML 檔案"></label>
+          ${d.versions.length > 1 ? `<button type="button" class="quiet" data-listen-vremove="${i}" aria-label="移除${esc(defaultVersionLabel(i))}">移除</button>` : ''}</div>
+        <div class="mml-hl"><pre class="mml-hl-layer" data-listen-vlayer="${i}" aria-hidden="true"></pre><textarea data-listen-vmml="${i}" class="code" spellcheck="false" autocomplete="off" aria-label="${esc(defaultVersionLabel(i))} 的 MML" placeholder="MML@…,…,…,…,…,…;（也可以把 .mml／.txt 檔案拖到這裡）">${esc(item.mml)}</textarea></div>
+        <p class="meta" data-listen-vcounts="${i}" aria-live="polite"></p></fieldset>`;
+    return `<details class="listen-paste" id="listen-mml-paste" ${d.open || (!state.session && !state.sessions.length) ? 'open' : ''}><summary>貼上 MML 直接試聽（可一次放 2–4 個版本做 A/B 比較）</summary>
+      <form id="listen-mml-form" novalidate><p class="meta">只在這台裝置建立試聽工作階段：不上傳、不建立或覆寫專案、不經過任何 Gate。第一個版本是 A，第二個是 B；其他版本可在「變更小節」改選為比較版本。</p>
+        <div class="field-grid"><label>標題（選填）<input name="title" maxlength="120" autocomplete="off" value="${esc(d.title)}"></label>
+          <label>拍號圖（選填；每行「起拍 拍號」，例如 <code>0 3/4</code>；留空以 4/4 假設）<textarea name="meter" class="code listen-meter" rows="2" spellcheck="false" autocomplete="off">${esc(d.meter)}</textarea></label></div>
+        ${d.versions.map(slot).join('')}
+        <div class="actions"><button type="button" class="secondary" id="listen-mml-add" ${d.versions.length >= PASTE_MAX_VERSIONS ? 'disabled' : ''}>＋ 新增比較版本</button><button id="listen-mml-open">建立試聽</button></div>
+        <p class="note" id="listen-mml-error" role="alert" ${d.error ? '' : 'hidden'}>${esc(d.error ?? '')}</p></form></details>`;
+  }
+  function renderPasteError() {
+    const el = root.querySelector('#listen-mml-error');
+    if (!el) return;
+    el.textContent = state.draft.error ?? '';
+    el.hidden = !state.draft.error;
+  }
+  // The same highlight and per-role counts as the project paste box: coloured
+  // only once the text is a complete MML@…; string, counts shown, not enforced.
+  function paintSlot(i) {
+    const area = root.querySelector(`[data-listen-vmml="${i}"]`), layer = root.querySelector(`[data-listen-vlayer="${i}"]`), counts = root.querySelector(`[data-listen-vcounts="${i}"]`);
+    if (!area || !layer || !counts) return;
+    const value = area.value;
+    const wrapped = segmentRoles(value).wrapped;
+    layer.innerHTML = wrapped ? renderHTML(value, buildRoles(value)) : renderHTML(value, new Uint8Array(value.length));
+    layer.scrollTop = area.scrollTop;
+    if (!wrapped) { counts.textContent = value.trim() ? '尚未是完整的 MML@…; 字串。' : ''; return; }
+    const perRole = roleCharacterCounts(value);
+    counts.innerHTML = perRole.length === 6
+      ? `${perRole.map((n, r) => `<span class="${n > ROLE_CHARACTER_LIMIT ? 'count-over' : ''}">${ROLES[r]} ${n}／${ROLE_CHARACTER_LIMIT}</span>`).join(' · ')}<br>${P1_COUNT_NOTE}`
+      : `目前為 ${perRole.length} 個角色；完整字串需要六個固定軌位。`;
+  }
+  // Read picked or dropped files: the first into slot `start`, the rest into
+  // the empty slots after it, then into new slots up to the limit.
+  async function loadFiles(files, start) {
+    const list = [...files ?? []];
+    if (!list.length) return;
+    const d = state.draft;
+    try {
+      for (const file of list) {
+        if (!isPasteFile(file)) throw Error(`「${file.name}」不是 .mml 或 .txt 檔案。`);
+        if (file.size > PASTE_MAX_FILE_BYTES) throw Error(`「${file.name}」太大，不像是 MML 文字檔。`);
+      }
+      const targets = [start];
+      for (let i = start + 1; targets.length < list.length && i < PASTE_MAX_VERSIONS; i++) if (!d.versions[i]?.mml.trim()) targets.push(i);
+      if (targets.length < list.length) throw Error(`一次最多比較 ${PASTE_MAX_VERSIONS} 個版本；請先移除或清空一個版本。`);
+      const texts = await Promise.all(list.map(file => file.text()));
+      list.forEach((file, k) => {
+        const i = targets[k];
+        while (d.versions.length <= i) d.versions.push({ label: '', mml: '' });
+        d.versions[i] = { label: labelFromFileName(file.name) || d.versions[i].label, mml: texts[k].trim() };
+      });
+      d.error = null;
+    } catch (error) { d.error = error.message; }
+    rerenderPaste();
+  }
+  function rerenderPaste({ focus = null } = {}) {
+    const card = root.querySelector('#listen-mml-paste');
+    if (!card) return;
+    card.outerHTML = pasteCard();
+    bindPaste();
+    if (focus !== null) root.querySelector(`[data-listen-vmml="${focus}"]`)?.focus();
+  }
+  function bindPaste() {
+    const card = root.querySelector('#listen-mml-paste');
+    const form = root.querySelector('#listen-mml-form');
+    if (!card || !form) return;
+    const d = state.draft;
+    // The click records the new state at once: a render between the click and
+    // its (asynchronous) toggle event must not close the form again.
+    card.querySelector('summary').onclick = () => { d.open = !card.open; };
+    card.ontoggle = () => { d.open = card.open; };
+    form.querySelector('[name="title"]').oninput = event => { d.title = event.target.value; };
+    form.querySelector('[name="meter"]').oninput = event => { d.meter = event.target.value; };
+    d.versions.forEach((item, i) => {
+      const area = form.querySelector(`[data-listen-vmml="${i}"]`);
+      const layer = form.querySelector(`[data-listen-vlayer="${i}"]`);
+      let frame = 0;
+      area.addEventListener('input', () => { item.mml = area.value; if (!frame) frame = requestAnimationFrame(() => { frame = 0; paintSlot(i); }); });
+      area.addEventListener('scroll', () => { layer.scrollTop = area.scrollTop; layer.scrollLeft = area.scrollLeft; });
+      form.querySelector(`[data-listen-vlabel="${i}"]`).oninput = event => { item.label = event.target.value; };
+      const file = form.querySelector(`[data-listen-vfile="${i}"]`);
+      file.onchange = () => { const files = [...file.files ?? []]; file.value = ''; loadFiles(files, i); };
+      const slot = form.querySelector(`[data-listen-slot="${i}"]`);
+      slot.addEventListener('dragover', event => { if ([...(event.dataTransfer?.types ?? [])].includes('Files')) { event.preventDefault(); slot.classList.add('listen-drop'); } });
+      slot.addEventListener('dragleave', () => slot.classList.remove('listen-drop'));
+      slot.addEventListener('drop', event => {
+        if (!event.dataTransfer?.files?.length) return;
+        event.preventDefault(); slot.classList.remove('listen-drop');
+        loadFiles(event.dataTransfer.files, i);
+      });
+      paintSlot(i);
+    });
+    form.querySelectorAll('[data-listen-vremove]').forEach(button => button.onclick = () => {
+      d.versions.splice(Number(button.dataset.listenVremove), 1);
+      if (!d.versions.length) d.versions.push({ label: '', mml: '' });
+      d.error = null;
+      rerenderPaste();
+    });
+    form.querySelector('#listen-mml-add').onclick = () => {
+      if (d.versions.length >= PASTE_MAX_VERSIONS) return;
+      d.versions.push({ label: '', mml: '' });
+      rerenderPaste({ focus: d.versions.length - 1 });
+    };
+    form.onsubmit = event => { event.preventDefault(); d.error = null; renderPasteError(); importPasted(d); };
   }
   function sessionBody() {
     const s = state.session;
     const origin = s.origin?.kind === 'project'
       ? `來自專案「${esc(s.origin.projectTitle || '未命名專案')}」· ${esc(s.origin.label ?? '')}`
-      : '來自試聽連結';
+      : s.origin?.kind === 'paste' ? `來自貼上的 MML（${(s.origin.labels ?? []).length || 1} 個版本，只在這台裝置）` : '來自試聽連結';
     const provenance = s.origin?.source ? `<p class="meta">連結附帶的來源（僅供顯示，未驗證）：${s.origin.source.project_id ? `project <code>${esc(s.origin.source.project_id)}</code>` : ''} ${s.origin.source.artifact_id ? `artifact <code>${esc(s.origin.source.artifact_id)}</code>` : ''}</p>` : '';
     const meter = state.assumed
       ? `<p class="note" id="listen-meter-assumed">未提供拍號圖：小節以 <strong>4/4 假設</strong>（assumed）計算，小節號可能與原曲不同。${state.meterError ? `（拍號圖無法使用：${esc(state.meterError)}）` : ''}</p>`
@@ -397,7 +553,8 @@ export function createListening({ root, call, message, copyText, audio, saveProj
   }
   function compareOptions() {
     const items = [];
-    for (const [i, alt] of (state.session.alternatives ?? []).entries()) items.push([`alt:${i}`, `專案：${alt.label}`]);
+    const from = state.session.origin?.kind === 'paste' ? '貼上' : '專案';
+    for (const [i, alt] of (state.session.alternatives ?? []).entries()) items.push([`alt:${i}`, `${from}：${alt.label}`]);
     for (const item of state.sessions) if (item.id !== state.session.id) items.push([`session:${item.id}`, `工作階段：${item.title}`]);
     return items;
   }
@@ -410,13 +567,13 @@ export function createListening({ root, call, message, copyText, audio, saveProj
     const compareProblems = findings(state.compare.parsed, '比較版本');
     const changes = state.changes;
     const preRoll = state.session.preRollBars ?? 1;
-    const ab = `<div class="listen-ab" role="group" aria-label="A/B 版本"><button type="button" data-listen-version="current" class="${state.version === 'current' ? 'secondary' : 'quiet'}" aria-pressed="${state.version === 'current'}">A 目前版本</button><button type="button" data-listen-version="compare" class="${state.version === 'compare' ? 'secondary' : 'quiet'}" aria-pressed="${state.version === 'compare'}" ${playable('compare') ? '' : 'disabled'}>B ${esc(state.compare.label)}</button></div>`;
+    const ab = `<div class="listen-ab" role="group" aria-label="A/B 版本"><button type="button" data-listen-version="current" class="${state.version === 'current' ? 'secondary' : 'quiet'}" aria-pressed="${state.version === 'current'}">A ${esc(state.session.currentLabel ?? '目前版本')}</button><button type="button" data-listen-version="compare" class="${state.version === 'compare' ? 'secondary' : 'quiet'}" aria-pressed="${state.version === 'compare'}" ${playable('compare') ? '' : 'disabled'}>B ${esc(state.compare.label)}</button></div>`;
     const rows = changes?.bars.map((bar, i) => {
       const counts = Object.entries(bar.counts).filter(([, n]) => n).map(([kind, n]) => `${{ added: '新增', removed: '移除', modified: '修改', tempo: 'Tempo' }[kind]} ${n}`).join('、');
       return `<li><button type="button" class="quiet" data-listen-change="${i}">▶ 第 ${bar.number} 小節</button><span class="listen-label">${esc(bar.roles.join('、') || 'Tempo')} · ${esc(counts)}</span></li>`;
     }).join('') ?? '';
     return `<div class="card" id="listen-changes"><h3>變更小節${changes ? `（${changes.bars.length}）` : ''}</h3>
-      <p class="meta">比較：${esc(state.compare.label)} → 目前版本。逐角色比較每個音的音高、起點、時值與音量（精確拍數）${state.assumed ? '；小節以 4/4 假設計算' : ''}。</p>
+      <p class="meta">比較：${esc(state.compare.label)} → ${esc(state.session.currentLabel ?? '目前版本')}。逐角色比較每個音的音高、起點、時值與音量（精確拍數）${state.assumed ? '；小節以 4/4 假設計算' : ''}。</p>
       ${compareProblems}
       ${changes ? `${ab}<div class="actions"><button type="button" id="listen-play-changed" ${changes.regions.length ? '' : 'disabled'}>▶ 只播放變更小節（${changes.regions.length} 段，各含 ${preRoll} 小節前導）</button></div>
         ${changes.bars.length ? `<ol class="listen-list" id="listen-changed-bars">${rows}</ol>` : '<p class="empty">兩個版本的音符與 Tempo 完全相同。</p>'}` : '<p class="meta">其中一個版本無法解析，無法列出變更。</p>'}
@@ -520,6 +677,7 @@ export function createListening({ root, call, message, copyText, audio, saveProj
       render();
       message('已刪除試聽工作階段；專案不受影響。');
     };
+    bindPaste();
     root.querySelector('#listen-link-form').onsubmit = event => {
       event.preventDefault();
       const raw = new FormData(event.target).get('link');
@@ -596,7 +754,7 @@ export function createListening({ root, call, message, copyText, audio, saveProj
       const value = String(new FormData(form).get('compare'));
       try {
         let mml, label;
-        if (value.startsWith('alt:')) { const alt = state.session.alternatives[Number(value.slice(4))]; mml = alt.mml; label = `專案：${alt.label}`; }
+        if (value.startsWith('alt:')) { const alt = state.session.alternatives[Number(value.slice(4))]; mml = alt.mml; label = state.session.origin?.kind === 'paste' ? alt.label : `專案：${alt.label}`; }
         else { const other = await getSession(value.slice(8)); mml = other.mml; label = `工作階段：${other.title}`; }
         state.session.compareMml = mml; state.session.compareLabel = label.slice(0, 120);
         await persist();
@@ -721,6 +879,7 @@ export function createListening({ root, call, message, copyText, audio, saveProj
   return Object.freeze({
     importFromLocation,
     importPayload,
+    importPasted,
     openFromProject,
     async showSessions() { show(); await refreshSessions(); if (!state.session && state.sessions.length) await open(state.sessions[0].id); else render(); root.scrollIntoView?.({ block: 'start' }); },
     hide,

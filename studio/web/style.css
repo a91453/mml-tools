@@ -140,6 +140,12 @@ code.digest,.facts dd code,table code{font-family:ui-monospace,SFMono-Regular,Me
 .listen-where-bar input[type=number]{width:110px;margin:0}
 .listen-roll .roll-zoom button{min-height:36px;min-width:40px;padding:4px 10px;margin:0}
 .listen-paste summary{min-height:44px}
+.listen-version{border:1px solid var(--line);border-radius:10px;padding:10px 14px 4px;margin:14px 0 0;min-width:0}
+.listen-version legend{font-size:13px;font-weight:700;padding:0 6px}
+.listen-version.listen-drop{border-color:#348ae0;background:#eef5fc}
+.listen-version textarea{min-height:96px}
+.listen-meter{min-height:64px}
+[data-listen-vcounts] .count-over{color:#b3261e;font-weight:700}
 @media(max-width:720px){.listen-inline input{max-width:none}.listen-roles{grid-template-columns:1fr;gap:8px}.listen-role{gap:4px;flex-wrap:wrap}.listen-role-name{min-width:52px;font-size:12px}.listen-role button{padding:6px 8px}.listen-position{font-size:15px}}
 .preview-card .preview-instruments summary{min-height:44px}
 .preview-card .preview-instrument-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(200px,1fr));gap:10px 14px}
