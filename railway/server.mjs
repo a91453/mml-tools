@@ -228,9 +228,9 @@ export function createApplication(options) {
       // that is otherwise serving correctly.
       //
       // The five identities stay five fields. Publishing them is consistent
-      // with what this project already publishes: the clean public export ships
-      // `canonical/published.json` carrying the same release metadata and Git
-      // provenance. Nothing here is a credential, and no song or project data
+      // with what this project already publishes: the repository is public, and
+      // its Canonical Manifest and Git history carry the same release metadata
+      // and provenance. Nothing here is a credential, and no song or project data
       // is exposed.
       if (url.pathname === '/' && request.method === 'GET') {
         const canonical = await studio.canonical.provenance();

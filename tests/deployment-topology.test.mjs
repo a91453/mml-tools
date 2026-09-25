@@ -15,9 +15,6 @@
 // rather than textual: they assert properties of the code and the deployment
 // descriptors, because a wording test can be satisfied by editing a sentence
 // while the architecture drifts underneath it.
-//
-// This file is deliberately NOT part of the clean public export: it reads
-// `ops/permanent/`, which the export does not carry.
 
 import test from 'node:test';
 import assert from 'node:assert/strict';

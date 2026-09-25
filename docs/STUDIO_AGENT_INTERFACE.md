@@ -1322,7 +1322,9 @@ what shapes how: the published SHA is captured from the published repository and
 everything is read from that commit, never from `HEAD` or the build context.)*
 
 If the Agent backend's builder cannot be made to supply that history, the
-identified follow-up is the approach the clean public export already uses:
+identified follow-up is the approach the former clean public export used
+(`scripts/export-oss.mjs`, retired once the repository itself became public;
+it remains in Git history):
 resolve the Canonical package in an environment that *can* load it and vendor it
 into the image as `canonical/published.json` with
 `distribution_mode: vendored-static`, alongside a static loader. That changes
