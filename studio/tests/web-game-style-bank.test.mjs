@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import { readFile } from 'node:fs/promises';
 import { existsSync } from 'node:fs';
 import { createHash } from 'node:crypto';
-import { GAME_INSTRUMENTS, GAME_STYLE_BANK_LABEL, GAME_STYLE_BANK_NAME, GAME_STYLE_PROGRAMS, resolveRoleVoices, uniformProgram, voiceFor } from '../web/preview/instruments.mjs';
+import { GAME_INSTRUMENTS, ROLE_GROUPS, groupChoice, GAME_STYLE_BANK_LABEL, GAME_STYLE_BANK_NAME, GAME_STYLE_PROGRAMS, resolveRoleVoices, uniformProgram, voiceFor } from '../web/preview/instruments.mjs';
 import { GAME_STYLE_BANK, GAME_STYLE_DEF, GAME_STYLE_DOWNLOAD_NOTICE, loadGameStyleBank, siteUrl } from '../web/preview/game-style-bank.mjs';
 
 const sha256 = value => createHash('sha256').update(value).digest('hex');
@@ -74,4 +74,12 @@ test('an altered, oversized, absent or unreachable game-style bank is refused an
   await assert.rejects(loadGameStyleBank({ fetchImpl: respond(bytes, 503), cache, pin }), { code: 'GAME_STYLE_BANK_DOWNLOAD_FAILED', message: /HTTP 503/ });
   await assert.rejects(loadGameStyleBank({ fetchImpl: async () => { throw TypeError('Failed to fetch'); }, cache, pin }), { code: 'GAME_STYLE_BANK_DOWNLOAD_FAILED', message: /可能離線/ });
   assert.equal(stored.size, 0);
+});
+
+test('the front and back role groups split the six roles and name a shared choice', () => {
+  assert.deepEqual([...ROLE_GROUPS.front, ...ROLE_GROUPS.back], [0, 1, 2, 3, 4, 5]);
+  const choices = ['lute', 'lute', 'lute', 'harp', 'harp', 'flute'];
+  assert.equal(groupChoice(choices, 'front'), 'lute');
+  assert.equal(groupChoice(choices, 'back'), '');
+  assert.equal(groupChoice(null, 'front'), '');
 });

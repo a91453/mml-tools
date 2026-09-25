@@ -53,6 +53,12 @@ export function voiceFor(choice, { gameStyle = false } = {}) {
   if (gameStyle) return { program: GAME_STYLE_PROGRAMS[instrument.id], drumNote: null, label: instrument.label, id: instrument.id };
   return { program: instrument.program, drumNote: instrument.drumNotes?.[0] ?? null, label: instrument.label, id: instrument.id };
 }
+// The two halves of the six roles, set together from one picker: Melody with
+// Chord1–2, and Chord3–5.
+export const ROLE_GROUPS = Object.freeze({ front: Object.freeze([0, 1, 2]), back: Object.freeze([3, 4, 5]) });
+export const ROLE_GROUP_LABELS = Object.freeze({ front: '前三角色（Melody–Chord2）', back: '後三角色（Chord3–5）' });
+// The choice a group shares, or '' when its roles differ.
+export const groupChoice = (choices, group) => { const values = ROLE_GROUPS[group].map(role => choices?.[role]); return values.every(value => value !== undefined && value === values[0]) ? values[0] : ''; };
 export const resolveRoleVoices = (choices, options) => Array.from({ length: 6 }, (_, role) => voiceFor(choices?.[role], options));
 
 // Picker options: the 11 named instruments for the default bank, the bank's
