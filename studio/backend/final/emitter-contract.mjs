@@ -44,6 +44,9 @@ export const EMIT_DIAGNOSTICS = Object.freeze({
   VOLUME_NOT_DECIDED: 'VOLUME_NOT_DECIDED',
   // --- Canonical / G10 ---------------------------------------------------
   MICRO_GAP_TECHNICAL_RESIDUE: 'MICRO_GAP_TECHNICAL_RESIDUE',
+  // G10's open questions only. It never carries a G10 proof code
+  // (FINAL_REPRESENTABILITY_PROOFS in final/micro-gap-enforcement.mjs), and it
+  // is never raised with an empty `blockers` list.
   MICRO_GAP_BLOCKED_PENDING: 'MICRO_GAP_BLOCKED_PENDING',
   // G10 raised MICRO_TIMING_BOUNDARY_NOT_FINAL_REPRESENTABLE: a position a role
   // has to reach -- an onset, a rest boundary, or a note release no release
@@ -68,6 +71,10 @@ export const EMIT_DIAGNOSTICS = Object.freeze({
   PROVISIONAL_RELEASES_RENDERED: 'PROVISIONAL_RELEASES_RENDERED',
   PROVISIONAL_RELEASE_RENDERING_UNAVAILABLE: 'PROVISIONAL_RELEASE_RENDERING_UNAVAILABLE',
   TEMPO_RESTATEMENTS_COLLAPSED: 'TEMPO_RESTATEMENTS_COLLAPSED',
+  // G10 preserves source-supported sub-grid material, which no admitted Final
+  // token can carry. An error, not pending: the emitter's answer to G10's
+  // MICRO_TIMING_SOURCE_SUPPORTED_NOT_FINAL_REPRESENTABLE, raised whenever
+  // `preservedIntervalKeys` is non-empty.
   SOURCE_SUPPORTED_INTERVAL_NOT_REPRESENTABLE: 'SOURCE_SUPPORTED_INTERVAL_NOT_REPRESENTABLE',
   READINESS_BLOCKED: 'READINESS_BLOCKED',
   IMPLEMENTATION_BLOCKED: 'IMPLEMENTATION_BLOCKED',

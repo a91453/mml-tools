@@ -261,8 +261,10 @@ test('G10-1 a source-supported sub-1/64 gap is preserved, not rejected for being
   assert.deepEqual([...report.preservedIntervalKeys], [record.identityKey]);
   assert.deepEqual([...report.rejectedIntervalKeys], []);
   assert.deepEqual([...report.blockedIntervalKeys], []);
-  assert.equal(report.status, 'PASS');
-  assert.deepEqual([...report.blockers], []);
+  // Preserved, and no admitted Final token can carry it: PENDING on exactly
+  // that, never FAIL, and never PASS.
+  assert.equal(report.status, 'PENDING');
+  assert.deepEqual([...report.blockers], [MICRO_GAP_BLOCKERS.SOURCE_SUPPORTED_NOT_FINAL_REPRESENTABLE]);
 });
 
 test('G10-1b neither attack onset moves and no event identity changes', () => {
@@ -284,10 +286,13 @@ test('G10-1b neither attack onset moves and no event identity changes', () => {
 test('G10-1c preserving a sub-grid gap makes no Final representability claim', () => {
   const { candidate } = articulationGapProject({ withKeep: true });
   const report = enforceMicroGaps(candidate);
-  // If this interval turns out to be undeliverable, the reason must come from a
-  // representability mechanism that does not exist yet -- never from "it was
-  // under 1/64, therefore technical".
-  assert.equal(report.status, 'PASS');
+  // The interval stays source-supported and preserved -- never "it was under
+  // 1/64, therefore technical". What blocks is the gate-level statement that no
+  // admitted Final token carries it; the per-interval field stays unset.
+  assert.equal(report.status, 'PENDING');
+  assert.deepEqual([...report.blockers], [MICRO_GAP_BLOCKERS.SOURCE_SUPPORTED_NOT_FINAL_REPRESENTABLE]);
+  assert.equal(report.sourceSupportedCount, 1);
+  assert.equal(report.technicalResidueCount, 0);
   assert.equal(report.finalRepresentable, null);
   assert.equal(readiness(candidate).gates.microTiming.finalRepresentable, null);
 });
@@ -303,8 +308,12 @@ test('G10-1d a source-supported sub-grid gap does not bypass the separate techni
     playerReadback: 'PASS',
     originalAudioRequired: true,
   });
-  assert.equal(result.gates.microTiming.status, 'PASS');
+  assert.equal(result.gates.microTiming.status, 'PENDING');
+  assert.deepEqual(result.gates.microTiming.blockers, [MICRO_GAP_BLOCKERS.SOURCE_SUPPORTED_NOT_FINAL_REPRESENTABLE]);
+  // The technical gate is its own result, with its own reason.
   assert.equal(result.gates.technical.status, 'FAIL');
+  assert.deepEqual(result.gates.technical.errors, [{ message: 'role exceeds 2,400 characters' }]);
+  assert.ok(result.preGameBlocking.includes('technical'));
   assert.equal(result.candidateReady, false);
 });
 
@@ -477,7 +486,8 @@ test('G10-5c a sub-grid event duration is classified on the same three-way rule'
 
   const supported = enforceMicroGaps(project({ events: [tiny], decisions: [keepDecision(identity)] }));
   assert.equal(supported.enforcement[0].enforcement, MICRO_GAP_ENFORCEMENT.PRESERVE);
-  assert.equal(supported.status, 'PASS');
+  assert.equal(supported.status, 'PENDING');
+  assert.deepEqual([...supported.blockers], [MICRO_GAP_BLOCKERS.SOURCE_SUPPORTED_NOT_FINAL_REPRESENTABLE]);
 
   const technical = enforceMicroGaps(project({ events: [tiny], decisions: [technicalDecision(identity)] }));
   assert.equal(technical.enforcement[0].enforcement, MICRO_GAP_ENFORCEMENT.REJECT_FINAL);
@@ -557,19 +567,31 @@ test('G10-7b disabling the flag cannot turn a confirmed technical residue into a
 });
 
 test('G10-7c the safe grid comes from the contract denominator and cannot silently drift', () => {
-  const { candidate } = articulationGapProject({ withKeep: true });
-  assert.equal(enforceMicroGaps(candidate).status, 'PASS');
+  const mismatch = { mobileSyntax: withMobileSyntax({ shortestSafeDenominator: 32 }) };
 
-  const mismatched = enforceMicroGaps(candidate, {
-    mobileSyntax: withMobileSyntax({ shortestSafeDenominator: 32 }),
-  });
+  // A project with nothing sub-grid: PASS, and the mismatch alone demotes it.
+  const clean = project({ events: [note({ id: 'plain', start: '0', end: '1' })] });
+  assert.equal(enforceMicroGaps(clean).status, 'PASS');
+  const cleanMismatched = enforceMicroGaps(clean, mismatch);
+  assert.equal(cleanMismatched.status, 'PENDING');
+  assert.deepEqual([...cleanMismatched.blockers], [MICRO_GAP_BLOCKERS.SAFE_GRID_MISMATCH]);
+
+  // The kept sub-grid gap keeps its own blocker, and the mismatch is added.
+  const { candidate } = articulationGapProject({ withKeep: true });
+  assert.deepEqual([...enforceMicroGaps(candidate).blockers], [MICRO_GAP_BLOCKERS.SOURCE_SUPPORTED_NOT_FINAL_REPRESENTABLE]);
+
+  const mismatched = enforceMicroGaps(candidate, mismatch);
   assert.equal(mismatched.policy.declaredSafeGrid, new F(4, 32).toString());
   assert.equal(mismatched.policy.conformant, false);
-  assert.ok(mismatched.blockers.includes(MICRO_GAP_BLOCKERS.SAFE_GRID_MISMATCH));
+  assert.deepEqual([...mismatched.blockers], [
+    MICRO_GAP_BLOCKERS.SAFE_GRID_MISMATCH,
+    MICRO_GAP_BLOCKERS.SOURCE_SUPPORTED_NOT_FINAL_REPRESENTABLE,
+  ]);
   assert.equal(mismatched.status, 'PENDING');
   // Critically, the declared value does not *become* the grid. A contract edit
   // must not be able to widen or narrow what Canonical calls sub-grid.
   assert.equal(mismatched.safeGrid, SAFE_GRID.toString());
+  assert.equal(mismatched.candidateCount, 1);
 });
 
 test('G10-7d a missing or nonsensical denominator fails closed rather than defaulting', () => {
@@ -600,7 +622,9 @@ test('G10-8 a source-supported sub-1/64 rest event is preserved, not swept up as
   const record = report.enforcement.find(item => item.identityKey === intervalIdentityKey(identity));
   assert.equal(record.classification, MICRO_TIMING_CLASSIFICATIONS.SOURCE_SUPPORTED_MICROTIMING);
   assert.equal(record.enforcement, MICRO_GAP_ENFORCEMENT.PRESERVE);
-  assert.equal(report.status, 'PASS');
+  assert.deepEqual([...report.rejectedIntervalKeys], []);
+  assert.equal(report.status, 'PENDING');
+  assert.deepEqual([...report.blockers], [MICRO_GAP_BLOCKERS.SOURCE_SUPPORTED_NOT_FINAL_REPRESENTABLE]);
   assert.equal(candidate.events.filter(event => event.kind === 'rest').length, 1);
 });
 
@@ -642,11 +666,13 @@ test('G10-8c three sub-1/64 intervals in one project reach three different outco
   assert.ok(!report.rejectedIntervalKeys.some(key => preserved.has(key)));
   assert.ok(!report.blockedIntervalKeys.some(key => preserved.has(key)));
 
-  // A confirmed violation outranks uncertainty, but the uncertainty stays visible.
+  // A confirmed violation outranks uncertainty, but the uncertainty stays
+  // visible, and so does the preserved interval no Final token can carry.
   assert.equal(report.status, 'FAIL');
   assert.deepEqual([...report.blockers], [
     MICRO_GAP_BLOCKERS.TECHNICAL_RESIDUE_PRESENT,
     MICRO_GAP_BLOCKERS.CLASSIFICATION_UNKNOWN,
+    MICRO_GAP_BLOCKERS.SOURCE_SUPPORTED_NOT_FINAL_REPRESENTABLE,
   ]);
 });
 

@@ -25,7 +25,7 @@
 // user, not to a serializer.
 import { F, f, ROLES } from '../mml/index.mjs';
 import { EFFECTIVE_RULESET, studioFinalBlockers } from '../rules/index.mjs';
-import { BOUNDARY_COVERAGE, MICRO_GAP_BLOCKERS, enforceMicroGaps } from './micro-gap-enforcement.mjs';
+import { BOUNDARY_COVERAGE, FINAL_REPRESENTABILITY_PROOFS, MICRO_GAP_BLOCKERS, enforceMicroGaps } from './micro-gap-enforcement.mjs';
 import { POSITION_CLASS, classifyPosition } from '../canonical/release-timing.mjs';
 import {
   DELIVERY_CLASS,
@@ -837,12 +837,20 @@ function evaluateGates(project, options) {
     }
   }
 
-  // G10's boundary code is a proof about this candidate, not an open question,
-  // so it is kept out of MICRO_GAP_BLOCKED_PENDING (whose "unproven" wording
-  // would be false for it) and reported below as the confirmed negative it is.
-  // Every other G10 blocker keeps exactly the diagnostic it had.
+  // G10's two proof codes (FINAL_REPRESENTABILITY_PROOFS) are proofs about this
+  // candidate, not open questions: MICRO_TIMING_BOUNDARY_NOT_FINAL_REPRESENTABLE
+  // (a position no admitted token sequence reaches) and
+  // MICRO_TIMING_SOURCE_SUPPORTED_NOT_FINAL_REPRESENTABLE (preserved
+  // source-supported material no admitted token can carry). They are kept out of
+  // MICRO_GAP_BLOCKED_PENDING (whose "unproven" wording would be false for them)
+  // and reported below as the confirmed negatives they are:
+  // MICRO_GAP_BOUNDARY_NOT_FINAL_REPRESENTABLE and
+  // SOURCE_SUPPORTED_INTERVAL_NOT_REPRESENTABLE. Every other G10 blocker keeps
+  // exactly the diagnostic it had, and MICRO_GAP_BLOCKED_PENDING is never raised
+  // with an empty list.
   const boundaryProven = microGap.blockers.includes(MICRO_GAP_BLOCKERS.BOUNDARY_NOT_FINAL_REPRESENTABLE);
-  const openBlockers = microGap.blockers.filter(code => code !== MICRO_GAP_BLOCKERS.BOUNDARY_NOT_FINAL_REPRESENTABLE);
+  const anyProof = microGap.blockers.some(code => FINAL_REPRESENTABILITY_PROOFS.includes(code));
+  const openBlockers = microGap.blockers.filter(code => !FINAL_REPRESENTABILITY_PROOFS.includes(code));
   if (microGap.status === 'FAIL') {
     diagnostics.push(diagnostic(
       EMIT_DIAGNOSTICS.MICRO_GAP_TECHNICAL_RESIDUE,
@@ -851,7 +859,7 @@ function evaluateGates(project, options) {
       { blockers: microGap.blockers, rejectedIntervalKeys: microGap.rejectedIntervalKeys },
     ));
     status = EMIT_STATUS.FAIL;
-  } else if (microGap.status !== 'PASS' && (openBlockers.length || !boundaryProven)) {
+  } else if (microGap.status !== 'PASS' && (openBlockers.length || !anyProof)) {
     diagnostics.push(diagnostic(
       EMIT_DIAGNOSTICS.MICRO_GAP_BLOCKED_PENDING,
       DIAGNOSTIC_SEVERITY.PENDING,
@@ -923,7 +931,10 @@ function evaluateGates(project, options) {
 
   // A source-supported sub-grid interval must survive untouched, and no admitted
   // Final token is shorter than the grid, so it cannot be written at all. The
-  // emitter refuses instead of shortening, absorbing or quantizing it.
+  // emitter refuses instead of shortening, absorbing or quantizing it. This is
+  // the emitter's answer to G10's
+  // MICRO_TIMING_SOURCE_SUPPORTED_NOT_FINAL_REPRESENTABLE, which G10 raises
+  // exactly when `preservedIntervalKeys` is non-empty.
   if (microGap.preservedIntervalKeys?.length) {
     diagnostics.push(diagnostic(
       EMIT_DIAGNOSTICS.SOURCE_SUPPORTED_INTERVAL_NOT_REPRESENTABLE,

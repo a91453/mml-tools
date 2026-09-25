@@ -430,10 +430,16 @@ function leadPromotionGate(reports, leadEventDiff = null) {
 // This gate therefore keeps the analyzer's four outcomes apart instead of
 // collapsing them into a boolean:
 //
-//   SOURCE_SUPPORTED_MICROTIMING  proven musical meaning       -> may PASS
+//   SOURCE_SUPPORTED_MICROTIMING  proven musical meaning       -> PENDING with
+//                                 MICRO_TIMING_SOURCE_SUPPORTED_NOT_FINAL_REPRESENTABLE
 //   TECHNICAL_RESIDUE             proven meaning-free          -> FAIL
 //   UNKNOWN                       unproven either way          -> PENDING
 //   unresolved stream identity    relationship not establishable -> PENDING
+//
+// A source-supported interval keeps its classification and is preserved; it
+// blocks because no admitted Final token is shorter than 1/64, so the loaded
+// Canonical gives it no Final representation (ACCEPTANCE_CRITERIA Gate 2:
+// PENDING/UNSUPPORTED, not guessed).
 //
 // Beside them, an onset, a rest boundary or a note release no release
 // representation can move (under a keep claim, or with no valid

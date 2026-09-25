@@ -42,7 +42,7 @@ import {
   createIntervalIdentity,
   intervalIdentityKey,
 } from '../backend/canonical/micro-timing.mjs';
-import { enforceMicroGaps } from '../backend/final/micro-gap-enforcement.mjs';
+import { MICRO_GAP_BLOCKERS, enforceMicroGaps } from '../backend/final/micro-gap-enforcement.mjs';
 import {
   REPAIR_STATUS,
   REPAIR_OPERATIONS,
@@ -364,7 +364,9 @@ test('TTR-5 the input project is never mutated and the repaired candidate is a d
 test('TTR-6 a source-supported articulation gap is preserved and never presented for repair', () => {
   const { identity, candidate } = earlyReleaseGap({ classify: 'keep' });
   const enforcement = enforceMicroGaps(candidate);
-  assert.equal(enforcement.status, 'PASS');
+  // Preserved, and no Final token can carry it: G10 says so itself.
+  assert.equal(enforcement.status, 'PENDING');
+  assert.deepEqual([...enforcement.blockers], [MICRO_GAP_BLOCKERS.SOURCE_SUPPORTED_NOT_FINAL_REPRESENTABLE]);
   assert.deepEqual([...enforcement.preservedIntervalKeys], [intervalIdentityKey(identity)]);
 
   const result = repairTechnicalTiming(candidate);

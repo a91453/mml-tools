@@ -1183,7 +1183,20 @@ export function repairTechnicalTiming(project, { mobileSyntax, enforcement, rele
   // nothing rejected. Dropping an interval from the worklist cannot buy a PASS.
   const everythingRepaired = unrepaired.length === 0
     && repairedIntervalKeys.length === presentedIntervalKeys.length;
-  const verificationClean = verification.status === 'PASS' && verification.rejectedIntervalKeys.length === 0;
+  // "Clean" means what it meant before G10 raised
+  // MICRO_TIMING_SOURCE_SUPPORTED_NOT_FINAL_REPRESENTABLE: PASS, or PENDING whose
+  // only blocker is that code. G10 raises it exactly when something is
+  // preserved and never makes G10 FAIL, so this predicate is true on exactly the
+  // verifications that would be PASS without that code. The preserved interval
+  // is reported by this layer itself (PRESERVED_INTERVAL_PRESENT) and still
+  // keeps finalEmissionEligible false below; it does not make the repair's own
+  // verification unclear. Any other PENDING -- UNKNOWN beside it, for example --
+  // is still not clean.
+  const verificationClean = verification.rejectedIntervalKeys.length === 0
+    && (verification.status === 'PASS'
+      || (verification.status === 'PENDING'
+        && verification.blockers.length === 1
+        && verification.blockers[0] === MICRO_GAP_BLOCKERS.SOURCE_SUPPORTED_NOT_FINAL_REPRESENTABLE));
 
   if (!verificationClean && everythingRepaired) {
     // A rejected interval surviving the repair is a defect in this layer; any

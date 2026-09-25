@@ -34,11 +34,22 @@
 //
 //   SOURCE_SUPPORTED_MICROTIMING -> PRESERVE      never deleted, quantized,
 //                                                 absorbed by a longer neighbour
-//                                                 or moved off its attack
+//                                                 or moved off its attack; the
+//                                                 gate is PENDING with
+//                                                 SOURCE_SUPPORTED_NOT_FINAL_REPRESENTABLE,
+//                                                 because no admitted Final
+//                                                 token is shorter than the grid
 //   TECHNICAL_RESIDUE            -> REJECT_FINAL  Final must not silently retain
 //   UNKNOWN / unresolved stream  -> BLOCK_PENDING unproven either way, so the
 //                                                 candidate blocks rather than
 //                                                 guessing
+//
+// So no outcome of an analysed sub-grid interval clears the gate. The
+// classification is the Canonical analyzer's and is never changed here: a
+// preserved interval stays SOURCE_SUPPORTED_MICROTIMING and stays preserved. It
+// blocks because the loaded Canonical has no Final representation for it
+// (ACCEPTANCE_CRITERIA Gate 2: an unsupported source construct stays
+// PENDING/UNSUPPORTED, not guessed), not because its meaning is in doubt.
 //
 // Why REJECT_FINAL and not normalize. MASTER_RULES §7 *permits* normalization of
 // a meaning-free micro-gap; it does not require it, and an exact rewrite to a
@@ -107,9 +118,10 @@ export const MICRO_GAP_BLOCKERS = Object.freeze({
   //
   // Only releases the interval analyzer cannot see raise it. A release followed by
   // a sub-grid gap, or a sub-grid note, already surfaces as an interval above and
-  // keeps its three-way outcome there; whether a *preserved* source-supported
-  // interval can be written at all stays the separate technical gate's question,
-  // exactly as before. And only a release awaiting a representation decision
+  // keeps its three-way outcome there. A *preserved* source-supported interval
+  // cannot be written at all, and this gate says so itself: it raises
+  // SOURCE_SUPPORTED_NOT_FINAL_REPRESENTABLE below. And only a release awaiting
+  // a representation decision
   // (REPRESENTATION_DECISION_REQUIRED) raises it: it has no keep claim and at
   // least one valid representation, so an evidence-backed release representation
   // answers it (applyMobileAdaptation.release_representation), and under machine
@@ -149,6 +161,20 @@ export const MICRO_GAP_BLOCKERS = Object.freeze({
   // question is whether the candidate can be written, reports it as the proof
   // it is (MICRO_GAP_BOUNDARY_NOT_FINAL_REPRESENTABLE, FAIL).
   BOUNDARY_NOT_FINAL_REPRESENTABLE: 'MICRO_TIMING_BOUNDARY_NOT_FINAL_REPRESENTABLE',
+  // At least one sub-grid interval is SOURCE_SUPPORTED_MICROTIMING (enforcement
+  // PRESERVE, `preservedIntervalKeys`), in any role or none. It must be kept
+  // exactly as it is (MASTER_RULES §7, MOBILE_SYNTAX §11 step 1), and no
+  // admitted Final token is shorter than 1/64 of a whole note (MOBILE_SYNTAX §2,
+  // §3, §4), so no Final writes it as the interval it is. Its classification is
+  // unchanged and it is never adapted: an unsupported source construct stays
+  // PENDING/UNSUPPORTED, not guessed (ACCEPTANCE_CRITERIA Gate 2), so this gate
+  // is PENDING rather than clearing a candidate the Final cannot write. It never
+  // makes the gate FAIL on its own, it stays visible beside a FAIL, and it is
+  // BLOCKING under every machine-delivery schema (final/delivery-evaluator.mjs);
+  // the provisional hold never applies beside source-supported material. The
+  // Final emitter reports the same fact as its proof
+  // SOURCE_SUPPORTED_INTERVAL_NOT_REPRESENTABLE (FAIL).
+  SOURCE_SUPPORTED_NOT_FINAL_REPRESENTABLE: 'MICRO_TIMING_SOURCE_SUPPORTED_NOT_FINAL_REPRESENTABLE',
   // A recorded release representation that does not re-verify from the project:
   // a timing change without the evidence-backed decision it claims.
   RELEASE_RECORD_INVALID: 'MICRO_TIMING_RELEASE_REPRESENTATION_RECORD_INVALID',
@@ -170,6 +196,16 @@ export const MICRO_GAP_BLOCKERS = Object.freeze({
   RELEASE_PROVISIONAL: 'MICRO_TIMING_RELEASE_PROVISIONAL',
 });
 
+// The G10 codes that state a proven Final negative about this candidate rather
+// than an open question: a position no admitted token sequence reaches, and
+// source-supported material no admitted token can carry. Nothing in this build
+// answers either, so the Final emitter keeps them out of
+// MICRO_GAP_BLOCKED_PENDING and reports each as the proof it is.
+export const FINAL_REPRESENTABILITY_PROOFS = Object.freeze([
+  MICRO_GAP_BLOCKERS.BOUNDARY_NOT_FINAL_REPRESENTABLE,
+  MICRO_GAP_BLOCKERS.SOURCE_SUPPORTED_NOT_FINAL_REPRESENTABLE,
+]);
+
 // ACCEPTANCE_CRITERIA "Delivered first, flagged for listening", rule 1
 // (2026-09-23-v3): the executable echo of its systematic-export-offset
 // precondition. A symbolic source qualifies when one sub-grid offset before the
@@ -189,7 +225,10 @@ export const PROVISIONAL_RELEASE_POLICY = Object.freeze({
 // the entry as `coverage`. Only NONE raises BOUNDARY_NOT_FINAL_REPRESENTABLE.
 export const BOUNDARY_COVERAGE = Object.freeze({
   // An analysed sub-grid interval in the boundary's role starts or ends here;
-  // that interval's classification decides, as for any other interval. A note
+  // that interval's classification decides, as for any other interval. Every
+  // outcome of an analysed interval blocks the gate (UNKNOWN is PENDING, residue
+  // is FAIL, preserved material raises SOURCE_SUPPORTED_NOT_FINAL_REPRESENTABLE),
+  // so an entry covered this way never sits beside a PASS. A note
   // release no release representation can move is not decided this way by any
   // interval at its beat, only by one that decides the release itself (its own
   // sub-grid duration, or the sub-grid gap after it), and is then not listed.
@@ -633,13 +672,16 @@ function failedAnalysisReport(policy, error) {
  * Apply the published Final micro-gap policy to a Canonical project.
  *
  * Returns a frozen enforcement report. It never returns PASS on uncertainty, on
- * a confirmed artifact, on a non-conformant contract, or on an onset or rest
- * boundary a Final role has to reach and no admitted token sequence can, and it
- * never proposes touching a source-supported interval.
+ * a confirmed artifact, on a non-conformant contract, on an onset or rest
+ * boundary a Final role has to reach and no admitted token sequence can, or on
+ * preserved source-supported sub-grid material no admitted token can carry, and
+ * it never proposes touching a source-supported interval.
  *
- * `finalRepresentable` stays null: source support answers musical meaning only.
- * Whether the emitted Final MML can represent an interval is a separate question
- * with its own mechanism, and the technical MML gate remains separately required.
+ * `finalRepresentable` stays null: it is a per-interval field this gate does not
+ * compute, and source support answers musical meaning only. The gate-level
+ * answer for preserved material is SOURCE_SUPPORTED_NOT_FINAL_REPRESENTABLE,
+ * raised from the classification without changing it, and the technical MML
+ * gate remains separately required.
  */
 export function enforceMicroGaps(project, { mobileSyntax, releaseEvidenceRegistry = null } = {}) {
   if (!project || typeof project !== 'object') throw Error('Canonical project is required');
@@ -710,6 +752,11 @@ export function enforceMicroGaps(project, { mobileSyntax, releaseEvidenceRegistr
   if (unsupportedBoundaries.some(item => item.coverage === BOUNDARY_COVERAGE.NONE)) {
     blockers.push(MICRO_GAP_BLOCKERS.BOUNDARY_NOT_FINAL_REPRESENTABLE);
   }
+  // Preserved material, keyed on the classification alone (never on coverage):
+  // a kept sub-grid note or gap between two reachable positions has no boundary
+  // entry at all and is still unwritable. PENDING, never FAIL, and not hidden
+  // behind a FAIL either.
+  if (preserved.length) blockers.push(MICRO_GAP_BLOCKERS.SOURCE_SUPPORTED_NOT_FINAL_REPRESENTABLE);
   const recordInvalid = releaseRecords.violations.length > 0;
   if (recordInvalid) blockers.push(MICRO_GAP_BLOCKERS.RELEASE_RECORD_INVALID);
   const evidenceRequirement = releaseEvidenceRegistry && releaseAnalysis.decisionRequiredCount > 0
