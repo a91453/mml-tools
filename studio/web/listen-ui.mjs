@@ -30,6 +30,7 @@ import { mountReviewRoll } from './review-roll.mjs';
 import { buildRoles, renderHTML, roleCharacterCounts, segmentRoles, ROLE_CHARACTER_LIMIT } from './mml-highlight.mjs';
 import { PASTE_MAX_FILE_BYTES, PASTE_MAX_VERSIONS, defaultVersionLabel, isPasteFile, labelFromFileName, preparePastedVersions } from './listen-paste.mjs';
 import { beatNumber, cmpBeat, parseBeat } from './roll-geometry.mjs';
+import { ROLE_GROUPS, ROLE_GROUP_LABELS, groupChoice } from './preview/instruments.mjs';
 
 const esc = value => String(value ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 const ROLES = LISTEN_ROLE_NAMES;
@@ -502,6 +503,7 @@ export function createListening({ root, call, message, copyText, audio, saveProj
         <form id="listen-from-time" class="listen-inline"><label>從時間（分:秒）<input name="time" inputmode="decimal" placeholder="1:23" autocomplete="off" required></label><button ${ready ? '' : 'disabled'}>▶ 從此時間播放</button></form>
         <label class="listen-inline-label">標記與變更的前導<select id="listen-preroll">${PRE_ROLL_CHOICES.map(n => `<option value="${n}" ${n === (state.session.preRollBars ?? 1) ? 'selected' : ''}>${n ? `${n} 小節` : '不加前導'}</option>`).join('')}</select></label>
       </div>
+      ${inst.options.length ? `<div class="listen-row listen-groups">${Object.keys(ROLE_GROUPS).map(group => { const value = groupChoice(inst.choices, group); return `<label>${ROLE_GROUP_LABELS[group]}<select data-listen-group="${group}">${value === '' ? '<option value="" selected>（逐角色不同）</option>' : ''}${inst.options.map(o => `<option value="${esc(o.value)}" ${o.value === value ? 'selected' : ''}>${esc(o.label)}</option>`).join('')}</select></label>`; }).join('')}</div>` : ''}
       <div class="listen-roles" role="group" aria-label="角色音色、靜音與獨奏">${roles}</div>
       ${inst.defaultBank ? `<p class="meta">音色為${esc(info.fallback ?? '')}：以 GM 音色近似遊戲樂器名稱，只供聆聽。</p>` : ''}
       <p class="meta" id="listen-status" role="status" aria-live="polite">${esc(state.stopNote ?? '')}</p></div>`;
@@ -726,6 +728,7 @@ export function createListening({ root, call, message, copyText, audio, saveProj
       refreshMarkers();
     };
     root.querySelectorAll('[data-listen-instrument]').forEach(select => select.onchange = () => audio.setInstrument?.(Number(select.dataset.listenInstrument), select.value));
+    root.querySelectorAll('[data-listen-group]').forEach(select => select.onchange = () => { if (select.value) audio.setInstrument?.(ROLE_GROUPS[select.dataset.listenGroup], select.value); });
     root.querySelectorAll('[data-listen-mute]').forEach(button => button.onclick = () => {
       const i = Number(button.dataset.listenMute);
       state.muted[i] = !state.muted[i];
@@ -902,6 +905,9 @@ export function createListening({ root, call, message, copyText, audio, saveProj
       else {
         const line = root.querySelector('#listen-bank'); if (line) line.innerHTML = bankLine();
         root.querySelectorAll('[data-listen-instrument]').forEach(select => { const value = inst.choices[Number(select.dataset.listenInstrument)]; if (value !== undefined && select.value !== value) select.value = value; });
+        // A group whose roles now differ needs its （逐角色不同） entry: redrawn.
+        const groupsStale = [...root.querySelectorAll('[data-listen-group]')].some(select => select.value !== groupChoice(inst.choices, select.dataset.listenGroup));
+        if (groupsStale && card) { card.outerHTML = playerCard(); bind(); }
         renderTransport();
       }
     },

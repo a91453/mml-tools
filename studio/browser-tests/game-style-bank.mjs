@@ -68,6 +68,20 @@ export async function runGameStyleBankChecks({ browser, base, profile }) {
     assert.ok((await page.locator('#bank-status').textContent()).includes(LABEL), 'section 06 names the chosen bank too');
     assert.equal(await page.locator('#preset-bank').inputValue(), 'game-style', 'both players share the choice');
     assert.equal(await page.locator('[data-listen-instrument="0"] option').count(), 11);
+    // One picker sets the last three roles; the first three keep theirs.
+    await page.locator('[data-listen-group="back"]').selectOption('harp');
+    for (const role of [3, 4, 5]) assert.equal(await page.locator(`[data-listen-instrument="${role}"]`).inputValue(), 'harp', `role ${role} follows the back group`);
+    for (const role of [0, 1, 2]) assert.equal(await page.locator(`[data-listen-instrument="${role}"]`).inputValue(), 'lute', `role ${role} is left alone`);
+    assert.equal(await page.locator('[data-preview-group="back"]').inputValue(), 'harp', 'section 06 shows the same group choice');
+    assert.equal(await page.locator('[data-preview-group="front"]').inputValue(), 'lute');
+    await page.locator('[data-listen-instrument="4"]').selectOption('flute');
+    await page.waitForFunction(() => document.querySelector('[data-listen-group="back"]')?.value === '', null, { timeout: 5000 });
+    await page.locator('[data-preview-group="front"]').selectOption('violin');
+    for (const role of [0, 1, 2]) assert.equal(await page.locator(`[data-listen-instrument="${role}"]`).inputValue(), 'violin');
+    await page.locator('#preview-program').selectOption('lute');
+    // The group pickers fit a phone's width in both players.
+    await page.locator('[data-listen-instrument="4"]').selectOption('flute');
+    assert.ok(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth + 1), 'no horizontal overflow with the group pickers');
     assert.ok(!(await page.locator('body').textContent()).includes('Fury'), 'the bank is never named by its file');
     assert.equal(bankRequests.length, 0, 'nothing is downloaded on choosing');
 

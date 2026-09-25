@@ -7,7 +7,7 @@ import { buildRoles, diagnosticsFromValidation, renderHTML, roleCharacterCounts,
 import { mountReviewRoll } from './review-roll.mjs';
 import { PROBES, buildObservation, summarize } from './engine-probe.mjs';
 import { compareReadback, normalizeCapture } from './preview/readback.mjs';
-import { DEFAULT_BANK_LABEL, DEFAULT_BANK_NAME, DEFAULT_INSTRUMENT, GAME_STYLE_BANK_LABEL, GAME_STYLE_BANK_NAME, instrumentOptions, resolveRoleVoices, uniformProgram } from './preview/instruments.mjs';
+import { DEFAULT_BANK_LABEL, DEFAULT_BANK_NAME, DEFAULT_INSTRUMENT, GAME_STYLE_BANK_LABEL, GAME_STYLE_BANK_NAME, ROLE_GROUPS, ROLE_GROUP_LABELS, groupChoice, instrumentOptions, resolveRoleVoices, uniformProgram } from './preview/instruments.mjs';
 import { DEFAULT_BANK_DOWNLOAD_NOTICE, DEFAULT_BANK_SUBSET, loadDefaultBank } from './preview/default-bank.mjs';
 import { GAME_STYLE_BANK, GAME_STYLE_DOWNLOAD_NOTICE, loadGameStyleBank } from './preview/game-style-bank.mjs';
 import { createListening } from './listen-ui.mjs';
@@ -983,7 +983,7 @@ function timbrePreviewCard() {
     <div class="preview-bank"><span class="meta" id="bank-status">${bankLine}</span><label class="file-button secondary">${bank ? '更換音色庫' : '選擇自己的音色庫'}<input type="file" id="bank-file" accept=".dls,.sf2,.sf3" aria-label="選擇音色庫檔案"></label>${bank ? '<button type="button" id="bank-clear" class="quiet">移除音色庫（改用預設音色）</button>' : ''}${bank === null ? presetBankSelect('id="preset-bank"') : ''}${preview.defaultCached ? '<button type="button" id="default-bank-clear" class="quiet">刪除這台裝置上的免費音色</button>' : ''}${preview.gameStyleCached ? '<button type="button" id="game-style-bank-clear" class="quiet">刪除這台裝置上的遊戲風格音色</button>' : ''}</div>
     ${defaultNote ? `<p class="meta" id="default-bank-note" data-default-bank-note>${esc(defaultNote)}</p>` : ''}
     ${ready ? '' : '<p class="empty">需先有通過驗證、且與候選一致的交付 MML，才能試聽。</p>'}
-    <div class="preview-controls"><label>全部角色音色${select('id="preview-program"', all, '按播放後載入音色清單')}</label>
+    <div class="preview-controls"><label>全部角色音色${select('id="preview-program"', all, '按播放後載入音色清單')}</label>${Object.keys(ROLE_GROUPS).map(group => `<label class="preview-group">${ROLE_GROUP_LABELS[group]}${select(`data-preview-group="${group}"`, groupChoice(preview.choices, group), '按播放後載入音色清單')}</label>`).join('')}
       <button type="button" id="preview-play" ${playable ? '' : 'disabled'}>${preview.busy ? '載入中…' : '▶ 播放'}</button><button type="button" id="preview-stop" class="secondary" ${preview.transport?.playing ? '' : 'disabled'}>■ 停止</button>
       <input type="range" id="preview-seek" min="0" max="1000" value="0" aria-label="播放位置" ${playable ? '' : 'disabled'}><span class="meta" id="preview-time">${clock(preview.owner === 'final' ? preview.position : 0)} / ${clock(preview.owner === 'final' ? preview.transport?.duration ?? 0 : 0)}</span></div>
     <div class="preview-roles" role="group" aria-label="試聽角色">${roles.map((role, i) => `<label><input type="checkbox" data-preview-role="${i}" ${preview.muted[i] ? '' : 'checked'}> ${role}</label>`).join('')}</div>
@@ -1181,7 +1181,9 @@ function instrumentPicker() {
 function setInstrument(role, value) {
   ensureChoices();
   if (!preview.choices) return;
-  if (role === null) preview.choices = Array(6).fill(value); else preview.choices[role] = value;
+  // A role, every role (null) or a group of roles (ROLE_GROUPS).
+  if (role === null) preview.choices = Array(6).fill(value);
+  else for (const index of Array.isArray(role) ? role : [role]) preview.choices[index] = value;
   preview.transport?.setVoices(resolveRoleVoices(preview.choices, voiceOptions()));
   refreshPreview();
 }
@@ -1284,6 +1286,7 @@ function bindTimbrePreview() {
     if (preview.owner === 'final' && preview.transport?.playing) preview.transport.play(preview.position).catch(fail);
   };
   $('#preview-program').onchange = event => { if (event.target.value) setInstrument(null, event.target.value); };
+  card.querySelectorAll('[data-preview-group]').forEach(select => select.onchange = () => { if (select.value) setInstrument(ROLE_GROUPS[select.dataset.previewGroup], select.value); });
   card.querySelectorAll('[data-preview-instrument]').forEach(select => select.onchange = () => setInstrument(Number(select.dataset.previewInstrument), select.value));
   card.querySelectorAll('[data-preview-role]').forEach(box => box.onchange = () => {
     const role = Number(box.dataset.previewRole);
