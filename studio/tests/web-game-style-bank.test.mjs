@@ -1,14 +1,17 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { readFile } from 'node:fs/promises';
+import { existsSync } from 'node:fs';
 import { createHash } from 'node:crypto';
 import { GAME_INSTRUMENTS, GAME_STYLE_BANK_LABEL, GAME_STYLE_BANK_NAME, GAME_STYLE_PROGRAMS, resolveRoleVoices, uniformProgram, voiceFor } from '../web/preview/instruments.mjs';
 import { GAME_STYLE_BANK, GAME_STYLE_DEF, GAME_STYLE_DOWNLOAD_NOTICE, loadGameStyleBank, siteUrl } from '../web/preview/game-style-bank.mjs';
 
 const sha256 = value => createHash('sha256').update(value).digest('hex');
-const pins = JSON.parse(await readFile(new URL('../../ops/permanent/sound-banks.json', import.meta.url), 'utf8'));
+// The deployment's pins live in ops/, which the public export does not carry.
+const pinFile = new URL('../../ops/permanent/sound-banks.json', import.meta.url);
+const pins = existsSync(pinFile) ? JSON.parse(await readFile(pinFile, 'utf8')) : null;
 
-test('the page pins the same game-style files the Studio Web function serves', () => {
+test('the page pins the same game-style files the Studio Web function serves', { skip: !pins && 'ops/ is not in the public export' }, () => {
   const bank = pins.banks.find(item => item.id === 'game-style');
   const byExt = Object.fromEntries(bank.files.map(pin => [pin.extension, pin]));
   for (const [page, served] of [[GAME_STYLE_BANK, byExt['.dls']], [GAME_STYLE_DEF, byExt['.def']]]) {
