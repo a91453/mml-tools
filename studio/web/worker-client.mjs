@@ -9,6 +9,14 @@
 // recovered session cannot answer from a half-initialised runtime; and while no
 // Worker can be started, every call rejects instead of hanging, which leaves the
 // gates that depend on it PENDING rather than silently unevaluated.
+//
+// A Worker whose script loaded but which could not fetch part of its module
+// graph is broken the same way, though it still answers: every request gets
+// that failure back for the rest of its life. It says so
+// (initializationRetryable), and it ran none of the requests, so they are
+// replayed unchanged on the replacement. It is replaced within the same budget
+// as a Worker that fails to start. Before this, one dropped module request
+// left the page on its boot error until it was reloaded.
 export const WORKER_TIMEOUT = '本機分析逾時，未完成的 Gate 保持 PENDING';
 export const WORKER_UNAVAILABLE = '本機分析 Worker 無法啟動，請重新開啟；未完成的 Gate 保持 PENDING';
 export const WORKER_GIVEN_UP = '本機分析 Worker 反覆失敗，請重新開啟頁面；未完成的 Gate 保持 PENDING';
@@ -21,8 +29,12 @@ export function createWorkerClient({ spawn, timeoutMs = 45000, maxRestarts = 3 }
   function attach() {
     const instance = spawn();
     instance.onmessage = ({ data }) => {
+      // An instance that has been replaced answers nothing: its requests were
+      // rejected with it, or moved to its replacement.
+      if (instance !== worker) return;
       const request = pending.get(data?.id);
       if (!request) return;
+      if (data.error && data.initializationRetryable) return replaceUninitialized(data.error);
       clearTimeout(request.timer);
       pending.delete(data.id);
       // Only an answered request proves this instance is healthy, so the restart
@@ -46,6 +58,27 @@ export function createWorkerClient({ spawn, timeoutMs = 45000, maxRestarts = 3 }
     worker = attach();
   }
 
+  // Every request this instance holds would get the same failure, and none of
+  // them ran, so each keeps its deadline and moves to the replacement. It is
+  // posted again from the caller's own arguments, which every caller awaits
+  // without changing them.
+  function replaceUninitialized(reason) {
+    const dying = worker;
+    worker = null;
+    try { dying?.terminate?.(); } catch { /* already gone; the replacement is what matters */ }
+    if (++restarts > maxRestarts) {
+      givenUp = true;
+      for (const request of pending.values()) { clearTimeout(request.timer); request.reject(Error(reason)); }
+      pending.clear();
+      return;
+    }
+    worker = attach();
+    for (const [id, request] of pending) {
+      try { worker.postMessage({ id, action: request.action, args: request.args }); }
+      catch (error) { clearTimeout(request.timer); pending.delete(id); request.reject(error); }
+    }
+  }
+
   return {
     call(action, ...args) {
       return new Promise((resolve, reject) => {
@@ -53,7 +86,7 @@ export function createWorkerClient({ spawn, timeoutMs = 45000, maxRestarts = 3 }
         if (!worker) worker = attach();
         const id = ++sequence;
         const timer = setTimeout(() => recycle(WORKER_TIMEOUT), timeoutMs);
-        pending.set(id, { resolve, reject, timer });
+        pending.set(id, { resolve, reject, timer, action, args });
         try { worker.postMessage({ id, action, args }); }
         catch (error) { clearTimeout(timer); pending.delete(id); recycle(WORKER_UNAVAILABLE); reject(error); }
       });

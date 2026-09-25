@@ -197,13 +197,21 @@ export const READINESS_GATE_OPERATIONS = freeze({
   technical: freeze(['finalize']),
   // A release no Final token can express — and the sub-grid gap it leaves
   // before the next attack — is answered by an evidence-backed release
-  // representation decision in the Mobile adaptation stage. The finalize-time
-  // technical timing repair is not listed: finalize refuses a blocked
-  // micro-timing gate before the emitter (and its opt-in repair) runs, so naming
-  // it here would send a caller to an operation that cannot answer. A sub-grid
-  // interval with no non-representable release behind it (a sub-grid note, or
-  // a gap after a release Final can express) has no application operation in
-  // this build; it is answered in the Canonical source itself.
+  // representation decision in the Mobile adaptation stage. G10 raises
+  // MICRO_TIMING_RELEASE_NOT_FINAL_REPRESENTABLE only for a release with no keep
+  // claim and at least one valid representation, so release representation can
+  // answer every release that code stands for. The finalize-time technical
+  // timing repair is not listed: finalize refuses a blocked micro-timing gate
+  // before the emitter (and its opt-in repair) runs, so naming it here would
+  // send a caller to an operation that cannot answer. A sub-grid interval with
+  // no non-representable release behind it (a sub-grid note, or a gap after a
+  // release Final can express) has no application operation in this build; it
+  // is answered in the Canonical source itself. Nor has a position Final cannot
+  // reach that is an onset, a rest boundary, or a release under a keep claim or
+  // with no valid representation (MICRO_TIMING_BOUNDARY_NOT_FINAL_REPRESENTABLE):
+  // release representation never moves an onset or a rest and refuses such a
+  // release, so that blocker is listed in READINESS_BLOCKER_WITHOUT_OPERATION
+  // below, and a request carrying only it names no operation.
   microTiming: freeze(['planMobileAdaptation', 'applyMobileAdaptation.release_representation']),
   core3: freeze(['approveCore3SourceChange']),
   core3Completeness: freeze(['recordConfirmations.core3_completeness_reviewed']),
@@ -216,6 +224,24 @@ export const READINESS_GATE_OPERATIONS = freeze({
   mobileAdaptation: freeze(['applyMobileAdaptation', 'recordConfirmations.mobile_adaptation_reviewed']),
   regression: freeze(['recordConfirmations.regression_reviewed']),
   pendingDecisions: freeze(['applyDecisions']),
+});
+
+/**
+ * Readiness blockers that no operation in this build answers, per gate, with
+ * what a caller has to know instead.
+ *
+ * `READINESS_GATE_OPERATIONS` hints per gate, and a gate can carry a blocker
+ * none of its listed operations can reach. A review request for such a gate
+ * states each of these blockers it carries in `missing`, and when these are
+ * all it carries it names no operation at all: a listed operation that cannot
+ * answer sends a caller round a loop that returns the same refusal. Like the
+ * table above, this decides nothing. The gate blocks exactly as readiness says,
+ * and a blocker absent from here keeps the gate's own hint.
+ */
+export const READINESS_BLOCKER_WITHOUT_OPERATION = freeze({
+  microTiming: freeze({
+    MICRO_TIMING_BOUNDARY_NOT_FINAL_REPRESENTABLE: 'MICRO_TIMING_BOUNDARY_NOT_FINAL_REPRESENTABLE: a position a Final role has to reach sits where no admitted Final token sequence reaches, and nothing in this build moves it. It is an onset, a rest boundary, or a note release no release representation can move (one under a keep claim, or one whose every representation is invalid); readiness.gates.microTiming.unsupportedBoundaries names each one with coverage "none" by role, event, boundary, beat and reason. No operation in this build answers it. An onset is an attack and is never moved; applyMobileAdaptation refuses to move an onset or remove a rest, and its release_representation moves only a note release and refuses one under a keep claim (RELEASE_EVENT_HAS_A_SOURCE_SUPPORTED_KEEP_CLAIM) and any option not valid for its release (RELEASE_REPRESENTATION_NOT_VALID_FOR_EVENT); applyDecisions and applyFinalReduction change no event timing; and the finalize-time Technical Timing Repair reaches only classified sub-grid intervals and never runs past a blocked microTiming gate. Omitting a note that starts or ends there, or moving it to another role, would change the boundary only by changing the arrangement, which is an arrangement decision on its own evidence and not an answer to this gate, so it is not suggested. The positions come from the sources the Source-Faithful Baseline was built from, and a keep claim from the decisions the Canonical project carries, so it is answered in the Canonical source itself: a baseline analysed from sources that put the boundary where Final reaches does not carry it, and a release no keep claim covers that has a valid representation is answered by release representation instead. Until then this candidate cannot become a Final, and the gate still blocks.',
+  }),
 });
 
 /**

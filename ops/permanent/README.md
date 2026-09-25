@@ -2,12 +2,13 @@
 
 > Railway resource IDs are kept out of this public repository and appear as `<redacted-id-N>` (the same N is the same resource). Read them from the Railway dashboard.
 
-Current release: main `e8d7a998d926`, which carries Published Canonical
-`2026-09-23-v3`. See [RELEASE_2026-09-23-v3.md](RELEASE_2026-09-23-v3.md) for
+Current release: main `d7ec3c6ea7bd` (v4), which carries Published Canonical
+`2026-09-23-v3`. See [RELEASE_2026-09-24-v4.md](RELEASE_2026-09-24-v4.md) for
 its identity, runs, startup log and rollback; the releases before it are
-[RELEASE_2026-09-23-v2.md](RELEASE_2026-09-23-v2.md) (main `45c5a2963b1e`,
-Canonical v2) and [RELEASE_2026-09-23.md](RELEASE_2026-09-23.md) (main
-`66e9244f89e2`, Canonical v1). The original migration (main `5769e76849e5`) is recorded in
+[RELEASE_2026-09-23-v3.md](RELEASE_2026-09-23-v3.md) (main `e8d7a998d926`,
+Canonical v3), [RELEASE_2026-09-23-v2.md](RELEASE_2026-09-23-v2.md) (main
+`45c5a2963b1e`, Canonical v2) and [RELEASE_2026-09-23.md](RELEASE_2026-09-23.md)
+(main `66e9244f89e2`, Canonical v1). The original migration (main `5769e76849e5`) is recorded in
 [MIGRATION_RESULT.md](MIGRATION_RESULT.md); the sections below keep describing
 that historical release where they name its pins.
 

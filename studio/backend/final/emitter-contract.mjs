@@ -45,6 +45,19 @@ export const EMIT_DIAGNOSTICS = Object.freeze({
   // --- Canonical / G10 ---------------------------------------------------
   MICRO_GAP_TECHNICAL_RESIDUE: 'MICRO_GAP_TECHNICAL_RESIDUE',
   MICRO_GAP_BLOCKED_PENDING: 'MICRO_GAP_BLOCKED_PENDING',
+  // G10 raised MICRO_TIMING_BOUNDARY_NOT_FINAL_REPRESENTABLE: a position a role
+  // has to reach -- an onset, a rest boundary, or a note release no release
+  // representation can move (one under a keep claim, or one with no valid
+  // representation) -- sits where no admitted Final token sequence reaches,
+  // and no other G10 outcome decides it. An error, not pending: a proof about
+  // this candidate that no evidence or search setting changes and nothing in
+  // this build moves, so it is never folded into MICRO_GAP_BLOCKED_PENDING's
+  // "unproven" wording. It carries `unreachableBoundaries` (role, eventId,
+  // kind, boundary, position, reason; at most 20) with
+  // `unreachableBoundaryCount`, the true count, and
+  // `unreachableBoundariesTruncated`, as BOUNDARY_NOT_FINAL_REPRESENTABLE
+  // carries the positions of the same proof met at serialization.
+  MICRO_GAP_BOUNDARY_NOT_FINAL_REPRESENTABLE: 'MICRO_GAP_BOUNDARY_NOT_FINAL_REPRESENTABLE',
   // Technical Timing Repair. Both are notices: the repair layer changes what the
   // emitter is looking at, never what any gate demands of it.
   TECHNICAL_TIMING_REPAIR_APPLIED: 'TECHNICAL_TIMING_REPAIR_APPLIED',
@@ -66,6 +79,13 @@ export const EMIT_DIAGNOSTICS = Object.freeze({
   DURATION_SEARCH_POLICY_LIMIT: 'DURATION_SEARCH_POLICY_LIMIT',
   DURATION_SEARCH_BUDGET_EXHAUSTED: 'DURATION_SEARCH_BUDGET_EXHAUSTED',
   DURATION_NON_POSITIVE: 'DURATION_NON_POSITIVE',
+  // Reported instead of either search code when the span the search failed on
+  // starts or ends at a position no admitted Final token sequence reaches
+  // (`canonical/release-timing.mjs#classifyPosition`). That is a proof about the
+  // position, not a search result: a role is written as consecutive tokens from
+  // beat 0, and every sum of admitted token lengths has a whole-note denominator
+  // dividing their lcm, which this position's does not.
+  BOUNDARY_NOT_FINAL_REPRESENTABLE: 'BOUNDARY_NOT_FINAL_REPRESENTABLE',
   PITCH_NOT_SPELLABLE: 'PITCH_NOT_SPELLABLE',
   PITCH_ABOVE_OFFICIAL_RANGE: 'PITCH_ABOVE_OFFICIAL_RANGE',
   VOLUME_OUT_OF_RANGE: 'VOLUME_OUT_OF_RANGE',

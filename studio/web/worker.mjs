@@ -1,23 +1,37 @@
 import { canonical, canonicalDigest } from './published.mjs';
 import { verifyCanonicalPackage } from './canonical-package.mjs';
 
-let model, initializationError;
+let model, initializationError, initializationRetryable = false;
 // Verification stays fail-closed, but it must not run as top-level await: a
 // module worker's message queue is enabled while its top-level await is still
 // pending, so a handler installed afterwards silently drops every request
 // posted in that window. Install the handler first and await this instead.
 const initialized = (async () => {
-  try {
-    await verifyCanonicalPackage(canonical, canonicalDigest);
-    model = await import('./model.mjs');
-    const { PUBLISHED_CANONICAL } = await import('../backend/rules/index.mjs');
-    if (JSON.stringify(PUBLISHED_CANONICAL) !== JSON.stringify(canonical)) throw Error('Runtime Canonical differs from verified package');
-  } catch (error) { initializationError = `CANONICAL_NOT_LOADED: ${error.message}`; }
+  try { await verifyCanonicalPackage(canonical, canonicalDigest); }
+  catch (error) { initializationError = `CANONICAL_NOT_LOADED: ${error.message}`; return; }
+  let runtime;
+  try { model = await import('./model.mjs'); runtime = await import('../backend/rules/index.mjs'); }
+  catch (error) {
+    // import() rejects with a TypeError when a module of the graph could not
+    // be fetched: a dropped connection, or a request the browser abandoned.
+    // This instance cannot recover from that, since it answers every request
+    // with this failure for the rest of its life, but a new Worker fetches the
+    // graph again and re-verifies the package. So the answer says a
+    // replacement may succeed. A module that fetched but failed to parse or
+    // link rejects with a SyntaxError and is not retried. One whose own
+    // top-level code throws a TypeError is retried, and fails closed once the
+    // client's replacement budget is spent.
+    initializationError = `CANONICAL_NOT_LOADED: ${error.message}`;
+    initializationRetryable = error instanceof TypeError;
+    return;
+  }
+  if (JSON.stringify(runtime.PUBLISHED_CANONICAL) !== JSON.stringify(canonical)) initializationError = 'CANONICAL_NOT_LOADED: Runtime Canonical differs from verified package';
 })();
 self.onmessage = async ({ data }) => {
+  await initialized;
+  // No request ran, so the client may send it to a replacement unchanged.
+  if (initializationError) return self.postMessage({ id: data.id, error: initializationError, ...(initializationRetryable ? { initializationRetryable: true } : {}) });
   try {
-    await initialized;
-    if (initializationError) throw Error(initializationError);
     let result;
     if (data.action === 'identity') result = { metadata: canonical.metadata, documents: canonical.documents };
     // intakeMidi receives an ArrayBuffer by structured clone, so the page keeps

@@ -164,7 +164,14 @@ A review request is a **projection** of an upstream report. Each one carries:
 There is **no allow-list gate**. A run proceeds only while
 `readiness.preGameBlocking` is empty; a gate this layer has never heard of is
 reported with `known: false`, gets no operation hint, and still blocks.
-`READINESS_GATE_OPERATIONS` is a hint table and decides nothing.
+`READINESS_GATE_OPERATIONS` is a hint table and decides nothing. A known gate
+can carry a blocker none of its hinted operations answers;
+`READINESS_BLOCKER_WITHOUT_OPERATION` lists those (today
+`MICRO_TIMING_BOUNDARY_NOT_FINAL_REPRESENTABLE`: an onset, a rest boundary, or a
+release under a keep claim or with no valid representation, that Final cannot
+reach and nothing in this build moves). The request states each one it
+carries in `missing`, names no operation when they are all it carries, and
+still blocks.
 
 Phase 2 adds the AI Proposal protocol and an agent review policy. Phase 1
 connects no model, and a fixture's human confirmations are not a permission a

@@ -25,7 +25,8 @@
 // user, not to a serializer.
 import { F, f, ROLES } from '../mml/index.mjs';
 import { EFFECTIVE_RULESET, studioFinalBlockers } from '../rules/index.mjs';
-import { enforceMicroGaps } from './micro-gap-enforcement.mjs';
+import { BOUNDARY_COVERAGE, MICRO_GAP_BLOCKERS, enforceMicroGaps } from './micro-gap-enforcement.mjs';
+import { POSITION_CLASS, classifyPosition } from '../canonical/release-timing.mjs';
 import {
   DELIVERY_CLASS,
   MACHINE_DELIVERY_SCHEMA_V2,
@@ -73,6 +74,9 @@ const MAX_DEFAULT_LENGTH_CANDIDATES = 12;
 // Always-offered default lengths for long tie/rest segments; see the
 // default-length candidates block in serializeItems().
 const LONG_SEGMENT_DEFAULTS = Object.freeze([1, 2]);
+// How many G10 boundaries a diagnostic lists by location; the true total is
+// reported beside them. The same bound as the unassigned-event list.
+const MAX_REPORTED_BOUNDARIES = 20;
 
 const digits = value => String(value).length;
 
@@ -405,6 +409,38 @@ function serializeItems(role, items, lattice, facts, options) {
         : reasons.has(PLAN_FAILURE.NON_POSITIVE_DURATION)
           ? PLAN_FAILURE.NON_POSITIVE_DURATION
           : PLAN_FAILURE.SEARCH_POLICY_LIMIT;
+      // Either search outcome yields to a proof about where the span sits. A
+      // role is written as consecutive tokens from beat 0, so a span boundary no
+      // admitted token sequence reaches cannot be written whatever the search
+      // bounds, the budget or the caution opt-in; saying "search limit" there
+      // sends a reader looking for a bound to raise. Only a boundary
+      // `classifyPosition` proves unreachable counts: an off-grid position it
+      // calls CAUTION_REPRESENTABLE keeps the search's own code.
+      if (failure !== PLAN_FAILURE.NON_POSITIVE_DURATION) {
+        const start = f(item.start);
+        const end = start.add(item.duration);
+        const unreachable = [['start', start], ['end', end]]
+          .filter(([, beat]) => classifyPosition(beat) === POSITION_CLASS.NOT_FINAL_REPRESENTABLE)
+          .map(([boundary, beat]) => Object.freeze({ boundary, position: beat.toString() }));
+        if (unreachable.length) {
+          diagnostics.push(diagnostic(
+            EMIT_DIAGNOSTICS.BOUNDARY_NOT_FINAL_REPRESENTABLE,
+            DIAGNOSTIC_SEVERITY.ERROR,
+            `${role}: the ${item.kind} span ${item.start}..${end} (${item.eventId ?? 'silence between events'}) ${unreachable.map(entry => `${entry.boundary}s at beat ${entry.position}`).join(' and ')}, and no sequence of admitted Final length tokens reaches ${unreachable.length > 1 ? 'either position' : 'that position'}: every sum of admitted token lengths has a whole-note denominator dividing the lcm of the token denominators, and ${unreachable.length > 1 ? 'neither position\'s does' : 'that position\'s does not'}. This is a proof, not a search limit, and no search bound, budget or caution opt-in changes it. The emitter fails closed and does not move the boundary.`,
+            {
+              role,
+              eventId: item.eventId,
+              duration: item.duration.toString(),
+              start: item.start,
+              end: end.toString(),
+              unreachableBoundaries: Object.freeze(unreachable),
+              planFailure: failure,
+              completenessProven: true,
+            },
+          ));
+          continue;
+        }
+      }
       const cautionHint = lattice.cautionLengthOptIn
         ? ''
         : ' FINAL_ALLOWED_WITH_CAUTION plain lengths are not admitted here; cautionLengthOptIn widens the lattice.';
@@ -801,6 +837,12 @@ function evaluateGates(project, options) {
     }
   }
 
+  // G10's boundary code is a proof about this candidate, not an open question,
+  // so it is kept out of MICRO_GAP_BLOCKED_PENDING (whose "unproven" wording
+  // would be false for it) and reported below as the confirmed negative it is.
+  // Every other G10 blocker keeps exactly the diagnostic it had.
+  const boundaryProven = microGap.blockers.includes(MICRO_GAP_BLOCKERS.BOUNDARY_NOT_FINAL_REPRESENTABLE);
+  const openBlockers = microGap.blockers.filter(code => code !== MICRO_GAP_BLOCKERS.BOUNDARY_NOT_FINAL_REPRESENTABLE);
   if (microGap.status === 'FAIL') {
     diagnostics.push(diagnostic(
       EMIT_DIAGNOSTICS.MICRO_GAP_TECHNICAL_RESIDUE,
@@ -809,14 +851,74 @@ function evaluateGates(project, options) {
       { blockers: microGap.blockers, rejectedIntervalKeys: microGap.rejectedIntervalKeys },
     ));
     status = EMIT_STATUS.FAIL;
-  } else if (microGap.status !== 'PASS') {
+  } else if (microGap.status !== 'PASS' && (openBlockers.length || !boundaryProven)) {
     diagnostics.push(diagnostic(
       EMIT_DIAGNOSTICS.MICRO_GAP_BLOCKED_PENDING,
       DIAGNOSTIC_SEVERITY.PENDING,
-      `G10 could not clear this candidate: ${microGap.blockers.join(', ')}. Unproven sub-grid material is never acted on.`,
-      { blockers: microGap.blockers, blockedIntervalKeys: microGap.blockedIntervalKeys },
+      `G10 could not clear this candidate: ${openBlockers.join(', ')}. Unproven sub-grid material is never acted on.`,
+      { blockers: Object.freeze(openBlockers), blockedIntervalKeys: microGap.blockedIntervalKeys },
     ));
     if (status !== EMIT_STATUS.FAIL) status = EMIT_STATUS.PENDING;
+  }
+
+  // A position a role has to reach -- an onset, a rest boundary, or a note
+  // release no release representation can move -- that G10 proves no admitted
+  // Final token sequence reaches and that no other G10 outcome decides
+  // (coverage NONE). FAIL, not PENDING. DIAGNOSTIC_SEVERITY.ERROR is "a
+  // confirmed negative: this candidate cannot be Final-emitted as it stands",
+  // and PENDING is "an unresolved Canonical/evidence question"; this is the
+  // first and not the second. Nothing in this build answers it the way evidence
+  // answers an unproven interval (a classification, and for confirmed residue
+  // Technical Timing Repair), or the way an evidence-backed release
+  // representation answers MICRO_TIMING_RELEASE_NOT_FINAL_REPRESENTABLE -- which
+  // G10 raises only for a release with no keep claim and at least one valid
+  // representation, and which under machine delivery a qualifying release may
+  // also meet by the provisional hold. An onset is an attack and is never
+  // moved, no rest is moved to make a role writable, release representation
+  // refuses a release under a keep claim and every invalid option, the
+  // provisional hold only ever takes a valid extension, and the arithmetic does
+  // not depend on any search bound, budget, caution opt-in or evidence. So a
+  // release whose every representation is invalid, and that no analysed
+  // interval of its own decides (its sub-grid duration or the sub-grid gap
+  // after it; a sub-grid rest starting at it decides only the rest's start),
+  // gets this FAIL whether a keep claim on it is accepted,
+  // pending, rejected or absent, and a release with a valid representation
+  // gets it only while a keep claim takes that representation away.
+  // The same proof met at serialization is BOUNDARY_NOT_FINAL_REPRESENTABLE,
+  // and the other provable G10-side negative,
+  // SOURCE_SUPPORTED_INTERVAL_NOT_REPRESENTABLE, is FAIL too. G10's own status
+  // is unchanged; this is the emitter's answer to whether the candidate can be
+  // written. The locations are named, bounded like the other lists a
+  // diagnostic carries, with the true count beside them.
+  if (boundaryProven) {
+    const unreachable = (microGap.unsupportedBoundaries ?? []).filter(item => item.coverage === BOUNDARY_COVERAGE.NONE);
+    const count = unreachable.length;
+    const where = item => `${item.role} event ${item.eventId} (${item.kind} ${item.boundary}) at beat ${item.position}`;
+    const isRelease = item => item.kind === 'note' && item.boundary === 'end';
+    const what = item => (item.kind === 'rest' ? 'a rest boundary' : isRelease(item) ? 'a note release' : 'an onset');
+    const named = count === 1
+      ? `${where(unreachable[0])} is ${what(unreachable[0])} its Final role has to reach, and no admitted Final token sequence reaches it`
+      : `${count} ${unreachable.some(isRelease) ? 'onset, note release or rest boundaries' : 'onset or rest boundaries'} a Final role has to reach sit where no admitted Final token sequence reaches${count ? `, the first ${where(unreachable[0])}; unreachableBoundaries lists ${count > MAX_REPORTED_BOUNDARIES ? `the first ${MAX_REPORTED_BOUNDARIES}` : 'them'}` : ''}`;
+    diagnostics.push(diagnostic(
+      EMIT_DIAGNOSTICS.MICRO_GAP_BOUNDARY_NOT_FINAL_REPRESENTABLE,
+      DIAGNOSTIC_SEVERITY.ERROR,
+      `G10 (${MICRO_GAP_BLOCKERS.BOUNDARY_NOT_FINAL_REPRESENTABLE}): ${named}. A role is written as consecutive tokens from beat 0, so every position it reaches is a sum of admitted token lengths, whose whole-note denominator divides the lcm of the admitted token denominators; ${count > 1 ? 'none of these positions\' does' : 'this position\'s does not'}. This is a proof about ${count > 1 ? 'those positions' : 'the position'}, not a search limit and not an unproven question: no search bound, budget, caution opt-in or evidence changes where ${count > 1 ? 'they are' : 'it is'}, and nothing is moved to make the role writable -- no attack, no rest, and no release that release representation refuses (one under a keep claim, or one with no valid representation). This candidate cannot be Final-emitted as it stands; the emitter fails closed.`,
+      {
+        blocker: MICRO_GAP_BLOCKERS.BOUNDARY_NOT_FINAL_REPRESENTABLE,
+        unreachableBoundaryCount: count,
+        unreachableBoundaries: Object.freeze(unreachable.slice(0, MAX_REPORTED_BOUNDARIES).map(item => Object.freeze({
+          role: item.role,
+          eventId: item.eventId,
+          kind: item.kind,
+          boundary: item.boundary,
+          position: item.position,
+          reason: item.reason,
+        }))),
+        unreachableBoundariesTruncated: count > MAX_REPORTED_BOUNDARIES,
+        completenessProven: true,
+      },
+    ));
+    status = EMIT_STATUS.FAIL;
   }
 
   // A source-supported sub-grid interval must survive untouched, and no admitted

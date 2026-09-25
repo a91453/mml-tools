@@ -29,6 +29,7 @@
 // computes no digest of its own.
 
 import { ERROR_CODES, LIMITS, isCandidateId, fail, requirePlainObject, requireString } from './contracts.mjs';
+import { sha256Of } from './store.mjs';
 
 const now = () => new Date().toISOString();
 
@@ -187,6 +188,58 @@ export function createArrangementService({ canonical, projects, intake, store })
   };
 
   /**
+   * One digest of everything `finalReduction` and `mobileAdaptation` read
+   * from what is stored, for one candidate, when they only plan.
+   *
+   * Those two read the project record, the stored baseline (through
+   * `intake.project`), the candidate's stored application (`loadCandidate`),
+   * every stored application up its lineage (`loadCandidateLineage`) and, for
+   * an adaptation, the project's asset registry. Nothing else they read comes
+   * from storage: the rest is the loaded engines and the caller's own input.
+   * So two derivations whose digests here are equal read the same bytes, and
+   * a caller that memoizes a derivation can tell from this alone whether an
+   * input it did not pass in has changed.
+   *
+   * Bytes, not ids. A baseline id and a candidate id are content addresses,
+   * but a stored blob can still be edited, truncated or removed under the id
+   * that names it -- and the operations then answer differently, refusing
+   * what they derived before. The digest moves with the bytes. The walk
+   * mirrors `loadCandidateLineage` and goes at least as far: it stops only at
+   * a missing record entry or a missing blob, so it covers every application
+   * that walk could read. Read-only, and it decodes nothing.
+   */
+  const planInputIdentity = (owner, projectId, candidateId) => {
+    const record = projects.load(owner, projectId);
+    const storedDigest = key => {
+      const bytes = store.getBytes(key);
+      return bytes ? sha256Of(bytes) : null;
+    };
+    const lineage = [];
+    const seen = new Set();
+    let currentId = candidateId;
+    while (typeof currentId === 'string' && currentId && !seen.has(currentId)) {
+      seen.add(currentId);
+      const entry = record.candidates.find(candidate => candidate.candidate_id === currentId);
+      if (!entry) {
+        lineage.push({ candidate_id: currentId, stored: false });
+        break;
+      }
+      const application = storedDigest(applicationKey(record.project_id, currentId));
+      lineage.push({ candidate_id: currentId, parent_candidate_id: entry.parent_candidate_id ?? null, application_sha256: application });
+      if (application === null) break;
+      currentId = entry.parent_candidate_id ?? null;
+    }
+    return sha256Of(new TextEncoder().encode(JSON.stringify({
+      project_id: record.project_id,
+      baseline_id: record.baseline?.baseline_id ?? null,
+      baseline_sha256: record.baseline ? intake.storedBaselineDigest(record) : null,
+      candidate_id: typeof candidateId === 'string' ? candidateId : null,
+      lineage,
+      assets: record.assets ?? [],
+    })));
+  };
+
+  /**
    * The baseline's events with their provenance, optionally one lane's, paged.
    *
    * Identity, role, pitch, timing and source identities only. No verdict is
@@ -241,6 +294,7 @@ export function createArrangementService({ canonical, projects, intake, store })
     suggestionFor,
     loadCandidate,
     loadCandidateLineage,
+    planInputIdentity,
     baselineEvents,
 
     async mobileAdaptation(owner, projectId, { candidateId, profile = null, releaseRepresentation = null, expectedPlanId = null, acceptedBy = null, apply = false, inputFingerprint = null, effectAttemptId = null } = {}) {

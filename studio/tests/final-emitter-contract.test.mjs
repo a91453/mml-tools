@@ -94,9 +94,11 @@ test('diagnostics are frozen and carry a code plus a severity', () => {
 
 test('no diagnostic code claims a duration is unrepresentable', () => {
   // The bounded search has no completeness proof, so the vocabulary it can
-  // report must not contain a verdict it cannot justify. The one remaining
-  // "NOT_REPRESENTABLE" code is about a G10-preserved sub-grid interval, which
-  // *is* provable: no admitted Final token is shorter than the safe grid.
+  // report must not contain a verdict it cannot justify. The remaining
+  // "NOT_REPRESENTABLE" codes are provable: a G10-preserved sub-grid interval
+  // (no admitted Final token is shorter than the safe grid), and a span boundary
+  // at a position no admitted token sequence reaches, which is a claim about the
+  // position rather than about the duration the search was given.
   const durationCodes = Object.keys(EMIT_DIAGNOSTICS).filter(name => name.startsWith('DURATION_'));
   assert.ok(durationCodes.length >= 3);
   for (const name of durationCodes) {

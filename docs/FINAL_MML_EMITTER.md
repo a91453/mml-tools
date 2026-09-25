@@ -277,6 +277,44 @@ only a search limit.
 
 Every diagnostic in this family carries `completenessProven: false`.
 
+One outcome is a proof, and it replaces either search code. When the span the
+search failed on starts or ends at a position that
+`canonical/release-timing.mjs#classifyPosition` calls `NOT_FINAL_REPRESENTABLE`,
+the emitter reports `BOUNDARY_NOT_FINAL_REPRESENTABLE` with
+`completenessProven: true`, the search's own `planFailure`, and the
+`unreachableBoundaries`. A role is written as consecutive tokens from beat 0, so
+every position it reaches is a sum of admitted token lengths, whose whole-note
+denominator divides the lcm of the admitted token denominators; that position's
+does not, so no bound, budget or `cautionLengthOptIn` changes the answer. It is a
+claim about a position, never about a duration, and an off-grid position
+`classifyPosition` calls `CAUTION_REPRESENTABLE` keeps the search's own code.
+G10 already refuses positions of that kind before any serialization. An onset
+or rest boundary a role has to reach raises
+`MICRO_TIMING_BOUNDARY_NOT_FINAL_REPRESENTABLE` unless an analysed sub-grid
+interval of the role starts or ends there and decides it. A note release no
+release representation can move (one under a keep claim, or one with no valid
+representation) raises the same code unless an analysed interval decides the
+release itself: the note's own sub-grid duration, or the sub-grid gap after the
+release. A sub-grid rest that starts at the release decides only the rest's
+start, so it does not stand in for the release. An unreachable release a
+representation can move raises `MICRO_TIMING_RELEASE_NOT_FINAL_REPRESENTABLE`
+unless such an interval decides it. The emitter reports the boundary refusal as
+the same proof under its own code, `MICRO_GAP_BOUNDARY_NOT_FINAL_REPRESENTABLE`
+(§5), and serializes nothing past a G10 that has not cleared. So
+`BOUNDARY_NOT_FINAL_REPRESENTABLE` is left for positions G10 does not own, such
+as an off-grid Tempo position that splits a span. What follows an unreachable
+release that no interval decides changes G10's answer only through whether a
+representation is valid for it. Under a keep claim it raises the boundary code
+whether an explicit rest follows it, implicit silence follows it or the role
+ends there. With no keep claim, an explicit rest starting at the release makes
+both representations invalid (extending enters the rest, and truncating leaves
+the rest's start where it is), so it raises the boundary code. After implicit
+silence, or at the role end, it raises the release code when a representation
+is valid (and G10 adds `MICRO_TIMING_RELEASE_PROVISIONAL` when the provisional
+hold covers every open micro-timing question, ACCEPTANCE_CRITERIA "Delivered
+first, flagged for listening"), and the boundary code only when neither
+representation is valid for another reason.
+
 A worked example, pinned by regression in both the planner and the production
 `emitFinalMml` path: a 100-beat sustain is exactly 16 dotted whole notes plus one
 whole note, so an exact decomposition demonstrably exists, yet the default
@@ -289,6 +327,7 @@ search-policy limit; raising only the bound makes the same candidate emit.
 | --- | --- |
 | the bounded search finds no exact plan | `FAIL` — never rounded to the nearest token, and reported as a search-policy limit rather than as unrepresentability |
 | duration search budget exhausted | `FAIL`, reported as a search limit rather than a proof of impossibility |
+| a span the search failed on starts or ends at a position no admitted token sequence reaches | `FAIL` with `BOUNDARY_NOT_FINAL_REPRESENTABLE` — a proof about the position (§4b); the boundary is not moved |
 | two notes overlap inside one role | `FAIL` — a role is one sequential voice; neither note is dropped or truncated |
 | a note event carries no six-slot role | `FAIL` — the emitter does not choose a slot |
 | a rest event carries no six-slot role | not a slot's material: a rest is silence, and one no role holds (a notated MusicXML rest carried from the baseline) is left out of the role streams, as the gaps of a MIDI source are; a rest a role holds is written as that role's rest |
@@ -301,6 +340,7 @@ search-policy limit; raising only the bound makes the same candidate emit.
 | any role exceeds the 2,400-character budget | `FAIL` with role, count, overage and attack count — no note, attack or rest is removed |
 | G10 reports confirmed technical residue | `FAIL` — unless `technicalTimingRepair` is opted into *and* the repair layer normalizes it exactly (§5a) |
 | G10 reports unproven sub-grid material | `PENDING` — never acted on, with or without the repair opt-in |
+| G10 reports an onset, a rest boundary, or a note release no release representation can move (under a keep claim, or with no valid representation), that the role must reach and no admitted token sequence can (`MICRO_TIMING_BOUNDARY_NOT_FINAL_REPRESENTABLE`) | `FAIL` with `MICRO_GAP_BOUNDARY_NOT_FINAL_REPRESENTABLE` — a proof, not unproven material, naming each boundary by role, event and beat (§5); no attack, rest or such release is moved to make it writable |
 | G10 preserves source-supported sub-grid material | `FAIL` — provably unrepresentable (every admitted token is at least one safe-grid unit), and refusing is the only answer that does not damage it |
 | a supplied readiness report blocks on any gate but `technical` | `PENDING` |
 | a pending arbitration decision exists | `PENDING` |
@@ -308,8 +348,8 @@ search-policy limit; raising only the bound makes the same candidate emit.
 
 ## 5. G10 consumption
 
-The emitter calls `enforceMicroGaps(project)` and honours the three key lists it
-publishes, without re-deriving any threshold:
+The emitter calls `enforceMicroGaps(project)` and honours the three key lists and
+the boundary list it publishes, without re-deriving any threshold:
 
 - `preservedIntervalKeys` — source-supported sub-grid material. The emitter may
   not delete, shorten, quantize, absorb or move an attack across these. Because
@@ -325,6 +365,87 @@ publishes, without re-deriving any threshold:
   transformation.
 - `blockedIntervalKeys` — unproven. The emitter returns `PENDING` and emits
   nothing. The repair layer cannot reach these at all.
+- `unsupportedBoundaries` — every onset or rest boundary that
+  `classifyPosition` proves no admitted token sequence reaches, each with the
+  `coverage` G10 decided it by. A boundary an analysed interval of its role
+  starts or ends at (`analysed-interval`) is answered by that interval's outcome
+  above; one at a release of its role that raises
+  `MICRO_TIMING_RELEASE_NOT_FINAL_REPRESENTABLE` (`release-target`) by the
+  release-side handling; one inside a silence (`inside-silence`) needs nothing,
+  because the silence is written as one exact span. The list also carries every
+  note release at such a position that no release representation can move and
+  nothing else decides, with coverage `none`: one under a keep claim (reason
+  `RELEASE_UNDER_A_KEEP_CLAIM_NOT_FINAL_REPRESENTABLE`, target status
+  `SOURCE_SUPPORTED_NOT_REPRESENTABLE`) or one whose every representation is
+  invalid (`RELEASE_WITH_NO_VALID_REPRESENTATION`, target status
+  `NO_VALID_REPRESENTATION`). Such a release is left out when an analysed
+  interval decides the release itself — the note's own sub-grid duration,
+  which ends at it, or the sub-grid gap after it, which starts at it — because
+  that interval's outcome decides it and it is not reported twice. It is also
+  left out when another entry already reports that position of its role with
+  coverage `none` (an explicit rest starting at the release that no interval
+  decides). An interval of another span at the same beat does not decide the
+  release: a sub-grid rest that starts at the release decides the rest's start
+  (`analysed-interval`), and the release is listed beside it with coverage
+  `none` whether that rest's interval is preserved, unproven or technical
+  residue. Neither kind of release raises the release code, and neither covers
+  a boundary as `release-target`. So a release under a keep claim gets the same
+  G10 answer whether an explicit rest follows it, implicit silence follows it,
+  or the role ends there. A release with no keep claim is such an entry only
+  while no representation is valid for it, which is always so when an explicit
+  rest starts at it; after implicit silence or at the role end it usually has a
+  valid representation and raises the release code instead (§4b). A boundary
+  with coverage `none` makes G10 raise
+  `MICRO_TIMING_BOUNDARY_NOT_FINAL_REPRESENTABLE`. That is a proof, not
+  unproven material, so the emitter keeps it out of
+  `MICRO_GAP_BLOCKED_PENDING` (which keeps the other G10 blockers, if any) and
+  returns `FAIL` with `MICRO_GAP_BOUNDARY_NOT_FINAL_REPRESENTABLE`: severity
+  `error`, `completenessProven: true`, and `unreachableBoundaries` naming each
+  boundary by role, event id, kind, boundary, beat and reason — at most 20, with
+  `unreachableBoundaryCount` the true count and `unreachableBoundariesTruncated`.
+  Nothing is emitted, and no attack, rest or release is moved.
+
+  `FAIL` rather than `PENDING`, because `PENDING` (severity `pending`) is
+  reserved for an unresolved Canonical or evidence question and `error` is "this
+  candidate cannot be Final-emitted as it stands". Nothing in this build answers
+  this one: an onset is an attack and is never moved, no Mobile adaptation,
+  decision or repair moves an onset or removes a rest, release representation
+  refuses a release under a keep claim and every invalid option, the
+  provisional hold only ever takes a valid extension, and the arithmetic
+  depends on no search bound, budget or caution opt-in. (Omitting a note, or
+  moving it to another role, changes which positions a role has to reach only
+  by changing the arrangement; that is an arrangement decision on its own
+  evidence, not an answer to this proof.) It is the same answer
+  the emitter gives for the same proof met at serialization
+  (`BOUNDARY_NOT_FINAL_REPRESENTABLE`) and for a preserved sub-grid interval.
+
+  `MICRO_TIMING_RELEASE_NOT_FINAL_REPRESENTABLE` deliberately stays `PENDING`
+  under `MICRO_GAP_BLOCKED_PENDING`, and that holds only because G10 raises it
+  for no other release than one awaiting a representation decision
+  (`REPRESENTATION_DECISION_REQUIRED`): no keep claim covers it and at least one
+  representation is valid for it. That release is an open decision, answered by
+  an evidence-backed release representation
+  (`applyMobileAdaptation.release_representation`), and under machine delivery a
+  qualifying one may instead be held provisionally (ACCEPTANCE_CRITERIA
+  "Delivered first, flagged for listening"). A release with no valid
+  representation has neither answer — the representation is refused and the
+  hold takes only a valid extension — so it is a boundary entry above, not a
+  release code. For identical events, where no analysed interval decides the
+  release itself, the emitter therefore answers `FAIL` for such a release
+  whether a keep claim on it is accepted, pending, rejected or absent. Where a
+  representation is valid, an accepted or pending keep claim takes it away
+  (release representation refuses a claimed release), so that release is
+  `FAIL` while the claim stands and `PENDING` once no claim covers it. G10's
+  own status is `PENDING` for both codes; the boundary code is `BLOCKING` for
+  machine delivery under every schema, and the release code is too unless the
+  provisional hold covers it. The emitter status only says
+  whether the candidate is waiting on an answer (`PENDING`) or cannot be
+  written as it stands (`FAIL`). No operation in this build answers the
+  boundary code either, so a run's microTiming review request says so in
+  `missing` and names no operation when that code is all the gate carries
+  (`READINESS_BLOCKER_WITHOUT_OPERATION` in `application/run-contracts.mjs`).
+  A gate that also carries the release code keeps its hint, and release
+  representation can answer every release that code stands for.
 
 ## 5a. Technical Timing Repair consumption
 

@@ -435,6 +435,14 @@ function leadPromotionGate(reports, leadEventDiff = null) {
 //   UNKNOWN                       unproven either way          -> PENDING
 //   unresolved stream identity    relationship not establishable -> PENDING
 //
+// Beside them, an onset, a rest boundary or a note release no release
+// representation can move (under a keep claim, or with no valid
+// representation), that the role has to reach at a position no admitted Final
+// token sequence reaches and that no interval above decides, is PENDING too
+// (MICRO_TIMING_BOUNDARY_NOT_FINAL_REPRESENTABLE). Such a release is decided
+// only by its own sub-grid duration or the sub-grid gap after it, never by a
+// sub-grid rest that merely starts at it.
+//
 // The classification/enforcement split itself lives in
 // final/micro-gap-enforcement.mjs, which is also where the published Final
 // policy is read out of the executable contract. This gate is one of its two

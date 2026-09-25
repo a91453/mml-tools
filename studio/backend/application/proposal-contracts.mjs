@@ -255,7 +255,16 @@ export const NEVER_AGENT_SETTLABLE = freeze([
  */
 export const PROPOSAL_STATE = freeze({
   SUBMITTED: 'submitted',
-  /** Explicitly accepted by a named reviewer; the existing operation is being reached. */
+  /**
+   * Explicitly accepted by a named reviewer; the existing operation is being
+   * reached. Its `application.run_resume_called` says whether the run ever
+   * admitted an attempt made through this build -- let the prepared input past
+   * every refusal of its own, before writing anything. While it is `false`,
+   * and the run has taken no write since the acceptance that does not record
+   * which request made it (what the release a rollback returns to leaves when
+   * it applies the acceptance itself), nothing of it reached the run and the
+   * proposal may still be rejected or withdrawn.
+   */
   ACCEPTED: 'accepted',
   /** The existing operation was called with the input this proposal prepared. */
   APPLIED: 'applied',
@@ -288,7 +297,12 @@ export const OPEN_PROPOSAL_STATES = freeze([PROPOSAL_STATE.SUBMITTED, PROPOSAL_S
  * caller has to rank.
  */
 export const AGENT_REVIEW = freeze({
-  /** The proposal fails the protocol itself: a forged identity, an unknown field, a field only the server may compute. */
+  /**
+   * The proposal fails the protocol itself: a forged identity, an unknown field,
+   * a field only the server may compute -- or an action the acceptance could
+   * never translate into the run's input, because the read-only plan operation
+   * it goes through refuses it or does not produce the plan id it states.
+   */
   INVALID: 'INVALID',
   /** Well-formed, but a binding it names no longer matches what is stored now. */
   STALE: 'STALE',
@@ -377,6 +391,21 @@ export const PROPOSAL_REFUSAL = freeze({
   REVIEWER_EVIDENCE_RECORD_SUPPLIED: 'REVIEWER_EVIDENCE_RECORD_SUPPLIED',
   COLLAPSED_CONFIDENCE_SCORE: 'COLLAPSED_CONFIDENCE_SCORE',
   EXPECTED_OPERATION_MISMATCH: 'EXPECTED_OPERATION_MISMATCH',
+  // A proposal an acceptance could never translate into the run's input. An
+  // acceptance derives the plan through the existing READ-ONLY plan operation
+  // before it reaches `runs.resume`, and that derivation is a pure function of
+  // the stored material the proposal is bound to and of the proposal itself.
+  // So a proposal whose action the operation refuses outright (`*_PLAN_REFUSED`)
+  // or whose stated `expected_plan_id` is not the plan its own action produces
+  // against its own bindings (`*_PLAN_ID_MISMATCH`) fails there on every
+  // attempt. Graded only at acceptance, it was accepted, never reached the run,
+  // and stayed `accepted` -- and open -- for good. The `*_PLAN_INPUTS_CHANGED`
+  // codes below are what an acceptance reports when the material moved between
+  // this check and the translation, which is a different fact.
+  REDUCTION_PLAN_REFUSED: 'REDUCTION_PLAN_REFUSED',
+  REDUCTION_PLAN_ID_MISMATCH: 'REDUCTION_PLAN_ID_MISMATCH',
+  ADAPTATION_PLAN_REFUSED: 'ADAPTATION_PLAN_REFUSED',
+  ADAPTATION_PLAN_ID_MISMATCH: 'ADAPTATION_PLAN_ID_MISMATCH',
 
   // STALE — a binding moved.
   CANONICAL_SNAPSHOT_CHANGED: 'CANONICAL_SNAPSHOT_CHANGED',

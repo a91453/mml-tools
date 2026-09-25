@@ -78,6 +78,7 @@ import { requestKeyOf } from './proposal-contracts.mjs';
 import { CONFIRMATIONS } from './review-service-core.mjs';
 import { CALLER_DECISION_KEYS } from './arrangement-service.mjs';
 import {
+  READINESS_BLOCKER_WITHOUT_OPERATION,
   READINESS_GATE_OPERATIONS,
   RUN_AUTHORITY_NOTICE,
   RUN_EXECUTION_MODE,
@@ -297,6 +298,35 @@ export const RESUME_INPUT_KEYS = Object.freeze([
   'adopt_candidate_id', 'adopt_artifact_id', 'decisions', 'accepted_by',
   'final_reduction', 'mobile_adaptation', 'confirmations', 'finalize', 'reconcile',
 ]);
+
+/**
+ * The latest revision of a stored run known to have been produced by a write
+ * that recorded no writer for it, or null when none is known.
+ *
+ * A revision is unattributed when `revision_written_by` does not name it: the
+ * write was made outside a request's hold (which records null), before the run
+ * kept the field, or by a build that does not know it -- the release a
+ * documented rollback returns to, whose `bumpRun` spreads the run it read and
+ * so carries the record of an earlier revision onto its own. Only the run's
+ * LATEST revision can be seen that way, because the next write that records its
+ * writer replaces the record. So every write this build makes through `bumpRun`
+ * first folds what it can see into `latest_unattributed_revision`, and keeps
+ * the highest such revision it has ever seen there. That field is never
+ * lowered and never cleared: this build's writes carry it forward, and the
+ * older build's `bumpRun` carries it forward too, since it spreads the run it
+ * read. Reading both answers, for any revision R, whether a write this build
+ * cannot attribute produced a revision after R, whatever was written since.
+ *
+ * It says nothing about WHICH request made such a write: nothing on the run
+ * can, and that is exactly why a caller that must know uses it only to refuse.
+ */
+export const latestUnattributedRevision = run => {
+  const known = Number.isInteger(run?.latest_unattributed_revision) ? run.latest_unattributed_revision : null;
+  const latest = Number.isInteger(run?.revision) && run.revision_written_by?.revision !== run.revision ? run.revision : null;
+  if (known === null) return latest;
+  if (latest === null) return known;
+  return Math.max(known, latest);
+};
 
 /**
  * What can actually be DONE about each unprovable cause.
@@ -591,18 +621,28 @@ function readinessRequests(readiness, {
     const entry = readiness?.gates?.[gate] ?? null;
     const known = Object.hasOwn(READINESS_GATE_OPERATIONS, gate);
     const raw = entry?.blockers;
+    const blockers = Array.isArray(raw) ? raw : (raw === undefined || raw === null ? [] : [raw]);
+    // Blockers of this gate that none of its hinted operations can answer are
+    // said so, in the table's own words. When they are all the gate carries,
+    // the gate's operations are not offered at all: they cannot answer it.
+    const unanswerable = known && Object.hasOwn(READINESS_BLOCKER_WITHOUT_OPERATION, gate)
+      ? READINESS_BLOCKER_WITHOUT_OPERATION[gate]
+      : null;
+    const codes = [...new Set(blockers.map(blockerCode))];
+    const withoutOperation = unanswerable ? codes.filter(code => Object.hasOwn(unanswerable, code)) : [];
     return reviewRequest({
       code: RUN_REVIEW_REQUEST.READINESS_GATE_BLOCKED,
       step,
       gate,
       known,
-      blockers: Array.isArray(raw) ? raw : (raw === undefined || raw === null ? [] : [raw]),
+      blockers,
       reportReference: `readiness.gates.${gate}`,
       baselineId,
       candidateId,
       eventIds: entry?.eventIds ?? entry?.decisionIds ?? null,
+      availableOperations: withoutOperation.length && withoutOperation.length === codes.length ? [] : null,
       missing: known
-        ? []
+        ? withoutOperation.map(code => unanswerable[code])
         : ['This readiness gate is not in the run orchestrator hint table, so no operation is suggested. It still blocks, and it is answered through the module that owns it.'],
       invalidatedBy: ['candidate', 'canonical'],
       detail: boundedGate(entry),
@@ -656,12 +696,84 @@ export function createRunService({ canonical, projects, store, operations, seria
     return run;
   };
 
-  const bumpRun = (owner, projectId, run, changes) => putRun(owner, projectId, {
-    ...run,
-    ...changes,
-    revision: run.revision + 1,
-    updated_at: now(),
+  // ── which request a revision was written for ──────────────────────────────
+  //
+  // Every revision the run takes records the request whose write produced it,
+  // as `revision_written_by`: that request's idempotency key (null when it sent
+  // none), its request fingerprint (`requestFingerprintOf`), and the revision
+  // that write produced. It is set by `bumpRun`, in the same save as the
+  // revision it describes, so it is exactly as durable as that write: a
+  // process that dies after a write leaves, on the record, which request made
+  // it. A write made outside a request's hold records null, which names no
+  // request.
+  //
+  // The revision inside it is what makes it a record of ONE revision rather
+  // than of whatever the run was last saved as. A build that predates the
+  // field -- the one a rollback returns to -- still writes the run by
+  // spreading the record it read and bumping the revision, so it carries the
+  // writer of the revision before its own onto its own revision. The record
+  // then names a revision that is no longer the run's, and a reader trusts it
+  // only when `revision_written_by.revision === run.revision`.
+  //
+  // It is what lets a caller finishing an interrupted application tell,
+  // truthfully and after a restart, whether the run's LATEST write was that
+  // application's own -- that is, whether anything else has moved the run
+  // since. The revision a caller happened to observe cannot say that: any
+  // writer may have produced it. Today the proposal service reads it (see
+  // `proposal-service.mjs`, `lastWrittenByThisApplication`).
+  //
+  // The record names the latest writer only. A write that records none -- a
+  // write by that older build, above all -- is replaced as the latest by the
+  // next write that does, and could then no longer be seen. So `bumpRun` also
+  // keeps `latest_unattributed_revision`: before it writes, it folds in the
+  // run's latest revision when that revision's writer is not recorded, and it
+  // never lowers the value (`latestUnattributedRevision`). The older build
+  // spreads the run it read, so it carries this forward as well. A caller that
+  // has to know whether ANY write since some revision might have been one it
+  // cannot attribute -- an acceptance being taken back, which that build
+  // applies without recording its admission -- reads it (see
+  // `proposal-service.mjs`, `unattributedWriteSinceAcceptance`).
+  //
+  // The request is known per lock hold. The serializer runs one hold per
+  // project at a time, so the request a hold writes for is kept by project for
+  // exactly the duration of that hold.
+  const holds = new Map();
+  const underLock = (projectId, request, work) => serialize(String(projectId), async () => {
+    const key = String(projectId);
+    holds.set(key, request);
+    try {
+      return await work();
+    } finally {
+      if (holds.get(key) === request) holds.delete(key);
+    }
   });
+
+  /** What a request's writes are recorded as. */
+  const requestFor = (normalized, fingerprint, { wrote = null } = {}) => ({
+    writtenBy: Object.freeze({ idempotency_key: normalized.idempotency_key, request_fingerprint: fingerprint }),
+    wrote: typeof wrote === 'function' ? wrote : null,
+  });
+
+  const bumpRun = (owner, projectId, run, changes) => {
+    const request = holds.get(String(projectId)) ?? null;
+    const revision = run.revision + 1;
+    // Read from the run as this write found it, before this write's own
+    // record replaces the one that says whether its latest revision had a
+    // recorded writer.
+    const unattributed = latestUnattributedRevision(run);
+    const written = putRun(owner, projectId, {
+      ...run,
+      ...changes,
+      revision,
+      updated_at: now(),
+      revision_written_by: request ? { ...request.writtenBy, revision } : null,
+      ...(unattributed === null ? {} : { latest_unattributed_revision: unattributed }),
+    });
+    // Reported to the request's own caller, under this lock, only once the
+    // write has been made. See `resume`'s `wrote`.
+    if (request?.wrote) request.wrote(written.revision);
+    return written;
+  };
 
   const appendStep = (run, receipt) => [...(run.steps ?? []).filter(entry => entry.step !== receipt.step), receipt];
 
@@ -2810,7 +2922,7 @@ export function createRunService({ canonical, projects, store, operations, seria
   }
 
   /** One bounded advancement: at most `maxRunStepsPerAdvance` steps. */
-  async function advance(owner, projectId, runId, normalized, { idempotencyKey = null, fingerprint = null } = {}) {
+  async function advance(owner, projectId, runId, normalized, { idempotencyKey = null, fingerprint = null, request = null } = {}) {
     let budget = LIMITS.maxRunStepsPerAdvance;
     let halted = false;
     let lastRun = null;
@@ -2819,12 +2931,12 @@ export function createRunService({ canonical, projects, store, operations, seria
       // Each step is one lock hold: read the committed state, re-validate, act,
       // write. The next step re-reads, because between two holds another caller
       // may have changed exactly what this step depends on.
-      const outcome = await serialize(String(projectId), () => step(owner, projectId, runId, normalized));
+      const outcome = await underLock(projectId, request, () => step(owner, projectId, runId, normalized));
       lastRun = outcome.run;
       halted = outcome.halted;
     }
     if (!halted) {
-      lastRun = await serialize(String(projectId), async () => {
+      lastRun = await underLock(projectId, request, async () => {
         const run = findRun(projects.load(owner, projectId), runId);
         return bumpRun(owner, projectId, run, {
           state: RUN_STATE.BLOCKED,
@@ -2833,7 +2945,7 @@ export function createRunService({ canonical, projects, store, operations, seria
       });
     }
     if (idempotencyKey !== null) {
-      lastRun = await serialize(String(projectId), async () => {
+      lastRun = await underLock(projectId, request, async () => {
         const run = findRun(projects.load(owner, projectId), runId);
         const receipts = [...(run.idempotency?.receipts ?? []).filter(entry => entry.key !== idempotencyKey), {
           key: idempotencyKey,
@@ -3369,8 +3481,9 @@ export function createRunService({ canonical, projects, store, operations, seria
       const normalized = normalizeRunInput(input, { label: 'run input', allowed: START_INPUT_KEYS });
       const fingerprint = requestFingerprintOf(normalized);
       const provenance = await canonical.provenance();
+      const request = requestFor(normalized, fingerprint);
 
-      const created = await serialize(String(projectId), async () => {
+      const created = await underLock(projectId, request, async () => {
         const record = projects.load(owner, projectId);
         if (normalized.idempotency_key !== null) {
           const existing = runsOf(record).find(entry => entry.idempotency?.key === normalized.idempotency_key);
@@ -3396,7 +3509,7 @@ export function createRunService({ canonical, projects, store, operations, seria
         if (normalized.target_candidate_id !== null) refuseCandidateFromAnotherSnapshot(record, normalized.target_candidate_id, provenance, 'target_candidate_id');
         const selection = assetSelection(record, normalized.asset_ids);
         const run = newRun(owner, record, normalized, { canonicalProvenance: provenance, fingerprint, selection });
-        return { run: putRun(owner, projectId, run), replayed: false };
+        return { run: putRun(owner, projectId, { ...run, revision_written_by: { ...request.writtenBy, revision: run.revision } }), replayed: false };
       });
 
       if (created.replayed) {
@@ -3407,16 +3520,48 @@ export function createRunService({ canonical, projects, store, operations, seria
           notice: 'This idempotency key is already bound to this run and this payload, so nothing was applied, no revision was taken and no artifact was produced. The run is returned as it stands.',
         });
       }
-      return Object.freeze({ run: await advance(owner, projectId, created.run.run_id, normalized), replayed: false, advanced: true });
+      return Object.freeze({ run: await advance(owner, projectId, created.run.run_id, normalized, { request }), replayed: false, advanced: true });
     },
 
-    /** Re-check an existing run and advance it with new input. */
-    async resume(owner, projectId, runId, input = {}) {
+    /**
+     * Re-check an existing run and advance it with new input.
+     *
+     * `admit` and `wrote` are for an in-process caller that has to know,
+     * truthfully, what its own request did to the run -- today the proposal
+     * service, whose acceptance may be taken back only while none of its
+     * attempts got in, and whose retry may finish only that acceptance's own
+     * application. Neither is a resume input: the public `resumeRun` passes
+     * four arguments, so no transport reaches them.
+     *
+     * `admit({ request_fingerprint })` is called once, inside this call's first
+     * lock hold, AFTER every refusal that hold makes (the idempotency
+     * fingerprint, the revision precondition, the audit-closed guard, the
+     * adoption checks) and BEFORE the hold's first write -- or before a replay
+     * or a settled answer is returned. So a request this method refused was
+     * never admitted, and wrote nothing; a request it acts on was admitted
+     * before anything was written; and the caller's own record of which it was
+     * is written under the same lock as that first write. It is handed the
+     * request fingerprint this call computed, which is what every write of
+     * this request records as its writer (`revision_written_by`), so the
+     * caller can record WHICH request the run let in. `admit` can only refuse,
+     * never widen: if it throws, the request is refused with nothing written
+     * to the run.
+     *
+     * `wrote(revision)` is called under the run's lock right after each write
+     * this request makes that moves the run's revision, with the revision the
+     * write produced. So a caller whose request is interrupted knows where its
+     * OWN request left the run, rather than reading the run afterwards and
+     * taking a revision another writer may have produced in between. The write
+     * it reports has been made, so it must not throw.
+     */
+    async resume(owner, projectId, runId, input = {}, { admit = null, wrote = null } = {}) {
       const normalized = normalizeRunInput(input, { label: 'resume input', allowed: RESUME_INPUT_KEYS });
       const fingerprint = requestFingerprintOf(normalized);
       const provenance = await canonical.provenance();
+      const request = requestFor(normalized, fingerprint, { wrote });
+      const admitted = async () => { if (typeof admit === 'function') await admit({ request_fingerprint: fingerprint }); };
 
-      const prepared = await serialize(String(projectId), async () => {
+      const prepared = await underLock(projectId, request, async () => {
         const record = projects.load(owner, projectId);
         const run = findRun(record, runId);
         // Idempotency is decided FIRST, and the revision precondition only
@@ -3441,6 +3586,7 @@ export function createRunService({ canonical, projects, store, operations, seria
               run_id: run.run_id, bound_request_fingerprint: receipt.request_fingerprint, received_request_fingerprint: fingerprint,
             });
           }
+          await admitted();
           return { run, replayed: true, receipt };
         }
         if (normalized.expected_run_revision !== null && normalized.expected_run_revision !== run.revision) {
@@ -3468,9 +3614,14 @@ export function createRunService({ canonical, projects, store, operations, seria
               available_operations: ['getRun', 'getArtifact', 'startRun'],
             });
           }
+          await admitted();
           return { run, replayed: false, settled: true };
         }
-        return { run: bumpRun(owner, projectId, run, resumeChanges(owner, record, run, normalized, provenance)), replayed: false };
+        // Every refusal of this hold is above this line, including the ones
+        // `resumeChanges` makes, and every write is below it.
+        const changes = resumeChanges(owner, record, run, normalized, provenance);
+        await admitted();
+        return { run: bumpRun(owner, projectId, run, changes), replayed: false };
       });
 
       if (prepared.settled) {
@@ -3491,7 +3642,7 @@ export function createRunService({ canonical, projects, store, operations, seria
         });
       }
       return Object.freeze({
-        run: await advance(owner, projectId, runId, normalized, { idempotencyKey: normalized.idempotency_key, fingerprint }),
+        run: await advance(owner, projectId, runId, normalized, { idempotencyKey: normalized.idempotency_key, fingerprint, request }),
         replayed: false,
         advanced: true,
       });

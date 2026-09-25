@@ -209,12 +209,17 @@ test('under @2 a same-value Tempo restatement is collapsed and recorded; a Tempo
   assert.equal(validateMML(collapsed.combinedMml, { meterText: '0 4/4' }).ok, true);
 
   // Under @1, or without the machine-delivery opt-in, the map is written as the
-  // candidate carries it, and the off-grid restatement fails closed as before.
+  // candidate carries it, and the off-grid restatement fails closed as before:
+  // one tick before a grid point is a position no admitted token sequence
+  // reaches, so it is named as that proof, not as a search limit.
   for (const [canonical, options] of [[AT1, MACHINE_DELIVERY_PATH], [AT2, {}]]) {
     const unchanged = emitFinalMml(project, { ...options, canonical });
     assert.equal(unchanged.status, 'FAIL');
     assert.equal(unchanged.combinedMml, null);
-    assert.ok(unchanged.diagnostics.some(item => item.code === EMIT_DIAGNOSTICS.DURATION_SEARCH_POLICY_LIMIT));
+    assert.ok(unchanged.diagnostics.some(item => item.code === EMIT_DIAGNOSTICS.BOUNDARY_NOT_FINAL_REPRESENTABLE
+      && item.completenessProven === true
+      && item.unreachableBoundaries.some(entry => entry.position === oneTickBeforeTwo)));
+    assert.equal(unchanged.diagnostics.some(item => item.code === EMIT_DIAGNOSTICS.DURATION_SEARCH_POLICY_LIMIT), false);
     assert.equal(unchanged.tempoRestatements?.applied ?? false, false);
   }
 });

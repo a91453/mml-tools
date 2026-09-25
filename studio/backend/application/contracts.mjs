@@ -445,6 +445,9 @@ export const LIMITS = freeze({
   // the open ones is what makes the refusal's remedy true: resolving or
   // withdrawing one frees a slot, exactly as it says. Counting every proposal
   // ever made, as this did, made that sentence a no-op and the cap terminal.
+  // One open proposal cannot be withdrawn: an accepted one whose application
+  // may already have reached the run. The refusal counts what can be freed and
+  // names a remedy only where one exists (`proposal-service.mjs`).
   maxProposalsPerProject: 64,
   // And the lifetime total a project retains, resolved records included. A
   // resolved proposal is an audit record and is never evicted -- an agent that

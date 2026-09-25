@@ -321,6 +321,14 @@ export function createStudioApplication({
       return { operation: OPERATION_STATUS.SUCCEEDED, reduction: await arrangement.finalReduction(owner, projectId, { ...input, apply: false }) };
     },
 
+    /**
+     * A digest of every stored input the two plan operations read for one
+     * candidate (`arrangement-service.planInputIdentity`). Read-only. The
+     * proposal layer keys its memo of the Agent Review Policy's plan
+     * derivation on it, so the memo is reused only for the same bytes.
+     */
+    planInputIdentity: (owner, projectId, candidateId) => arrangement.planInputIdentity(owner, projectId, candidateId),
+
     async applyFinalReduction(owner, projectId, input) {
       const result = await arrangement.finalReduction(owner, projectId, { ...input, apply: true });
       const reviewResult = result.applied ? await review.review(owner, projectId, { candidateId: result.candidate_id }) : null;
@@ -748,6 +756,7 @@ export { PRE_EMISSION_EXEMPT_GATES, FINAL_ARTIFACT_SCHEMA } from './final-servic
 export { CONFIRMATIONS, CONFIRMATION_SCOPE, PLAYER_READBACK_VALUES, STALE_CONFIRMATION, gatesFrom } from './review-service.mjs';
 export { PROJECT_RECORD_SCHEMA } from './project-service.mjs';
 export {
+  READINESS_BLOCKER_WITHOUT_OPERATION,
   READINESS_GATE_OPERATIONS,
   RUN_AUTHORITY_NOTICE,
   RUN_EXECUTION_MODE,

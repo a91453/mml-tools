@@ -60,6 +60,59 @@ for (const backend of ['memory', 'filesystem']) {
     store.putBytes('empty', new Uint8Array());
     assert.deepEqual(store.getBytes('empty'), new Uint8Array());
   });
+
+  // `writeCount` is how the policy's plan-derivation memo proves no write of
+  // this process landed while a derivation ran (`plan-derivation-memo.mjs`):
+  // an outcome is held only if the count did not move. A write method that
+  // forgot to count would let an outcome derived across that write be held
+  // and served for the state after it. The record and blob writes proposals
+  // and runs actually make go through `writeProjectRecord`, `putJson` and
+  // `putBytes`, so every method is pinned here on its own -- and every method
+  // the store exposes must be classified, so one added later without a
+  // decision about the counter fails this test rather than slipping past it.
+  test(`${backend}: every write method moves the write count, once per call, and no read moves it`, t => {
+    const store = storeFor(t, 64);
+    const record = id => ({ project_id: `prj_${id.repeat(32)}`, owner: 'owner:store-write-count', title: id });
+    const writes = {
+      createProjectRecord: () => store.createProjectRecord(record('a')),
+      writeProjectRecord: () => store.writeProjectRecord({ ...record('a'), title: 'rewritten' }),
+      deleteProjectRecord: () => store.deleteProjectRecord(record('a').project_id),
+      putBytes: () => store.putBytes('blob:bytes', Uint8Array.of(1, 2, 3)),
+      putJson: () => store.putJson('blob:json', { value: 1 }),
+      deleteBytes: () => store.deleteBytes('blob:bytes'),
+    };
+    const reads = {
+      describe: () => store.describe(),
+      readProjectRecord: () => store.readProjectRecord(record('b').project_id),
+      listProjectRecords: () => store.listProjectRecords('owner:store-write-count'),
+      getBytes: () => store.getBytes('blob:json'),
+      getJson: () => store.getJson('blob:json'),
+      usedBytes: () => store.usedBytes(),
+      writeCount: () => store.writeCount(),
+    };
+    const values = ['maxBytes'];
+    assert.deepEqual(Object.keys(store).sort(), [...Object.keys(writes), ...Object.keys(reads), ...values].sort(),
+      'every store member is classified as a write, a read or a value');
+
+    store.createProjectRecord(record('b'));
+    for (const [name, write] of Object.entries(writes)) {
+      const before = store.writeCount();
+      write();
+      assert.equal(store.writeCount(), before + 1, `${name} moves the write count by one`);
+      for (const [readName, read] of Object.entries(reads)) {
+        const unmoved = store.writeCount();
+        read();
+        assert.equal(store.writeCount(), unmoved, `${readName} is a read and moves nothing`);
+      }
+    }
+    // The count is of attempts, not successes: a write the store refuses
+    // still says something MAY have changed.
+    for (const name of ['putBytes', 'putJson']) {
+      const before = store.writeCount();
+      assert.throws(() => store[name]('blob:too-big', name === 'putBytes' ? new Uint8Array(65) : { value: 'x'.repeat(65) }), { code: 'STORAGE_FULL' });
+      assert.equal(store.writeCount(), before + 1, `a refused ${name} is counted`);
+    }
+  });
 }
 
 test('a temp file a failed or interrupted write left behind is neither charged nor kept', () => {

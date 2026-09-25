@@ -11,7 +11,7 @@ on:
   workflow_dispatch:
 
 concurrency:
-  group: studio-durable-release-e8d7a998d926
+  group: studio-durable-release-d7ec3c6ea7bd
   cancel-in-progress: false
 
 permissions:
@@ -30,14 +30,14 @@ jobs:
       - name: Check published main and build the pinned merged source
         shell: bash
         run: |
-          test "$(git rev-parse origin/main)" = e8d7a998d926744450d477402a544ca03e9c044a
-          git worktree add --detach /tmp/studio-release-source e8d7a998d926744450d477402a544ca03e9c044a
+          test "$(git rev-parse origin/main)" = d7ec3c6ea7bd9e69488389e0e9db71a38fbb3e7a
+          git worktree add --detach /tmp/studio-release-source d7ec3c6ea7bd9e69488389e0e9db71a38fbb3e7a
           cd /tmp/studio-release-source
           npm install --ignore-scripts --package-lock=false
           node scripts/bootstrap-canonical.mjs --summary
           node scripts/build.mjs
           node scripts/build-studio-web.mjs
-          node scripts/verify-studio-artifact.mjs studio/web-build --buildId=8d45514dee668a3b8f3dfbfd9d0f858fc865802c7975539baac37fae9a5ced36 --sourceSha=e8d7a998d926744450d477402a544ca03e9c044a --canonical_version=2026-09-23-v3 --canonical_status=PUBLISHED --manifest_version=2026-09-23-v3-manifest1 --rules_snapshot_sha=ff1a9df054f5ca1ae42571067fc95feb274755ef --machine_delivery_schema=mabinogi-mobile-mml-studio/machine-delivery@2
+          node scripts/verify-studio-artifact.mjs studio/web-build --buildId=f7c5c9d5fa625063123bfae44a5259ed04b36515bf14cc41fe4fda79255872c9 --sourceSha=d7ec3c6ea7bd9e69488389e0e9db71a38fbb3e7a --canonical_version=2026-09-23-v3 --canonical_status=PUBLISHED --manifest_version=2026-09-23-v3-manifest1 --rules_snapshot_sha=ff1a9df054f5ca1ae42571067fc95feb274755ef --machine_delivery_schema=mabinogi-mobile-mml-studio/machine-delivery@2
       - name: Package deterministic runtime and separately pinned trust bundles
         run: |
           python ops/permanent/package_release.py /tmp/studio-release-source /tmp/studio-release-source/studio/web-build /tmp/studio-release-assets
