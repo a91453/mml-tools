@@ -87,23 +87,36 @@ async function browserCache() {
 
 const describe = record => ({ name: GAME_STYLE_BANK_NAME, label: GAME_STYLE_BANK_LABEL, size: record.size, sha256: record.sha256, format: 'DLS', bytes: record.bytes, isDefault: true, preset: 'game-style' });
 
-/**
- * The verified game-style bank: from this browser's store or, on a miss,
- * downloaded from this site, verified and kept.
- * Everything that touches the outside is injectable for tests.
- */
-export async function loadGameStyleBank({ fetchImpl, cache = null, onProgress = () => {}, pin = GAME_STYLE_BANK } = {}) {
+// One pinned file from this browser's store or, on a miss, downloaded from
+// this site, verified and kept. A kept copy is checked again before use; one
+// that no longer matches is treated as absent and replaced. With `keptOnly`
+// a miss answers null and nothing is downloaded.
+async function loadKept(pin, { fetchImpl, cache = null, onProgress = () => {}, keptOnly = false }) {
   const store = cache ?? await browserCache();
-  // A kept copy is checked again before use; one that no longer matches is
-  // treated as absent and replaced.
   const cached = await store.load(pin.sha256).catch(() => null);
-  if (cached?.bytes && await sha256Hex(cached.bytes) === pin.sha256) return { ...describe(cached), downloaded: false };
+  if (cached?.bytes && await sha256Hex(cached.bytes) === pin.sha256) return { record: cached, downloaded: false };
+  if (keptOnly) return null;
   onProgress({ phase: 'download', received: 0, total: pin.bytes });
   const bytes = await fetchPinned(pin, { fetchImpl, onProgress });
   const record = { sha256: pin.sha256, size: bytes.byteLength, savedAt: new Date().toISOString(), source: pin.path, bytes: bytes.buffer };
-  // The verified bank still plays when this browser cannot keep it.
+  // The verified file is still used when this browser cannot keep it.
   let stored = true;
   try { await store.store(record); } catch { stored = false; }
   onProgress({ phase: 'done', stored });
-  return { ...describe(record), downloaded: true, stored };
+  return { record, downloaded: true, stored };
+}
+
+/**
+ * The verified game-style bank. Everything that touches the outside is
+ * injectable for tests. With `keptOnly`, null unless this browser keeps it.
+ */
+export async function loadGameStyleBank({ pin = GAME_STYLE_BANK, ...options } = {}) {
+  const kept = await loadKept(pin, options);
+  return kept && { ...describe(kept.record), downloaded: kept.downloaded, ...(kept.downloaded ? { stored: kept.stored } : {}) };
+}
+
+/** The bank's verified instrument list (.def), for the Workshop's names. */
+export async function loadGameStyleDef({ pin = GAME_STYLE_DEF, ...options } = {}) {
+  const kept = await loadKept(pin, options);
+  return kept && kept.record.bytes;
 }

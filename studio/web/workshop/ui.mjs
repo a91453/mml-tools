@@ -47,6 +47,7 @@ import * as storage from "./storage.mjs";
 import { setIcon } from "./icons.mjs";
 import * as studio from "./studio-bridge.mjs";
 import * as bankStore from "../preview/soundbank-store.mjs";
+import { GameStyleBankError, loadGameStyleBank, loadGameStyleDef } from "../preview/game-style-bank.mjs";
 import { buildRoles, withSelection, renderHTML, runAt, MAX_HL_CHARS } from "./mml-highlight.mjs";
 
 let rawPresets = [];
@@ -628,7 +629,9 @@ export function describe(err, headline) {
 }
 
 // The sound bank is the one the user keeps in Studio Web's local bank store
-// (the same store the Studio timbre preview reads). Nothing is fetched.
+// (the same store the Studio timbre preview reads); without one, the
+// game-style bank when it was chosen and this device keeps it. Nothing is
+// fetched.
 // It is asked for at boot, before the user can pick anything, so it is older
 // than every pick: once any bank has been picked it is never applied, not
 // even when the pick came while the engine was still booting and its own
@@ -640,7 +643,7 @@ export async function loadStoredBank() {
   let stored = null;
   try { stored = await bankStore.loadBank(); }
   catch (err) { console.warn("[Workshop] stored bank:", err); }
-  if (!stored) return;
+  if (!stored) return loadKeptGameStyle(picked);
   // A copy of the bytes the synth gets, taken before they are handed over, is
   // what an export renders (bankSource).
   try { await queueBank(() => picked() ? undefined : loadBank(stored.bytes, stored.name, false, new Blob([stored.bytes]))); }
@@ -651,6 +654,39 @@ export async function loadStoredBank() {
     if (picked()) return;
     $("#dlsName").textContent = i18n.t("ui.bankFailed");
     say(describe(err, i18n.t("ui.bankLoadError")));
+  }
+}
+
+// The game-style bank the site serves (game-style-bank.mjs), with its own
+// instrument list for the names and the whitelist. Studio's players remember
+// the same choice under this key (app.mjs); a bank of the user's own still
+// comes first at boot.
+const PRESET_BANK_KEY = "mml-studio-preset-bank";
+const gameStyleChosen = () => { try { return localStorage.getItem(PRESET_BANK_KEY) === "game-style"; } catch { return false; } };
+const chooseGameStyle = () => { try { localStorage.setItem(PRESET_BANK_KEY, "game-style"); } catch { /* this page only */ } };
+const gameStyleMessage = err => i18n.t(err?.code === "GAME_STYLE_BANK_ABSENT" ? "ui.gameStyleAbsent"
+  : err?.code === "GAME_STYLE_BANK_MISMATCH" ? "ui.gameStyleMismatch" : "ui.gameStyleDownloadFailed");
+
+async function useGameStyle(bank, def) {
+  const name = i18n.t("ui.gameStyleName");
+  // A copy for exports, taken before the synth gets the bytes (bankSource).
+  await loadBank(bank.bytes, name, false, new Blob([bank.bytes]));
+  applyDef(def, name, true);
+}
+
+// Kept on this device and chosen before: used at boot without a download.
+async function loadKeptGameStyle(picked) {
+  if (!gameStyleChosen()) return;
+  let bank = null, def = null;
+  try { [bank, def] = await Promise.all([loadGameStyleBank({ keptOnly: true }), loadGameStyleDef({ keptOnly: true })]); }
+  catch (err) { console.warn("[Workshop] game-style bank:", err); }
+  if (!bank || !def || picked()) return;
+  try { await queueBank(() => picked() ? undefined : useGameStyle(bank, def)); }
+  catch (err) {
+    console.warn("[Workshop] game-style bank failed to load:", err);
+    if (picked()) return;
+    $("#dlsName").textContent = i18n.t("ui.bankFailed");
+    say(describe(err, i18n.t("ui.gameStyleLoadError")));
   }
 }
 
@@ -3388,6 +3424,29 @@ export function init() {
       if (pick !== bankPicks) return;
     $("#dlsName").textContent = i18n.t("ui.bankFailed");
     say(describe(err, i18n.t("ui.bankLoadError")));
+    }
+  });
+
+  $("#gameStyleBank").addEventListener("click", async () => {
+    const pick = ++bankPicks;
+    const had = namedBank();
+    const show = text => { if (pick === bankPicks) $("#dlsName").textContent = had ? `${had} · ${text}` : text; };
+    show(i18n.t("ui.bankReading"));
+    try {
+      await queueBank(async () => {
+        if (pick !== bankPicks) return;
+        const progress = p => { if (p.phase === "download") show(i18n.t("ui.gameStyleDownloading", { pct: Math.floor((p.received / p.total) * 100) })); };
+        const [bank, def] = await Promise.all([loadGameStyleBank({ onProgress: progress }), loadGameStyleDef()]);
+        if (pick !== bankPicks) return;
+        chooseGameStyle();
+        await useGameStyle(bank, def);
+      });
+    }
+    catch (err) {
+      console.error(err);
+      if (pick !== bankPicks) return;
+      $("#dlsName").textContent = i18n.t("ui.bankFailed");
+      say(err instanceof GameStyleBankError ? escHtml(gameStyleMessage(err)) : describe(err, i18n.t("ui.gameStyleLoadError")));
     }
   });
 
