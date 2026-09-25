@@ -587,8 +587,9 @@ Three things keep it from becoming a way around this interface's own rules:
   produces a review request with `known: false`, no operation hint, and still
   blocks. A blocker of a known gate that none of its hinted operations answers
   (`READINESS_BLOCKER_WITHOUT_OPERATION`; today
-  `MICRO_TIMING_BOUNDARY_NOT_FINAL_REPRESENTABLE`) is stated in `missing`, and a
-  request carrying only such blockers names no operation. The pre-emission
+  `MICRO_TIMING_BOUNDARY_NOT_FINAL_REPRESENTABLE` and
+  `MICRO_TIMING_SOURCE_SUPPORTED_NOT_FINAL_REPRESENTABLE`) is stated in
+  `missing`, and a request carrying only such blockers names no operation. The pre-emission
   exemption is the Final service's own
   `PRE_EMISSION_EXEMPT_GATES`, imported rather than restated, so the run cannot
   become a second exemption policy or extend the exemption;
