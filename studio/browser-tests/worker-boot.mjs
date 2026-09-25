@@ -97,4 +97,15 @@ export async function runWorkerBootChecks({ browser, base }) {
   assert.equal(listenOnce.workers, 2);
   assert.equal(listenOnce.boot_error, false);
   assert.deepEqual(listenOnce.errors, []);
+  // A listen model that fetched but does not parse is not retried, and the
+  // page says the link did not open rather than that it did. The session is
+  // saved and listed, so it can be opened again.
+  const listenParse = await boot('**/studio/web/listen-model.mjs', route => route.fulfill({ status: 200, contentType: 'text/javascript', body: 'export const = ;' }), { listen });
+  assert.equal(listenParse.workers, 1, `a listen model that does not parse is not retried: ${JSON.stringify(listenParse)}`);
+  assert.equal(listenParse.listen_title, null);
+  assert.ok(!listenParse.messages.includes(opened), `the status line never reports a session that opened: ${JSON.stringify(listenParse)}`);
+  assert.match(listenParse.listen_error, /^試聽連結無法開啟：/);
+  assert.ok(listenParse.messages.includes(listenParse.listen_error), 'the status line reports the failure the panel shows');
+  assert.equal(listenParse.listen_sessions, 1);
+  assert.equal(listenParse.boot_error, false, 'analysis is unaffected');
 }

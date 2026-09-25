@@ -96,7 +96,10 @@ export function createListening({ root, call, message, copyText, audio, saveProj
         mml: link.mml, meterText: link.meter_text ?? null, start: link.start ?? null, markers: link.markers ?? [],
         compareMml: link.compare_mml ?? null, compareLabel: link.compare_mml ? '連結提供的前一版' : null,
       });
-      await open(session.id);
+      // open() keeps its failure on the page instead of throwing, so only a
+      // session that opened is reported as one. It stays saved either way and
+      // can be opened again from the list.
+      if (!await open(session.id)) throw Error(state.error);
       message('已從試聽連結建立新的試聽工作階段；按「播放」才會發出聲音。沒有建立或覆寫任何專案。');
       return session;
     } catch (error) {
@@ -126,9 +129,11 @@ export function createListening({ root, call, message, copyText, audio, saveProj
   }
 
   // ─── opening a session ────────────────────────────────────────────────
+  // Resolves true when the session opened, false when it could not.
   async function open(id) {
     stop({ quiet: true });
     state.loading = true; state.error = null; render();
+    let opened = false;
     try {
       const session = await getSession(id);
       const parsed = await call('parseListening', session.mml);
@@ -137,12 +142,14 @@ export function createListening({ root, call, message, copyText, audio, saveProj
       layout();
       state.cue = { beat: startBeat(session.start) };
       state.position = { seconds: clock().secondsAt(state.cue.beat), beat: beatNumber(state.cue.beat) };
+      opened = true;
     } catch (error) {
       state.session = null; state.error = error.message;
     }
     state.loading = false;
     await refreshSessions();
     render();
+    return opened;
   }
   // Bars, clocks, markers and changes for what is loaded.
   function layout() {
