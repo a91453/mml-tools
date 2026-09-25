@@ -619,11 +619,13 @@ Three things keep it from becoming a way around this interface's own rules:
   release representation moves only such a release, so an unclassified
   sub-grid interval with no such release behind it is stated in `missing` as
   answered in the Canonical source itself. A finalize the Final emitter refused
-  names no operation unless its sole blocking diagnostic is
-  `EVENT_ROLE_UNASSIGNED`: then a new, explicitly reviewed Final reduction may
-  assign the role, and its `FINALIZE_BLOCKED` and `technical` requests name
-  `planFinalReduction` / `applyFinalReduction`. `FINALIZE_BLOCKED` carries the
-  emitter's blocking codes in `detail.emitter_blockers` (§10). The pre-emission
+  names no gate operation either: its `FINALIZE_BLOCKED`, `technical` and
+  `finalEmission` requests list only the operations `EMITTER_REFUSAL_OPERATIONS`
+  names for the emitter's codes (today `EVENT_ROLE_UNASSIGNED`:
+  `planFinalReduction`, `applyFinalReduction`, whether or not other codes are
+  raised beside it), and none for a code it does not list.
+  `FINALIZE_BLOCKED` carries the emitter's blocking codes in
+  `detail.emitter_blockers` (§10). The pre-emission
   exemption is the Final service's own
   `PRE_EMISSION_EXEMPT_GATES`, imported rather than restated, so the run cannot
   become a second exemption policy or extend the exemption;
@@ -784,11 +786,16 @@ reported failure and the parser never ran; the candidate declares no meter
 events so nothing was graded; the parser rejected the emitted MML; the recorded
 readback names a different MML. An emitter failure is `operation: "failed"` and
 a `failed` job; a blocked finalize is a completed job whose `result_operation`
-is `blocked`. A run that reaches an emitter failure names no operation for it:
-every gate finalize grades before emission was already satisfied, so nothing
-but a new candidate or Canonical release changes the refusal, and the run's
-`FINALIZE_BLOCKED` request carries the emitter's blocking diagnostic codes in
-`detail.emitter_blockers` instead.
+is `blocked`. A run that reaches an emitter failure names no gate operation
+for it: the emitter runs only when no gate finalize grades before emission
+blocks delivery, so what changes the refusal is a different candidate. The
+run's `FINALIZE_BLOCKED` request carries the emitter's blocking diagnostic codes
+in `detail.emitter_blockers`, and it and the `technical` request name only an
+operation that produces such a candidate for one of those codes
+(`EMITTER_REFUSAL_OPERATIONS`): `EVENT_ROLE_UNASSIGNED`, material the Final
+reduction kept outside the six roles, is answered by a reduction that places or
+omits it (`planFinalReduction`, then `resumeRun` with `final_reduction`). A code
+the table does not list is stated with no operation.
 
 The artifact records the MML, the candidate and project identity, the Canonical
 provenance, the readiness summary, the repair report, the round-trip report, the
