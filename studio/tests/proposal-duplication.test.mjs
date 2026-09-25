@@ -410,9 +410,12 @@ test('a process that dies inside the run leaves an acceptance whose retry finish
       const app = createStudioApplication({ dataDirectory: directory, durability: 'persistent' });
       const context = await submitted(app);
 
+      // The acceptance must get into the run for its process to die there. One
+      // the run refuses settles instead of stopping, and is reported as such
+      // rather than waited on for good.
       const dying = dyingInside(directory, hook);
-      acceptIn(dying.app, context);
-      await dying.stopped;
+      const settledFirst = await Promise.race([dying.stopped.then(() => null), acceptIn(dying.app, context)]);
+      assert.equal(settledFirst, null, `${hook}: the acceptance must be admitted and stop inside the run, got ${settledFirst?.error?.code}: ${settledFirst?.error?.message}`);
 
       // A fresh service over the same store. The acceptance and the run's
       // admission of it are on the record; nothing after that is.
@@ -526,8 +529,8 @@ test('after a process died inside the run, a retry is refused once another write
       const app = createStudioApplication({ dataDirectory: directory, durability: 'persistent' });
       const context = await submitted(app);
       const dying = dyingInside(directory, 'beforeEffect');
-      acceptIn(dying.app, context);
-      await dying.stopped;
+      const settledFirst = await Promise.race([dying.stopped.then(() => null), acceptIn(dying.app, context)]);
+      assert.equal(settledFirst, null, `${writer}: the acceptance must be admitted and stop inside the run, got ${settledFirst?.error?.code}: ${settledFirst?.error?.message}`);
 
       let interruptOther = false;
       const restarted = createStudioApplication({
