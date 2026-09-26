@@ -20,6 +20,9 @@ import { createSourceRequestLedger } from './source-requests.mjs';
 // pipeline. This small adapter only opens a copy there and brings an edit back
 // through the ordinary intake below; see workshop-link.mjs.
 import { UNVERIFIED_LABEL, parseReturnHash, returnFileName, takeReturn, workshopUrl } from './workshop-link.mjs';
+// Light/dark theme (ui-prefs.mjs), shared with the Workshop; boot.js applied
+// the stored one before first paint.
+import { applyTheme, setTheme, themeChoice, UI_KEY } from './ui-prefs.mjs';
 
 const $ = selector => document.querySelector(selector);
 const esc = value => String(value ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
@@ -1681,6 +1684,20 @@ function offerWorkshopReturn() {
 }
 async function buildAudit(){ try{ const r=await fetch('./build.json'); if(!r.ok) return null; return (await r.json()).audit??null; } catch { return null; } }
 function network(){ $('#network').textContent=navigator.onLine?'本地執行 · Online':'本地執行 · Offline'; }
+// ─── Theme ──────────────────────────────────────────────────────────────────
+// Light, dark or follow the system. The choice is stored in the preference the
+// Workshop shares, so a theme picked on either page holds on both; a switch
+// only swaps CSS tokens (the review roll repaints itself, review-roll.mjs).
+function initTheme(){
+  const select=$('#theme');
+  select.value=themeChoice();
+  select.onchange=()=>setTheme(select.value);
+  // "Follow the system" follows it live, and a choice made on the Workshop
+  // page in another tab is picked up when it is made.
+  globalThis.matchMedia?.('(prefers-color-scheme: dark)').addEventListener?.('change',()=>{if(themeChoice()==='system')applyTheme('system');});
+  addEventListener('storage',event=>{if(event.key===null||event.key===UI_KEY){select.value=themeChoice();applyTheme();}});
+}
+initTheme();
 addEventListener('online',network);addEventListener('offline',network);network();
 // ─── Listening sessions ─────────────────────────────────────────────────────
 // A listen link (#listen=…) opens its own session beside whatever project is

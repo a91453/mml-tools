@@ -837,3 +837,23 @@ cache-first 的 Service Worker 快取，所以開著的工作坊分頁會一直�
   暫停、循環、播放中改譜。共用的是引擎載入檢查（`bank-check.mjs`）、樂器表、鼓音規則與空白音色
   過濾（`isUsablePreset`）。
 
+
+### 14.6 Studio 主頁的深色模式（2026-09-26）
+
+UI-7（深色模式）在 Studio 主頁完成。擁有者決定 Studio 主頁**只做深色模式，不做四語系**：頁面一律是
+`<html lang="zh-Hant">`，工作坊的四語系維持不變。
+
+- **三種主題**：淺色、深色、跟隨系統（不存 theme，跟著 `prefers-color-scheme` 即時切換）。側欄的「主題」選單切換，
+  不重新載入頁面。
+- **首繪前套用**：`studio/web/boot.js`（外部 classic script，符合 CSP）只讀主題並設定 `data-theme` 與 theme-color；
+  不做語言偵測，也不隱藏頁面。
+- **一個主題偏好**：與工作坊共用 localStorage `studio-workshop/ui` 的 `theme`（`studio/web/ui-prefs.mjs`），在任一頁
+  選的主題兩頁都沿用；另一個分頁改了主題時，本頁即時跟上。Studio 只讀寫 `theme`，工作坊存的 `lang` 等欄位不受影響，
+  也不影響 Studio。
+- **深色主題**：`style.css` 的顏色全部改成 token，`:root[data-theme="dark"]` 重新定義每一個 token（含審核捲軸的
+  `--roll-*`）；審核捲軸在主題切換時重新讀取 token 並重畫（`review-roll.mjs`）。狀態顏色的意義不變（PASS 綠、
+  FAIL／UNSUPPORTED 紅、PENDING 琥珀），只調整明度。
+- **驗證**：單元測試 `studio/tests/web-theme.test.mjs`（深色 token 完整、token 區塊外沒有寫死的顏色、CSP、boot.js
+  只處理主題、共用偏好、「跟隨系統」清除已存的主題且保留工作坊其他偏好）；瀏覽器測試
+  `studio/browser-tests/web-theme.mjs`（首繪前即為系統主題、就地切換、重新載入後保留、跟隨系統即時切換、與工作坊
+  共用主題、日文瀏覽器與工作坊存的語言都不改變 Studio 的 zh-Hant）。
