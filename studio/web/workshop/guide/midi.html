@@ -1,0 +1,227 @@
+<!doctype html>
+<html lang="zh-Hant">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="theme-color" content="#122325">
+<meta name="robots" content="noindex">
+<!-- The Workshop's policy: scripts and styles only from 'self', no inline script or style, nothing but this origin is contacted. -->
+<meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self' data:; connect-src 'self'; object-src 'none'; base-uri 'self'; form-action 'none'">
+<title>MIDI 轉 MML · 工作坊說明</title>
+<link rel="icon" href="../../../../icon.svg" type="image/svg+xml">
+<link rel="stylesheet" href="./guide.css">
+<script src="./boot.js"></script>
+</head>
+<body data-guide="midi">
+<p class="zh-only" id="zhOnly" hidden>目前只有中文版</p>
+<header class="guide-head">
+  <div class="inner">
+    <a class="brand" href="../index.html">← 工作坊</a>
+    <nav class="guide-nav" aria-label="說明頁">
+      <a href="./editor.html">編輯器入門</a>
+      <a href="./reference.html">功能說明</a>
+      <a href="./keys.html">快捷鍵</a>
+      <a href="./mobile.html">手機與平板</a>
+      <a href="./mml.html">MML 教學</a>
+      <a href="./midi.html">MIDI 轉 MML</a>
+      <a href="./faq.html">常見問題</a>
+    </nav>
+  </div>
+</header>
+<main id="guide">
+  <h1>MIDI 轉 MML</h1>
+  <p>把現成的 MIDI 檔轉成瑪奇能用的樂譜</p>
+
+  <div class="toc">
+    <ol>
+      <li><a href="#why">為什麼不能直接轉</a></li>
+      <li><a href="#studio">要保留原曲的全部內容：用 Studio 的 Raw MIDI</a></li>
+      <li><a href="#how">工作坊的操作步驟</a></li>
+      <li><a href="#list">聲部清單怎麼讀</a></li>
+      <li><a href="#mode">五種採樣模式</a></li>
+      <li><a href="#quota">軌數額度</a></li>
+      <li><a href="#after">匯入之後要檢查什麼</a></li>
+      <li><a href="#limit">已知的限制</a></li>
+    </ol>
+  </div>
+
+  <div class="note">
+    <p><strong>先分清楚兩條路：</strong>這一頁大部分在講<strong>工作坊</strong>的 MIDI 匯入。它是一個編輯器功能：為了讓你馬上有一份能編的單音譜，它會對齊格子、從同時響的音裡挑一個、移八度、合併速度——<strong>會丟掉原曲的內容</strong>，而且在 Canonical／驗證流程之外。要做一份能追溯到原曲、經過審核的譜，請把 MIDI 交給 <a href="../../../../index.html">Studio</a>（見<a href="#studio">下一節</a>）。</p>
+  </div>
+
+  <h2 id="why">為什麼不能直接轉</h2>
+
+  <p>MIDI 與瑪奇 MML 表達能力差很多，這是整件事的根源：</p>
+
+  <table>
+    <thead>
+      <tr><th></th><th>MIDI</th><th>瑪奇 Mobile MML</th></tr>
+    </thead>
+    <tbody>
+      <tr><td>同時發聲</td><td>一個聲部可以同時響好幾個音</td><td><strong>一個角色是一串依序的音</strong>，同一時間只有一個音；和弦要拆到不同角色</td></tr>
+      <tr><td>聲部數量</td><td>16 個 channel，各自不限</td><td>最多 <strong>6 個角色</strong>（基本 3 個，可擴充到 6 個，MOBILE_SYNTAX §2）</td></tr>
+      <tr><td>樂器</td><td>同一軌中途可以換</td><td>MML 文字本身不帶樂器；工作坊每個分頁選一種樂器</td></tr>
+      <tr><td>時間精度</td><td>非常細，可以記錄真人演奏的微小誤差</td><td>要寫成 1–64 的長度（MOBILE_SYNTAX §3）；專案 Final 的安全時間解析度是 1/64（MOBILE_SYNTAX §4）</td></tr>
+    </tbody>
+  </table>
+
+  <p>所以「把 MIDI 變成六個角色」一定有取捨：哪些音留下、哪些音移到別的角色、哪些音拿掉。Canonical 的做法是<strong>先完整保留來源，再做有紀錄的縮減</strong>（MASTER_RULES §2、§3）：每一個被移動、刪除或改動的音都要能列出來，不能默默消失。</p>
+
+  <div class="workshop-only">
+    <p><strong>工作坊專用：</strong>工作坊的匯入走的是另一條路——它當下就做取捨：從每個瞬間好幾個音裡挑一個留下來。轉出來的東西一定比原曲少，問題只在於「少掉的是不是你在意的那些」，而那正是採樣模式在決定的事。它不會留下「哪些音被丟掉」的逐音紀錄（只有警告訊息裡的數字），所以結果不能當成來源基準。</p>
+  </div>
+
+  <h2 id="studio">要保留原曲的全部內容：用 Studio 的 Raw MIDI</h2>
+
+  <p>在 <a href="../../../../index.html">Studio</a> 的「01　專案與來源」加入 <code>.mid</code>／<code>.midi</code>，結果會出現在「02　Raw MIDI 來源與候選」。它和工作坊的匯入不同：</p>
+
+  <ul>
+    <li><strong>保留每一個來源事件。</strong>原始位元組留在這台裝置，Studio 從位元組讀出完整的來源專案，以精確的拍數記錄時間，不對齊格子、不挑音；無法無損表示的音會列為「未支援」，不會被近似。每個來源事件都會落在「已指派角色」「待決」「未指派」「未支援」其中一格，沒有事件會為了畫面好看被刪掉。</li>
+    <li><strong>先分解聲部（G11-B），再<em>建議</em>角色候選（G11-C）。</strong>候選只是建議，不是已接受的編排：它不修改來源專案，也不認證任何 Gate。</li>
+    <li><strong>這一節不產生 Final MML</strong>，不做 Mobile 適配，不指派樂器或八度，不做鼓面對應，也不宣稱任何實機結果；後面的比對、審核與 Final 走 Studio 自己的流程。</li>
+  </ul>
+
+  <p>Studio 目前拒收超過 4 MiB 的檔案，以及事件數會超過 30000 的檔案；這兩個是實作上的保護，不是 Canonical 規則，被拒收時會寫出實際的數字。</p>
+
+  <p>工作坊比較適合的用途是：快速聽聽一份 MIDI 拆成單音譜大概是什麼樣子、拿來當手動編曲的素材。</p>
+
+  <h2 id="how">工作坊的操作步驟</h2>
+
+  <ol>
+    <li>在<a href="../index.html">工作坊</a>標題列點<strong>檔案</strong>。</li>
+    <li>在「匯入」區塊按<strong>選擇檔案</strong>選你的 <code>.mid</code>，或直接把檔案拖進這個框。同一個框也吃 3MLE 的 <code>.mml</code>、瑪奇的 <code>.mmi</code>、<code>.musicxml</code> 與 <code>.mxl</code>。</li>
+    <li>檔案框會自己關掉，換成<strong>選擇要匯入的聲部</strong>清單。</li>
+    <li>選匯入方式：<strong>新採譜</strong>（取代全部，打開清單時的預設）或<strong>追加採譜</strong>（接在後面）。</li>
+    <li>勾選要匯入的列，每一列各自選一種<strong>採樣模式</strong>。清單打開時，前 15 列預設全部勾起來——包括標成「打擊」的列，不要的記得取消。</li>
+    <li>按<strong>匯入</strong>。選「新採譜」而且目前的譜不是空的時，按鈕會變成<strong>清空並匯入</strong>：全部 15 軌的內容會被清掉，從第 1 軌重新寫起（按 Ctrl+Z 可以復原）。</li>
+  </ol>
+
+  <p>「追加採譜」會從目前最後一個有內容的分頁的下一軌開始寫，前面的分頁不動；想分次匯入不同聲部，就重複做幾次。從第 1 軌開始寫的時候，檔案裡的拍號與段落標記也會一起帶進來；匯入後，匯出檔名會換成這個檔案的名字。</p>
+
+  <h2 id="list">聲部清單怎麼讀</h2>
+
+  <p>清單的欄位是「勾選」「序」「Channel」「音符數」「採樣模式」。每一列會顯示 <code>Ch 3 · Bright Acoustic Piano</code> 這樣的名稱。幾個地方值得說明：</p>
+
+  <h3>一列不是一個 channel</h3>
+
+  <p>一列代表<strong>一組（MIDI 音軌, channel）的組合</strong>，不是單純照 channel 分。原因是鋼琴譜常常把左右手寫成兩個音軌卻共用同一個 channel——照 channel 合併會把左右手混在一起，採樣器要在兩隻手之間挑，採出來的東西沒辦法聽。</p>
+
+  <p>同樣地，也不會因為一軌中途換了樂器就把它拆開；一個分頁本來就只選一種樂器，拆了也表達不出那個變化，只會白白佔掉兩個分頁而且兩個都半空。這種列會標上「<strong>▸ N 種音色</strong>」提醒你，顯示的是第一個音色的名字。</p>
+
+  <h3>顯示的是 GM 音色名，不是軌名</h3>
+
+  <p>這是刻意的。<strong>軌名是人打的自由文字，GM 音色是機器寫的、播放器真的會照著發聲的值</strong>。實際遇過的檔案：</p>
+
+  <table>
+    <thead>
+      <tr><th>檔案裡的軌名</th><th>實際的 GM 音色</th></tr>
+    </thead>
+    <tbody>
+      <tr><td><code>MIDI main</code></td><td>Vibraphone（鐵琴）——從軌名完全看不出來</td></tr>
+      <tr><td><code>MIDI violin</code></td><td>String Ensemble 1——<strong>軌名是錯的</strong>，那是弦樂群奏</td></tr>
+      <tr><td><code>©MidiStar</code>（整份 12 軌都一樣）</td><td>各不相同——軌名只是匯出工具的浮水印</td></tr>
+    </tbody>
+  </table>
+
+  <p>你要靠這一列決定採樣模式（鋼琴用哪一種、貝斯用哪一種），照一個可能是錯的名字選就會選錯。檔案沒有寫音色時才退回顯示軌名。</p>
+
+  <h3>名稱旁邊的標籤</h3>
+
+  <ul>
+    <li><strong>有旋律</strong>：最高聲部有自己的節奏。「智能分弦」會留一軌主旋律，最多 4 軌。</li>
+    <li><strong>純伴奏</strong>：最高聲部從來不自己動，是和弦的一部分。「智能分弦」不留旋律軌，最多 3 軌。音符起點太少（少於 20 個）的列不會判定，兩個標籤都不顯示。</li>
+    <li><strong>打擊</strong>：GM 的第 10 個 channel 是打擊組，音高是鼓的編號不是音階。</li>
+  </ul>
+
+  <div class="workshop-only">
+    <p><strong>工作坊專用：</strong>「打擊」列和其他列一樣預設是勾起來的，而且匯入時會把 GM 鼓的編號當成一般音高寫進 MML（只是不會被移八度）。照 MASTER_RULES §8，GM 鼓的編號不是一般的 Mobile 音高，要先有證據支持的 Mobile 鼓面對應；這個對應目前仍待驗證（PENDING P10）。除非你只是想看看，否則請取消勾選打擊列。</p>
+  </div>
+
+  <h2 id="mode">五種採樣模式</h2>
+
+  <p>模式決定的是：<strong>同一瞬間響了好幾個音的時候，留下哪一個、要拆成幾軌。</strong></p>
+
+  <div class="workshop-only">
+    <p><strong>工作坊專用：</strong>以下五種模式都是工作坊的<strong>有損</strong>轉換：除了「和弦全採」盡量多留之外，每一種都會丟掉音，而且都在<a href="#limit">對齊 1/32 格子</a>之後才進行。它們不是 Canonical 的角色判定，產生的「主旋律」也不是經過證據確認的 Lead（MASTER_RULES §4）。</p>
+  </div>
+
+  <table>
+    <thead>
+      <tr><th>模式</th><th>留下</th><th>佔用軌數</th><th>適合</th></tr>
+    </thead>
+    <tbody>
+      <tr><td><strong>旋律重視</strong></td><td>每個瞬間最高的音</td><td>1</td><td>主旋律、右手、長笛、獨奏</td></tr>
+      <tr><td><strong>根音重視</strong></td><td>每個瞬間最低的音</td><td>1</td><td>貝斯、左手和弦的根音</td></tr>
+      <tr><td><strong>旋律 + 根音（2 軌）</strong></td><td>一軌取最高音；另一軌只在「同時有兩個以上不同音」的地方取最低音</td><td>2</td><td>鋼琴編曲</td></tr>
+      <tr><td><strong>智能分弦（4 軌）</strong></td><td>把同時響的音順著各自的走向拆成幾條線：判定有旋律時最多 4 軌（含一軌主旋律），純伴奏時最多 3 軌</td><td>4</td><td>和弦與旋律混在一起的聲部</td></tr>
+      <tr><td><strong>和弦全採（15 軌）</strong></td><td>先照智能分弦拆，剩下沒採到的音再拆成更多軌，最多到 15 軌，盡可能把音符都採出來</td><td>15</td><td>想把一個聲部完整攤開來看、再自己挑</td></tr>
+    </tbody>
+  </table>
+
+  <p>幾個推論值得記住：</p>
+
+  <ul>
+    <li><strong>單音的聲部，「旋律重視」和「根音重視」結果完全一樣。</strong>貝斯、主旋律、獨奏本來就同時只有一個音，選哪個都沒差。這種聲部選「旋律 + 根音」<strong>只會拿到一軌</strong>——第二軌會跟第一軌一模一樣，產它只是浪費一個分頁。匯入完成的訊息會告訴你這件事。</li>
+    <li><strong>同一個音不會被採兩次。</strong>「旋律 + 根音」遇到「那一瞬只有一個音」的地方（和弦之間的單音過門最常見），那個音只進旋律那一軌，根音那一軌在那裡是休止或前一個根音的延續，不是跟右手一樣的音。</li>
+    <li><strong>「長音被丟掉」不是壞掉，是選錯模式。</strong>一個全音符上面壓一個八分裝飾音：旋律重視採出裝飾音那條線，根音重視採出長音那條線。你要哪一條是你決定的，不是程式猜的。</li>
+    <li><strong>智能分弦與和弦全採採不下的音會被丟掉。</strong>同時響的音比軌數多時，匯入訊息會寫出有幾個音沒有採進來；判定為純伴奏、或拆出來的軌數比上限少時，也會提示。</li>
+  </ul>
+
+  <div class="note">
+    <p><strong>鋼琴譜可以先試「旋律 + 根音」或「智能分弦」。</strong>最常見的匯入素材是鋼琴編曲，整首只有一到兩個 channel——照一列一軌匯入，六個遊戲角色會閒置好幾個。用這兩個模式，一份鋼琴 MIDI 可以拆成旋律、內聲部、低音好幾軌，聽起來厚很多。拆出來的哪一軌該放在哪個角色，還是要你自己判斷。</p>
+  </div>
+
+  <h3>分解和弦會被採到</h3>
+
+  <p>採樣規則是<strong>任何新的音進場都切斷目前那個音</strong>，不管新的音比較高還是比較低。所以錯開進場、一起放開的分解和弦（C → E → G，各差一個十六分音符）會採成 <code>c16e16g2.&amp;g8</code>，而不是整段都是最高的那個 G。如果規則寫成「每一段取最高音」，琶音會整個消失。</p>
+
+  <h2 id="quota">軌數額度</h2>
+
+  <p>一次最多匯入 <strong>15 軌</strong>，而且算的是<strong>加總</strong>：「旋律重視」「根音重視」一列算 1 軌，「旋律 + 根音」算 2 軌，「智能分弦」算 4 軌，「和弦全採」算 15 軌（選了它就不能再勾別的列）。選「追加採譜」時，額度是 15 減掉前面已經用掉的分頁，清單底下會寫「剩 N 軌」。超額時會顯示「已選 n / 額度 —— 超過 x 軌」的紅字，匯入鈕會停用。</p>
+
+  <p>提醒一次：<strong>只有前 6 個分頁會進遊戲，也只有前 6 個會送回 Studio。</strong>匯入 15 軌是可以的，但你最後要自己決定哪六軌留下、把它們排到前面（拖曳分頁可以排序）。</p>
+
+  <h2 id="after">匯入之後要檢查什麼</h2>
+
+  <ol>
+    <li><strong>先按「▶ 演奏」聽一遍</strong>（要先在「設定」載入自己的音色庫）。採樣規則沒有「錯誤」這種狀態，採歪了不會報錯，只會聽起來怪。</li>
+    <li><strong>看字數。</strong>匯入的結果常常超過 2,400 字，匯入訊息會列出超過的軌。每個角色 2,400 字是官方上限，但遊戲實際怎麼數字元仍待驗證（MOBILE_SYNTAX §9、PENDING P1）。</li>
+    <li><strong>需要壓字數時，先看工具列「優化」裡的「無損壓縮」。</strong>它一個音都不動，只換寫法；視窗會先顯示每一種方式能省幾個字。還不夠時，再考慮下面的有損方式或自己刪改。</li>
+    <li><strong>檢查樂器。</strong>匯入的分頁會先換成預設樂器（樂器清單的第一項），瑪奇的音色要你在分頁上自己挑。</li>
+    <li><strong>檢查力度。</strong>匯入時會把 MIDI 的力度換成 <code>v1</code>–<code>v15</code>；伴奏還是太吵的話，用工具列的「力度」壓低幾格，主旋律才浮得出來。</li>
+    <li><strong>檢查速度。</strong>匯入只把速度寫在第一個匯入的分頁（見<a href="#limit">已知的限制</a>）。照 MOBILE_SYNTAX §7，交付時每個有內容的角色都要帶同一張速度表，詳見 <a href="./mml.html#tempo">MML 教學的速度一節</a>。</li>
+    <li><strong>要交付，就按「送回 Studio 驗證」。</strong>工作坊只送前 6 個分頁，Studio 把它當成衍生候選重新做技術驗證與審核，不會因此變成 VALIDATED。</li>
+  </ol>
+
+  <div class="workshop-only">
+    <p><strong>工作坊專用：</strong>「優化」裡除了「無損壓縮」，還有三種會改變聲音的方式：「音長補滿」（音後面的短休止整段併進那個音）、「部分補滿」（只併進一部分）、「尾段收音」（把音的尾巴讓出來變成休止）。它們<strong>不會動到任何一個音的進場時間</strong>，執行後工作坊會檢查每個音的起點都沒變，檢查沒過就一個音都不改；但它們會改變音長與休止。範圍可選「全部音軌」「目前音軌」「已選擇音符」，四種方式一次只能選一種，執行後會告訴你省了幾個字、動到幾個音，不滿意按 Ctrl+Z。</p>
+    <p>這三種方式是為了省字而改音樂，和 Canonical 的方向相反：MASTER_RULES §7 要求保留有意義的休止、呼吸與斷奏，不為了連續性數字去填掉真正的休止；§2 也說不能靠抹掉有來源依據的音樂來改善指標。用了它們的譜，是工作坊的編曲選擇，不是 Canonical 認可的縮減。</p>
+  </div>
+
+  <h2 id="limit">已知的限制</h2>
+
+  <div class="workshop-only">
+    <p><strong>工作坊專用：</strong>以下都是工作坊匯入器的行為，會讓結果和原曲不同。</p>
+    <ul>
+      <li><strong>所有時間都對齊 1/32 音符的格子。</strong>音的開始與結束、速度、拍號與標記的位置，都會先對齊到最近的 1/32 格——這讓真人彈的和弦（三個音差幾個 tick）能被認成「同時」，也讓鋼琴捲軸的每一格都對得上。代價是<strong>三連音會被打歪</strong>：八分三連音 C、D、E 會變成大約 <code>c16.d16e16.</code>。最短的音是一個 1/32。</li>
+      <li><strong>速度會被簡化。</strong>速度會四捨五入成整數 BPM，並夾進 32–255。整份檔的速度點超過 32 個時，只用開頭那一個速度。保留下來的速度只寫進<strong>第一個匯入的分頁</strong>，而且放在那一軌最接近的音符／休止符邊界上，位置可能和原曲差一點。用「追加採譜」接到一份已經有速度的譜時，檔案的速度不會寫進去（兩者不同時會提示）。這些都不符合 MOBILE_SYNTAX §7 的交付規則，要自己補齊（見 <a href="./mml.html#tempo">MML 教學的速度一節</a>）。</li>
+      <li><strong>音域會被移動或夾住。</strong>每一列會整組上下移八度，讓最多的音落在工作坊的 <code>o1c</code>–<code>o7b</code> 裡（匯入訊息會說移了幾個八度）；移完還在範圍外的音，會被直接夾到範圍的邊界上，音高因此改變。</li>
+      <li><strong>不處理彎音、踏板、控制器與力度曲線。</strong>只讀音符、音色、速度、拍號與標記；MIDI 力度會換成少量的 <code>v</code> 變化（以中位數為基準，最多寫 60 次）。</li>
+      <li><strong>超長的音會被截短。</strong>一個音超過 36 小節時，會截短並在後面補上等長的休止。</li>
+      <li><strong>開頭的空小節會被切掉。</strong>從第一個音所在的小節開始寫；弱起拍會留在小節裡原本的位置。</li>
+      <li><strong>有些檔讀不了或會提醒。</strong>用 SMPTE 時間碼的檔沒有節拍資訊，無法轉；Format 2 的檔每個音軌是獨立的樂段，同時勾多個音軌會疊在一起；讀到一半就結束的音軌只採到中斷的地方。</li>
+      <li><strong>匯入的分頁可能超過 2,400 字。</strong>匯入器已經用工作坊的編碼器寫出 MML，但沒有特別為了省字而改寫；超過時可以先試「無損壓縮」，再決定要不要用有損的方式或自己刪。</li>
+    </ul>
+  </div>
+
+  <div class="note">
+    <p>還沒看過 MML 語法？先讀 <a href="./mml.html">MML 教學</a>，匯入之後要手動修的時候會用到。其他問題看<a href="./faq.html">常見問題</a>。</p>
+  </div>
+</main>
+<footer>
+  <p>工作坊在 Canonical 驗證流程之外：這裡描述的是工作坊的行為，不是遊戲規則，也不代表任何東西通過 Studio 的驗證。遊戲與交付規則以 Published Canonical 為準。</p>
+  <div class="row"><a href="../index.html">← 工作坊</a><a href="../../../../index.html">MML Studio</a></div>
+</footer>
+<script type="module" src="./guide.mjs"></script>
+</body>
+</html>

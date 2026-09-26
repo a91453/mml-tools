@@ -57,9 +57,9 @@ for (const name of ['index.html', 'style.css']) await put(`studio/web/service/${
 // page, its stylesheet and its first-paint script are the only other files.
 // It reuses vendor/spessasynth/ below and ships no bank and no icon font.
 for (const name of ['index.html', 'workshop.css', 'boot.js']) await put(`studio/web/workshop/${name}`, await readFile(resolve(root, 'studio/web/workshop', name)));
-// The Workshop's help pages (studio/web/workshop/guide/): static HTML and one
-// stylesheet; their modules and translated articles are .mjs, copied above.
-for (const name of (await readdir(resolve(root, 'studio/web/workshop/guide'))).filter(name => /\.(html|css)$/.test(name))) await put(`studio/web/workshop/guide/${name}`, await readFile(resolve(root, 'studio/web/workshop/guide', name)));
+// The Workshop's help pages (studio/web/workshop/guide/): static zh-Hant HTML,
+// one stylesheet and a first-paint theme script; guide.mjs is copied above.
+for (const name of (await readdir(resolve(root, 'studio/web/workshop/guide'))).filter(name => /\.(html|css|js)$/.test(name))) await put(`studio/web/workshop/guide/${name}`, await readFile(resolve(root, 'studio/web/workshop/guide', name)));
 await put('dist/core.js', await readFile(resolve(root, 'dist/core.js')));
 // Preserve all engine modules. Only replace the environment-specific Git loader.
 // Dynamic Git provenance (repository_head / published_main_head / pr_head and

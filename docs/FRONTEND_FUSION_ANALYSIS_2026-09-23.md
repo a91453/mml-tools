@@ -837,3 +837,30 @@ cache-first 的 Service Worker 快取，所以開著的工作坊分頁會一直�
   暫停、循環、播放中改譜。共用的是引擎載入檢查（`bank-check.mjs`）、樂器表、鼓音規則與空白音色
   過濾（`isUsablePreset`）。
 
+
+### 14.8 工作坊說明頁（2026-09-26）
+
+舊站的七個說明頁（擁有者早期前端 v1.1.0 擷取包的 `pages/guide-*.html` 與 `faq.html`）移植為工作坊說明，
+放在 `studio/web/workshop/guide/`。擁有者決定**說明頁只做繁體中文**；工作坊介面本身的四語系不變。
+
+- **先完整檢視擷取包**：七頁只有繁中版（擷取包沒有英日韓說明頁）；其中 `guide-editor`、`guide-reference` 還停在更早的
+  「16 份樂譜 × 4 軌（旋律／和音1／和音2／歌唱）、1600／1200／900／1200 字」模型，與 v1.1.0 程式本身（15 分頁、前 6 軌
+  進遊戲、每軌 2400 字）就不一致；`guide-midi` 寫三種採樣模式，v1.1.0 與現在都是五種。因此每一頁都以現在的工作坊程式
+  （元素 id、`i18n/zh-Hant.mjs` 的介面文字）逐項核對改寫，不以舊頁文字為準。
+- **刪除**：登入／帳號、分享、雲端存檔、MP3 與空間混音、OMR、離線音色包下載、服務條款與隱私權頁。
+- **補上**：從 Studio 開啟、送回 Studio 驗證、未驗證標示、WAV／影片匯出、遊戲風格音色、歌曲庫、新版按鈕。
+- **Canonical 與工作坊專用分開**：引用規則的句子標出處（MOBILE_SYNTAX §…、MASTER_RULES §…、PENDING P…），連 PENDING
+  狀態照原文；工作坊比規則寬鬆或有損的行為（速度合併與速度工具只寫主旋律、1/32 格子、五種採樣模式、優化的三種音長規則、
+  音域摺疊、附點方言、Nxx 換算）放在「工作坊專用」框。`guide-mml` 的速度一節依 MOBILE_SYNTAX §7 重寫；Nxx 只寫兩個
+  解析器差 12 半音、遊戲側未驗證（LG-1 未解）；`guide-midi` 指向 Studio 的無損 Raw MIDI 攝入。
+- **頁面**：`<html lang="zh-Hant">`；`guide/boot.js` 只套用工作坊的主題；`guide.mjs` 標出目前頁，工作坊設成其他語言時
+  最上方顯示「目前只有中文版」。沒有語言選單、沒有翻譯表。CSP 同工作坊（無 inline script／style、不連外）。
+- **入口**：工作坊「關於」面板的「說明」清單（頁名與一行說明取自舊站關於面板）。工作坊四語系表只為它新增 15 個 key。
+- **建置與離線**：`scripts/build-studio-web.mjs` 複製 `guide/` 的 HTML、CSS 與 `boot.js`，全部進入 Service Worker 的
+  precache。
+- **驗證**：`studio/tests/workshop-guide.test.mjs`（七頁存在、只有繁中、CSP、允許的標記、每個內部連結與 #錨點都解析得到、
+  沒有已刪除的功能、「目前只有中文版」只在其他語言時出現、關於面板的連結與 key）；瀏覽器
+  `studio/browser-tests/workshop-guide.mjs`（七頁載入無錯誤、從關於面板進入、工作坊設為英文時說明頁仍是繁中並顯示提示）。
+- **發現但未修改**：工作坊介面有幾句提示與 Canonical 或程式行為不一致——「非標準時值…瑪奇 Mobile 不吃」「複製會去掉
+  空白，那才是遊戲算的字數」與 MOBILE_SYNTAX §3、§9 衝突；「只選取」與「範圍」的 title 說右鍵設結束線，實際是開選單。
+  說明頁照程式與 Canonical 寫，介面文字留待另案處理。

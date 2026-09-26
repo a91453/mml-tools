@@ -1,0 +1,308 @@
+<!doctype html>
+<html lang="zh-Hant">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="theme-color" content="#122325">
+<meta name="robots" content="noindex">
+<!-- The Workshop's policy: scripts and styles only from 'self', no inline script or style, nothing but this origin is contacted. -->
+<meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self' data:; connect-src 'self'; object-src 'none'; base-uri 'self'; form-action 'none'">
+<title>編輯器入門 · 工作坊說明</title>
+<link rel="icon" href="../../../../icon.svg" type="image/svg+xml">
+<link rel="stylesheet" href="./guide.css">
+<script src="./boot.js"></script>
+</head>
+<body data-guide="editor">
+<p class="zh-only" id="zhOnly" hidden>目前只有中文版</p>
+<header class="guide-head">
+  <div class="inner">
+    <a class="brand" href="../index.html">← 工作坊</a>
+    <nav class="guide-nav" aria-label="說明頁">
+      <a href="./editor.html">編輯器入門</a>
+      <a href="./reference.html">功能說明</a>
+      <a href="./keys.html">快捷鍵</a>
+      <a href="./mobile.html">手機與平板</a>
+      <a href="./mml.html">MML 教學</a>
+      <a href="./midi.html">MIDI 轉 MML</a>
+      <a href="./faq.html">常見問題</a>
+    </nav>
+  </div>
+</header>
+<main id="guide">
+  <h1>編輯器入門</h1>
+  <p>試著做可貼進遊戲的譜</p>
+
+  <div class="toc">
+    <ol>
+      <li><a href="#which">你手上有什麼</a></li>
+      <li><a href="#map">介面五區</a></li>
+      <li><a href="#listen">一、先聽一次</a></li>
+      <li><a href="#clear">二、清出一張白紙</a></li>
+      <li><a href="#draw">三、畫出七個音</a></li>
+      <li><a href="#text">四、看一眼文字區</a></li>
+      <li><a href="#harmony">五、加一條和弦軌</a></li>
+      <li><a href="#tempo">六、調速度</a></li>
+      <li><a href="#chars">七、看字數</a></li>
+      <li><a href="#copy">八、複製 MML，貼進遊戲</a></li>
+      <li><a href="#next">接下來</a></li>
+    </ol>
+  </div>
+
+  <div class="workshop-only">
+    <p><strong>工作坊專用：</strong>工作坊是 MML Studio 裡的編輯器，但它在 Canonical 驗證流程之外。這一頁描述的是工作坊怎麼操作，在這裡做出來的譜一律是「工作坊編輯（未經 Studio 驗證）」——畫面左上角那個標籤就是在講這件事。要讓 Studio 檢查它，最後一節的<strong>送回 Studio 驗證</strong>才是那條路。</p>
+  </div>
+
+  <h2 id="which">你手上有什麼</h2>
+
+  <p>四種人走四條路，先確認你是哪一種：</p>
+
+  <table>
+    <thead>
+      <tr><th>你手上的東西</th><th>走哪條路</th></tr>
+    </thead>
+    <tbody>
+      <tr><td>什麼都沒有，想從零寫一首</td><td>這一頁，從<a href="#listen">第一節</a>開始往下讀</td></tr>
+      <tr><td>一份別人給你的 MML 文字（<code>MML@…;</code>）</td><td>標題列的<strong>剪貼簿</strong> → <strong>貼上</strong>。它會取代所有分頁的內容。細節看<a href="./reference.html#clip">剪貼簿那一節</a></td></tr>
+      <tr><td>一個檔案（<code>.mid</code>、<code>.mml</code>、<code>.mmi</code>、<code>.musicxml</code>、<code>.mxl</code>）</td><td>標題列的<strong>檔案</strong> → <strong>選擇檔案</strong>，或把檔案拖進那個框。MIDI 的細節看 <a href="./midi.html">MIDI 轉 MML 教學</a></td></tr>
+      <tr><td>Studio 裡的一個專案</td><td>標題列的<strong>從 Studio 開啟</strong> → 選專案 → 在想要的 MML 來源那一列按<strong>開啟副本</strong>。開的是一份<strong>副本</strong>，會取代所有分頁；Studio 裡的專案不會被改動</td></tr>
+    </tbody>
+  </table>
+
+  <p>這一頁只走第一條。走完你會得到一首七個音的短曲，加一條和弦軌，最後複製成一段貼得進遊戲空白樂譜的文字——重點不是那首曲子，是路上經過的每一個地方你都知道它在幹什麼。</p>
+
+  <div class="note">
+    <p>還不知道 MML 是什麼？可以先讀 <a href="./mml.html">MML 教學</a>，但不是必要的——這一頁不用你會寫任何一個字母。</p>
+  </div>
+
+  <h2 id="map">介面五區</h2>
+
+  <p>工作坊從上到下是五區，鋼琴捲軸與樂譜區之間夾著一條可以上下拖的分隔線（決定兩區各佔多高；選中它之後用方向鍵也能調，按著 <kbd>Shift</kbd> 走得比較快）：</p>
+
+  <table>
+    <thead>
+      <tr><th>這一區</th><th>做什麼</th></tr>
+    </thead>
+    <tbody>
+      <tr><td><strong>標題列</strong></td><td>左邊是<strong>工作坊</strong>標誌與「工作坊編輯（未經 Studio 驗證）」標籤；從 Studio 開過副本時，旁邊還有一個「來源：Studio「…」」的小標示。右邊是進出口：<strong>← Studio</strong>（回到 Studio）、<strong>從 Studio 開啟</strong>、<strong>送回 Studio 驗證</strong>、<strong>剪貼簿</strong>（跟遊戲之間搬譜）、<strong>檔案</strong>（新增、儲存、匯入、匯出、清空）、<strong>設定</strong>、<strong>關於</strong>。有新版可用時會多一顆<strong>套用新版</strong></td></tr>
+      <tr><td><strong>工具列</strong></td><td>左半邊是播放：<strong>▶ 演奏</strong>、<strong>停止</strong>、<strong>捲軸同步</strong>、<strong>全曲／範圍</strong>、<strong>循環</strong>。右半邊是編輯：<strong>只選取</strong>（箭頭）、音符長度 <code>1</code>–<code>32</code>、縮放、<strong>復原</strong>／<strong>重做</strong>，以及<strong>速度／力度／移調／優化／合併</strong>五個功能。最右邊顯示現在是編輯中還是演奏中、正在編哪一軌，以及一行操作提示</td></tr>
+      <tr><td><strong>鋼琴捲軸</strong></td><td>用滑鼠畫音符的地方。左邊是琴鍵（點得出聲，每個 C 那一列標著 <code>o4C</code> 這樣的名字），上面那條細的是小節尺</td></tr>
+      <tr><td><strong>樂譜區</strong></td><td>上面一排是分頁，一個分頁＝一軌。分頁下面是樂器列（樂器、四顆小開關、字數），再下面是那一軌的 MML 文字</td></tr>
+      <tr><td><strong>狀態列</strong></td><td>最下面一行：軌數（例如 <code>軌 3 / 15</code>）、音符數、速度、總長度、解析警告、暫存狀態（例如 <code>已暫存 · 21:04</code>）、引擎狀態</td></tr>
+    </tbody>
+  </table>
+
+  <div class="note">
+    <p><strong>先把「軌」跟「角色」分清楚，後面全部靠它。</strong></p>
+    <p><strong>軌（分頁）</strong>是工作坊裡的一條單音線，有自己的樂器、自己的 MML 文字。一首曲子最少 3 軌、最多 15 軌，按分頁列最後的<strong>＋ 新增</strong>加一軌，按分頁上的 ✕ 移掉一軌（只剩 3 軌時不能再移）。</p>
+    <p><strong>角色</strong>是遊戲那一邊的說法：遊戲的一份譜最多 6 個角色（基本 3 個、可擴充到 6 個），每個角色的 MML 文字上限 2,400 字（MOBILE_SYNTAX §2）。Canonical 把這六個角色叫做 Melody、Chord1–Chord5；其中 Melody + Chord1 + Chord2 稱為 Core3，是單人三和弦樂器的完整編曲目標（MASTER_RULES §5）。</p>
+    <p>工作坊的<strong>前 6 軌就是這 6 個角色</strong>，分頁名稱是<strong>主旋律、和弦1、和弦2、和弦3、和弦4、和弦5</strong>。第 7 軌以後叫<strong>輔助1</strong>到<strong>輔助9</strong>。</p>
+  </div>
+
+  <div class="workshop-only">
+    <p><strong>工作坊專用：</strong>輔助1–輔助9 只是工作坊裡的素材軌，可以拿來放暫時用不到的聲部、或當合併的來源。它們不會出現在複製出去的 MML 裡，也不會送回 Studio，WAV 匯出也只合成前 6 軌。</p>
+  </div>
+
+  <h2 id="listen">一、先聽一次</h2>
+
+  <p>第一次打開看到的不是白紙，是一首現成的短曲：三軌（主旋律、和弦1、和弦2）、四小節、速度 120，樂器都是預設的 Lute。</p>
+
+  <p>要聽得到聲音，工作坊得先有<strong>音色庫</strong>——它自己不附音色。打開標題列的<strong>設定</strong>，在<strong>音色庫</strong>那一格二選一：</p>
+
+  <ul>
+    <li><strong>選擇 .dls / .sf2 / .sf3</strong>：用你自己裝置上的音色庫檔案。它只存在這台裝置，而且跟 Studio 的試聽共用，之後打開工作坊會自動接回來</li>
+    <li><strong>使用遊戲風格音色</strong>：站方提供的遊戲風格音色（模擬，不是實機）。第一次使用時從本網站下載並核對 SHA-256，之後只存在這台裝置；不是每個網站都有提供，沒有的話它會直接告訴你</li>
+  </ul>
+
+  <p>音色庫載好之前，<strong>▶ 演奏</strong>是按不下去的。載好之後什麼都別動，先按工具列左邊的 <strong>▶ 演奏</strong>。</p>
+
+  <div class="workshop-only">
+    <p><strong>工作坊專用：</strong>不管用哪一種音色庫，工作坊的聲音都只是聆聽輔助：Mabinogi Mobile 樂器對到 GM 音色（Lute → GM 24 等）只是近似，遊戲風格音色也只是模擬。這裡聽到的不是遊戲的音色，也不是任何驗證的證據。</p>
+  </div>
+
+  <p>三件事會同時發生，值得各看一眼：</p>
+
+  <ul>
+    <li>鋼琴捲軸上有一條線從左往右掃過去——那是<strong>導播線</strong>，它走到哪就在響哪</li>
+    <li>畫面自己往後翻頁。那是<strong>捲軸同步</strong>這顆在作用；播放中你自己去拖水平捲軸，它會自動關掉（因為你顯然想自己看別的地方），按一下可以再打開</li>
+    <li>文字區的 MML 跟著反白，反白到哪就是正在唱哪一個字母（看的是你目前所在的那一軌）</li>
+  </ul>
+
+  <p>按鈕會變成 <strong>❚❚ 暫停</strong>，再按是 <strong>▶ 繼續</strong>；<strong>停止</strong>則是回到頭。手不必離開鍵盤：<kbd>Space</kbd> 是演奏／暫停，播放中 <kbd>←</kbd> <kbd>→</kbd> 前後一小節、<kbd>↑</kbd> 回到開頭（或開始線）、<kbd>↓</kbd> 停止（<a href="./reference.html#playkeys">功能說明</a>有完整的一組）。</p>
+
+  <p>想只聽中間一段：在小節尺上<strong>左鍵</strong>點一下設開始、<strong>右鍵</strong>點一下設結束，工具列的<strong>範圍</strong>會亮起來。按<strong>全曲</strong>會清掉那兩條線回到整首。旁邊的<strong>循環</strong>是播到結尾（或結束線）立刻從頭（或開始線）再來一次。</p>
+
+  <div class="note">
+    <p><strong>播放中兩邊都不能編輯。</strong>捲軸與文字區在播放時是唯讀的，這是刻意的——要改東西先按暫停或停止。暫停中可以改，改動會在按繼續之後生效。</p>
+  </div>
+
+  <h2 id="clear">二、清出一張白紙</h2>
+
+  <p>要自己寫，得先把那首範例清掉。位置在<strong>標題列 → 檔案 → 最下面「清空」那一段 → 清空所有音符</strong>。</p>
+
+  <p>它會清掉全部 15 軌的樂譜文字，留下 3 個空白音軌；<strong>樂器選擇、檔名、調號都保留</strong>。<strong>按 <kbd>Ctrl</kbd>+<kbd>Z</kbd> 可以復原</strong>，所以放心按。</p>
+
+  <p>同一個對話框最上面還有一顆<strong>新增</strong>：它開一份全新的檔案，軌數、樂器與檔名全部回到預設（調號與換行設定保留），一樣可以用 <kbd>Ctrl</kbd>+<kbd>Z</kbd> 復原。只是想清掉音符的話，用「清空所有音符」就好。</p>
+
+  <div class="note">
+    <p><strong>想把範例叫回來，點左上角的「工作坊」標誌。</strong>那顆的意思是「重新開始」——它會把自動暫存清掉，再重新載入範例樂譜。<strong>它不會先問你，而且 <kbd>Ctrl</kbd>+<kbd>Z</kbd> 也救不回來</strong>，所以上面那個「清空所有音符」才是你在這一步該用的（那個復原得回來）。存進歌曲庫（<strong>檔案 → 儲存到…</strong>）的檔案不受影響。從主畫面以 app 模式開啟時，這個標誌不會顯示。</p>
+  </div>
+
+  <h2 id="draw">三、畫出七個音</h2>
+
+  <p>我們畫小星星的開頭七個音：<strong>Do Do Sol Sol La La Sol</strong>。選它不是因為簡單，是因為<strong>你聽得出對錯</strong>——音階畫錯一個音沒人會發現，小星星錯一個當場就聽出來。</p>
+
+  <p>清空之後停在第一個分頁<strong>主旋律</strong>上，我們就畫在這裡。</p>
+
+  <div class="note">
+    <p><strong>用手機或平板看這一段？</strong>下面寫的是滑鼠與鍵盤的做法。手指的對應做法——輕觸畫音符、長按拿起來搬、選中之後用畫面底部的面板改長度與刪除——在<a href="./mobile.html">手機與平板</a>。對照著看就好，這一節其他內容通用。</p>
+  </div>
+
+  <p>先看工具列中間那一排。箭頭那一顆是<strong>只選取</strong>（快捷鍵 <kbd>0</kbd>，不會畫東西），右邊 <code>1</code> 到 <code>32</code> 六顆是<strong>音符長度</strong>：全音符、二分、四分、八分、十六分、三十二分（快捷鍵 <kbd>1</kbd> 到 <kbd>6</kbd>）。</p>
+
+  <p><strong>按 <kbd>3</kbd> 選四分音符</strong>（或直接點那顆 <code>4</code>）。然後在捲軸上照這個順序<strong>左鍵</strong>點七下：</p>
+
+  <pre><code>Do  Do  Sol Sol La  La  Sol
+  </code></pre>
+
+  <p>音高看左邊的琴鍵找——<strong>點琴鍵會發出那個音</strong>，聽到對的再往右邊那一格點下去。中央 Do 是琴鍵上標著 <code>o4C</code> 的那一列。</p>
+
+  <p>畫的時候可以用的四個動作，工具列右邊那行提示也寫著同一句話（「左鍵畫 · 拖曳搬動 · 拖右邊框改長度 · 右鍵開選單」）：</p>
+
+  <table>
+    <thead>
+      <tr><th>動作</th><th>結果</th></tr>
+    </thead>
+    <tbody>
+      <tr><td>左鍵點空白處</td><td>放一個音，長度用你選的那一顆</td></tr>
+      <tr><td>拖曳音符</td><td>搬動它（上下換音高、左右換位置）</td></tr>
+      <tr><td>拖音符的<strong>右邊框</strong></td><td>改長度</td></tr>
+      <tr><td>右鍵點音符</td><td>開一個選單，最後一列是<strong>刪除音符</strong>（變回同長度的休止符，後面的音不會位移）</td></tr>
+    </tbody>
+  </table>
+
+  <p>最後那個 Sol 想拉長成二分音符：拖它的右邊框往右拉。放開之前想取消就按 <kbd>Esc</kbd>。</p>
+
+  <p>畫完按 <strong>▶ 演奏</strong>（或按 <kbd>Space</kbd>）。聽起來是小星星就對了。畫錯的音右鍵選<strong>刪除音符</strong>重畫，或按 <kbd>Ctrl</kbd>+<kbd>Z</kbd>。</p>
+
+  <div class="note">
+    <p><kbd>Delete</kbd> 也可以刪：先點選音符，再按 <kbd>Delete</kbd>。但它只在<strong>焦點不在文字區</strong>的時候是這個意思——在文字區裡 <kbd>Delete</kbd> 就是刪字。這件事在<a href="./keys.html#worlds">快捷鍵</a>那一頁講得完整。</p>
+  </div>
+
+  <h2 id="text">四、看一眼文字區</h2>
+
+  <p>低頭看下面的文字區。你剛剛畫的七個音已經變成一行 MML 了，如果畫在 <code>o4</code> 那一個八度，它長這樣：</p>
+
+  <pre><code>ccggaag2
+  </code></pre>
+
+  <p>前面沒有 <code>l4</code> 也沒有 <code>o4</code>，因為那就是工作坊的預設（四分音符、第 4 八度）。畫在別的八度的話，會多出 <code>&lt;</code>、<code>&gt;</code> 或 <code>o</code> 之類的八度記號，但形狀是一樣的。</p>
+
+  <p><strong>捲軸與文字區是同一份資料的兩種樣子</strong>，不是兩個檔案。這句話有三個立刻用得到的後果：</p>
+
+  <ul>
+    <li>直接在文字區打字改 MML，捲軸馬上跟著變</li>
+    <li>在文字區<strong>選一段文字</strong>，捲軸上那幾個音會跟著被選起來——反過來也一樣</li>
+    <li>在捲軸上<strong>雙擊</strong>一個音（要在<strong>只選取</strong>模式下），文字區的游標會跳到那個音的位置。長譜上找音就靠這個</li>
+  </ul>
+
+  <div class="note">
+    <p><strong>用捲軸編輯會重新產生整軌的 MML。</strong>音符內容一個都不會變，但你手寫的<strong>註解與手動排版會消失</strong>。所以習慣是：先用捲軸把音符弄對，最後才手動排版；不要反過來。想要自動排版的話，<strong>設定 → MML 格式化換行</strong>可以讓重新產生的文字每 1、2 或 4 小節換一行——換行只是排版，空白不佔遊戲字數。</p>
+  </div>
+
+  <h2 id="harmony">五、加一條和弦軌</h2>
+
+  <p>分頁列上現在有三個分頁：<strong>主旋律／和弦1／和弦2</strong>。剛剛畫的東西在<strong>主旋律</strong>裡。</p>
+
+  <p>點一下<strong>和弦1</strong>那個分頁，捲軸的焦點就換到那一軌（工具列右邊的「編輯中」後面也會變成和弦1），然後照同樣的方法畫幾個長音當伴奏——例如 <strong>Do Do Fa Do</strong>，每個用二分音符（按 <kbd>2</kbd>）。</p>
+
+  <p>畫的時候你會看到主旋律的音符還在，只是變成半透明；你正在編輯的那一軌是實心的。其他軌的音符都留在畫面上，是為了讓你對得準位置。在<strong>只選取</strong>模式下用滑鼠點一下別軌的半透明音符，會直接切到那一軌並選中它。</p>
+
+  <p>每個分頁底下的樂器列可以各自選樂器：下拉選單裡先列 <strong>Mabinogi Mobile 樂器（GM 近似）</strong>那 11 種（Lute、Mandolin、Chalumeau、Xylophone、Flute、Violin、Piano、Harp、Music Box、BassDrum、Cymbals），載入的音色庫有自己的音色時，下面還會多一組。樂器右邊有四顆小開關：<strong>靜音</strong>、<strong>只聽</strong>這一軌（兩個都只影響試聽，匯出照舊完整）、<strong>在捲軸上顯示</strong>這一軌、<strong>只看</strong>這一軌（兩個都只影響畫面）。</p>
+
+  <p>再按演奏，兩條線一起響。</p>
+
+  <div class="note">
+    <p><strong>一軌同時只能響一個音。</strong>和弦要拆到不同軌去（主旋律一個音、和弦1 一個、和弦2 一個）。<code>[ceg]</code> 這種寫法工作坊讀不懂，狀態列會標成「看不懂的字元」。詳見<a href="./faq.html#chord">常見問題</a>。</p>
+  </div>
+
+  <h2 id="tempo">六、調速度</h2>
+
+  <p>速度不要在文字區手打，用工具列的<strong>速度</strong>按鈕——它會把 <code>t</code> 寫到它該寫的地方，也會處理跨過速度變化的長音。</p>
+
+  <ol>
+    <li>按<strong>速度</strong>，打開「速度/拍速」</li>
+    <li><strong>設置位置</strong>選<strong>音軌開頭</strong>（曲子中途要換速度才選「選擇的音符前」，那要先選一個音，沒選的話那顆按不下去）</li>
+    <li>在<strong>速度（BPM）</strong>輸入數字或拉滑桿，範圍 32–255。旁邊的<strong>試聽</strong>會用固定的節拍型、以目前這一軌的樂器讓你聽速度本身；按住滑桿拖的時候也會自動響（演奏中、或音色庫還沒載好時不能試聽）</li>
+    <li>按<strong>執行</strong>。那個位置原本就有速度記號的話，對話框會說它會從幾改成幾，並多出一顆<strong>移除這個速度記號</strong></li>
+  </ol>
+
+  <p>寫進去之後，狀態列的<strong>速度</strong>會顯示新的值；曲中有換速度的話會顯示成 <code>120 → 90</code> 這樣的一串。還沒寫過任何速度時顯示「120 BPM（預設）」。</p>
+
+  <div class="workshop-only">
+    <p><strong>工作坊專用：</strong>速度工具把整首的速度圖<strong>只寫進主旋律</strong>，同時把其他各軌文字裡的 <code>t</code> 全部拿掉；別軌有音符跨過換速度的位置時，會把那個音切成兩段、用連結線接回去（聽起來一樣）。工作坊自己播放時，任何一軌的速度記號都套用到全部的軌，所以<strong>在這裡聽不出每一軌有沒有自己帶速度</strong>。</p>
+  </div>
+
+  <div class="canonical">
+    <p><strong>Canonical 的交付規則（MOBILE_SYNTAX §7）</strong>：<code>T32</code>–<code>T255</code> 是官方確認的範圍。交付時，每一個<strong>非空</strong>角色都要以同一個起始速度開頭；曲中有換速度時，每一個非空角色都要在相同的音樂位置帶著同一份完整的速度圖；完全空的角色保持空白，不為了驗證器補速度或休止符。這是為了同步安全訂的專案規則，<strong>不是</strong>官方說引擎技術上需要每個角色都帶速度；只有一個角色帶曲中換速度時遊戲會不會保持同步，目前是 PENDING_IN_GAME。</p>
+    <p>所以工作坊速度工具的結果（只有主旋律帶 <code>t</code>）<strong>不符合</strong>這條交付規則。Studio 的技術檢查會把「非空軌的速度圖彼此不同」標出來。</p>
+  </div>
+
+  <h2 id="chars">七、看字數</h2>
+
+  <p>每個分頁的樂器列右邊都有一組數字，例如 <code>7 音 · 8/2400 字</code>。那是<strong>匯出後</strong>的字數，空白與換行（還有 <code>/* */</code>、<code>//</code> 註解）不計——所以你可以放心用換行分小節。</p>
+
+  <div class="canonical">
+    <p>每個角色的 MML 文字上限是 <strong>2,400 字</strong>，這是官方確認的遊戲限制，六個角色各自算（MOBILE_SYNTAX §2、§9）。遊戲客戶端實際怎麼數字（跟程式裡的字串長度是否完全一致）還沒確認，是 PENDING_IN_GAME（MOBILE_SYNTAX §9）。</p>
+  </div>
+
+  <div class="workshop-only">
+    <p><strong>工作坊專用：</strong>樂器列上的數字是工作坊自己的算法。超過 2,400 字時那組數字會變紅（游標停上去會說超過幾字）；開著<strong>設定 → 語法上色</strong>時，超出的那一段文字也會加紅底。這些都只是提示，不會擋住你繼續編輯。</p>
+  </div>
+
+  <p>真的超了怎麼壓：工具列的<strong>優化</strong>，先選<strong>無損壓縮</strong>（一個音都不動，音符完全相同）。它不夠的話，下面的<strong>音長補滿</strong>、<strong>部分補滿</strong>、<strong>尾段收音</strong>三種不動任何音符的起始時間、也不改變節奏，但<strong>會改變音符長短</strong>，聲音會有差。詳見<a href="./reference.html#opt">功能說明的優化那一節</a>與<a href="./faq.html#toolong">常見問題</a>。</p>
+
+  <h2 id="copy">八、複製 MML，貼進遊戲</h2>
+
+  <p>最後一步。<strong>標題列 → 剪貼簿 → 複製</strong>。</p>
+
+  <p>那會把<strong>前 6 軌（主旋律到和弦5）</strong>複製成一段 <code>MML@…;</code> 的文字，角色之間用逗號隔開，整段貼進遊戲的空白樂譜。複製時會去掉空白與註解（那才是遊戲算的字數），能省的字會自動再做一次<strong>無損壓縮</strong>（音樂完全相同），結尾空著的角色不會留下多餘的逗號。完成時訊息列會寫「已複製 3 軌 · … 字元到剪貼簿」。</p>
+
+  <ul>
+    <li>瀏覽器不讓網頁直接寫剪貼簿的話，會跳出一個「複製 MML」的框，內容已經選好，按 <kbd>Ctrl</kbd>+<kbd>C</kbd> 帶走</li>
+    <li>輔助軌有內容的話，訊息會告訴你哪幾軌沒有複製進去</li>
+    <li>雙附點（<code>..</code>）會被改寫成等長、不用雙附點的寫法並告訴你；改寫不了的話那次<strong>不會複製</strong>，訊息列會說是哪一軌。瑪奇 PC／MabiIcco 那種非標準時值則照原文複製，並附上一句提醒</li>
+    <li>字數超過 2,400 的角色照樣會被複製，而且這時不會再提醒你——複製前自己看一眼樂器列的字數有沒有變紅</li>
+    <li>樂器選擇不在複製出去的文字裡（文字裡原本的 <code>@</code> 數字也會拿掉）</li>
+  </ul>
+
+  <div class="workshop-only">
+    <p><strong>工作坊專用：</strong>這段文字是工作坊直接產生的，<strong>沒有經過任何驗證</strong>：沒有 Canonical 規則檢查、沒有 Studio 審核，也沒有實機確認。它貼不貼得進、在遊戲裡聽起來對不對，要你自己在遊戲裡確認。</p>
+  </div>
+
+  <h3>要讓 Studio 檢查：送回 Studio 驗證</h3>
+
+  <p>如果這首要走 Studio 的流程，按標題列的<strong>送回 Studio 驗證</strong>。對話框會列出要交出去的六軌 MML（遊戲讀的第 1–6 軌）和轉換時的注意事項；按<strong>送到 Studio</strong> 之後會回到 Studio。</p>
+
+  <p>在 Studio 那一邊，它會被當成<strong>衍生候選</strong>匯入，由 Studio 重新做技術驗證與各項審核。先前的審核與接受不會沿用，也不會因此變成 VALIDATED。<strong>工作坊本身不驗證任何東西</strong>——標題列那個「工作坊編輯（未經 Studio 驗證）」會一直在，就是這個意思。</p>
+
+  <div class="note">
+    <p>你的東西留在這台裝置的瀏覽器裡：<strong>設定 → 自動存檔</strong>開著時，每次編輯後都會暫存，重新整理或關掉重開都接得回來（狀態列會寫「已接回上次的樂譜」）；想留很多首就用<strong>檔案 → 儲存到…</strong>（快捷鍵 <kbd>Ctrl</kbd>+<kbd>S</kbd>）存進歌曲庫。這些都不會上傳，換電腦或換瀏覽器就不見了，要長久保存請用<strong>檔案 → 匯出</strong>下載 <code>.mid</code>／<code>.mml</code>／<code>.mmi</code>，或在歌曲庫用<strong>批次下載</strong>。</p>
+  </div>
+
+  <h2 id="next">接下來</h2>
+
+  <ul>
+    <li><a href="./reference.html">功能說明</a>——每一顆按鈕在做什麼，包括力度、移調、合併音軌、WAV 與影片匯出</li>
+    <li><a href="./keys.html">快捷鍵</a>——鍵盤、滑鼠與滾輪的對照表</li>
+    <li><a href="./mml.html">MML 教學</a>——想直接手寫文字的話</li>
+    <li><a href="./midi.html">MIDI 轉 MML</a>——把現成的曲子變成樂譜，不用一個音一個音畫</li>
+    <li><a href="./faq.html">常見問題</a>——音色、存檔、字數上限</li>
+  </ul>
+</main>
+<footer>
+  <p>工作坊在 Canonical 驗證流程之外：這裡描述的是工作坊的行為，不是遊戲規則，也不代表任何東西通過 Studio 的驗證。遊戲與交付規則以 Published Canonical 為準。</p>
+  <div class="row"><a href="../index.html">← 工作坊</a><a href="../../../../index.html">MML Studio</a></div>
+</footer>
+<script type="module" src="./guide.mjs"></script>
+</body>
+</html>

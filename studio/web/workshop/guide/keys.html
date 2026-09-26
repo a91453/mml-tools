@@ -1,0 +1,219 @@
+<!doctype html>
+<html lang="zh-Hant">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="theme-color" content="#122325">
+<meta name="robots" content="noindex">
+<!-- The Workshop's policy: scripts and styles only from 'self', no inline script or style, nothing but this origin is contacted. -->
+<meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self' data:; connect-src 'self'; object-src 'none'; base-uri 'self'; form-action 'none'">
+<title>快捷鍵 · 工作坊說明</title>
+<link rel="icon" href="../../../../icon.svg" type="image/svg+xml">
+<link rel="stylesheet" href="./guide.css">
+<script src="./boot.js"></script>
+</head>
+<body data-guide="keys">
+<p class="zh-only" id="zhOnly" hidden>目前只有中文版</p>
+<header class="guide-head">
+  <div class="inner">
+    <a class="brand" href="../index.html">← 工作坊</a>
+    <nav class="guide-nav" aria-label="說明頁">
+      <a href="./editor.html">編輯器入門</a>
+      <a href="./reference.html">功能說明</a>
+      <a href="./keys.html">快捷鍵</a>
+      <a href="./mobile.html">手機與平板</a>
+      <a href="./mml.html">MML 教學</a>
+      <a href="./midi.html">MIDI 轉 MML</a>
+      <a href="./faq.html">常見問題</a>
+    </nav>
+  </div>
+</header>
+<main id="guide">
+  <h1>快捷鍵</h1>
+  <p>鍵盤、滑鼠與滾輪的對照表</p>
+
+  <div class="toc">
+    <ol>
+      <li><a href="#worlds">兩個世界：焦點決定鍵盤</a></li>
+      <li><a href="#transport">播放控制</a></li>
+      <li><a href="#rollkeys">鋼琴捲軸的鍵盤</a></li>
+      <li><a href="#dragkeys">拖曳中的微調鍵</a></li>
+      <li><a href="#mouse">滑鼠與滾輪</a></li>
+      <li><a href="#global">整個工作坊通用</a></li>
+      <li><a href="#menukeys">選單與輸入框裡的鍵</a></li>
+    </ol>
+  </div>
+
+  <p>每一顆按鈕在做什麼、以及那些沒有快捷鍵的功能，在<a href="./reference.html">功能說明</a>。第一次用請先走一遍<a href="./editor.html">編輯器入門</a>。用手指操作的方式另外寫在<a href="./mobile.html">手機與平板</a>。</p>
+
+  <p>表裡寫的 <kbd>Ctrl</kbd>，在 macOS 上也可以用 <kbd>⌘</kbd>；<kbd>Alt</kbd> 就是 Mac 的 <kbd>Option</kbd>。</p>
+
+  <h2 id="worlds">兩個世界：焦點決定鍵盤</h2>
+
+  <p>工作坊有兩個可以動的地方——<strong>鋼琴捲軸</strong>與 <strong>MML 文字區</strong>——而它們共用鍵盤。規則只有一條：</p>
+
+  <div class="note">
+    <p>焦點在 MML 文字區或其他輸入框（包括下拉選單）時，鋼琴捲軸與播放的快捷鍵都讓路，保留原生的文字操作：<kbd>Ctrl</kbd>+<kbd>A</kbd> 是全選文字、<kbd>Ctrl</kbd>+<kbd>C</kbd> 是複製文字、空白鍵就是打一個空格。</p>
+    <p>例外有三組：<kbd>Ctrl</kbd>+<kbd>D</kbd> 在<strong>目前音軌的 MML 文字區</strong>裡也會複製選取的音符（不會開瀏覽器的書籤；其他輸入框不攔截）；<kbd>Ctrl</kbd>+<kbd>Z</kbd>／<kbd>Ctrl</kbd>+<kbd>Y</kbd>／<kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>Z</kbd> 在任何地方都是工作坊自己的復原與重做；<kbd>Ctrl</kbd>+<kbd>S</kbd> 在任何地方都交給工作坊的儲存（見<a href="#global">整個工作坊通用</a>）。</p>
+    <p>對話框、設定抽屜或右鍵選單開啟時，不會操作背後的音符。</p>
+  </div>
+
+  <p>捲軸那一側的鍵有一個共同前提：<strong>要有選取</strong>。<kbd>Delete</kbd>、<kbd>+</kbd>／<kbd>-</kbd>、<kbd>Ctrl</kbd>+<kbd>C</kbd>／<kbd>X</kbd>／<kbd>D</kbd> 都是對「選起來的那幾個音」動作，沒有選取就什麼都不會發生。</p>
+
+  <p>另外，<strong>對話框或右鍵選單開著的時候整組停手</strong>：力度框開著按 <kbd>Delete</kbd> 不會刪掉背後的音符，按 <kbd>3</kbd> 也不會偷偷換掉音符長度。</p>
+
+  <p>會改動音符的鍵在<strong>演奏中</strong>不作用（捲軸與文字區這時都是唯讀）；<strong>暫停中</strong>可以改，改動在按下繼續之後生效。</p>
+
+  <p><strong>播放的那五顆鍵是另一組</strong>（<kbd>Space</kbd> 與四顆方向鍵）：它們不需要選取，但同樣在文字區打字時讓路。詳見<a href="#transport">播放控制</a>。</p>
+
+  <h2 id="transport">播放控制</h2>
+
+  <table>
+    <thead>
+      <tr><th>鍵</th><th>作用</th><th>前提</th></tr>
+    </thead>
+    <tbody>
+      <tr><td><kbd>Space</kbd></td><td>演奏／暫停／繼續（等於按「▶ 演奏」）</td><td>音色庫已載入（「▶ 演奏」不是灰的）；焦點不在其他按鈕、輸入框或下拉選單上；沒有拖曳中的音符</td></tr>
+      <tr><td><kbd>←</kbd>／<kbd>→</kbd></td><td>播放頭退／進一小節</td><td>演奏中或暫停中</td></tr>
+      <tr><td><kbd>↑</kbd></td><td>回到開始線；沒有設開始線就回到曲首</td><td>演奏中或暫停中</td></tr>
+      <tr><td><kbd>↓</kbd></td><td>停止</td><td>演奏中或暫停中</td></tr>
+      <tr><td>媒體鍵：播放／暫停、停止、上一首／下一首（或快退／快轉）</td><td>演奏／暫停、停止、播放頭退／進一小節</td><td>按過一次演奏之後；鍵盤或耳機的媒體鍵要送到哪個分頁，由瀏覽器與作業系統決定</td></tr>
+    </tbody>
+  </table>
+
+  <p>這五顆鍵按住不放不會連發，按著 <kbd>Shift</kbd>、<kbd>Ctrl</kbd>、<kbd>Alt</kbd> 時也不作用；對話框、設定抽屜或右鍵選單開著時同樣停手。</p>
+
+  <h2 id="rollkeys">鋼琴捲軸的鍵盤</h2>
+
+  <table>
+    <thead>
+      <tr><th>鍵</th><th>作用</th><th>前提</th></tr>
+    </thead>
+    <tbody>
+      <tr><td><kbd>0</kbd></td><td>切到<strong>只選取</strong>（箭頭）模式</td><td>—</td></tr>
+      <tr><td><kbd>1</kbd> <kbd>2</kbd> <kbd>3</kbd> <kbd>4</kbd> <kbd>5</kbd> <kbd>6</kbd></td><td>切到繪製模式，音符長度：全音符／二分／四分／八分／十六分／三十二分（對應工具列上那六顆 1、2、4、8、16、32）</td><td>—</td></tr>
+      <tr><td><kbd>7</kbd></td><td>六十四分音符。<strong>工具列上沒有這一顆按鈕</strong>——按下去那六顆會全部暗掉，那不是壞掉，是「現在的長度不在這六顆裡」。左邊那個音符圖示會告訴你現在是什麼</td><td>—</td></tr>
+      <tr><td><kbd>.</kbd></td><td>切換<strong>接下來畫的</strong>音符帶不帶附點（長度變 1.5 倍）。點工具列上那個音符圖示也一樣。已經畫好的音要加附點走右鍵選單</td><td>繪製模式；六十四分音符不支援附點</td></tr>
+      <tr><td><kbd>Ctrl</kbd>+<kbd>A</kbd></td><td>選起目前這條音軌的<strong>全部音符</strong>。接著按 <kbd>Ctrl</kbd>+<kbd>C</kbd> 就是整條的 MML</td><td>焦點不在輸入框；沒有拖曳中的音符</td></tr>
+      <tr><td><kbd>Ctrl</kbd>+<kbd>D</kbd></td><td>選取的那一段<strong>複製接在自己後面</strong>，往後推整數個小節。按住 <kbd>Ctrl</kbd> 連點 <kbd>D</kbd> 就一段一段鋪出去</td><td>有選取、非演奏中；焦點在捲軸或目前音軌的文字區</td></tr>
+      <tr><td><kbd>Delete</kbd>／<kbd>Backspace</kbd></td><td>選起來的音變回同長度的休止符</td><td>有選取、非演奏中</td></tr>
+      <tr><td><kbd>+</kbd>／<kbd>-</kbd></td><td>力度加減一格（力度是 0–15，到頭就停）。數字鍵盤上的 <kbd>+</kbd> <kbd>-</kbd> 也可以</td><td>有選取、非演奏中</td></tr>
+      <tr><td><kbd>Ctrl</kbd>+<kbd>C</kbd></td><td>複製選起來的音（以 MML 文字放進剪貼簿）</td><td>有選取；焦點不在輸入框</td></tr>
+      <tr><td><kbd>Ctrl</kbd>+<kbd>X</kbd></td><td>剪下選起來的音（原處變成休止符）</td><td>有選取、非演奏中</td></tr>
+      <tr><td><kbd>Ctrl</kbd>+<kbd>V</kbd></td><td>把剪貼簿裡的 MML 片段貼成音符。落點依序是：選取的開頭、滑鼠所在的位置、播放開始線；三者都沒有就只提示一句</td><td>非演奏中；焦點不在輸入框</td></tr>
+      <tr><td><kbd>Esc</kbd></td><td>取消正在進行的拖曳並停掉試聽；沒有拖曳的時候<strong>清空選取</strong></td><td>清空選取時：焦點不在輸入框、沒有對話框開著</td></tr>
+    </tbody>
+  </table>
+
+  <p><kbd>Ctrl</kbd>+<kbd>D</kbd> 保留選取起點在小節內的位置，往後移整數個小節（夠放下整段選取的最少小節數）再貼上；不會把後面的內容推開。落點範圍內原有的音符會被覆蓋，完成時會回報覆蓋了幾個。每次都可用 <kbd>Ctrl</kbd>+<kbd>Z</kbd> 復原。新副本會自動選取，因此連按可繼續往後鋪排；按住不放不會連續觸發。<kbd>Ctrl</kbd>+<kbd>V</kbd> 也一樣是覆蓋、貼完自動選取剛貼上的音。</p>
+
+  <p>六十四分音符不能加附點，這跟 Canonical 規則的方向一致：<code>64.</code> 在 Final 裡是禁止的寫法（MOBILE_SYNTAX §4）。</p>
+
+  <h2 id="dragkeys">拖曳中的微調鍵</h2>
+
+  <p>下面這幾顆<strong>只在按住滑鼠拖曳音符時</strong>有用（包括剛按下去、還沒放開的新音符）。捲軸上方的提示列會寫出現在能用哪幾顆。</p>
+
+  <table>
+    <thead>
+      <tr><th>鍵</th><th>作用</th><th>前提</th></tr>
+    </thead>
+    <tbody>
+      <tr><td><kbd>←</kbd> <kbd>→</kbd></td><td>前後微調半格（六十四分音符的長度）</td><td>搬動或改長度中</td></tr>
+      <tr><td><kbd>↑</kbd> <kbd>↓</kbd></td><td>上下一個半音</td><td>搬動中（改長度時沒有作用）</td></tr>
+      <tr><td><kbd>Shift</kbd>+<kbd>↑</kbd> <kbd>↓</kbd></td><td>上下一個八度</td><td>搬動中（改長度時沒有作用）</td></tr>
+      <tr><td><kbd>Shift</kbd>+<kbd>←</kbd> <kbd>→</kbd></td><td>前後一小節。<strong>是位移不是吸附</strong>——落在反拍上的音會移到下一小節的同一個反拍</td><td>搬動或改長度中</td></tr>
+    </tbody>
+  </table>
+
+  <p>框選拖曳中按方向鍵不會有任何作用（也不會捲動頁面）。</p>
+
+  <h2 id="mouse">滑鼠與滾輪</h2>
+
+  <table>
+    <thead>
+      <tr><th>手勢</th><th>作用</th><th>前提</th></tr>
+    </thead>
+    <tbody>
+      <tr><td>左鍵點空白處</td><td>畫一個音（長度是目前選的音符長度）。按住不放可以先拖到想要的位置再放開</td><td>繪製模式、非演奏中</td></tr>
+      <tr><td>左鍵點空白處</td><td>清空選取並設播放開始線；演奏中只移動開始線</td><td><strong>只選取</strong>模式</td></tr>
+      <tr><td>左鍵空白處<strong>拖曳</strong></td><td><strong>框選</strong>：選取變成剛好框到的那幾個（框到 0 個就是清空）</td><td><strong>只選取</strong>模式、非演奏中</td></tr>
+      <tr><td><kbd>Ctrl</kbd>+空白處拖曳</td><td>框選<strong>追加</strong>：已經選起來的留著</td><td><strong>只選取</strong>模式、非演奏中</td></tr>
+      <tr><td>右鍵點空白處</td><td>開<a href="./reference.html#menu">捲軸選單</a>（前兩項就是設定演奏開始線／結束線，其他有段落標記、選前方／後方所有音符、貼上、插入／刪除小節）</td><td>—</td></tr>
+      <tr><td>左鍵點小節尺</td><td>設播放開始線</td><td>演奏中也可以</td></tr>
+      <tr><td>右鍵點小節尺</td><td>開<a href="./reference.html#menu-bar">小節尺選單</a>（開始線、結束線、清除範圍播放、此位置加入力度、變拍）</td><td>演奏中也可以</td></tr>
+      <tr><td>右鍵點捲軸左上角（小節尺左邊、琴鍵上方）</td><td>開曲首拍號選單</td><td>設定裡的「拍號顯示及調整」是啟用</td></tr>
+      <tr><td>左鍵點音符</td><td>選它並發一聲（演奏中只選取、不發聲）</td><td>—</td></tr>
+      <tr><td>右鍵點音符</td><td>開<a href="./reference.html#menu-note">音符選單</a>（沒選起來的音會先被選起來）</td><td>—</td></tr>
+      <tr><td>拖曳音符</td><td>搬動。拖的是多選裡的其中一個音時，整組一起搬</td><td>非演奏中</td></tr>
+      <tr><td>拖音符右邊框</td><td>改長度</td><td>拖的音不在多選之中、非演奏中</td></tr>
+      <tr><td><kbd>Ctrl</kbd>+點音符</td><td>加進／移出選取</td><td>非演奏中</td></tr>
+      <tr><td><kbd>Shift</kbd>+點音符</td><td>範圍選取：從上一次點的那個音選到這個音</td><td>非演奏中</td></tr>
+      <tr><td>雙擊音符</td><td>MML 文字區的游標跳到這個音的後面</td><td><strong>只選取</strong>模式、非演奏中</td></tr>
+      <tr><td>點別軌的音符（捲軸上淡色的那些）</td><td>切換到那一軌並選起這個音</td><td><strong>只選取</strong>模式；那一軌有顯示在捲軸上</td></tr>
+      <tr><td>點左側琴鍵</td><td>試聽那個音</td><td>演奏中也可以</td></tr>
+      <tr><td>點段落標記的膠囊</td><td>捲軸捲到那個標記</td><td>—</td></tr>
+      <tr><td>右鍵點段落標記的膠囊</td><td>開標記選單（修改標記文字、移除這個標記）</td><td>—</td></tr>
+      <tr><td>拖曳音軌分頁</td><td>改變音軌順序（內容、樂器、靜音與顯示狀態一起搬）</td><td>—</td></tr>
+      <tr><td>拖曳捲軸與樂譜區之間的分隔線</td><td>調整兩邊的高度</td><td>—</td></tr>
+      <tr><td><kbd>Ctrl</kbd>+滾輪</td><td>格寬縮放（以滑鼠位置為中心）</td><td>—</td></tr>
+      <tr><td><kbd>Ctrl</kbd>+<kbd>Shift</kbd>+滾輪　或　<kbd>Alt</kbd>+滾輪</td><td>列高縮放</td><td>—</td></tr>
+      <tr><td><kbd>Shift</kbd>+滾輪</td><td>水平捲動（瀏覽器本身的行為）</td><td>—</td></tr>
+    </tbody>
+  </table>
+
+  <div class="note">
+    <p><strong><kbd>Ctrl</kbd>+<strong>點音符</strong>與 <kbd>Ctrl</kbd>+<strong>框</strong>不一樣，而且是刻意的。</strong> 點是<strong>切換</strong>（已經選起來的會被抽掉），框是<strong>純追加</strong>（已經選起來的一定留著）。框選很難精準地「只框到還沒選的那些」，所以它不做切換。</p>
+    <p>純框（不按 <kbd>Ctrl</kbd>）是<strong>取代</strong>：選取變成剛好框到的那幾個。選取可以在視窗外而畫面上沒有任何線索，所以預設不追加——不然「在第 3 小節選好幾個音、捲到第 40 小節再框住眼前這幾個」會默默改到第 3 小節。</p>
+  </div>
+
+  <h2 id="global">整個工作坊通用</h2>
+
+  <table>
+    <thead>
+      <tr><th>鍵</th><th>作用</th><th>前提</th></tr>
+    </thead>
+    <tbody>
+      <tr><td><kbd>Ctrl</kbd>+<kbd>Z</kbd></td><td>復原</td><td>任何地方都作用，文字區裡也是工作坊自己的復原</td></tr>
+      <tr><td><kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>Z</kbd>／<kbd>Ctrl</kbd>+<kbd>Y</kbd></td><td>重做</td><td>同上</td></tr>
+      <tr><td><kbd>Ctrl</kbd>+<kbd>S</kbd></td><td>把這一份存進這個瀏覽器的歌曲庫。已經存過（或從歌曲庫開過）而且名字沒改的話就直接存回同一份；否則打開「儲存樂譜」框</td><td>見下方說明</td></tr>
+      <tr><td><kbd>Esc</kbd></td><td>關閉對話框、設定抽屜、窄畫面的選單（段落標記的輸入框請按取消）；WAV 或影片匯出進行中時不會關掉那個框</td><td>—</td></tr>
+      <tr><td><kbd>↑</kbd> <kbd>↓</kbd></td><td>調整捲軸與樂譜區的高度（<kbd>Shift</kbd> 一次跨大步）</td><td>焦點在<strong>分隔線</strong>上</td></tr>
+    </tbody>
+  </table>
+
+  <div class="note">
+    <p><strong><kbd>Ctrl</kbd>+<kbd>S</kbd> 有兩種行為，分界是「這還是不是你上次存的那一份」。</strong>不論哪一種，瀏覽器自己的「另存網頁」都不會跳出來。</p>
+    <p><strong>直接存回去</strong>——這次開啟頁面之後，你已經把這一份存進歌曲庫（或從歌曲庫開過一份），而且之後沒有改檔名。這時候按下去就直接寫回歌曲庫裡同名的那一份，<strong>不會再問一次要不要覆蓋</strong>，畫面上會出現一句確認。這是唯一一條不問就覆寫既有存檔的路，所以下面那幾種情況一律不走它。</p>
+    <p><strong>打開「儲存樂譜」框</strong>——第一次存、重新整理頁面之後的第一次、改過檔名（那是另存新檔）。<strong>按「新增」、用剪貼簿「貼上」、從「檔案」匯入、或「從 Studio 開啟」之後也會打開框</strong>：那些都是把編輯器裡的東西整批換掉，換完之後它已經不是你原本那份檔案了。</p>
+    <p>這一份是空的（沒有任何音符）時按下去只會提醒一句，不會開框。已經有別的對話框開著時它不作用——除了「儲存樂譜」框自己開著的時候，那時 <kbd>Ctrl</kbd>+<kbd>S</kbd> 就等於按下那顆「儲存」（名字跟歌曲庫裡某一份相同時，仍會先問要不要覆蓋）。</p>
+    <p>歌曲庫只存在這個瀏覽器裡，不會上傳；換電腦或換瀏覽器就看不到。要長久保存，請用「檔案」的匯出，或在「儲存樂譜」框裡批次下載。</p>
+  </div>
+
+  <h2 id="menukeys">選單與輸入框裡的鍵</h2>
+
+  <table>
+    <thead>
+      <tr><th>鍵</th><th>作用</th><th>前提</th></tr>
+    </thead>
+    <tbody>
+      <tr><td><kbd>↑</kbd> <kbd>↓</kbd></td><td>在選單的項目之間移動</td><td>右鍵選單開著（捲軸、音符、小節尺、拍號、段落標記的選單都一樣）</td></tr>
+      <tr><td><kbd>←</kbd> <kbd>→</kbd></td><td>調整那一項的數字（例如插入幾個小節、改成幾拍）</td><td>右鍵選單裡、帶數字的項目</td></tr>
+      <tr><td><kbd>Enter</kbd>／<kbd>Space</kbd></td><td>執行用方向鍵移到的那一項</td><td>右鍵選單裡</td></tr>
+      <tr><td><kbd>Esc</kbd>／<kbd>Tab</kbd></td><td>關閉選單</td><td>右鍵選單裡</td></tr>
+      <tr><td><kbd>Enter</kbd></td><td>儲存</td><td>焦點在「儲存樂譜」框的檔名欄</td></tr>
+      <tr><td><kbd>Enter</kbd></td><td>下載</td><td>焦點在「檔案」框匯出區的檔名欄</td></tr>
+      <tr><td><kbd>Enter</kbd></td><td>確定</td><td>焦點在段落標記的文字欄</td></tr>
+    </tbody>
+  </table>
+
+  <div class="note">
+    <p>每一顆按鈕在做什麼、以及那些沒有快捷鍵的功能，在<a href="./reference.html">功能說明</a>。還沒讀過入門？<a href="./editor.html">編輯器入門</a>有一條從零到貼進遊戲的完整路線。想手寫 MML 看 <a href="./mml.html">MML 教學</a>，其他問題看<a href="./faq.html">常見問題</a>。<a href="../index.html">回到工作坊</a>。</p>
+  </div>
+</main>
+<footer>
+  <p>工作坊在 Canonical 驗證流程之外：這裡描述的是工作坊的行為，不是遊戲規則，也不代表任何東西通過 Studio 的驗證。遊戲與交付規則以 Published Canonical 為準。</p>
+  <div class="row"><a href="../index.html">← 工作坊</a><a href="../../../../index.html">MML Studio</a></div>
+</footer>
+<script type="module" src="./guide.mjs"></script>
+</body>
+</html>
