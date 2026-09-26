@@ -63,7 +63,7 @@ async function consent(send, clientId, redirect, extra = {}) {
   assert.equal(approved.status, 303);
   const location = new URL(approved.headers.get('location'));
   assert.equal(location.origin + location.pathname, redirect);
-  assert.equal(location.searchParams.get('state'), 'synthetic-state');
+  assert.equal(location.searchParams.get('state'), extra.state ?? 'synthetic-state');
   return location.searchParams.get('code');
 }
 const exchange = (send, clientId, code, extra = {}, headers = {}) => send(form('/oauth/token', { client_id: clientId, grant_type: 'authorization_code', code, code_verifier: verifier, resource: origin + '/mcp', ...extra }, headers));
@@ -252,4 +252,30 @@ test('a refused registration is logged with its metadata shape, never a callback
   assert.deepEqual(opted.rejected.map(entry => [entry.endpoint, entry.error]), [['/oauth/token', 'invalid_client'], ['/oauth/authorize', 'access_denied']]);
   const tokenLog = JSON.stringify(opted.rejected);
   for (const secret of [code, verifier, 'synthetic-secret-value', 'synthetic-wrong-password', password]) assert.equal(tokenLog.includes(secret), false);
+});
+
+// What production logged (OAUTH_REQUEST_REJECTED, 2026-09-26) for Gemini's
+// registration: six callbacks over Google's production, sandbox and test
+// relays, token_endpoint_auth_method `none`, no scope. Its authorize request
+// then carried a 1314-character state.
+test('Gemini\'s observed registration and long state complete the flow once all three relays are listed', async t => {
+  const relays = ['oauth-redirect.googleusercontent.com', 'oauth-redirect-sandbox.googleusercontent.com', 'oauth-redirect-test.googleusercontent.com'];
+  const hosts = parseRedirectHosts({ MML_OAUTH_REDIRECT_HOSTS: ['chatgpt.com', 'chat.openai.com', 'claude.ai', 'claude.com', ...relays].join(',') });
+  const callbacks = relays.flatMap(host => [1, 2].map(n => `https://${host}/r/user_bound_custom-mcp-00000000000000000000${n}-mml_example`));
+  const observed = { client_name: 'Gemini', redirect_uris: callbacks, response_types: ['code'], grant_types: ['authorization_code', 'refresh_token'], token_endpoint_auth_method: 'none' };
+  // With only the production relay listed, the sandbox and test callbacks refuse the whole registration.
+  await refused(setup(t).send, observed, 'invalid_redirect_uri');
+  const { send } = setup(t, { allowedRedirectHosts: hosts });
+  const client = await register(send, observed);
+  assert.deepEqual(client.redirect_uris, callbacks);
+  for (const length of [1314, 4096]) {
+    const state = 'A'.repeat(length - 1) + '_';
+    const code = await consent(send, client.client_id, callbacks[0], { state });
+    const token = await exchange(send, client.client_id, code);
+    assert.equal(token.status, 200, String(length));
+    assert.equal((await ping(send, (await token.json()).access_token)).status, 200, String(length));
+  }
+  const tooLong = await send(req('/oauth/authorize?' + authorizeParams(client.client_id, callbacks[0], { state: 'A'.repeat(4097) })));
+  assert.equal(tooLong.status, 400);
+  assert.equal((await tooLong.json()).error_description, 'State too long');
 });

@@ -63,12 +63,13 @@ export const serverFaultLog = entry => console.error(JSON.stringify({ event: 'UN
 // registered callback, PKCE S256, CSRF, the owner password — is the same for
 // every client.
 //
-// Google's OAuth relay, oauth-redirect.googleusercontent.com (Gemini custom MCP
-// connectors call back to /r/user_bound_custom-mcp-<id>-<server>), is
-// deliberately not a default. Unlike the connector-owned callbacks above, that
-// host relays to whichever Google project or connector the path names, so
-// admitting it widens who can receive an authorization code this owner
-// approves. A deployment that uses Gemini opts in by listing it in
+// Google's OAuth relays, oauth-redirect.googleusercontent.com and its -sandbox
+// and -test siblings (Gemini custom MCP connectors register callbacks
+// /r/user_bound_custom-mcp-<id>-<server> on all three in one request), are
+// deliberately not defaults. Unlike the connector-owned callbacks above, each
+// relays to whichever Google project or connector the path names, so admitting
+// them widens who can receive an authorization code this owner approves. A
+// deployment that uses Gemini opts in by listing all three in
 // MML_OAUTH_REDIRECT_HOSTS together with the hosts above.
 export const DEFAULT_REDIRECT_HOSTS = Object.freeze(['chatgpt.com', 'chat.openai.com', 'claude.ai', 'claude.com']);
 
