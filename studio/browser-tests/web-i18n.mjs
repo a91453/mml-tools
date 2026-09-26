@@ -17,7 +17,7 @@ export async function runStudioI18nChecks({ browser, base, profile }) {
   page.on('pageerror', error => errors.push(error.message));
   const settled = () => page.waitForFunction(() => document.querySelector('#app h1') && document.querySelector('#app')?.getAttribute('aria-busy') === 'false', null, { timeout: 60000 });
   const heading = () => page.locator('#intake h2').textContent();
-  const background = () => page.evaluate(() => getComputedStyle(document.body).backgroundColor);
+  const background = () => page.evaluate(() => getComputedStyle(document.documentElement).backgroundColor);
   const stored = () => page.evaluate(() => JSON.parse(localStorage.getItem('studio-workshop/ui') || '{}'));
   try {
     await page.goto(base);
