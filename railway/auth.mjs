@@ -4,6 +4,22 @@ import { mkdirSync } from 'node:fs';
 import { dirname, isAbsolute } from 'node:path';
 
 const SCOPE = 'mml:read';
+// Scope tokens a request may name. offline_access asks for the refresh token
+// every grant already receives, so tolerating it issues nothing new: the
+// granted scope is always mml:read, and anything else is still refused.
+const TOLERATED_SCOPES = new Set([SCOPE, 'offline_access']);
+// Dynamic Client Registration (RFC 7591). A connector may list a few callbacks
+// (Gemini's are per user and per connector), so a registration may carry up to
+// ten; every one must still pass redirectAllowed.
+const MAX_REDIRECT_URIS = 10;
+// token_endpoint_auth_method values a registration may ask for. Every client
+// is registered as `none`, a public PKCE client, and the response says so.
+// RFC 7591 §2 makes client_secret_basic the method a client assumes when it
+// names none, and §3.2.1 lets the server replace a requested value, so a
+// server-side connector (Google's) that asks for a secret-based method is
+// answered with the public client this server issues instead of a 400. No
+// secret is ever issued, and the token endpoint still refuses one.
+const REGISTRABLE_AUTH_METHODS = new Set(['none', 'client_secret_basic', 'client_secret_post']);
 const opaque = () => randomBytes(32).toString('base64url');
 const hash = value => createHash('sha256').update(value).digest('hex');
 const challenge = value => createHash('sha256').update(value).digest('base64url');
@@ -16,6 +32,25 @@ const expiredLoginPage = () => new Response(`<!doctype html><html lang="zh-Hant"
 
 class OAuthFault extends Error {
   constructor(code, description, status = 400) { super(description); this.code = code; this.status = status; }
+}
+// What a refused registration asked for, for the deployment log: public RFC
+// 7591 metadata only. Callbacks are reduced to scheme and host, because a
+// connector's callback path can carry a per-user identifier.
+function describeRegistration(body) {
+  if (!body || typeof body !== 'object' || Array.isArray(body)) return { shape: Array.isArray(body) ? 'array' : body === null ? 'null' : typeof body };
+  const text = value => value === undefined ? undefined : typeof value === 'string' ? value.slice(0, 120) : `<${Array.isArray(value) ? 'array' : value === null ? 'null' : typeof value}>`;
+  const list = value => Array.isArray(value) ? value.slice(0, 12).map(text) : text(value);
+  const origin = value => { try { const u = new URL(value); return `${u.protocol}//${u.host}`; } catch { return '<unparseable>'; } };
+  return {
+    fields: Object.keys(body).slice(0, 40).map(key => key.slice(0, 64)),
+    redirect_uri_count: Array.isArray(body.redirect_uris) ? body.redirect_uris.length : text(body.redirect_uris),
+    redirect_origins: Array.isArray(body.redirect_uris) ? [...new Set(body.redirect_uris.slice(0, 12).map(origin))] : undefined,
+    token_endpoint_auth_method: text(body.token_endpoint_auth_method),
+    grant_types: list(body.grant_types),
+    response_types: list(body.response_types),
+    scope: text(body.scope),
+    client_name_length: typeof body.client_name === 'string' ? body.client_name.length : text(body.client_name),
+  };
 }
 function requireValue(ok, code = 'invalid_request', description = 'Invalid request', status = 400) { if (!ok) throw new OAuthFault(code, description, status); }
 function uniqueParams(params) { for (const key of new Set(params.keys())) requireValue(params.getAll(key).length === 1, 'invalid_request', 'Repeated parameter'); return params; }
@@ -66,7 +101,7 @@ class AuthStore {
 // authorization code is delivered only to a listener on the owner's own host.
 const LOOPBACK_HOSTS = new Set(['127.0.0.1', '[::1]', 'localhost']);
 
-export function createAuth({ origin, ownerPassword, database, allowedRedirectHosts = ['chatgpt.com', 'chat.openai.com'], allowLoopbackRedirects = true, now = () => Math.floor(Date.now() / 1000), allowHttpForTests = false }) {
+export function createAuth({ origin, ownerPassword, database, allowedRedirectHosts = ['chatgpt.com', 'chat.openai.com'], allowLoopbackRedirects = true, now = () => Math.floor(Date.now() / 1000), allowHttpForTests = false, rejectLog = () => {} }) {
   // An unparseable value is the same configuration error as a malformed one and
   // is reported as one: the raw `Invalid URL` a bare parse throws names nothing
   // an operator can act on, and this is the first thing a misconfigured
@@ -91,7 +126,9 @@ export function createAuth({ origin, ownerPassword, database, allowedRedirectHos
   }
   function clientFor(id) { const client = store.get('client', id); requireValue(client, 'invalid_client', 'Unknown client', 401); return client; }
   function checkResource(value) { requireValue(!value || value === resource, 'invalid_target', 'Resource does not match this server'); }
-  function checkScope(value) { requireValue(!value || value === SCOPE, 'invalid_scope', 'Only mml:read is available'); }
+  // A space-delimited scope string (RFC 6749 §3.3) naming only mml:read and
+  // offline_access, or none at all; whatever is asked, mml:read is granted.
+  function checkScope(value) { requireValue(!value || (typeof value === 'string' && value.length <= 256 && value.split(' ').every(token => token === '' || TOLERATED_SCOPES.has(token))), 'invalid_scope', 'Only mml:read is available'); }
   // Exact HTTPS callbacks on the approved connector hosts with no userinfo, no
   // fragment and no custom port; or a loopback redirect for a native client.
   function redirectAllowed(value) {
@@ -185,14 +222,21 @@ export function createAuth({ origin, ownerPassword, database, allowedRedirectHos
   async function register(request) {
     rate('register', 12); store.prune();
     const body = await readBody(request, 'application/json');
-    requireValue(body && typeof body === 'object' && !Array.isArray(body), 'invalid_client_metadata', 'Expected an object');
-    requireValue(Array.isArray(body.redirect_uris) && body.redirect_uris.length > 0 && body.redirect_uris.length <= 5 && body.redirect_uris.every(redirectAllowed), 'invalid_redirect_uri', 'Only approved HTTPS callback hosts are accepted');
-    requireValue(body.token_endpoint_auth_method === undefined || body.token_endpoint_auth_method === 'none', 'invalid_client_metadata', 'This server uses public clients with PKCE');
-    requireValue(body.grant_types === undefined || (Array.isArray(body.grant_types) && body.grant_types.includes('authorization_code') && body.grant_types.every(v => ['authorization_code', 'refresh_token'].includes(v))), 'invalid_client_metadata', 'Unsupported grant types');
-    requireValue(body.response_types === undefined || (Array.isArray(body.response_types) && body.response_types.length === 1 && body.response_types[0] === 'code'), 'invalid_client_metadata', 'Unsupported response type');
-    const name = body.client_name ?? 'ChatGPT';
-    requireValue(typeof name === 'string' && name.length > 0 && name.length <= 100, 'invalid_client_metadata', 'Invalid client name');
-    checkScope(body.scope);
+    const name = body?.client_name ?? 'ChatGPT';
+    try {
+      requireValue(body && typeof body === 'object' && !Array.isArray(body), 'invalid_client_metadata', 'Expected an object');
+      requireValue(Array.isArray(body.redirect_uris) && body.redirect_uris.length > 0 && body.redirect_uris.length <= MAX_REDIRECT_URIS && body.redirect_uris.every(redirectAllowed), 'invalid_redirect_uri', 'Only approved HTTPS callback hosts are accepted');
+      // A client never chooses its own secret, and this server issues none.
+      requireValue(body.client_secret === undefined, 'invalid_client_metadata', 'This server issues no client secrets');
+      requireValue(body.token_endpoint_auth_method === undefined || REGISTRABLE_AUTH_METHODS.has(body.token_endpoint_auth_method), 'invalid_client_metadata', 'This server uses public clients with PKCE');
+      requireValue(body.grant_types === undefined || (Array.isArray(body.grant_types) && body.grant_types.includes('authorization_code') && body.grant_types.every(v => ['authorization_code', 'refresh_token'].includes(v))), 'invalid_client_metadata', 'Unsupported grant types');
+      requireValue(body.response_types === undefined || (Array.isArray(body.response_types) && body.response_types.length === 1 && body.response_types[0] === 'code'), 'invalid_client_metadata', 'Unsupported response type');
+      requireValue(typeof name === 'string' && name.length > 0 && name.length <= 100, 'invalid_client_metadata', 'Invalid client name');
+      checkScope(body.scope);
+    } catch (error) {
+      if (error instanceof OAuthFault) error.registration = describeRegistration(body);
+      throw error;
+    }
     const redirectUris = [...new Set(body.redirect_uris)];
     // The service page registers on every login, and a consented client is kept
     // for a year, so its logins alone used up the 128 registrations and then
@@ -279,6 +323,12 @@ export function createAuth({ origin, ownerPassword, database, allowedRedirectHos
         if (url.pathname === '/oauth/revoke' && request.method === 'POST') return await revoke(request);
         return null;
       } catch (error) {
+        // One deployment-log line per refused OAuth request: the endpoint, the
+        // error and, for a registration, the metadata shape it asked for. The
+        // platform HTTP log shows only the status. Never a token, password,
+        // code, query string or callback path.
+        const fault = error instanceof OAuthFault ? error : error instanceof SyntaxError || error instanceof TypeError ? new OAuthFault('invalid_request', 'Malformed request') : null;
+        if (fault) try { rejectLog({ endpoint: url.pathname, method: request.method, status: fault.status, error: fault.code, reason: fault.message, user_agent: (request.headers.get('user-agent') ?? '').slice(0, 200), ...(error.registration ? { registration: error.registration } : {}) }); } catch {}
         if (error instanceof OAuthFault) {
           const acceptsHtml = (request.headers.get('accept') ?? '').split(',').some(value => value.trim().split(';')[0].toLowerCase() === 'text/html');
           if (request.method === 'POST' && url.pathname === '/oauth/authorize' && error.message === 'Login request expired or invalid' && acceptsHtml) return expiredLoginPage();
