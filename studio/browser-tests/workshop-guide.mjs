@@ -5,7 +5,7 @@ import en from '../web/workshop/guide/i18n/en.mjs';
 // panel, drawn in the shared language and theme before they are shown, the
 // article swapped for its translation, the language switch on the page, and
 // no console error or CSP violation on any of the seven.
-const PAGES = ['editor', 'keys', 'mobile', 'reference', 'mml', 'midi', 'faq'];
+const PAGES = ['editor', 'reference', 'keys', 'mobile', 'mml', 'midi', 'faq'];
 const h1Of = html => /<h1[^>]*>([\s\S]*?)<\/h1>/.exec(html)[1].replace(/<[^>]+>/g, '').trim();
 
 export async function runWorkshopGuideChecks({ browser, base, profile }) {

@@ -12,7 +12,7 @@ import * as i18n from "../i18n.mjs";
 import * as storage from "../storage.mjs";
 import { LANGS, LANG_NAMES, translateStatic } from "../../i18n-core.mjs";
 
-export const PAGES = ["editor", "keys", "mobile", "reference", "mml", "midi", "faq"];
+export const PAGES = ["editor", "reference", "keys", "mobile", "mml", "midi", "faq"];
 
 const root = document.documentElement;
 const page = document.body.dataset.guide;

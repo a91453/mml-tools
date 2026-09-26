@@ -10,7 +10,7 @@ import { fileURLToPath } from 'node:url';
 import { dirname, resolve } from 'node:path';
 
 const dir = new URL('../web/workshop/guide/', import.meta.url);
-const PAGES = ['editor', 'keys', 'mobile', 'reference', 'mml', 'midi', 'faq'];
+const PAGES = ['editor', 'reference', 'keys', 'mobile', 'mml', 'midi', 'faq'];
 const LANGS = ['en', 'ja', 'ko'];
 const read = async name => readFile(new URL(name, dir), 'utf8');
 const article = html => /<main id="guide">([\s\S]*)<\/main>/.exec(html)?.[1] ?? '';
