@@ -857,3 +857,26 @@ UI-7（深色模式）在 Studio 主頁完成。擁有者決定 Studio 主頁**�
   只處理主題、共用偏好、「跟隨系統」清除已存的主題且保留工作坊其他偏好）；瀏覽器測試
   `studio/browser-tests/web-theme.mjs`（首繪前即為系統主題、就地切換、重新載入後保留、跟隨系統即時切換、與工作坊
   共用主題、日文瀏覽器與工作坊存的語言都不改變 Studio 的 zh-Hant）。
+### 14.7 Studio 來源匯入：3MLE `.mml`／`.mmi`（LG-6，2026-09-26）
+
+§11.1 的「格式讀取部分」移植完成，只取「檔案 → 原始 MML 文字＋metadata」這一段：
+
+- **模組**：`studio/backend/mml/community-formats.mjs`（區段讀取、3MLE 擴充區塊的 CRC／bzip2／TLV），
+  `studio/backend/mml/bzip2-decode.mjs`（只有解壓；壓縮器留在工作坊）。
+- **接到既有 intake**：`model.mjs` 的 `intake()` 認出 `[Settings]`／`[ChannelN]`／`[mml-score]` 後，把檔案讀出的
+  `MML@…;` 字串交給 `normalizeMMLSource`，和貼上的 MML@ 字串走同一條路；**不經過**工作坊的 480 tick 模型，
+  也**不經過** `mml-compress`，不改寫任何音符。單元測試確認檔案與它讀出的 MML@ 字串產生完全相同的事件。
+- **位置就是角色**：`.mml` 的每個 `[ChannelN]` 是一個位置（先依擴充區塊的順序，再依 channel 編號），空 channel
+  保留位置；`.mmi` 每個 block 是一個樂器，block 內的 part 都保留位置（`MML@a,,c;` 是三個位置，c 仍在第三個），只捨去
+  block 尾端的空 part（`MML@a,,;` 是一個位置），整個空的 block 保留一個位置；兩種格式對空軌的處理一致。尾端空位捨去；超過六個位置時**拒絕**（UNSUPPORTED），不截斷。軌內含 `MML@`、`,`、`;` 也拒絕。
+- **換行**：3MLE channel 內的折行視為排版，接起來（警告 `COMMUNITY_LINES_JOINED`）；行內其他空白**不刪**，
+  交給 parser 報錯，避免把 `c 4` 悄悄變成 `c4`。
+- **metadata 只記錄不套用**：標題、音軌名稱、program、檔案宣告的拍號與 marker 放在 asset 的 `community` 欄位並
+  顯示在來源卡片；檔案宣告的拍號**不是** caller-confirmed meter map，不會套用。擴充區塊任何檢查失敗時只少了名稱
+  與 program（`COMMUNITY_EXTENSION_UNREADABLE`），音軌仍從 channel 讀取。
+- **asset 形狀**：`content` 保留原始檔案文字（備份還原、改拍號重讀都從檔案重新讀取），`mml` 是讀出的 MML@ 字串；
+  讀回比對、試聽、工作坊開啟都用 `assetMml()`（`studio/web/asset-mml.mjs`）。
+- **範圍外**：服務端（MCP）來源匯入（`studio/backend/application/intake-service.mjs`）尚未支援 3MLE／`.mmi`；
+  非 UTF-8 檔案的 `[Settings]` 標題以 UTF-8 讀取（擴充區塊內的名稱照宣告的編碼解碼）。
+- **驗證**：`studio/tests/community-formats.test.mjs`（以工作坊自己的寫出器產生檔案，並與工作坊的讀取器比對）；
+  瀏覽器 `studio/browser-tests/community-formats.mjs`（從來源選擇器挑 `.mml`／`.mmi`、七軌被拒絕）。
