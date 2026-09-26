@@ -6,12 +6,12 @@ import subprocess
 import sys
 import zipfile
 
-SOURCE_SHA = "44c282f1f32a9ea036c57dfd8239c7509aad0b3e"
-BUILD_ID = "072c2cc6033cfc2c795fdf77d8a6fb2692c724048e16217e5025337605cdea9e"
-CACHE_ID = "1cea96fa5918ae79b5cd759e331df3a1f303e37ef8d8af2a19e1d6224a7880b2"
+SOURCE_SHA = "718c8452dd4fd717346045bd8e954c6be05289b9"
+BUILD_ID = "e5b22614b0ead493e301d4e0d7bef86ac00fcda0c0fdbe82fa19d7ae4872fdd8"
+CACHE_ID = "d451746f5e98dee09598deac3fed97aa7c4b741b51c8103e4786785efb5a2450"
 TRUSTED = ["scripts/verify-studio-artifact.mjs", "scripts/studio-artifact-identity.mjs",
            "studio/web/canonical-contract.mjs", "studio/web/sw.js"]
-TAG = "studio-v1-durable-44c282f1f32a"
+TAG = "studio-v1-durable-718c8452dd4f"
 
 def digest(data):
     return hashlib.sha256(data).hexdigest()
