@@ -20,6 +20,10 @@ import { createSourceRequestLedger } from './source-requests.mjs';
 // pipeline. This small adapter only opens a copy there and brings an edit back
 // through the ordinary intake below; see workshop-link.mjs.
 import { UNVERIFIED_LABEL, parseReturnHash, returnFileName, takeReturn, workshopUrl } from './workshop-link.mjs';
+// Light/dark theme (ui-prefs.mjs), shared with the Workshop; boot.js applied
+// the stored one before first paint.
+import { applyTheme, setTheme, themeChoice, UI_KEY } from './ui-prefs.mjs';
+import { assetMml } from './asset-mml.mjs';
 
 const $ = selector => document.querySelector(selector);
 const esc = value => String(value ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
@@ -146,16 +150,26 @@ async function commit(next) {
 }
 const input = (name, label, value, attrs = '') => `<label>${esc(label)}<input name="${name}" value="${esc(value)}" ${attrs}></label>`;
 const bytesLabel = value => value >= 1048576 ? `${(value / 1048576).toFixed(2)} MiB` : `${(value / 1024).toFixed(1)} KiB`;
+// What a 3MLE .mml/.mmi file says about itself, shown beside the MML read out
+// of it. Names, programs, declared meter and markers are file metadata: none
+// of it is applied (the meter map stays the one confirmed in 01).
+function communityFacts(asset) {
+  const c = asset?.community;
+  if (!c) return '';
+  const tracks = c.tracks.map(track => `${['Melody', 'Chord1', 'Chord2', 'Chord3', 'Chord4', 'Chord5'][track.position]}: ${track.empty ? '—' : `${track.label ?? '?'}${track.program === null ? '' : ` (program ${track.program})`}`}`).join(' · ');
+  const meter = c.declaredMeter.map(m => `${m.numerator}/${m.denominator}`).join(', ');
+  return `<p class="meta">${c.title ? `「${esc(c.title)}」 · ` : ''}${esc(tracks)}${meter ? ` · 檔案宣告拍號 ${esc(meter)}（未套用；拍號圖以 01 的設定為準）` : ''}${c.extension === 'refused' ? ' · 3MLE 擴充區塊未通過檢查，未讀取音軌名稱與音色' : ''}</p>`;
+}
 function intakeCard(slot, title, hint) {
   const asset = workspace.assets[slot];
   // A Raw MIDI asset has no text representation, so its identity is stated as
   // the byte count and the digest of the bytes that were actually parsed.
   const source = asset?.source?.sha256 ? `<p class="meta">${bytesLabel(asset.source.byteLength)} · SMF ${esc(asset.midi?.smfFormat ?? '?')} · ${asset.midi?.trackCount ?? '?'} tracks<br><code class="digest">sha256 ${esc(asset.source.sha256.slice(0, 16))}…</code></p>` : '';
-  const workshop = asset?.format === 'MML' && /MML@/i.test(asset.content ?? '') ? `<p><a class="file-button quiet workshop-link" href="${esc(workshopUrl(workspace.id, slot))}">在工作坊開啟（副本）</a></p>` : '';
+  const workshop = /MML@/i.test(assetMml(asset) ?? '') ? `<p><a class="file-button quiet workshop-link" href="${esc(workshopUrl(workspace.id, slot))}">在工作坊開啟（副本）</a></p>` : '';
   // The picker has no accept list: iPhone/iPad map one to their own document
   // types and grey out an .xml they do not associate with it. The bytes decide
   // the reader (MIDI or ZIP header, else text intake), as for a dropped file.
-  return `<div class="card"><h3>${title}</h3><p class="meta">${hint}</p>${asset ? `<p><strong>${esc(asset.name)}</strong></p><p class="meta">${esc(asset.format)} · ${asset.project.events.length} events</p>${source}${workshop}${badge(asset.unsupported.length ? 'UNSUPPORTED' : 'PENDING')} <small>${asset.complete ? '解析完成，等待來源審核' : '來源未完整'}</small>${detail('來源 authority／warnings／unsupported', { sources: asset.project.sources, warnings: asset.warnings, errors: asset.errors, unsupported: asset.unsupported })}` : '<div class="empty">尚未加入來源<br>MusicXML · MML · MIDI · Canonical IR</div>'}<label class="file-button secondary">${asset ? '更換來源' : '選擇檔案'}<input type="file" data-intake="${slot}" aria-label="${title}檔案"></label>${asset ? `<button class="quiet" data-download-ir="${slot}">匯出 IR</button>` : ''}${asset?.format === 'MML' ? `<button class="quiet" data-listen-asset="${slot}">送到試聽</button>` : ''}</div>`;
+  return `<div class="card"><h3>${title}</h3><p class="meta">${hint}</p>${asset ? `<p><strong>${esc(asset.name)}</strong></p><p class="meta">${esc(asset.community ? `${asset.format} · ${asset.community.format}` : asset.format)} · ${asset.project.events.length} events</p>${communityFacts(asset)}${source}${workshop}${badge(asset.unsupported.length ? 'UNSUPPORTED' : 'PENDING')} <small>${asset.complete ? '解析完成，等待來源審核' : '來源未完整'}</small>${detail('來源 authority／warnings／unsupported', { sources: asset.project.sources, warnings: asset.warnings, errors: asset.errors, unsupported: asset.unsupported })}` : '<div class="empty">尚未加入來源<br>MusicXML · MML · MIDI · Canonical IR</div>'}<label class="file-button secondary">${asset ? '更換來源' : '選擇檔案'}<input type="file" data-intake="${slot}" aria-label="${title}檔案"></label>${asset ? `<button class="quiet" data-download-ir="${slot}">匯出 IR</button>` : ''}${asset?.format === 'MML' ? `<button class="quiet" data-listen-asset="${slot}">送到試聽</button>` : ''}</div>`;
 }
 // ─── Raw MIDI presentation ──────────────────────────────────────────────────
 //
@@ -825,11 +839,11 @@ function bind() {
   if(listenFinal)listenFinal.onclick=()=>sendToListening(appliedDelivery(),'Final MML',{markers:true});
   const listenMml=$('#listen-mml');
   if(listenMml)listenMml.onclick=()=>sendToListening(report.rawMml,report.deliveryOrigin==='candidate-source'?'候選 MML':'完整 MML@',{markers:true});
-  document.querySelectorAll('[data-listen-asset]').forEach(button=>button.onclick=()=>{const slot=button.dataset.listenAsset;sendToListening(workspace.assets[slot]?.content,slotLabels[slot]??slot);});
+  document.querySelectorAll('[data-listen-asset]').forEach(button=>button.onclick=()=>{const slot=button.dataset.listenAsset;sendToListening(assetMml(workspace.assets[slot]),slotLabels[slot]??slot);});
 }
 function sendToListening(mml,label,{markers=false}={}){
   if(!listening||typeof mml!=='string'||!mml.trim())return message('沒有可送到試聽的 MML');
-  const alternatives=[['Final MML',appliedDelivery()],['完整 MML@',report?.rawMml],...['candidate','baseline','previous'].map(slot=>[slotLabels[slot],workspace.assets[slot]?.format==='MML'?workspace.assets[slot].content:null])].filter(([,text])=>typeof text==='string'&&text.trim()).map(([name,text])=>({label:name,mml:text}));
+  const alternatives=[['Final MML',appliedDelivery()],['完整 MML@',report?.rawMml],...['candidate','baseline','previous'].map(slot=>[slotLabels[slot],assetMml(workspace.assets[slot])])].filter(([,text])=>typeof text==='string'&&text.trim()).map(([name,text])=>({label:name,mml:text}));
   listening.openFromProject({projectId:workspace.id,projectTitle:workspace.title,label,mml,meterText:workspace.settings?.meterText??'',markers:markers?markersFromReport(report):[],notes:workspace.listeningNotes??[],alternatives}).catch(error=>message(error.message,true));
 }
 
@@ -1681,6 +1695,20 @@ function offerWorkshopReturn() {
 }
 async function buildAudit(){ try{ const r=await fetch('./build.json'); if(!r.ok) return null; return (await r.json()).audit??null; } catch { return null; } }
 function network(){ $('#network').textContent=navigator.onLine?'本地執行 · Online':'本地執行 · Offline'; }
+// ─── Theme ──────────────────────────────────────────────────────────────────
+// Light, dark or follow the system. The choice is stored in the preference the
+// Workshop shares, so a theme picked on either page holds on both; a switch
+// only swaps CSS tokens (the review roll repaints itself, review-roll.mjs).
+function initTheme(){
+  const select=$('#theme');
+  select.value=themeChoice();
+  select.onchange=()=>setTheme(select.value);
+  // "Follow the system" follows it live, and a choice made on the Workshop
+  // page in another tab is picked up when it is made.
+  globalThis.matchMedia?.('(prefers-color-scheme: dark)').addEventListener?.('change',()=>{if(themeChoice()==='system')applyTheme('system');});
+  addEventListener('storage',event=>{if(event.key===null||event.key===UI_KEY){select.value=themeChoice();applyTheme();}});
+}
+initTheme();
 addEventListener('online',network);addEventListener('offline',network);network();
 // ─── Listening sessions ─────────────────────────────────────────────────────
 // A listen link (#listen=…) opens its own session beside whatever project is

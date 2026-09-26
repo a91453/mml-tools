@@ -837,3 +837,72 @@ cache-first 的 Service Worker 快取，所以開著的工作坊分頁會一直�
   暫停、循環、播放中改譜。共用的是引擎載入檢查（`bank-check.mjs`）、樂器表、鼓音規則與空白音色
   過濾（`isUsablePreset`）。
 
+
+### 14.6 Studio 主頁的深色模式（2026-09-26）
+
+UI-7（深色模式）在 Studio 主頁完成。擁有者決定 Studio 主頁**只做深色模式，不做四語系**：頁面一律是
+`<html lang="zh-Hant">`，工作坊的四語系維持不變。
+
+- **三種主題**：淺色、深色、跟隨系統（不存 theme，跟著 `prefers-color-scheme` 即時切換）。側欄的「主題」選單切換，
+  不重新載入頁面。
+- **首繪前套用**：`studio/web/boot.js`（外部 classic script，符合 CSP）只讀主題並設定 `data-theme` 與 theme-color；
+  不做語言偵測，也不隱藏頁面。
+- **一個主題偏好**：與工作坊共用 localStorage `studio-workshop/ui` 的 `theme`（`studio/web/ui-prefs.mjs`），在任一頁
+  選的主題兩頁都沿用；另一個分頁改了主題時，本頁即時跟上。Studio 只讀寫 `theme`，工作坊存的 `lang` 等欄位不受影響，
+  也不影響 Studio。
+- **深色主題**：`style.css` 的顏色全部改成 token，`:root[data-theme="dark"]` 重新定義每一個 token（含審核捲軸的
+  `--roll-*`）；審核捲軸在主題切換時重新讀取 token 並重畫（`review-roll.mjs`）。狀態顏色的意義不變（PASS 綠、
+  FAIL／UNSUPPORTED 紅、PENDING 琥珀），只調整明度。
+- **驗證**：單元測試 `studio/tests/web-theme.test.mjs`（深色 token 完整、token 區塊外沒有寫死的顏色、CSP、boot.js
+  只處理主題、共用偏好、「跟隨系統」清除已存的主題且保留工作坊其他偏好）；瀏覽器測試
+  `studio/browser-tests/web-theme.mjs`（首繪前即為系統主題、就地切換、重新載入後保留、跟隨系統即時切換、與工作坊
+  共用主題、日文瀏覽器與工作坊存的語言都不改變 Studio 的 zh-Hant）。
+### 14.7 Studio 來源匯入：3MLE `.mml`／`.mmi`（LG-6，2026-09-26）
+
+§11.1 的「格式讀取部分」移植完成，只取「檔案 → 原始 MML 文字＋metadata」這一段：
+
+- **模組**：`studio/backend/mml/community-formats.mjs`（區段讀取、3MLE 擴充區塊的 CRC／bzip2／TLV），
+  `studio/backend/mml/bzip2-decode.mjs`（只有解壓；壓縮器留在工作坊）。
+- **接到既有 intake**：`model.mjs` 的 `intake()` 認出 `[Settings]`／`[ChannelN]`／`[mml-score]` 後，把檔案讀出的
+  `MML@…;` 字串交給 `normalizeMMLSource`，和貼上的 MML@ 字串走同一條路；**不經過**工作坊的 480 tick 模型，
+  也**不經過** `mml-compress`，不改寫任何音符。單元測試確認檔案與它讀出的 MML@ 字串產生完全相同的事件。
+- **位置就是角色**：`.mml` 的每個 `[ChannelN]` 是一個位置（先依擴充區塊的順序，再依 channel 編號），空 channel
+  保留位置；`.mmi` 每個 block 是一個樂器，block 內的 part 都保留位置（`MML@a,,c;` 是三個位置，c 仍在第三個），只捨去
+  block 尾端的空 part（`MML@a,,;` 是一個位置），整個空的 block 保留一個位置；兩種格式對空軌的處理一致。尾端空位捨去；超過六個位置時**拒絕**（UNSUPPORTED），不截斷。軌內含 `MML@`、`,`、`;` 也拒絕。
+- **換行**：3MLE channel 內的折行視為排版，接起來（警告 `COMMUNITY_LINES_JOINED`）；行內其他空白**不刪**，
+  交給 parser 報錯，避免把 `c 4` 悄悄變成 `c4`。
+- **metadata 只記錄不套用**：標題、音軌名稱、program、檔案宣告的拍號與 marker 放在 asset 的 `community` 欄位並
+  顯示在來源卡片；檔案宣告的拍號**不是** caller-confirmed meter map，不會套用。擴充區塊任何檢查失敗時只少了名稱
+  與 program（`COMMUNITY_EXTENSION_UNREADABLE`），音軌仍從 channel 讀取。
+- **asset 形狀**：`content` 保留原始檔案文字（備份還原、改拍號重讀都從檔案重新讀取），`mml` 是讀出的 MML@ 字串；
+  讀回比對、試聽、工作坊開啟都用 `assetMml()`（`studio/web/asset-mml.mjs`）。
+- **範圍外**：服務端（MCP）來源匯入（`studio/backend/application/intake-service.mjs`）尚未支援 3MLE／`.mmi`；
+  非 UTF-8 檔案的 `[Settings]` 標題以 UTF-8 讀取（擴充區塊內的名稱照宣告的編碼解碼）。
+- **驗證**：`studio/tests/community-formats.test.mjs`（以工作坊自己的寫出器產生檔案，並與工作坊的讀取器比對）；
+  瀏覽器 `studio/browser-tests/community-formats.mjs`（從來源選擇器挑 `.mml`／`.mmi`、七軌被拒絕）。
+### 14.8 工作坊說明頁（2026-09-26）
+
+舊站的七個說明頁（擁有者早期前端 v1.1.0 擷取包的 `pages/guide-*.html` 與 `faq.html`）移植為工作坊說明，
+放在 `studio/web/workshop/guide/`。擁有者決定**說明頁只做繁體中文**；工作坊介面本身的四語系不變。
+
+- **先完整檢視擷取包**：七頁只有繁中版（擷取包沒有英日韓說明頁）；其中 `guide-editor`、`guide-reference` 還停在更早的
+  「16 份樂譜 × 4 軌（旋律／和音1／和音2／歌唱）、1600／1200／900／1200 字」模型，與 v1.1.0 程式本身（15 分頁、前 6 軌
+  進遊戲、每軌 2400 字）就不一致；`guide-midi` 寫三種採樣模式，v1.1.0 與現在都是五種。因此每一頁都以現在的工作坊程式
+  （元素 id、`i18n/zh-Hant.mjs` 的介面文字）逐項核對改寫，不以舊頁文字為準。
+- **刪除**：登入／帳號、分享、雲端存檔、MP3 與空間混音、OMR、離線音色包下載、服務條款與隱私權頁。
+- **補上**：從 Studio 開啟、送回 Studio 驗證、未驗證標示、WAV／影片匯出、遊戲風格音色、歌曲庫、新版按鈕。
+- **Canonical 與工作坊專用分開**：引用規則的句子標出處（MOBILE_SYNTAX §…、MASTER_RULES §…、PENDING P…），連 PENDING
+  狀態照原文；工作坊比規則寬鬆或有損的行為（速度合併與速度工具只寫主旋律、1/32 格子、五種採樣模式、優化的三種音長規則、
+  音域摺疊、附點方言、Nxx 換算）放在「工作坊專用」框。`guide-mml` 的速度一節依 MOBILE_SYNTAX §7 重寫；Nxx 只寫兩個
+  解析器差 12 半音、遊戲側未驗證（LG-1 未解）；`guide-midi` 指向 Studio 的無損 Raw MIDI 攝入。
+- **頁面**：`<html lang="zh-Hant">`；`guide/boot.js` 只套用工作坊的主題；`guide.mjs` 標出目前頁，工作坊設成其他語言時
+  最上方顯示「目前只有中文版」。沒有語言選單、沒有翻譯表。CSP 同工作坊（無 inline script／style、不連外）。
+- **入口**：工作坊「關於」面板的「說明」清單（頁名與一行說明取自舊站關於面板）。工作坊四語系表只為它新增 15 個 key。
+- **建置與離線**：`scripts/build-studio-web.mjs` 複製 `guide/` 的 HTML、CSS 與 `boot.js`，全部進入 Service Worker 的
+  precache。
+- **驗證**：`studio/tests/workshop-guide.test.mjs`（七頁存在、只有繁中、CSP、允許的標記、每個內部連結與 #錨點都解析得到、
+  沒有已刪除的功能、「目前只有中文版」只在其他語言時出現、關於面板的連結與 key）；瀏覽器
+  `studio/browser-tests/workshop-guide.mjs`（七頁載入無錯誤、從關於面板進入、工作坊設為英文時說明頁仍是繁中並顯示提示）。
+- **發現但未修改**：工作坊介面有幾句提示與 Canonical 或程式行為不一致——「非標準時值…瑪奇 Mobile 不吃」「複製會去掉
+  空白，那才是遊戲算的字數」與 MOBILE_SYNTAX §3、§9 衝突；「只選取」與「範圍」的 title 說右鍵設結束線，實際是開選單。
+  說明頁照程式與 Canonical 寫，介面文字留待另案處理。

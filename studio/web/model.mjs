@@ -1,5 +1,7 @@
 import { createSource, createCanonicalNoteEvent, createCanonicalRestEvent, createCanonicalTempoEvent, createCanonicalMeterEvent, createCanonicalProject, createArbitrationDecision } from '../backend/canonical/index.mjs';
 import { normalizeMMLSource, mmlFragmentToProject } from '../backend/mml/canonicalize.mjs';
+import { readCommunityMML, sniffCommunityFormat } from '../backend/mml/community-formats.mjs';
+import { assetMml } from './asset-mml.mjs';
 import { validateMML, splitMML } from '../backend/mml/parser.mjs';
 import { ingestMusicXML, musicXMLFragmentToProject, decodeMusicXMLBytes, isZipContainer } from '../backend/score/index.mjs';
 import { compareCandidateLineage, compareCanonicalVersions } from '../backend/compare/version-drift.mjs';
@@ -55,7 +57,16 @@ export function intake({ name, content, id, authority = 'supporting', meterText 
   // An archive read as text is not MusicXML; compressed MusicXML arrives as
   // bytes through intakeMxl, which opens the container first.
   if (/^PK\u0003\u0004/.test(content)) throw Error('UNSUPPORTED: compressed MusicXML (.mxl) must be picked as a file so its bytes can be opened');
-  if (/^\s*MML@/i.test(content)) {
+  // A 3MLE .mml or .mmi file: only its reading half runs here (file text →
+  // the MML@ string it carries, plus its own metadata), and that string takes
+  // the same path as a pasted one. The file text stays the asset's content.
+  let community = null;
+  if (sniffCommunityFormat(content)) {
+    const { mml, ...facts } = readCommunityMML(content);
+    community = { ...facts, mml };
+    fragment = normalizeMMLSource(mml, { ...options, authority: 'derived' });
+    project = mmlFragmentToProject(fragment);
+  } else if (/^\s*MML@/i.test(content)) {
     fragment = normalizeMMLSource(content, { ...options, authority: 'derived' });
     project = mmlFragmentToProject(fragment);
   } else if (/^\s*</.test(content)) {
@@ -65,6 +76,7 @@ export function intake({ name, content, id, authority = 'supporting', meterText 
   } else project = readCanonical(JSON.parse(content));
   return { name, content, project, format: fragment?.validation ? 'MML' : fragment ? (container ? 'MusicXML (compressed .mxl)' : 'MusicXML') : 'Canonical IR', complete: fragment ? fragment.complete : project.metadata.sourceComplete === true,
     ...(container ? { container } : {}),
+    ...(community ? { mml: community.mml, community: { format: community.format, title: community.title, encoding: community.encoding, extension: community.extension, tracks: community.tracks, declaredMeter: community.declaredMeter, markers: community.markers, warnings: community.warnings } } : {}),
     warnings: copy(fragment?.validation?.warnings ?? fragment?.warnings ?? project.metadata.warnings ?? []),
     errors: copy(fragment?.validation?.errors ?? project.metadata.errors ?? []), unsupported: copy(fragment?.unsupported ?? project.metadata.unsupported ?? []) };
 }
@@ -624,7 +636,7 @@ function currentDelivery(w) {
 
 function selectDelivery(w, asset) {
   return currentDelivery(w)
-    ?? (asset.format === 'MML' ? { mml: asset.content, origin: 'candidate-source' } : { mml: undefined, origin: null });
+    ?? (asset.format === 'MML' ? { mml: assetMml(asset), origin: 'candidate-source' } : { mml: undefined, origin: null });
 }
 
 // The authoritative delivery check: technical syntax, then exact symbolic

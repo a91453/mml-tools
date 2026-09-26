@@ -10,6 +10,7 @@
 // A Workshop edit is outside the Canonical/verified pipeline. Crossing back
 // never marks anything VALIDATED or accepted; Studio re-runs its own
 // technical validation and every review starts over.
+import { assetMml } from './asset-mml.mjs';
 
 export const UNVERIFIED_LABEL = '工作坊編輯（未經 Studio 驗證）';
 export const RETURN_KEY = 'studio-workshop/return';
@@ -34,8 +35,9 @@ export function projectSources(workspace) {
   }
   for (const slot of ['candidate', 'baseline', 'previous']) {
     const asset = workspace.assets?.[slot];
-    if (asset?.format === 'MML' && typeof asset.content === 'string' && /MML@/i.test(asset.content)) {
-      out.push({ slot, label: SLOT_LABELS[slot], name: String(asset.name ?? `${slot}.mml`), mml: asset.content.trim() });
+    const mml = assetMml(asset);
+    if (typeof mml === 'string' && /MML@/i.test(mml)) {
+      out.push({ slot, label: SLOT_LABELS[slot], name: String(asset.name ?? `${slot}.mml`), mml: mml.trim() });
     }
   }
   return out;
