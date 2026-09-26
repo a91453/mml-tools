@@ -378,7 +378,11 @@ function showStore(at, verb = i18n.t("ui.saved")) {
 }
 
 function renderStore() {
-  $("#storeState").textContent = storage.isBroken()
+  const broken = storage.isBroken();
+  $("#status").classList.toggle("store-failed", broken);
+  $("#storeState").classList.toggle("bad", broken);
+  $("#storeRetry").hidden = !broken || !storage.isAutosaveOn();
+  $("#storeState").textContent = broken
     ? i18n.t("ui.store.broken")
     : !storage.isAutosaveOn() ? i18n.t("ui.store.off")
     : lastSavedAt ? i18n.t("ui.store.at",
@@ -393,6 +397,10 @@ function syncAutosaveUI() {
 }
 
 function initAutosave() {
+  $("#storeRetry").addEventListener("click", () => {
+    tracks.persist();
+    say(i18n.t(storage.flush() ? "ui.store.recovered" : "ui.store.failed"));
+  });
   $("#autosave").addEventListener("change", e => {
     const on = e.target.value === "on";
     storage.setAutosave(on);
@@ -3244,6 +3252,10 @@ export function init() {
   player.setStopHandler(onStopped);
   player.setKeyMapper((t, midi) => soundingKey(soundPreset(t), midi));
   storage.setSavedHandler(showStore);
+  storage.setErrorHandler(() => {
+    renderStore();
+    say(i18n.t("ui.store.failed"));
+  });
 
   initBarsPerLine();
 
