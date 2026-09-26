@@ -61,7 +61,7 @@ export function mountReviewRoll(root, source, { onSelect = () => {}, onSignal = 
   stage.append(canvas, pad);
   root.append(stage);
   const g = canvas.getContext('2d');
-  const C = readTheme(root);
+  let C = readTheme(root);
   const span = pitchSpan(projection);
   const bars = barStarts(projection.meters, projection.end).map(b => ({ ...b, x: beatNumber(b.beat) }));
   const eventsById = new Map();
@@ -432,6 +432,10 @@ export function mountReviewRoll(root, source, { onSelect = () => {}, onSignal = 
   stage.addEventListener('scroll', draw, { passive: true });
   const observer = typeof ResizeObserver === 'function' ? new ResizeObserver(draw) : null;
   observer?.observe(stage);
+  // The page's light/dark switch (ui-prefs.mjs) changes the CSS tokens the
+  // colours are read from; read them again and repaint.
+  const themeObserver = typeof MutationObserver === 'function' ? new MutationObserver(() => { C = readTheme(root); draw(); }) : null;
+  themeObserver?.observe(document.documentElement, { attributes: true, attributeFilter: ['data-theme'] });
 
   syncPad();
   // Open at the first sounding note rather than at beat 0 of a long intro.
@@ -471,6 +475,6 @@ export function mountReviewRoll(root, source, { onSelect = () => {}, onSignal = 
       draw();
     },
     get prefs() { return { w: prefs.w, h: prefs.h, visible: [...prefs.visible] }; },
-    destroy() { observer?.disconnect(); root.innerHTML = ''; },
+    destroy() { observer?.disconnect(); themeObserver?.disconnect(); root.innerHTML = ''; },
   });
 }

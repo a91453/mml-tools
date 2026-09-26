@@ -9,6 +9,7 @@ import { createTaskQueue } from '../web/task-queue.mjs';
 import { createSourceRequestLedger } from '../web/source-requests.mjs';
 import { mergeCanonicalProjects } from '../backend/canonical/merge.mjs';
 import * as fixtures from './fixtures/midi-fixtures.mjs';
+import { has, t } from '../web/i18n.mjs';
 
 // Deterministic Canonical identity for Raw MIDI.
 //
@@ -60,6 +61,8 @@ function studio({ intercept = null } = {}) {
     document: { querySelector: node, querySelectorAll: selector => collections.get(selector) ?? [] },
     createTaskQueue, createSourceRequestLedger,
     createWorkerClient: () => ({ call: (...args) => context.workerCall(...args) }),
+    // The page's translator (zh-Hant, its default language).
+    t, has,
     Worker: function () {}, URL, structuredClone, crypto, TextEncoder, TextDecoder, btoa, atob,
     FormData: class { constructor(form) { return Object.entries(form.fields); } },
     setTimeout: () => 0, clearTimeout() {}, navigator: {},

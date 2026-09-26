@@ -4,6 +4,7 @@ import vm from 'node:vm';
 import { readFile } from 'node:fs/promises';
 import { createTaskQueue } from '../web/task-queue.mjs';
 import { createSourceRequestLedger } from '../web/source-requests.mjs';
+import { has, t } from '../web/i18n.mjs';
 
 const source = (await readFile(new URL('../web/app.mjs', import.meta.url), 'utf8')).replace(/\r\n/g, '\n');
 const deferred = () => { let resolve; const promise = new Promise(r => { resolve = r; }); return { promise, resolve }; };
@@ -39,6 +40,8 @@ function controller() {
   const context = vm.createContext({
     document: { querySelector: node, querySelectorAll: selector => collections.get(selector) ?? [] },
     createTaskQueue, createSourceRequestLedger, createWorkerClient: () => ({ call: (...args) => context.workerCall(...args) }),
+    // The page's translator (zh-Hant, its default language).
+    t, has,
     Worker: function () {}, URL, structuredClone, crypto,
     FormData: class { constructor(form) { return Object.entries(form.fields); } },
     setTimeout: () => 0, clearTimeout() {}, navigator: {},

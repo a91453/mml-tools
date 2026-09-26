@@ -837,3 +837,25 @@ cache-first 的 Service Worker 快取，所以開著的工作坊分頁會一直�
   暫停、循環、播放中改譜。共用的是引擎載入檢查（`bank-check.mjs`）、樂器表、鼓音規則與空白音色
   過濾（`isUsablePreset`）。
 
+
+### 14.6 Studio 主頁的四語系與深色模式（2026-09-26）
+
+UI-7（深色模式）與 UI-9（i18n）在 Studio 主頁完成，沿用工作坊的做法：
+
+- **同一套引擎**：工作坊的 i18n（扁平 key、zh-Hant 後備、複數、韓文助詞）抽成 `studio/web/i18n-core.mjs`，
+  工作坊與 Studio 主頁共用；Studio 的語系表在 `studio/web/i18n/`（zh-Hant／en／ja／ko，637 個 key）。
+- **狀態代碼不翻譯**：PASS、PENDING、VALIDATED、IN_GAME_ACCEPTED 等代碼在四種語言中原樣保留；徽章直接印代碼。
+  `studio/tests/web-i18n.test.mjs` 檢查四表的 key、placeholder、HTML 標記一致，且每個代碼都原樣出現在譯文中。
+- **首繪前套用**：`studio/web/boot.js`（外部 classic script，符合 CSP）在首繪前套用主題與語言；非 zh-Hant 時先隱藏，
+  `app.mjs` 翻譯靜態文字後才顯示。
+- **一個偏好**：Studio 與工作坊共用 localStorage `studio-workshop/ui` 的 `lang`／`theme`，在任一頁選的語言與主題，
+  兩頁都會沿用。Studio 另有「跟隨系統」（不存 theme，跟著 `prefers-color-scheme` 即時切換）。
+- **就地切換**：切換語言或主題不重新載入；語言切換會重繪（與一般重繪相同，正在輸入的表單內容會被取代）。
+  其他分頁已套用新版時拒絕切換語言，因為語系表是新版模組。
+- **深色主題**：`style.css` 的顏色全部改成 token，`:root[data-theme="dark"]` 重新定義每一個 token；審核捲軸在主題
+  切換時重新讀取 token 並重畫（`review-roll.mjs`）。
+- **範圍**：本批只涵蓋 `index.html`、`app.mjs`、`style.css`。由其他模組產生的文字（試聽工作階段 `listen-ui.mjs`、
+  引擎實機測試的題目 `engine-probe.mjs`、音色庫名稱與下載說明、`model.mjs` 回傳的診斷訊息）仍是繁體中文，
+  列為後續工作。
+- **驗證**：`studio/browser-tests/web-i18n.mjs`（英文瀏覽器自動英文、就地切換為日文、深色主題、重新載入後保留、
+  跟隨系統、工作坊沿用同一偏好）。其他瀏覽器測試的 context 設為 `zh-TW`，照舊檢查繁中文字。

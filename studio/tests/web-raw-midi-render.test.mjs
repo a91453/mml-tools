@@ -5,6 +5,7 @@ import { readFile } from 'node:fs/promises';
 import { intakeMidi, newWorkspace, analyzeWorkspace, recordReview, REVIEW_NAMES } from '../web/model.mjs';
 import { suggestRoleCandidates } from '../backend/arrangement/index.mjs';
 import * as fixtures from './fixtures/midi-fixtures.mjs';
+import { has, t } from '../web/i18n.mjs';
 
 // What the Raw MIDI section actually renders.
 //
@@ -18,7 +19,9 @@ import * as fixtures from './fixtures/midi-fixtures.mjs';
 // studio/browser-tests.
 
 const source = await readFile(new URL('../web/app.mjs', import.meta.url), 'utf8');
-const context = vm.createContext({ document: { querySelector: () => ({ value: '', textContent: '' }) } });
+// The page's own translator, in its default language (zh-Hant): the render
+// helpers call t()/has() for every string, and these assertions read the zh-Hant text.
+const context = vm.createContext({ document: { querySelector: () => ({ value: '', textContent: '' }) }, t, has });
 const slice = (from, to) => vm.runInContext(source.slice(source.indexOf(from), source.indexOf(to)), context);
 slice('const $ ', 'const roles =');
 slice('const bytesLabel', 'function diffTable');
