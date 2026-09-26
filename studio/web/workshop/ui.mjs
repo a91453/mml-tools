@@ -31,7 +31,7 @@ import * as rollmenu from "./rollmenu.mjs";
 import * as theme from "./theme.mjs";
 import * as mediakeys from "./mediakeys.mjs";
 import * as history from "./history.mjs";
-import { parseDef, pickLocale, selectPresets, isKit, soundingKey } from "./instruments.mjs";
+import { parseDef, pickLocale, selectPresets, isKit, soundingKey, bankPreset } from "./instruments.mjs";
 import * as engine from "./engine.mjs";
 import * as player from "./player.mjs";
 import * as roll from "./pianoroll.mjs";
@@ -56,6 +56,8 @@ let presets    = [];
 let filterNote = "";
 let bankLabel  = "";
 let bankBuiltin = false;
+// The synth holds the game-style bank: Mobile instruments play its own presets.
+let bankGameStyle = false;
 let defLabel   = "";
 let defBuiltin = false;
 let defMap     = new Map();
@@ -126,8 +128,9 @@ function queueBank(task) {
   return run;
 }
 
-async function loadBank(buf, name, builtin = false, file = null) {
+async function loadBank(buf, name, builtin = false, file = null, { gameStyle = false } = {}) {
   const { list, mb } = await engine.loadBank(buf);
+  bankGameStyle = gameStyle;
   bankLabel = `${name} · ${mb} MB`;
   setPresets(list);
   bankBuiltin = !!builtin;
@@ -137,6 +140,8 @@ async function loadBank(buf, name, builtin = false, file = null) {
   filebox.setBankReady(true);
   tracks.enableInstruments();
   applyMutes();
+  // Programs are bank-specific (bankPreset): a bank changed mid-play re-selects them.
+  if (player.isPlaying()) applyInstruments(tracks.trackTexts().map((_, i) => i));
 }
 
 let selRanges = [];
@@ -277,7 +282,7 @@ function auditionStart(midi, vel) {
   auditionOff();
   engine.resume();
   engine.unmute();
-  const p = tracks.presetOf(tracks.activeTrack());
+  const p = soundPreset(tracks.activeTrack());
   if (p) engine.selectProgram(AUDITION_CH, p[0], p[1], p[2], isKit(p));
   auditionMidi = soundingKey(p, midi);
   engine.noteOn(AUDITION_CH, auditionMidi, vel, engine.now());
@@ -301,10 +306,14 @@ function auditionOff() {
   auditionMidi = -1;
 }
 
+// A track's instrument as the loaded bank plays it (instruments.bankPreset):
+// what the synth, the key mapping and the offline render all use.
+const soundPreset = t => bankPreset(tracks.presetOf(t), { gameStyle: bankGameStyle });
+
 function applyInstruments(trackIdx) {
   if (!presets.length) return;
   for (const t of trackIdx) {
-    const p = tracks.presetOf(t);
+    const p = soundPreset(t);
     if (p) engine.selectProgram(chanOf(t), p[0], p[1], p[2], isKit(p));
   }
 }
@@ -671,7 +680,7 @@ const gameStyleMessage = err => i18n.t(err?.code === "GAME_STYLE_BANK_ABSENT" ? 
 async function useGameStyle(bank, def) {
   const name = i18n.t("ui.gameStyleName");
   // A copy for exports, taken before the synth gets the bytes (bankSource).
-  await loadBank(bank.bytes, name, false, new Blob([bank.bytes]));
+  await loadBank(bank.bytes, name, false, new Blob([bank.bytes]), { gameStyle: true });
   applyDef(def, name, true);
 }
 
@@ -3190,7 +3199,7 @@ function hasSound() {
 function renderSetup(parsed) {
   return {
     song: parsed,
-    presets: parsed.tracks.map((_, i) => tracks.presetOf(i)),
+    presets: parsed.tracks.map((_, i) => soundPreset(i)),
     bank: bankSource(),
     name: $("#expName")?.value ?? "",
   };
@@ -3234,7 +3243,7 @@ export function init() {
   engine.setStatusHandler(text => { $("#engine").textContent = text; });
   engine.setPresetListHandler(list => setPresets(list));
   player.setStopHandler(onStopped);
-  player.setKeyMapper((t, midi) => soundingKey(tracks.presetOf(t), midi));
+  player.setKeyMapper((t, midi) => soundingKey(soundPreset(t), midi));
   storage.setSavedHandler(showStore);
 
   initBarsPerLine();

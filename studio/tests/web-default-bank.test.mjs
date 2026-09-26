@@ -58,7 +58,7 @@ test('the instrument mapping resolves every role to a preset the recorded subset
   assert.deepEqual(mixed.map(v => [v.program, v.drumNote]), [[24, null], [46, null], [0, null], [0, 35], [0, 49], [24, null]]);
   assert.equal(voiceFor(undefined).id, DEFAULT_INSTRUMENT);
   // A user bank's own presets are chosen as p:<program>.
-  assert.deepEqual(voiceFor('p:5'), { program: 5, drumNote: null, label: '006' });
+  assert.deepEqual(voiceFor('p:5'), { program: 5, drumNote: null, drumNotes: null, label: '006' });
   assert.equal(voiceFor('p:300').id, DEFAULT_INSTRUMENT);
   assert.equal(uniformProgram(resolveRoleVoices(Array(6).fill('violin'))), 40);
   assert.equal(uniformProgram(mixed), null);
@@ -190,14 +190,14 @@ test('per-role voices: a drum role sounds its kit note, and only one uniform pro
   t.after(() => Object.assign(globalThis, { setInterval: saved.si, clearInterval: saved.ci, requestAnimationFrame: saved.raf, cancelAnimationFrame: saved.caf }));
   const ends = [];
   const transport = createTransport(engine, { onEnd: capture => ends.push(capture) });
-  transport.load(parseListening('MML@t120o4c4,t120o4e4,,t120o4g4,,;').song);
+  transport.load(parseListening('MML@t120o4c4,t120o4e4,,t120o3g8o4g8,,;').song);
   transport.setVoices(resolveRoleVoices(['lute', 'harp', 'lute', 'bass-drum', 'lute', 'lute']));
   await transport.play(0);
   context.currentTime += 5; tick?.();
   assert.deepEqual(sent.filter(e => e.program !== undefined).map(e => [e.channel, e.program]), [[0, 24], [1, 46], [2, 24], [3, 0], [4, 24], [5, 24]]);
   assert.equal(drums.get(3), true);
   assert.equal(drums.get(0), false);
-  assert.deepEqual(sent.filter(e => e.pitch !== undefined).map(e => [e.channel, e.pitch]), [[0, 60], [1, 64], [3, 35]], 'the drum role plays its kit note');
+  assert.deepEqual(sent.filter(e => e.pitch !== undefined).map(e => [e.channel, e.pitch]), [[0, 60], [1, 64], [3, 35], [3, 36]], 'the drum role plays its kit notes: o3g below o4c, o4g from o4c');
   context.currentTime += 10; tick?.();
   assert.ok(ends[0].incomplete.includes('PER_ROLE_INSTRUMENTS'), 'per-role instruments cannot be a readback');
   sent.length = 0;

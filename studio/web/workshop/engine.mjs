@@ -110,8 +110,13 @@ export function setChannelMute(ch, on) {
 // `drum` selects the bank's percussion kit on this channel (GM drum mode)
 // instead of a melodic program; the Mabinogi Mobile BassDrum and Cymbals
 // instruments are previewed that way (see instruments.mjs).
+// What each channel was last told to play, for the page and its checks.
+const selections = new Map();
+export const selectedProgram = ch => selections.get(ch) ?? null;
+
 export function selectProgram(ch, msb, lsb, prog, drum = false) {
   if (!synth) return;
+  selections.set(ch, { msb, lsb, program: prog, drum: !!drum });
   synth.midiChannels?.[ch]?.setDrums?.(!!drum);
   synth.controllerChange(ch, 0, drum ? 0 : msb);
   synth.controllerChange(ch, 32, drum ? 0 : lsb);

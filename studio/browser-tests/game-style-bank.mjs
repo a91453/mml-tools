@@ -4,6 +4,7 @@ import { createHash } from 'node:crypto';
 import { encodeListenLink } from '../web/listen-link.mjs';
 import { GAME_STYLE_BANK, GAME_STYLE_DEF, GAME_STYLE_DOWNLOAD_NOTICE } from '../web/preview/game-style-bank.mjs';
 import { syntheticUpstreamBank } from '../tests/support/synthetic-soundbank.mjs';
+import { GAME_STYLE_PROGRAMS } from '../web/preview/instruments.mjs';
 
 // The game-style bank through the real page and engine, in a browser context
 // of its own. The bank is never in this repository and the test servers have
@@ -182,6 +183,14 @@ export async function runWorkshopGameStyleChecks({ browser, base, profile }) {
     assert.deepEqual((await bankOptions()).map(text => text.replace(/\s+/g, ' ')), ['025 魯特琴', '047 豎琴']);
     assert.ok(!(await page.locator('body').textContent()).includes('Fury'));
     assert.equal(requests.length, 4, 'the refused try and this one each asked for both files');
+
+    // A Mobile instrument plays the game-style bank's own preset: the first
+    // track's Lute is that bank's program 0, not GM 24 (its Harp), and no kit.
+    assert.equal(await page.locator('.trk-inst').first().inputValue(), '[0,0,24,"lute"]');
+    await page.locator('#play').click();
+    await page.waitForFunction(async () => (await import('./engine.mjs')).selectedProgram(0) !== null);
+    assert.deepEqual(await page.evaluate(async () => (await import('./engine.mjs')).selectedProgram(0)), { msb: 0, lsb: 0, program: GAME_STYLE_PROGRAMS.lute, drum: false });
+    await page.locator('#stop').click();
 
     // The next visit: loaded from this device, nothing downloaded.
     await page.reload(); await page.locator('#unverified').waitFor();

@@ -29,7 +29,7 @@ test('with the game-style bank every game instrument plays its own melodic prese
   assert.deepEqual(voices.map(v => [v.program, v.drumNote]), [[0, null], [24, null], [21, null], [66, null], [68, null], [0, null]]);
   assert.equal(uniformProgram(resolveRoleVoices(Array(6).fill('violin'), { gameStyle: true })), 22);
   assert.equal(voiceFor('bass-drum').drumNote, 35, 'the free default bank still uses the GM kit');
-  assert.deepEqual(voiceFor('p:5', { gameStyle: true }), { program: 5, drumNote: null, label: '006' });
+  assert.deepEqual(voiceFor('p:5', { gameStyle: true }), { program: 5, drumNote: null, drumNotes: null, label: '006' });
 });
 
 function fixture(bytes) {

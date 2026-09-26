@@ -8,14 +8,16 @@ import { readFile } from 'node:fs/promises';
 import { parseAll } from '../web/workshop/mml.mjs';
 import { buildEvents, buildSetup, EV_STRIDE, VEL_OFF } from '../web/workshop/mixnotes.mjs';
 import { encodeWav, peakOf, gainFor, trimTail, CEILING } from '../web/workshop/mixmath.mjs';
-import { MOBILE_INSTRUMENTS, mobilePresetValue, soundingKey, isKit, mobileForProgram } from '../web/workshop/instruments.mjs';
+import { MOBILE_INSTRUMENTS, mobilePresetValue, soundingKey, isKit, mobileForProgram, mobileInstrument, currentPresetValue, bankPreset } from '../web/workshop/instruments.mjs';
+import { GAME_INSTRUMENTS, GAME_STYLE_PROGRAMS } from '../web/preview/instruments.mjs';
+import { GAME_INSTRUMENTS as BACKEND_INSTRUMENTS } from '../backend/audio/instruments.mjs';
 
 test('the eleven Mabinogi Mobile instruments map to the agreed GM programs and kit keys', () => {
   assert.deepEqual(MOBILE_INSTRUMENTS.map(m => [m.name, m.kit ? m.kit.join('/') : m.program]), [
     ['Lute', 24], ['Mandolin', 25], ['Chalumeau', 71], ['Xylophone', 13], ['Flute', 73], ['Violin', 40],
     ['Piano', 0], ['Harp', 46], ['Music Box', 10], ['BassDrum', '35/36'], ['Cymbals', '49/57'],
   ]);
-  const drum = JSON.parse(mobilePresetValue(MOBILE_INSTRUMENTS.find(m => m.id === 'bassdrum')));
+  const drum = JSON.parse(mobilePresetValue(MOBILE_INSTRUMENTS.find(m => m.id === 'bass-drum')));
   assert.equal(isKit(drum), true);
   assert.deepEqual([soundingKey(drum, 48), soundingKey(drum, 60), soundingKey(drum, 72)], [35, 36, 36]);
   const cymbals = JSON.parse(mobilePresetValue(MOBILE_INSTRUMENTS.find(m => m.id === 'cymbals')));
@@ -24,6 +26,38 @@ test('the eleven Mabinogi Mobile instruments map to the agreed GM programs and k
   assert.equal(soundingKey([0, 0, 24], 61), 61, 'a bank preset plays the written pitch');
   assert.equal(mobileForProgram(40).id, 'violin');
   assert.equal(mobileForProgram(0).id, 'piano', 'program 0 is Piano, never a kit');
+});
+
+test('the Workshop, the Studio players and the prescreen read one instrument table', () => {
+  assert.equal(GAME_INSTRUMENTS, BACKEND_INSTRUMENTS, 'the web table is the backend table, not a copy');
+  assert.deepEqual(MOBILE_INSTRUMENTS.map(m => [m.id, m.program, m.kit ?? null]), GAME_INSTRUMENTS.map(item => [item.id, item.program, item.drumNotes ?? null]));
+});
+
+test('an instrument saved under an old Workshop id comes back as the same instrument', () => {
+  assert.equal(mobileInstrument('bassdrum').id, 'bass-drum');
+  assert.equal(mobileInstrument('musicbox').id, 'music-box');
+  assert.equal(currentPresetValue('[0,0,0,"bassdrum"]'), '[0,0,0,"bass-drum"]');
+  assert.equal(currentPresetValue('[0,0,10,"musicbox"]'), '[0,0,10,"music-box"]');
+  assert.equal(currentPresetValue('[0,0,24,"lute"]'), '[0,0,24,"lute"]');
+  assert.equal(currentPresetValue('[0,0,5]'), '[0,0,5]', 'a bank preset is left alone');
+  assert.equal(currentPresetValue('not json'), 'not json');
+  assert.deepEqual([soundingKey([0, 0, 0, 'bassdrum'], 48), soundingKey([0, 0, 0, 'bassdrum'], 72)], [35, 36]);
+});
+
+test('with the game-style bank a Mobile instrument plays that bank\'s own preset, drums included', () => {
+  for (const m of MOBILE_INSTRUMENTS) {
+    const stored = JSON.parse(mobilePresetValue(m));
+    assert.deepEqual(bankPreset(stored), stored, `${m.id} on a GM bank is the stored preset`);
+    const own = bankPreset(stored, { gameStyle: true });
+    assert.deepEqual(own, [0, 0, GAME_STYLE_PROGRAMS[m.id]], `${m.id} on the game-style bank`);
+    assert.equal(isKit(own), false, `${m.id} is never a kit there`);
+    assert.equal(soundingKey(own, 72), 72, 'the written pitch sounds');
+  }
+  // The bug this replaces: Lute sent GM program 24, which is the game-style bank's Harp.
+  assert.equal(GAME_STYLE_PROGRAMS.harp, 24);
+  assert.deepEqual(bankPreset([0, 0, 24, 'lute'], { gameStyle: true }), [0, 0, 0]);
+  assert.deepEqual(bankPreset([0, 0, 5], { gameStyle: true }), [0, 0, 5], 'a bank preset is the bank\'s own already');
+  assert.equal(bankPreset(null, { gameStyle: true }), null);
 });
 
 test('events are sample-accurate, note-off first on a shared frame, six tracks only, kits mapped', () => {

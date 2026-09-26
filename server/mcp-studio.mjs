@@ -90,7 +90,7 @@ const PRESCREEN_RENDER_LIMIT_TEXT = `每個替代版本最多渲染 ${PRESCREEN_
 const prescreenMml = { type: 'string', minLength: 1, maxLength: 16384, description: '完整六軌 MML@...,...,...,...,...,...; 原文；本工具不改寫。' };
 const prescreenInstruments = {
   type: 'array', minItems: 6, maxItems: 6, items: { type: 'string', enum: [...GAME_INSTRUMENT_IDS] },
-  description: `六角色（Melody、Chord1–Chord5）各自的遊戲樂器，以 GM 音色近似：${GAME_INSTRUMENTS.map(item => `${item.id} ${item.label}=${item.drumNotes ? `GM 鼓 ${item.drumNotes[0]}` : `GM ${item.program}`}`).join('、')}。省略時六角色皆為 lute。`,
+  description: `六角色（Melody、Chord1–Chord5）各自的遊戲樂器，以 GM 音色近似：${GAME_INSTRUMENTS.map(item => `${item.id} ${item.label}=${item.drumNotes ? `GM 鼓 ${item.drumNotes.join('／')}（o4c 以下／以上）` : `GM ${item.program}`}`).join('、')}。省略時六角色皆為 lute。`,
 };
 const prescreenProperties = {
   alternatives: {

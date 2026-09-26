@@ -11,7 +11,7 @@ import { say } from "./util.mjs";
 import { bareTrack } from "./mml.mjs";
 import {
   presetLabel, presetName, MOBILE_INSTRUMENTS, mobilePresetValue, mobileName, mobileForProgram,
-  mobileInstrument, DEFAULT_PRESET_VALUE,
+  mobileInstrument, DEFAULT_PRESET_VALUE, currentPresetValue,
 } from "./instruments.mjs";
 import { icon, setIcon } from "./icons.mjs";
 import * as storage from "./storage.mjs";
@@ -92,7 +92,7 @@ export function init({ onChange: change, onInstrumentChange, onSelect: select,
     restoredAtMs = saved.at;
     if (saved.count !== null) count = clamp(saved.count, MIN_TRACKS, MAX_TRACKS);
     active = clamp(saved.active, 0, count - 1);
-    for (let i = 0; i < MAX_TRACKS; i++) if (saved.presets[i]) picked[i] = saved.presets[i];
+    for (let i = 0; i < MAX_TRACKS; i++) if (saved.presets[i]) picked[i] = currentPresetValue(saved.presets[i]);
     setGhosts(saved.ghosts);
     setZip_all(saved.zip);
     meters.set(saved.meters);
@@ -295,7 +295,7 @@ export function applySnapshot(s) {
 function setPicked(list) {
   const sel = selects();
   for (let i = 0; i < MAX_TRACKS; i++) {
-    const v = list[i] ?? null;
+    const v = list[i] ? currentPresetValue(list[i]) : null;
     picked[i] = v;
     const s = sel[i];
     if (s && v && [...s.options].some(o => o.value === v)) s.value = v;
