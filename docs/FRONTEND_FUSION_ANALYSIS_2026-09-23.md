@@ -838,24 +838,22 @@ cache-first 的 Service Worker 快取，所以開著的工作坊分頁會一直�
   過濾（`isUsablePreset`）。
 
 
-### 14.6 Studio 主頁的四語系與深色模式（2026-09-26）
+### 14.6 Studio 主頁的深色模式（2026-09-26）
 
-UI-7（深色模式）與 UI-9（i18n）在 Studio 主頁完成，沿用工作坊的做法：
+UI-7（深色模式）在 Studio 主頁完成。擁有者決定 Studio 主頁**只做深色模式，不做四語系**：頁面一律是
+`<html lang="zh-Hant">`，工作坊的四語系維持不變。
 
-- **同一套引擎**：工作坊的 i18n（扁平 key、zh-Hant 後備、複數、韓文助詞）抽成 `studio/web/i18n-core.mjs`，
-  工作坊與 Studio 主頁共用；Studio 的語系表在 `studio/web/i18n/`（zh-Hant／en／ja／ko，637 個 key）。
-- **狀態代碼不翻譯**：PASS、PENDING、VALIDATED、IN_GAME_ACCEPTED 等代碼在四種語言中原樣保留；徽章直接印代碼。
-  `studio/tests/web-i18n.test.mjs` 檢查四表的 key、placeholder、HTML 標記一致，且每個代碼都原樣出現在譯文中。
-- **首繪前套用**：`studio/web/boot.js`（外部 classic script，符合 CSP）在首繪前套用主題與語言；非 zh-Hant 時先隱藏，
-  `app.mjs` 翻譯靜態文字後才顯示。
-- **一個偏好**：Studio 與工作坊共用 localStorage `studio-workshop/ui` 的 `lang`／`theme`，在任一頁選的語言與主題，
-  兩頁都會沿用。Studio 另有「跟隨系統」（不存 theme，跟著 `prefers-color-scheme` 即時切換）。
-- **就地切換**：切換語言或主題不重新載入；語言切換會重繪（與一般重繪相同，正在輸入的表單內容會被取代）。
-  其他分頁已套用新版時拒絕切換語言，因為語系表是新版模組。
-- **深色主題**：`style.css` 的顏色全部改成 token，`:root[data-theme="dark"]` 重新定義每一個 token；審核捲軸在主題
-  切換時重新讀取 token 並重畫（`review-roll.mjs`）。
-- **範圍**：本批只涵蓋 `index.html`、`app.mjs`、`style.css`。由其他模組產生的文字（試聽工作階段 `listen-ui.mjs`、
-  引擎實機測試的題目 `engine-probe.mjs`、音色庫名稱與下載說明、`model.mjs` 回傳的診斷訊息）仍是繁體中文，
-  列為後續工作。
-- **驗證**：`studio/browser-tests/web-i18n.mjs`（英文瀏覽器自動英文、就地切換為日文、深色主題、重新載入後保留、
-  跟隨系統、工作坊沿用同一偏好）。其他瀏覽器測試的 context 設為 `zh-TW`，照舊檢查繁中文字。
+- **三種主題**：淺色、深色、跟隨系統（不存 theme，跟著 `prefers-color-scheme` 即時切換）。側欄的「主題」選單切換，
+  不重新載入頁面。
+- **首繪前套用**：`studio/web/boot.js`（外部 classic script，符合 CSP）只讀主題並設定 `data-theme` 與 theme-color；
+  不做語言偵測，也不隱藏頁面。
+- **一個主題偏好**：與工作坊共用 localStorage `studio-workshop/ui` 的 `theme`（`studio/web/ui-prefs.mjs`），在任一頁
+  選的主題兩頁都沿用；另一個分頁改了主題時，本頁即時跟上。Studio 只讀寫 `theme`，工作坊存的 `lang` 等欄位不受影響，
+  也不影響 Studio。
+- **深色主題**：`style.css` 的顏色全部改成 token，`:root[data-theme="dark"]` 重新定義每一個 token（含審核捲軸的
+  `--roll-*`）；審核捲軸在主題切換時重新讀取 token 並重畫（`review-roll.mjs`）。狀態顏色的意義不變（PASS 綠、
+  FAIL／UNSUPPORTED 紅、PENDING 琥珀），只調整明度。
+- **驗證**：單元測試 `studio/tests/web-theme.test.mjs`（深色 token 完整、token 區塊外沒有寫死的顏色、CSP、boot.js
+  只處理主題、共用偏好、「跟隨系統」清除已存的主題且保留工作坊其他偏好）；瀏覽器測試
+  `studio/browser-tests/web-theme.mjs`（首繪前即為系統主題、就地切換、重新載入後保留、跟隨系統即時切換、與工作坊
+  共用主題、日文瀏覽器與工作坊存的語言都不改變 Studio 的 zh-Hant）。

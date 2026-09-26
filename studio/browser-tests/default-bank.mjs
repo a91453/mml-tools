@@ -41,7 +41,7 @@ async function upstreamFixture() {
 
 export async function runDefaultBankChecks({ browser, base, profile }) {
   const fixture = await upstreamFixture();
-  const context = await browser.newContext({ viewport: profile.viewport, isMobile: profile.isMobile, hasTouch: profile.hasTouch, serviceWorkers: 'block', locale: 'zh-TW' });
+  const context = await browser.newContext({ viewport: profile.viewport, isMobile: profile.isMobile, hasTouch: profile.hasTouch, serviceWorkers: 'block' });
   const errors = [], upstreamRequests = [];
   try {
     if (fixture.swap) {

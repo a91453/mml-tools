@@ -41,7 +41,7 @@ export async function runLibraryChecks({ page, idle }) {
 // its list records derived from what is stored. Runs in a fresh context whose
 // page never boots the app, so the v1 database is really the one upgraded.
 export async function runLibraryMigrationCheck({ browser, base }) {
-  const context = await browser.newContext({ locale: 'zh-TW' });
+  const context = await browser.newContext();
   try {
     const page = await context.newPage();
     await page.goto(`${base}/build.json`);

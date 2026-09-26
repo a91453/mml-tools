@@ -57,7 +57,7 @@ for (const name of ['index.html', 'style.css']) await put(`studio/web/service/${
 // page, its stylesheet and its first-paint script are the only other files.
 // It reuses vendor/spessasynth/ below and ships no bank and no icon font.
 for (const name of ['index.html', 'workshop.css', 'boot.js']) await put(`studio/web/workshop/${name}`, await readFile(resolve(root, 'studio/web/workshop', name)));
-// The Studio main page's first-paint script (theme and language before the
+// The Studio main page's first-paint script (the theme before the
 // page is drawn; a classic script, as Studio's CSP allows no inline script).
 await put('studio/web/boot.js', await readFile(resolve(root, 'studio/web/boot.js')));
 await put('dist/core.js', await readFile(resolve(root, 'dist/core.js')));

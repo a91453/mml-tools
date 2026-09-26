@@ -22,7 +22,7 @@ export async function runGameStyleBankChecks({ browser, base, profile }) {
   const stand = sha256(body);
   // The page's notice names the size it pins: here, the stand-in's.
   const notice = GAME_STYLE_DOWNLOAD_NOTICE.replace(/約 [\d.]+ MB/, `約 ${(body.length / 1e6).toFixed(1)} MB`);
-  const context = await browser.newContext({ viewport: profile.viewport, isMobile: profile.isMobile, hasTouch: profile.hasTouch, serviceWorkers: 'block', locale: 'zh-TW' });
+  const context = await browser.newContext({ viewport: profile.viewport, isMobile: profile.isMobile, hasTouch: profile.hasTouch, serviceWorkers: 'block' });
   const errors = [], bankRequests = [];
   try {
     await context.route('**/studio/web/preview/game-style-bank.mjs', async route => {

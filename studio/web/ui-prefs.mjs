@@ -1,9 +1,8 @@
-// Language and theme for the Studio main page. One preference serves Studio
-// and the Workshop: both read and write `studio-workshop/ui` (the Workshop's
-// key, workshop/storage.mjs), so a choice made on either page holds on both.
-// boot.js applies it before first paint; this module changes it afterwards.
-import { LANGS } from './i18n-core.mjs';
-
+// Theme for the Studio main page. Studio and the Workshop share one stored
+// preference, `studio-workshop/ui` (the Workshop's key, workshop/storage.mjs):
+// a theme chosen on either page holds on both. Studio reads and writes only its
+// `theme`; the Workshop's `lang` and other fields are left as they are.
+// boot.js applies the theme before first paint; this module changes it later.
 export const UI_KEY = 'studio-workshop/ui';
 export const THEMES = ['system', 'light', 'dark'];
 const BAR = { light: '#122a32', dark: '#0b1a1f' };
@@ -15,9 +14,8 @@ export function readPrefs() {
   } catch { return {}; }
 }
 
-export function savePrefs(prefs) {
-  try { localStorage.setItem(UI_KEY, JSON.stringify({ ...readPrefs(), ...prefs })); return true; }
-  catch { return false; }
+function writePrefs(prefs) {
+  try { localStorage.setItem(UI_KEY, JSON.stringify(prefs)); return true; } catch { return false; }
 }
 
 // The stored choice: 'light' or 'dark', or 'system' when none is stored (the
@@ -38,11 +36,7 @@ export function applyTheme(choice = themeChoice()) {
 
 export function setTheme(choice) {
   if (!THEMES.includes(choice)) return applyTheme();
-  if (choice === 'system') {
-    const { theme, ...rest } = readPrefs();
-    try { localStorage.setItem(UI_KEY, JSON.stringify(rest)); } catch { /* this page only */ }
-  } else savePrefs({ theme: choice });
+  const { theme, ...rest } = readPrefs();
+  writePrefs(choice === 'system' ? rest : { ...rest, theme: choice });
   return applyTheme(choice);
 }
-
-export const langChoice = () => (LANGS.includes(document.documentElement.lang) ? document.documentElement.lang : 'zh-Hant');

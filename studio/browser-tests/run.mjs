@@ -18,7 +18,7 @@ import { DEFAULT_BANK_UPSTREAM } from '../web/preview/default-bank.mjs';
 import { runWorkshopChecks } from './workshop.mjs';
 import { runWorkshopUpdateChecks } from './workshop-update.mjs';
 import { runWorkerBootChecks } from './worker-boot.mjs';
-import { runStudioI18nChecks } from './web-i18n.mjs';
+import { runStudioThemeChecks } from './web-theme.mjs';
 
 // A browser build that is not installed is neither a pass nor a failed
 // assertion, so it is recorded as NOT_RUN with its reason rather than being
@@ -49,9 +49,7 @@ try {
     try {
       try{browser=await profile.engine.launch(executable[profile.engineName]?{executablePath:executable[profile.engineName]}:{});}
       catch(error){throw Object.assign(Error(error.message),{engineMissing:true});}
-      // Studio follows the browser language (boot.js); these checks read the
-      // zh-Hant page, so the context says so. web-i18n.mjs covers the others.
-      context=await browser.newContext({viewport:profile.viewport,isMobile:profile.isMobile,hasTouch:profile.hasTouch,locale:'zh-TW'});
+      context=await browser.newContext({viewport:profile.viewport,isMobile:profile.isMobile,hasTouch:profile.hasTouch});
       // Never the real network: this context should never ask for the free
       // default bank at all (the no-external-request check below says so); its
       // download is exercised in a context of its own (default-bank.mjs).
@@ -187,7 +185,7 @@ try {
       // It publishes a second release through a real Service Worker update,
       // proven here for Chromium only.
       if(profile.engineName==='chromium')await runWorkshopUpdateChecks({browser});
-      await runStudioI18nChecks({browser,base,profile});
+      await runStudioThemeChecks({browser,base,profile});
       await runDefaultBankChecks({browser,base,profile});
       await runGameStyleBankChecks({browser,base,profile});
       await runWorkshopGameStyleChecks({browser,base,profile});

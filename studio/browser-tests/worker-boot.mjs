@@ -16,7 +16,7 @@ export async function runWorkerBootChecks({ browser, base }) {
   // they are when `then` goes on to use the page that booted.
   const listened = page => page.waitForFunction(() => { const root = document.querySelector('#listening'); return root && !root.hidden && !root.textContent.includes('正在讀取試聽內容') && (root.querySelector('#listen-head') || root.querySelector('.empty')); }, null, { timeout: 60000 });
   const boot = async (pattern, handle, { listen = null, then = null } = {}) => {
-    const context = await browser.newContext({ serviceWorkers: 'block', locale: 'zh-TW' });
+    const context = await browser.newContext({ serviceWorkers: 'block' });
     let requests = 0, page = null;
     await context.route(pattern, route => handle(route, ++requests, page));
     page = await context.newPage();
