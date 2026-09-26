@@ -43,6 +43,12 @@ export const SERVICE_OWNER = 'owner:service';
 // reason, the protocol-version header and the user agent, never a body. The
 // platform HTTP log shows the 400 but not why (see handleMcp).
 export const mcpRejectLog = entry => console.warn(JSON.stringify({ event: 'MCP_REQUEST_REJECTED', ...entry }));
+// One deployment-log line per OAuth request the authorization server refuses:
+// endpoint, OAuth error and reason, the user agent and, for a Dynamic Client
+// Registration, the metadata shape it asked for (callback origins, never
+// paths). The platform HTTP log shows `POST /oauth/register 400` but not which
+// check refused it. Tokens, passwords, codes and query strings are never logged.
+export const oauthRejectLog = entry => console.warn(JSON.stringify({ event: 'OAUTH_REQUEST_REJECTED', ...entry }));
 // One deployment-log line per request that ends in an unexpected fault. The
 // caller's response stays the generic INTERNAL_ERROR; headers, bodies and
 // tokens are never logged.
@@ -56,6 +62,14 @@ export const serverFaultLog = entry => console.error(JSON.stringify({ event: 'UN
 // MML_OAUTH_LOOPBACK_REDIRECTS=0. The authorization flow itself — exact
 // registered callback, PKCE S256, CSRF, the owner password — is the same for
 // every client.
+//
+// Google's OAuth relay, oauth-redirect.googleusercontent.com (Gemini custom MCP
+// connectors call back to /r/user_bound_custom-mcp-<id>-<server>), is
+// deliberately not a default. Unlike the connector-owned callbacks above, that
+// host relays to whichever Google project or connector the path names, so
+// admitting it widens who can receive an authorization code this owner
+// approves. A deployment that uses Gemini opts in by listing it in
+// MML_OAUTH_REDIRECT_HOSTS together with the hosts above.
 export const DEFAULT_REDIRECT_HOSTS = Object.freeze(['chatgpt.com', 'chat.openai.com', 'claude.ai', 'claude.com']);
 
 // A host name and nothing else: no scheme, no port, no path, no userinfo, no
@@ -140,7 +154,7 @@ export function productionAgentConfiguration(env = process.env) {
 }
 
 export function createApplication(options) {
-  const auth = createAuth({ ...options, allowedRedirectHosts: options.allowedRedirectHosts ?? [...DEFAULT_REDIRECT_HOSTS] });
+  const auth = createAuth({ ...options, allowedRedirectHosts: options.allowedRedirectHosts ?? [...DEFAULT_REDIRECT_HOSTS], rejectLog: options.oauthRejectLog });
   // Constructing the service performs no Canonical load and touches no engine:
   // a deployment missing the published Git history still starts, serves
   // /healthz and answers capability discovery saying Canonical is unavailable,
@@ -305,6 +319,7 @@ if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) 
     ...productionAgentConfiguration(process.env),
     allowedRedirectHosts: parseRedirectHosts(process.env),
     allowLoopbackRedirects: parseLoopbackSetting(process.env),
+    oauthRejectLog,
     // Optional; see server/mcp-listen.mjs. An invalid origin yields no link.
     studioWebOrigin: process.env.STUDIO_WEB_ORIGIN ?? null,
     listenSamplesUrl: process.env.STUDIO_LISTEN_SAMPLES_URL ?? null,
