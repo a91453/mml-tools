@@ -189,14 +189,14 @@
     </button>
     <div id="rangeSel" role="radiogroup" aria-label="播放範圍" data-i18n-attr="aria-label:html.rangeSel@aria-label">
       <button type="button" role="radio" data-range="all" aria-checked="true" class="on" title="整首播放（會清掉小節尺上的開始／結束線）" data-i18n-attr="title:html.rangeSel.0@title" data-i18n="html.rangeSel.0">全曲</button>
-      <button type="button" role="radio" data-range="part" aria-checked="false" aria-disabled="true" title="設定範圍：小節尺上左鍵設開始、右鍵設結束；箭頭工具（0）在捲軸空白處左鍵設開始、右鍵開選單（選單前兩項就是這兩條線）" data-i18n-attr="title:html.rangeSel.1@title" data-i18n="html.rangeSel.1">範圍</button>
+      <button type="button" role="radio" data-range="part" aria-checked="false" aria-disabled="true" title="設定範圍：小節尺上左鍵設開始、右鍵開選單（選單前兩項就是開始線和結束線）；箭頭工具（0）在捲軸空白處左鍵設開始、右鍵同樣開選單" data-i18n-attr="title:html.rangeSel.1@title" data-i18n="html.rangeSel.1">範圍</button>
     </div>
     <button class="tiny toggle" id="loopBtn" aria-pressed="false" title="循環播放：播到結尾（或結束線）立刻從頭（或基準線）再播一次" data-i18n-attr="title:html.loopBtn@title" data-i18n-text="html.loopBtn~0">
       <svg class="ico" aria-hidden="true" focusable="false"><use href="#i-retweet"></use></svg>循環
     </button>
   </div>
   <div class="grp hideable">
-    <button class="tool" id="toolSelect" title="箭頭（快捷鍵 0）：音符上搬動／改長度／刪除，Shift或Ctrl 點第二個音可以選取整段；空白處左鍵設播放的開始線、右鍵設結束線" data-i18n-attr="title:html.toolSelect@title">
+    <button class="tool" id="toolSelect" title="箭頭（快捷鍵 0）：音符上搬動／改長度／刪除，Shift或Ctrl 點第二個音可以選取整段；空白處左鍵設播放的開始線、右鍵開選單（可設結束線）" data-i18n-attr="title:html.toolSelect@title">
       <svg class="ico" aria-hidden="true" focusable="false"><use href="#i-arrow-pointer"></use></svg><span class="sr" data-i18n="html.toolSelect.1">只選取</span>
     </button>
     <button type="button" class="lbl" id="lensLbl" aria-pressed="false">
@@ -257,7 +257,7 @@
     <span class="warnmsg" id="rollNote"></span>
     <span id="rollNonstd" hidden=""></span>
   </div>
-  <span class="hint hideable" id="rollHint" data-i18n="html.rollHint">左鍵畫 · 拖曳搬動 · 拖右邊框改長度 · 右鍵刪除</span>
+  <span class="hint hideable" id="rollHint" data-i18n="html.rollHint">左鍵畫 · 拖曳搬動 · 拖右邊框改長度 · 右鍵開選單</span>
 </div>
 
 <div id="rollwrap">
@@ -430,7 +430,7 @@
       <button class="act" id="paste" data-i18n="html.paste">貼上</button>
       <button class="act" id="copy" data-i18n="html.copy">複製</button>
     </div>
-    <p class="hint" data-i18n="html.clipBox.0.3">貼上會取代所有分頁的內容。複製會去掉空白，那才是遊戲算的字數。</p>
+    <p class="hint" data-i18n="html.clipBox.0.3">貼上會取代所有分頁的內容。複製會去掉空白，這裡的字數也不算空白；遊戲本身怎麼算字數尚未實機驗證。</p>
   </div>
 </div>
 

@@ -50,3 +50,27 @@ test('the page keeps Studio Web\'s CSP: no inline script, style or handler, noth
     assert.doesNotMatch(text, /style=\\?"/, `${file} builds no inline style`);
   }
 });
+
+// Hints must not claim game behaviour the Canonical rules leave PENDING
+// (MOBILE_SYNTAX §3 / P4 lengths 1–64, §4 / P5 multi-dot, §9 / P1 counting),
+// nor describe a right click on the ruler or the roll as setting the end
+// line or deleting: both open a menu (pianoroll.mjs openMenu).
+test('hints claim no unverified game behaviour and describe right click as a menu', async () => {
+  const unverified = {
+    'zh-Hant': /不吃|吃不下|遊戲不支援|遊戲算的字數|右鍵設結束|右鍵刪除/,
+    en: /will not accept|does not accept|what the game counts|right click the end|right click deletes/,
+    ja: /では使えません|受け付けない|受け付けません|ゲームの数える|右クリックで終了|右クリックで削除/,
+    ko: /Mobile에서는 쓸 수 없|받지 않는|게임이 세는 글자|우클릭이 끝|우클릭으로 삭제/,
+  };
+  for (const tag of LANGS) {
+    for (const [key, value] of Object.entries(tables[tag])) assert.doesNotMatch(JSON.stringify(value), unverified[tag], `${tag} ${key}`);
+  }
+  const html = await readFile(new URL('index.html', dir), 'utf8');
+  assert.doesNotMatch(html, unverified['zh-Hant']);
+  for (const key of ['html.rollHint', 'html.clipBox.0.3']) assert.ok(html.includes(`data-i18n="${key}">${tables['zh-Hant'][key]}<`), `${key} static text`);
+  for (const key of ['html.rangeSel.1@title', 'html.toolSelect@title']) assert.ok(html.includes(`title="${tables['zh-Hant'][key]}"`), `${key} static text`);
+  const guide = new URL('guide/', dir);
+  for (const name of await readdir(guide)) {
+    if (name.endsWith('.html')) assert.doesNotMatch((await readFile(new URL(name, guide), 'utf8')).replace(/不能只因為[^；。]*不吃/g, ''), /Mobile (?:可能)?不吃|遊戲算的字數|右鍵<\/strong>點一下設結束/, name);
+  }
+});
