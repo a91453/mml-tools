@@ -2,7 +2,6 @@
 // 3MLE extension block reader/writer (bzip2 + base64 channel data).
 // Workshop edits sit outside the Canonical/verified pipeline and are never evidence.
 import { decompress, compress } from "./bzip2.mjs";
-import * as i18n from "./i18n.mjs";
 
 export const EXT_SECTION = "3MLE EXTENSION";
 
@@ -60,9 +59,8 @@ const ENCODING_ALIASES = new Map(Object.entries({
   "iso-8859-1": "windows-1252", "latin1": "windows-1252", "ansi": "windows-1252",
 }));
 
-const LOCALE_CODEPAGE = { "zh-Hant": "big5", "ja": "shift_jis", "ko": "euc-kr", "en": "windows-1252" };
-
-const guessLegacy = () => LOCALE_CODEPAGE[i18n.getLocale()] ?? "big5";
+// Legacy (non-UTF-8) text is read as the zh-Hant players' codepage.
+const guessLegacy = () => "big5";
 
 const encoderCache = new Map();
 

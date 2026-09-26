@@ -1,11 +1,10 @@
 // Waiting for the Workshop to show itself, with a failure that says why not.
 //
-// A language other than zh-Hant keeps the Workshop's body hidden until
-// main.mjs and everything it imports have loaded and translated the page
-// (boot.js, workshop.css: html[data-i18n-pending] body). A module that never
-// arrives, or fails to load, leaves the page blank without a page error: only
-// a console message says so, and a bare 30 s timeout on #unverified said
-// nothing more (desktop Chromium, once in CI on 90bb6db). `watchPage` records,
+// A module of the Workshop that never arrives, or fails to load, can leave
+// the page unready without a page error: only a console message says so, and
+// a bare 30 s timeout on #unverified said nothing more (desktop Chromium, once
+// in CI on 90bb6db, when a non-zh-Hant page stayed hidden until its language
+// file loaded; the Workshop is zh-Hant only since). `watchPage` records,
 // per page, the requests still in flight, the requests that failed and the
 // console errors and warnings, so `workshopShown` can name them when it gives
 // up.
@@ -37,7 +36,6 @@ export async function workshopShown(page, options) {
       url: location.href,
       ready_state: document.readyState,
       lang: document.documentElement.lang,
-      i18n_pending: document.documentElement.hasAttribute('data-i18n-pending'),
       unverified: document.querySelector('#unverified') ? 'present' : 'absent',
       worker_controller: navigator.serviceWorker?.controller?.scriptURL ?? null,
       workshop_modules_loaded: performance.getEntriesByType('resource')

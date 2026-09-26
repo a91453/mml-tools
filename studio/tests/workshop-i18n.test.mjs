@@ -1,27 +1,33 @@
-// Studio Workshop: the four UI languages stay in step, the static page asks
-// only for keys that exist, and the page keeps Studio's no-inline, no-external
-// policy (CSP 'self', no icon font, no outside URL).
+// Studio Workshop: one zh-Hant text table (the owner is the only user), the
+// static page asks only for keys that exist, and the page keeps Studio's
+// no-inline, no-external policy (CSP 'self', no icon font, no outside URL).
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { readFile, readdir } from 'node:fs/promises';
+import { existsSync } from 'node:fs';
 import { pageKeys } from '../web/workshop/i18n-page.mjs';
 
 const dir = new URL('../web/workshop/', import.meta.url);
-const LANGS = ['zh-Hant', 'en', 'ja', 'ko'];
-const tables = Object.fromEntries(await Promise.all(LANGS.map(async tag => [tag, (await import(new URL(`i18n/${tag}.mjs`, dir))).default])));
-const placeholders = v => new Set([...JSON.stringify(v).matchAll(/\{(\w+)(?::[^}]*)?\}/g)].map(m => m[1]));
+const zh = (await import(new URL('i18n/zh-Hant.mjs', dir))).default;
 
-test('the four tables have exactly the same keys and placeholders', () => {
-  const base = Object.keys(tables['zh-Hant']).sort();
-  assert.ok(base.length > 700);
-  for (const tag of LANGS) {
-    assert.deepEqual(Object.keys(tables[tag]).sort(), base, `${tag} key set`);
-    for (const key of base) {
-      const value = tables[tag][key];
-      assert.ok(typeof value === 'string' || (value && typeof value.other === 'string'), `${tag} ${key} shape`);
-      assert.deepEqual(placeholders(value), placeholders(tables['zh-Hant'][key]), `${tag} ${key} placeholders`);
-      if (typeof value === 'string') assert.ok(value.trim() || key.endsWith('~0'), `${tag} ${key} is empty`);
-    }
+test('zh-Hant is the only table: no other language, no picker, no language loading', async () => {
+  assert.deepEqual(await readdir(new URL('i18n/', dir)), ['zh-Hant.mjs']);
+  assert.ok(!existsSync(new URL('lang.mjs', dir)), 'no language picker module');
+  const html = await readFile(new URL('index.html', dir), 'utf8');
+  assert.match(html, /^<!doctype html>\n<html lang="zh-Hant">/);
+  assert.doesNotMatch(html, /id="lang"|語言 \(Language\)/);
+  assert.doesNotMatch(await readFile(new URL('i18n.mjs', dir), 'utf8'), /import\(|PluralRules/);
+  assert.doesNotMatch((await readFile(new URL('boot.js', dir), 'utf8')).replace(/^\s*\/\/.*$/gm, ''), /lang|navigator|i18n/i, 'boot.js applies the theme only');
+  assert.doesNotMatch(await readFile(new URL('workshop.css', dir), 'utf8'), /i18n-pending/);
+});
+
+test('every entry is a non-empty string with plain {name} placeholders', () => {
+  const table = zh;
+  assert.ok(Object.keys(table).length > 700);
+  for (const [key, value] of Object.entries(table)) {
+    assert.equal(typeof value, 'string', `${key} shape`);
+    assert.ok(value.trim() || key.endsWith('~0'), `${key} is empty`);
+    assert.doesNotMatch(value, /\{\w+:[^}]*\}/, `${key} uses no particle form`);
   }
 });
 
@@ -33,7 +39,7 @@ test('every key the page and the modules ask for exists', async () => {
     for (const m of code.matchAll(/\bi18n\.(?:t|has)\(\s*"([^"]+)"/g)) wanted.add(m[1]);
   }
   assert.ok(wanted.size > 300);
-  for (const key of wanted) assert.ok(key in tables['zh-Hant'], `missing key ${key}`);
+  for (const key of wanted) assert.ok(key in zh, `missing key ${key}`);
 });
 
 test('the page keeps Studio Web\'s CSP: no inline script, style or handler, nothing external', async () => {
@@ -43,7 +49,7 @@ test('the page keeps Studio Web\'s CSP: no inline script, style or handler, noth
   assert.doesNotMatch(html, /\sstyle=/, 'no style attribute');
   assert.doesNotMatch(html, /\son[a-z]+=/, 'no inline event handler');
   assert.doesNotMatch(html, /<style\b/);
-  for (const file of ['index.html', 'workshop.css', 'boot.js', ...(await readdir(dir)).filter(f => f.endsWith('.mjs')), ...LANGS.map(t => `i18n/${t}.mjs`)]) {
+  for (const file of ['index.html', 'workshop.css', 'boot.js', ...(await readdir(dir)).filter(f => f.endsWith('.mjs')), 'i18n/zh-Hant.mjs']) {
     const text = await readFile(new URL(file, dir), 'utf8');
     assert.doesNotMatch(text, /https?:\/\//, `${file} names no URL`);
     assert.doesNotMatch(text, /\/api\/|fa-solid|fa-regular|@font-face|@import/, `${file} has no server endpoint or font`);
@@ -56,19 +62,12 @@ test('the page keeps Studio Web\'s CSP: no inline script, style or handler, noth
 // nor describe a right click on the ruler or the roll as setting the end
 // line or deleting: both open a menu (pianoroll.mjs openMenu).
 test('hints claim no unverified game behaviour and describe right click as a menu', async () => {
-  const unverified = {
-    'zh-Hant': /不吃|吃不下|遊戲不支援|遊戲算的字數|右鍵設結束|右鍵刪除/,
-    en: /will not accept|does not accept|what the game counts|right click the end|right click deletes/,
-    ja: /では使えません|受け付けない|受け付けません|ゲームの数える|右クリックで終了|右クリックで削除/,
-    ko: /Mobile에서는 쓸 수 없|받지 않는|게임이 세는 글자|우클릭이 끝|우클릭으로 삭제/,
-  };
-  for (const tag of LANGS) {
-    for (const [key, value] of Object.entries(tables[tag])) assert.doesNotMatch(JSON.stringify(value), unverified[tag], `${tag} ${key}`);
-  }
+  const unverified = /不吃|吃不下|遊戲不支援|遊戲算的字數|右鍵設結束|右鍵刪除/;
+  for (const [key, value] of Object.entries(zh)) assert.doesNotMatch(value, unverified, key);
   const html = await readFile(new URL('index.html', dir), 'utf8');
-  assert.doesNotMatch(html, unverified['zh-Hant']);
-  for (const key of ['html.rollHint', 'html.clipBox.0.3']) assert.ok(html.includes(`data-i18n="${key}">${tables['zh-Hant'][key]}<`), `${key} static text`);
-  for (const key of ['html.rangeSel.1@title', 'html.toolSelect@title']) assert.ok(html.includes(`title="${tables['zh-Hant'][key]}"`), `${key} static text`);
+  assert.doesNotMatch(html, unverified);
+  for (const key of ['html.rollHint', 'html.clipBox.0.3']) assert.ok(html.includes(`data-i18n="${key}">${zh[key]}<`), `${key} static text`);
+  for (const key of ['html.rangeSel.1@title', 'html.toolSelect@title']) assert.ok(html.includes(`title="${zh[key]}"`), `${key} static text`);
   const guide = new URL('guide/', dir);
   for (const name of await readdir(guide)) {
     if (name.endsWith('.html')) assert.doesNotMatch((await readFile(new URL(name, guide), 'utf8')).replace(/不能只因為[^；。]*不吃/g, ''), /Mobile (?:可能)?不吃|遊戲算的字數|右鍵<\/strong>點一下設結束/, name);
