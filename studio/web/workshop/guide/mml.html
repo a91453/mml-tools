@@ -1,0 +1,333 @@
+<!doctype html>
+<html lang="zh-Hant">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="theme-color" content="#122325">
+<meta name="robots" content="noindex">
+<!-- The Workshop's policy: scripts and styles only from 'self', no inline script or style, nothing but this origin is contacted. -->
+<meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self' data:; connect-src 'self'; object-src 'none'; base-uri 'self'; form-action 'none'">
+<title>MML 教學 · 工作坊說明</title>
+<link rel="icon" href="../../../../icon.svg" type="image/svg+xml">
+<link rel="stylesheet" href="./guide.css">
+<script src="./boot.js"></script>
+</head>
+<body data-guide="mml">
+<p class="zh-only" id="zhOnly" hidden>目前只有中文版</p>
+<header class="guide-head">
+  <div class="inner">
+    <a class="brand" href="../index.html">← 工作坊</a>
+    <nav class="guide-nav" aria-label="說明頁">
+      <a href="./editor.html">編輯器入門</a>
+      <a href="./reference.html">功能說明</a>
+      <a href="./keys.html">快捷鍵</a>
+      <a href="./mobile.html">手機與平板</a>
+      <a href="./mml.html">MML 教學</a>
+      <a href="./midi.html">MIDI 轉 MML</a>
+      <a href="./faq.html">常見問題</a>
+    </nav>
+  </div>
+</header>
+<main id="guide">
+  <h1>MML 教學</h1>
+  <p>簡介 MML 語法：從零開始，看得懂也寫得出來</p>
+
+  <div class="toc">
+    <ol>
+      <li><a href="#what">MML 是什麼</a></li>
+      <li><a href="#note">音符與休止符</a></li>
+      <li><a href="#len">長度與附點</a></li>
+      <li><a href="#oct">八度與音高範圍</a></li>
+      <li><a href="#tempo">速度：每個角色都帶同一張速度表</a></li>
+      <li><a href="#vol">力度</a></li>
+      <li><a href="#tie">連結線與 n 指令</a></li>
+      <li><a href="#track">角色與字數上限</a></li>
+      <li><a href="#dialect">工作坊、Studio 與其他工具的寫法差異</a></li>
+      <li><a href="#mistake">最常見的錯誤</a></li>
+    </ol>
+  </div>
+
+  <div class="note">
+    <p><strong>這一頁怎麼讀：</strong>一般段落與標示（MOBILE_SYNTAX §…）等出處的句子，照的是這個專案已發布的 Canonical 規則（<code>docs/MOBILE_SYNTAX.md</code>、<code>docs/MASTER_RULES.md</code>、<code>docs/PENDING.md</code>），連「尚未實機驗證」的狀態也照原文寫。標成「工作坊專用」的框，說的是工作坊這個編輯器自己的行為——它在 Canonical／驗證流程之外，比規則寬鬆或做得更多，不代表遊戲會這樣處理。</p>
+  </div>
+
+  <h2 id="what">MML 是什麼</h2>
+
+  <p>MML（Music Macro Language，音樂巨集語言）是用<strong>純文字</strong>寫樂譜的方法。瑪奇 Mobile 的作曲系統吃的就是這種文字——一串像 <code>t120o4l4cdefg</code> 的字，每個角色一串，角色就照著演奏。</p>
+
+  <p>它不是五線譜也不是簡譜，比較接近「把每個音怎麼彈寫成指令」。好處是可以複製貼上、可以用文字工具處理；壞處是寫錯了不一定有人提醒你，通常要播出來才知道。</p>
+
+  <p>底下的範例都可以貼進<a href="../index.html">工作坊</a>，按「▶ 演奏」試聽（要先在「設定」裡載入自己的音色庫，工作坊不附音色庫；聽到的是 GM 音色近似，不是遊戲音色）。建議一邊看一邊改，聽得到差別比讀得懂更重要。</p>
+
+  <div class="note">
+    <p>工作坊裡編輯的一切都標示為「工作坊編輯（未經 Studio 驗證）」。工作坊播得出來、沒有警告，都<strong>不</strong>代表譜符合 Canonical 規則，也不代表遊戲裡能用。要檢查，請按「送回 Studio 驗證」，由 <a href="../../../../index.html">Studio</a> 重新做技術驗證與審核。</p>
+  </div>
+
+  <h2 id="note">音符與休止符</h2>
+
+  <p>七個音名對應到 Do 到 Si：</p>
+
+  <table>
+    <thead>
+      <tr><th>寫法</th><th>音</th><th>寫法</th><th>音</th></tr>
+    </thead>
+    <tbody>
+      <tr><td><code>c</code></td><td>Do</td><td><code>g</code></td><td>Sol</td></tr>
+      <tr><td><code>d</code></td><td>Re</td><td><code>a</code></td><td>La</td></tr>
+      <tr><td><code>e</code></td><td>Mi</td><td><code>b</code></td><td>Si</td></tr>
+      <tr><td><code>f</code></td><td>Fa</td><td><code>r</code></td><td>休止符（不發聲）</td></tr>
+    </tbody>
+  </table>
+
+  <p>升記號用 <code>+</code>，降記號用 <code>-</code>，寫在音名後面、長度前面：</p>
+
+  <pre><code>c+   Do 升（等於 Re 降）
+  d-   Re 降
+  </code></pre>
+
+  <p>大小寫都可以，工作坊與 Studio 的解析器都把大小寫當成同一個字。</p>
+
+  <div class="workshop-only">
+    <p><strong>工作坊專用：</strong>工作坊也接受 <code>#</code> 當升記號、連續好幾個升降記號（例如 <code>c++</code>）、<code>h</code>（當成 <code>b</code>）與 <code>p</code>（當成休止符 <code>r</code>）。這些是從其他工具帶進來的寫法，Studio 的解析器只接受一個升降記號，也不認得 <code>h</code> 與 <code>p</code>；按「送回 Studio 驗證」時工作坊會把它們改寫成 <code>+</code>、單一拼法、<code>b</code> 與 <code>r</code>。詳見<a href="#dialect">寫法差異</a>。</p>
+  </div>
+
+  <h2 id="len">長度與附點</h2>
+
+  <p>音名後面接數字就是那個音的長度，數字是<strong>分母</strong>：</p>
+
+  <table>
+    <thead>
+      <tr><th>寫法</th><th>意思</th></tr>
+    </thead>
+    <tbody>
+      <tr><td><code>c1</code></td><td>全音符</td></tr>
+      <tr><td><code>c2</code></td><td>二分音符</td></tr>
+      <tr><td><code>c4</code></td><td>四分音符</td></tr>
+      <tr><td><code>c8</code></td><td>八分音符</td></tr>
+      <tr><td><code>c16</code></td><td>十六分音符</td></tr>
+      <tr><td><code>c32</code></td><td>三十二分音符</td></tr>
+      <tr><td><code>c64</code></td><td>六十四分音符</td></tr>
+    </tbody>
+  </table>
+
+  <p>每個音都寫數字很囉唆，所以有 <code>l</code>（length）可以設<strong>預設長度</strong>——後面沒寫數字的音與休止符都用它：</p>
+
+  <pre><code>l8cdefg      跟 c8d8e8f8g8 完全一樣
+  l8cde4fg     只有 e 是四分音符，其餘八分
+  </code></pre>
+
+  <div class="canonical">
+    <p><strong>長度數字的範圍（MOBILE_SYNTAX §3）：</strong>官方文件寫的音符／休止符長度數值範圍是 <code>1–64</code>，並<strong>沒有</strong>說只能用 2 的次方。所以：</p>
+    <ul>
+      <li>1–64 之間的長度，不能只因為「不是 2 的次方」就說遊戲不吃；<code>64</code> 在官方範圍內，<code>48</code> 也不是官方禁止的寫法。</li>
+      <li>專案的 Final 輸出<strong>偏好</strong> <code>1／2／4／8／16／32／64</code>（能精確表達節奏時）；其他整數長度（包括 <code>3</code>、<code>6</code>、<code>12</code>、<code>24</code>、<code>48</code>）屬於「謹慎使用」：只在來源節奏需要、而且驗證確認沒有時間漂移時才用。</li>
+      <li>這些非 2 次方長度在遊戲裡長時間播放會不會漂移，仍待實機測試（PENDING P4）。</li>
+    </ul>
+  </div>
+
+  <p>後面加一個點是<strong>附點</strong>，長度變 1.5 倍：</p>
+
+  <pre><code>c4.   四分音符 × 1.5（一拍半）
+  c8.   八分音符 × 1.5
+  </code></pre>
+
+  <div class="canonical">
+    <p><strong>附點的規則（MOBILE_SYNTAX §4）：</strong>專案 Final 的安全時間解析度是 1/64。</p>
+    <ul>
+      <li>偏好：在 <code>1、2、4、8、16、32</code> 上加<strong>單一個</strong>附點，而且能保留原本的節奏。</li>
+      <li>Final 禁止：<code>64.</code>；<code>3.</code>、<code>6.</code>、<code>12.</code>、<code>24.</code>、<code>48.</code> 這類不穩定的附點；以及上面偏好清單以外的任何附點底數。</li>
+      <li>Final 禁止：雙附點或多附點，例如 <code>1..</code>、<code>2..</code>、<code>4..</code>、<code>8..</code>。</li>
+      <li>要表達這些長度時，改寫成時間完全相等的「音符＋連結線＋休止符」組合，例如 <code>c4..</code>（1.75 拍）寫成 <code>c4&amp;c8.</code>。</li>
+      <li>這些被禁止的寫法遊戲引擎本身吃不吃，是另一個仍待實機驗證的問題（PENDING P5）；禁止的是專案的 Final 輸出，不是在宣稱遊戲的行為。</li>
+    </ul>
+  </div>
+
+  <div class="workshop-only">
+    <p><strong>工作坊專用：</strong>工作坊的解析器比 Final 規則寬鬆：</p>
+    <ul>
+      <li>它讀得懂雙附點（<code>c4..</code> 是 1.75 倍），也讀得懂<strong>帶附點的預設長度</strong>。在工作坊裡，附點是吃在長度數字上的，不會疊加：寫了 <code>l4.</code> 之後，單寫 <code>c</code> 是 1.5 拍，接著的 <code>c.</code> 也是 1.5 拍<em>而不是</em> 2.25 拍。Studio 的解析器不接受 <code>l4.</code> 這種寫法。</li>
+      <li>「剪貼簿」→「複製」與「送回 Studio 驗證」都會先把 <code>..</code> 改寫成單附點加連結線的等長寫法；送回 Studio 時 <code>lN.</code> 會改成 <code>lN</code>，原本靠它的音會寫出完整長度。</li>
+      <li>鋼琴捲軸的「加上附點」只允許全／2分／4分／8分／16分／32分音符（64 分不行），跟上面的偏好清單一致。</li>
+      <li>工作坊以每拍 480 tick 計時，長度換成 tick 時會取整數，所以 <code>5</code>、<code>7</code>、<code>9</code> 這類分母在工作坊裡播的是近似值。</li>
+      <li>工作坊把 1、2、3、4、6、8、12、16、24、32、48、64 以外的分母標成「非標準時值」，訊息寫著「瑪奇 Mobile 不吃」，並提供工具列的「還原」把它們換成標準時值。這是工作坊自己的分類：照 MOBILE_SYNTAX §3，1–64 之間的長度都在官方範圍內，不能說成遊戲的禁令。反過來，工作坊當成「標準」的 3、6、12、24、48 在 Canonical 裡屬於「謹慎使用」，它們的附點形式在 Final 裡是禁止的。</li>
+    </ul>
+  </div>
+
+  <h2 id="oct">八度與音高範圍</h2>
+
+  <p><code>o</code> 後面接數字決定接下來的音在哪個八度，例如 <code>o4c</code>。</p>
+
+  <p><code>&lt;</code> 降一個八度、<code>&gt;</code> 升一個八度——旋律上下跑的時候用這兩個比一直寫 <code>o</code> 短很多：</p>
+
+  <pre><code>o4cde&gt;c    最後那個 c 高一個八度
+  </code></pre>
+
+  <p>Studio 的解析器要求第一個音名之前一定要先寫 <code>o</code>，所以建議每個角色一開頭就寫好八度。</p>
+
+  <div class="canonical">
+    <p><strong>音高範圍（MOBILE_SYNTAX §6）：</strong>官方文件寫的是音高範圍 <code>0–107</code>，而不是某一組 <code>o</code> 的範圍。程式裡任何「八度寫得到哪裡」的範圍都只是<strong>實作上的對應</strong>，必須拿 0–107 的音高模型驗證；<code>o</code>、音名、數字音高與邊界音之間的精確關係還沒有文件化或測試（PENDING P6）。</p>
+  </div>
+
+  <div class="workshop-only">
+    <p><strong>工作坊專用：</strong>工作坊與 Studio 在程式內部都把 <code>o4c</code> 算成 MIDI 60（一般說的中央 C），但這只是兩個程式的換算方式，它和官方 0–107 的精確對應仍待驗證。工作坊的鋼琴捲軸範圍是 <code>o1c</code>–<code>o7b</code>：超出這個範圍的音，工作坊會以八度為單位摺回範圍內播放，並在狀態列警告「有音高超出捲軸的 o1c–o7b，已折八度塞進來」。Studio 目前的實作對應是 <code>O0</code>–<code>O8</code>，並對換算後超過 107 的音名提出警告。</p>
+  </div>
+
+  <h2 id="tempo">速度：每個角色都帶同一張速度表</h2>
+
+  <p><code>t</code> 後面接數字設定速度（BPM），例如 <code>t120</code>。遊戲作曲編輯器的速度輸入範圍是 <code>32–255</code>，這是官方確認的範圍，也是專案 Final 使用的數值範圍（MOBILE_SYNTAX §2、§7）。</p>
+
+  <div class="canonical">
+    <p><strong>速度的交付規則（MOBILE_SYNTAX §7）：</strong>在實機測試證明可以放寬之前，專案 Final 的交付規則是：</p>
+    <ol>
+      <li>每個<strong>有內容的</strong>角色，開頭都寫同一個起始速度；</li>
+      <li>曲中換速度時，每個有內容的角色都帶<strong>同一張完整的速度表</strong>，換速度的位置在音樂上完全相同；</li>
+      <li>完全空白的角色維持空白，不為了通過檢查而塞速度或休止符；</li>
+      <li>這條「每個角色重複速度表」是為了保持同步的<strong>專案安全政策</strong>，<strong>不是</strong>在宣稱遊戲引擎技術上要求每個角色都寫速度。</li>
+    </ol>
+    <p>只有一個角色帶曲中速度變化時，遊戲客戶端能不能保持同步，目前是 <strong>PENDING_IN_GAME</strong>（待實機驗證，PENDING P2）。</p>
+    <p>曲中換速度本身不違法，但有漂移的實際風險：來源、預覽與候選的速度表必須完全一致，換速度的位置要有來源依據，並做逐曲的時間驗證。重複寫一次「目前已經生效的速度」不改變任何時間，不算速度表的一部分。</p>
+  </div>
+
+  <p>照這條規則，一首三個角色、第二小節起從 120 換成 90 的曲子，三個角色都要在同一個位置寫：</p>
+
+  <pre><code>MML@t120o4l4cdeft90gfed,t120o4l2cet90db,t120o3l1ct90g,,,;
+  </code></pre>
+
+  <div class="workshop-only">
+    <p><strong>工作坊專用：</strong>工作坊<strong>播放</strong>時，會把所有分頁（包括不會送進遊戲的輔助軌）寫的 <code>t</code> 合併成一張速度表：同一個位置有好幾個分頁都寫時，以分頁號碼小的為準；整首都沒寫時用 120。超出 32–255 的值會被夾進範圍。狀態列的「速度」欄會列出合併後的結果（例如 <code>120 → 90</code>）。</p>
+    <p>因為是合併後才播，工作坊裡就算只有一個分頁寫了 <code>t</code>，聽起來也是整首同步的——這只說明工作坊怎麼播，<strong>不</strong>代表遊戲會這樣處理（那正是 PENDING P2 待驗證的事）。</p>
+    <p>工具列的「速度」按鈕（「速度/拍速」視窗：設置位置選「音軌開頭」或「選擇的音符前」、輸入速度（BPM）、「試聽」、「移除這個速度記號」、「執行」）會把整張速度表寫進<strong>主旋律</strong>，並刪掉其他所有分頁的 <code>t</code>；其他分頁有音符跨過換速度的位置時，會在那裡切開再用連結線接回去。這樣做出來的譜只有主旋律帶速度，<strong>不符合</strong>上面的 MOBILE_SYNTAX §7 交付規則。交付前請讓每個有內容的角色都帶同一張速度表；送回 Studio 時，Studio 會把各角色速度表不一致列為問題（Final 驗證時是錯誤）。</p>
+  </div>
+
+  <h2 id="vol">力度</h2>
+
+  <p><code>v</code> 後面接數字決定音量，數字越大越響。官方範圍是 <code>0–15</code>（MOBILE_SYNTAX §2）。它跟 <code>l</code> 一樣是<strong>持續生效</strong>的——設了之後，後面所有音都用這個力度，直到下一個 <code>v</code>。</p>
+
+  <pre><code>o4v12cdev8fga    前三個音較響，後三個較輕
+  </code></pre>
+
+  <p>多角色合奏時，伴奏角色調低幾格會讓主旋律浮出來。</p>
+
+  <div class="workshop-only">
+    <p><strong>工作坊專用：</strong>工作坊與 Studio 在沒寫 <code>v</code> 時都當成 <code>v8</code>。工作坊會把超出 0–15 的值夾進範圍，Studio 的解析器則把它當成錯誤。工具列的「力度」按鈕（「力度/音量」視窗，範圍可選「全部音軌」「目前音軌」「選擇的音符」）可以整段調整，不用一個一個改。</p>
+  </div>
+
+  <h2 id="tie">連結線與 n 指令</h2>
+
+  <p><code>&amp;</code> 把前後兩個<strong>同音高</strong>的音接成一個長音：</p>
+
+  <pre><code>c1&amp;c1    連續兩個全音符長度的 Do，中間不斷開
+  c1&amp;c4    五拍長的 Do
+  </code></pre>
+
+  <p>跨小節的長音、長度表達不出來的拍子（例如五拍）、以及 Final 不允許的附點寫法，都靠它改寫。</p>
+
+  <div class="canonical">
+    <p><strong>連結線只用在同一個音的延續（MOBILE_SYNTAX §8、MASTER_RULES §7）：</strong><code>&amp;</code> 只能接起「同一個音高、在音樂上本來就是延續」的音。不要用它把兩次重複起音藏成一個長音，也不要用它跨過休止符。相鄰的重複起音不能被默默改成一個延音；語法最佳化必須保留每一個起音。</p>
+  </div>
+
+  <div class="workshop-only">
+    <p><strong>工作坊專用：</strong>工作坊遇到接到<strong>不同音高</strong>或接到休止符的 <code>&amp;</code>，會不聲不響地忽略它（後面的音照樣重新起音）；Studio 的解析器把這種寫法當成錯誤。送回 Studio 時，工作坊會把它沒有真的接起來的 <code>&amp;</code> 刪掉並附上提示。</p>
+  </div>
+
+  <p><code>n</code> 後面接數字是<strong>數字音高</strong>，不受 <code>o</code> 影響，也不改變之後的八度狀態。手寫很少用得到，主要出現在工具產生的譜裡。</p>
+
+  <div class="canonical">
+    <p><strong>數字音高 <code>Nxx</code>（MOBILE_SYNTAX §5、PENDING P3）：</strong>社群作品確實在用，所以不能說遊戲不支援（輸入能力的證據等級是 <code>COMMUNITY_VERIFIED</code>）；但官方的範圍與客戶端保證都沒有文件。專案 Final 的標籤是「謹慎使用」：</p>
+    <ul>
+      <li>讀進歷史／社群／來源的 MML 時，保留 <code>Nxx</code> 事件原本的身分；</li>
+      <li>能用一般音名乾淨表達同一個事件時，就換成一般音名；</li>
+      <li>只有在這首歌／這個專案明確開啟數字音高輸出，<strong>而且</strong>有這首曲子的往返或實機驗證支持時，可貼上的 Final 才保留 <code>Nxx</code>。</li>
+    </ul>
+  </div>
+
+  <div class="note">
+    <p><strong><code>n</code> 的數字到底對到哪個音，目前還沒有定論。</strong>工作坊與 Studio 兩個解析器對同一個 <code>n</code> 的讀法差 12 個半音（一個八度）：工作坊把 <code>n48</code> 讀成和它的 <code>o4c</code> 同一個音，Studio 則把 <code>n60</code> 讀成和它的 <code>o4c</code> 同一個音。遊戲實際採用哪一種，還在等實機 A/B 比對，<strong>未經驗證</strong>，所以這一頁不把任何一種對應當成事實。</p>
+    <p>為了讓兩邊聽到、分析到的是同一個音，「從 Studio 開啟」與「送回 Studio 驗證」在交接時會改寫 <code>n</code> 的數值，其他文字不動；開啟時如果改寫過，狀態列會說明。在這個問題解決之前，想讓譜在各處讀起來都一樣，最穩的做法是用一般音名，不用 <code>n</code>。</p>
+  </div>
+
+  <div class="workshop-only">
+    <p><strong>工作坊專用：</strong>工作坊的 <code>n</code> 用目前的預設長度 <code>l</code>，也可以加附點；Studio 的 <code>N</code> 只吃 <code>L</code> 的長度、不能加附點（送回時帶附點的 <code>n</code> 會改寫成同音高、同長度的音名）。另外，「剪貼簿」→「複製」會自動做無損壓縮，為了省字可能把某些音寫成 <code>nNN</code>——這些數字是照工作坊的讀法寫的，在上面那個對應問題解決之前，貼到別處時音高可能差一個八度。</p>
+  </div>
+
+  <h2 id="track">角色與字數上限</h2>
+
+  <p>瑪奇 Mobile 的作曲最多有 <strong>6 個角色</strong>（基本 3 個，可擴充到 6 個，MOBILE_SYNTAX §2）：主旋律加和弦 1–5。其中主旋律、和弦 1、和弦 2 三個角色是單人演奏的核心（Core3），和弦 3–5 預設是加值（MASTER_RULES §5）。整首的字串把各角色用逗號分開，前面加 <code>MML@</code>、結尾加 <code>;</code>；Studio 的 Final 與「送回 Studio 驗證」一律寫成六個軌位，空的角色就留空：</p>
+
+  <pre><code>MML@t120o4l4cdef,t120o4l4ceg&gt;c,t120o3l2cg,,,;
+  </code></pre>
+
+  <div class="canonical">
+    <p><strong>每個角色最多 2,400 個字</strong>，這是官方確認的上限（MOBILE_SYNTAX §2、§9）。遊戲客戶端到底怎麼數字元——跟 Python／JavaScript 的字串長度是否相同、會不會先正規化——仍待實機驗證（MOBILE_SYNTAX §9、PENDING P1），所以任何工具算出來的字數都不能說跟遊戲完全一致。</p>
+    <p><strong>空的角色維持空白（MOBILE_SYNTAX §10）：</strong>不要為了通過檢查塞休止符或速度。客戶端對空的和弦軌位怎麼處理，也仍待實機驗證（PENDING P7）。</p>
+  </div>
+
+  <div class="workshop-only">
+    <p><strong>工作坊專用：</strong></p>
+    <ul>
+      <li>工作坊開得出最多 <strong>15 個分頁</strong>：主旋律、和弦1–和弦5，以及輔助1–輔助9。<strong>只有前 6 個會進遊戲、會交給 Studio</strong>；「複製」與「送回 Studio 驗證」都只取前 6 個分頁，後面的是編曲時暫放素材用的。分頁的位置就是它的身分，拖曳分頁排序會連內容帶樂器一起搬。</li>
+      <li>工作坊算字數時<strong>不含空白、換行與註解</strong>，所以在工作坊裡可以用換行分小節，讓譜好讀一點。「複製」會去掉空白；但 Studio 的解析器不接受角色裡有空白或換行，所以交付的字串裡不能有。</li>
+      <li>某個分頁超過 2,400 字時，分頁上的字數會變紅（「設定」裡的「語法上色」啟用時，超出的那一段還會加紅底），但不會擋住你繼續編輯。要壓下來看<a href="./faq.html#toolong">常見問題那一節</a>。</li>
+      <li>「複製」出來的字串會省略結尾的空角色，所以不一定有六個軌位；「送回 Studio 驗證」則一律送六個。</li>
+    </ul>
+  </div>
+
+  <h2 id="dialect">工作坊、Studio 與其他工具的寫法差異</h2>
+
+  <p>MML 不只瑪奇在用，各家實作的細節不完全一樣。下表左欄是工作坊<strong>目前</strong>的解析器怎麼處理（工作坊專用），右欄是 Studio 的解析器（<code>studio/backend/mml/parser.mjs</code>）接受什麼。工作坊為了讓從別處拿到的譜也讀得進來，比 Studio 寬鬆很多；Studio 讀不懂的寫法，送回時由工作坊改寫，改寫不了的會附上提示照送，由 Studio 回報。</p>
+
+  <div class="workshop-only">
+    <p><strong>工作坊專用：</strong>下表的「工作坊」欄描述的是編輯器的方言，不是遊戲規則；工作坊讀得進來，不代表遊戲或 Studio 讀得進來。</p>
+  </div>
+
+  <table>
+    <thead>
+      <tr><th>寫法</th><th>工作坊</th><th>Studio 解析器</th></tr>
+    </thead>
+    <tbody>
+      <tr><td>大小寫</td><td>當成同一個字</td><td>當成同一個字</td></tr>
+      <tr><td><code>h</code></td><td>當成 <code>b</code>（德式記法，3MLE 的譜偶爾會有）</td><td>讀不懂，報錯；送回時改成 <code>b</code></td></tr>
+      <tr><td><code>p</code></td><td>當成休止符 <code>r</code></td><td>讀不懂，報錯；送回時改成 <code>r</code></td></tr>
+      <tr><td><code>#</code></td><td>當成 <code>+</code></td><td>接受，當成升記號；送回時仍改寫成 <code>+</code></td></tr>
+      <tr><td><code>c++</code> 等連續升降記號</td><td>逐一累加</td><td>只接受一個升降記號；送回時改寫成單一拼法</td></tr>
+      <tr><td><code>@</code> 加數字的樂器指令</td><td>演奏時不生效，音色由分頁上的樂器決定；用「剪貼簿」→「貼上」整首貼入時，每個角色的第一個 <code>@n</code> 會用來替那個分頁挑樂器（對得上時），然後從文字裡拿掉</td><td>讀不懂，報錯；送回時拿掉</td></tr>
+      <tr><td><code>[ceg]4</code> 和弦</td><td><strong>不支援</strong>。<code>[</code> 與 <code>]</code> 被當成看不懂的字元（狀態列警告）並略過，裡面的音名照單音依序讀——舊譜的和弦會變成旋律</td><td>讀不懂，報錯；送回時拿掉看不懂的字元</td></tr>
+      <tr><td>註解 <code>/* … */</code>、<code>// …</code></td><td>略過，不算字數</td><td>讀不懂，報錯；送回時拿掉</td></tr>
+      <tr><td>角色裡的空白、換行</td><td>略過，不算字數</td><td>報錯（角色必須是純 MML 字串）；送回與複製時拿掉</td></tr>
+      <tr><td>單一分頁裡的逗號</td><td>狀態列提醒要分軌請改用「貼上」；逗號兩邊的內容會接在一起讀</td><td>逗號是角色分隔符號</td></tr>
+      <tr><td><code>MML@</code> 前綴與結尾的 <code>;</code></td><td>貼進單一分頁也沒關係，會自己處理掉（<code>;</code> 之後的內容不讀）</td><td>整首驗證時必須是從 <code>MML@</code> 到 <code>;</code> 的完整字串，而且剛好六個軌位</td></tr>
+      <tr><td>第一個音名前沒寫 <code>o</code></td><td>從 <code>o4</code> 開始</td><td>報錯；送回時補上 <code>o</code></td></tr>
+      <tr><td>雙附點 <code>c4..</code></td><td>1.75 倍</td><td>讀取時保留並警告，Final 驗證時是錯誤；複製與送回時工作坊先改寫成等長的單附點加連結線</td></tr>
+      <tr><td>帶附點的預設長度 <code>l4.</code></td><td>支援（見<a href="#len">長度與附點</a>）</td><td>讀不懂，報錯；送回時改成 <code>l4</code> 並把長度寫在音上</td></tr>
+      <tr><td>接到不同音或休止符的 <code>&amp;</code></td><td>略過，不警告</td><td>報錯；送回時拿掉並提示</td></tr>
+      <tr><td>超出範圍的 <code>t</code>、<code>v</code></td><td>夾進 32–255、0–15</td><td>報錯；送回時工作坊先夾好</td></tr>
+      <tr><td>超出範圍的音高</td><td>摺進 <code>o1c</code>–<code>o7b</code> 播放並警告</td><td>實作對應是 <code>O0</code>–<code>O8</code>；換算後超過 107 的音名會警告</td></tr>
+      <tr><td><code>n</code> 數字音高</td><td>讀法見<a href="#tie">上面</a>，和 Studio 差 12 個半音</td><td>讀取時警告為謹慎語法；Final 需要明確開啟與驗證證據；交接時 <code>n</code> 的數值會被改寫</td></tr>
+    </tbody>
+  </table>
+
+  <div class="workshop-only">
+    <p><strong>工作坊專用：</strong>「剪貼簿」→「複製」除了去掉空白、只取前 6 個分頁之外，還會自動做<strong>無損壓縮</strong>（音符完全相同，只換寫法）。為了省字，壓縮出來的文字可能省略開頭的 <code>o4</code>、改用 <code>b+</code>／<code>c-</code> 或 <code>nNN</code> 這類寫法，也可能用 3、6、12、24、48 這些長度與它們的附點形式。這些都不是 Canonical Final 的預設寫法；要交付的譜，請送回 Studio 驗證。</p>
+  </div>
+
+  <h2 id="mistake">最常見的錯誤</h2>
+
+  <ol>
+    <li><strong>只在一個角色寫 <code>t</code></strong>——照 MOBILE_SYNTAX §7，每個有內容的角色都要從同一個速度開始，換速度時都帶同一張速度表。工作坊播放時會把速度合併，所以在工作坊裡聽不出問題；遊戲在只有一個角色帶速度變化時能不能同步，還沒有驗證。</li>
+    <li><strong>用了帶附點的預設長度或雙附點</strong>——<code>l4.</code> 是工作坊的方言，Studio 不收；<code>4..</code> 這類多附點在 Final 裡是禁止的，要改寫成等長的音符＋連結線。</li>
+    <li><strong>以為 <code>[ceg]</code> 和弦寫法還能用</strong>——不能，那三個字母會被當成三個依序的音。真正的和弦要拆到不同角色。</li>
+    <li><strong>用 <code>&amp;</code> 接不同的音</strong>——連結線只用在同一個音的延續，不能跨休止符，也不能拿來把重複起音藏成長音。</li>
+    <li><strong>只算字數不算角色</strong>——2,400 是<em>每一個角色</em>的上限，不是整首的；遊戲實際怎麼數字元仍待驗證，別把譜壓到剛好 2,400 字的邊緣。</li>
+  </ol>
+
+  <div class="note">
+    <p>想直接把現成的曲子變成 MML，不用一個音一個音打——看 <a href="./midi.html">MIDI 轉 MML</a>。其他問題看<a href="./faq.html">常見問題</a>。</p>
+  </div>
+</main>
+<footer>
+  <p>工作坊在 Canonical 驗證流程之外：這裡描述的是工作坊的行為，不是遊戲規則，也不代表任何東西通過 Studio 的驗證。遊戲與交付規則以 Published Canonical 為準。</p>
+  <div class="row"><a href="../index.html">← 工作坊</a><a href="../../../../index.html">MML Studio</a></div>
+</footer>
+<script type="module" src="./guide.mjs"></script>
+</body>
+</html>

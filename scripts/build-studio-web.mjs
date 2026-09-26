@@ -60,6 +60,9 @@ for (const name of ['index.html', 'workshop.css', 'boot.js']) await put(`studio/
 // The Studio main page's first-paint script (the theme before the
 // page is drawn; a classic script, as Studio's CSP allows no inline script).
 await put('studio/web/boot.js', await readFile(resolve(root, 'studio/web/boot.js')));
+// The Workshop's help pages (studio/web/workshop/guide/): static zh-Hant HTML,
+// one stylesheet and a first-paint theme script; guide.mjs is copied above.
+for (const name of (await readdir(resolve(root, 'studio/web/workshop/guide'))).filter(name => /\.(html|css|js)$/.test(name))) await put(`studio/web/workshop/guide/${name}`, await readFile(resolve(root, 'studio/web/workshop/guide', name)));
 await put('dist/core.js', await readFile(resolve(root, 'dist/core.js')));
 // Preserve all engine modules. Only replace the environment-specific Git loader.
 // Dynamic Git provenance (repository_head / published_main_head / pr_head and

@@ -20,6 +20,7 @@ import { runWorkshopUpdateChecks } from './workshop-update.mjs';
 import { runWorkerBootChecks } from './worker-boot.mjs';
 import { runStudioThemeChecks } from './web-theme.mjs';
 import { runCommunityFormatChecks } from './community-formats.mjs';
+import { runWorkshopGuideChecks } from './workshop-guide.mjs';
 
 // A browser build that is not installed is neither a pass nor a failed
 // assertion, so it is recorded as NOT_RUN with its reason rather than being
@@ -188,6 +189,7 @@ try {
       if(profile.engineName==='chromium')await runWorkshopUpdateChecks({browser});
       await runStudioThemeChecks({browser,base,profile});
       await runCommunityFormatChecks({browser,base,profile});
+      await runWorkshopGuideChecks({browser,base,profile});
       await runDefaultBankChecks({browser,base,profile});
       await runGameStyleBankChecks({browser,base,profile});
       await runWorkshopGameStyleChecks({browser,base,profile});

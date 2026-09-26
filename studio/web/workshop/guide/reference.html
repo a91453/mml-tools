@@ -1,0 +1,798 @@
+<!doctype html>
+<html lang="zh-Hant">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="theme-color" content="#122325">
+<meta name="robots" content="noindex">
+<!-- The Workshop's policy: scripts and styles only from 'self', no inline script or style, nothing but this origin is contacted. -->
+<meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self' data:; connect-src 'self'; object-src 'none'; base-uri 'self'; form-action 'none'">
+<title>功能說明 · 工作坊說明</title>
+<link rel="icon" href="../../../../icon.svg" type="image/svg+xml">
+<link rel="stylesheet" href="./guide.css">
+<script src="./boot.js"></script>
+</head>
+<body data-guide="reference">
+<p class="zh-only" id="zhOnly" hidden>目前只有中文版</p>
+<header class="guide-head">
+  <div class="inner">
+    <a class="brand" href="../index.html">← 工作坊</a>
+    <nav class="guide-nav" aria-label="說明頁">
+      <a href="./editor.html">編輯器入門</a>
+      <a href="./reference.html">功能說明</a>
+      <a href="./keys.html">快捷鍵</a>
+      <a href="./mobile.html">手機與平板</a>
+      <a href="./mml.html">MML 教學</a>
+      <a href="./midi.html">MIDI 轉 MML</a>
+      <a href="./faq.html">常見問題</a>
+    </nav>
+  </div>
+</header>
+<main id="guide">
+  <h1>功能說明</h1>
+  <p>每一顆按鈕在做什麼</p>
+
+  <div class="note">
+    <p><strong>工作坊在 Canonical 驗證流程之外。</strong> 這一頁描述的是工作坊這個編輯器的行為，不是遊戲規則，也不代表任何東西通過了 Studio 的驗證。遊戲與交付規則以 Published Canonical 為準；頁面裡引用規則的地方會標出出處（例如 MOBILE_SYNTAX §2）。</p>
+  </div>
+
+  <div class="toc">
+    <ol>
+      <li><a href="#howto">我想做某件事，看哪一節</a></li>
+      <li><a href="#header">標題列</a></li>
+      <li><a href="#play">播放列</a></li>
+      <li><a href="#tools">捲簾工具列</a></li>
+      <li><a href="#roll">鋼琴捲簾</a></li>
+      <li><a href="#menu">右鍵選單</a></li>
+      <li><a href="#scores">音軌分頁與編輯區</a></li>
+      <li><a href="#status">狀態列</a></li>
+      <li><a href="#settings">設定抽屜</a></li>
+      <li><a href="#export">WAV 與影片匯出</a></li>
+      <li><a href="#narrow">窄螢幕與手機</a></li>
+    </ol>
+  </div>
+
+  <p>這一頁是查閱用的。第一次用請先走一遍<a href="./editor.html">編輯器入門</a>，那裡有一條從零到貼進遊戲的完整路線。</p>
+
+  <h2 id="howto">我想做某件事，看哪一節</h2>
+
+  <table>
+    <thead>
+      <tr><th>我想…</th><th>看這裡</th></tr>
+    </thead>
+    <tbody>
+      <tr><td>把字數壓下來，貼得進遊戲</td><td><a href="#opt">優化</a>（先用無損壓縮）</td></tr>
+      <tr><td>只聽中間某一段</td><td><a href="#play">播放列</a>（範圍播放）</td></tr>
+      <tr><td>不用滑鼠控制播放</td><td><a href="#playkeys">播放的快捷鍵</a>（空白鍵與四顆方向鍵）</td></tr>
+      <tr><td>整段改音量或改調</td><td><a href="#vel">力度</a>、<a href="#trans">移調</a></td></tr>
+      <tr><td>中間漏了一小節、或整段要往後推</td><td><a href="#menu-bar">右鍵選單</a>（插入／刪除小節）</td></tr>
+      <tr><td>替已經畫好的音加上附點</td><td><a href="#dot">附點</a>、<a href="#menu-note">音符上的右鍵選單</a></td></tr>
+      <tr><td>把兩條音軌併成一條</td><td><a href="#merge">合併音軌</a></td></tr>
+      <tr><td>整首歌換速度、或中途變速</td><td><a href="#tempo">速度</a></td></tr>
+      <tr><td>從遊戲把譜搬進來、或搬回去</td><td><a href="#clip">剪貼簿</a></td></tr>
+      <tr><td>存成檔案帶走、或匯入檔案</td><td><a href="#file">檔案</a></td></tr>
+      <tr><td>存在這台裝置、下次再開</td><td><a href="#library">歌曲庫（儲存到…）</a></td></tr>
+      <tr><td>拿 Studio 專案裡的譜來改，改完交回 Studio</td><td><a href="#studio">和 Studio 連動</a></td></tr>
+      <tr><td>做一個音檔或影片給沒玩遊戲的人聽</td><td><a href="#export">WAV 與影片匯出</a></td></tr>
+      <tr><td>在長譜上找到某個音在文字的哪裡</td><td><a href="#roll">鋼琴捲簾</a>（雙擊那個音）</td></tr>
+      <tr><td>換樂器、把某一軌靜音或藏起來</td><td><a href="#scores">音軌分頁與編輯區</a></td></tr>
+      <tr><td>用手機或平板編曲</td><td><a href="./mobile.html">手機與平板</a>（手勢與操作面板）</td></tr>
+    </tbody>
+  </table>
+
+  <h2 id="header">標題列</h2>
+
+  <p>最上面一行。左邊是「工作坊 MML Studio」的名字，旁邊是<strong>工作坊編輯（未經 Studio 驗證）</strong>標示；右邊依序是 <strong>← Studio</strong>、<strong>從 Studio 開啟</strong>、<strong>送回 Studio 驗證</strong>、<strong>剪貼簿</strong>、<strong>檔案</strong>、<strong>設定</strong>、<strong>關於</strong>。有新版時中間會多出一顆<a href="#update">套用新版</a>。</p>
+
+  <div class="note">
+    <p><strong>左上角的「工作坊」是「重來一次」。</strong> 它不是「回到上一頁」——點下去會<strong>直接</strong>清掉自動暫存、重新載入範例樂譜，不會先問你。重新載入之後復原記錄也沒了，<strong><kbd>Ctrl</kbd>+<kbd>Z</kbd> 救不回來</strong>。存在<a href="#library">歌曲庫</a>裡的檔案不受影響。要回 Studio 請按右邊的 <strong>← Studio</strong>。</p>
+  </div>
+
+  <h3 id="badge">「工作坊編輯（未經 Studio 驗證）」與來源標示</h3>
+
+  <p>名字旁邊那個標示一直都在：在這裡改的東西<strong>不經過</strong> Canonical 規則與 Studio 的審核。要讓它成為 Studio 的候選，唯一的路是按<strong>送回 Studio 驗證</strong>，由 Studio 重新做技術驗證與各項審核。</p>
+
+  <p>用<strong>從 Studio 開啟</strong>打開的譜，標示旁邊會多一個來源標示：<strong>來源：Studio「專案名」· 哪一份（副本）</strong>。它只是提醒你這份是從哪裡來的副本；之後用剪貼簿貼上、從檔案匯入或按「新增」會自動清掉，也可以按它右邊的 <strong>✕</strong> 手動清掉。</p>
+
+  <h3 id="studio">和 Studio 連動</h3>
+
+  <table>
+    <thead>
+      <tr><th>按鈕</th><th>做什麼</th></tr>
+    </thead>
+    <tbody>
+      <tr><td><strong>← Studio</strong></td><td>回到 MML Studio。編輯中的樂譜照自動暫存的設定留在這台裝置</td></tr>
+      <tr><td><strong>從 Studio 開啟</strong></td><td>開一個框：上面選<strong>Studio 專案</strong>（這台裝置上 Studio 的本機專案），下面列出那個專案裡有的 MML——<strong>Final／交付 MML</strong>、<strong>目前候選</strong>、<strong>Source-Faithful Baseline</strong>、<strong>已接受的前一版</strong>，有幾份列幾份，附字數。按<strong>開啟副本</strong>就把它載進來，<strong>取代所有分頁的內容</strong>（<kbd>Ctrl</kbd>+<kbd>Z</kbd> 可以回去）。Studio 裡的專案不會被改動</td></tr>
+      <tr><td><strong>送回 Studio 驗證</strong></td><td>開一個框，裡面是要交給 Studio 的<strong>六軌 MML</strong>（遊戲讀的第 1–6 軌），唯讀，下面列出轉換時的提醒。按<strong>送到 Studio</strong> 會離開工作坊、回到 Studio，由 Studio 當成<strong>衍生候選</strong>匯入並重新做技術驗證；先前的審核與接受不會沿用，也不會因此變成 VALIDATED。第 7 軌之後有內容的話會告訴你那幾軌不會送出；前 6 軌都空著時按不下去</td></tr>
+    </tbody>
+  </table>
+
+  <div class="workshop-only"><p><strong>工作坊專用：</strong>工作坊與 Studio 對 <code>n</code>／<code>N</code> 數字音符的八度讀法不同，所以開啟與送回時都會換算成同一個音高（哪一種才是遊戲的讀法還沒有定論）。送回時工作坊還會把它自己的寫法收窄成 Studio 讀得懂的樣子（例如補上 <code>o</code>、把 <code>lN.</code> 展開、去掉 <code>@</code> 數字與看不懂的字元），並逐軌比對 Studio 讀到的和工作坊播放的是否一樣；對不上的軌照送，但會在框裡寫出來。這只是轉換本身的檢查，<strong>不是</strong> Studio 的驗證。</p></div>
+
+  <h3 id="clip">剪貼簿</h3>
+
+  <p>跟遊戲之間搬譜就靠這裡。MML 是純文字，所以進出都走剪貼簿。框裡兩顆：</p>
+
+  <table>
+    <thead>
+      <tr><th>按鈕</th><th>做什麼</th></tr>
+    </thead>
+    <tbody>
+      <tr><td><strong>貼上</strong></td><td>把剪貼簿裡的 <code>MML@…;</code> 讀進來，<strong>取代所有分頁的內容</strong>：逗號分開的每一段放進一個分頁，最多 15 段，多的不收。段落裡的 <code>@</code> 數字會拿來選樂器，然後從文字裡拿掉。<kbd>Ctrl</kbd>+<kbd>Z</kbd> 可以復原</td></tr>
+      <tr><td><strong>複製</strong></td><td>把<strong>前 6 軌</strong>複製成一整段 <code>MML@…,…;</code>，可以直接貼進遊戲。第 7 軌之後是工作坊的素材，不會複製，有內容時會提醒你</td></tr>
+    </tbody>
+  </table>
+
+  <p>複製時會去掉空白與換行，那才是遊戲算的字數；<code>@</code> 數字、看不懂的字元會拿掉，雙附點 <code>..</code> 會改寫成等長的寫法。某一軌寫不出來時整段不複製，並告訴你是哪一軌。</p>
+
+  <div class="workshop-only"><p><strong>工作坊專用：</strong>複製時還會自動<strong>無損壓縮</strong>，換成更省字的寫法（照工作坊自己的讀法，音符、長度、速度都不變），省了幾字會在訊息裡寫出來。壓縮只影響送出去的那一份，編輯器裡的文字不變。工作坊選的寫法可能用到 Canonical Final 禁止（FINAL_FORBIDDEN）的附點形式（例如 <code>12.</code>、<code>64.</code>，見 MOBILE_SYNTAX §4），這一點不在工作坊檢查的範圍內；捲簾編輯與優化重新產生的文字也一樣。</p></div>
+
+  <p>某些瀏覽器不讓網頁直接讀寫剪貼簿，那時會開一個小框請你自己按 <kbd>Ctrl</kbd>+<kbd>V</kbd>（再按<strong>載入</strong>）或 <kbd>Ctrl</kbd>+<kbd>C</kbd>——不是壞了。</p>
+
+  <h3 id="file">檔案</h3>
+
+  <p>四塊，從上到下：</p>
+
+  <table>
+    <thead>
+      <tr><th>區塊</th><th>做什麼</th></tr>
+    </thead>
+    <tbody>
+      <tr><td><strong>新增 / 儲存</strong></td><td><strong>新增</strong>開一份全新的檔案：軌數回到 3 軌、樂器與檔名回到預設，拍號與段落標記也清掉；調號顯示與換行設定保留。<strong>儲存到…</strong>打開<a href="#library">歌曲庫</a>。兩者 <kbd>Ctrl</kbd>+<kbd>Z</kbd> 都可以復原（歌曲庫本身除外）</td></tr>
+      <tr><td><strong>匯入</strong></td><td><strong>選擇檔案</strong>：吃 <code>.mid</code>、3MLE 的 <code>.mml</code>、MabiIcco 的 <code>.mmi</code>、<code>.musicxml</code> 與 <code>.mxl</code>，或只有 <code>MML@…;</code> 的純文字檔；也可以把檔案拖進這個框。會列出檔案裡有音符的聲部讓你勾選，最多 15 軌</td></tr>
+      <tr><td><strong>匯出</strong></td><td>填檔名、選格式（<code>.mid</code> / <code>.mml</code> / <code>.mmi</code>）、按<strong>下載</strong>。下面另外兩顆 <strong>匯出 WAV</strong> 與 <strong>MP4影片製作</strong> 是另一件事，見 <a href="#export">WAV 與影片匯出</a></td></tr>
+      <tr><td><strong>清空</strong></td><td><strong>清空所有音符</strong>：清掉全部 15 軌的樂譜文字，留下 3 個空白音軌。樂器選擇、檔名、調號、拍號與段落標記都保留。<kbd>Ctrl</kbd>+<kbd>Z</kbd> 可以復原</td></tr>
+    </tbody>
+  </table>
+
+  <p>匯入的勾選清單有兩種模式：<strong>新採譜</strong>（取代全部，預設）與<strong>追加採譜</strong>（接在最後一條有內容的軌後面，前面的軌不動）。編輯器裡已經有內容時，新採譜的按鈕會變成紅色的<strong>清空並匯入</strong>。MIDI 與 MusicXML 每一列還可以選採樣模式，那部分的細節在 <a href="./midi.html">MIDI 轉 MML</a>。</p>
+
+  <p>三種匯出格式都會帶走所有分頁（最多 15 軌），差別在：</p>
+
+  <ul>
+    <li><code>.mid</code>：每一軌一個 MIDI 軌，帶樂器編號、速度、拍號（含曲中變拍）與段落標記</li>
+    <li><code>.mml</code>（3MLE）：每一軌一個 Channel，帶樂器與段落標記，但<strong>只帶得走曲首拍號</strong>，曲中的變拍不會保留——要保留請存 <code>.mid</code></li>
+    <li><code>.mmi</code>：每一軌一個 <code>mml-track</code>。<strong>超過 6 軌的 <code>.mmi</code> 只保證工作坊自己讀得回來</strong>，3MLE 等其他工具能不能讀還沒驗證過；要給別人用建議存 <code>.mml</code></li>
+  </ul>
+
+  <p><strong>非標準時值。</strong> 瑪奇 PC／MabiIcco 的譜有時會用 <code>C21</code>、<code>R19.</code> 這種時值。匯入、貼上時<strong>原文完整保留</strong>，勾選清單上會標出「非標準 N」，那一軌在工具列上也會出現「這一軌有 N 個非標準時值」和一顆<strong>還原</strong>。按還原會用遊戲的尺重讀這一軌、換成標準時值寫回去，而且只在每個音的時間都完全對得上時才寫——例如 <code>C21R.R19.C2</code> 會變成等長的 <code>l2c32.r4r8.r64c</code>（字數會變多）。對不上就保留原文，一個時值都不動。沒還原的軌照樣可以編輯、儲存、複製與匯出，只是會提醒你瑪奇 Mobile 可能不吃。</p>
+
+  <div class="workshop-only"><p><strong>工作坊專用：</strong><a href="#opt">無損壓縮</a>的搜尋有額度，逐軌獨立：排除空白後每軌不超過 4000 字用 200,000，超過才提高到 400,000。額度用完會提示，並不代表已經不能再縮短。</p></div>
+
+  <h3 id="library">歌曲庫（儲存到…）</h3>
+
+  <p><strong>檔案</strong>框裡的<strong>儲存到…</strong>，或在任何地方按 <kbd>Ctrl</kbd>+<kbd>S</kbd>。框的標題是<strong>儲存樂譜</strong>：</p>
+
+  <ul>
+    <li>上面填名字（最多 100 字）按<strong>儲存</strong>。同名的檔案已經在的話會先問<strong>要覆蓋這個檔案嗎？</strong>——<strong>覆蓋沒辦法復原</strong>（<kbd>Ctrl</kbd>+<kbd>Z</kbd> 只管編輯器，不管存檔），建立時間會保留</li>
+    <li>已經存過、而且名字沒改的話，<kbd>Ctrl</kbd>+<kbd>S</kbd> 會直接存回同一份，不再開框</li>
+    <li>框裡會寫著現在的內容是 <strong>● 有未儲存的變更</strong> 還是 <strong>✓ 已儲存</strong></li>
+    <li>下面是清單：<strong>檔名、軌、音符、建立、更新</strong>，每一列有<strong>開啟</strong>（載入到編輯器，<kbd>Ctrl</kbd>+<kbd>Z</kbd> 可以回到剛才那份）與<strong>刪除</strong></li>
+    <li>勾選幾列之後可以<strong>批次下載</strong>（打包成一個 zip，每首一個 <code>.mml</code>，不帶拍號與段落標記）或<strong>刪除選取</strong>（會先問，刪掉之後就拿不回來了）</li>
+    <li>清單下面寫著用量：<strong>N 個檔案 · 已用 X / 20 MB</strong>，存不下時會告訴你還差多少</li>
+  </ul>
+
+  <div class="note">
+    <p><strong>歌曲庫只存在這個瀏覽器裡。</strong> 更換電腦或瀏覽器，檔案就會不見；無痕視窗或擋住網站資料的設定也會讓它存不了。匯出或批次下載到本機，才是長久的保存方法。它和<a href="#settings">自動存檔</a>是兩件事：自動存檔只記「現在這一份」，歌曲庫是你自己取名、自己管理的多份檔案。</p>
+  </div>
+
+  <h3 id="update">套用新版／重新載入</h3>
+
+  <p>Studio 有新版下載好時，標題列會出現<strong>套用新版</strong>：按下去會先寫出自動暫存，再重新載入工作坊；其他開著的 Studio 分頁之後也要重新載入。</p>
+
+  <p>如果是<strong>別的分頁</strong>先套用了新版，這個分頁會變成舊版，那顆按鈕會叫<strong>重新載入</strong>。在重新載入之前，這個分頁<strong>不能</strong>匯出 WAV／影片、讀取 <code>.mxl</code>，也不能從 Studio 開啟或送回 Studio——按了會跳出提示。</p>
+
+  <p>兩種情況都會擋下重新載入：WAV 或影片正在匯出（完成或取消後再按）；或者自動存檔已關閉／寫不進去，而現在的內容還沒存進歌曲庫（先存到歌曲庫，或打開自動存檔）。</p>
+
+  <h3>設定與關於</h3>
+
+  <p><strong>設定</strong>是右側抽屜，內容見<a href="#settings">設定抽屜</a>那一節。<strong>關於</strong>也是一個抽屜，寫著工作坊是什麼、資料存在哪裡，並列出這幾頁說明。兩者都按 <kbd>Esc</kbd> 或點旁邊的暗處關閉。</p>
+
+  <h2 id="play">播放列</h2>
+
+  <p>工具列的左半邊。</p>
+
+  <table>
+    <thead>
+      <tr><th>按鈕</th><th>做什麼</th></tr>
+    </thead>
+    <tbody>
+      <tr><td><strong>▶ 演奏</strong></td><td>播放。播放中變成 <strong>❚❚ 暫停</strong>，暫停後變成 <strong>▶ 繼續</strong>。快捷鍵是 <kbd>Space</kbd>。要等引擎就緒而且<a href="#settings">載入音色庫</a>之後才按得下去</td></tr>
+      <tr><td><strong>停止</strong></td><td>停下來並回到開頭。快捷鍵是 <kbd>↓</kbd></td></tr>
+      <tr><td><strong>捲軸同步</strong></td><td>播放時畫面跟著導播線換頁。<strong>你自己拖水平捲軸就會自動關掉</strong>，按一下可以再打開</td></tr>
+      <tr><td><strong>全曲</strong>／<strong>範圍</strong></td><td>哪一顆亮著，表示現在是播整首還是只播一段。設了開始或結束線，<strong>範圍</strong>會自己亮起來；按<strong>全曲</strong>會清掉那兩條線</td></tr>
+      <tr><td><strong>循環</strong></td><td>播到結尾（或結束線）立刻從頭（或開始線）再播一次</td></tr>
+    </tbody>
+  </table>
+
+  <p><strong>範圍怎麼設</strong>：最快的是<strong>小節尺</strong>——<strong>左鍵設開始線、右鍵開選單</strong>（選單前三項就是設定演奏開始線、設定演奏結束線、清除範圍播放），播放中也可以在尺上即時挪動範圍。捲簾上是<strong>只選取</strong>模式左鍵點空白處設開始線；右鍵點空白處是開選單，而那個選單的前兩項就是這兩條線（見<a href="#menu">右鍵選單</a>）。選起來的音符也可以直接拿來框範圍，右鍵那幾個音就有。線會吸到 1/32 格，<strong>不是吸到小節線</strong>；開始線不能放在結束線之後，反過來也一樣。</p>
+
+  <div class="note">
+    <p><strong>播放中兩邊唯讀。</strong> 捲簾與文字區在播放時都不能改。暫停中可以改，改動會在按<strong>繼續</strong>之後生效。捲簾工具列右邊會顯示現在是<strong>演奏中／暫停中／編輯中</strong>。</p>
+    <p><strong>但左側琴鍵播放中照樣發聲</strong>——對著正在播的伴奏按琴鍵試和音，判斷這個音疊上去好不好聽。它走自己的聲道，所以不會切掉曲子裡的音，<strong>被靜音的軌也試得出聲音</strong>。捲簾上其他的試聽（點音符、畫音符）播放中不出聲：那時點音符的意圖是選它，不是聽它。</p>
+  </div>
+
+  <h3 id="playkeys">播放的快捷鍵</h3>
+
+  <p>五顆鍵，<strong>都不用按修飾鍵</strong>：</p>
+
+  <table>
+    <thead>
+      <tr><th>鍵</th><th>作用</th><th>前提</th></tr>
+    </thead>
+    <tbody>
+      <tr><td><kbd>Space</kbd></td><td>演奏／暫停／繼續（等於按那顆按鈕）</td><td>演奏按得下去</td></tr>
+      <tr><td><kbd>←</kbd>／<kbd>→</kbd></td><td>播放頭退／進一小節</td><td>演奏中或暫停中</td></tr>
+      <tr><td><kbd>↑</kbd></td><td>回到開始（設了開始線就回到那條線）</td><td>演奏中或暫停中</td></tr>
+      <tr><td><kbd>↓</kbd></td><td>停止</td><td>演奏中或暫停中</td></tr>
+    </tbody>
+  </table>
+
+  <p>四顆方向鍵<strong>只在演奏中或暫停中</strong>作用，停止狀態下它們不歸播放管；拖曳中也不歸——那時方向鍵是微調。挪播放頭會夾在播放範圍裡面，撞到邊就停在邊上，<strong>不會因此停止播放</strong>。捲軸同步關掉的時候畫面會一次性跳去看播放頭，但不會把同步搶回來。</p>
+
+  <p><strong>按住不連發</strong>：一下一格。要跳遠請直接在小節尺上點。</p>
+
+  <div class="note">
+    <p><strong><kbd>Space</kbd> 只在「沒有別人要用它」的時候歸播放。</strong> 焦點在按鈕、下拉或輸入框上時，空白鍵照它原本的意思用（按下那顆按鈕）——不然只用鍵盤的人會按不動設定抽屜裡的東西。<strong>演奏與停止那兩顆按鈕是例外</strong>：焦點在它們身上時空白鍵還是演奏／暫停，所以按過停止之後再按一下空白就是重播。</p>
+    <p>對話框、抽屜或右鍵選單開著時整組停手（選單自己要用方向鍵），在文字區打字時也一樣。</p>
+  </div>
+
+  <h3 id="media">鍵盤與耳機的媒體鍵</h3>
+
+  <p>鍵盤上那排媒體鍵、耳機線控也可以控制這裡的播放：</p>
+
+  <table>
+    <thead>
+      <tr><th>媒體鍵</th><th>作用</th></tr>
+    </thead>
+    <tbody>
+      <tr><td><kbd>⏯</kbd></td><td>演奏／暫停</td></tr>
+      <tr><td><kbd>⏹</kbd></td><td>停止</td></tr>
+      <tr><td><kbd>⏮</kbd>／<kbd>⏭</kbd>　或　<kbd>⏪</kbd>／<kbd>⏩</kbd></td><td>前後一小節。工作坊沒有「上一首／下一首」，所以那兩顆接成快退／快進，不會變成按了沒反應的鍵</td></tr>
+    </tbody>
+  </table>
+
+  <div class="note">
+    <p><strong>按下演奏之後，系統的媒體鍵會歸這個分頁。</strong> 也就是說你本來用它控制的播放器會接不到那些鍵，作業系統可能跳出「正在播放」的通知，手機上也可能中斷背景音訊。這是這個功能的代價，所以<strong>一打開頁面不會發生</strong>——要等你真的按下演奏；按停止就交回去。</p>
+    <p>媒體鍵靠瀏覽器的支援，<strong>不是每一家都有</strong>——整組沒反應就是那個瀏覽器不支援，上面那五顆鍵不受影響。</p>
+  </div>
+
+  <h2 id="tools">捲簾工具列</h2>
+
+  <h3 id="lens">只選取與音符長度</h3>
+
+  <p><strong>只選取</strong>（快捷鍵 <kbd>0</kbd>）是箭頭模式：在空白處點不會畫出音符，改成設播放開始線；在空白處拖曳是框選。它右邊六顆是<strong>音符長度</strong>，快捷鍵 <kbd>1</kbd> 到 <kbd>6</kbd>：</p>
+
+  <table>
+    <thead>
+      <tr><th>鍵</th><th>長度</th><th>鍵</th><th>長度</th></tr>
+    </thead>
+    <tbody>
+      <tr><td><kbd>1</kbd></td><td>全音符</td><td><kbd>4</kbd></td><td>八分音符</td></tr>
+      <tr><td><kbd>2</kbd></td><td>二分音符</td><td><kbd>5</kbd></td><td>十六分音符</td></tr>
+      <tr><td><kbd>3</kbd></td><td>四分音符</td><td><kbd>6</kbd></td><td>三十二分音符</td></tr>
+    </tbody>
+  </table>
+
+  <p>選了長度就等於進入繪製模式，左鍵點空白處會畫出那個長度的音。畫完幾個音想回去點譜對照 MML，按 <kbd>0</kbd>。</p>
+
+  <p><strong>還有一顆 <kbd>7</kbd>，是六十四分音符，但工具列上沒有那顆按鈕。</strong> 按下去那六顆會全部暗掉——那不是壞掉，是「現在的長度不在這六顆裡」。它有兩個代價要先知道：預設縮放下一格只有 6px 寬，<strong>放大之後才好用</strong>（格寬放大到一定程度，畫面上會多出一層更細的格線給你對）；而且它<strong>不支援附點</strong>。</p>
+
+  <h3 id="len-icon">那個音符圖示：目前是什麼、以及附點</h3>
+
+  <p>六顆長度鈕左邊那個音符圖示不是裝飾，它回答的是<strong>「在空白處按下去會發生什麼」</strong>：</p>
+
+  <table>
+    <thead>
+      <tr><th>現在的模式</th><th>圖示</th><th>按它會怎樣</th></tr>
+    </thead>
+    <tbody>
+      <tr><td>繪製（選了長度）</td><td>目前那個時值的音符，帶不帶附點都畫出來</td><td>加上／取消附點</td></tr>
+      <tr><td><strong>只選取</strong>（箭頭）</td><td>一圈虛線框——對映的正是這個模式的框選</td><td>不能按</td></tr>
+    </tbody>
+  </table>
+
+  <p>繪製模式下圖示一共十三種：全音符到三十二分音符這六種各有帶附點與不帶附點兩個樣子，再加上沒有附點的六十四分音符。</p>
+
+  <h3 id="dot">附點</h3>
+
+  <p><strong>附點就是長度變 1.5 倍</strong>：四分音符加了附點是 <code>l4.</code>，長度等於三個八分音符。點那個圖示，或按 <kbd>.</kbd>。</p>
+
+  <p><kbd>.</kbd> 切換的是<strong>「接下來畫的音符」</strong>帶不帶附點，跟 <kbd>1</kbd>–<kbd>6</kbd> 是同一類的鍵。圖示跟著變，空白處那個虛線框也會變成 1.5 倍寬。繪製模式下<strong>任何時候都切得動</strong>，包括剛畫完一個音（那時那個音是選起來的）；只選取模式下它不作用。</p>
+
+  <p>所以最常用的節奏是這樣：</p>
+
+  <pre><code>4        挑八分音符
+  畫 畫     兩個八分
+  .        開附點
+  畫        一個八分附點
+  .        關附點
+  畫 畫     繼續八分</code></pre>
+
+  <p><strong>已經畫好的音要加附點，走另一條路：右鍵（手指是長按）那個音，選單裡有一列「加上附點」／「取消附點」。</strong> 那條路比鍵盤好，因為選單會先算合不合格——不行的話灰字在你按之前就講了。</p>
+
+  <p>一次選好幾個而且狀態不一樣的時候：<strong>只要有一個還沒有附點，就全部加上；全都有了，再按一次才全部取消。</strong> 不必先數清楚現在混到什麼程度，最多兩下就到得了你要的狀態。</p>
+
+  <p>兩種情況會被擋下來，而且理由不一樣：</p>
+
+  <ul>
+    <li><strong>長度不合。</strong> 只有全音符到三十二分音符這六種可以加。其他長度（例如用方向鍵微調過的音）都不行，<strong>六十四分音符也不行</strong>。有一個不合就整批不做，訊息會指出是第幾小節的哪一個音。</li>
+    <li><strong>會蓋掉後面的音。</strong> 音變長 1.5 倍要往後佔位置，後面如果是休止符就直接吃掉（那是最常見的情形，不算破壞）；但後面如果是另一個音，那個音會整個消失，所以這裡<strong>擋下來不做</strong>。真的要那樣做的話<strong>改用滑鼠拖音符的右邊框</strong>——那條路會即時告訴你會刪掉幾個音，你看得到代價再決定。</li>
+  </ul>
+
+  <p>取消附點永遠安全（音變短只會留下休止符），所以上面那條守衛只管「加」。</p>
+
+  <p>手機也保留音符圖示按鈕：先選音符長度，再點圖示切換接下來繪製的附點狀態。修改已經畫好的音符，請長按音符後使用選單。六十四分附點只是不在繪製與附點工具的操作範圍內；匯入或手寫的 <code>l64.</code> 仍可保留，不會被當成非法 MML。</p>
+
+  <div class="canonical"><p>Canonical 的交付規則另有規定：Final 禁止（FINAL_FORBIDDEN）<code>64.</code>、多重附點（例如 <code>4..</code>），以及 <code>3.</code>、<code>6.</code>、<code>12.</code>、<code>24.</code>、<code>48.</code> 這類不在偏好集合裡的附點；偏好的單附點是 <code>1</code>、<code>2</code>、<code>4</code>、<code>8</code>、<code>16</code>、<code>32</code> 的附點。這些是專案的交付政策，引擎本身能不能讀這些禁止的寫法仍是 PENDING_IN_GAME（MOBILE_SYNTAX §4）。</p></div>
+
+  <h3>縮放</h3>
+
+  <p>兩組加減鈕，兩個軸分開調：<strong>格寬</strong>（橫向一格多寬）與<strong>列高</strong>（音高一列多高）。滾輪也可以：</p>
+
+  <table>
+    <thead>
+      <tr><th>手勢</th><th>作用</th></tr>
+    </thead>
+    <tbody>
+      <tr><td><kbd>Ctrl</kbd>+滾輪</td><td>格寬（橫向看得更細／更多）</td></tr>
+      <tr><td><kbd>Ctrl</kbd>+<kbd>Shift</kbd>+滾輪　或　<kbd>Alt</kbd>+滾輪</td><td>列高（音高看得更清楚／一次看到更多八度）</td></tr>
+      <tr><td><kbd>Shift</kbd>+滾輪</td><td>水平捲動（瀏覽器原生的，長譜上很好用）</td></tr>
+    </tbody>
+  </table>
+
+  <p>縮放是<strong>當下的狀態</strong>，重新整理會回到預設。窄螢幕上沒有這兩組按鈕，用雙指縮放。</p>
+
+  <h3>復原與重做</h3>
+
+  <p><kbd>Ctrl</kbd>+<kbd>Z</kbd> 復原，<kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>Z</kbd> 或 <kbd>Ctrl</kbd>+<kbd>Y</kbd> 重做，最多記 80 步。連續打字算一步，不會一個字母一步。</p>
+
+  <p>下面五個功能全部都可以用 <kbd>Ctrl</kbd>+<kbd>Z</kbd> 收回，匯入、貼上、從 Studio 開啟、開啟歌曲庫的檔案、新增與清空所有音符也一樣——所以不必怕按下去。收不回來的主要是歌曲庫本身的覆蓋與刪除、左上角的「重來一次」，以及切換語言（會清空復原記錄）。</p>
+
+  <h3 id="tempo">速度</h3>
+
+  <p>對話框叫<strong>速度/拍速</strong>，把 <code>t</code> 寫進樂譜。手打也行，但用這個框才會處理跨過速度變化的長音（會切成兩段用連結線接回去，聽起來一樣）。</p>
+
+  <ul>
+    <li><strong>設置位置</strong>：<strong>音軌開頭</strong>（整首的速度）或<strong>選擇的音符前</strong>（中途變速，要先選一個音）</li>
+    <li><strong>速度（BPM）</strong>：數字或滑桿，32 到 255。<strong>試聽</strong>會用固定的節拍型讓你聽速度本身，拖滑桿時也會自動響（要先載入音色庫，演奏中不能試聽）</li>
+    <li>那個位置已經有速度記號時，會多一顆<strong>移除這個速度記號</strong></li>
+    <li>也可以從捲簾左上角的拍號選單（<strong>修改曲速（BPM）</strong>）打開這個框，那時位置是音軌開頭</li>
+  </ul>
+
+  <p>框裡會先寫出這一下會做什麼：「這個位置原本是 T100，會改成 T120」，或「會在這裡寫入 T120」；有哪幾軌的音會被切開也會列出來。狀態列的<strong>速度</strong>會顯示目前的速度表，有變速時寫成「100 → 120」。</p>
+
+  <div class="workshop-only"><p><strong>工作坊專用：</strong>按<strong>執行</strong>之後，完整的速度表只寫進<strong>第 1 軌（主旋律）</strong>，其他軌裡原有的 <code>t</code> 會全部拿掉，只在音符跨過變速點的地方切開、用連結線接回去（工作坊的提示說這樣遊戲裡才不會走音——這一點沒有經過實機確認）。工作坊播放時也是把所有軌裡的 <code>t</code> 合成一張速度表來播，所以在這裡聽不出「只有一軌帶速度」會怎樣。</p>
+  <p>這和 Canonical 的交付政策不同：交付時每一個非空的角色都要以同樣的初始速度開頭，中途變速時每一個非空角色都要在同樣的位置帶同一張完整的速度表；這條複製規則是為了同步安全的專案政策，不是官方說引擎一定要每個角色都帶速度；只有一個角色帶中途變速時客戶端會不會保持同步，仍是 PENDING_IN_GAME（MOBILE_SYNTAX §7）。<a href="#studio">送回 Studio 驗證</a>時由 Studio 檢查這一點。</p></div>
+
+  <h3 id="vel">力度</h3>
+
+  <p>對話框叫<strong>力度/音量</strong>，整批調整音量（MML 的 <code>v</code>，0 到 15）。<strong>範圍</strong>三種：<strong>全部音軌／目前音軌／選擇的音符</strong>（最後一種要先選音）；<strong>調整</strong>選增強或減弱 1 到 10 格。框裡會先告訴你這個範圍有幾個音、力度落在哪個區間。</p>
+
+  <p>捲簾上還有一組更快的：選起來的音按 <kbd>+</kbd> 或 <kbd>-</kbd>，一次一格，<strong>只有選起來的那幾個音</strong>會變，後面接回原本的力度。要「從這裡開始都用某個力度」，用小節尺右鍵選單的<strong>此位置加入力度</strong>（見<a href="#menu-ruler">小節尺上</a>）。</p>
+
+  <p>調到 0 或 15 就到底了，超出去的音會被夾住，它們之間的強弱差別會消失——框裡會先講。小節尺上會用 <strong>V</strong> 標出目前這一軌力度改變的位置。</p>
+
+  <h3 id="trans">移調</h3>
+
+  <p>整批升高或降低半音。<strong>範圍</strong>同樣三種（全部音軌／目前音軌／已選擇音符），<strong>調整</strong>是「升／降 N key」，1 到 12，剛好一個八度時會標出（高八度）／（低八度）。</p>
+
+  <p>移出工作坊的音域（<code>o1c</code>–<code>o7b</code>）的話整批不做，並告訴你有幾個音低於下限、幾個音高於上限。</p>
+
+  <h3 id="opt">優化</h3>
+
+  <p>對話框叫<strong>壓縮優化</strong>，把字數壓下來。<strong>範圍</strong>三種：全部音軌／目前音軌／已選擇音符。<strong>方式</strong>四種，分成兩類：</p>
+
+  <table>
+    <thead>
+      <tr><th>症狀</th><th>選哪個</th></tr>
+    </thead>
+    <tbody>
+      <tr><td>字數超一點，不想動到聲音</td><td><strong>無損壓縮</strong>——重算每個音最省的寫法，一個音都不動</td></tr>
+      <tr><td>無損壓縮之後還是超</td><td><strong>音長補滿</strong>（音後面的短休止整段併進那個音，省最多）、<strong>部分補滿</strong>（只併一部分，留一點斷點感）、<strong>尾段收音</strong>（讓出音的尾巴當呼吸點）。這三種<strong>會改變音符長短</strong></td></tr>
+    </tbody>
+  </table>
+
+  <p>每個選項按鈕上都會先算出代價給你看（「省 N 字 · 不動任何音符」或「再省 N 字 · 影響 N 個音」），下面一行寫著最長的一軌（或這一軌）現在幾字、做完幾字、上限 2400；選了才執行。無損壓縮一律整條音軌重算，不受選取範圍影響。執行前會再驗一次：無損壓縮要求每個音完全相同，另外三種要求每個音的起始時間都不變；沒過就一個音都不動。</p>
+
+  <div class="workshop-only"><p><strong>工作坊專用：</strong>音長補滿、部分補滿、尾段收音是工作坊的有損優化，會改掉原本的音長與休止。改動是有界的：不改變任何一個音符的起始時間，只動長度——延長的部分最多是原長的 3 倍、延長後不超過 3 個全音符，讓出來的休止不超過一個八分音符，也不會跨過速度記號。Canonical 在交付前的整理要求保留來源的起音與休止（MOBILE_SYNTAX §11），這三種卻會改掉休止與音長，所以用過的譜要當成改編看待，送回 Studio 時由 Studio 判斷。</p></div>
+
+  <p><strong>按過優化的音軌會記住這件事</strong>（壓縮模式）——之後在鋼琴捲簾上編輯，那一條會自動再無損壓縮一次，字數不會跳回去；沒按過的照舊寫成好讀的形式。代價是那一條的 MML 會整個重新排版，手動的換行與 <code>l</code> 的位置都會變。字數計數旁邊會多一個小的壓縮圖示；要停掉就按這個框說明行上的<strong>關閉 N 軌的自動壓縮</strong>——它只停止之後的自動壓縮，已經壓好的文字不會展開。<strong>在文字區直接打字也會讓那一軌退出壓縮模式。</strong> 沒有字可省、但那一軌還沒進壓縮模式時，無損壓縮的按鈕會寫<strong>維持壓縮</strong>，按下去只是打開壓縮模式。</p>
+
+  <div class="note">
+    <p>做完不滿意都是 <kbd>Ctrl</kbd>+<kbd>Z</kbd>。</p>
+  </div>
+
+  <h3 id="merge">合併音軌</h3>
+
+  <p>把這一條音軌（或選起來的音）併進另一條。<strong>目標</strong>下拉列出其他每一個分頁，包括輔助軌。</p>
+
+  <p><strong>方式</strong>五種，一樣用症狀來選：</p>
+
+  <table>
+    <thead>
+      <tr><th>你想要的結果</th><th>選哪個</th></tr>
+    </thead>
+    <tbody>
+      <tr><td>來源整條搬過去，目標只在空隙裡留下</td><td><strong>來源音軌優先</strong></td></tr>
+      <tr><td>反過來，只把來源塞進目標的空隙，撞到就捨棄</td><td><strong>合併目標優先</strong></td></tr>
+      <tr><td>兩條合成一條，讓主旋律浮上來</td><td><strong>旋律重視</strong>（每個發聲點取最高音）</td></tr>
+      <tr><td>兩條合成一條，留下低音線</td><td><strong>根音重視</strong>（每個發聲點取最低音）</td></tr>
+      <tr><td>目標那一段不要了，整段換成來源</td><td><strong>來源取代目標</strong></td></tr>
+    </tbody>
+  </table>
+
+  <p><strong>範圍</strong>兩種：目前音軌或已選擇音符（有選取時預設是後者）。每個方式的按鈕上會先算出代價（丟掉幾個音、截短幾個音），下面一行寫著目標軌現在幾字、合併後幾字、上限 2400。合併之後，被搬過去的音會<strong>從來源軌拿掉</strong>（變成休止符），畫面切到目標軌並選起合併進來的音。</p>
+
+  <div class="workshop-only"><p><strong>工作坊專用：</strong>除了剛好沒有衝突的情況，合併會丟掉或截短音符：合併目標優先會捨棄撞到的音，旋律重視與根音重視會<strong>重新產生一條單音線</strong>、只留每個發聲點的最高或最低音，來源取代目標會<strong>丟棄目標軌在這個範圍內的全部內容</strong>。這是改編，不是保留來源的轉換；按鈕上的代價就是會失去的音。</p></div>
+
+  <h3>工具列右邊</h3>
+
+  <p>工具列最右邊是狀態，不是按鈕：<strong>演奏中／暫停中／編輯中</strong>、正在編輯的是哪一軌（用那一軌的顏色寫出名字），以及需要時才出現的提醒——這一軌為什麼唯讀、拖曳會刪掉或截短幾個音、哪些音的時值寫不出來。有非標準時值時還會出現<strong>還原</strong>（見<a href="#file">檔案</a>）。最後一段是操作提示，會跟著模式換。</p>
+
+  <h2 id="roll">鋼琴捲簾</h2>
+
+  <p>用滑鼠畫音符的地方。左邊是琴鍵，<strong>點琴鍵會發出那個音</strong>（<a href="#play">播放中也可以</a>）；上面那條細的是小節尺。捲簾和下面的樂譜區之間有一條分隔線，拖曳它（或聚焦後按方向鍵，<kbd>Shift</kbd> 加速）可以調整兩邊的高度，會記住。</p>
+
+  <h3>滑鼠</h3>
+
+  <table>
+    <thead>
+      <tr><th>動作</th><th>結果</th><th>前提</th></tr>
+    </thead>
+    <tbody>
+      <tr><td>左鍵點空白處</td><td>畫一個音（用工具列選的長度）</td><td>繪製模式</td></tr>
+      <tr><td>左鍵點空白處</td><td>設播放開始線</td><td><strong>只選取</strong>模式</td></tr>
+      <tr><td>左鍵在空白處拖曳</td><td>框選（按著 <kbd>Ctrl</kbd> 是加選）</td><td><strong>只選取</strong>模式</td></tr>
+      <tr><td>右鍵點空白處</td><td>開<a href="#menu-bar">右鍵選單</a>（演奏線、段落標記、選取前後、貼上、插入／刪除小節）</td><td>—</td></tr>
+      <tr><td>左鍵點音符</td><td>選它並發一聲</td><td>—</td></tr>
+      <tr><td>左鍵點別軌的音（外框畫的那些）</td><td>切到那一軌並選起那個音</td><td>—</td></tr>
+      <tr><td>右鍵點音符</td><td>開<a href="#menu-note">音符選單</a>（演奏線、選取前後、附點、力度、貼上、複製剪下、刪除）</td><td>—</td></tr>
+      <tr><td>拖曳音符</td><td>搬動（上下換音高、左右換位置）；選了好幾個時整組一起搬</td><td>—</td></tr>
+      <tr><td>拖音符右邊框</td><td>改長度</td><td>單選才有</td></tr>
+      <tr><td><kbd>Ctrl</kbd>+點音符</td><td>把它加進選取／從選取裡拿掉</td><td>—</td></tr>
+      <tr><td><kbd>Shift</kbd>+點音符</td><td>從上一個點過的音到這個音，整段選起來</td><td>—</td></tr>
+      <tr><td>雙擊音符</td><td>文字區的游標跳到那個音的位置</td><td><strong>只選取</strong>模式</td></tr>
+      <tr><td>小節尺上左鍵／右鍵</td><td>設播放的開始線／<a href="#menu-ruler">開選單</a></td><td>手指是輕觸／長按</td></tr>
+    </tbody>
+  </table>
+
+  <p>拖曳中放開之前想取消按 <kbd>Esc</kbd>。拖曳中方向鍵是<strong>微調</strong>：<kbd>←</kbd>／<kbd>→</kbd> 一次半格（六十四分音符），<kbd>↑</kbd>／<kbd>↓</kbd> 一次半音；加 <kbd>Shift</kbd> 變成一小節／一個八度。改長度時只有左右有用。拖曳會不會壓掉別的音，工具列右邊會先寫「會刪掉 N 個音／會截短 N 個音」。</p>
+
+  <h3>看得懂畫面</h3>
+
+  <ul>
+    <li><strong>實心的是你正在編輯的那一條音軌</strong>，其他軌是外框，輔助軌（第 7 軌之後）更淡。顏色是按軌分的，跟分頁上的顏色一樣</li>
+    <li><strong>選中的音</strong>會換成明顯的底色。選取跟文字區是連動的——在文字區選一段字，這裡就跟著選起來</li>
+    <li>設定裡開了<strong>調號顯示</strong>之後，不在那個調上的水平列會變暗。只是提示，不擋任何操作</li>
+    <li>小節線預設按 <strong>4/4</strong> 畫；設定裡打開<strong>拍號顯示及調整</strong>之後照你設的拍號畫（見<a href="#marks">段落標記與拍號</a>）</li>
+    <li>小節尺上會標出速度（<strong>T</strong>）與目前這一軌力度（<strong>V</strong>）改變的位置</li>
+    <li>播放時導播線走過的位置會亮起來</li>
+  </ul>
+
+  <div class="workshop-only"><p><strong>工作坊專用：</strong>捲簾與播放的音域是 <code>o1c</code>–<code>o7b</code>。譜裡寫到這個範圍以外的音，工作坊會<strong>折八度</strong>塞進來播放，並在狀態列提醒，所以你在這裡聽到的不是它寫的音高。光是打開、播放不會改文字；但用捲簾或工具列的功能改過那一軌之後，重新產生的文字會寫成折過的音高，複製時的自動壓縮也可能這樣寫。<a href="#trans">移調</a>也不讓音移出這個範圍。遊戲官方文件寫的音高範圍是 0–107（MOBILE_SYNTAX §2、§6）。</p></div>
+
+  <h3>選取、刪除、剪貼簿</h3>
+
+  <table>
+    <thead>
+      <tr><th>鍵</th><th>作用</th><th>前提</th></tr>
+    </thead>
+    <tbody>
+      <tr><td><kbd>Delete</kbd>／<kbd>Backspace</kbd></td><td>選起來的音變回同長度的休止符</td><td>有選取、焦點不在文字區</td></tr>
+      <tr><td><kbd>+</kbd>／<kbd>-</kbd></td><td>選起來的音力度加減一格</td><td>有選取</td></tr>
+      <tr><td><kbd>Ctrl</kbd>+<kbd>A</kbd></td><td>選起目前這一軌的全部內容</td><td>焦點不在文字區</td></tr>
+      <tr><td><kbd>Ctrl</kbd>+<kbd>C</kbd></td><td>複製選起來的音</td><td>有選取</td></tr>
+      <tr><td><kbd>Ctrl</kbd>+<kbd>X</kbd></td><td>剪下（複製走再變成休止符）</td><td>有選取</td></tr>
+      <tr><td><kbd>Ctrl</kbd>+<kbd>V</kbd></td><td>貼上音符</td><td>見下</td></tr>
+      <tr><td><kbd>Ctrl</kbd>+<kbd>D</kbd></td><td>把選起來的音複製一份，往後挪剛好容得下它們的整數個小節（落點原本的音會被取代）</td><td>有選取</td></tr>
+      <tr><td><kbd>Esc</kbd></td><td>取消選取</td><td>沒有在拖曳</td></tr>
+    </tbody>
+  </table>
+
+  <div class="note">
+    <p><strong><kbd>Ctrl</kbd>+<kbd>V</kbd> 的落點是「選取的位置，或滑鼠現在停的位置」。</strong> 兩個都沒有、但設過<strong>演奏開始線</strong>時就貼在那條線上；連那個也沒有才提醒你「先選幾個音，或把滑鼠移到要貼上的位置」。貼上會取代落點原本的內容（訊息會寫覆蓋了幾個音），<kbd>Ctrl</kbd>+<kbd>Z</kbd> 可以復原。</p>
+  </div>
+
+  <h3>唯讀的音軌</h3>
+
+  <p>一條音軌的文字有工作坊讀不懂、沒辦法重新編碼的內容時，那一條的<strong>捲簾是唯讀的</strong>——不能畫、不能拖，工具列右邊會寫出原因。<strong>文字照樣可以改</strong>，把那些內容改掉之後就恢復。</p>
+
+  <div class="note">
+    <p><strong>用捲簾編輯會重新產生整條音軌的 MML。</strong> 音符內容不受影響，但手寫的<strong>註解與排版會消失</strong>，本來就不發聲的怪字元（例如 <code>r+</code>）也會丟掉。先用捲簾把音弄對、最後才排版。</p>
+  </div>
+
+  <h3 id="marks">段落標記與拍號</h3>
+
+  <p><strong>段落標記</strong>是捲簾底部的彩色膠囊（前奏、副歌…）。<strong>加入</strong>在小節尺或空白處的右鍵選單（<strong>加入段落標記</strong>），一個小節最多一個；<strong>修改與移除要右鍵那個膠囊</strong>（<strong>修改標記文字</strong>／<strong>移除這個標記</strong>）。點膠囊會跳到那一小節。文字上限 20 個半形（中文 10 字），最多 16 個。顏色照順序自動配，所以刪掉中間一個之後後面會換色。水平捲軸上也有對應的色點，點一下就跳過去。</p>
+
+  <p><strong>拍號</strong>要先在設定裡打開<strong>拍號顯示及調整</strong>（預設停用）。打開後捲簾左上角會顯示曲首拍號，右鍵那裡可以改曲首拍號（每小節拍數 2／3／4／6／9，以二分、四分或八分音符為一拍）或<strong>修改曲速（BPM）</strong>；小節尺上右鍵可以從某一小節開始變拍。小節線、每小節格數、插入／刪除小節、MML 換行都跟著拍號走。關掉時一律照 4/4 畫，已設定的拍號會保留。</p>
+
+  <h2 id="menu">右鍵選單</h2>
+
+  <p>捲簾上右鍵有三種選單，落點決定哪一個：<strong>音符上</strong>那個管「這幾個音」，<strong>空白處</strong>那個管「這個位置的時間軸」，<strong>小節尺上</strong>那個管「這一小節」。另外段落標記的膠囊與左上角的曲首拍號也各有自己的小選單。這些選單都<strong>不分模式</strong>——手上拿著只選取還是某個音長都開得出來。</p>
+
+  <div class="note">
+    <p><strong>選單裡每一項的作用對象是「選取」，不是你右鍵的那一個音。</strong> 右鍵一個沒選中的音會先把它單選起來（跟左鍵點它一樣）；右鍵選取<strong>裡面</strong>的音則整組原封不動——所以「選一句話、右鍵、設定力度」就是預期的用法。</p>
+    <p>不能做的那幾列會<strong>灰掉並寫出原因</strong>（「播放中不能編輯」、「這一側沒有音符」、「這裡之後沒有音符」）。會改動樂譜的項目播放中都灰掉；複製音符、演奏線與選取不動樂譜，播放中照樣能按。</p>
+  </div>
+
+  <h3 id="menu-note">音符上</h3>
+
+  <p>標頭寫著第幾小節、選了幾個音。</p>
+
+  <table>
+    <thead>
+      <tr><th>項目</th><th>做什麼</th></tr>
+    </thead>
+    <tbody>
+      <tr><td><strong>演奏開始設置在音符前</strong>／<strong>演奏結束設置在音符後</strong></td><td>用<strong>整個選取的跨度</strong>設兩條演奏線——選一句話、右鍵，範圍就框好了</td></tr>
+      <tr><td><strong>選擇前方所有音符</strong>／<strong>選擇後方所有音符</strong></td><td>以你右鍵的那個音為切點，把<strong>目前音軌</strong>這一側的音全部選起來。灰字先告訴你有幾個</td></tr>
+      <tr><td><strong>加上附點</strong>／<strong>取消附點</strong></td><td>選中的音長度 ×1.5（或取消）。規則見<a href="#dot">附點</a>；不合格時灰字會先講</td></tr>
+      <tr><td><strong>設定力度</strong></td><td>用 ◀ ▶ 選一個 0–15 的值，把選中的音<strong>設成</strong>那個值。灰字寫著這幾個音現在的力度</td></tr>
+      <tr><td><strong>貼上音符</strong></td><td>跟 <kbd>Ctrl</kbd>+<kbd>V</kbd> 同一件事，落點是<strong>這個音的起點</strong>（灰字寫第幾小節第幾拍）</td></tr>
+      <tr><td><strong>複製音符</strong></td><td>跟 <kbd>Ctrl</kbd>+<kbd>C</kbd> 同一件事</td></tr>
+      <tr><td><strong>剪下音符</strong>／<strong>刪除音符</strong></td><td>紅色那兩項。刪除是變回同長度的休止符，後面的音不位移</td></tr>
+    </tbody>
+  </table>
+
+  <p><strong>設定力度</strong>跟捲簾上的 <kbd>+</kbd>／<kbd>-</kbd> 是兩件事：這裡是「設成 10」，那兩顆是「在現在的基礎上加減一格」。</p>
+
+  <h3 id="menu-bar">空白處</h3>
+
+  <p>標頭寫著你右鍵的是第幾小節。前面幾項跟音符選單同一類（演奏線、選取、貼上），後面四項是<strong>工作坊唯一會位移時間軸的編輯</strong>：</p>
+
+  <table>
+    <thead>
+      <tr><th>項目</th><th>做什麼</th></tr>
+    </thead>
+    <tbody>
+      <tr><td><strong>設定演奏開始線</strong>／<strong>設定演奏結束線</strong></td><td>設在你右鍵的位置。線吸到 1/32 格，<strong>不是吸到小節線</strong>——「聽這一句到這裡」才做得到</td></tr>
+      <tr><td><strong>加入段落標記</strong></td><td>在這一小節加一個段落標記。這一小節已經有、或已經滿 16 個時灰掉</td></tr>
+      <tr><td><strong>選擇前方所有音符</strong>／<strong>選擇後方所有音符</strong></td><td>以這一小節的開頭為切點，目前音軌那一側全部選起來</td></tr>
+      <tr><td><strong>貼上音符</strong></td><td>貼在你右鍵的位置（灰字寫第幾小節第幾拍）</td></tr>
+      <tr><td><strong>本軌插入 N 小節</strong></td><td>在這個小節之前插入空白小節，<strong>只推目前這一條音軌</strong></td></tr>
+      <tr><td><strong>全部軌插入 N 小節</strong></td><td>同上，但<strong>所有分頁</strong>（包括輔助軌）這裡之後有音的都<strong>一起推</strong>，拍號與段落標記也跟著移</td></tr>
+      <tr><td><strong>本軌刪除 N 小節</strong>／<strong>全部軌刪除 N 小節</strong></td><td>紅色那兩項。刪掉那幾小節，後面的音往前接上</td></tr>
+    </tbody>
+  </table>
+
+  <p>小節數用 ◀ ▶ 調（插入 1–16；刪除的上限跟著「這裡到結尾還剩幾小節」收窄），而且<strong>每次打開都重設回 1</strong>，四列各自獨立。一次插入或刪除好幾軌只算<strong>一步</strong>復原，<kbd>Ctrl</kbd>+<kbd>Z</kbd> 按一次就全部回去。這一小節之後沒有音符的話，這四項會灰掉。</p>
+
+  <div class="note">
+    <p><strong>「本軌」那兩項會讓其他軌錯開</strong>——那是刻意的，它是「這一條我採錯了、要整段往後推」的修補工具。要整首一起動請用<strong>全部軌</strong>那兩項。</p>
+  </div>
+
+  <h3 id="menu-ruler">小節尺上</h3>
+
+  <p>小節尺上左鍵直接設開始線，右鍵開這個選單（手指請長按）：</p>
+
+  <table>
+    <thead>
+      <tr><th>項目</th><th>做什麼</th></tr>
+    </thead>
+    <tbody>
+      <tr><td><strong>設定演奏開始線</strong>／<strong>設定演奏結束線</strong></td><td>設在你右鍵的位置</td></tr>
+      <tr><td><strong>清除範圍播放</strong></td><td>回到全曲播放。沒有設範圍時灰掉</td></tr>
+      <tr><td><strong>此小節改成 N/N</strong>（兩列）</td><td>一列用 ◀ ▶ 調每小節拍數，一列調以幾分音符為一拍，按下去從這一小節開始變拍，一直到下一個變拍。拍號功能停用時、或這是第 1 小節時灰掉（曲首拍號請在左上角改）</td></tr>
+      <tr><td><strong>移除此小節的變拍</strong></td><td>這一小節有變拍時才能按，後面接回前面的拍號</td></tr>
+      <tr><td><strong>此位置加入力度</strong></td><td>用 ◀ ▶ 選 0–15，在目前這一軌的這個位置寫入力度，從這裡開始生效</td></tr>
+      <tr><td><strong>加入段落標記</strong></td><td>同空白處選單那一項</td></tr>
+    </tbody>
+  </table>
+
+  <h3 id="menu-keys">選單裡的鍵盤</h3>
+
+  <table>
+    <thead>
+      <tr><th>鍵</th><th>作用</th></tr>
+    </thead>
+    <tbody>
+      <tr><td><kbd>↑</kbd>／<kbd>↓</kbd></td><td>上下換一列（跳過灰掉的）。剛開啟時<strong>沒有任何一列亮著</strong>，按一下才進去</td></tr>
+      <tr><td><kbd>←</kbd>／<kbd>→</kbd></td><td>改那一列的數字，等於按 ◀ ▶</td></tr>
+      <tr><td><kbd>Enter</kbd>／<kbd>Space</kbd></td><td>執行亮著的那一列</td></tr>
+      <tr><td><kbd>Esc</kbd>／<kbd>Tab</kbd></td><td>關掉，焦點回到原來的地方</td></tr>
+    </tbody>
+  </table>
+
+  <p>調數字<strong>不會關掉選單</strong>（不然多小節根本沒得設），按下可執行的那一半才關。頁面一捲動選單就會關掉（改變視窗大小也一樣）。</p>
+
+  <p>點選單外面也會關掉，而<strong>那一下不算數</strong>——在繪製模式下點捲簾把選單關掉，不會順手畫出一個音。</p>
+
+  <h2 id="scores">音軌分頁與編輯區</h2>
+
+  <p>畫面下半。一個分頁＝<strong>一條音軌</strong>，最少 3 條、最多 15 條。分頁的名字照位置固定：前 6 條是遊戲的六個角色<strong>主旋律、和弦1–和弦5</strong>，之後是<strong>輔助1–輔助9</strong>。</p>
+
+  <div class="canonical"><p>遊戲的作曲角色最多 6 個（基本 3 個，可擴充到 6 個），每個角色的 MML 文字上限 2,400 字（MOBILE_SYNTAX §2）。</p></div>
+
+  <p><strong>只有前 6 條會進遊戲。</strong> 複製、送回 Studio、WAV 與影片都只用前 6 條；第 7 條之後的輔助軌是工作坊的工作區（放素材、備份、還沒決定要不要的聲部），存檔與 <code>.mid</code>／<code>.mml</code>／<code>.mmi</code> 會帶著它們。</p>
+
+  <h3>分頁列</h3>
+
+  <table>
+    <thead>
+      <tr><th>操作</th><th>結果</th></tr>
+    </thead>
+    <tbody>
+      <tr><td>點分頁</td><td>切過去。分頁上括號裡寫著這一軌的樂器</td></tr>
+      <tr><td><strong>拖曳分頁</strong></td><td>改變音軌順序（名字跟著位置走，所以拖到第 1 格的那一條就是新的主旋律）</td></tr>
+      <tr><td>點名字左邊的<strong>圓點</strong></td><td>在鋼琴捲簾上顯示／隱藏這一軌的音符（<strong>不影響播放</strong>）</td></tr>
+      <tr><td>右邊的 <strong>✕</strong></td><td>移除這一軌。還有內容時會先問一次，後面的軌往前移一格。只剩 3 軌時沒有 ✕</td></tr>
+      <tr><td><strong>＋ 新增</strong></td><td>加一條新的空白音軌。滿 15 條時不見</td></tr>
+    </tbody>
+  </table>
+
+  <p>超過 6 條時分頁列會換行。拖曳、新增與移除都可以用 <kbd>Ctrl</kbd>+<kbd>Z</kbd> 復原。</p>
+
+  <h3>樂器列</h3>
+
+  <p>分頁下面那一行，從左到右：</p>
+
+  <table>
+    <thead>
+      <tr><th>控制項</th><th>做什麼</th></tr>
+    </thead>
+    <tbody>
+      <tr><td><strong>樂器</strong>下拉</td><td>這一軌用什麼音色。上面一組是 <strong>Mabinogi Mobile 樂器（GM 近似）</strong>：Lute、Mandolin、Chalumeau、Xylophone、Flute、Violin、Piano、Harp、Music Box、BassDrum、Cymbals；載入音色庫之後下面會多一組那個音色庫自己的音色。每一軌各自選</td></tr>
+      <tr><td><strong>靜音</strong>（喇叭）</td><td>這一軌試聽時不出聲。匯出與另存不受影響</td></tr>
+      <tr><td><strong>只聽</strong>（擴音器）</td><td>只聽這一軌，其他全部靜音。再按一次解除全部靜音</td></tr>
+      <tr><td><strong>顯示</strong>（眼睛）</td><td>在捲簾上收掉這一軌的音符。<strong>它照樣出聲、照樣編得動</strong>——要它閉嘴請用靜音</td></tr>
+      <tr><td><strong>只看</strong></td><td>捲簾上只畫這一軌，其他全部收掉。再按一次全部顯示</td></tr>
+      <tr><td>最右邊的計數</td><td><code>N 音 · N/2400 字</code>，見下</td></tr>
+    </tbody>
+  </table>
+
+  <p><strong>靜音／只聽</strong>管聲音，<strong>顯示／只看</strong>管畫面，四顆並排但互不相干。</p>
+
+  <div class="workshop-only"><p><strong>工作坊專用：</strong>樂器列上的 Mobile 樂器只是試聽用的近似：用一般音色庫時它們對應到 GM 音色（Lute → GM 24 等），BassDrum 與 Cymbals 對應到打擊組的兩個鍵（寫在 <code>o4c</code> 以下響第一個、以上響第二個）；用<a href="#settings">遊戲風格音色</a>時每一種樂器有自己的音色。兩者都不是遊戲的音色。匯入或貼上的 <code>@</code> 數字會照 GM 編號對到 Mobile 樂器，對不到才找音色庫裡的音色。</p></div>
+
+  <h3>MML 文字區</h3>
+
+  <p>一次顯示一條音軌的文字，就是目前分頁那一條；點分頁切換，捲簾的焦點跟著換。</p>
+
+  <p>樂器列最右邊是計數：<code>N 音 · N/2400 字</code>。那是<strong>匯出後</strong>的字數，<strong>空白與換行不計</strong>，所以可以放心用換行分小節。超過上限會變紅，但不會擋住你繼續編輯；游標停在上面會寫出超過幾字。那一軌在<a href="#opt">壓縮模式</a>時，計數前面會多一個壓縮圖示。</p>
+
+  <div class="canonical"><p>每個角色 2,400 字是遊戲官方文件寫的上限；但遊戲客戶端實際怎麼數字（跟程式裡的字串長度是否一致）仍是 PENDING_IN_GAME（MOBILE_SYNTAX §9）。工作坊的計數只是依它自己的算法（去掉空白與換行）。</p></div>
+
+  <p>設定裡的<strong>語法上色</strong>與 <strong>MML 格式化換行</strong>都作用在這裡，見<a href="#settings">設定抽屜</a>。</p>
+
+  <h2 id="status">狀態列</h2>
+
+  <p>最下面一行，全部是「現在的狀態」，沒有可以按的東西：</p>
+
+  <table>
+    <thead>
+      <tr><th>欄位</th><th>意思</th></tr>
+    </thead>
+    <tbody>
+      <tr><td><strong>軌</strong></td><td>現在有幾條音軌 / 最多 15 條</td></tr>
+      <tr><td><strong>音符</strong></td><td>全部音符數</td></tr>
+      <tr><td><strong>速度</strong></td><td>目前的速度表，有變速時寫成「100 → 120」。沒有寫 <code>t</code> 時顯示「120 BPM（預設）」</td></tr>
+      <tr><td><strong>長度</strong></td><td>整首播完要多久</td></tr>
+      <tr><td>暫存狀態</td><td><strong>已暫存 · 時間</strong>／<strong>已接回上次的樂譜 · 時間</strong>／<strong>尚未暫存</strong>／<strong>自動存檔已關閉</strong>／<strong>這個瀏覽器不給暫存</strong></td></tr>
+      <tr><td>引擎</td><td>合成器的載入進度，就緒後寫成<strong>引擎就緒 · 取樣率</strong>。窄螢幕上不顯示</td></tr>
+    </tbody>
+  </table>
+
+  <p>中間還有一個只在需要時出現的：解析警告（看不懂的字元、音高超出範圍被折八度…），最多顯示兩則。其他訊息（匯入結果、錯誤、提醒）會出現在畫面下方的訊息框，按 <strong>✕</strong> 關掉。</p>
+
+  <h2 id="settings">設定抽屜</h2>
+
+  <p>標題列上那顆<strong>設定</strong>（<strong>關於</strong>在它右邊），<kbd>Esc</kbd> 關閉。從上到下：</p>
+
+  <table>
+    <thead>
+      <tr><th>項目</th><th>說明</th></tr>
+    </thead>
+    <tbody>
+      <tr><td><strong>語言 (Language)</strong></td><td>繁體中文、English、日本語、한국어。切換會重新載入頁面——編輯中的樂譜會保留，<strong>但復原記錄會清空</strong></td></tr>
+      <tr><td><strong>主題</strong></td><td>深色或淺色</td></tr>
+      <tr><td><strong>自動存檔</strong></td><td>每次編輯後把樂譜存在這個瀏覽器裡，重新整理或重開都接得回來，<strong>不會上傳</strong>。關掉不會刪掉已經存的，但之後的編輯不再記下——重新整理會退回關掉之前那一份。它只記「現在這一份」；要留好幾份請用<a href="#library">歌曲庫</a></td></tr>
+      <tr><td><strong>調號顯示</strong></td><td>選一個調（或不使用），捲簾上不在調上的水平列會變暗。只是提示</td></tr>
+      <tr><td><strong>拍號顯示及調整</strong></td><td>啟用後左上角顯示曲首拍號，右鍵可改拍號或曲速；小節尺上右鍵可設變拍。<strong>預設停用</strong>；停用時一律照 4/4 畫，已設定的拍號會保留。見<a href="#marks">段落標記與拍號</a></td></tr>
+      <tr><td><strong>語法上色</strong></td><td>速度、音長、八度、音量各有顏色，音符保持白色；看不懂的字元畫紅色波浪線，超過 2400 字的那一段加紅底。只是提示</td></tr>
+      <tr><td><strong>MML 格式化換行</strong></td><td>不換行／每 1／每 2／每 4 小節換一行。<strong>改的是文字</strong>（真的插入換行，可以 <kbd>Ctrl</kbd>+<kbd>Z</kbd>），但空白不佔遊戲字數。開啟時文字區左邊會帶小節號，一行從小節中間開始時號碼前面有 <code>~</code>；跨小節的長音切不開，所以那一行會比較長、號碼會跳號。貼上、匯入、開啟檔案或從 Studio 開啟之後會自動回到<strong>不換行</strong>，保持原文的排版</td></tr>
+      <tr><td><strong>音色庫</strong></td><td><strong>選擇 .dls / .sf2 / .sf3</strong>：載入你裝置上的音色庫，只存在這台裝置，並與 Studio 試聽共用；下次打開會自動載入。<strong>使用遊戲風格音色</strong>：改用站方提供的遊戲風格音色（模擬，不是實機），第一次使用時從本網站下載並核對 SHA-256，只存在這台裝置；這個選擇也會記住，但你自己的音色庫優先。沒有任何音色庫時不能演奏、試聽或匯出 WAV／影片。細節見<a href="./faq.html#bank">常見問題</a></td></tr>
+      <tr><td><strong>樂器定義檔</strong></td><td>選用。載入 3MLE 的 <code>.def</code>，為音色庫的音色命名與篩選，決定樂器下拉裡音色庫那一組列出哪些</td></tr>
+    </tbody>
+  </table>
+
+  <h2 id="export">WAV 與影片匯出</h2>
+
+  <p><strong>檔案</strong>框的匯出區裡，「下載」下面那兩顆獨立的按鈕：<strong>匯出 WAV</strong> 與 <strong>MP4影片製作</strong>。它們跟上面三個格式不是同一件事：</p>
+
+  <table>
+    <thead>
+      <tr><th></th><th><code>.mid</code> / <code>.mml</code> / <code>.mmi</code></th><th>WAV／MP4</th></tr>
+    </thead>
+    <tbody>
+      <tr><td>拿到什麼</td><td><strong>樂譜</strong>，還要用別的東西打開</td><td><strong>音檔</strong>或<strong>影片</strong>，誰都聽得到</td></tr>
+      <tr><td>要多久</td><td>按了就有</td><td><strong>幾十秒以上</strong>，它在這台裝置上算一份新的音訊</td></tr>
+      <tr><td>做哪幾軌</td><td>全部</td><td><strong>只有前 6 軌</strong>（見下）</td></tr>
+      <tr><td>需要什麼</td><td>—</td><td>先<a href="#settings">載入音色庫</a>，而且有音符；否則按鈕是灰的</td></tr>
+    </tbody>
+  </table>
+
+  <div class="note">
+    <p><strong>只做前 6 軌，也就是遊戲讀得到的那幾軌。</strong> 輔助軌是工作坊的工作區，遊戲裡不存在；第 7 軌之後真的有音符時，框裡會先告訴你哪幾軌不會進去。<strong>靜音不影響匯出</strong>——那是試聽用的開關；小節尺上的開始線與結束線也不理，一律整首。</p>
+    <p><strong>這是聆聽輔助，不是證據。</strong> 聲音來自你的音色庫（或遊戲風格音色的模擬），不是遊戲音色，也不能拿來當 Studio 的任何審核依據。</p>
+  </div>
+
+  <h3 id="wav">匯出 WAV</h3>
+
+  <p>按下去開一個小框：填檔名（空著就用檔案框上面那一欄的名字），按<strong>開始匯出</strong>。按鈕旁邊會出現進度條與<strong>合成中／編碼中／完成</strong>，這時<strong>關閉</strong>變成<strong>取消</strong>，按了立刻停。算完自動下載，框不會自己關。</p>
+
+  <table>
+    <thead>
+      <tr><th>關於檔案</th><th></th></tr>
+    </thead>
+    <tbody>
+      <tr><td>格式</td><td>WAV，16-bit、44.1 kHz 立體聲</td></tr>
+      <tr><td>音量</td><td><strong>只縮不放</strong>：只有在整首會爆掉的時候才整體壓下來，否則一個 dB 都不動。刻意寫得很輕的曲子不會被拉大聲</td></tr>
+      <tr><td>結尾</td><td>自動留到最後一個音真的消失為止，不會硬切，也不會掛一段無聲</td></tr>
+    </tbody>
+  </table>
+
+  <div class="note">
+    <p><strong>手機上可能會失敗，訊息會直說。</strong> 這個功能要把整首歌的音訊一次放在記憶體裡，手機常常撐不住。長曲子建議用電腦匯出。</p>
+  </div>
+
+  <h3 id="video">MP4影片製作</h3>
+
+  <p>做一支<strong>鋼琴瀑布</strong>影片：音符從上往下落到琴鍵上。畫面與聲音都在這台裝置用瀏覽器的 WebCodecs 產生，不會上傳。框打開後會先<strong>正在合成聲音…</strong>，好了之後：</p>
+
+  <ul>
+    <li><strong>播放</strong>、拖進度條、看時間——預覽放的就是會編進影片的那一份聲音</li>
+    <li><strong>影片比例</strong>：<strong>9:16</strong>（直式，預設）或 <strong>16:9</strong>（橫式）</li>
+    <li><strong>落下速度</strong>：最慢／慢／標準／快</li>
+    <li><strong>外觀</strong>：開<a href="#look">影片外觀</a>編輯器</li>
+    <li>填檔名，旁邊會估計檔案大小（約 N MB），按<strong>匯出 MP4</strong>。進度會寫<strong>畫面編碼中／音訊編碼中／組裝檔案／完成</strong>，可以<strong>取消</strong></li>
+  </ul>
+
+  <p>影片的短邊在電腦上是 1080，在觸控裝置上是 720；每秒 60 格，裝置編不動時自動退到 30 格。聲音會把整體響度調到大約 −14 LUFS（仍然不超過峰值上限），所以可能比 WAV 大聲一點。影片比例、速度與外觀會記在這台裝置，下次打開還在。</p>
+
+  <div class="note">
+    <p>需要支援 WebCodecs、能編 H.264 畫面與 AAC 聲音的瀏覽器（Chrome、Edge 或 Safari 16.4 以上）；做不出來時訊息會直說。<strong>製作期間請讓這個分頁留在前景，也不要讓螢幕休眠</strong>，不然瀏覽器可能把它中斷。</p>
+  </div>
+
+  <h3 id="look">影片外觀</h3>
+
+  <p>按<strong>外觀</strong>開的框，三個分頁：</p>
+
+  <table>
+    <thead>
+      <tr><th>分頁</th><th>選什麼</th></tr>
+    </thead>
+    <tbody>
+      <tr><td><strong>軌道顏色</strong></td><td>前 6 軌各自的顏色。點一軌會換成一整片色票（30 種，各有名字，例如天空藍、蜜柑橙、翡翠綠），選好按 ← 回去；<strong>恢復預設</strong>把六軌都換回原本的顏色</td></tr>
+      <tr><td><strong>音符樣式</strong></td><td>落下來的音符長什麼樣子：玻璃、霓虹、像素、光劍、流光、光暈、電光、冰晶、故障、泡泡、卡通、復古</td></tr>
+      <tr><td><strong>落鍵特效</strong></td><td>音符碰到琴鍵時的效果：噴發、漣漪、光柱、煙霧、火花、新星、碎裂、灰燼、水花，或<strong>無</strong></td></tr>
+    </tbody>
+  </table>
+
+  <p>按<strong>完成</strong>回到預覽，改動當場就看得到。</p>
+
+  <h2 id="narrow">窄螢幕與手機</h2>
+
+  <p>畫面變窄時東西會收起來，不是不見了：</p>
+
+  <ul>
+    <li>標題列右邊變成一顆<strong>選單鈕</strong>（三條線），← Studio、從 Studio 開啟、送回 Studio 驗證、剪貼簿、檔案、設定、關於都收在那個面板裡（有新版時還有套用新版）</li>
+    <li>標題列上會<strong>多出四顆顯示開關</strong>（這四顆桌機看不到）：<strong>顯示工具列／顯示鋼琴捲軸／顯示編輯器／顯示狀態列</strong>。關掉一區，剩下的會把空間吃掉。逐顆的用法在<a href="./mobile.html#toggles">四顆顯示開關</a></li>
+    <li>工具列上的縮放按鈕收起來（用雙指縮放），狀態列的引擎欄位也不顯示</li>
+    <li>點進 MML 文字區打字時，工具列的後半、樂器列與狀態列會暫時收起來，把空間讓給鍵盤</li>
+  </ul>
+
+  <p>觸發的條件是<strong>兩個</strong>：畫面寬度很窄，<strong>或者高度很矮</strong>——所以手機橫放（很寬但很矮）也會變成這個樣子，把桌機視窗拉得很扁也一樣。</p>
+
+  <p><strong>這一節講的是版面，跟你用滑鼠還是手指無關。</strong> 把桌機視窗拉扁也會變成這個樣子，而那時你手上還是滑鼠，上面所有的快捷鍵與右鍵選單一個都沒少。</p>
+
+  <p>用手指的話另外還有一整套東西——輕觸、長按拖著搬、雙指縮放，以及選中音符後從畫面底部浮出來的操作面板——那些在<a href="./mobile.html">手機與平板</a>。</p>
+</main>
+<footer>
+  <p>工作坊在 Canonical 驗證流程之外：這裡描述的是工作坊的行為，不是遊戲規則，也不代表任何東西通過 Studio 的驗證。遊戲與交付規則以 Published Canonical 為準。</p>
+  <div class="row"><a href="../index.html">← 工作坊</a><a href="../../../../index.html">MML Studio</a></div>
+</footer>
+<script type="module" src="./guide.mjs"></script>
+</body>
+</html>

@@ -1,0 +1,244 @@
+<!doctype html>
+<html lang="zh-Hant">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="theme-color" content="#122325">
+<meta name="robots" content="noindex">
+<!-- The Workshop's policy: scripts and styles only from 'self', no inline script or style, nothing but this origin is contacted. -->
+<meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self' data:; connect-src 'self'; object-src 'none'; base-uri 'self'; form-action 'none'">
+<title>常見問題 · 工作坊說明</title>
+<link rel="icon" href="../../../../icon.svg" type="image/svg+xml">
+<link rel="stylesheet" href="./guide.css">
+<script src="./boot.js"></script>
+</head>
+<body data-guide="faq">
+<p class="zh-only" id="zhOnly" hidden>目前只有中文版</p>
+<header class="guide-head">
+  <div class="inner">
+    <a class="brand" href="../index.html">← 工作坊</a>
+    <nav class="guide-nav" aria-label="說明頁">
+      <a href="./editor.html">編輯器入門</a>
+      <a href="./reference.html">功能說明</a>
+      <a href="./keys.html">快捷鍵</a>
+      <a href="./mobile.html">手機與平板</a>
+      <a href="./mml.html">MML 教學</a>
+      <a href="./midi.html">MIDI 轉 MML</a>
+      <a href="./faq.html">常見問題</a>
+    </nav>
+  </div>
+</header>
+<main id="guide">
+  <h1>常見問題</h1>
+  <p>關於工作坊、關於瑪奇 Mobile MML</p>
+
+  <div class="toc">
+    <ol>
+      <li><a href="#install">要安裝什麼嗎</a></li>
+      <li><a href="#sound">聽起來跟遊戲裡不一樣</a></li>
+      <li><a href="#bank">可以用自己的音色庫嗎</a></li>
+      <li><a href="#save">樂譜會不會不見</a></li>
+      <li><a href="#toolong">字數超過 2400 怎麼辦</a></li>
+      <li><a href="#tracks">為什麼只有 6 軌進得了遊戲</a></li>
+      <li><a href="#tempo">速度 t 是整首共用的嗎</a></li>
+      <li><a href="#chord">和弦要怎麼寫</a></li>
+      <li><a href="#triplet">三連音採得進來嗎</a></li>
+      <li><a href="#mobile">手機可以用嗎</a></li>
+      <li><a href="#studio">工作坊改好的譜怎麼回到 Studio</a></li>
+      <li><a href="#unverified">「工作坊編輯（未經 Studio 驗證）」是什麼意思</a></li>
+      <li><a href="#wav">可以匯出成音訊或影片嗎</a></li>
+    </ol>
+  </div>
+
+  <h2 id="install">要安裝什麼嗎</h2>
+
+  <p>不用。工作坊是 MML Studio 網頁的一部分：從 <a href="../../../../index.html">Studio</a> 側欄的「工作坊 · MML 編輯器」進來，或直接<a href="../index.html">打開工作坊</a>就能用，沒有下載、沒有外掛、不需要 Java 或其他執行環境。你需要的只是一個夠新的瀏覽器。</p>
+
+  <p>只有「MP4影片製作」有額外要求：瀏覽器要支援 WebCodecs（Chrome、Edge 或 Safari 16.4 以上）。不支援時，影片框裡會直接告訴你。</p>
+
+  <h2 id="sound">聽起來跟遊戲裡不一樣</h2>
+
+  <p>先確認用的是哪一份音色庫。設定抽屜（標題列的<strong>設定</strong>）的「音色庫」底下會顯示目前載入的是哪一份。<strong>工作坊不內建音色</strong>：還沒載入任何音色庫之前，「▶ 演奏」是灰的、按不下去，也沒辦法匯出 WAV 或影片——請先在設定裡選一份自己的 <code>.dls</code>／<code>.sf2</code>／<code>.sf3</code>，或按「使用遊戲風格音色」。細節見<a href="#bank">下一題</a>。</p>
+
+  <p>「遊戲風格音色」是站方提供的<strong>模擬音色</strong>，不是遊戲檔案本身；它跟遊戲的真實音色會有差距，尤其是某些樂器的尾音與音量平衡。分頁樂器下拉裡的「Mabinogi Mobile 樂器（GM 近似）」也一樣只是近似。</p>
+
+  <p>另外幾個常見原因：</p>
+
+  <div class="workshop-only">
+    <p><strong>工作坊專用：</strong>下面這些是工作坊試聽的做法，不代表遊戲裡的行為。</p>
+    <ul>
+      <li><strong>力度。</strong> 工作坊裡各軌的音量平衡只是這裡的試聽結果，跟遊戲裡聽到的不一定一樣。</li>
+      <li><strong>樂器選錯。</strong> 分頁上的「樂器」下拉決定音色。在文字區裡打的 <code>@</code> 指令<em>不</em>影響播放；只有用剪貼簿「貼上」整首時，每一軌的第一個 <code>@數字</code> 會拿來挑那個分頁的樂器（先找同一個 GM 編號的 Mobile 樂器，再找音色庫裡的音色），然後從文字裡拿掉。「複製」出去的 MML 不帶 <code>@</code>。</li>
+      <li><strong>音域。</strong> 工作坊只播得出 o1c 到 o7b；超出這個範圍的音，試聽時會被摺進音域裡播。遊戲官方寫的音高範圍是 0–107（MOBILE_SYNTAX §2、§6）。</li>
+      <li><strong><code>n</code> 指令。</strong> 工作坊與 Studio 對 <code>n</code> 的八度讀法不同，兩邊互相開啟或送回時會換算成同一個音高；遊戲實際用哪一種讀法還沒有確認。</li>
+      <li><strong>速度。</strong> 工作坊試聽時把所有分頁的 <code>t</code> 合成一條速度線，見<a href="#tempo">速度 t 是整首共用的嗎</a>。</li>
+    </ul>
+  </div>
+
+  <h2 id="bank">可以用自己的音色庫嗎</h2>
+
+  <p>可以。設定抽屜的「音色庫」按「選擇 .dls / .sf2 / .sf3」，載入你裝置上的檔案。它<strong>只存在這台裝置</strong>、不會上傳，並且跟 Studio 的試聽共用同一份：在這裡選過，下次打開工作坊或 Studio 試聽都會用它。</p>
+
+  <p>不想自己找音色庫的話，按「使用遊戲風格音色」。第一次使用時會從本網站下載並核對 SHA-256，之後就存在這台裝置上，不用再下載。</p>
+
+  <p>「樂器定義檔」可以另外載入 3MLE 的 <code>.def</code>（選用），用來為音色庫裡的音色命名與篩選。</p>
+
+  <div class="note">
+    <p><strong>換成自己的音色庫之後，遊戲風格音色附帶的樂器定義會自動清掉。</strong> 那份定義記的是遊戲風格音色裡的編號，拿去篩別的音色庫只會看起來像壞掉——清單裡出現一堆對不上的名字。換完音色庫請一併載入配套的 <code>.def</code>，或是先不載、讓它列出全部音色。如果載入的 <code>.def</code> 在目前的音色庫裡一個編號都找不到，畫面會提醒你八成是配錯了，下拉維持原樣。</p>
+  </div>
+
+  <h2 id="save">樂譜會不會不見</h2>
+
+  <p>預設會<strong>自動存檔</strong>：每次編輯後把樂譜存在你的瀏覽器裡，重新整理或關掉重開都接得回來。<strong>不會上傳到任何伺服器。</strong></p>
+
+  <p>想留好幾份，用「檔案」框裡的「儲存到…」（快捷鍵 <kbd>Ctrl</kbd>+<kbd>S</kbd>，行為見<a href="./keys.html#global">快捷鍵</a>）。它會把這一份取個名字存進這個瀏覽器的歌曲庫（全部加起來最多 20 MB），之後可以在同一個框裡開啟、刪除，或勾選幾份「批次下載」成一個 zip（每份一個 <code>.mml</code>）。</p>
+
+  <div class="note">
+    <p><strong>自動存檔與歌曲庫都只在這個瀏覽器裡。</strong> 換電腦、換瀏覽器、清掉網站資料，檔案就會不見；無痕視窗或擋住網站儲存的瀏覽器設定下，也可能根本存不進去（畫面會告訴你）。要長久保存，請用「檔案」的匯出（<code>.mid</code>／<code>.mml</code>／<code>.mmi</code>）或歌曲庫的批次下載，把檔案存到本機。</p>
+  </div>
+
+  <p>可以在設定抽屜把自動存檔關掉。關掉之後，還沒存進歌曲庫的編輯在重新整理時就真的沒了，請自己存好或匯出。</p>
+
+  <p>另外兩件事：</p>
+
+  <ul>
+    <li>換語言會重新載入頁面，但樂譜會被保住（復原記錄會清空，這個沒辦法）。</li>
+    <li>點左上角的「工作坊」字樣是<strong>重新開始</strong>：會清掉暫存並載入範例樂譜。要保留的東西請先存好。</li>
+  </ul>
+
+  <h2 id="toolong">字數超過 2400 怎麼辦</h2>
+
+  <div class="canonical">
+    <p>遊戲官方的上限是<strong>每個角色（每一軌）2,400 個字元</strong>（MOBILE_SYNTAX §2、§9）。遊戲的字數計算跟程式裡的字串長度是否完全一致，目前還是 PENDING_IN_GAME（MOBILE_SYNTAX §9）。</p>
+  </div>
+
+  <div class="workshop-only">
+    <p><strong>工作坊專用：</strong>每一軌下方的字數是「匯出後的字數」，空白與換行不計。超過 2400 的軌字數會變紅（滑鼠移上去會說超過多少字），開著「語法上色」時超出的那一段會加紅底；但工作坊不會擋住你繼續編輯。用剪貼簿「複製」時，送出去的那一份會自動再做一次無損壓縮。</p>
+  </div>
+
+  <p>三個方向，由輕到重：</p>
+
+  <ol>
+    <li><strong>先跑無損壓縮。</strong> 工具列的「優化」會打開「壓縮優化」框，方式選「無損壓縮」。它重算每個音最省的寫法，<strong>一個音都不動，音符完全相同</strong>。框的「範圍」可以選全部音軌、目前音軌或已選擇音符，不過無損壓縮一律整軌重算。每一種方式旁邊會先算好能省幾個字，按「執行」才套用。</li>
+    <li><strong>用同一個框裡的三種音長規則。</strong> 這是「優化」裡唯一會改變聲音的地方，動的是音符長度——延長讓它吃掉後面的休止（<code>c4r4</code> → <code>c2</code>），或縮短讓它產生休止（<code>c2</code> → <code>c4r4</code>）。<strong>每個音的進場時間完全不動</strong>，所以節奏不會被改壞，變的只是圓滑或斷奏的感覺。<strong>音長補滿</strong>省最多也最沒有斷點感，<strong>部分補滿</strong>留一點斷點，<strong>尾段收音</strong>把尾巴讓出來當呼吸點。一次選一個，旁邊會先寫出再省幾個字、影響幾個音，按「執行」才套用，之後也能用 <kbd>Ctrl</kbd>+<kbd>Z</kbd> 復原。</li>
+    <li><strong>刪內容。</strong> 前兩步都不夠就只能減音符了——重複的段落、太密的裝飾音、聽不太出來的內聲部。</li>
+  </ol>
+
+  <div class="canonical">
+    <p>這首曲子如果要送回 Studio 走 Canonical 流程，請記得：規則要求保留有意義的休止、呼吸與斷奏間隙，不可以為了讓音樂更連續而把真正的休止填掉（MASTER_RULES §7）；語法層的優化必須保留每一個音的進場（MOBILE_SYNTAX §8）。音長規則改掉的休止，Studio 會當成你的編輯重新驗證。</p>
+  </div>
+
+  <p>從 MIDI 匯入的譜值得先跑一次無損壓縮：匯入器寫出來的是好改的直白寫法，不是最省字的寫法。</p>
+
+  <h2 id="tracks">為什麼只有 6 軌進得了遊戲</h2>
+
+  <div class="canonical">
+    <p>遊戲的作曲最多 <strong>6 個角色</strong>（一開始 3 個，可以擴充到 6 個），每個角色最多 2,400 字元（MOBILE_SYNTAX §2）。Canonical 把這六個角色稱為 Melody、Chord1–Chord5；Melody + Chord1 + Chord2 是單人三和音樂器的目標（Core3），Chord3–Chord5 預設是豐富化（MASTER_RULES §5）。</p>
+  </div>
+
+  <p>工作坊的分頁名稱對應的是主旋律、和弦1～和弦5。工作坊開得出 15 個分頁，第 7 個以後（輔助1 起）是<strong>工作用的</strong>——編曲時暫放素材、比較兩個版本、把 MIDI 匯入的東西先攤開再挑。剪貼簿的「複製」、「送回 Studio 驗證」、「匯出 WAV」與「MP4影片製作」都<strong>只用前 6 軌</strong>（複製、送回與 WAV 在後面幾軌有內容時會提醒你哪幾軌沒帶上）；「檔案」的匯出則會連同所有分頁一起存成工作檔。</p>
+
+  <p>分頁的位置就是它的身分，用拖曳分頁把你要的六軌搬到前面就行，內容和樂器會一起搬。</p>
+
+  <h2 id="tempo">速度 t 是整首共用的嗎</h2>
+
+  <p>在遊戲裡不能這樣假設。Canonical 的規定如下：</p>
+
+  <div class="canonical">
+    <p>Tempo 的官方輸入範圍是 32–255。曲中或多個 Tempo 指令本身不算違規，但有同步漂移的風險；在遊戲內測試證明可以放寬之前，交付時的專案規則是（MOBILE_SYNTAX §7）：</p>
+    <ol>
+      <li>每一個非空的角色都以<strong>同一個起始 Tempo</strong> 開頭；</li>
+      <li>曲中有變速時，每一個非空的角色都在<strong>相同的音樂位置</strong>帶著<strong>同一份完整的 Tempo Map</strong>；</li>
+      <li>完全空白的角色維持空白，不為了通過檢查而塞入 Tempo 或休止；</li>
+      <li>這條「每軌重複」是為了同步安全的專案規則，<strong>不是</strong>官方說引擎技術上要求每一軌都有 Tempo。</li>
+    </ol>
+    <p>只有一個角色帶曲中變速時，遊戲會不會保持同步，目前是 PENDING_IN_GAME（MOBILE_SYNTAX §7）。</p>
+  </div>
+
+  <div class="workshop-only">
+    <p><strong>工作坊專用：</strong>工作坊試聽時，會把所有分頁裡的 <code>t</code> 合成<strong>一條</strong>速度線套用到每一軌（同一個位置有兩個分頁都寫了 <code>t</code> 時，以前面的分頁為準；整首都沒寫就是 120），超出 32–255 的值會被夾進範圍。所以在工作坊裡「只有第一軌寫 <code>t</code>」聽起來也會整首一起變速——這<strong>不</strong>代表遊戲裡也一樣。從 MIDI 匯入時，速度只寫進匯入的第一軌；「送回 Studio 驗證」會照每一軌原本寫的內容送出，不會替你把速度複製到其他軌，之後由 Studio 重新驗證。</p>
+  </div>
+
+  <p>手寫的做法見 <a href="./mml.html#tempo">MML 教學</a>。</p>
+
+  <h2 id="chord">和弦要怎麼寫</h2>
+
+  <p>MML 的每一軌是一條依序往下走的音列，所以和弦要<strong>拆到不同軌</strong>：主旋律走旋律，和弦軌各按一個音。</p>
+
+  <div class="canonical">
+    <p>遊戲的樂器分成一次只奏一個音的樂器，和最多同時三個音的三和音樂器（MOBILE_SYNTAX §2）。Canonical 以 Melody + Chord1 + Chord2 作為單人三和音樂器的完整編曲目標（MASTER_RULES §5）。</p>
+  </div>
+
+  <div class="workshop-only">
+    <p><strong>工作坊專用：</strong>工作坊不支援 <code>[ceg]4</code> 這種方括號和弦寫法。舊譜貼進來時，<code>[</code> 和 <code>]</code> 會被當成看不懂的字元提示出來、播放時略過，裡面的音名則<strong>照單音依序讀</strong>——所以 <code>[ceg]</code> 會變成「do mi sol 三個音依序響」而不是一個和弦；「複製」出去或送回 Studio 時，這些看不懂的字元會被拿掉。要還原成和聲，把那幾個音分別放到不同的和弦軌。</p>
+  </div>
+
+  <h2 id="triplet">三連音採得進來嗎</h2>
+
+  <p><strong>手寫可以，從檔案匯入不行。</strong></p>
+
+  <div class="workshop-only">
+    <p><strong>工作坊專用：</strong>手寫 MML 直接寫 <code>c12 d12 e12</code> 就是三連音，工作坊播放時時值正確，「複製」時也會照原樣保留。但工作坊的 <strong>MIDI 匯入</strong>會把每個音的進場與結束都對齊到三十二分音符的格子上，<strong>沒有</strong>另外辨認三連音，所以匯入的三連音會被拉到最近的格子、位置會歪掉；MusicXML 匯入遇到連音時會直接提醒你「位置會歪掉」。鋼琴捲軸也只能在格子上畫音，沒有「設成三連音」的功能。</p>
+  </div>
+
+  <div class="canonical">
+    <p>1–64 之間的音長數字都在官方範圍內，不能只因為不是 2 的次方就說遊戲不吃；Final 偏好 1/2/4/8/16/32/64，其他整數音長（例如 <code>12</code>、<code>24</code>）屬於「謹慎使用」，要來源的節奏真的需要、而且驗證確認沒有漂移（MOBILE_SYNTAX §3）。<code>3.</code>、<code>6.</code>、<code>12.</code>、<code>24.</code>、<code>48.</code> 這類附點寫法在 Final 裡禁止（MOBILE_SYNTAX §4）。</p>
+  </div>
+
+  <h2 id="mobile">手機可以用嗎</h2>
+
+  <p><strong>可以，而且是完整的編輯器。</strong> 畫音符、搬音符、改長度、插刪小節、換樂器、匯出，手機上一樣做得到，只是做法不同：輕觸選音符、長按拖著搬；選中之後畫面底部會浮出一塊面板，位置與長度用桿子推，音符選單也在那上面。</p>
+
+  <p>完整的手指操作在<a href="./mobile.html">手機與平板</a>。長譜在桌機上會快一些，但短譜、改幾個音、在外面臨時想到什麼要調，手機完全夠用。</p>
+
+  <h2 id="studio">工作坊改好的譜怎麼回到 Studio</h2>
+
+  <p>按標題列的<strong>「送回 Studio 驗證」</strong>。會先打開一個框，列出要交給 Studio 的六軌 MML（遊戲讀的第 1–6 軌），以及轉換時要注意的地方（例如 <code>n</code> 音高的換算、Studio 讀不懂而被拿掉的字元、第 7 軌以後不會送出）。確認後按「送到 Studio」，頁面會切到 Studio。</p>
+
+  <p>Studio 那邊會出現一塊「工作坊編輯（未經 Studio 驗證）」的面板，顯示收到的 MML，讓你選：</p>
+
+  <ul>
+    <li><strong>匯入為「某專案」的候選</strong>——預設是你當初開啟的那個 Studio 專案；</li>
+    <li><strong>新增專案並匯入</strong>；</li>
+    <li><strong>捨棄</strong>。</li>
+  </ul>
+
+  <p>匯入後，它成為該專案的<strong>衍生候選</strong>，由 Studio 重新做 MML 技術驗證；先前的審核與接受不會沿用，匯入本身不讓任何 Gate 通過，也不會因此變成 VALIDATED。送出的內容只在這個瀏覽器裡暫放、只能讀一次，超過 24 小時沒處理就會失效，要回工作坊再送一次。</p>
+
+  <p>反方向也可以：按<strong>「從 Studio 開啟」</strong>，選 Studio 專案與 MML 來源（Final／交付 MML、目前候選、Source-Faithful Baseline 或已接受的前一版），按「開啟副本」。或是在 Studio 裡按「在工作坊開啟（副本）」。開啟的是<strong>副本</strong>，會取代所有分頁；Studio 裡的專案不會被改動。標題列會標出「來源：Studio「…」· …（副本）」，送回時會用它預選目標專案；不需要時可以按「清除來源標示」。</p>
+
+  <h2 id="unverified">「工作坊編輯（未經 Studio 驗證）」是什麼意思</h2>
+
+  <p>標題列上一直掛著這個標籤，意思是：<strong>在工作坊裡的一切都不經過 Canonical 規則與 Studio 的審核。</strong> 就算是從 Studio 的 Final 開啟的，打開的那一刻起也只是工作坊裡的一份副本。</p>
+
+  <p>工作坊裡聽起來對、字數在範圍內、「複製」時自動修掉了什麼，都只是工作坊自己的檢查與試聽，不是驗證，也不是證據。工作坊裡關於「遊戲吃不吃某種寫法」的提示，是工作坊自己的判斷，不是 Canonical 規則；Canonical 的語法規則以 MOBILE_SYNTAX 為準。</p>
+
+  <div class="canonical">
+    <p>各層的通過狀態彼此獨立（TECHNICAL_PASS、SOURCE_PASS、PLAYER_READBACK_PASS、AUDIO_ALIGNMENT_PASS、MOBILE_ADAPTATION_PASS、IN_GAME_ACCEPTED），低的一層不能冒充高的一層（MASTER_RULES §11）；網站上的播放不是接受的證據（MASTER_RULES §9）。</p>
+  </div>
+
+  <p>要讓工作坊的編輯進入正式流程，唯一的路是<a href="#studio">送回 Studio 驗證</a>，由 Studio 當成新的候選重新驗證、重新審核。</p>
+
+  <h2 id="wav">可以匯出成音訊或影片嗎</h2>
+
+  <p><strong>可以匯出 WAV，沒有 MP3。</strong> 「檔案」框匯出區裡的<strong>「匯出 WAV」</strong>，會用你的音色庫在這台裝置上離線合成遊戲讀的<strong>前 6 軌</strong>，輸出 16-bit WAV；第 7 軌以後有音符的話，框裡會先告訴你哪幾軌不會出現在檔案裡。需要 MP3 的話，請自己用其他軟體轉檔。</p>
+
+  <p>同一區的<strong>「MP4影片製作」</strong>會做一支鋼琴瀑布影片（同樣是前 6 軌），畫面與聲音都在這台裝置用 WebCodecs 產生，畫面樣式可以自己調。</p>
+
+  <p>它們跟「下載」<code>.mid</code>／<code>.mml</code>／<code>.mmi</code> 不一樣：那些交出去的是<strong>樂譜</strong>，這兩個交出去的是<strong>聲音與畫面</strong>，所以要現算、需要先載入音色庫，匯出中可以按取消。</p>
+
+  <div class="note">
+    <p>WAV 與影片裡的聲音來自你的音色庫，<strong>只是聆聽輔助</strong>：不是遊戲音色，也不是 Studio 的證據。</p>
+  </div>
+
+  <div class="note">
+    <p>沒找到答案？看<a href="./editor.html">編輯器入門</a>、<a href="./reference.html">功能說明</a>、<a href="./keys.html">快捷鍵</a>、<a href="./mml.html">MML 教學</a>或 <a href="./midi.html">MIDI 轉 MML</a>。<a href="../index.html">回到工作坊</a>。</p>
+  </div>
+</main>
+<footer>
+  <p>工作坊在 Canonical 驗證流程之外：這裡描述的是工作坊的行為，不是遊戲規則，也不代表任何東西通過 Studio 的驗證。遊戲與交付規則以 Published Canonical 為準。</p>
+  <div class="row"><a href="../index.html">← 工作坊</a><a href="../../../../index.html">MML Studio</a></div>
+</footer>
+<script type="module" src="./guide.mjs"></script>
+</body>
+</html>

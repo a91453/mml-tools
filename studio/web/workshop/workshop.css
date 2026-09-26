@@ -1597,6 +1597,9 @@ button svg.ico + *, button > svg.ico{pointer-events:none}
 #aboutPanel .thanks{margin:0;color:var(--dim);font-size:12.5px;line-height:1.7}
 #aboutPanel .thanks b{color:var(--txt);font-weight:500}
 #aboutPanel .thanks a{color:var(--t2)}
+#aboutPanel h3{margin:0;font-size:13px;color:var(--txt)}
+#aboutPanel .guide-links{margin:0;padding-left:1.2em;font-size:12.5px;line-height:1.9}
+#aboutPanel .guide-links a{color:var(--t2)}
 
 #studioBox .card{width:min(600px,94vw)}
 #studioBox .sect{display:flex;flex-direction:column;gap:6px}
