@@ -6,6 +6,7 @@ import { SYNTH_READY_TIMEOUT_MS } from '../web/preview/bank-check.mjs';
 import { countBankSends } from './bank-sends.mjs';
 import { holdNextBankCheck } from './bank-check-hold.mjs';
 import { readyGate, withholdSynthReady } from './synth-ready.mjs';
+import { workshopShown } from './workshop-ready.mjs';
 
 // The Workshop editor (studio/web/workshop/), end to end in a real browser:
 // open a Studio MML as a copy, zh-Hant only, dark/light theme, a bank
@@ -131,7 +132,7 @@ export async function runWorkshopChecks({ page, base, idle, file, screenshot, pr
     return slot === 'delivery' ? w.deliveryMml : w.assets[slot].content;
   }, { projectId, slot });
   await Promise.all([page.waitForURL(/\/studio\/web\/workshop\/index\.html/), link.click()]);
-  await page.locator('#unverified').waitFor();
+  await workshopShown(page);
   const expected = source.replace(/^MML@/i, '').replace(/;\s*$/, '').split(',').map(bare);
   await page.waitForFunction(first => document.querySelector('.pane textarea')?.value.replace(/\s+/g, '') === first, expected[0]);
   assert.deepEqual((await texts(page)).slice(0, expected.length).map(bare), expected, 'the Studio MML is loaded unchanged (no Nxx in it)');
@@ -169,7 +170,7 @@ export async function runWorkshopChecks({ page, base, idle, file, screenshot, pr
   const light = await background();
   assert.notEqual(light, 'rgb(13, 26, 27)');
   await page.locator('#theme').selectOption('dark');
-  await page.reload(); await page.locator('#unverified').waitFor();
+  await page.reload(); await workshopShown(page);
   assert.equal(await page.evaluate(() => document.documentElement.dataset.theme ?? 'dark'), 'dark', 'the stored theme is applied on load');
   assert.equal(await page.evaluate(() => document.documentElement.lang), 'zh-Hant', 'a stored language is ignored');
   assert.equal((await page.locator('#studioOpen').textContent()).trim(), '從 Studio 開啟');
@@ -313,7 +314,7 @@ export async function runWorkshopChecks({ page, base, idle, file, screenshot, pr
     };
   });
   await page.evaluate(() => { sessionStorage.setItem('workshopRefuseBankStore', 'yes'); sessionStorage.setItem('workshopHoldProcessor', 'yes'); });
-  await page.reload(); await page.locator('#unverified').waitFor();
+  await page.reload(); await workshopShown(page);
   // The processor is asked for only after the engine library has loaded and
   // the audio context exists. In CI (desktop Chromium, run 36145326999) that
   // once did not happen within 30 s and passed on a re-run; it has not been
@@ -363,7 +364,7 @@ export async function runWorkshopChecks({ page, base, idle, file, screenshot, pr
     window.setTimeout = (callback, ms, ...rest) => realSetTimeout(callback, ms === limit ? 300 : ms, ...rest);
   }, SYNTH_READY_TIMEOUT_MS);
   await page.evaluate(() => sessionStorage.setItem('workshopShortReadyLimit', 'yes'));
-  await page.reload(); await page.locator('#unverified').waitFor();
+  await page.reload(); await workshopShown(page);
   // The limit counts only while the audio context runs, and one made as the
   // page loads may wait for a user gesture first: a tap on a button that
   // only resumes it, as the page's own play or audition would.
@@ -390,7 +391,7 @@ export async function runWorkshopChecks({ page, base, idle, file, screenshot, pr
   assert.equal(await page.locator('#dlsName').textContent(), await t('ui.bankFailed'), 'the pick ends as a failed load');
   assert.equal(await readySends(), 0, 'no bank is sent to a synth that is not ready');
   await withholdSynthReady(page, false);
-  await page.reload(); await page.locator('#unverified').waitFor();
+  await page.reload(); await workshopShown(page);
   await bankLoaded('saw.sf2');
   await page.locator('#play:enabled').waitFor();
 
@@ -429,7 +430,7 @@ export async function runWorkshopChecks({ page, base, idle, file, screenshot, pr
   const onBootConsole = message => { if (message.type() === 'warning') bootWarnings.push(message.text()); };
   page.on('console', onBootConsole);
   await page.evaluate(() => sessionStorage.setItem('workshopHoldBankSend', 'yes'));
-  await page.reload(); await page.locator('#unverified').waitFor();
+  await page.reload(); await workshopShown(page);
   await page.waitForFunction(() => window.bankSendHold?.held === 1);
   await page.evaluate(() => {
     const label = document.querySelector('#dlsName');
@@ -542,7 +543,7 @@ export async function runWorkshopChecks({ page, base, idle, file, screenshot, pr
   // An export renders the bank the page plays, even when the store no longer
   // keeps it (another tab removed or replaced it): a bank read from the store
   // at boot is kept as the bytes the synth was given, not read back later.
-  await page.reload(); await page.locator('#unverified').waitFor();
+  await page.reload(); await workshopShown(page);
   await bankLoaded('saw.sf2');
   await page.evaluate(async () => (await import('../preview/soundbank-store.mjs')).clearBank());
   await command('#file');

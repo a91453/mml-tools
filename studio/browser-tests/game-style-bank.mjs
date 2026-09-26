@@ -5,6 +5,7 @@ import { encodeListenLink } from '../web/listen-link.mjs';
 import { GAME_STYLE_BANK, GAME_STYLE_DEF, GAME_STYLE_DOWNLOAD_NOTICE } from '../web/preview/game-style-bank.mjs';
 import { syntheticUpstreamBank } from '../tests/support/synthetic-soundbank.mjs';
 import { GAME_STYLE_PROGRAMS } from '../web/preview/instruments.mjs';
+import { watchPage, workshopShown } from './workshop-ready.mjs';
 
 // The game-style bank through the real page and engine, in a browser context
 // of its own. The bank is never in this repository and the test servers have
@@ -159,6 +160,7 @@ export async function runWorkshopGameStyleChecks({ browser, base, profile }) {
     }
     const page = await context.newPage();
     page.on('pageerror', error => errors.push(error.message));
+    watchPage(page);
     const url = new URL('studio/web/workshop/index.html', base).href;
     const label = () => page.locator('#dlsName').textContent();
     const loaded = () => page.waitForFunction(() => /^遊戲風格音色 · [\d.]+ MB · 2 個音色/.test(document.querySelector('#dlsName')?.textContent ?? ''), null, { timeout: 60000 });
@@ -166,7 +168,7 @@ export async function runWorkshopGameStyleChecks({ browser, base, profile }) {
 
     // A server without the bank says so and loads nothing.
     mode = 'absent';
-    await page.goto(url); await page.locator('#unverified').waitFor();
+    await page.goto(url); await workshopShown(page);
     // The engine boots on the bank load itself, as on a phone it may only
     // after a gesture.
     await page.evaluate(() => document.querySelector('#gameStyleBank').click());
@@ -191,7 +193,7 @@ export async function runWorkshopGameStyleChecks({ browser, base, profile }) {
     await page.locator('#stop').click();
 
     // The next visit: loaded from this device, nothing downloaded.
-    await page.reload(); await page.locator('#unverified').waitFor();
+    await page.reload(); await workshopShown(page);
     await loaded();
     assert.equal(requests.length, 4, 'a kept bank is never downloaded again');
     assert.deepEqual(errors, []);
