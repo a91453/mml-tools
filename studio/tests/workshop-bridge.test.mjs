@@ -189,11 +189,9 @@ test('the mirrored Studio limits are the effective ruleset\'s, and every send wa
     volumeMin: s.volumeMin, volumeMax: s.volumeMax,
     numericNoteMin: s.numericNoteMin, numericNoteMax: s.numericNoteMax,
   });
-  for (const tag of ['zh-Hant', 'en', 'ja', 'ko']) {
-    const table = (await import(`../web/workshop/i18n/${tag}.mjs`)).default;
-    for (const code of bridge.SEND_WARNING_CODES) assert.equal(typeof table[`studio.warn.${code}`], 'string', `${tag} studio.warn.${code}`);
-    for (const key of ['studio.nWarning', 'studio.nLowWarning']) assert.equal(typeof table[key], 'string', `${tag} ${key}`);
-  }
+  const table = (await import('../web/workshop/i18n/zh-Hant.mjs')).default;
+  for (const code of bridge.SEND_WARNING_CODES) assert.equal(typeof table[`studio.warn.${code}`], 'string', `studio.warn.${code}`);
+  for (const key of ['studio.nWarning', 'studio.nLowWarning']) assert.equal(typeof table[key], 'string', key);
   const reported = new Set();
   for (const text of workshopTracks(400, 11, true)) for (const w of workshopToStudio([text]).warnings) reported.add(w.code);
   for (const code of reported) assert.ok(bridge.SEND_WARNING_CODES.includes(code), `${code} is listed`);

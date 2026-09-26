@@ -1,5 +1,5 @@
 // Studio Workshop — ported from the owner's earlier frontend (owner-authorized port).
-// Entry point: language, static text, editor wiring, then the sound engine.
+// Entry point: static text, editor wiring, then the sound engine.
 // Workshop edits sit outside the Canonical/verified pipeline and are never evidence.
 import { $, say } from "./util.mjs";
 import * as i18n from "./i18n.mjs";
@@ -8,9 +8,7 @@ import * as engine from "./engine.mjs";
 import * as ui from "./ui.mjs";
 import * as release from "./release.mjs";
 
-await i18n.use(document.documentElement.lang);
 translatePage(document);
-document.documentElement.removeAttribute("data-i18n-pending");
 
 $("#log button")?.addEventListener("click", () => { $("#log").style.display = "none"; });
 

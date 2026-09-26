@@ -30,11 +30,6 @@ export function gridSlotAt(x, y, rects) {
 export const indexAfterRemove = (idx, removed, count) =>
   idx > removed ? idx - 1 : Math.min(idx, Math.max(0, count - 1));
 
-export const culturePrefix = () => {
-  const lang = document.documentElement.lang;
-  return lang && lang !== "zh-Hant" ? `/${lang}` : "";
-};
-
 export const DEFAULT_NAME = "score";
 
 // Every extension the import dialog reads, so an imported file's name becomes

@@ -1,6 +1,6 @@
 // Studio main page light/dark theme: every colour token has a dark value, the
-// page keeps Studio's CSP, boot.js applies only the theme (the page stays
-// zh-Hant whatever language the Workshop stores), and the preference is the
+// page keeps Studio's CSP, boot.js applies only the theme (the page is
+// zh-Hant), and the preference is the
 // one the Workshop shares.
 import test from 'node:test';
 import assert from 'node:assert/strict';

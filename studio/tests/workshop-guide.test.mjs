@@ -7,7 +7,6 @@ import { readFile, readdir } from 'node:fs/promises';
 import { existsSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { dirname, resolve } from 'node:path';
-import vm from 'node:vm';
 
 const dir = new URL('../web/workshop/guide/', import.meta.url);
 const PAGES = ['editor', 'reference', 'keys', 'mobile', 'mml', 'midi', 'faq'];
@@ -24,17 +23,17 @@ test('the seven pages exist, and guide.mjs knows exactly them', async () => {
   assert.match(await read('guide.mjs'), new RegExp(`export const PAGES = \\[${PAGES.map(p => `"${p}"`).join(', ')}\\]`));
 });
 
-test('every page is zh-Hant only: no language picker, no translation hook, no translated copies', async () => {
+test('every page is zh-Hant only: no language picker, no translation hook, no language notice', async () => {
   const files = await readdir(dir);
   assert.ok(!files.includes('i18n'), 'no translation tables');
   for (const name of PAGES) {
     const html = await read(`${name}.html`);
     assert.match(html, /^<!doctype html>\n<html lang="zh-Hant">/, name);
     assert.doesNotMatch(html, /data-i18n|<select\b|id="guideLang"/, name);
-    assert.match(html, /<p class="zh-only" id="zhOnly" hidden>目前只有中文版<\/p>/, `${name} carries the zh-only line, hidden by default`);
+    assert.doesNotMatch(html, /zhOnly|目前只有中文版/, `${name} needs no zh-only line`);
   }
   const script = await read('guide.mjs');
-  assert.doesNotMatch(script, /i18n|import\(/, 'guide.mjs loads no language');
+  assert.doesNotMatch(script, /i18n|import\b|loadUI/, 'guide.mjs loads no language');
   assert.doesNotMatch((await read('boot.js')).replace(/^\s*\/\/.*$/gm, ''), /lang|i18n|navigator/i, 'boot.js applies the theme only');
 });
 
@@ -82,20 +81,6 @@ test('the pages carry none of the removed features', async () => {
     const text = article(await read(`${name}.html`)).replace(/<[^>]+>/g, '');
     assert.doesNotMatch(text, /登入|登出|帳號|分享連結|雲端|OMR|環境音|殘響|lamejs|伺服器存檔|歌唱譜|樂器譜|同步所有樂譜|1600/, name);
   }
-});
-
-test('the zh-only line shows only when the Workshop is set to another language', async () => {
-  const run = async stored => {
-    const notice = { hidden: true };
-    const context = vm.createContext({ document: { body: { dataset: { guide: 'keys' } }, querySelector: selector => (selector === '#zhOnly' ? notice : null) } });
-    const source = (await read('guide.mjs')).replace(/^import \* as storage from "\.\.\/storage\.mjs";$/m, '').replace(/^export /gm, '');
-    vm.runInContext(`const storage = { loadUI: () => (${JSON.stringify(stored)}) };\n${source}`, context);
-    return notice.hidden;
-  };
-  assert.equal(await run(null), true);
-  assert.equal(await run({ lang: 'zh-Hant' }), true);
-  assert.equal(await run({ lang: 'en', theme: 'light' }), false);
-  assert.equal(await run({ lang: 'ko' }), false);
 });
 
 test('the Workshop links to every page from its About panel, and keeps only those guide keys', async () => {

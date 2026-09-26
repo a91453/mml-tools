@@ -2,7 +2,7 @@
 // inline script). Applies the Workshop's theme from the preference Studio and
 // the Workshop share (`studio-workshop/ui`), with the Workshop's own rule:
 // dark unless light is chosen, or nothing is chosen and the system prefers
-// light. The pages are zh-Hant only, whatever language the Workshop uses.
+// light. The pages are zh-Hant only.
 (function () {
   var ui = {};
   try { ui = JSON.parse(localStorage.getItem("studio-workshop/ui") || "{}") || {}; } catch (e) { ui = {}; }

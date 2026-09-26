@@ -1558,7 +1558,6 @@ body:is(.no-status,
 }
 
 /* ─── Studio Workshop additions ─── */
-html[data-i18n-pending] body{visibility:hidden}
 .sprite{position:absolute;width:0;height:0;overflow:hidden}
 svg.ico{
   width:1em; height:1em; flex:0 0 auto; vertical-align:-.125em;

@@ -1,8 +1,7 @@
 // Studio main page first paint (a classic script: Studio's CSP allows no
 // inline script). Applies the stored theme before the page is drawn. The
 // preference is the one the Workshop shares (`studio-workshop/ui`); only its
-// theme is read here. The Studio page is zh-Hant whatever language the
-// Workshop stores.
+// theme is read here. The Studio page is zh-Hant.
 (function () {
   var root = document.documentElement;
   var ui = {};

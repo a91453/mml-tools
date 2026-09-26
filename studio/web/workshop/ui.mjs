@@ -41,7 +41,6 @@ import * as marks from "./marks.mjs";
 import * as clipboard from "./clipboard.mjs";
 import * as filebox from "./filebox.mjs";
 import * as savebox from "./savebox.mjs";
-import * as lang from "./lang.mjs";
 import * as select from "./select.mjs";
 import * as storage from "./storage.mjs";
 import { setIcon } from "./icons.mjs";
@@ -3373,16 +3372,6 @@ export function init() {
     e.preventDefault();
     savebox.quickSave();
   });
-
-  lang.init(() => ({ ...tracks.snapshot(), meters: meters.stored(), marks: marks.stored() }));
-
-  const stashed = lang.takeHandoff();
-  if (stashed?.snapshot) {
-    tracks.applySnapshot(stashed.snapshot);
-    if (stashed.snapshot.meters) meters.set(stashed.snapshot.meters);
-    if (stashed.snapshot.marks) marks.set(stashed.snapshot.marks);
-    refresh();
-  }
 
   studio.init({ getTexts: tracks.trackTexts, load: onStudioText });
 
