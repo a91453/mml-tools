@@ -3366,6 +3366,9 @@ export function init() {
   savebox.init({
     onOpen: () => {
       if (player.isPlaying()) { selBeforePlay = null; player.stop(); }
+      // A library song is not the Studio copy that was open before it: its
+      // source label (and the project Studio preselects on the way back) goes.
+      studio.clearOrigin();
       setBarsPerLine(0, false);
       refresh();
     },
