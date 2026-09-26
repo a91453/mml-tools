@@ -18,6 +18,7 @@ import { DEFAULT_BANK_UPSTREAM } from '../web/preview/default-bank.mjs';
 import { runWorkshopChecks } from './workshop.mjs';
 import { runWorkshopUpdateChecks } from './workshop-update.mjs';
 import { runWorkerBootChecks } from './worker-boot.mjs';
+import { runCommunityFormatChecks } from './community-formats.mjs';
 
 // A browser build that is not installed is neither a pass nor a failed
 // assertion, so it is recorded as NOT_RUN with its reason rather than being
@@ -184,6 +185,7 @@ try {
       // It publishes a second release through a real Service Worker update,
       // proven here for Chromium only.
       if(profile.engineName==='chromium')await runWorkshopUpdateChecks({browser});
+      await runCommunityFormatChecks({browser,base,profile});
       await runDefaultBankChecks({browser,base,profile});
       await runGameStyleBankChecks({browser,base,profile});
       await runWorkshopGameStyleChecks({browser,base,profile});
