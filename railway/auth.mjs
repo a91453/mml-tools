@@ -166,8 +166,11 @@ export function createAuth({ origin, ownerPassword, database, allowedRedirectHos
     requireValue(params.get('response_type') === 'code', 'unsupported_response_type', 'Only authorization code flow is supported');
     requireValue(params.get('code_challenge_method') === 'S256' && /^[A-Za-z0-9_-]{43}$/.test(params.get('code_challenge') ?? ''), 'invalid_request', 'PKCE S256 is required');
     checkResource(params.get('resource')); checkScope(params.get('scope'));
+    // state is opaque to this server and returned verbatim. Gemini's runs to
+    // about 1.3 KB, so the bound is 4 KB: still finite for the pending-login
+    // map, the stored code record and the callback URL.
     const state = params.get('state') ?? '';
-    requireValue(state.length <= 1024, 'invalid_request', 'State too long');
+    requireValue(state.length <= 4096, 'invalid_request', 'State too long');
     for (const [id, flow] of flows) if (flow.expires <= now()) flows.delete(id);
     requireValue(flows.size < 128, 'temporarily_unavailable', 'Too many pending logins', 429);
     const flowId = opaque(), csrf = opaque();
