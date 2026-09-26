@@ -17,6 +17,7 @@ import { runGameStyleBankChecks, runWorkshopGameStyleChecks } from './game-style
 import { DEFAULT_BANK_UPSTREAM } from '../web/preview/default-bank.mjs';
 import { runWorkshopChecks } from './workshop.mjs';
 import { runWorkshopUpdateChecks } from './workshop-update.mjs';
+import { watchPage } from './workshop-ready.mjs';
 import { runWorkerBootChecks } from './worker-boot.mjs';
 import { runStudioThemeChecks } from './web-theme.mjs';
 import { runCommunityFormatChecks } from './community-formats.mjs';
@@ -56,7 +57,7 @@ try {
       // default bank at all (the no-external-request check below says so); its
       // download is exercised in a context of its own (default-bank.mjs).
       await context.route(DEFAULT_BANK_UPSTREAM.url,route=>route.abort('blockedbyclient'));
-      page=await context.newPage();page.on('pageerror',e=>errors.push(e.message));page.on('request',r=>requests.push({url:r.url(),method:r.method()}));
+      page=await context.newPage();page.on('pageerror',e=>errors.push(e.message));watchPage(page);page.on('request',r=>requests.push({url:r.url(),method:r.method()}));
       // aria-busy false is a claim that what is on screen is settled, so a gate
       // still reading ANALYSIS_RUNNING at that moment is the app contradicting
       // itself -- a failed or abandoned analysis leaving its placeholder behind

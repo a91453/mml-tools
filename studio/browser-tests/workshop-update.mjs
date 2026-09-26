@@ -5,6 +5,7 @@ import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { BasicSoundBank } from 'spessasynth_core';
 import { serveStudio } from '../../scripts/serve-studio-web.mjs';
+import { watchPage, workshopShown } from './workshop-ready.mjs';
 
 // The Workshop and a new Studio Web release (studio/web/workshop/release.mjs),
 // end to end through the real Service Worker. The check serves its own copy of
@@ -54,8 +55,9 @@ export async function runWorkshopUpdateChecks({ browser }) {
 
     const workshop = await context.newPage();
     workshop.on('pageerror', e => errors.push(`workshop: ${e.message}`));
+    watchPage(workshop);
     await workshop.goto(`${base}${WORKSHOP}`);
-    await workshop.locator('#unverified').waitFor();
+    await workshopShown(workshop);
     await workshop.waitForFunction(() => navigator.serviceWorker.controller !== null);
     assert.equal(await workshop.locator('#pwaUpdate').isHidden(), true, 'no release is offered on a first visit');
     // A bank (SpessaSynth's own one-preset saw wave), so the WAV export can open.
@@ -95,7 +97,7 @@ export async function runWorkshopUpdateChecks({ browser }) {
     assert.equal(await workshop.locator('#studioSendBox.on').count(), 0, 'a stale Workshop does not write into Studio');
 
     await Promise.all([workshop.waitForEvent('load'), workshop.locator('#pwaUpdate').click()]);
-    await workshop.locator('#unverified').waitFor();
+    await workshopShown(workshop);
     assert.equal(await workshop.locator('#pwaUpdate').isHidden(), true, 'the reloaded Workshop runs the current release');
 
     // ── unsaved edits hold a release back; autosave lets it through ────────
@@ -119,7 +121,7 @@ export async function runWorkshopUpdateChecks({ browser }) {
     await ask(studio);
     await studio.locator('#apply-update').waitFor({ state: 'visible' });
     await Promise.all([workshop.waitForEvent('load'), workshop.locator('#pwaUpdate').click()]);
-    await workshop.locator('#unverified').waitFor();
+    await workshopShown(workshop);
     assert.equal(await workshop.locator('#pwaUpdate').isHidden(), true);
     await studio.waitForFunction(() => document.querySelector('#message')?.textContent.includes('其他分頁套用新版'));
     assert.equal(await studio.locator('#apply-update').isHidden(), true, 'the Studio tab is stale, not offered the release again');
