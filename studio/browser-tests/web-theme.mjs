@@ -4,7 +4,7 @@ import assert from 'node:assert/strict';
 // its own with a dark-preferring, Japanese-language browser: the page follows
 // the system before first paint, switches in place, keeps a chosen theme
 // across a reload, follows the system live when asked to, shares the theme
-// with the Workshop, and stays zh-Hant whatever language is stored.
+// with the Workshop, and, like the Workshop, stays zh-Hant in a Japanese browser.
 export async function runStudioThemeChecks({ browser, base, profile }) {
   const context = await browser.newContext({ viewport: profile.viewport, isMobile: profile.isMobile, hasTouch: profile.hasTouch, serviceWorkers: 'block', locale: 'ja-JP', colorScheme: 'dark' });
   const page = await context.newPage();
@@ -48,12 +48,13 @@ export async function runStudioThemeChecks({ browser, base, profile }) {
     await page.waitForFunction(() => document.documentElement.dataset.theme === 'dark');
     assert.ok(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth + 1), 'no horizontal overflow');
 
-    // One theme for Studio and the Workshop; the Workshop's language is its own.
+    // One theme for Studio and the Workshop, both zh-Hant.
     await page.locator('#theme').selectOption('light');
     const workshop = await context.newPage();
     workshop.on('pageerror', error => errors.push(`workshop: ${error.message}`));
     await workshop.goto(`${base}/studio/web/workshop/index.html`);
-    await workshop.waitForFunction(() => !document.documentElement.hasAttribute('data-i18n-pending'));
+    await workshop.locator('#unverified').waitFor();
+    assert.equal(await workshop.evaluate(() => document.documentElement.lang), 'zh-Hant', 'a Japanese browser still gets the zh-Hant Workshop');
     assert.equal(await workshop.evaluate(() => document.documentElement.dataset.theme), 'light', 'the Workshop opens in the theme chosen in Studio');
     await workshop.evaluate(() => localStorage.setItem('studio-workshop/ui', JSON.stringify({ ...JSON.parse(localStorage.getItem('studio-workshop/ui')), theme: 'dark', lang: 'ko' })));
     await workshop.close();
@@ -63,7 +64,7 @@ export async function runStudioThemeChecks({ browser, base, profile }) {
     await page.reload();
     await settled();
     assert.equal(await theme(), 'dark');
-    assert.equal(await page.evaluate(() => document.documentElement.lang), 'zh-Hant', 'the Workshop\'s stored language does not change Studio');
+    assert.equal(await page.evaluate(() => document.documentElement.lang), 'zh-Hant', 'a stored language does not change Studio');
     assert.deepEqual(errors, []);
   } finally {
     await context.close();

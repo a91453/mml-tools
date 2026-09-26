@@ -1,7 +1,7 @@
 // Theme for the Studio main page. Studio and the Workshop share one stored
 // preference, `studio-workshop/ui` (the Workshop's key, workshop/storage.mjs):
 // a theme chosen on either page holds on both. Studio reads and writes only its
-// `theme`; the Workshop's `lang` and other fields are left as they are.
+// `theme`; any other fields are left as they are.
 // boot.js applies the theme before first paint; this module changes it later.
 export const UI_KEY = 'studio-workshop/ui';
 export const THEMES = ['system', 'light', 'dark'];

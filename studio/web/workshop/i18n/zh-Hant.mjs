@@ -642,8 +642,6 @@ export default {
   "html.settings.0.0": "設定",
   "html.settingsClose@title": "關閉（Esc）",
   "html.settingsClose@aria-label": "關閉",
-  "html.settings.1.0.0": "語言 (Language)",
-  "html.settings.1.0.2": "切換語言會重新載入頁面。編輯中的樂譜會保留，復原記錄會清空。",
   "html.settings.1.1.0": "主題",
   "html.theme.0": "深色",
   "html.theme.1": "淺色",

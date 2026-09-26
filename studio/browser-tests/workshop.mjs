@@ -9,13 +9,12 @@ import { readyGate, withholdSynthReady } from './synth-ready.mjs';
 import { workshopShown } from './workshop-ready.mjs';
 
 // The Workshop editor (studio/web/workshop/), end to end in a real browser:
-// open a Studio MML as a copy, language switch, dark/light theme, a bank
+// open a Studio MML as a copy, zh-Hant only, dark/light theme, a bank
 // picked while the engine boots, a note drawn on the piano roll with
 // undo/redo, 3MLE export and re-import, MusicXML import, WAV export through
 // the real SpessaSynth worker, the video dialog's preview, and the hand-back
 // into Studio's ordinary candidate intake. The bank is SpessaSynth's
 // own one-preset saw wave, generated here; no real instrument bank is used.
-// Everything is driven by element ids, so the check is language-independent.
 // Touch profiles tap, and reach the header commands through the phone menu.
 const texts = page => page.evaluate(() => [...document.querySelectorAll('.pane textarea')].map(t => t.value));
 
@@ -141,33 +140,23 @@ export async function runWorkshopChecks({ page, base, idle, file, screenshot, pr
   assert.equal(new URL(page.url()).hash, '', 'the one-shot link is consumed');
   await fitsWidth('the Workshop as opened');
 
-  // ── language switch (reload keeps the score) ─────────────────────────────
+  // ── zh-Hant only: no language picker, and a language an older Workshop ────
+  // stored is ignored. Module-built text (the import dialog's capture modes)
+  // is zh-Hant too. Cancelled, so the score is untouched.
   const before = await texts(page);
-  await command('#gear');
-  await Promise.all([page.waitForEvent('load'), page.locator('#lang').selectOption('ja')]);
-  await workshopShown(page);
-  assert.equal(await page.evaluate(() => document.documentElement.lang), 'ja');
-  assert.equal((await page.locator('#studioOpen').textContent()).trim(), 'Studio から開く');
-  assert.equal(await page.locator('#unverified').textContent(), 'ワークショップ編集（Studio 未検証）');
-  assert.equal(await page.evaluate(() => document.documentElement.hasAttribute('data-i18n-pending')), false);
-  assert.deepEqual(await texts(page), before, 'the score survives a language switch');
-  // Text a module builds is looked up in the page language, which is chosen
-  // only after every module has loaded: the import dialog's capture modes and
-  // its column heading are Japanese too. Cancelled, so the score is untouched.
+  assert.equal(await page.evaluate(() => document.documentElement.lang), 'zh-Hant');
+  assert.equal(await page.locator('#lang').count(), 0, 'no language picker');
+  assert.equal((await page.locator('#studioOpen').textContent()).trim(), '從 Studio 開啟');
+  assert.equal(await page.locator('#unverified').textContent(), '工作坊編輯（未經 Studio 驗證）');
+  await page.evaluate(() => localStorage.setItem('studio-workshop/ui', JSON.stringify({ ...JSON.parse(localStorage.getItem('studio-workshop/ui') || '{}'), lang: 'ja' })));
   await command('#file');
   await page.locator('#midFile').setInputFiles({ name: 'score.musicxml', mimeType: 'application/xml', buffer: Buffer.from(SCORE) });
   await page.locator('#midiBox.on').waitFor();
   assert.deepEqual(await page.locator('#midiRows select').first().locator('option').allTextContents(),
-    ['メロディ優先', '根音優先', 'メロディ + 根音（2 トラック）', 'スマート声部分割（4 トラック）', '和音まるごと取り込み（15 トラック）'], 'the capture modes are in the page language');
-  assert.equal(await page.locator('#colUnit').textContent(), 'チャンネル', 'the column heading is in the page language');
+    ['旋律重視', '根音重視', '旋律 + 根音（2 軌）', '智能分弦（4 軌）', '和弦全採（15 軌）'], 'the capture modes are zh-Hant');
   await page.locator('#midiCancel').click();
   await page.waitForFunction(() => !document.querySelector('#midiBox')?.classList.contains('on'));
   assert.deepEqual(await texts(page), before, 'a cancelled import leaves the score alone');
-  await command('#gear');
-  await Promise.all([page.waitForEvent('load'), page.locator('#lang').selectOption('zh-Hant')]);
-  await workshopShown(page);
-  assert.equal((await page.locator('#studioOpen').textContent()).trim(), '從 Studio 開啟');
-  assert.equal(await page.locator('#unverified').textContent(), '工作坊編輯（未經 Studio 驗證）');
   await fitsWidth('the Workshop in Traditional Chinese');
 
   // ── dark / light theme, applied before first paint on reload ─────────────
@@ -183,6 +172,8 @@ export async function runWorkshopChecks({ page, base, idle, file, screenshot, pr
   await page.locator('#theme').selectOption('dark');
   await page.reload(); await workshopShown(page);
   assert.equal(await page.evaluate(() => document.documentElement.dataset.theme ?? 'dark'), 'dark', 'the stored theme is applied on load');
+  assert.equal(await page.evaluate(() => document.documentElement.lang), 'zh-Hant', 'a stored language is ignored');
+  assert.equal((await page.locator('#studioOpen').textContent()).trim(), '從 Studio 開啟');
   await screenshot('workshop-dark');
 
   // ── the user's bank, kept in Studio's local bank store ────────────────────
