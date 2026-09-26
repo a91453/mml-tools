@@ -51,9 +51,12 @@ function show(state) {
 
 function onClick() {
   if (leaving || !flow) return;
+  // The last write can be the first one to fail. Check the leave blocker only
+  // after it has completed; a previous successful autosave proves nothing
+  // about the edits still in the debounce queue.
+  const saved = storage.flush();
   const why = blocker();
-  if (why) { say(why); return; }
-  storage.flush();
+  if (why) { say(saved ? why : i18n.t("pwa.saveFailed")); return; }
   if (flow.stale) {
     leaving = true;
     location.reload();

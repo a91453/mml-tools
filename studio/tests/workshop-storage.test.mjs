@@ -7,8 +7,9 @@ import assert from 'node:assert/strict';
 
 class MemoryStorage {
   #m = new Map();
+  writeError = null;
   getItem(k) { return this.#m.has(k) ? this.#m.get(k) : null; }
-  setItem(k, v) { this.#m.set(k, String(v)); }
+  setItem(k, v) { if (this.writeError) throw this.writeError; this.#m.set(k, String(v)); }
   removeItem(k) { this.#m.delete(k); }
   keys() { return [...this.#m.keys()]; }
 }
@@ -48,6 +49,67 @@ test('autosave writes one Studio-owned key and reads back a clean state', async 
 
   localStorage.setItem(storage.KEY, '{broken');
   assert.equal(storage.load(), null, 'an unreadable autosave falls back to the default score');
+});
+
+test('a failed autosave reports failure and retries the retained snapshot without another edit', async t => {
+  t.mock.method(console, 'warn', () => {});
+  globalThis.localStorage = new MemoryStorage();
+  const subject = await import('../web/workshop/storage.mjs?retry-failed-save');
+  const saved = [];
+  subject.setSavedHandler(at => saved.push(at));
+  subject.save({ texts: ['t120o4c1'] });
+  assert.equal(subject.flush(), true);
+  localStorage.writeError = new DOMException('Storage full', 'QuotaExceededError');
+  subject.save({ texts: ['t120o4d1'] });
+  assert.equal(subject.flush(), false);
+  assert.equal(subject.isBroken(), true);
+  assert.equal(saved.length, 1, 'a failed write is never announced as saved');
+  assert.deepEqual(JSON.parse(localStorage.getItem(subject.KEY)).texts, ['t120o4c1']);
+  localStorage.writeError = null;
+  assert.equal(subject.flush(), true, 'an explicit retry works without a new save() call');
+  assert.equal(subject.isBroken(), false);
+  assert.deepEqual(subject.load().texts, ['t120o4d1']);
+  assert.equal(saved.length, 2);
+});
+
+test('saving after a failure retains the newest edit and announces the error immediately', async t => {
+  t.mock.method(console, 'warn', () => {});
+  globalThis.localStorage = new MemoryStorage();
+  const subject = await import('../web/workshop/storage.mjs?newest-failed-save');
+  const errors = [];
+  subject.setErrorHandler(error => errors.push({ error, broken: subject.isBroken() }));
+  const error = new DOMException('Storage denied', 'SecurityError');
+  localStorage.writeError = error;
+  subject.save({ texts: ['c1'] });
+  assert.equal(subject.flush(), false);
+  assert.deepEqual(errors, [{ error, broken: true }]);
+  subject.save({ texts: ['d1'] });
+  assert.equal(subject.flush(), false);
+  assert.equal(errors.length, 1, 'an ongoing failure does not repeat the notification on every keystroke');
+  localStorage.writeError = null;
+  subject.flush();
+  assert.deepEqual(subject.load().texts, ['d1'], 'the older failed snapshot never overwrites a newer edit');
+  localStorage.writeError = error;
+  subject.save({ texts: ['e1'] });
+  assert.equal(subject.flush(), false);
+  assert.equal(errors.length, 2, 'a new failure after recovery is announced again');
+});
+
+test('a preference write failure cannot silently turn off subsequent score saves', async t => {
+  t.mock.method(console, 'warn', () => {});
+  globalThis.localStorage = new MemoryStorage();
+  const subject = await import('../web/workshop/storage.mjs?preferences-failed-save');
+  const errors = [];
+  subject.setErrorHandler(error => errors.push(error));
+  localStorage.writeError = new DOMException('Storage full', 'QuotaExceededError');
+  subject.saveUI({ theme: 'light' });
+  assert.equal(subject.isBroken(), true);
+  assert.equal(errors.length, 1);
+  localStorage.writeError = null;
+  subject.save({ texts: ['c1'] });
+  assert.equal(subject.flush(), true);
+  assert.equal(subject.isBroken(), false);
+  assert.deepEqual(subject.load().texts, ['c1']);
 });
 
 test('library snapshots round-trip through the stored format and are size-checked', () => {

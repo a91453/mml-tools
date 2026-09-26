@@ -13,17 +13,22 @@ let timer = null, queued = null, broken = false;
 let autosave = true;
 
 let onSaved = () => {};
+let onError = () => {};
 export const setSavedHandler = fn => { onSaved = fn; };
+export const setErrorHandler = fn => { onError = fn; };
 
 export const isBroken = () => broken;
 
 function guard(fn, fallback) {
-  if (broken) return fallback;
   try {
     return fn();
   } catch (err) {
+    const firstFailure = !broken;
     broken = true;
-    console.warn("[Workshop] localStorage 不能用，這次不暫存:", err);
+    if (firstFailure) {
+      console.warn("[Workshop] localStorage 不能用，這次不暫存:", err);
+      onError(err);
+    }
     return fallback;
   }
 }
@@ -63,18 +68,30 @@ export function save(state) {
 
 export function flush() {
   clearTimeout(timer); timer = null;
-  if (!autosave || !queued) return;
+  // With autosave off, the caller must check whether the song is saved in the
+  // library before leaving. With it on, only a completed write is success.
+  if (!autosave) return true;
+  if (!queued) return !broken;
   const state = queued;
-  queued = null;
   const at = Date.now();
-  guard(() => localStorage.setItem(KEY, JSON.stringify({ v: VERSION, at, ...state })));
-  if (!broken) onSaved(at);
+  const saved = guard(() => {
+    localStorage.setItem(KEY, JSON.stringify({ v: VERSION, at, ...state }));
+    return true;
+  }, false);
+  if (!saved) return false; // Keep the snapshot for a retry or a newer edit.
+  queued = null;
+  broken = false;
+  onSaved(at);
+  return true;
 }
 
 export function clear() {
   clearTimeout(timer); timer = null; queued = null;
-  guard(() => localStorage.removeItem(KEY));
+  const cleared = guard(() => { localStorage.removeItem(KEY); return true; }, false);
+  if (!cleared) return false;
+  broken = false;
   onSaved(null);
+  return true;
 }
 
 export const isAutosaveOn = () => autosave;

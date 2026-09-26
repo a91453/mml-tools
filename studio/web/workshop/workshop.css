@@ -802,6 +802,8 @@ body.hl-debug .tarow textarea{-webkit-text-fill-color:rgba(255,60,60,.55)}
 .status .k{color:var(--dimmer)}
 .status .bad{color:var(--warn)}
 .status .store{margin-left:auto;color:var(--dimmer)}
+.status .store.bad{color:var(--warn)}
+.status #storeRetry{width:auto;padding:3px 8px;font-size:inherit}
 .status .engine{color:var(--dimmer)}
 .pill{
     display:inline-flex;align-items:center;gap:6px;
@@ -1361,7 +1363,11 @@ body.no-editor .tarow{display:none}
 body.no-editor main{flex:0 0 auto!important}
 body.no-editor #splitter{display:none}
 body:is(.no-status,
-.kbd) #status{display:none}
+.kbd) #status:not(.store-failed){display:none}
+/* Keep the failure and recovery action visible even while typing or when the
+   status row is collapsed. The usual view preference resumes after recovery. */
+body:is(.no-status,
+.kbd) #status.store-failed > :not(#storeState):not(#storeRetry){display:none}
 }
 #lensLbl{
     background:none; border:0; padding:0 2px;
