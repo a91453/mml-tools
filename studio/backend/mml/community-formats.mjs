@@ -299,15 +299,18 @@ function readMmi(text) {
   const head = /^\s*(\d+)\s*\/\s*(\d+)\s*$/.exec(time);
   const positions = [];
   // An .mmi block is one instrument with up to three parts (melody and two
-  // chords, MML@a,b,c;). Its written parts take consecutive positions and its
-  // unused part slots take none; a block with nothing written keeps its one
-  // position, so an empty track between two others stays where it was.
+  // chords, MML@a,b,c;). Every part keeps its position, an empty one inside
+  // the block included (MML@a,,c; is three positions, c stays third); only
+  // the block's trailing empty parts are dropped (MML@a,,; is one position).
+  // A block with nothing written keeps its first position, so an empty track
+  // between two others stays where it was.
   blocks.forEach((block, bi) => {
     const parts = splitWrapped(block.mml);
-    const written = parts.map((part, k) => ({ part, k })).filter(({ part }) => part);
+    let last = parts.length;
+    while (last > 1 && !parts[last - 1]) last--;
+    const kept = parts.slice(0, last);
     const name = block.name || `Track${bi + 1}`;
-    if (!written.length) positions.push({ text: '', label: name, program: block.program, channel: null });
-    for (const { part, k } of written) positions.push({ text: part, label: written.length > 1 || k > 0 ? `${name} #${k + 1}` : name, program: block.program, channel: null });
+    kept.forEach((part, k) => positions.push({ text: part, label: kept.length > 1 ? `${name} #${k + 1}` : name, program: block.program, channel: null }));
   });
   if (positions.some(position => /\s/.test(position.text))) warnings.push('COMMUNITY_WHITESPACE_IN_TRACK');
   return assemble('mmi', positions, {

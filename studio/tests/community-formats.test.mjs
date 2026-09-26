@@ -76,7 +76,7 @@ test('.mml: an empty channel keeps its position; wrapped lines are joined; other
   assert.ok(asset.errors.some(error => /空白/.test(error.message)), 'the parser reports the whitespace');
 });
 
-test('.mmi: a block\'s written parts take consecutive positions, an empty block keeps its place, meter changes are reported', () => {
+test('.mmi: every block keeps its place, meter changes are reported', () => {
   const file = toMmi([texts[0], '', texts[2]], { programs: [24, 0, 40], meters: [{ tick: 0, num: 4, den: 4 }, { tick: 3840, num: 3, den: 4 }] });
   const read = readCommunityMML(file);
   assert.equal(read.format, '.mmi');
@@ -87,6 +87,24 @@ test('.mmi: a block\'s written parts take consecutive positions, an empty block 
   const block = readCommunityMML(pc);
   assert.equal(block.mml, 'MML@o4c,o3e,o3g,,,;', 'a three-part block fills three positions');
   assert.deepEqual(block.tracks.slice(0, 3).map(t => t.label), ['Lute #1', 'Lute #2', 'Lute #3']);
+});
+
+test('.mmi: an empty part inside a block keeps its position; only the block\'s trailing empty parts are dropped', () => {
+  // Regression: the middle part used to be skipped, so the third part moved
+  // from Chord2 to Chord1 without a word.
+  const gap = readCommunityMML('[mml-score]\r\nmml-track=MML@t120o4c4,,t120o3e4;\r\nname=Lute\r\n');
+  assert.equal(gap.mml, 'MML@t120o4c4,,t120o3e4,,,;');
+  assert.deepEqual(gap.tracks.slice(0, 3).map(t => [t.label, t.empty]), [['Lute #1', false], ['Lute #2', true], ['Lute #3', false]]);
+  // The same as the 3MLE .mml whose Channel2 is empty.
+  assert.equal(readCommunityMML('[Settings]\r\n[Channel1]\r\nt120o4c4\r\n[Channel2]\r\n\r\n[Channel3]\r\nt120o3e4\r\n').mml, gap.mml);
+  // Trailing empty parts of a block take no position: the next block follows on.
+  const trailing = readCommunityMML('[mml-score]\r\nmml-track=MML@o4c,,;\r\nname=A\r\nmml-track=MML@o3e,o3g;\r\nname=B\r\n');
+  assert.equal(trailing.mml, 'MML@o4c,o3e,o3g,,,;');
+  assert.deepEqual(trailing.tracks.slice(0, 3).map(t => t.label), ['A', 'B #1', 'B #2']);
+  // Kept positions count toward the six slots: three a,,c blocks are nine.
+  const nine = '[mml-score]\r\n' + ['A', 'B', 'C'].map(n => `mml-track=MML@o4c,,o4e;\r\nname=${n}\r\n`).join('');
+  assert.throws(() => readCommunityMML(nine), /UNSUPPORTED: \.mmi file lays out 9 tracks \(6 non-empty\); Studio reads six role slots and does not drop tracks/);
+  assert.equal(readCommunityMML(nine.replace(/mml-track=MML@o4c,,o4e;\r\nname=C\r\n$/, '')).mml, 'MML@o4c,,o4e,o4c,,o4e;');
 });
 
 test('a file that cannot be laid out as six role slots is refused, not cut or rewritten', () => {
