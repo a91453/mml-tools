@@ -22,15 +22,12 @@
 //     (readback.mjs); that capture is about this engine, not the game.
 import { buildSchedule, indexAt, soundingAt } from './schedule.mjs';
 import { MAX_CAPTURED_EVENTS, READBACK_KIND, READBACK_SCOPE } from './readback.mjs';
-import { uniformProgram } from './instruments.mjs';
+import { drumNotesOf, isUsablePreset, soundingPitch, uniformProgram } from './instruments.mjs';
 import { BANK_LOAD_TIMEOUT_MS, SYNTH_READY_TIMEOUT_MS, addSoundBankOrFail, synthReadyOrFail } from './bank-check.mjs';
 
 export const LOOKAHEAD_SEC = 0.3;
 export const TICK_MS = 25;
 export const START_DELAY_SEC = 0.12;
-// Empty bank slots are named `(Not Used)N`, or `(Not Used100` once the name
-// field is full; neither is an instrument.
-const PLACEHOLDER = /^\(Not Used/i;
 const VENDOR = new URL('../../../vendor/spessasynth/', import.meta.url);
 // The vendored engine (scripts/build-studio-web.mjs); a build test holds these
 // to the versions named in vendor/spessasynth/lib.js.
@@ -81,7 +78,7 @@ export async function createPreviewEngine(bank, context, { bankTimeoutMs = BANK_
     catch (error) { throw Error(bankLoadMessage(error)); }
     const list = await Promise.race([listed, new Promise(resolve => setTimeout(() => resolve(synth.presetList), 4000))]);
     const presets = (list ?? [])
-      .filter(preset => preset?.name && !PLACEHOLDER.test(preset.name))
+      .filter(isUsablePreset)
       .map(preset => ({ program: preset.program, bankMSB: preset.bankMSB ?? 0, bankLSB: preset.bankLSB ?? 0, name: preset.name, drums: Boolean(preset.isAnyDrums ?? preset.isGMGSDrum) }))
       .sort((a, b) => a.program - b.program);
     if (!presets.length) throw Error('音色庫沒有可用的音色');
@@ -100,11 +97,14 @@ export async function createPreviewEngine(bank, context, { bankTimeoutMs = BANK_
 export function createTransport(engine, { onPosition = () => {}, onEnd = () => {} } = {}) {
   const { context, synth, out } = engine;
   let song = null;
-  // One voice per role: a program, and a drum-kit note for a drum instrument
+  // One voice per role: a program, and the two kit notes of a drum instrument
   // (preview/instruments.mjs). Every role plays the same program by default.
-  const melodic = voice => ({ program: Number(voice?.program ?? 0), drumNote: Number.isInteger(voice?.drumNote) ? voice.drumNote : null });
+  const melodic = voice => {
+    const drumNotes = drumNotesOf(voice);
+    return { program: Number(voice?.program ?? 0), drumNote: drumNotes?.[0] ?? null, drumNotes: drumNotes ? [...drumNotes] : null };
+  };
   let voices = Array.from({ length: 6 }, () => melodic({ program: engine.presets[0].program }));
-  const pitchFor = event => voices[event.role]?.drumNote ?? event.pitch;
+  const pitchFor = event => soundingPitch(voices[event.role], event.pitch);
   const muted = [false, false, false, false, false, false];
   let events = [], duration = 0, index = 0, t0 = 0, timer = 0, frame = 0, playing = false, unmuteTimer = 0;
   // Counts halts, so a play() still waiting when something halts the

@@ -3,43 +3,54 @@
 // Workshop edits sit outside the Canonical/verified pipeline and are never evidence.
 import * as i18n from "./i18n.mjs";
 
-// The eleven Mabinogi Mobile instruments, previewed on whatever General MIDI
-// bank is active. Programs are 0-based GM numbers. BassDrum and Cymbals have
-// no GM program: they play the bank's percussion kit, and every written note
-// becomes one of two kit keys (below o4c the first, from o4c up the second).
-// A listening approximation only — never the game's timbre.
-export const MOBILE_INSTRUMENTS = Object.freeze([
-  { id: "lute", name: "Lute", program: 24 },
-  { id: "mandolin", name: "Mandolin", program: 25 },
-  { id: "chalumeau", name: "Chalumeau", program: 71 },
-  { id: "xylophone", name: "Xylophone", program: 13 },
-  { id: "flute", name: "Flute", program: 73 },
-  { id: "violin", name: "Violin", program: 40 },
-  { id: "piano", name: "Piano", program: 0 },
-  { id: "harp", name: "Harp", program: 46 },
-  { id: "musicbox", name: "Music Box", program: 10 },
-  { id: "bassdrum", name: "BassDrum", program: 0, kit: Object.freeze([35, 36]) },
-  { id: "cymbals", name: "Cymbals", program: 0, kit: Object.freeze([49, 57]) },
-].map(Object.freeze));
+import { GAME_INSTRUMENTS, GAME_STYLE_PROGRAMS, gameInstrument, gameInstrumentForProgram, isUsablePreset, soundingPitch } from "../preview/instruments.mjs";
 
-export const DRUM_SPLIT = 60;
+// The eleven Mabinogi Mobile instruments: Studio's one table
+// (preview/instruments.mjs, from studio/backend/audio/instruments.mjs), in
+// the Workshop's shape. Programs are 0-based GM numbers. BassDrum and Cymbals
+// have no GM program: on a GM bank they play its percussion kit, a written
+// pitch below o4c sounding the first kit key and o4c and above the second.
+// A listening approximation only — never the game's timbre.
+export const MOBILE_INSTRUMENTS = Object.freeze(GAME_INSTRUMENTS.map(item => Object.freeze({
+  id: item.id, name: item.name, program: item.program, ...(item.drumNotes ? { kit: item.drumNotes } : {}),
+})));
+
 const MOBILE_BY_ID = new Map(MOBILE_INSTRUMENTS.map(m => [m.id, m]));
 
-export const mobileInstrument = id => MOBILE_BY_ID.get(id) ?? null;
+// Also finds an instrument by the id the Workshop stored before the table was
+// shared (musicbox, bassdrum).
+export const mobileInstrument = id => MOBILE_BY_ID.get(gameInstrument(id)?.id) ?? null;
 
 // A track's instrument is stored as JSON "[msb, lsb, program]" for a bank
 // preset, or "[msb, lsb, program, id]" for a Mobile instrument.
 export const mobilePresetValue = m => JSON.stringify([0, 0, m.program, m.id]);
 export const DEFAULT_PRESET_VALUE = mobilePresetValue(MOBILE_INSTRUMENTS[0]);
 
+// A stored value in today's ids: a Mobile instrument saved under an old id
+// comes back as the same instrument.
+export function currentPresetValue(raw) {
+  let value;
+  try { value = JSON.parse(raw); } catch { return raw; }
+  if (!Array.isArray(value) || value.length < 4) return raw;
+  const m = mobileInstrument(value[3]);
+  return m ? mobilePresetValue(m) : raw;
+}
+
 export const kitOf = preset => mobileInstrument(preset?.[3])?.kit ?? null;
 export const isKit = preset => kitOf(preset) !== null;
 
 // The kit key a written pitch sounds on a percussion instrument, or the
 // pitch itself for a melodic one.
-export function soundingKey(preset, midi) {
-  const kit = kitOf(preset);
-  return kit ? (midi < DRUM_SPLIT ? kit[0] : kit[1]) : midi;
+export const soundingKey = (preset, midi) => soundingPitch({ drumNotes: kitOf(preset) }, midi);
+
+// A track's instrument as the loaded bank plays it. On a GM bank that is the
+// stored preset. The game-style bank (preview/game-style-bank.mjs) holds each
+// Mobile instrument as a melodic preset of its own, drums included, so there
+// a Mobile instrument becomes that preset: no kit, the written pitch sounds.
+export function bankPreset(preset, { gameStyle = false } = {}) {
+  const m = mobileInstrument(preset?.[3]);
+  if (!gameStyle || !m) return preset ?? null;
+  return [0, 0, GAME_STYLE_PROGRAMS[m.id]];
 }
 
 // Shown by their game names in every language.
@@ -47,8 +58,7 @@ export const mobileName = m => m.name;
 
 // The Mobile instrument an imported program number (`@n`, MIDI program change,
 // 3MLE/MMI program field) stands for, if any.
-export const mobileForProgram = program =>
-  MOBILE_INSTRUMENTS.find(m => !m.kit && m.program === program) ?? null;
+export const mobileForProgram = program => mobileInstrument(gameInstrumentForProgram(program)?.id);
 
 export function parseDef(buf) {
   const bytes = new Uint8Array(buf);
@@ -106,9 +116,7 @@ export function pickLocale(locales, lang = i18n.getLocale()) {
   return new Map();
 }
 
-const UNUSED = /^[([{\s]*(not\s*used|unused|empty|reserved|n\/a|none|-+)[)\]}\s]*\d*[)\]}\s]*$/i;
-
-export const isUsable = p => { const n = (p?.name ?? "").trim(); return n !== "" && !UNUSED.test(n); };
+export const isUsable = isUsablePreset;
 
 export function selectPresets(all, defMap) {
   if (defMap.size) {

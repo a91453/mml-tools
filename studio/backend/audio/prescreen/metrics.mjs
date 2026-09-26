@@ -19,6 +19,7 @@
 import { cosine, pearson, resample } from './dsp.mjs';
 import { tempoClock } from './performance.mjs';
 import { ANCHOR_PITCHES, PARTIALS, voiceKey } from './renderer-core-constants.mjs';
+import { soundingPitch } from '../instruments.mjs';
 
 export const METRICS_VERSION = 'mml-studio/prescreen-metrics@1';
 export const SOUND_METRICS = Object.freeze(['roughness', 'masking', 'smear', 'clipping']);
@@ -59,7 +60,9 @@ export const intervalName = (a, b) => {
 
 function modelAt(profile, pitch) {
   const anchors = profile.anchors;
-  if (profile.drum || anchors.length === 1) return anchors[0];
+  // A drum's anchors are its kit notes: the one struck, not a blend.
+  if (profile.drum) return anchors.find(anchor => anchor.pitch === pitch) ?? anchors[0];
+  if (anchors.length === 1) return anchors[0];
   if (pitch <= anchors[0].pitch) return anchors[0];
   if (pitch >= anchors.at(-1).pitch) return anchors.at(-1);
   let i = 0;
@@ -86,7 +89,7 @@ export function modelNotes(performance, profiles) {
     const profile = profiles[voiceKey(role)];
     if (!profile) throw Error(`no calibration for voice ${voiceKey(role)}`);
     for (const note of role.notes) {
-      const model = modelAt(profile, role.drumNote ?? note.pitch);
+      const model = modelAt(profile, soundingPitch(role, note.pitch));
       const amplitude = model.level * (profile.volume_gain[note.volume] ?? 1);
       const holdTau = model.hold_tau_seconds ?? Infinity;
       const releaseTau = model.release_tau_seconds;

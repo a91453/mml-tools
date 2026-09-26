@@ -820,3 +820,20 @@ cache-first 的 Service Worker 快取，所以開著的工作坊分頁會一直�
 
 驗證：`studio/browser-tests/workshop-update.mjs`（Chromium，實際的 Service Worker 更新）。
 它另外提供一份建置副本，在副本的 `sw.js` 改快取名稱來發布新版。
+
+### 14.5 播放器與樂器表合併（2026-09-26）
+
+- **一份樂器表**：原本有三份——後端音訊預篩 `studio/backend/audio/instruments.mjs`、Studio 試聽
+  `preview/instruments.mjs`、工作坊 `workshop/instruments.mjs`，只靠測試保持一致。現在只剩後端那份，
+  兩個網頁端都 import 它；工作坊的舊 id（`musicbox`、`bassdrum`）讀取時換成新的 id，存過的歌不會變。
+- **一種鼓音規則**：擁有者選擇工作坊（早期前端）的做法——大鼓／鈸的譜面音高 o4c 以下發第一個鼓音
+  （35／49），o4c 以上發第二個（36／57）。Studio 試聽、試聽工作階段、音訊預篩、工作坊都用
+  `soundingPitch`。預篩的渲染器與校正版本升為 `@2`。這仍是聆聽近似，不是 Mobile 鼓面對應
+  （`MASTER_RULES` §8）。
+- **修正**：工作坊載入遊戲風格音色時，Mobile 樂器原本送出 GM 程式號（Lute＝24，在該音色庫是 Harp；
+  鼓切到打擊組）。現在以 `bankPreset` 換成該音色庫自己的音色（Lute＝0、BassDrum＝66…），與 Studio
+  試聽相同。
+- **沒有合併的部分**：兩個播放排程器仍分開。Studio 的要擷取 Gate 6 回讀、只播範圍；工作坊的要
+  暫停、循環、播放中改譜。共用的是引擎載入檢查（`bank-check.mjs`）、樂器表、鼓音規則與空白音色
+  過濾（`isUsablePreset`）。
+

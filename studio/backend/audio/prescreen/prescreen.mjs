@@ -46,7 +46,8 @@ const digest = value => sha256Hex(new TextEncoder().encode(typeof value === 'str
 /** The render-time identity of a performance: what was actually played. */
 export const performanceDigest = performance => digest({
   tempo: performance.tempo,
-  roles: performance.roles.map(role => ({ instrument: role.instrument, program: role.program, drumNote: role.drumNote, notes: role.notes.map(n => [n.pitch, n.startExact, n.endExact, n.volume]) })),
+  // drumNotes only on a drum role, so a pitched performance keeps its digest.
+  roles: performance.roles.map(role => ({ instrument: role.instrument, program: role.program, drumNote: role.drumNote, ...(role.drumNotes ? { drumNotes: role.drumNotes } : {}), notes: role.notes.map(n => [n.pitch, n.startExact, n.endExact, n.volume]) })),
 });
 
 const roundDeep = value => {
@@ -60,7 +61,7 @@ const roundDeep = value => {
 async function profilesFor({ pool, bank, sampleRate, alternatives, cache }) {
   const voices = new Map();
   for (const alternative of alternatives) {
-    for (const role of alternative.performance.roles) voices.set(voiceKey(role), { program: role.program, drumNote: role.drumNote });
+    for (const role of alternative.performance.roles) voices.set(voiceKey(role), { program: role.program, drumNote: role.drumNote, drumNotes: role.drumNotes ?? null });
   }
   const missing = [...voices.entries()].filter(([key]) => !cache.has(`${bank.sha256}:${sampleRate}:${key}`));
   if (missing.length) {

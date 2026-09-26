@@ -13,13 +13,13 @@ import { createHash } from 'node:crypto';
 
 import { ROLES } from '../../dist/core.js';
 import { splitMML, parseTrack } from '../backend/mml/parser.mjs';
-import { GAME_INSTRUMENTS, gmVoiceFor, velocityForVolume } from '../backend/audio/instruments.mjs';
+import { GAME_INSTRUMENTS, gmVoiceFor, soundingPitch, velocityForVolume } from '../backend/audio/instruments.mjs';
 import { velocityFor } from '../web/preview/schedule.mjs';
 import { GAME_INSTRUMENTS as WEB_INSTRUMENTS, voiceFor as webVoiceFor } from '../web/preview/instruments.mjs';
 import { AUDIO_BANK_ERROR, FREE_GM_BANK, SoundBankError, bankCacheDirectory, createSoundBankProvider } from '../backend/audio/prescreen/sound-bank.mjs';
 import { createRenderPool } from '../backend/audio/prescreen/render-pool.mjs';
 import { barsFor, meterFromText, performanceFromTracks, referenceFromPerformance } from '../backend/audio/prescreen/performance.mjs';
-import { clippingByBar, similarityValue } from '../backend/audio/prescreen/metrics.mjs';
+import { clippingByBar, modelNotes, similarityValue } from '../backend/audio/prescreen/metrics.mjs';
 import { alternativeNotes, fidelityByBar } from '../backend/audio/prescreen/fidelity.mjs';
 import { DEFAULT_THRESHOLDS, REASON, VERDICT, contenders, decideBar, normalizeThresholds } from '../backend/audio/prescreen/decision.mjs';
 import { decodeWav, encodeWav16 } from '../backend/audio/prescreen/wav.mjs';
@@ -73,7 +73,7 @@ test('AP-1 the game-instrument table maps the eleven instruments to their GM sta
   for (const { id } of GAME_INSTRUMENTS) {
     const web = webVoiceFor(id);
     const backend = gmVoiceFor(id);
-    assert.deepEqual([backend.program, backend.drumNote, backend.label], [web.program, web.drumNote, web.label], id);
+    assert.deepEqual([backend.program, backend.drumNote, backend.drumNotes, backend.label], [web.program, web.drumNote, web.drumNotes, web.label], id);
   }
 });
 
@@ -399,6 +399,24 @@ test('AP-19 the render pool keeps no thread alive once idle', async () => {
   assert.ok(profiles.profiles[voiceKey(gmVoiceFor('piano'))]);
   await new Promise(resolve => setTimeout(resolve, 200));
   await small.close();
+});
+
+test('AP-22 a drum role sounds its two kit notes, split at o4c, in the render model and its calibration', async () => {
+  const drum = gmVoiceFor('bass-drum');
+  assert.deepEqual([drum.drumNote, [...drum.drumNotes]], [35, [35, 36]]);
+  assert.deepEqual([soundingPitch(drum, 59), soundingPitch(drum, 60), soundingPitch(gmVoiceFor('cymbals'), 72), soundingPitch(gmVoiceFor('piano'), 72)], [35, 36, 57, 72]);
+  assert.equal(voiceKey(drum), 'd35+36');
+  assert.equal(voiceKey({ program: 0, drumNote: 35 }), 'd35+35', 'a voice naming one drum note sounds it for every pitch');
+  const loaded = await provider.load();
+  const { profiles } = await pool.run('calibrate', { sampleRate: 22050, voices: [drum] }, { bank: { sha256: loaded.identity.sha256, bytes: loaded.bytes } });
+  const profile = profiles['d35+36'];
+  assert.equal(profile.drum, true);
+  assert.deepEqual(profile.anchors.map(anchor => anchor.pitch), [35, 36], 'each kit note is measured');
+  // The model reads the anchor of the kit note each written pitch strikes.
+  const tagged = { 'd35+36': { ...profile, anchors: profile.anchors.map(anchor => ({ ...anchor, level: anchor.pitch })) } };
+  const note = (pitch, start) => ({ pitch, start, on: start, off: start + 0.5, volume: 15 });
+  const modelled = modelNotes({ roles: [{ index: 0, ...drum, notes: [note(48, 0), note(72, 1)] }] }, tagged);
+  assert.deepEqual(modelled.map(item => Math.round(item.amplitude)), [35, 36]);
 });
 
 test('AP-21 a job that outlives the pool\'s time limit fails, its worker is stopped, and the queue goes on with a fresh one', async () => {

@@ -16,7 +16,7 @@
 import { createHash } from 'node:crypto';
 import { BasicSoundBank, SoundBankLoader, SpessaLog, SpessaSynthProcessor } from 'spessasynth_core';
 import { bandMap, chromaMap, createFft, hann, thirdOctaveEdges, frameSizeFor } from './dsp.mjs';
-import { velocityForVolume } from '../instruments.mjs';
+import { drumNotesOf, soundingPitch, velocityForVolume } from '../instruments.mjs';
 import { ANCHOR_PITCHES, CALIBRATION_ID, PARTIALS, RENDERER_ID, RENDER_ENGINE, voiceKey } from './renderer-core-constants.mjs';
 
 export const BLOCK = 256;
@@ -49,7 +49,7 @@ async function newSynth(bank, sampleRate) {
 }
 
 function assignVoice(synth, channel, voice) {
-  if (voice.drumNote !== null && voice.drumNote !== undefined) {
+  if (drumNotesOf(voice)) {
     synth.midiChannels[channel].setDrums(true);
     synth.programChange(channel, 0);
   } else {
@@ -78,7 +78,8 @@ export async function renderAnalysis({ bank, performance, sampleRate, channels, 
   const endSec = window?.endSec ?? performance.durationSeconds;
   const events = [];
   for (const role of performance.roles) {
-    const pitchFor = note => (role.drumNote !== null && role.drumNote !== undefined ? role.drumNote : note.pitch);
+    // A drum role sounds a kit note: below o4c its first, from o4c its second.
+    const pitchFor = note => soundingPitch(role, note.pitch);
     for (const note of role.notes) {
       if (note.off <= startSec || note.on >= endSec) continue;
       const on = Math.max(0, Math.round((note.on - startSec) * sampleRate));
@@ -240,7 +241,8 @@ async function renderSingle(bank, sampleRate, voice, pitch, velocity, holdSecond
   const out = new Float32Array(total);
   const outs = [[new Float32Array(BLOCK), new Float32Array(BLOCK)]];
   const fx = new Float32Array(BLOCK);
-  const key = voice.drumNote ?? pitch;
+  // `pitch` is the key struck: a kit note for a drum voice (calibrate).
+  const key = pitch;
   synth.noteOn(0, key, velocity);
   let written = 0;
   let released = false;
@@ -320,7 +322,7 @@ async function measure(bank, sampleRate, voice, pitch) {
     // null: the held note does not measurably decay (a sustaining voice).
     hold_tau_seconds: holdTau === null ? null : Math.min(30, Math.max(0.02, holdTau)),
     release_tau_seconds: Math.min(5, Math.max(0.005, releaseTau)),
-    partials: voice.drumNote === null || voice.drumNote === undefined ? partialsOf(signal, sampleRate, pitch, peak.t + 0.02) : null,
+    partials: drumNotesOf(voice) ? null : partialsOf(signal, sampleRate, pitch, peak.t + 0.02),
   };
 }
 
@@ -330,10 +332,12 @@ export async function calibrate({ bank, sampleRate, voices }) {
   for (const voice of voices) {
     const key = voiceKey(voice);
     if (profiles[key]) continue;
-    const drum = voice.drumNote !== null && voice.drumNote !== undefined;
+    const kit = drumNotesOf(voice);
+    const drum = Boolean(kit);
     const anchors = [];
-    for (const pitch of drum ? [voice.drumNote] : ANCHOR_PITCHES) anchors.push(await measure(bank, sampleRate, voice, pitch));
-    const reference = anchors.find(anchor => anchor.pitch === (drum ? voice.drumNote : 60)) ?? anchors[0];
+    // A drum is measured on each kit note it sounds, once per distinct note.
+    for (const pitch of drum ? [...new Set(kit)] : ANCHOR_PITCHES) anchors.push(await measure(bank, sampleRate, voice, pitch));
+    const reference = anchors.find(anchor => anchor.pitch === (drum ? kit[0] : 60)) ?? anchors[0];
     const gains = [];
     for (let volume = 0; volume <= 15; volume++) {
       const signal = await renderSingle(bank, sampleRate, voice, reference.pitch, velocityForVolume(volume), 0.3, 0.35);

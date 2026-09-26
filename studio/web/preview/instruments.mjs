@@ -1,4 +1,7 @@
-// Preview instruments. Pure: no DOM, no audio.
+// Preview instruments: the one table of the eleven Mabinogi Mobile instruments
+// for every player in Studio Web -- the Studio preview and listening players
+// and the Workshop (workshop/instruments.mjs builds on it). Pure: no DOM, no
+// audio.
 //
 // With the free default bank (default-bank.mjs: a MIT-licensed General MIDI
 // subset each browser derives from the upstream file it downloads) each
@@ -7,25 +10,16 @@
 // a generic GM sound is not the game's timbre and says nothing about how the
 // game sounds. With a bank the user picked, the picker lists that bank's own
 // presets instead.
+//
+// The table itself, the drum split and the Workshop's old ids are the
+// backend's (studio/backend/audio/instruments.mjs), shared with the audio
+// prescreen so both hear the same voices.
+import { DEFAULT_INSTRUMENT, DRUM_SPLIT, GAME_INSTRUMENTS, GM_DRUM_NOTES, GM_PROGRAMS, INSTRUMENT_ALIASES, drumNotesOf, gameInstrument, gameInstrumentForProgram, soundingPitch } from '../../backend/audio/instruments.mjs';
+export { DEFAULT_INSTRUMENT, DRUM_SPLIT, GAME_INSTRUMENTS, INSTRUMENT_ALIASES, drumNotesOf, gameInstrument, gameInstrumentForProgram, soundingPitch };
+
 export const DEFAULT_BANK_NAME = 'FluidR3Mono GM（Studio 子集）';
 export const DEFAULT_BANK_LABEL = '免費通用音色（近似），不是遊戲音色';
 
-// 0-based GM programs. A drum instrument plays its first note on the Standard
-// kit (GM percussion, program 0); the other listed note is kept in the bank.
-export const GAME_INSTRUMENTS = Object.freeze([
-  Object.freeze({ id: 'lute', name: 'Lute', label: '魯特琴', program: 24 }),
-  Object.freeze({ id: 'mandolin', name: 'Mandolin', label: '曼陀林', program: 25 }),
-  Object.freeze({ id: 'chalumeau', name: 'Chalumeau', label: '夏盧莫管', program: 71 }),
-  Object.freeze({ id: 'xylophone', name: 'Xylophone', label: '木琴', program: 13 }),
-  Object.freeze({ id: 'flute', name: 'Flute', label: '長笛', program: 73 }),
-  Object.freeze({ id: 'violin', name: 'Violin', label: '小提琴', program: 40 }),
-  Object.freeze({ id: 'piano', name: 'Piano', label: '鋼琴', program: 0 }),
-  Object.freeze({ id: 'harp', name: 'Harp', label: '豎琴', program: 46 }),
-  Object.freeze({ id: 'music-box', name: 'Music Box', label: '音樂盒', program: 10 }),
-  Object.freeze({ id: 'bass-drum', name: 'BassDrum', label: '大鼓', program: 0, drumNotes: Object.freeze([35, 36]) }),
-  Object.freeze({ id: 'cymbals', name: 'Cymbals', label: '鈸', program: 0, drumNotes: Object.freeze([49, 57]) }),
-]);
-export const DEFAULT_INSTRUMENT = 'lute';
 // The game-style bank (game-style-bank.mjs, the owner's own recordings) holds
 // each of the 11 instruments as a melodic preset of its own, drums included,
 // at these 0-based programs (its instrument list names them 1-based).
@@ -34,24 +28,25 @@ export const GAME_STYLE_BANK_LABEL = '遊戲風格音色（模擬），不是實
 export const GAME_STYLE_PROGRAMS = Object.freeze({
   lute: 0, mandolin: 2, flute: 5, chalumeau: 6, piano: 21, violin: 22, harp: 24, 'music-box': 30, 'bass-drum': 66, cymbals: 68, xylophone: 77,
 });
-export const DEFAULT_BANK_PROGRAMS = Object.freeze([...new Set(GAME_INSTRUMENTS.filter(item => !item.drumNotes).map(item => item.program))].sort((a, b) => a - b));
-export const DEFAULT_BANK_DRUM_NOTES = Object.freeze([...new Set(GAME_INSTRUMENTS.flatMap(item => item.drumNotes ?? []))].sort((a, b) => a - b));
+export const DEFAULT_BANK_PROGRAMS = GM_PROGRAMS;
+export const DEFAULT_BANK_DRUM_NOTES = GM_DRUM_NOTES;
 
 const byId = new Map(GAME_INSTRUMENTS.map(item => [item.id, item]));
 
 /**
- * The voice one role plays: a GM program, and a drum-kit note when the role
- * is a drum instrument (every note of the role then sounds as that note).
+ * The voice one role plays: a GM program, and for a drum instrument its two
+ * kit notes (`drumNotes`; `drumNote` is the first, and marks a drum voice).
+ * soundingPitch picks the kit note for a written pitch.
  * A choice is a game instrument id (default bank) or `p:<program>` (a preset
  * of the user's own bank). Anything else falls back to the default.
  */
 export function voiceFor(choice, { gameStyle = false } = {}) {
   const text = String(choice ?? '');
   const preset = /^p:(\d{1,3})$/.exec(text);
-  if (preset && Number(preset[1]) <= 127) return { program: Number(preset[1]), drumNote: null, label: `${String(Number(preset[1]) + 1).padStart(3, '0')}` };
-  const instrument = byId.get(text) ?? byId.get(DEFAULT_INSTRUMENT);
-  if (gameStyle) return { program: GAME_STYLE_PROGRAMS[instrument.id], drumNote: null, label: instrument.label, id: instrument.id };
-  return { program: instrument.program, drumNote: instrument.drumNotes?.[0] ?? null, label: instrument.label, id: instrument.id };
+  if (preset && Number(preset[1]) <= 127) return { program: Number(preset[1]), drumNote: null, drumNotes: null, label: `${String(Number(preset[1]) + 1).padStart(3, '0')}` };
+  const instrument = gameInstrument(text) ?? byId.get(DEFAULT_INSTRUMENT);
+  if (gameStyle) return { program: GAME_STYLE_PROGRAMS[instrument.id], drumNote: null, drumNotes: null, label: instrument.label, id: instrument.id };
+  return { program: instrument.program, drumNote: instrument.drumNotes?.[0] ?? null, drumNotes: instrument.drumNotes ?? null, label: instrument.label, id: instrument.id };
 }
 // The two halves of the six roles, set together from one picker: Melody with
 // Chord1–2, and Chord3–5.
@@ -67,6 +62,11 @@ export function instrumentOptions({ defaultBank, presets = [] }) {
   if (defaultBank) return GAME_INSTRUMENTS.map(item => ({ value: item.id, label: `${item.label}（${item.name}）` }));
   return presets.map(preset => ({ value: `p:${preset.program}`, label: `${String(preset.program + 1).padStart(3, '0')} ${preset.name}` }));
 }
+// Bank slots that hold no instrument: `(Not Used)N`, `(Not Used100` once the
+// name field is full, `Unused`, `Empty`, `Reserved`, `N/A`, `None`, `---`.
+const UNUSED = /^[([{\s]*(not\s*used|unused|empty|reserved|n\/a|none|-+)[)\]}\s]*\d*[)\]}\s]*$/i;
+export const isUsablePreset = preset => { const name = String(preset?.name ?? '').trim(); return name !== '' && !UNUSED.test(name); };
+
 // A whole set of voices is uniform when every role plays the same melodic
 // program; only then can a playback be a Gate 6 readback of one program.
 export const uniformProgram = voices => (voices.every(voice => voice.drumNote === null && voice.program === voices[0].program) ? voices[0].program : null);

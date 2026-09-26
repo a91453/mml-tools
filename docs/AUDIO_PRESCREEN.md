@@ -35,11 +35,15 @@ The prescreen is the "is it obvious?" half. Whether an obvious verdict may be
 
 ## Instruments
 
-`studio/backend/audio/instruments.mjs` is the shared table (equivalent to the
-Studio Web preview picker's): Lute 24, Mandolin 25, Chalumeau 71, Xylophone 13,
-Flute 73, Violin 40, Piano 0, Harp 46, Music Box 10 (0-based GM programs);
-BassDrum GM drum note 35 (36 kept), Cymbals 49 (57 kept). Every note of a drum
-role sounds as its drum note. V0–V15 map to velocity `max(1, round(v·127/15))`,
+`studio/backend/audio/instruments.mjs` is the one table: the Studio Web
+preview and listening players and the Workshop import it. Lute 24, Mandolin 25,
+Chalumeau 71, Xylophone 13, Flute 73, Violin 40, Piano 0, Harp 46, Music Box 10
+(0-based GM programs); BassDrum GM drum notes 35/36, Cymbals 49/57. A drum
+role's written pitch below o4c sounds the first note, o4c and above the second
+(`soundingPitch`), in the render and in the note model; calibration measures
+both notes, and the voice key names both (`d35+36`). This split replaced a
+single drum note in `prescreen-renderer@2` / `prescreen-calibration@2`, so a
+drum role's results from `@1` are not comparable. V0–V15 map to velocity `max(1, round(v·127/15))`,
 the preview's curve. Default: Lute on every role.
 
 ## Sound bank
