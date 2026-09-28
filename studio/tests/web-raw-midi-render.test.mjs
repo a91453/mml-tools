@@ -40,9 +40,18 @@ function assertBalanced(html) {
   for (const [tag, balance] of counts) assert.equal(balance, 0, `<${tag}> is unbalanced by ${balance}`);
 }
 
-test('a project with no Raw MIDI renders no Raw MIDI section at all', () => {
-  assert.equal(renderRawMidi([]), '');
-  assert.equal(renderRawMidi(undefined), '');
+// Without a Raw MIDI source the stage keeps its place, so the page's numbering
+// has no gap, but it is only its heading and the line saying what it needs:
+// nothing of a source is shown, or claimed.
+test('a project with no Raw MIDI renders only the 02 heading and what the stage needs', () => {
+  for (const entries of [[], undefined]) {
+    const html = renderRawMidi(entries);
+    assertBalanced(html);
+    assert.match(html, /^<section id="raw-midi" class="waiting">/);
+    assert.match(html, /<h2>02　Raw MIDI 來源與候選<\/h2>/);
+    assert.match(html, /<p class="stage-wait">[^<]*\.mid／\.midi[^<]*<\/p>/);
+    assert.doesNotMatch(html, /raw-midi-slot|SMF format|G11-|note safe/);
+  }
 });
 
 test('the section states the source facts a reviewer needs', () => {
@@ -247,18 +256,20 @@ test('a hostile track name is rendered as text, never as markup', () => {
 test('the sidebar navigation numbering matches the section headings it points at', async () => {
   // The nav lives in index.html and the headings in app.mjs, so nothing but a
   // check keeps them in step -- inserting the Raw MIDI section moved four of
-  // them, and inserting Final MML generation moved in-game acceptance to 07.
+  // them, inserting Final MML generation moved in-game acceptance to 07, and
+  // numbering G12 and Mobile adaptation (06, 07) moved both to 08 and 09.
   const html = await readFile(new URL('../web/index.html', import.meta.url), 'utf8');
   const nav = [...html.matchAll(/<a href="#([a-z-]+)">(\d\d)　/g)].map(([, id, number]) => [id, number]);
-  const headings = new Map([...source.matchAll(/<section id="([a-z-]+)"><div class="section-heading"><h2>(\d\d)　/g)].map(([, id, number]) => [id, number]));
-  // The Raw MIDI section renders only when a Raw MIDI source is present, so its
-  // heading lives in its own function rather than the main template.
-  headings.set('raw-midi', source.match(/<section id="raw-midi">[\s\S]*?<h2>(\d\d)　/)[1]);
+  // A section's opening tag may carry the class a waiting stage folds with.
+  const headings = new Map([...source.matchAll(/<section id="([a-z-]+)"[^>]*><div class="section-heading"><h2>(\d\d)　/g)].map(([, id, number]) => [id, number]));
+  // The Raw MIDI section is rendered by its own function, whose heading is
+  // shared by its one-line waiting form and its full form.
+  headings.set('raw-midi', source.match(/function rawMidiSection[\s\S]*?<h2>(\d\d)　/)[1]);
 
-  assert.equal(nav.length, 7);
+  assert.equal(nav.length, 9);
   for (const [id, number] of nav) {
     assert.ok(headings.has(id), `nav points at #${id}, which is not a section`);
     assert.equal(headings.get(id), number, `#${id} is ${number} in the nav and ${headings.get(id)} in its heading`);
   }
-  assert.deepEqual(nav.map(([, number]) => number), ['01', '02', '03', '04', '05', '06', '07']);
+  assert.deepEqual(nav.map(([, number]) => number), ['01', '02', '03', '04', '05', '06', '07', '08', '09']);
 });

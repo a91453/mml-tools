@@ -159,3 +159,12 @@ code.digest,.facts dd code,table code{font-family:ui-monospace,SFMono-Regular,Me
 /* Dark theme: the same tokens, redefined. Status colours keep their meaning (PASS green, FAIL/UNSUPPORTED red, PENDING amber); only their lightness changes. */
 :root[data-theme="dark"]{color-scheme:dark;--ink:#dde9e6;--muted:#93aba7;--line:#294240;--teal:#1f7a63;--paper:#132426;--amber:#e3b56c;--bg:#0b1a1c;--on-teal:#fff;--secondary-bg:#1d3634;--secondary-line:#2f504c;--field-bg:#0f1f21;--field-line:#3c5a56;--focus:#6aaef0;--focus-field:#5fb096;--topbar-bg:#07131a;--topbar-ink:#eef6f4;--topbar-muted:#8fb0ac;--pill-line:#335652;--pill-ink:#b6dcc8;--nav-hover:#1a3230;--current-bg:#18382d;--current-line:#2f6b54;--current-ink:#a9e2c4;--badge-bg:#3a2e17;--pass-bg:#173a28;--pass-ink:#8fdcae;--fail-bg:#43201c;--fail-ink:#f2a197;--na-bg:#22303a;--na-ink:#a9bac4;--note-line:#a7823f;--note-bg:#2a2416;--safe-line:#4f9a7a;--safe-bg:#132f25;--row-line:#223a38;--pre-bg:#0f1f21;--dashed:#35524e;--toast-bg:#e3eeeb;--toast-ink:#10201f;--shadow:#0008;--error:#ff8a80;--error-bg:#4a1e1a;--over-bg:#5a2620;--caution:#e6b45a;--mml-select:#6aaef066;--drop-bg:#15283a;--tk-t:#f08cc0;--tk-l:#8ab8f5;--tk-o:#7fd3a0;--tk-v:#e6b45a;--tk-n:#b9a0f5;--tk-quiet:#8fa3ad;--tk-punct:#7f9299;--tk-dead:#5d6f75}
 :root[data-theme="dark"] .roll-card,:root[data-theme="dark"] .listen-roll{--roll-region:#22a3c4;--roll-region-focus:#4cb8e0;--roll-playhead:#f87171;--roll-bg:#0f1f21;--roll-row-white:#132426;--roll-row-black:#0c1a1c;--roll-row-out:#3a1e1b;--roll-grid:#1b302e;--roll-beat:#24403d;--roll-bar:#46655f;--roll-ruler-bg:#10201f;--roll-text:#dde9e6;--roll-muted:#8fa8a5;--roll-lane-0:#fb923c;--roll-lane-1:#7aa2f7;--roll-lane-2:#34d399;--roll-lane-3:#b794f6;--roll-lane-4:#f5b04c;--roll-lane-5:#38bdf8;--roll-lane-6:#9ca3af;--roll-signal:#fbbf24;--roll-signal-line:#f59e0b;--roll-select:#f8fafc}
+/* A stage waiting for its input: its heading and one line naming what it waits for; the line opens it. */
+section.waiting{margin:0;padding:12px 0 4px;border-top:1px solid var(--line)}
+section.waiting .section-heading{margin-bottom:0}
+section.waiting h2{font-size:17px;letter-spacing:0;color:var(--muted)}
+.stage-fold>summary,.stage-wait{font-size:13px;color:var(--muted)}
+.stage-fold>summary{min-height:44px;padding:8px 0}
+.stage-fold>summary:hover{color:var(--ink)}
+.stage-fold[open]>summary{display:none}
+.stage-wait{margin:0;padding:8px 0 12px}

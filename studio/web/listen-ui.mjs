@@ -325,7 +325,7 @@ export function createListening({ root, call, message, copyText, audio, saveProj
     const keepScroll = root.querySelector('#listen-roll .roll-stage')?.scrollLeft ?? null;
     root.innerHTML = `<div class="section-heading"><h2 id="listening-title">試聽工作階段</h2><button type="button" class="quiet" id="listen-close">關閉試聽</button></div>
       ${sessionsCard()}
-      ${state.loading ? '<div class="card"><p class="meta" role="status">正在讀取試聽內容…</p></div>' : state.session ? sessionBody() : `<div class="card"><div class="empty">${state.error ? esc(state.error) : '尚未開啟試聽工作階段。<br>在第 06 節或第 07 節按「送到試聽」、開啟一個試聽連結，或直接在上方貼上 MML。'}</div></div>`}`;
+      ${state.loading ? '<div class="card"><p class="meta" role="status">正在讀取試聽內容…</p></div>' : state.session ? sessionBody() : `<div class="card"><div class="empty">${state.error ? esc(state.error) : '尚未開啟試聽工作階段。<br>在第 08 節或第 09 節按「送到試聽」、開啟一個試聽連結，或直接在上方貼上 MML。'}</div></div>`}`;
     bind();
     if (state.session && !state.loading) mountRoll(keepScroll);
   }

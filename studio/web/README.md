@@ -36,6 +36,16 @@ merging Studio source.
    Explicit client/region/version, instrument setup and user evidence tied to the
    exact pasted MML are required for In-game Accepted.
 
+The page numbers its stages 01–09 in page order, and the side navigation names the
+same numbers: 01 sources, 02 Raw MIDI, 03 分析 Gate, 04 比對與審核, 05 音訊證據,
+06 六角色收斂 (G12), 07 Mobile 適配, 08 Final MML, 09 實機接受. A stage with nothing to
+act on yet (no candidate, or no baseline where it needs one) folds to its heading and
+one line naming what it waits for, and opens by itself once that arrives. Opening one
+by hand or through the side navigation keeps it open for the project on screen.
+Folding only hides; the stage is rendered and bound as ever. The device's own cards,
+the sound bank shared with listening sessions (08) and the engine probe log (09), never
+fold.
+
 Projects persist in IndexedDB after transaction completion. Storage failures remain
 visible and portable export stays available. Concurrent tabs use optimistic save
 tokens to avoid silently overwriting each other. Export backups regularly: Safari
