@@ -26,7 +26,7 @@ import { createStudioApplication } from '../studio/backend/application/index.mjs
 import { MACHINE_DELIVERY_SCHEMA_V2 } from '../studio/backend/final/delivery-evaluator.mjs';
 import { handleMcp } from '../server/mcp.mjs';
 import { STUDIO_MCP_TOOLS } from '../server/mcp-studio.mjs';
-import { RESPONSE_COMPACTION, compactStudioResponse } from '../server/mcp-compaction.mjs';
+import { COMPACTION_NOTICE, RESPONSE_COMPACTION, compactStudioResponse } from '../server/mcp-compaction.mjs';
 import { readReportPage } from '../server/report-page.mjs';
 
 const OWNER = 'owner:compaction';
@@ -174,6 +174,9 @@ test('a 2,000-release @2 run: every MCP response stays bounded, summaries point 
   // Per-source figures are small and stay whole.
   assert.deepEqual(ledgerEntry(ledger, 'microTiming').release_offset_sources.map(item => [item.source_id, item.share, item.qualifies]), [[SOURCE_ID, '2000/2000', true]]);
   assert.equal(status.result.response_compaction.schema, RESPONSE_COMPACTION.schema);
+  // The view explains itself where it happens: read descriptions do not.
+  assert.equal(status.result.response_compaction.notice, COMPACTION_NOTICE);
+  assert.match(COMPACTION_NOTICE, /report_page/);
   assert.ok(status.result.response_compaction.compacted.some(entry => entry.path.at(-1) === 'provisional_releases' && entry.total === 2000));
   // The resumed run and the status read name the same list.
   assert.equal(ledgerEntry(run.machine_delivery, 'microTiming').provisional_releases.sha256, releases.sha256);
@@ -260,10 +263,20 @@ test('clients are told never to retry a succeeded call whose response was too la
   const { instructions } = (await initialize.json()).result;
   assert.match(instructions, /operation_returned: true .*never retry it/);
   assert.match(instructions, /report_page/);
-  for (const name of ['studio_run_start', 'studio_run_resume', 'studio_run_status', 'studio_decisions_apply', 'studio_final_reduction_apply', 'studio_finalize']) {
-    const { description } = STUDIO_MCP_TOOLS.find(tool => tool.name === name);
-    assert.match(description, /never retry it/, name);
-    assert.match(description, /report_page/, name);
+  // Said in advance where it matters, on every call that changes state. A read
+  // is safe to repeat, and pages through its own report_page parameter; the
+  // warning is not spent on reads, since every loaded description costs the model.
+  for (const tool of STUDIO_MCP_TOOLS) {
+    if (tool.annotations.readOnlyHint) {
+      assert.doesNotMatch(tool.description, /never retry it/, tool.name);
+      if (tool.name !== 'studio_capabilities') assert.ok(tool.inputSchema.properties.report_page, `${tool.name} pages with report_page`);
+    } else {
+      assert.equal(tool.description.match(/never retry it/g)?.length, 1, tool.name);
+      assert.match(tool.description, /report_page/, tool.name);
+    }
+  }
+  for (const name of ['studio_run_start', 'studio_run_resume', 'studio_decisions_apply', 'studio_final_reduction_apply', 'studio_finalize']) {
+    assert.equal(STUDIO_MCP_TOOLS.find(tool => tool.name === name).annotations.readOnlyHint, false, name);
   }
 
   const project_id = (await application.createProject(OWNER, { title: 'Oversized' })).project.project_id;

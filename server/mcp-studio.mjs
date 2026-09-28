@@ -627,14 +627,18 @@ export const STUDIO_MCP_TOOLS = [
 
 // Paging is a transport view on these existing reads, never an additional
 // operation or stored artifact. The bounded view of long lists
-// (mcp-compaction.mjs) is the other transport view, and every tool that can
-// return one, or that writes, says how to read past it and what a too-large
-// response after a write means.
-export const RESPONSE_SIZE_NOTE = ' 回應中的長清單會摘要成 {compacted, truncated, total, first, sha256, report_page 或 retrieve}；儲存的紀錄完整不變，完整清單請依 report_page（工具、參數與 JSON path）分頁讀取，或用 retrieve 指名的讀取。'
-  + 'Long lists are summarized; read them in full with report_page. If a call returns PAYLOAD_TOO_LARGE with details.operation_returned=true (for example operation="succeeded"), the operation already took effect: never retry it; read the state back through details.recovery_reads.';
+// (mcp-compaction.mjs) is the other transport view. It explains itself where
+// it happens: a summarized response carries `response_compaction.notice`, and
+// every summary names its report_page or retrieve read. What a description
+// must say in advance is the one thing a caller could get wrong before it sees
+// that response: a writing call whose response was too large has already taken
+// effect and must not be repeated. A read is safe to repeat, and its own
+// report_page parameter says how to page, so read descriptions do not carry it
+// -- every tool the model loads pays for every sentence here.
+export const RESPONSE_SIZE_NOTE = ' If this call returns PAYLOAD_TOO_LARGE with details.operation_returned=true (for example operation="succeeded"), the operation already took effect: never retry it; read the state back through details.recovery_reads, using report_page for large reads.';
 for (const tool of STUDIO_MCP_TOOLS) {
   if (PAGED_REPORT_TOOLS.has(tool.name)) tool.inputSchema.properties.report_page = REPORT_PAGE_SCHEMA;
-  if (tool.name !== 'studio_capabilities') tool.description += RESPONSE_SIZE_NOTE;
+  if (!tool.annotations.readOnlyHint) tool.description += RESPONSE_SIZE_NOTE;
 }
 
 // The run input, as the Application Service already spells it.
