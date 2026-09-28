@@ -1,0 +1,8 @@
+{
+  "mcpServers": {
+    "mml-studio": {
+      "type": "http",
+      "url": "https://mml-tools-production.up.railway.app/mcp"
+    }
+  }
+}

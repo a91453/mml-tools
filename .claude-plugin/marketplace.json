@@ -1,0 +1,14 @@
+{
+  "name": "mml-tools",
+  "description": "Mabinogi Mobile MML Studio plugins",
+  "owner": {
+    "name": "a91453"
+  },
+  "plugins": [
+    {
+      "name": "mml-tools",
+      "source": "./plugins/mml-tools",
+      "description": "Mabinogi Mobile MML Studio：遠端 MCP 工具與 Canonical 載入 skill"
+    }
+  ]
+}

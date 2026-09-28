@@ -20,6 +20,10 @@ Railway 已於 2026-09-08 22:48 UTC 完成部署，GitHub 來源為 `a91453/mml-
 
 2026-09-09 06:32 UTC 已確認回呼修正版部署成功，正式 HTTPS 回傳正確的 CSP、來源政策及失效表單說明，更新前註冊的合成客戶端也在更新後保留。此檢查沒有提交擁有者密碼；本人返回 ChatGPT、token 交換與授權工具呼叫仍待驗收。
 
+## Claude／ChatGPT 外掛
+
+[`plugins/mml-tools/`](plugins/mml-tools/README.md) 把下面的 MCP 服務和 `mabinogi-mobile-mml` skill 包成一個外掛，Claude（Claude Code、claude.ai、Cowork）與 ChatGPT／Codex 都能安裝：Claude Code 用 `/plugin marketplace add a91453/mml-tools`，Codex 用 `codex plugin marketplace add a91453/mml-tools`，ChatGPT 網頁版在開發者模式填 MCP 網址。服務只允許擁有者登入。
+
 ## MCP 工具服務
 
 新增 `POST /mcp`，使用無狀態 Streamable HTTP：
