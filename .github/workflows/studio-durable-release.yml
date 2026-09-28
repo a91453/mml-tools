@@ -4,7 +4,7 @@ on:
   workflow_dispatch:
 
 concurrency:
-  group: studio-durable-release-37d59cec3762
+  group: studio-durable-release-a42928a0b386
   cancel-in-progress: false
 
 permissions:
@@ -23,19 +23,16 @@ jobs:
       - name: Check published main and build the pinned merged source
         shell: bash
         run: |
-          test "$(git rev-parse origin/main)" = 37d59cec376230d56fe84dbc25907b1371ee7343
-          git worktree add --detach /tmp/studio-release-source 37d59cec376230d56fe84dbc25907b1371ee7343
+          test "$(git rev-parse origin/main)" = a42928a0b386ee1d4122ac7273b12f307e0e3bc0
+          git worktree add --detach /tmp/studio-release-source a42928a0b386ee1d4122ac7273b12f307e0e3bc0
           cd /tmp/studio-release-source
-          # Archival: this publisher rebuilds the pinned historical commit above,
-          # which carries no package-lock.json, exactly as it was built for its
-          # release. npm ci cannot run there, and the verified buildId below is
-          # that release's identity, so the install stays as it was. Current
-          # builds install from the committed lockfile with npm ci (roadmap G13).
-          npm install --ignore-scripts --package-lock=false
+          # The pinned commit carries package-lock.json, so the release installs
+          # exactly that tree; npm ci resolves nothing (roadmap G13).
+          npm ci --ignore-scripts
           node scripts/bootstrap-canonical.mjs --summary
           node scripts/build.mjs
           node scripts/build-studio-web.mjs
-          node scripts/verify-studio-artifact.mjs studio/web-build --buildId=55aac2dda2564ca100ac328eddac2f2f1f38f7087eebdb17547215ebec7038c9 --sourceSha=37d59cec376230d56fe84dbc25907b1371ee7343 --canonical_version=2026-09-23-v3 --canonical_status=PUBLISHED --manifest_version=2026-09-23-v3-manifest1 --rules_snapshot_sha=ff1a9df054f5ca1ae42571067fc95feb274755ef --machine_delivery_schema=mabinogi-mobile-mml-studio/machine-delivery@2
+          node scripts/verify-studio-artifact.mjs studio/web-build --buildId=1248f6168819fd570fc145ba22259490086cea9bd5969c07eff33e647a746000 --sourceSha=a42928a0b386ee1d4122ac7273b12f307e0e3bc0 --canonical_version=2026-09-23-v3 --canonical_status=PUBLISHED --manifest_version=2026-09-23-v3-manifest1 --rules_snapshot_sha=ff1a9df054f5ca1ae42571067fc95feb274755ef --machine_delivery_schema=mabinogi-mobile-mml-studio/machine-delivery@2
       - name: Package deterministic runtime and separately pinned trust bundles
         run: |
           python ops/permanent/package_release.py /tmp/studio-release-source /tmp/studio-release-source/studio/web-build /tmp/studio-release-assets

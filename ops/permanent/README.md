@@ -2,10 +2,11 @@
 
 > Railway resource IDs are kept out of this public repository and appear as `<redacted-id-N>` (the same N is the same resource). Read them from the Railway dashboard.
 
-Current release: main `37d59cec3762` (v10), which carries Published Canonical
-`2026-09-23-v3`. See [RELEASE_2026-09-28-v10.md](RELEASE_2026-09-28-v10.md) for
+Current release: main `a42928a0b386` (v10.1), which carries Published Canonical
+`2026-09-23-v3`. See [RELEASE_2026-09-28-v10.1.md](RELEASE_2026-09-28-v10.1.md) for
 its identity, runs, startup log, public checks and rollback. Before it ran
-[RELEASE_2026-09-26-v9.md](RELEASE_2026-09-26-v9.md) (main `718c8452dd4f`,
+[RELEASE_2026-09-28-v10.md](RELEASE_2026-09-28-v10.md) (main `37d59cec3762`,
+Canonical v3), [RELEASE_2026-09-26-v9.md](RELEASE_2026-09-26-v9.md) (main `718c8452dd4f`,
 Canonical v3) and v8 (main `d59836cf4a0d`, Canonical v3, pinned in commit
 `530b82679d3f`); the releases before that are
 [RELEASE_2026-09-25-v7.md](RELEASE_2026-09-25-v7.md) (main `5dbf42a51c83`,
