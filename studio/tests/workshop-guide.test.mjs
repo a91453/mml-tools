@@ -15,7 +15,8 @@ const article = html => /<main id="guide">([\s\S]*)<\/main>/.exec(html)?.[1] ?? 
 const count = (html, re) => (html.match(re) ?? []).length;
 const ids = html => [...html.matchAll(/\sid="([^"]+)"/g)].map(m => m[1]);
 const hrefs = html => [...html.matchAll(/\shref="([^"]+)"/g)].map(m => m[1]);
-const ALLOWED = new Set(['h1', 'h2', 'h3', 'p', 'ul', 'ol', 'li', 'table', 'thead', 'tbody', 'tr', 'th', 'td', 'strong', 'em', 'code', 'kbd', 'pre', 'a', 'br', 'div']);
+const ALLOWED = new Set(['h1', 'h2', 'h3', 'p', 'ul', 'ol', 'li', 'table', 'thead', 'tbody', 'tr', 'th', 'td', 'strong', 'em', 'code', 'kbd', 'pre', 'a', 'br', 'div', 'details', 'summary']);
+const BOXES = ['note', 'toc', 'workshop-only', 'canonical'];
 
 test('the seven pages exist, and guide.mjs knows exactly them', async () => {
   const files = (await readdir(dir)).filter(name => name.endsWith('.html')).map(name => name.slice(0, -5)).sort();
@@ -52,8 +53,12 @@ test('articles use only the allowed markup', async () => {
   for (const name of PAGES) {
     const html = article(await read(`${name}.html`));
     for (const [, tag] of html.matchAll(/<\/?([a-zA-Z][a-zA-Z0-9]*)/g)) assert.ok(ALLOWED.has(tag.toLowerCase()), `${name}: <${tag}>`);
-    for (const [, cls] of html.matchAll(/<div class="([^"]*)"/g)) assert.ok(['note', 'toc', 'workshop-only', 'canonical'].includes(cls), `${name}: div.${cls}`);
-    for (const tag of ['div', 'table', 'ul', 'ol', 'p', 'pre', 'strong', 'code', 'kbd', 'a']) assert.equal(count(html, new RegExp(`<${tag}\\b`, 'g')), count(html, new RegExp(`</${tag}>`, 'g')), `${name}: balanced <${tag}>`);
+    for (const [, cls] of html.matchAll(/<div class="([^"]*)"/g)) assert.ok(BOXES.includes(cls), `${name}: div.${cls}`);
+    // A collapsed box is one of the same boxes, and says what it holds on its
+    // one visible line: every <details> opens with a non-empty <summary>.
+    for (const [, cls] of html.matchAll(/<details class="([^"]*)"(?: open)?>/g)) assert.ok(BOXES.includes(cls), `${name}: details.${cls}`);
+    assert.equal(count(html, /<details\b/g), count(html, /<details class="[^"]+"(?: open)?>\s*<summary>(?!<\/summary>)/g), `${name}: every <details> starts with its <summary>`);
+    for (const tag of ['div', 'details', 'summary', 'table', 'ul', 'ol', 'p', 'pre', 'strong', 'code', 'kbd', 'a']) assert.equal(count(html, new RegExp(`<${tag}\\b`, 'g')), count(html, new RegExp(`</${tag}>`, 'g')), `${name}: balanced <${tag}>`);
     assert.equal(count(html, /<h1\b/g), 1, `${name}: one h1`);
     const seen = ids(html);
     assert.equal(new Set(seen).size, seen.length, `${name}: unique ids`);

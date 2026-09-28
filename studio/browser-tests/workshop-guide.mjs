@@ -21,7 +21,20 @@ export async function runWorkshopGuideChecks({ browser, base, profile }) {
       assert.match(await page.title(), / · 工作坊說明$/);
       assert.equal(await page.locator('#zhOnly').count(), 0, 'no zh-only line');
       assert.ok(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth + 1), `${name}: no horizontal overflow`);
+      // The contents list folds to one line on a narrow screen and stays open
+      // beside the article on a wide one.
+      assert.equal(await page.locator('#guide > details.toc').evaluate(toc => toc.open), profile.viewport.width >= 1140, `${name}: contents open only when wide`);
     }
+    // Side notes open on demand, and the contents list marks the section being read.
+    await page.goto(`${base}/studio/web/workshop/guide/mml.html#tempo`);
+    await ready();
+    const rule = page.locator('#tempo ~ details.canonical').first();
+    assert.equal(await rule.evaluate(box => box.open), false, 'a Canonical rule starts collapsed');
+    assert.equal(await rule.locator('p').first().isVisible(), false);
+    await rule.locator('summary').click();
+    assert.equal(await rule.evaluate(box => box.open), true);
+    assert.ok(await rule.locator('p').first().isVisible(), 'its text shows once opened');
+    await page.waitForFunction(() => document.querySelector('#guide > details.toc a[aria-current="location"]')?.getAttribute('href') === '#tempo');
     // Reached from the Workshop's About panel.
     await page.goto(`${base}/studio/web/workshop/index.html`);
     if (await page.locator('#navToggle').isVisible()) await page.locator('#navToggle').click();
