@@ -23,6 +23,7 @@ import { runStudioThemeChecks } from './web-theme.mjs';
 import { runCommunityFormatChecks } from './community-formats.mjs';
 import { runWorkshopGuideChecks } from './workshop-guide.mjs';
 import { runWorkshopOriginChecks } from './workshop-origin.mjs';
+import { runStageFoldChecks } from './stage-fold.mjs';
 
 // A browser build that is not installed is neither a pass nor a failed
 // assertion, so it is recorded as NOT_RUN with its reason rather than being
@@ -96,6 +97,7 @@ try {
       await page.locator('[name="audioRequired"]').selectOption('no');
       await page.locator('[name="preview"]').selectOption('none');
       await page.getByRole('button',{name:'儲存專案設定',exact:true}).click();await page.locator('h1').filter({hasText:'Studio browser fixture'}).waitFor();await idle();
+      await runStageFoldChecks({page,idle});
       // Serialization: while the candidate commit owns one busy window, fire two
       // distinct file choices in a deterministic order. Both change events must
       // observe aria-busy=true and both must survive the render that replaces the
@@ -136,6 +138,7 @@ try {
       assert.equal(await intakeCards.nth(0).locator('strong').textContent(),'candidate.mml','the in-flight intake still applies');
       assert.equal(await intakeCards.nth(1).locator('strong').textContent(),'queued-baseline.mml','the first waiter is applied to the baseline slot');
       assert.equal(await intakeCards.nth(2).locator('strong').textContent(),'queued-previous.mml','the second waiter is applied to the previous slot instead of being dropped');
+      assert.equal(await page.locator('#app details.stage-fold').count(),0,'with a candidate and a baseline no stage waits folded');
       assert.equal(await page.locator('#copy-mml').isEnabled(),true);
       assert.equal(await page.locator('.hero .badge').textContent(),'CANDIDATE');
       assert.equal(await page.locator('#track-3').inputValue(),'');

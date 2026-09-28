@@ -23,8 +23,8 @@ export async function runFinalDeliveryChecks({ page, idle, file, mml }) {
   // ── the two states are separate, and say which is which ──────────────────
   assert.equal(await section.count(), 1, 'the Final MML section must exist');
   assert.equal(await page.locator('#delivery').count(), 1, 'the acceptance section stays separate');
-  assert.equal(await page.locator('#final-delivery h2').textContent(), '06　Final MML 產生與匯出');
-  assert.equal(await page.locator('#delivery h2').textContent(), '07　Readiness 與實機接受');
+  assert.equal(await page.locator('#final-delivery h2').textContent(), '08　Final MML 產生與匯出');
+  assert.equal(await page.locator('#delivery h2').textContent(), '09　Readiness 與實機接受');
   // Two sections both called "delivery" is exactly the ambiguity this avoids.
   assert.equal(await page.locator('nav a[href="#final-delivery"]').count(), 1);
   assert.equal(await page.locator('nav a[href="#delivery"]').count(), 1);

@@ -20,7 +20,8 @@ export async function runRawMidiChecks({ page, idle, base, requests, screenshot 
 
   // ── a real file picker, real bytes ──
   await midi(page, 'candidate', 'six-voices.mid', fixtures.sixSourceVoices());
-  await page.locator('#raw-midi').waitFor();
+  // The section is always on the page (one line until a MIDI source arrives), so wait for the source itself.
+  await page.locator('#raw-midi .raw-midi-slot').first().waitFor();
   await idle();
 
   const text = await sectionText(page);
