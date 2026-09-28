@@ -36,6 +36,62 @@ function evidenceIds(value) {
     : [];
 }
 
+// How the last bar closes, reported beside the bars. Only the first two are
+// statements about the source; the third is what the music does when nobody
+// stated how it ends.
+export const FINAL_BAR_CLOSURE = Object.freeze({
+  BAR_LINE: 'BAR_LINE',
+  SOURCE_CONFIRMED_PARTIAL: 'SOURCE_CONFIRMED_PARTIAL',
+  UNDECLARED_PARTIAL: 'UNDECLARED_PARTIAL',
+});
+
+// The beats the music occupies of its last bar when it stops before that bar's
+// line, or null when it ends on a bar line. It walks bars the way buildBars
+// does and only proposes a length: buildBars then builds and checks the bars
+// with it, so a meter or pickup problem still fails there for its own reason.
+function undeclaredFinalRemainder(total, meter, pickup) {
+  try {
+    const end = f(total);
+    const pickupLength = pickup ? f(pickup) : null;
+    let cursor = f(0);
+    let index = 0;
+    for (let bar = 0; bar < 10000 && cursor.cmp(end) < 0; bar++) {
+      if (index + 1 < meter.length && eq(cursor, meter[index + 1].beat)) index++;
+      const size = bar === 0 && pickupLength ? pickupLength : new F(meter[index].numerator * 4, meter[index].denominator);
+      if (size.cmp(0) <= 0) return null;
+      const remain = end.sub(cursor);
+      if (size.cmp(remain) > 0) return String(remain);
+      cursor = cursor.add(size);
+    }
+  } catch {
+    // Malformed input: buildBars reports it.
+  }
+  return null;
+}
+
+// The bars of the timeline under the source-confirmed meter map, and how the
+// last one closes.
+//
+// Published Canonical asks that meter and time alignment be verified
+// (MOBILE_SYNTAX §11 step 7) and that bars come exactly from the confirmed
+// meter; it states no rule that the last bar must be full. PENDING P14 leaves
+// end-time and total-duration expectations unformalized and says not to pad
+// meaningful silence. So a piece that stops before its last bar line, with no
+// final partial bar stated, keeps the partial bar its music has and is
+// reported for review (FINAL_BAR_PARTIAL_UNDECLARED) rather than failed
+// (roadmap G15). Nothing is padded, extended or inferred: no final_partial is
+// derived, and a stated pickup or final partial bar that the music contradicts,
+// a meter change inside a bar and every other bar error still fail.
+function barStructure(total, meter, pickup, finalPartial) {
+  if (finalPartial) {
+    const bars = buildBars(total, meter, pickup, finalPartial);
+    return { bars, remainder: null, closure: FINAL_BAR_CLOSURE.SOURCE_CONFIRMED_PARTIAL };
+  }
+  const remainder = undeclaredFinalRemainder(total, meter, pickup);
+  const bars = buildBars(total, meter, pickup, remainder ?? '');
+  return { bars, remainder, closure: remainder === null ? FINAL_BAR_CLOSURE.BAR_LINE : FINAL_BAR_CLOSURE.UNDECLARED_PARTIAL };
+}
+
 export function splitMML(raw) {
   if (typeof raw !== 'string' || raw.length > 40000) throw Error('請提供40,000字以內的MML');
   const text = raw.trim();
@@ -317,6 +373,7 @@ export function validateMML(raw, settings = {}) {
   let total = '0';
   let meter = [];
   let bars = [];
+  let finalBar = null;
   let drums = null;
 
   if (!active.length) errors.push({ message: '六軌皆空，無法建立預覽' });
@@ -343,7 +400,7 @@ export function validateMML(raw, settings = {}) {
       if (!eq(track.total, total)) {
         warnings.push({
           role: track.role,
-          message: `總拍長${track.total}不等於最長非空軌${total}；依PENDING P16僅列Review，不自動補休止或判FAIL`,
+          message: `總拍長${track.total}不等於最長非空軌${total}；依PENDING P14僅列Review，不自動補休止或判FAIL`,
           code: 'CROSS_ROLE_END_TIME_REVIEW',
         });
       }
@@ -355,7 +412,23 @@ export function validateMML(raw, settings = {}) {
   } else {
     try {
       meter = parseMeter(settings.meterText);
-      bars = buildBars(total, meter, settings.pickup, settings.finalPartial);
+      const structure = barStructure(total, meter, settings.pickup, settings.finalPartial);
+      bars = structure.bars;
+      const last = bars.at(-1);
+      finalBar = Object.freeze({
+        closure: structure.closure,
+        beats: String(f(last.end).sub(last.start)),
+        declaredPickup: settings.pickup || null,
+        declaredFinalPartial: settings.finalPartial || null,
+      });
+      if (structure.remainder !== null) {
+        warnings.push({
+          message: `末小節只有${structure.remainder}拍，未在小節線結束，且未提供來源確認的末小節長度。Published Canonical 未規定末小節須填滿（PENDING P14），僅列Review；不自動補休止、不延長音符、不推測末小節長度`,
+          code: 'FINAL_BAR_PARTIAL_UNDECLARED',
+          start: last.start,
+          beats: structure.remainder,
+        });
+      }
     } catch (error) {
       errors.push({ message: error.message });
     }
@@ -385,6 +458,7 @@ export function validateMML(raw, settings = {}) {
     total,
     meter,
     bars,
+    finalBar,
     drums,
     programs,
     validationMode,

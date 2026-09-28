@@ -18,7 +18,7 @@ for the Published Canonical rule sources. Rule discovery starts only at
 | `rules_snapshot_sha` | `ff1a9df054f5ca1ae42571067fc95feb274755ef` |
 | `machine_delivery_schema` | `mabinogi-mobile-mml-studio/machine-delivery@2` |
 | Manifest commit | `44f3f0082cf5c30328edf1c251398b844488ad0a` |
-| Published main at this update | `96af74e60ec99cec910ab7dcf4b0d83c57d06ed0` |
+| Published main at this update | `2c6db689c5ea8fb35c765601f1b6b5c3cdc86b62` |
 
 Loaded with `npm run canonical:bootstrap -- --summary` from that published main
 (`CANONICAL_LOADED`). No local Skill, Master, memory, audit document or
@@ -79,6 +79,7 @@ prose.
 | G12 | Stale `workbench-source.zip` | `RESOLVED` | — | `NONE` |
 | G13 | Lockfile decision | `RESOLVED` | — | `NONE` |
 | G14 | Per-token caution granularity | `NO_ACTION_REQUIRED` | — | `NONE` |
+| G15 | Emitter / validator final-bar disagreement | `RESOLVED` | — | `NONE` |
 | G11-D-R | G11-D residual integrity hardening (Lead identity at the gate, Web revision chain, record envelope, carry-forward) | `RESOLVED` (pending review) | — | `NONE` |
 
 ### Coverage closed by PR #10 (G1–G7, G11)
@@ -459,38 +460,74 @@ dated audit records list candidate-level opt-in as visible debt
 **Disposition.** Closed as not-a-gap. Retained here so the identifier is not
 silently reused and so a future reader does not re-derive it as open.
 
-### G15 — Emitter and Web validator disagree on final-bar completeness · `OPEN`
+### G15 — Emitter and Web validator disagree on final-bar completeness · `RESOLVED`
 
-**Evidence.** Two implementers answer different questions about the same
-candidate. `studio/backend/final/mml-emitter.mjs` enforces the Final policy it
-implements — safe-grid decomposition, forbidden dotted forms, the
+**Evidence (before).** Two implementers answered different questions about the
+same candidate. `studio/backend/final/mml-emitter.mjs` enforces the Final policy
+it implements — safe-grid decomposition, forbidden dotted forms, the
 synchronization-safe Tempo policy, the per-role character limit, and its own
 readback — but performs no final-bar-completeness check. `validateMML`
-(`studio/backend/mml/parser.mjs`), which the Web layer uses to grade a delivery,
-does require the last bar to be filled against the confirmed meter. A candidate
-whose music ends mid-bar therefore serializes cleanly and is then refused by the
-delivery check. Reproduced during the Web Final delivery integration and pinned
-as a regression in `studio/tests/web-final-delivery.test.mjs`.
+(`studio/backend/mml/parser.mjs`), which the Web delivery check, Application
+finalize and the Canonical technical service (MCP `mml_validate`, HTTP) all use,
+built bars with the legacy `buildBars` and failed any piece whose music stopped
+before its last bar line unless a `final_partial` was stated
+(`末小節剩N拍，請依來源明確填寫末小節長度`). Reproduced at `2c6db68`: a 4/4
+candidate of two quarter notes emits `MML@t120o4cd,,,,,;` with emitter `PASS`
+and round-trip `PASS`, and `validateMML` with `0 4/4` returns
+`TECHNICAL FAIL`; the Web could not state a `final_partial` at all, so it could
+never deliver such a piece.
 
-**What this is not.** Neither behaviour is an engine claim. The published rule
-sources do not state a final-bar-completeness requirement:
-`MOBILE_SYNTAX.md` §11 step 7 requires that meter and time alignment be
-verified without specifying this test, and `PENDING.md` P14 explicitly records
-that cross-role end-time and total-duration expectations are not yet formalised.
-The validator's check is one implementation's reading, and this register may not
-be read as promoting it to a rule.
+**Canonical authority.** The published rule sources state no
+final-bar-completeness requirement. Gate 1 (technical syntax) lists no such
+item; `MOBILE_SYNTAX.md` §11 step 7 requires that meter and time alignment be
+verified without specifying this test; Gate 6 and `MASTER_RULES` §9 ask for
+exact bars from the confirmed meter, which a partial last bar is; and
+`PENDING.md` P14 records that cross-role end-time and total-duration
+expectations are not yet formalised and says not to pad meaningful silence. The
+refusal was one implementation's reading presented as a Canonical technical
+verdict.
 
-**Mitigating fact.** The integration fails closed: the emitted string is
-verified before it can become a delivery, a refusal keeps no output, and nothing
-pads a short final bar to make the check pass. The Web UI shows the validator's
-refusal in the validator's own words and labels it as current implementation
-behaviour.
+**Resolution.** The undocumented hard failure is removed from the Canonical
+validator; nothing else about bars changes.
 
-**Why open.** Needs a decision rather than a repair: whether the emitter should
-adopt the same test, whether the validator's test should be narrowed, or whether
-the two questions are legitimately different and only the reporting needs work.
-Any answer that would make final-bar completeness a normative finalization
-requirement is a Canonical change and must go through change control instead.
+- `validateMML` keeps the partial last bar the music has and reports it as a
+  `FINAL_BAR_PARTIAL_UNDECLARED` review warning (start, beats, P14) instead of
+  an error. Its result gains `song.finalBar` (`closure`: `BAR_LINE`,
+  `SOURCE_CONFIRMED_PARTIAL` or `UNDECLARED_PARTIAL`; the last bar's beats; the
+  stated pickup and final partial bar, or null).
+- Nothing is inferred or padded: no `final_partial`, pickup or meter is derived,
+  no rest is added, no note lengthened, no attack moved. The remainder is only
+  proposed to the legacy `buildBars`, which still builds and checks the bars.
+- Still failing, each for its own reason: a missing or malformed meter map, a
+  meter map not starting at beat 0, a meter change inside a bar or at/after the
+  end, a pickup as long as its bar, a non-positive pickup or final partial bar,
+  and a stated `final_partial` the music contradicts (a meter/time-alignment
+  failure). Tempo map, syntax, round-trip and every other Final check are
+  untouched.
+- The Final artifact's `final_bar` records the parser's `closure` beside the
+  stated inputs and meter map; stating a `final_partial` changes that record,
+  never a character of the Final.
+- The `CROSS_ROLE_END_TIME_REVIEW` warning cited `PENDING P16` (the `r64`
+  item); it now cites P14, the item it is about.
+- The legacy `dist/core.js` validator is unchanged. It is the labelled legacy
+  diagnostic, not a Canonical verdict, and still refuses such a piece under its
+  own name.
+- Regressions: `studio/tests/final-bar-closure.test.mjs` (partial ending
+  accepted with emitter/round-trip `PASS`; source-confirmed `final_partial`
+  reported, contradicted one failing; pickup not taken for an ending and never
+  guessed; no padding or event change; meter failures still failing for their
+  own reason; full-bar Finals unchanged; emitter, parser, Web and technical
+  service agreeing on one string), plus the Web delivery, Application finalize
+  and run tests that previously pinned the disagreement. Restoring the hard
+  failure turns eight of them red.
+
+**What this is not.** Canonical impact is `NONE`: no Published Canonical
+document, Manifest or `rules_snapshot_sha` changed, and no Final Gate was
+added. P14 remains `PENDING`; this does not resolve client end-time semantics
+or decide whether shorter roles or pieces are acceptable in game. It only stops
+an implementer from presenting a completeness policy the rules do not state as a
+Canonical technical `FAIL`, which is what made the emitter and the validator
+contradict each other.
 
 **Canonical impact.** `NONE`.
 

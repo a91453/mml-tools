@@ -37,10 +37,8 @@ const note = ({ id, pitch = 60, start, end, role = 'Melody', volume = 8 }) => cr
   id, pitch, start: String(start), end: String(end), role, voice: role, volume, sourceIds: ['official'],
 });
 
-// A bar-complete fixture. The Web technical validation requires the final bar to
-// be filled against the confirmed meter, which the emitter does not check, so a
-// fixture whose music stops mid-bar fails the delivery check rather than the
-// property under test.
+// A bar-complete fixture by default. A piece that stops before its last bar
+// line is delivered too (G15); the fixtures that exercise that say so.
 function candidateProject(events, { tempoEvents, meterEvents } = {}) {
   return createCanonicalProject({
     id: 'fixture-project', title: 'Final delivery fixture', sources: [OFFICIAL], events,
@@ -456,29 +454,64 @@ test('acceptance still requires VALIDATED and binds the exact generated string',
 });
 
 test('a Web delivery-validation refusal is reported in the validator\'s own words', () => {
-  // The emitter has no final-bar-completeness check and the Web technical
-  // validation does, so a candidate whose music stops mid-bar serializes
-  // cleanly and is then refused here. That disagreement is a current
-  // implementation finding, not a published rule and not a proven engine limit,
-  // so the refusal is carried verbatim rather than paraphrased -- and nothing
-  // pads the music to make it go away.
+  // The emitter does not read the meter map; the Web delivery check does. A
+  // meter change that falls inside a bar therefore serializes cleanly and is
+  // then refused here: the confirmed meter map and the bar grid disagree, which
+  // is the meter and time alignment MOBILE_SYNTAX §11 step 7 asks to verify.
+  // The refusal is carried verbatim rather than paraphrased -- and nothing
+  // moves the change or pads the music to make it go away.
+  const events = [
+    note({ id: 'q1', pitch: 60, start: 0, end: 1 }),
+    note({ id: 'q2', pitch: 62, start: 1, end: 2 }),
+    note({ id: 'q3', pitch: 64, start: 2, end: 5 }),
+  ];
+  const meterEvents = [
+    createCanonicalMeterEvent({ id: 'm1', beat: '0', numerator: 4, denominator: 4, sourceIds: ['official'] }),
+    createCanonicalMeterEvent({ id: 'm2', beat: '2', numerator: 3, denominator: 4, sourceIds: ['official'] }),
+  ];
+  const w = reviewAll(workspaceFor(candidateProject(events, { meterEvents })));
+  w.settings.meterText = '0 4/4\n2 3/4';
+  const result = generateFinalDelivery(w);
+  assert.equal(result.status, 'FAIL');
+  assert.equal(result.combinedMml, null, 'a refused delivery keeps no output');
+  assert.ok(codes(result).includes('FINAL_DELIVERY_READBACK_FAILED'));
+  assert.equal(result.delivery.technical.ok, false, 'the Web validator is what refused it');
+  assert.deepEqual(result.delivery.technical.errors.map(error => error.message), ['第2拍變拍落在小節內；請核對來源或弱起']);
+
+  const next = applyFinalDelivery(w, result);
+  assert.equal(next.deliveryMml, undefined, 'nothing is written');
+  assert.equal(next.finalDelivery.deliveryCheck.technicalOk, false);
+  assert.deepEqual(next.finalDelivery.deliveryCheck.errors, ['第2拍變拍落在小節內；請核對來源或弱起'], 'the validator messages are kept so the UI can show them');
+  assert.equal(analyzeWorkspace(next).rawMml, null);
+});
+
+test('a candidate whose music stops before its last bar line is delivered, reported for review and never padded (G15)', () => {
+  // Before G15 this was the refusal above: the emitter wrote the Final and the
+  // Web check failed it for an unfilled last bar, a requirement no Published
+  // Canonical rule states (PENDING P14 leaves end-time expectations open).
   const events = [
     note({ id: 'half1', pitch: 60, start: 0, end: 1 }),
     note({ id: 'half2', pitch: 62, start: 1, end: 2 }),
   ];
   const w = ready(events);
   const result = generateFinalDelivery(w);
-  assert.equal(result.status, 'FAIL');
-  assert.equal(result.combinedMml, null, 'a refused delivery keeps no output');
-  assert.ok(codes(result).includes('FINAL_DELIVERY_READBACK_FAILED'));
-  assert.equal(result.delivery.technical.ok, false, 'the Web validator is what refused it');
+  assert.equal(result.status, 'PASS', JSON.stringify(result.diagnostics));
+  assert.equal(result.combinedMml, 'MML@t120o4cd,,,,,;', 'two quarter notes and nothing after them');
+  assert.equal(result.delivery.technical.ok, true);
+  assert.equal(result.delivery.deliveryMatches, true, 'the delivery reads back as exactly the candidate events');
+  assert.equal(result.delivery.technical.song.total, '2', 'the timeline ends where the music ends');
+  assert.deepEqual(result.delivery.technical.song.finalBar, { closure: 'UNDECLARED_PARTIAL', beats: '2', declaredPickup: null, declaredFinalPartial: null });
+  const review = result.delivery.technical.warnings.filter(item => item.code === 'FINAL_BAR_PARTIAL_UNDECLARED');
+  assert.equal(review.length, 1);
+  assert.deepEqual([review[0].start, review[0].beats], ['0', '2']);
 
   const next = applyFinalDelivery(w, result);
-  assert.equal(next.deliveryMml, undefined, 'nothing is written');
-  assert.equal(next.finalDelivery.deliveryCheck.technicalOk, false);
-  assert.ok(next.finalDelivery.deliveryCheck.errors.length > 0, 'the validator messages are kept so the UI can show them');
-  assert.ok(next.finalDelivery.deliveryCheck.errors.every(message => typeof message === 'string' && message.length));
-  assert.equal(analyzeWorkspace(next).rawMml, null);
+  assert.equal(next.deliveryMml, result.combinedMml);
+  const report = analyzeWorkspace(next);
+  assert.equal(report.gates.technical.status, 'PASS');
+  assert.equal(report.state, 'VALIDATED');
+  assert.equal(report.rawMml, result.combinedMml);
+  assert.deepEqual(report.technical.song.tracks[0].events.map(event => [event.pitch, event.start, event.end]), [[60, '0', '1'], [62, '1', '2']]);
 });
 
 test('a refused generation leaves a valid pasted delivery in place and does not relabel it', () => {
