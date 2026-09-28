@@ -31,7 +31,8 @@
   <h1>編輯器入門</h1>
   <p>試著做可貼進遊戲的譜</p>
 
-  <div class="toc">
+  <details class="toc" open>
+    <summary>本頁目錄</summary>
     <ol>
       <li><a href="#which">你手上有什麼</a></li>
       <li><a href="#map">介面五區</a></li>
@@ -45,11 +46,12 @@
       <li><a href="#copy">八、複製 MML，貼進遊戲</a></li>
       <li><a href="#next">接下來</a></li>
     </ol>
-  </div>
+  </details>
 
-  <div class="workshop-only">
-    <p><strong>工作坊專用：</strong>工作坊是 MML Studio 裡的編輯器，但它在 Canonical 驗證流程之外。這一頁描述的是工作坊怎麼操作，在這裡做出來的譜一律是「工作坊編輯（未經 Studio 驗證）」——畫面左上角那個標籤就是在講這件事。要讓 Studio 檢查它，最後一節的<strong>送回 Studio 驗證</strong>才是那條路。</p>
-  </div>
+  <details class="workshop-only">
+    <summary><strong>工作坊專用</strong>這一頁寫的是工作坊怎麼操作；在這裡做的譜都未經 Studio 驗證</summary>
+    <p>工作坊是 MML Studio 裡的編輯器，但它在 Canonical 驗證流程之外。這一頁描述的是工作坊怎麼操作，在這裡做出來的譜一律是「工作坊編輯（未經 Studio 驗證）」——畫面左上角那個標籤就是在講這件事。要讓 Studio 檢查它，最後一節的<strong>送回 Studio 驗證</strong>才是那條路。</p>
+  </details>
 
   <h2 id="which">你手上有什麼</h2>
 
@@ -97,9 +99,10 @@
     <p>工作坊的<strong>前 6 軌就是這 6 個角色</strong>，分頁名稱是<strong>主旋律、和弦1、和弦2、和弦3、和弦4、和弦5</strong>。第 7 軌以後叫<strong>輔助1</strong>到<strong>輔助9</strong>。</p>
   </div>
 
-  <div class="workshop-only">
-    <p><strong>工作坊專用：</strong>輔助1–輔助9 只是工作坊裡的素材軌，可以拿來放暫時用不到的聲部、或當合併的來源。它們不會出現在複製出去的 MML 裡，也不會送回 Studio，WAV 匯出也只合成前 6 軌。</p>
-  </div>
+  <details class="workshop-only">
+    <summary><strong>工作坊專用</strong>輔助1–輔助9 只是素材軌：不會複製出去，也不會送回 Studio</summary>
+    <p>輔助1–輔助9 只是工作坊裡的素材軌，可以拿來放暫時用不到的聲部、或當合併的來源。它們不會出現在複製出去的 MML 裡，也不會送回 Studio，WAV 匯出也只合成前 6 軌。</p>
+  </details>
 
   <h2 id="listen">一、先聽一次</h2>
 
@@ -114,9 +117,10 @@
 
   <p>音色庫載好之前，<strong>▶ 演奏</strong>是按不下去的。載好之後什麼都別動，先按工具列左邊的 <strong>▶ 演奏</strong>。</p>
 
-  <div class="workshop-only">
-    <p><strong>工作坊專用：</strong>不管用哪一種音色庫，工作坊的聲音都只是聆聽輔助：Mabinogi Mobile 樂器對到 GM 音色（Lute → GM 24 等）只是近似，遊戲風格音色也只是模擬。這裡聽到的不是遊戲的音色，也不是任何驗證的證據。</p>
-  </div>
+  <details class="workshop-only">
+    <summary><strong>工作坊專用</strong>這裡的聲音只是聆聽輔助，不是遊戲音色，也不是驗證證據</summary>
+    <p>不管用哪一種音色庫，工作坊的聲音都只是聆聽輔助：Mabinogi Mobile 樂器對到 GM 音色（Lute → GM 24 等）只是近似，遊戲風格音色也只是模擬。這裡聽到的不是遊戲的音色，也不是任何驗證的證據。</p>
+  </details>
 
   <p>三件事會同時發生，值得各看一眼：</p>
 
@@ -160,8 +164,7 @@
 
   <p><strong>按 <kbd>3</kbd> 選四分音符</strong>（或直接點那顆 <code>4</code>）。然後在捲軸上照這個順序<strong>左鍵</strong>點七下：</p>
 
-  <pre><code>Do  Do  Sol Sol La  La  Sol
-  </code></pre>
+  <pre><code>Do  Do  Sol Sol La  La  Sol</code></pre>
 
   <p>音高看左邊的琴鍵找——<strong>點琴鍵會發出那個音</strong>，聽到對的再往右邊那一格點下去。中央 Do 是琴鍵上標著 <code>o4C</code> 的那一列。</p>
 
@@ -191,8 +194,7 @@
 
   <p>低頭看下面的文字區。你剛剛畫的七個音已經變成一行 MML 了，如果畫在 <code>o4</code> 那一個八度，它長這樣：</p>
 
-  <pre><code>ccggaag2
-  </code></pre>
+  <pre><code>ccggaag2</code></pre>
 
   <p>前面沒有 <code>l4</code> 也沒有 <code>o4</code>，因為那就是工作坊的預設（四分音符、第 4 八度）。畫在別的八度的話，會多出 <code>&lt;</code>、<code>&gt;</code> 或 <code>o</code> 之類的八度記號，但形狀是一樣的。</p>
 
@@ -237,26 +239,30 @@
 
   <p>寫進去之後，狀態列的<strong>速度</strong>會顯示新的值；曲中有換速度的話會顯示成 <code>120 → 90</code> 這樣的一串。還沒寫過任何速度時顯示「120 BPM（預設）」。</p>
 
-  <div class="workshop-only">
-    <p><strong>工作坊專用：</strong>速度工具把整首的速度圖<strong>只寫進主旋律</strong>，同時把其他各軌文字裡的 <code>t</code> 全部拿掉；別軌有音符跨過換速度的位置時，會把那個音切成兩段、用連結線接回去（聽起來一樣）。工作坊自己播放時，任何一軌的速度記號都套用到全部的軌，所以<strong>在這裡聽不出每一軌有沒有自己帶速度</strong>。</p>
-  </div>
+  <details class="workshop-only">
+    <summary><strong>工作坊專用</strong>速度工具只把速度圖寫進主旋律，並拿掉其他軌的 <code>t</code></summary>
+    <p>速度工具把整首的速度圖<strong>只寫進主旋律</strong>，同時把其他各軌文字裡的 <code>t</code> 全部拿掉；別軌有音符跨過換速度的位置時，會把那個音切成兩段、用連結線接回去（聽起來一樣）。工作坊自己播放時，任何一軌的速度記號都套用到全部的軌，所以<strong>在這裡聽不出每一軌有沒有自己帶速度</strong>。</p>
+  </details>
 
-  <div class="canonical">
+  <details class="canonical">
+    <summary><strong>Canonical 規則</strong>交付時每個非空角色都要帶同一份速度圖（MOBILE_SYNTAX §7），速度工具的結果不符合</summary>
     <p><strong>Canonical 的交付規則（MOBILE_SYNTAX §7）</strong>：<code>T32</code>–<code>T255</code> 是官方確認的範圍。交付時，每一個<strong>非空</strong>角色都要以同一個起始速度開頭；曲中有換速度時，每一個非空角色都要在相同的音樂位置帶著同一份完整的速度圖；完全空的角色保持空白，不為了驗證器補速度或休止符。這是為了同步安全訂的專案規則，<strong>不是</strong>官方說引擎技術上需要每個角色都帶速度；只有一個角色帶曲中換速度時遊戲會不會保持同步，目前是 PENDING_IN_GAME。</p>
     <p>所以工作坊速度工具的結果（只有主旋律帶 <code>t</code>）<strong>不符合</strong>這條交付規則。Studio 的技術檢查會把「非空軌的速度圖彼此不同」標出來。</p>
-  </div>
+  </details>
 
   <h2 id="chars">七、看字數</h2>
 
   <p>每個分頁的樂器列右邊都有一組數字，例如 <code>7 音 · 8/2400 字</code>。那是<strong>匯出後</strong>的字數，空白與換行（還有 <code>/* */</code>、<code>//</code> 註解）不計——所以你可以放心用換行分小節。</p>
 
-  <div class="canonical">
+  <details class="canonical">
+    <summary><strong>Canonical 規則</strong>每個角色上限 2,400 字，六個角色各自算（MOBILE_SYNTAX §2、§9）</summary>
     <p>每個角色的 MML 文字上限是 <strong>2,400 字</strong>，這是官方確認的遊戲限制，六個角色各自算（MOBILE_SYNTAX §2、§9）。遊戲客戶端實際怎麼數字（跟程式裡的字串長度是否完全一致）還沒確認，是 PENDING_IN_GAME（MOBILE_SYNTAX §9）。</p>
-  </div>
+  </details>
 
-  <div class="workshop-only">
-    <p><strong>工作坊專用：</strong>樂器列上的數字是工作坊自己的算法。超過 2,400 字時那組數字會變紅（游標停上去會說超過幾字）；開著<strong>設定 → 語法上色</strong>時，超出的那一段文字也會加紅底。這些都只是提示，不會擋住你繼續編輯。</p>
-  </div>
+  <details class="workshop-only">
+    <summary><strong>工作坊專用</strong>字數超過 2,400 只會變紅提示，不會擋住編輯</summary>
+    <p>樂器列上的數字是工作坊自己的算法。超過 2,400 字時那組數字會變紅（游標停上去會說超過幾字）；開著<strong>設定 → 語法上色</strong>時，超出的那一段文字也會加紅底。這些都只是提示，不會擋住你繼續編輯。</p>
+  </details>
 
   <p>真的超了怎麼壓：工具列的<strong>優化</strong>，先選<strong>無損壓縮</strong>（一個音都不動，音符完全相同）。它不夠的話，下面的<strong>音長補滿</strong>、<strong>部分補滿</strong>、<strong>尾段收音</strong>三種不動任何音符的起始時間、也不改變節奏，但<strong>會改變音符長短</strong>，聲音會有差。詳見<a href="./reference.html#opt">功能說明的優化那一節</a>與<a href="./faq.html#toolong">常見問題</a>。</p>
 
@@ -274,9 +280,10 @@
     <li>樂器選擇不在複製出去的文字裡（文字裡原本的 <code>@</code> 數字也會拿掉）</li>
   </ul>
 
-  <div class="workshop-only">
-    <p><strong>工作坊專用：</strong>這段文字是工作坊直接產生的，<strong>沒有經過任何驗證</strong>：沒有 Canonical 規則檢查、沒有 Studio 審核，也沒有實機確認。它貼不貼得進、在遊戲裡聽起來對不對，要你自己在遊戲裡確認。</p>
-  </div>
+  <details class="workshop-only">
+    <summary><strong>工作坊專用</strong>複製出去的文字沒有經過任何驗證，要自己在遊戲裡確認</summary>
+    <p>這段文字是工作坊直接產生的，<strong>沒有經過任何驗證</strong>：沒有 Canonical 規則檢查、沒有 Studio 審核，也沒有實機確認。它貼不貼得進、在遊戲裡聽起來對不對，要你自己在遊戲裡確認。</p>
+  </details>
 
   <h3>要讓 Studio 檢查：送回 Studio 驗證</h3>
 

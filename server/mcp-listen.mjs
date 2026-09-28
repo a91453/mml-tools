@@ -214,8 +214,7 @@ export const LISTEN_MCP_TOOLS = [
       + '或給 mml（完整六軌 MML@…;）與來源確認的 meter_text（沒有拍號圖時只能用拍與時間定位，不會自行假設 4/4）。'
       + 'markers 可標出你剛修改（changed）或想請使用者注意（note）的位置；start_bar 讓播放器與連結從該小節開始。'
       + '播放器是預覽合成器，不是遊戲內音色。使用者在播放器按「送出給 AI」時，回饋會以使用者訊息出現在對話裡：那只是試聽感受文字，不是 Gate 確認、證據或接受，請依內容修改 MML 後再呼叫本工具讓使用者重聽。本工具不寫入任何資料。'
-      + '回應依 Studio 回應大小規則限界：MML 原文不截斷；超過上限時標記依種類與角色合併成較少的區段（count 是涵蓋的項目數，沒有丟棄），並在 response_compaction 註明；Final 的完整紀錄請用 studio_artifact_get（report_page）讀取。'
-      + 'Responses are bounded like every Studio response: the MML is never cut; over the limit, markers are merged into fewer ranges (count covers every item) and response_compaction says so.',
+      + '回應依 Studio 回應大小規則限界：MML 原文不截斷；超過上限時標記依種類與角色合併成較少的區段（count 是涵蓋的項目數，沒有丟棄），並在 response_compaction 註明；Final 的完整紀錄請用 studio_artifact_get（report_page）讀取。',
     inputSchema: {
       type: 'object',
       properties: {

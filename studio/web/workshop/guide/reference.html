@@ -31,11 +31,13 @@
   <h1>功能說明</h1>
   <p>每一顆按鈕在做什麼</p>
 
-  <div class="note">
+  <details class="note">
+    <summary>這一頁寫的是工作坊的行為，不是遊戲規則</summary>
     <p><strong>工作坊在 Canonical 驗證流程之外。</strong> 這一頁描述的是工作坊這個編輯器的行為，不是遊戲規則，也不代表任何東西通過了 Studio 的驗證。遊戲與交付規則以 Published Canonical 為準；頁面裡引用規則的地方會標出出處（例如 MOBILE_SYNTAX §2）。</p>
-  </div>
+  </details>
 
-  <div class="toc">
+  <details class="toc" open>
+    <summary>本頁目錄</summary>
     <ol>
       <li><a href="#howto">我想做某件事，看哪一節</a></li>
       <li><a href="#header">標題列</a></li>
@@ -49,7 +51,7 @@
       <li><a href="#export">WAV 與影片匯出</a></li>
       <li><a href="#narrow">窄螢幕與手機</a></li>
     </ol>
-  </div>
+  </details>
 
   <p>這一頁是查閱用的。第一次用請先走一遍<a href="./editor.html">編輯器入門</a>，那裡有一條從零到貼進遊戲的完整路線。</p>
 
@@ -106,7 +108,10 @@
     </tbody>
   </table>
 
-  <div class="workshop-only"><p><strong>工作坊專用：</strong>工作坊與 Studio 對 <code>n</code>／<code>N</code> 數字音符的八度讀法不同，所以開啟與送回時都會換算成同一個音高（哪一種才是遊戲的讀法還沒有定論）。送回時工作坊還會把它自己的寫法收窄成 Studio 讀得懂的樣子（例如補上 <code>o</code>、把 <code>lN.</code> 展開、去掉 <code>@</code> 數字與看不懂的字元），並逐軌比對 Studio 讀到的和工作坊播放的是否一樣；對不上的軌照送，但會在框裡寫出來。這只是轉換本身的檢查，<strong>不是</strong> Studio 的驗證。</p></div>
+  <details class="workshop-only">
+    <summary><strong>工作坊專用</strong>與 Studio 互相開啟或送回時，<code>n</code>／<code>N</code> 會換算成同一個音高，寫法也會改成 Studio 讀得懂的樣子</summary>
+    <p>工作坊與 Studio 對 <code>n</code>／<code>N</code> 數字音符的八度讀法不同，所以開啟與送回時都會換算成同一個音高（哪一種才是遊戲的讀法還沒有定論）。送回時工作坊還會把它自己的寫法收窄成 Studio 讀得懂的樣子（例如補上 <code>o</code>、把 <code>lN.</code> 展開、去掉 <code>@</code> 數字與看不懂的字元），並逐軌比對 Studio 讀到的和工作坊播放的是否一樣；對不上的軌照送，但會在框裡寫出來。這只是轉換本身的檢查，<strong>不是</strong> Studio 的驗證。</p>
+  </details>
 
   <h3 id="clip">剪貼簿</h3>
 
@@ -124,7 +129,10 @@
 
   <p>複製時會去掉空白與換行，工作坊的字數也不算空白（遊戲本身怎麼算字數尚未實機驗證，PENDING P1）；<code>@</code> 數字、看不懂的字元會拿掉，雙附點 <code>..</code> 會改寫成等長的寫法。某一軌寫不出來時整段不複製，並告訴你是哪一軌。</p>
 
-  <div class="workshop-only"><p><strong>工作坊專用：</strong>複製時還會自動<strong>無損壓縮</strong>，換成更省字的寫法（照工作坊自己的讀法，音符、長度、速度都不變），省了幾字會在訊息裡寫出來。壓縮只影響送出去的那一份，編輯器裡的文字不變。工作坊選的寫法可能用到 Canonical Final 禁止（FINAL_FORBIDDEN）的附點形式（例如 <code>12.</code>、<code>64.</code>，見 MOBILE_SYNTAX §4），這一點不在工作坊檢查的範圍內；捲簾編輯與優化重新產生的文字也一樣。</p></div>
+  <details class="workshop-only">
+    <summary><strong>工作坊專用</strong>複製時會自動無損壓縮，寫法可能用到 Final 禁止的附點形式</summary>
+    <p>複製時還會自動<strong>無損壓縮</strong>，換成更省字的寫法（照工作坊自己的讀法，音符、長度、速度都不變），省了幾字會在訊息裡寫出來。壓縮只影響送出去的那一份，編輯器裡的文字不變。工作坊選的寫法可能用到 Canonical Final 禁止（FINAL_FORBIDDEN）的附點形式（例如 <code>12.</code>、<code>64.</code>，見 MOBILE_SYNTAX §4），這一點不在工作坊檢查的範圍內；捲簾編輯與優化重新產生的文字也一樣。</p>
+  </details>
 
   <p>某些瀏覽器不讓網頁直接讀寫剪貼簿，那時會開一個小框請你自己按 <kbd>Ctrl</kbd>+<kbd>V</kbd>（再按<strong>載入</strong>）或 <kbd>Ctrl</kbd>+<kbd>C</kbd>——不是壞了。</p>
 
@@ -156,7 +164,9 @@
 
   <p><strong>非標準時值。</strong> 瑪奇 PC／MabiIcco 的譜有時會用 <code>C21</code>、<code>R19.</code> 這種時值。匯入、貼上時<strong>原文完整保留</strong>，勾選清單上會標出「非標準 N」，那一軌在工具列上也會出現「這一軌有 N 個非標準時值」和一顆<strong>還原</strong>。按還原會用遊戲的尺重讀這一軌、換成標準時值寫回去，而且只在每個音的時間都完全對得上時才寫——例如 <code>C21R.R19.C2</code> 會變成等長的 <code>l2c32.r4r8.r64c</code>（字數會變多）。對不上就保留原文，一個時值都不動。沒還原的軌照樣可以編輯、儲存、複製與匯出，只是會提醒你瑪奇 Mobile 是否接受尚未實機驗證。</p>
 
-  <div class="workshop-only"><p><strong>工作坊專用：</strong><a href="#opt">無損壓縮</a>的搜尋有額度，逐軌獨立：排除空白後每軌不超過 4000 字用 200,000，超過才提高到 400,000。額度用完會提示，並不代表已經不能再縮短。</p></div>
+  <div class="workshop-only">
+    <p><strong>工作坊專用：</strong><a href="#opt">無損壓縮</a>的搜尋有額度，逐軌獨立：排除空白後每軌不超過 4000 字用 200,000，超過才提高到 400,000。額度用完會提示，並不代表已經不能再縮短。</p>
+  </div>
 
   <h3 id="library">歌曲庫（儲存到…）</h3>
 
@@ -302,11 +312,11 @@
   <p>所以最常用的節奏是這樣：</p>
 
   <pre><code>4        挑八分音符
-  畫 畫     兩個八分
-  .        開附點
-  畫        一個八分附點
-  .        關附點
-  畫 畫     繼續八分</code></pre>
+畫 畫     兩個八分
+.        開附點
+畫        一個八分附點
+.        關附點
+畫 畫     繼續八分</code></pre>
 
   <p><strong>已經畫好的音要加附點，走另一條路：右鍵（手指是長按）那個音，選單裡有一列「加上附點」／「取消附點」。</strong> 那條路比鍵盤好，因為選單會先算合不合格——不行的話灰字在你按之前就講了。</p>
 
@@ -323,7 +333,10 @@
 
   <p>手機也保留音符圖示按鈕：先選音符長度，再點圖示切換接下來繪製的附點狀態。修改已經畫好的音符，請長按音符後使用選單。六十四分附點只是不在繪製與附點工具的操作範圍內；匯入或手寫的 <code>l64.</code> 仍可保留，不會被當成非法 MML。</p>
 
-  <div class="canonical"><p>Canonical 的交付規則另有規定：Final 禁止（FINAL_FORBIDDEN）<code>64.</code>、多重附點（例如 <code>4..</code>），以及 <code>3.</code>、<code>6.</code>、<code>12.</code>、<code>24.</code>、<code>48.</code> 這類不在偏好集合裡的附點；偏好的單附點是 <code>1</code>、<code>2</code>、<code>4</code>、<code>8</code>、<code>16</code>、<code>32</code> 的附點。這些是專案的交付政策，引擎本身能不能讀這些禁止的寫法仍是 PENDING_IN_GAME（MOBILE_SYNTAX §4）。</p></div>
+  <details class="canonical">
+    <summary><strong>Canonical 規則</strong>Final 禁止 <code>64.</code>、多重附點與 <code>3.</code>、<code>6.</code>、<code>12.</code>、<code>24.</code>、<code>48.</code> 這類附點（MOBILE_SYNTAX §4）</summary>
+    <p>Canonical 的交付規則另有規定：Final 禁止（FINAL_FORBIDDEN）<code>64.</code>、多重附點（例如 <code>4..</code>），以及 <code>3.</code>、<code>6.</code>、<code>12.</code>、<code>24.</code>、<code>48.</code> 這類不在偏好集合裡的附點；偏好的單附點是 <code>1</code>、<code>2</code>、<code>4</code>、<code>8</code>、<code>16</code>、<code>32</code> 的附點。這些是專案的交付政策，引擎本身能不能讀這些禁止的寫法仍是 PENDING_IN_GAME（MOBILE_SYNTAX §4）。</p>
+  </details>
 
   <h3>縮放</h3>
 
@@ -361,8 +374,11 @@
 
   <p>框裡會先寫出這一下會做什麼：「這個位置原本是 T100，會改成 T120」，或「會在這裡寫入 T120」；有哪幾軌的音會被切開也會列出來。狀態列的<strong>速度</strong>會顯示目前的速度表，有變速時寫成「100 → 120」。</p>
 
-  <div class="workshop-only"><p><strong>工作坊專用：</strong>按<strong>執行</strong>之後，完整的速度表只寫進<strong>第 1 軌（主旋律）</strong>，其他軌裡原有的 <code>t</code> 會全部拿掉，只在音符跨過變速點的地方切開、用連結線接回去（工作坊的提示說這樣遊戲裡才不會走音——這一點沒有經過實機確認）。工作坊播放時也是把所有軌裡的 <code>t</code> 合成一張速度表來播，所以在這裡聽不出「只有一軌帶速度」會怎樣。</p>
-  <p>這和 Canonical 的交付政策不同：交付時每一個非空的角色都要以同樣的初始速度開頭，中途變速時每一個非空角色都要在同樣的位置帶同一張完整的速度表；這條複製規則是為了同步安全的專案政策，不是官方說引擎一定要每個角色都帶速度；只有一個角色帶中途變速時客戶端會不會保持同步，仍是 PENDING_IN_GAME（MOBILE_SYNTAX §7）。<a href="#studio">送回 Studio 驗證</a>時由 Studio 檢查這一點。</p></div>
+  <details class="workshop-only">
+    <summary><strong>工作坊專用</strong>速度表只寫進主旋律，和 Canonical 的交付政策不同（MOBILE_SYNTAX §7）</summary>
+    <p>按<strong>執行</strong>之後，完整的速度表只寫進<strong>第 1 軌（主旋律）</strong>，其他軌裡原有的 <code>t</code> 會全部拿掉，只在音符跨過變速點的地方切開、用連結線接回去（工作坊的提示說這樣遊戲裡才不會走音——這一點沒有經過實機確認）。工作坊播放時也是把所有軌裡的 <code>t</code> 合成一張速度表來播，所以在這裡聽不出「只有一軌帶速度」會怎樣。</p>
+    <p>這和 Canonical 的交付政策不同：交付時每一個非空的角色都要以同樣的初始速度開頭，中途變速時每一個非空角色都要在同樣的位置帶同一張完整的速度表；這條複製規則是為了同步安全的專案政策，不是官方說引擎一定要每個角色都帶速度；只有一個角色帶中途變速時客戶端會不會保持同步，仍是 PENDING_IN_GAME（MOBILE_SYNTAX §7）。<a href="#studio">送回 Studio 驗證</a>時由 Studio 檢查這一點。</p>
+  </details>
 
   <h3 id="vel">力度</h3>
 
@@ -394,7 +410,10 @@
 
   <p>每個選項按鈕上都會先算出代價給你看（「省 N 字 · 不動任何音符」或「再省 N 字 · 影響 N 個音」），下面一行寫著最長的一軌（或這一軌）現在幾字、做完幾字、上限 2400；選了才執行。無損壓縮一律整條音軌重算，不受選取範圍影響。執行前會再驗一次：無損壓縮要求每個音完全相同，另外三種要求每個音的起始時間都不變；沒過就一個音都不動。</p>
 
-  <div class="workshop-only"><p><strong>工作坊專用：</strong>音長補滿、部分補滿、尾段收音是工作坊的有損優化，會改掉原本的音長與休止。改動是有界的：不改變任何一個音符的起始時間，只動長度——延長的部分最多是原長的 3 倍、延長後不超過 3 個全音符，讓出來的休止不超過一個八分音符，也不會跨過速度記號。Canonical 在交付前的整理要求保留來源的起音與休止（MOBILE_SYNTAX §11），這三種卻會改掉休止與音長，所以用過的譜要當成改編看待，送回 Studio 時由 Studio 判斷。</p></div>
+  <details class="workshop-only">
+    <summary><strong>工作坊專用</strong>音長補滿、部分補滿、尾段收音會改掉音長與休止，用過的譜要當成改編</summary>
+    <p>音長補滿、部分補滿、尾段收音是工作坊的有損優化，會改掉原本的音長與休止。改動是有界的：不改變任何一個音符的起始時間，只動長度——延長的部分最多是原長的 3 倍、延長後不超過 3 個全音符，讓出來的休止不超過一個八分音符，也不會跨過速度記號。Canonical 在交付前的整理要求保留來源的起音與休止（MOBILE_SYNTAX §11），這三種卻會改掉休止與音長，所以用過的譜要當成改編看待，送回 Studio 時由 Studio 判斷。</p>
+  </details>
 
   <p><strong>按過優化的音軌會記住這件事</strong>（壓縮模式）——之後在鋼琴捲簾上編輯，那一條會自動再無損壓縮一次，字數不會跳回去；沒按過的照舊寫成好讀的形式。代價是那一條的 MML 會整個重新排版，手動的換行與 <code>l</code> 的位置都會變。字數計數旁邊會多一個小的壓縮圖示；要停掉就按這個框說明行上的<strong>關閉 N 軌的自動壓縮</strong>——它只停止之後的自動壓縮，已經壓好的文字不會展開。<strong>在文字區直接打字也會讓那一軌退出壓縮模式。</strong> 沒有字可省、但那一軌還沒進壓縮模式時，無損壓縮的按鈕會寫<strong>維持壓縮</strong>，按下去只是打開壓縮模式。</p>
 
@@ -423,7 +442,10 @@
 
   <p><strong>範圍</strong>兩種：目前音軌或已選擇音符（有選取時預設是後者）。每個方式的按鈕上會先算出代價（丟掉幾個音、截短幾個音），下面一行寫著目標軌現在幾字、合併後幾字、上限 2400。合併之後，被搬過去的音會<strong>從來源軌拿掉</strong>（變成休止符），畫面切到目標軌並選起合併進來的音。</p>
 
-  <div class="workshop-only"><p><strong>工作坊專用：</strong>除了剛好沒有衝突的情況，合併會丟掉或截短音符：合併目標優先會捨棄撞到的音，旋律重視與根音重視會<strong>重新產生一條單音線</strong>、只留每個發聲點的最高或最低音，來源取代目標會<strong>丟棄目標軌在這個範圍內的全部內容</strong>。這是改編，不是保留來源的轉換；按鈕上的代價就是會失去的音。</p></div>
+  <details class="workshop-only">
+    <summary><strong>工作坊專用</strong>合併通常會丟掉或截短音符：這是改編，不是保留來源的轉換</summary>
+    <p>除了剛好沒有衝突的情況，合併會丟掉或截短音符：合併目標優先會捨棄撞到的音，旋律重視與根音重視會<strong>重新產生一條單音線</strong>、只留每個發聲點的最高或最低音，來源取代目標會<strong>丟棄目標軌在這個範圍內的全部內容</strong>。這是改編，不是保留來源的轉換；按鈕上的代價就是會失去的音。</p>
+  </details>
 
   <h3>工具列右邊</h3>
 
@@ -469,7 +491,10 @@
     <li>播放時導播線走過的位置會亮起來</li>
   </ul>
 
-  <div class="workshop-only"><p><strong>工作坊專用：</strong>捲簾與播放的音域是 <code>o1c</code>–<code>o7b</code>。譜裡寫到這個範圍以外的音，工作坊會<strong>折八度</strong>塞進來播放，並在狀態列提醒，所以你在這裡聽到的不是它寫的音高。光是打開、播放不會改文字；但用捲簾或工具列的功能改過那一軌之後，重新產生的文字會寫成折過的音高，複製時的自動壓縮也可能這樣寫。<a href="#trans">移調</a>也不讓音移出這個範圍。遊戲官方文件寫的音高範圍是 0–107（MOBILE_SYNTAX §2、§6）。</p></div>
+  <details class="workshop-only">
+    <summary><strong>工作坊專用</strong>音域是 o1c–o7b，超出的音會折八度播放，編輯後的文字也會寫成折過的音高</summary>
+    <p>捲簾與播放的音域是 <code>o1c</code>–<code>o7b</code>。譜裡寫到這個範圍以外的音，工作坊會<strong>折八度</strong>塞進來播放，並在狀態列提醒，所以你在這裡聽到的不是它寫的音高。光是打開、播放不會改文字；但用捲簾或工具列的功能改過那一軌之後，重新產生的文字會寫成折過的音高，複製時的自動壓縮也可能這樣寫。<a href="#trans">移調</a>也不讓音移出這個範圍。遊戲官方文件寫的音高範圍是 0–107（MOBILE_SYNTAX §2、§6）。</p>
+  </details>
 
   <h3>選取、刪除、剪貼簿</h3>
 
@@ -602,7 +627,9 @@
 
   <p>畫面下半。一個分頁＝<strong>一條音軌</strong>，最少 3 條、最多 15 條。分頁的名字照位置固定：前 6 條是遊戲的六個角色<strong>主旋律、和弦1–和弦5</strong>，之後是<strong>輔助1–輔助9</strong>。</p>
 
-  <div class="canonical"><p>遊戲的作曲角色最多 6 個（基本 3 個，可擴充到 6 個），每個角色的 MML 文字上限 2,400 字（MOBILE_SYNTAX §2）。</p></div>
+  <div class="canonical">
+    <p>遊戲的作曲角色最多 6 個（基本 3 個，可擴充到 6 個），每個角色的 MML 文字上限 2,400 字（MOBILE_SYNTAX §2）。</p>
+  </div>
 
   <p><strong>只有前 6 條會進遊戲。</strong> 複製、送回 Studio、WAV 與影片都只用前 6 條；第 7 條之後的輔助軌是工作坊的工作區（放素材、備份、還沒決定要不要的聲部），存檔與 <code>.mid</code>／<code>.mml</code>／<code>.mmi</code> 會帶著它們。</p>
 
@@ -643,7 +670,10 @@
 
   <p><strong>靜音／只聽</strong>管聲音，<strong>顯示／只看</strong>管畫面，四顆並排但互不相干。</p>
 
-  <div class="workshop-only"><p><strong>工作坊專用：</strong>樂器列上的 Mobile 樂器只是試聽用的近似：用一般音色庫時它們對應到 GM 音色（Lute → GM 24 等），BassDrum 與 Cymbals 對應到打擊組的兩個鍵（寫在 <code>o4c</code> 以下響第一個、以上響第二個）；用<a href="#settings">遊戲風格音色</a>時每一種樂器有自己的音色。兩者都不是遊戲的音色。匯入或貼上的 <code>@</code> 數字會照 GM 編號對到 Mobile 樂器，對不到才找音色庫裡的音色。</p></div>
+  <details class="workshop-only">
+    <summary><strong>工作坊專用</strong>樂器列上的 Mobile 樂器只是試聽用的近似，不是遊戲的音色</summary>
+    <p>樂器列上的 Mobile 樂器只是試聽用的近似：用一般音色庫時它們對應到 GM 音色（Lute → GM 24 等），BassDrum 與 Cymbals 對應到打擊組的兩個鍵（寫在 <code>o4c</code> 以下響第一個、以上響第二個）；用<a href="#settings">遊戲風格音色</a>時每一種樂器有自己的音色。兩者都不是遊戲的音色。匯入或貼上的 <code>@</code> 數字會照 GM 編號對到 Mobile 樂器，對不到才找音色庫裡的音色。</p>
+  </details>
 
   <h3>MML 文字區</h3>
 
@@ -651,7 +681,10 @@
 
   <p>樂器列最右邊是計數：<code>N 音 · N/2400 字</code>。那是<strong>匯出後</strong>的字數，<strong>空白與換行不計</strong>，所以可以放心用換行分小節。超過上限會變紅，但不會擋住你繼續編輯；游標停在上面會寫出超過幾字。那一軌在<a href="#opt">壓縮模式</a>時，計數前面會多一個壓縮圖示。</p>
 
-  <div class="canonical"><p>每個角色 2,400 字是遊戲官方文件寫的上限；但遊戲客戶端實際怎麼數字（跟程式裡的字串長度是否一致）仍是 PENDING_IN_GAME（MOBILE_SYNTAX §9）。工作坊的計數只是依它自己的算法（去掉空白與換行）。</p></div>
+  <details class="canonical">
+    <summary><strong>Canonical 規則</strong>2,400 字是官方上限，遊戲客戶端怎麼數字仍待實機驗證（MOBILE_SYNTAX §9）</summary>
+    <p>每個角色 2,400 字是遊戲官方文件寫的上限；但遊戲客戶端實際怎麼數字（跟程式裡的字串長度是否一致）仍是 PENDING_IN_GAME（MOBILE_SYNTAX §9）。工作坊的計數只是依它自己的算法（去掉空白與換行）。</p>
+  </details>
 
   <p>設定裡的<strong>語法上色</strong>與 <strong>MML 格式化換行</strong>都作用在這裡，見<a href="#settings">設定抽屜</a>。</p>
 

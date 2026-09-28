@@ -31,7 +31,8 @@
   <h1>MIDI 轉 MML</h1>
   <p>把現成的 MIDI 檔轉成瑪奇能用的樂譜</p>
 
-  <div class="toc">
+  <details class="toc" open>
+    <summary>本頁目錄</summary>
     <ol>
       <li><a href="#why">為什麼不能直接轉</a></li>
       <li><a href="#studio">要保留原曲的全部內容：用 Studio 的 Raw MIDI</a></li>
@@ -42,7 +43,7 @@
       <li><a href="#after">匯入之後要檢查什麼</a></li>
       <li><a href="#limit">已知的限制</a></li>
     </ol>
-  </div>
+  </details>
 
   <div class="note">
     <p><strong>先分清楚兩條路：</strong>這一頁大部分在講<strong>工作坊</strong>的 MIDI 匯入。它是一個編輯器功能：為了讓你馬上有一份能編的單音譜，它會對齊格子、從同時響的音裡挑一個、移八度、合併速度——<strong>會丟掉原曲的內容</strong>，而且在 Canonical／驗證流程之外。要做一份能追溯到原曲、經過審核的譜，請把 MIDI 交給 <a href="../../../../index.html">Studio</a>（見<a href="#studio">下一節</a>）。</p>
@@ -66,9 +67,10 @@
 
   <p>所以「把 MIDI 變成六個角色」一定有取捨：哪些音留下、哪些音移到別的角色、哪些音拿掉。Canonical 的做法是<strong>先完整保留來源，再做有紀錄的縮減</strong>（MASTER_RULES §2、§3）：每一個被移動、刪除或改動的音都要能列出來，不能默默消失。</p>
 
-  <div class="workshop-only">
-    <p><strong>工作坊專用：</strong>工作坊的匯入走的是另一條路——它當下就做取捨：從每個瞬間好幾個音裡挑一個留下來。轉出來的東西一定比原曲少，問題只在於「少掉的是不是你在意的那些」，而那正是採樣模式在決定的事。它不會留下「哪些音被丟掉」的逐音紀錄（只有警告訊息裡的數字），所以結果不能當成來源基準。</p>
-  </div>
+  <details class="workshop-only">
+    <summary><strong>工作坊專用</strong>匯入當下就挑音，結果一定比原曲少，不能當成來源基準</summary>
+    <p>工作坊的匯入走的是另一條路——它當下就做取捨：從每個瞬間好幾個音裡挑一個留下來。轉出來的東西一定比原曲少，問題只在於「少掉的是不是你在意的那些」，而那正是採樣模式在決定的事。它不會留下「哪些音被丟掉」的逐音紀錄（只有警告訊息裡的數字），所以結果不能當成來源基準。</p>
+  </details>
 
   <h2 id="studio">要保留原曲的全部內容：用 Studio 的 Raw MIDI</h2>
 
@@ -132,17 +134,19 @@
     <li><strong>打擊</strong>：GM 的第 10 個 channel 是打擊組，音高是鼓的編號不是音階。</li>
   </ul>
 
-  <div class="workshop-only">
-    <p><strong>工作坊專用：</strong>「打擊」列和其他列一樣預設是勾起來的，而且匯入時會把 GM 鼓的編號當成一般音高寫進 MML（只是不會被移八度）。照 MASTER_RULES §8，GM 鼓的編號不是一般的 Mobile 音高，要先有證據支持的 Mobile 鼓面對應；這個對應目前仍待驗證（PENDING P10）。除非你只是想看看，否則請取消勾選打擊列。</p>
-  </div>
+  <details class="workshop-only">
+    <summary><strong>工作坊專用</strong>打擊列預設勾選，但 GM 鼓的編號不是一般的 Mobile 音高（MASTER_RULES §8）；除非只是想看看，請取消勾選</summary>
+    <p>「打擊」列和其他列一樣預設是勾起來的，而且匯入時會把 GM 鼓的編號當成一般音高寫進 MML（只是不會被移八度）。照 MASTER_RULES §8，GM 鼓的編號不是一般的 Mobile 音高，要先有證據支持的 Mobile 鼓面對應；這個對應目前仍待驗證（PENDING P10）。除非你只是想看看，否則請取消勾選打擊列。</p>
+  </details>
 
   <h2 id="mode">五種採樣模式</h2>
 
   <p>模式決定的是：<strong>同一瞬間響了好幾個音的時候，留下哪一個、要拆成幾軌。</strong></p>
 
-  <div class="workshop-only">
-    <p><strong>工作坊專用：</strong>以下五種模式都是工作坊的<strong>有損</strong>轉換：除了「和弦全採」盡量多留之外，每一種都會丟掉音，而且都在<a href="#limit">對齊 1/32 格子</a>之後才進行。它們不是 Canonical 的角色判定，產生的「主旋律」也不是經過證據確認的 Lead（MASTER_RULES §4）。</p>
-  </div>
+  <details class="workshop-only">
+    <summary><strong>工作坊專用</strong>五種模式都是有損轉換，產生的主旋律不是經過證據確認的 Lead</summary>
+    <p>以下五種模式都是工作坊的<strong>有損</strong>轉換：除了「和弦全採」盡量多留之外，每一種都會丟掉音，而且都在<a href="#limit">對齊 1/32 格子</a>之後才進行。它們不是 Canonical 的角色判定，產生的「主旋律」也不是經過證據確認的 Lead（MASTER_RULES §4）。</p>
+  </details>
 
   <table>
     <thead>
@@ -192,10 +196,11 @@
     <li><strong>要交付，就按「送回 Studio 驗證」。</strong>工作坊只送前 6 個分頁，Studio 把它當成衍生候選重新做技術驗證與審核，不會因此變成 VALIDATED。</li>
   </ol>
 
-  <div class="workshop-only">
-    <p><strong>工作坊專用：</strong>「優化」裡除了「無損壓縮」，還有三種會改變聲音的方式：「音長補滿」（音後面的短休止整段併進那個音）、「部分補滿」（只併進一部分）、「尾段收音」（把音的尾巴讓出來變成休止）。它們<strong>不會動到任何一個音的進場時間</strong>，執行後工作坊會檢查每個音的起點都沒變，檢查沒過就一個音都不改；但它們會改變音長與休止。範圍可選「全部音軌」「目前音軌」「已選擇音符」，四種方式一次只能選一種，執行後會告訴你省了幾個字、動到幾個音，不滿意按 Ctrl+Z。</p>
+  <details class="workshop-only">
+    <summary><strong>工作坊專用</strong>音長補滿、部分補滿、尾段收音會改變音長與休止，和 Canonical 的方向相反</summary>
+    <p>「優化」裡除了「無損壓縮」，還有三種會改變聲音的方式：「音長補滿」（音後面的短休止整段併進那個音）、「部分補滿」（只併進一部分）、「尾段收音」（把音的尾巴讓出來變成休止）。它們<strong>不會動到任何一個音的進場時間</strong>，執行後工作坊會檢查每個音的起點都沒變，檢查沒過就一個音都不改；但它們會改變音長與休止。範圍可選「全部音軌」「目前音軌」「已選擇音符」，四種方式一次只能選一種，執行後會告訴你省了幾個字、動到幾個音，不滿意按 Ctrl+Z。</p>
     <p>這三種方式是為了省字而改音樂，和 Canonical 的方向相反：MASTER_RULES §7 要求保留有意義的休止、呼吸與斷奏，不為了連續性數字去填掉真正的休止；§2 也說不能靠抹掉有來源依據的音樂來改善指標。用了它們的譜，是工作坊的編曲選擇，不是 Canonical 認可的縮減。</p>
-  </div>
+  </details>
 
   <h2 id="limit">已知的限制</h2>
 

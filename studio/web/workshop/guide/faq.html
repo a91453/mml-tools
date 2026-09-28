@@ -31,7 +31,8 @@
   <h1>常見問題</h1>
   <p>關於工作坊、關於瑪奇 Mobile MML</p>
 
-  <div class="toc">
+  <details class="toc" open>
+    <summary>本頁目錄</summary>
     <ol>
       <li><a href="#install">要安裝什麼嗎</a></li>
       <li><a href="#sound">聽起來跟遊戲裡不一樣</a></li>
@@ -47,7 +48,7 @@
       <li><a href="#unverified">「工作坊編輯（未經 Studio 驗證）」是什麼意思</a></li>
       <li><a href="#wav">可以匯出成音訊或影片嗎</a></li>
     </ol>
-  </div>
+  </details>
 
   <h2 id="install">要安裝什麼嗎</h2>
 
@@ -107,13 +108,15 @@
 
   <h2 id="toolong">字數超過 2400 怎麼辦</h2>
 
-  <div class="canonical">
+  <details class="canonical">
+    <summary><strong>Canonical 規則</strong>官方上限是每個角色 2,400 字，遊戲怎麼數字仍待實機驗證（MOBILE_SYNTAX §2、§9）</summary>
     <p>遊戲官方的上限是<strong>每個角色（每一軌）2,400 個字元</strong>（MOBILE_SYNTAX §2、§9）。遊戲的字數計算跟程式裡的字串長度是否完全一致，目前還是 PENDING_IN_GAME（MOBILE_SYNTAX §9）。</p>
-  </div>
+  </details>
 
-  <div class="workshop-only">
-    <p><strong>工作坊專用：</strong>每一軌下方的字數是「匯出後的字數」，空白與換行不計。超過 2400 的軌字數會變紅（滑鼠移上去會說超過多少字），開著「語法上色」時超出的那一段會加紅底；但工作坊不會擋住你繼續編輯。用剪貼簿「複製」時，送出去的那一份會自動再做一次無損壓縮。</p>
-  </div>
+  <details class="workshop-only">
+    <summary><strong>工作坊專用</strong>字數不含空白；超過只會變紅提示，複製時會再做一次無損壓縮</summary>
+    <p>每一軌下方的字數是「匯出後的字數」，空白與換行不計。超過 2400 的軌字數會變紅（滑鼠移上去會說超過多少字），開著「語法上色」時超出的那一段會加紅底；但工作坊不會擋住你繼續編輯。用剪貼簿「複製」時，送出去的那一份會自動再做一次無損壓縮。</p>
+  </details>
 
   <p>三個方向，由輕到重：</p>
 
@@ -123,17 +126,19 @@
     <li><strong>刪內容。</strong> 前兩步都不夠就只能減音符了——重複的段落、太密的裝飾音、聽不太出來的內聲部。</li>
   </ol>
 
-  <div class="canonical">
+  <details class="canonical">
+    <summary><strong>Canonical 規則</strong>送回 Studio 時，有意義的休止不能為了連續而填掉（MASTER_RULES §7）</summary>
     <p>這首曲子如果要送回 Studio 走 Canonical 流程，請記得：規則要求保留有意義的休止、呼吸與斷奏間隙，不可以為了讓音樂更連續而把真正的休止填掉（MASTER_RULES §7）；語法層的優化必須保留每一個音的進場（MOBILE_SYNTAX §8）。音長規則改掉的休止，Studio 會當成你的編輯重新驗證。</p>
-  </div>
+  </details>
 
   <p>從 MIDI 匯入的譜值得先跑一次無損壓縮：匯入器寫出來的是好改的直白寫法，不是最省字的寫法。</p>
 
   <h2 id="tracks">為什麼只有 6 軌進得了遊戲</h2>
 
-  <div class="canonical">
+  <details class="canonical">
+    <summary><strong>Canonical 規則</strong>六個角色是 Melody、Chord1–Chord5，Core3 是 Melody + Chord1 + Chord2（MASTER_RULES §5）</summary>
     <p>遊戲的作曲最多 <strong>6 個角色</strong>（一開始 3 個，可以擴充到 6 個），每個角色最多 2,400 字元（MOBILE_SYNTAX §2）。Canonical 把這六個角色稱為 Melody、Chord1–Chord5；Melody + Chord1 + Chord2 是單人三和音樂器的目標（Core3），Chord3–Chord5 預設是豐富化（MASTER_RULES §5）。</p>
-  </div>
+  </details>
 
   <p>工作坊的分頁名稱對應的是主旋律、和弦1～和弦5。工作坊開得出 15 個分頁，第 7 個以後（輔助1 起）是<strong>工作用的</strong>——編曲時暫放素材、比較兩個版本、把 MIDI 匯入的東西先攤開再挑。剪貼簿的「複製」、「送回 Studio 驗證」、「匯出 WAV」與「MP4影片製作」都<strong>只用前 6 軌</strong>（複製、送回與 WAV 在後面幾軌有內容時會提醒你哪幾軌沒帶上）；「檔案」的匯出則會連同所有分頁一起存成工作檔。</p>
 
@@ -143,7 +148,8 @@
 
   <p>在遊戲裡不能這樣假設。Canonical 的規定如下：</p>
 
-  <div class="canonical">
+  <details class="canonical">
+    <summary><strong>Canonical 規則</strong>交付時每個非空角色都帶同一份完整的 Tempo Map（MOBILE_SYNTAX §7）</summary>
     <p>Tempo 的官方輸入範圍是 32–255。曲中或多個 Tempo 指令本身不算違規，但有同步漂移的風險；在遊戲內測試證明可以放寬之前，交付時的專案規則是（MOBILE_SYNTAX §7）：</p>
     <ol>
       <li>每一個非空的角色都以<strong>同一個起始 Tempo</strong> 開頭；</li>
@@ -152,11 +158,12 @@
       <li>這條「每軌重複」是為了同步安全的專案規則，<strong>不是</strong>官方說引擎技術上要求每一軌都有 Tempo。</li>
     </ol>
     <p>只有一個角色帶曲中變速時，遊戲會不會保持同步，目前是 PENDING_IN_GAME（MOBILE_SYNTAX §7）。</p>
-  </div>
+  </details>
 
-  <div class="workshop-only">
-    <p><strong>工作坊專用：</strong>工作坊試聽時，會把所有分頁裡的 <code>t</code> 合成<strong>一條</strong>速度線套用到每一軌（同一個位置有兩個分頁都寫了 <code>t</code> 時，以前面的分頁為準；整首都沒寫就是 120），超出 32–255 的值會被夾進範圍。所以在工作坊裡「只有第一軌寫 <code>t</code>」聽起來也會整首一起變速——這<strong>不</strong>代表遊戲裡也一樣。從 MIDI 匯入時，速度只寫進匯入的第一軌；「送回 Studio 驗證」會照每一軌原本寫的內容送出，不會替你把速度複製到其他軌，之後由 Studio 重新驗證。</p>
-  </div>
+  <details class="workshop-only">
+    <summary><strong>工作坊專用</strong>試聽時把所有分頁的 <code>t</code> 合成一條速度線，不代表遊戲也一樣</summary>
+    <p>工作坊試聽時，會把所有分頁裡的 <code>t</code> 合成<strong>一條</strong>速度線套用到每一軌（同一個位置有兩個分頁都寫了 <code>t</code> 時，以前面的分頁為準；整首都沒寫就是 120），超出 32–255 的值會被夾進範圍。所以在工作坊裡「只有第一軌寫 <code>t</code>」聽起來也會整首一起變速——這<strong>不</strong>代表遊戲裡也一樣。從 MIDI 匯入時，速度只寫進匯入的第一軌；「送回 Studio 驗證」會照每一軌原本寫的內容送出，不會替你把速度複製到其他軌，之後由 Studio 重新驗證。</p>
+  </details>
 
   <p>手寫的做法見 <a href="./mml.html#tempo">MML 教學</a>。</p>
 
@@ -164,25 +171,29 @@
 
   <p>MML 的每一軌是一條依序往下走的音列，所以和弦要<strong>拆到不同軌</strong>：主旋律走旋律，和弦軌各按一個音。</p>
 
-  <div class="canonical">
+  <details class="canonical">
+    <summary><strong>Canonical 規則</strong>樂器分成單音與三和音兩種，Core3 是單人三和音樂器的目標（MASTER_RULES §5）</summary>
     <p>遊戲的樂器分成一次只奏一個音的樂器，和最多同時三個音的三和音樂器（MOBILE_SYNTAX §2）。Canonical 以 Melody + Chord1 + Chord2 作為單人三和音樂器的完整編曲目標（MASTER_RULES §5）。</p>
-  </div>
+  </details>
 
-  <div class="workshop-only">
-    <p><strong>工作坊專用：</strong>工作坊不支援 <code>[ceg]4</code> 這種方括號和弦寫法。舊譜貼進來時，<code>[</code> 和 <code>]</code> 會被當成看不懂的字元提示出來、播放時略過，裡面的音名則<strong>照單音依序讀</strong>——所以 <code>[ceg]</code> 會變成「do mi sol 三個音依序響」而不是一個和弦；「複製」出去或送回 Studio 時，這些看不懂的字元會被拿掉。要還原成和聲，把那幾個音分別放到不同的和弦軌。</p>
-  </div>
+  <details class="workshop-only">
+    <summary><strong>工作坊專用</strong>不支援 <code>[ceg]</code> 方括號和弦：<code>[</code> <code>]</code> 會被略過，裡面的音依序響</summary>
+    <p>工作坊不支援 <code>[ceg]4</code> 這種方括號和弦寫法。舊譜貼進來時，<code>[</code> 和 <code>]</code> 會被當成看不懂的字元提示出來、播放時略過，裡面的音名則<strong>照單音依序讀</strong>——所以 <code>[ceg]</code> 會變成「do mi sol 三個音依序響」而不是一個和弦；「複製」出去或送回 Studio 時，這些看不懂的字元會被拿掉。要還原成和聲，把那幾個音分別放到不同的和弦軌。</p>
+  </details>
 
   <h2 id="triplet">三連音採得進來嗎</h2>
 
   <p><strong>手寫可以，從檔案匯入不行。</strong></p>
 
-  <div class="workshop-only">
-    <p><strong>工作坊專用：</strong>手寫 MML 直接寫 <code>c12 d12 e12</code> 就是三連音，工作坊播放時時值正確，「複製」時也會照原樣保留。但工作坊的 <strong>MIDI 匯入</strong>會把每個音的進場與結束都對齊到三十二分音符的格子上，<strong>沒有</strong>另外辨認三連音，所以匯入的三連音會被拉到最近的格子、位置會歪掉；MusicXML 匯入遇到連音時會直接提醒你「位置會歪掉」。鋼琴捲軸也只能在格子上畫音，沒有「設成三連音」的功能。</p>
-  </div>
+  <details class="workshop-only">
+    <summary><strong>工作坊專用</strong>手寫三連音沒問題；MIDI 匯入會把它對齊到 1/32 格子而歪掉</summary>
+    <p>手寫 MML 直接寫 <code>c12 d12 e12</code> 就是三連音，工作坊播放時時值正確，「複製」時也會照原樣保留。但工作坊的 <strong>MIDI 匯入</strong>會把每個音的進場與結束都對齊到三十二分音符的格子上，<strong>沒有</strong>另外辨認三連音，所以匯入的三連音會被拉到最近的格子、位置會歪掉；MusicXML 匯入遇到連音時會直接提醒你「位置會歪掉」。鋼琴捲軸也只能在格子上畫音，沒有「設成三連音」的功能。</p>
+  </details>
 
-  <div class="canonical">
+  <details class="canonical">
+    <summary><strong>Canonical 規則</strong>1–64 的音長都在官方範圍內；<code>3.</code>、<code>6.</code>、<code>12.</code>、<code>24.</code>、<code>48.</code> 在 Final 禁止（MOBILE_SYNTAX §3、§4）</summary>
     <p>1–64 之間的音長數字都在官方範圍內，不能只因為不是 2 的次方就說遊戲不吃；Final 偏好 1/2/4/8/16/32/64，其他整數音長（例如 <code>12</code>、<code>24</code>）屬於「謹慎使用」，要來源的節奏真的需要、而且驗證確認沒有漂移（MOBILE_SYNTAX §3）。<code>3.</code>、<code>6.</code>、<code>12.</code>、<code>24.</code>、<code>48.</code> 這類附點寫法在 Final 裡禁止（MOBILE_SYNTAX §4）。</p>
-  </div>
+  </details>
 
   <h2 id="mobile">手機可以用嗎</h2>
 
@@ -212,9 +223,10 @@
 
   <p>工作坊裡聽起來對、字數在範圍內、「複製」時自動修掉了什麼，都只是工作坊自己的檢查與試聽，不是驗證，也不是證據。工作坊裡關於「遊戲吃不吃某種寫法」的提示，是工作坊自己的判斷，不是 Canonical 規則；Canonical 的語法規則以 MOBILE_SYNTAX 為準。</p>
 
-  <div class="canonical">
+  <details class="canonical">
+    <summary><strong>Canonical 規則</strong>各層通過狀態彼此獨立，網站上的播放不是接受的證據（MASTER_RULES §9、§11）</summary>
     <p>各層的通過狀態彼此獨立（TECHNICAL_PASS、SOURCE_PASS、PLAYER_READBACK_PASS、AUDIO_ALIGNMENT_PASS、MOBILE_ADAPTATION_PASS、IN_GAME_ACCEPTED），低的一層不能冒充高的一層（MASTER_RULES §11）；網站上的播放不是接受的證據（MASTER_RULES §9）。</p>
-  </div>
+  </details>
 
   <p>要讓工作坊的編輯進入正式流程，唯一的路是<a href="#studio">送回 Studio 驗證</a>，由 Studio 當成新的候選重新驗證、重新審核。</p>
 
