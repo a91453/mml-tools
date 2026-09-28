@@ -14,3 +14,8 @@ The former 2026-09-10 Lead Role extensions are preserved verbatim in
 They are not current instructions or an alternate load path.
 
 This repository change does not install or overwrite an external ChatGPT Skill.
+
+The [mml-tools plugin](../../plugins/mml-tools/README.md) carries a byte-for-byte
+copy of SKILL.md, because a plugin installs only its own folder; this directory
+stays the source, at the path the Manifest names. Change both copies together:
+`tests/plugin-package.test.mjs` checks that they match.

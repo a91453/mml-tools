@@ -1,0 +1,13 @@
+{
+  "$schema": "https://agent-plugins.org/schemas/1.0.0/plugin.schema.json",
+  "name": "mml-tools",
+  "version": "0.1.0",
+  "description": "Mabinogi Mobile MML Studio：遠端 MCP 工具（技術檢查、Studio 編排流程、試聽）與 Canonical 載入 skill",
+  "author": {
+    "name": "a91453"
+  },
+  "homepage": "https://github.com/a91453/mml-tools/tree/main/plugins/mml-tools",
+  "repository": "https://github.com/a91453/mml-tools",
+  "license": "MIT",
+  "keywords": ["mabinogi-mobile", "mml", "mcp"]
+}
