@@ -7,10 +7,12 @@
 // SHA-256 verification); the tree those builds are made from is now pinned too.
 //
 // These regressions keep it that way: the lockfile stays committed, it agrees
-// with package.json, and no current workflow or image resolves around it. The
-// one exception is archival and is verified rather than trusted: a publisher
-// that rebuilds a pinned historical commit which itself carries no lockfile,
-// where `npm ci` cannot run and the historical release identity must not move.
+// with package.json, and no current workflow or image resolves around it. An
+// archival exception is verified rather than trusted: a publisher that
+// rebuilds a pinned historical commit which itself carries no lockfile, where
+// `npm ci` cannot run and the historical release identity must not move. There
+// is none today: since v10.1 the durable release publisher pins a commit that
+// carries the lockfile and installs it with `npm ci`.
 //
 // Runs in Studio CI's classify job, before any dependency is installed and
 // whatever paths a change touches, so it imports nothing outside Node.
@@ -25,11 +27,10 @@ const root = resolve(fileURLToPath(new URL('..', import.meta.url)));
 const read = path => readFileSync(resolve(root, path), 'utf8');
 const git = (...args) => spawnSync('git', args, { cwd: root, encoding: 'utf8' });
 
-// Archival publishers: the workflow, and the historical commit it rebuilds.
-// An entry is honoured only while that commit really has no lockfile.
-const ARCHIVAL_INSTALLS = Object.freeze({
-  '.github/workflows/studio-durable-release.yml': 'npm install --ignore-scripts --package-lock=false',
-});
+// Archival publishers: workflow -> the exact install line it keeps for a pinned
+// historical commit. An entry is honoured only while that commit really has no
+// lockfile. Empty: the durable release publisher uses npm ci since v10.1.
+const ARCHIVAL_INSTALLS = Object.freeze({});
 
 const NPM_RESOLVING_INSTALL = /\bnpm\s+(?:install|i|add|update|upgrade)\b/;
 const LOCKFILE_BYPASS = /--(?:no-)?package-lock(?:=false)?\b|--no-shrinkwrap\b/;
