@@ -28,6 +28,7 @@ jobs:
             tests/railway-agent-policy.test.mjs \
             tests/ci-artifact-upload-policy.test.mjs \
             tests/ci-classify-policy.test.mjs \
+            tests/dependency-lock-policy.test.mjs \
             tests/secret-scan.test.mjs
       - name: Classify Railway-only changes
         id: paths
@@ -86,7 +87,9 @@ jobs:
         with:
           node-version: '22'
       - name: Install Node dependencies
-        run: npm install --ignore-scripts --package-lock=false
+        # The committed lockfile, exactly: npm ci resolves nothing and fails if
+        # package.json and package-lock.json disagree (roadmap G13).
+        run: npm ci --ignore-scripts
       - name: Verify published Canonical Bootstrap
         run: npm run canonical:bootstrap -- --summary
       - name: Run legacy and Studio symbolic regressions
@@ -140,7 +143,7 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: '22'
-      - run: npm install --ignore-scripts --package-lock=false
+      - run: npm ci --ignore-scripts
       - run: npx playwright install --with-deps chromium webkit
       - run: npm run build:studio-web
       - run: npm run test:studio-web

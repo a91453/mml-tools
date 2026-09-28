@@ -7,7 +7,9 @@
 //
 //   - a piece whose last bar is partial could never satisfy the technical
 //     gate, because the source-confirmed pickup / final_partial that the Final
-//     parser accepts were never plumbed from the caller to the parser;
+//     parser accepts were never plumbed from the caller to the parser (and,
+//     since G15, it no longer needs them: a partial last bar nobody stated is
+//     reported for review, and the artifact says which case it was);
 //   - a stored candidate that no longer agreed with itself or with the
 //     baseline was emitted and filed as a Final;
 //   - a candidate accepted under a different Published Canonical release was
@@ -51,7 +53,7 @@ async function withDirectory(work) {
   try { return await work(directory); } finally { await rm(directory, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 }); }
 }
 
-test('a piece that ends on a partial bar is finalized only with the source-confirmed final_partial, which is carried on the artifact', async () => {
+test('a piece that ends on a partial bar is finalized with or without a stated final_partial, and the artifact says which (G15)', async () => {
   const base = sixRoleBaseline();
   // One extra Melody beat past the last full 4/4 bar: bar two is one beat long.
   const partial = createCanonicalProject({
@@ -63,26 +65,45 @@ test('a piece that ends on a partial bar is finalized only with the source-confi
   const projectId = await uploaded(service, partial, 'Partial bar');
   const candidateId = (await service.applyDecisions(OWNER, projectId, { decisions: keepEveryRole(partial) })).decisions.candidate_id;
 
+  // Nothing states how the piece ends. The Published Canonical has no rule that
+  // the last bar be full (PENDING P14), so the parser reports the one-beat bar
+  // for review and the technical gate passes; nothing is padded.
   const bare = await service.finalize(OWNER, projectId, { candidateId, confirmations: CONFIRMATIONS });
-  assert.equal(bare.operation, 'blocked', 'without the bar declaration the Final parser rejects the partial bar');
-  assert.equal(bare.gates.technical, 'FAIL');
-  assert.deepEqual(bare.blockers, ['technical']);
-  assert.equal(bare.artifact_id, null);
-  assert.deepEqual(bare.final_bar, { pickup: null, final_partial: null, meter_text: '0 4/4' });
-  assert.match(bare.notice, /final_partial/, 'the refusal names the remedy that exists');
+  assert.equal(bare.operation, 'succeeded', bare.notice);
+  assert.equal(bare.gates.technical, 'PASS');
+  assert.match(bare.mml, /^MML@/);
+  assert.deepEqual(bare.final_bar, { pickup: null, final_partial: null, meter_text: '0 4/4', closure: 'UNDECLARED_PARTIAL' });
+  const technical = await service.validateTechnicalMml({ mml: bare.mml, meter_text: bare.final_bar.meter_text });
+  assert.equal(technical.technical_ok, true);
+  assert.equal(technical.total_beats, '5', 'the delivered timeline still ends where the music ends');
+  assert.ok(technical.warnings.some(item => item.code === 'FINAL_BAR_PARTIAL_UNDECLARED' && item.beats === '1'));
 
   for (const bad of [{ finalPartial: 'x;y' }, { pickup: 5 }, { finalPartial: '1'.repeat(33) }, { pickup: '' }]) {
     await rejects(service.finalize(OWNER, projectId, { candidateId, ...bad }), ERROR_CODES.INVALID_REQUEST);
   }
 
+  // The source-confirmed statement is recorded as such; it changes the record,
+  // never the music.
   const declared = await service.finalize(OWNER, projectId, { candidateId, finalPartial: '1' });
   assert.equal(declared.operation, 'succeeded');
   assert.equal(declared.gates.technical, 'PASS');
-  assert.match(declared.mml, /^MML@/);
-  assert.deepEqual(declared.final_bar, { pickup: null, final_partial: '1', meter_text: '0 4/4' });
+  assert.equal(declared.mml, bare.mml, 'stating the final partial bar changes no character of the Final');
+  assert.deepEqual(declared.final_bar, { pickup: null, final_partial: '1', meter_text: '0 4/4', closure: 'SOURCE_CONFIRMED_PARTIAL' });
   const { artifact } = await service.getArtifact(OWNER, declared.artifact_id);
   assert.deepEqual(artifact.final_bar, declared.final_bar, 'the bar declaration the Final was validated under is part of the record');
   assert.equal(artifact.mml, declared.mml);
+  assert.deepEqual((await service.getArtifact(OWNER, bare.artifact_id)).artifact.final_bar, bare.final_bar);
+
+  // A statement the music contradicts is a meter/time-alignment failure, not a
+  // completeness policy, and still blocks.
+  const contradicted = await service.finalize(OWNER, projectId, { candidateId, finalPartial: '2' });
+  assert.equal(contradicted.operation, 'blocked');
+  assert.equal(contradicted.gates.technical, 'FAIL');
+  assert.deepEqual(contradicted.blockers, ['technical']);
+  assert.equal(contradicted.mml, null);
+  assert.equal(contradicted.artifact_id, null);
+  assert.equal(contradicted.final_bar.closure, null, 'no closure is reported for bars the parser refused');
+  assert.match(contradicted.notice, /final_partial/, 'the refusal names the remedy that exists');
 });
 
 test('legacy Final artifact reads add a lazy machine-delivery projection without mutating stored bytes', async () => withDirectory(async directory => {

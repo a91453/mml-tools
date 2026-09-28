@@ -1,5 +1,6 @@
 dist/server/
 dist/.openai/
+dist/workbench-source.zip
 node_modules/
 studio/web-build/
 studio/browser-results/
@@ -11,5 +12,4 @@ __pycache__/
 *.sqlite-shm
 *.sqlite-wal
 .canonical-bootstrap.json
-package-lock.json
 .studio-agent/

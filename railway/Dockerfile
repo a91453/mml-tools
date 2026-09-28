@@ -47,13 +47,13 @@ RUN apt-get update \
 
 WORKDIR /app
 
-# Dependencies first, so a source-only change does not re-resolve them. The
-# three runtime dependencies are exactly pinned in package.json, but no lockfile
-# is committed, so the versions of their own dependencies are resolved when the
-# image is built. Install scripts stay disabled, and nothing here contacts a
-# paid service.
-COPY package.json ./package.json
-RUN npm install --omit=dev --ignore-scripts --no-audit --no-fund
+# Dependencies first, so a source-only change does not re-install them. They
+# come from the committed lockfile, exactly: npm ci resolves nothing and fails if
+# package.json and package-lock.json disagree, so the image carries the same
+# dependency tree CI tested (roadmap G13). Development dependencies are omitted,
+# install scripts stay disabled, and nothing here contacts a paid service.
+COPY package.json package-lock.json ./
+RUN npm ci --omit=dev --ignore-scripts --no-audit --no-fund
 
 # The .dockerignore allowlist decides what this copies.
 COPY . ./

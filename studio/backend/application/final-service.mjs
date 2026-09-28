@@ -36,16 +36,19 @@ import { deliveryBlockingGates, machineDeliveryEmitOptions } from '../final/deli
 const now = () => new Date().toISOString();
 const encoder = new TextEncoder();
 
-// Source-confirmed bar-closure inputs for the authoritative Final parser. The
-// parser refuses to guess how a piece that does not end on a bar line closes
-// (`末小節剩N拍，請依來源明確填寫末小節長度`), exactly as the legacy technical
-// check does; a caller states the pickup and final partial bar from the source,
-// in the same grammar the legacy tools accept. They are validated here, never
-// derived, and recorded in the artifact beside the meter map that was used.
+// Source-confirmed bar-closure inputs for the authoritative Final parser. A
+// caller states the pickup and final partial bar from the source, in the same
+// grammar the legacy tools accept. They are validated here, never derived, and
+// recorded in the artifact beside the meter map that was used. Neither is
+// required merely because a piece stops before its last bar line: the parser
+// then reports that bar for review instead of failing it (roadmap G15), and the
+// artifact's `final_bar.closure` says which case it was. A stated value the
+// music contradicts still fails the technical gate.
 const BAR_INPUT = /^\d+(?:\/\d+|\.\d{1,9})?$/;
 function barInput(value, label) {
-  // Absent means "the piece ends on a bar line". An empty string is not that
-  // statement; it is a malformed one, and is refused rather than read as absent.
+  // Absent means "nothing is stated": the parser reads the bars from the music
+  // alone. An empty string is not that; it is a malformed statement, and is
+  // refused rather than read as absent.
   if (value === undefined || value === null) return null;
   const text = requireString(value, label, { max: 32 });
   if (/\d{10}/.test(text) || !BAR_INPUT.test(text)) {
@@ -409,7 +412,12 @@ export function createFinalService({ canonical, projects, review, store }) {
         // Tempo events that restated the Tempo in effect and were not written.
         // Null where the loaded release does not collapse them.
         tempo_restatements: emitted.tempoRestatements ?? null,
-        final_bar: { ...barInputs, meter_text: meterText },
+        // `closure` is the parser's reading of how the last bar closes:
+        // BAR_LINE, SOURCE_CONFIRMED_PARTIAL (final_partial was stated and
+        // matches) or UNDECLARED_PARTIAL (the music stops before the bar line
+        // and nobody stated the bar; reported for review, never padded). Null
+        // when the parser did not run.
+        final_bar: { ...barInputs, meter_text: meterText, closure: mmlValidation?.song?.finalBar?.closure ?? null },
         player_readback_binding: playerReadbackBinding,
         candidate_rules_snapshot_sha: ctx.candidateRulesSnapshot,
         round_trip: emitted.roundTrip,
@@ -510,7 +518,7 @@ export function createFinalService({ canonical, projects, review, store }) {
 function nonDeliveryNotice({ passed, emitStatus, mmlValidation, readbackMatched }) {
   if (!passed) return `No Final was delivered. The Final emitter reported ${emitStatus} for this candidate, so nothing was emitted and the authoritative Final parser did not run. When nothing but the ungraded technical gate blocks, machine delivery records the refusal as its finalEmission entry, which carries the emitter's own status and diagnostics. in_game is unaffected and remains PENDING.`;
   if (mmlValidation === null) return 'No Final was delivered. The candidate declares no meter events, so the emitted MML could not be re-validated under the authoritative Final parser; the technical gate stays NOT_RUN and no MML and no artifact were returned. in_game is unaffected and remains PENDING.';
-  if (!mmlValidation.ok) return 'No Final was delivered. The emitted MML did not satisfy the technical gate under the authoritative Final parser, so no MML and no artifact were returned. If the piece does not end on a bar line, state the source-confirmed pickup and final_partial. in_game is unaffected and remains PENDING.';
+  if (!mmlValidation.ok) return 'No Final was delivered. The emitted MML did not satisfy the technical gate under the authoritative Final parser, so no MML and no artifact were returned. If its error concerns the pickup or a stated final_partial, state them as the source confirms them; a piece that only stops before its last bar line needs neither. in_game is unaffected and remains PENDING.';
   if (readbackMatched === false) return 'No Final was delivered. The recorded player readback names a different MML than the one emitted for this candidate, so the readback gate stays NOT_RUN and no MML and no artifact were returned. in_game is unaffected and remains PENDING.';
   return 'No Final was delivered. A required gate did not pass after emission, so no MML and no artifact were returned. in_game is unaffected and remains PENDING.';
 }

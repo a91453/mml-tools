@@ -344,7 +344,7 @@ export const STUDIO_MCP_TOOLS = [
         technical_timing_repair: { type: 'boolean', description: '明確 opt-in。預設 false，呼叫 finalize 不會自動開啟。' },
         confirmations: structuredPayload(CONFIRMATIONS_DESCRIPTION),
         pickup: { type: 'string', minLength: 1, maxLength: 32, description: '來源確認的弱起拍長（整數、小數或分數拍）；沒有時省略。Final parser 不會自行推測。' },
-        final_partial: { type: 'string', minLength: 1, maxLength: 32, description: '來源確認的末小節拍長；曲子未在小節線結束時必填，否則 technical gate 無法通過。不會自行推測。' },
+        final_partial: { type: 'string', minLength: 1, maxLength: 32, description: '來源確認的末小節拍長；沒有時省略。省略時，未在小節線結束的末小節列為 Review 警告（FINAL_BAR_PARTIAL_UNDECLARED），不判 FAIL、不補休止；提供的值若與音樂不符則 technical gate 不通過。不會自行推測。' },
       },
       required: ['project_id', 'candidate_id'],
       additionalProperties: false,

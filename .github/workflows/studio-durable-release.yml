@@ -26,6 +26,11 @@ jobs:
           test "$(git rev-parse origin/main)" = 37d59cec376230d56fe84dbc25907b1371ee7343
           git worktree add --detach /tmp/studio-release-source 37d59cec376230d56fe84dbc25907b1371ee7343
           cd /tmp/studio-release-source
+          # Archival: this publisher rebuilds the pinned historical commit above,
+          # which carries no package-lock.json, exactly as it was built for its
+          # release. npm ci cannot run there, and the verified buildId below is
+          # that release's identity, so the install stays as it was. Current
+          # builds install from the committed lockfile with npm ci (roadmap G13).
           npm install --ignore-scripts --package-lock=false
           node scripts/bootstrap-canonical.mjs --summary
           node scripts/build.mjs

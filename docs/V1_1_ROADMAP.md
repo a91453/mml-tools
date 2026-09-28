@@ -18,7 +18,7 @@ for the Published Canonical rule sources. Rule discovery starts only at
 | `rules_snapshot_sha` | `ff1a9df054f5ca1ae42571067fc95feb274755ef` |
 | `machine_delivery_schema` | `mabinogi-mobile-mml-studio/machine-delivery@2` |
 | Manifest commit | `44f3f0082cf5c30328edf1c251398b844488ad0a` |
-| Published main at this update | `96af74e60ec99cec910ab7dcf4b0d83c57d06ed0` |
+| Published main at this update | `2c6db689c5ea8fb35c765601f1b6b5c3cdc86b62` |
 
 Loaded with `npm run canonical:bootstrap -- --summary` from that published main
 (`CANONICAL_LOADED`). No local Skill, Master, memory, audit document or
@@ -76,9 +76,10 @@ prose.
 | G9 | Reduced 1-/2-role quality (P17) | `OPEN` | `ROADMAP_ONLY` / `NEEDS_PROJECT_DECISION` | `NONE` (see correction 1) |
 | G10 | Source-aware sub-1/64 micro-gap | `RESOLVED` | — | `NONE` |
 | G11 | Drum policy fails closed | `RESOLVED` | — | `NONE` |
-| G12 | Stale `workbench-source.zip` | `OPEN` | `NEEDS_PROJECT_DECISION` → `IMPLEMENTATION_WORK` | `NONE` |
-| G13 | Lockfile decision | `OPEN` | `NEEDS_PROJECT_DECISION` → `IMPLEMENTATION_WORK` | `NONE` |
+| G12 | Stale `workbench-source.zip` | `RESOLVED` | — | `NONE` |
+| G13 | Lockfile decision | `RESOLVED` | — | `NONE` |
 | G14 | Per-token caution granularity | `NO_ACTION_REQUIRED` | — | `NONE` |
+| G15 | Emitter / validator final-bar disagreement | `RESOLVED` | — | `NONE` |
 | G11-D-R | G11-D residual integrity hardening (Lead identity at the gate, Web revision chain, record envelope, carry-forward) | `RESOLVED` (pending review) | — | `NONE` |
 
 ### Coverage closed by PR #10 (G1–G7, G11)
@@ -364,44 +365,88 @@ with its own threat model, regressions and executed mutations, documented in
 source Lead evidence stays fail-closed until the IR preserves source/source-event
 pairs. Both are stated in the code as data.
 
-### G12 — Stale legacy `workbench-source.zip` · `OPEN`
+### G12 — Stale legacy `workbench-source.zip` · `RESOLVED`
 
-**Evidence.** `dist/workbench-source.zip` is tracked (`.gitignore` excludes only
-`dist/server/` and `dist/.openai/`). `scripts/build.mjs:12-14` regenerates it
-from explicitly listed inputs, 26 of them as of `96af74e`; the tracked copy
-still has 23 entries and lacks
+**Evidence (before).** `dist/workbench-source.zip` was tracked (`.gitignore`
+excluded only `dist/server/` and `dist/.openai/`). `scripts/build.mjs`
+regenerated it from explicitly listed inputs, 26 of them as of `96af74e`; the
+tracked copy still had 23 entries and lacked
 `studio/backend/application/contracts.mjs`,
 `studio/backend/application/technical-service.mjs` and
-`scripts/bundle-sites-worker.mjs`, so it no longer matches its declared inputs.
+`scripts/bundle-sites-worker.mjs`, so it no longer matched its declared inputs.
 Its latest change, `d8d5307` (2026-09-23), replaced one entry inside the
 archive to remove Railway IDs and deliberately left the rest as it was. It is
-user-visible: `dist/index.html:32` offers it for download and
-`scripts/build.mjs:16-19` base64-embeds it into the legacy Worker bundle.
+user-visible: `dist/index.html:32` offers it for download and the build
+base64-embeds it into the legacy Worker bundle. Studio CI rebuilt it on every
+run, so deployments did not serve the stale committed bytes; the drift was in the
+tracked artifact. The build was also not byte-reproducible: zip recorded each
+input's checkout mtime and mode.
 
-**Mitigating fact.** Studio CI runs `npm run build` on main, which rebuilds the
-zip, so deployments do not serve the stale committed bytes. The drift is in the
-tracked artifact, not in what users receive.
+**Resolution.** Option (a), untrack it and always build. No repository path,
+workflow, image or test read a committed copy: the Railway image allowlist
+admits only `dist/core.js` from `dist/`, and the only reader is the build itself,
+which writes the archive before reading it. The download stays, served from
+the build output.
 
-**Why open.** Requires a strategy choice, not a repair. Candidate options:
-(a) untrack it and always build; (b) keep it committed and add a CI drift check;
-(c) retire the download with the legacy Workbench.
+- The archive is removed from the index and ignored like the other build outputs
+  (`dist/server/`, `dist/.openai/`).
+- Its inputs are declared once, in `scripts/workbench-source.mjs`
+  (`WORKBENCH_SOURCE_FILES`, 27 entries including that module), which also
+  writes it: each input is staged with one fixed timestamp and mode and zipped
+  with `TZ=UTC`, so the archive depends on the inputs' bytes only.
+- `tests/sites-build.test.mjs` builds from the declared inputs alone (no archive
+  present) and asserts that no build output is tracked and all are ignored; the
+  archive holds exactly the declared inputs, byte for byte; it rebuilds itself
+  — archive and Worker bundle — byte for byte from nothing but its own entries,
+  so an input the build reads but the list omits fails; a build that grows an
+  undeclared input is caught by that rebuild (negative control); a different
+  checkout time, file mode and time zone yield the same bytes; and the Worker
+  serves the archive at the page's download link. Each was mutation-checked:
+  re-adding the archive to the index, dropping an input from the list, and
+  reusing a pre-existing archive instead of regenerating it each fail the file.
 
 **Canonical impact.** `NONE`.
 
-### G13 — Lockfile decision · `OPEN`
+### G13 — Lockfile decision · `RESOLVED`
 
-**Evidence.** No `package-lock.json`, `npm-shrinkwrap.json`, `pnpm-lock.yaml` or
-`yarn.lock` exists. All three `studio-ci.yml` jobs install with
-`npm install --ignore-scripts --package-lock=false`. Direct dependencies are
-exactly pinned (`fast-xml-parser 5.10.1`, `playwright 1.62.1`), so only
-transitive resolution floats. `docs/RELEASE_READINESS_2026-09-13.md` already
-records this as accepted debt: exact direct versions without a committed
+**Evidence (before).** No `package-lock.json`, `npm-shrinkwrap.json`,
+`pnpm-lock.yaml` or `yarn.lock` existed, and `.gitignore` ignored
+`package-lock.json`. All three `studio-ci.yml` jobs and the service-browser
+job installed with `npm install --ignore-scripts --package-lock=false`, and the
+Railway image with `npm install --omit=dev`. Direct dependencies were exactly
+pinned, so only transitive resolution floated. `docs/RELEASE_READINESS_2026-09-13.md`
+recorded this as accepted debt: exact direct versions without a committed
 lockfile, "so transitive install reproducibility can be hardened later."
 
-**Why open.** Deliberately deferred rather than overlooked. It interacts with the
-durable release path, which pins byte-reproducible artifacts
-(`ops/permanent/release-lock.json`, `buildId`), so the lockfile posture and the
-release-workflow intent (M3b) should be decided together.
+**Resolution.** A committed lockfile for current and future builds; the
+archival publisher is left as it is.
+
+- `package-lock.json` (lockfileVersion 3, npm 10 / Node 22) is committed and no
+  longer ignored. It was generated without changing any version: the locked
+  tree is identical to the tree the floating install resolved at
+  `2c6db68`, and every direct dependency keeps its exact version.
+- Studio CI (Node suite and browser suite) and Studio service CI install with
+  `npm ci --ignore-scripts`. The Railway image copies the lockfile and installs
+  with `npm ci --omit=dev`; `.dockerignore` admits it, and
+  `railway/service-settings.json` watches it so a lockfile-only change
+  redeploys. That desired-state change takes effect only when the owner
+  dispatches **Railway production config apply** after merge; until then the
+  post-merge production audit reports `CONFIG_DRIFT` (railway/README.md).
+- `studio-durable-release.yml` is untouched in behaviour. It rebuilds the
+  pinned historical commit `37d59ce`, which carries no lockfile, so `npm ci`
+  cannot run there and the verified `buildId` is that release's identity. It is
+  now marked archival in a comment. M3b is unchanged.
+- The Studio Web artifact identity did not move: two builds from the locked
+  install give `buildId` `55aac2dd…`, the same as the floating install and as
+  the published v10 `release-lock.json`.
+- `tests/dependency-lock-policy.test.mjs`, run in Studio CI's classify job for
+  every change, keeps the lockfile tracked and unignored, in agreement with
+  `package.json` (exact direct versions, registry `resolved`, sha512
+  `integrity`), keeps every current workflow and the Railway image on `npm ci`,
+  and honours the archival exemption only while the commit it rebuilds carries
+  no lockfile. Reverting CI to `--package-lock=false`, re-ignoring the
+  lockfile, drifting `package.json` from it and reverting the image install each
+  fail it.
 
 **Canonical impact.** `NONE`.
 
@@ -415,38 +460,74 @@ dated audit records list candidate-level opt-in as visible debt
 **Disposition.** Closed as not-a-gap. Retained here so the identifier is not
 silently reused and so a future reader does not re-derive it as open.
 
-### G15 — Emitter and Web validator disagree on final-bar completeness · `OPEN`
+### G15 — Emitter and Web validator disagree on final-bar completeness · `RESOLVED`
 
-**Evidence.** Two implementers answer different questions about the same
-candidate. `studio/backend/final/mml-emitter.mjs` enforces the Final policy it
-implements — safe-grid decomposition, forbidden dotted forms, the
+**Evidence (before).** Two implementers answered different questions about the
+same candidate. `studio/backend/final/mml-emitter.mjs` enforces the Final policy
+it implements — safe-grid decomposition, forbidden dotted forms, the
 synchronization-safe Tempo policy, the per-role character limit, and its own
 readback — but performs no final-bar-completeness check. `validateMML`
-(`studio/backend/mml/parser.mjs`), which the Web layer uses to grade a delivery,
-does require the last bar to be filled against the confirmed meter. A candidate
-whose music ends mid-bar therefore serializes cleanly and is then refused by the
-delivery check. Reproduced during the Web Final delivery integration and pinned
-as a regression in `studio/tests/web-final-delivery.test.mjs`.
+(`studio/backend/mml/parser.mjs`), which the Web delivery check, Application
+finalize and the Canonical technical service (MCP `mml_validate`, HTTP) all use,
+built bars with the legacy `buildBars` and failed any piece whose music stopped
+before its last bar line unless a `final_partial` was stated
+(`末小節剩N拍，請依來源明確填寫末小節長度`). Reproduced at `2c6db68`: a 4/4
+candidate of two quarter notes emits `MML@t120o4cd,,,,,;` with emitter `PASS`
+and round-trip `PASS`, and `validateMML` with `0 4/4` returns
+`TECHNICAL FAIL`; the Web could not state a `final_partial` at all, so it could
+never deliver such a piece.
 
-**What this is not.** Neither behaviour is an engine claim. The published rule
-sources do not state a final-bar-completeness requirement:
-`MOBILE_SYNTAX.md` §11 step 7 requires that meter and time alignment be
-verified without specifying this test, and `PENDING.md` P14 explicitly records
-that cross-role end-time and total-duration expectations are not yet formalised.
-The validator's check is one implementation's reading, and this register may not
-be read as promoting it to a rule.
+**Canonical authority.** The published rule sources state no
+final-bar-completeness requirement. Gate 1 (technical syntax) lists no such
+item; `MOBILE_SYNTAX.md` §11 step 7 requires that meter and time alignment be
+verified without specifying this test; Gate 6 and `MASTER_RULES` §9 ask for
+exact bars from the confirmed meter, which a partial last bar is; and
+`PENDING.md` P14 records that cross-role end-time and total-duration
+expectations are not yet formalised and says not to pad meaningful silence. The
+refusal was one implementation's reading presented as a Canonical technical
+verdict.
 
-**Mitigating fact.** The integration fails closed: the emitted string is
-verified before it can become a delivery, a refusal keeps no output, and nothing
-pads a short final bar to make the check pass. The Web UI shows the validator's
-refusal in the validator's own words and labels it as current implementation
-behaviour.
+**Resolution.** The undocumented hard failure is removed from the Canonical
+validator; nothing else about bars changes.
 
-**Why open.** Needs a decision rather than a repair: whether the emitter should
-adopt the same test, whether the validator's test should be narrowed, or whether
-the two questions are legitimately different and only the reporting needs work.
-Any answer that would make final-bar completeness a normative finalization
-requirement is a Canonical change and must go through change control instead.
+- `validateMML` keeps the partial last bar the music has and reports it as a
+  `FINAL_BAR_PARTIAL_UNDECLARED` review warning (start, beats, P14) instead of
+  an error. Its result gains `song.finalBar` (`closure`: `BAR_LINE`,
+  `SOURCE_CONFIRMED_PARTIAL` or `UNDECLARED_PARTIAL`; the last bar's beats; the
+  stated pickup and final partial bar, or null).
+- Nothing is inferred or padded: no `final_partial`, pickup or meter is derived,
+  no rest is added, no note lengthened, no attack moved. The remainder is only
+  proposed to the legacy `buildBars`, which still builds and checks the bars.
+- Still failing, each for its own reason: a missing or malformed meter map, a
+  meter map not starting at beat 0, a meter change inside a bar or at/after the
+  end, a pickup as long as its bar, a non-positive pickup or final partial bar,
+  and a stated `final_partial` the music contradicts (a meter/time-alignment
+  failure). Tempo map, syntax, round-trip and every other Final check are
+  untouched.
+- The Final artifact's `final_bar` records the parser's `closure` beside the
+  stated inputs and meter map; stating a `final_partial` changes that record,
+  never a character of the Final.
+- The `CROSS_ROLE_END_TIME_REVIEW` warning cited `PENDING P16` (the `r64`
+  item); it now cites P14, the item it is about.
+- The legacy `dist/core.js` validator is unchanged. It is the labelled legacy
+  diagnostic, not a Canonical verdict, and still refuses such a piece under its
+  own name.
+- Regressions: `studio/tests/final-bar-closure.test.mjs` (partial ending
+  accepted with emitter/round-trip `PASS`; source-confirmed `final_partial`
+  reported, contradicted one failing; pickup not taken for an ending and never
+  guessed; no padding or event change; meter failures still failing for their
+  own reason; full-bar Finals unchanged; emitter, parser, Web and technical
+  service agreeing on one string), plus the Web delivery, Application finalize
+  and run tests that previously pinned the disagreement. Restoring the hard
+  failure turns eight of them red.
+
+**What this is not.** Canonical impact is `NONE`: no Published Canonical
+document, Manifest or `rules_snapshot_sha` changed, and no Final Gate was
+added. P14 remains `PENDING`; this does not resolve client end-time semantics
+or decide whether shorter roles or pieces are acceptable in game. It only stops
+an implementer from presenting a completeness policy the rules do not state as a
+Canonical technical `FAIL`, which is what made the emitter and the validator
+contradict each other.
 
 **Canonical impact.** `NONE`.
 
@@ -738,8 +819,10 @@ exists; between two arbitrary candidates it does not).
 
 ## Dependencies
 
-- **G13 depends on M3b.** The lockfile posture and the durable release intent both
-  govern reproducibility; deciding them separately risks contradictory pins.
+- **G13 was resolved without deciding M3b.** Current builds install the
+  committed lockfile; the archival durable-release publisher keeps the install
+  its pinned historical commit was built with, so no pin moved and M3b stays
+  open as it was.
 - **G8 depends on M5/D3.** The legal/licensing gate for committable source
   material is the same decision in both items.
 - **M5/D7 depends on the G8 guardrail.** The `FIXTURE_PENDING` exit criteria must
@@ -763,7 +846,7 @@ Sequenced so that no PR mixes a decision-bearing change with a mechanical one.
 | **A — documentation + CI topology** | This register; restore `ops/permanent/**` push coverage on `main` (M3a) | None. This is PR #11. |
 | **B — release semantics** | Resolve `studio-durable-release.yml` re-runnability per M3b | M3b decision |
 | **C — G10 enforcement** ✅ | Source-aware micro-gap enforcement with mutation-verified regressions | Delivered across C2A / C2B / C2C |
-| **D — G12 / G13** | Artifact strategy and lockfile posture together | G12 + G13 decisions, after M3b |
+| **D — G12 / G13** ✅ | Artifact strategy and lockfile posture together | Delivered; M3b left open (see G13) |
 | **E — M5 groundwork** | Song History structure documentation only, no schema | D1–D8 decisions |
 | **F — Final MML emitter** ✅ | Canonical-aware Final MML emitter: exact-rational duration decomposition, attack/tie semantics, tempo placement, pitch/octave and character planning, G10 consumption, round-trip Final gate | C. Foundation delivered; no `Nxx` opt-in output |
 | **G — Technical Timing Repair** ✅ | Canonical-aware Technical Timing Repair (G16): consumes `rejectedIntervalKeys`, two exact rest-only operations whose neutrality the IR proves, structured refusal for everything else, opt-in emitter integration | C and F |

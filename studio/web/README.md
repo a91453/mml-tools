@@ -456,7 +456,7 @@ upgraded version: the editor works as before, and Studio adds the checks.
 From a Git checkout with refreshed `origin/main` and the complete rules snapshot:
 
 ```sh
-npm install --ignore-scripts --package-lock=false
+npm ci --ignore-scripts
 npm run canonical:bootstrap -- --summary
 npm test
 npm run build:studio-web

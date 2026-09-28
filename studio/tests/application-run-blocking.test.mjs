@@ -956,10 +956,12 @@ test('a finalize the Final emitter refused for role-less material names the redu
 });
 
 test('a finalize the Final parser refused after emission keeps the operations that answer it', async () => {
-  // Control. One extra Melody beat past the last full 4/4 bar: the emitter
-  // writes it, the Final parser rejects the partial bar, and finalize with the
-  // source-confirmed final_partial is the answer that exists. A refusal that is
-  // not the emitter's keeps every hint it had.
+  // Control. One extra Melody beat past the last full 4/4 bar, and a stated
+  // final partial bar of two beats that the music contradicts: the emitter
+  // writes it, the Final parser rejects the contradiction, and finalize with
+  // the source-confirmed final_partial is the answer that exists. A refusal
+  // that is not the emitter's keeps every hint it had. (The partial bar alone
+  // no longer fails, G15; see the next test.)
   const source = sixRoleBaseline({ id: 'fixture:partial-bar' });
   const project = createCanonicalProject({
     ...source,
@@ -969,7 +971,7 @@ test('a finalize the Final parser refused after emission keeps the operations th
   const own = await projectWithSymbolicAsset(isolated, OWNER, { project });
   await isolated.analyzeSources(OWNER, own.projectId, { assetIds: [own.assetId] });
   const candidate = (await isolated.applyDecisions(OWNER, own.projectId, { decisions: runDecisionsFor(own.project) })).decisions.candidate_id;
-  const { run } = await isolated.startRun(OWNER, own.projectId, { target_candidate_id: candidate, confirmations: FIXTURE_CONFIRMATIONS });
+  const { run } = await isolated.startRun(OWNER, own.projectId, { target_candidate_id: candidate, confirmations: FIXTURE_CONFIRMATIONS, finalize: { final_partial: '2' } });
 
   assert.equal(run.state, RUN_STATE.AWAITING_REVIEW, JSON.stringify(run.blockers));
   const finalize = run.steps.find(entry => entry.step === RUN_STEP.FINALIZE);
@@ -980,6 +982,31 @@ test('a finalize the Final parser refused after emission keeps the operations th
   assert.equal(Object.hasOwn(blocked.detail, 'emitter_blockers'), false);
   assert.deepEqual(gateRequest(run, 'technical').available_operations, ['finalize']);
   assert.deepEqual(gateRequest(run, 'technical').missing, []);
+});
+
+test('a run over a piece that stops before its last bar line completes without a final_partial (G15)', async () => {
+  // The same music with nothing stated about how it ends. The partial last bar
+  // is reported for review, not failed, so the run delivers the Final it would
+  // have delivered with the statement, character for character.
+  const source = sixRoleBaseline({ id: 'fixture:partial-bar' });
+  const project = createCanonicalProject({
+    ...source,
+    events: [...source.events, createCanonicalNoteEvent({ id: 'melody-4', pitch: 74, start: '4', end: '5', sourceIds: [FIXTURE_SOURCE_ID], sourceEventIds: [`${FIXTURE_SOURCE_ID}#melody-4`], role: 'Melody', voice: 'melody', volume: null, metadata: {} })],
+  });
+  const delivered = {};
+  for (const [label, finalize] of [['undeclared', undefined], ['declared', { final_partial: '1' }]]) {
+    const isolated = createStudioApplication({});
+    const own = await projectWithSymbolicAsset(isolated, OWNER, { project });
+    await isolated.analyzeSources(OWNER, own.projectId, { assetIds: [own.assetId] });
+    const candidate = (await isolated.applyDecisions(OWNER, own.projectId, { decisions: runDecisionsFor(own.project) })).decisions.candidate_id;
+    const { run } = await isolated.startRun(OWNER, own.projectId, { target_candidate_id: candidate, confirmations: FIXTURE_CONFIRMATIONS, ...(finalize ? { finalize } : {}) });
+    assert.equal(run.state, RUN_STATE.COMPLETED, `${label}: ${JSON.stringify(run.review_requests.map(entry => [entry.code, entry.gate, entry.missing]))}`);
+    const { artifact } = await isolated.getArtifact(OWNER, run.final_artifact_id);
+    assert.equal(artifact.final_bar.closure, label === 'declared' ? 'SOURCE_CONFIRMED_PARTIAL' : 'UNDECLARED_PARTIAL');
+    delivered[label] = artifact.mml;
+  }
+  assert.match(delivered.undeclared, /^MML@/);
+  assert.equal(delivered.undeclared, delivered.declared);
 });
 
 // ─── an unknown blocker still blocks ────────────────────────────────────────

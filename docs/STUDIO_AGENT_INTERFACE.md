@@ -778,8 +778,15 @@ source-confirmed `pickup` and `final_partial` (a non-negative integer, decimal
 or fraction of beats, at most 32 characters). Finalize passes exactly what the
 caller states, never infers either, and records both under `final_bar` on the
 response and the artifact together with the meter map the MML was validated
-under. Without the declaration a partial last bar fails the technical gate, and
-the non-delivery notice says so.
+under and the parser's `closure`: `BAR_LINE`, `SOURCE_CONFIRMED_PARTIAL`, or
+`UNDECLARED_PARTIAL` when the music stops before its last bar line and nobody
+stated that bar. The last is not a failure: no Published Canonical rule requires
+the last bar to be full (PENDING P14 leaves end-time expectations open), so the
+parser keeps the partial bar the music has and reports it as a
+`FINAL_BAR_PARTIAL_UNDECLARED` review warning, and nothing pads it (roadmap
+G15). A stated pickup or `final_partial` that the music contradicts, a meter
+change inside a bar and every other bar error still fail the technical gate,
+and the non-delivery notice says so.
 
 Every non-delivery is explained for the path that was taken: the emitter
 reported failure and the parser never ran; the candidate declares no meter
