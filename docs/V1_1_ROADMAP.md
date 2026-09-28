@@ -76,7 +76,7 @@ prose.
 | G9 | Reduced 1-/2-role quality (P17) | `OPEN` | `ROADMAP_ONLY` / `NEEDS_PROJECT_DECISION` | `NONE` (see correction 1) |
 | G10 | Source-aware sub-1/64 micro-gap | `RESOLVED` | — | `NONE` |
 | G11 | Drum policy fails closed | `RESOLVED` | — | `NONE` |
-| G12 | Stale `workbench-source.zip` | `OPEN` | `NEEDS_PROJECT_DECISION` → `IMPLEMENTATION_WORK` | `NONE` |
+| G12 | Stale `workbench-source.zip` | `RESOLVED` | — | `NONE` |
 | G13 | Lockfile decision | `OPEN` | `NEEDS_PROJECT_DECISION` → `IMPLEMENTATION_WORK` | `NONE` |
 | G14 | Per-token caution granularity | `NO_ACTION_REQUIRED` | — | `NONE` |
 | G11-D-R | G11-D residual integrity hardening (Lead identity at the gate, Web revision chain, record envelope, carry-forward) | `RESOLVED` (pending review) | — | `NONE` |
@@ -364,27 +364,45 @@ with its own threat model, regressions and executed mutations, documented in
 source Lead evidence stays fail-closed until the IR preserves source/source-event
 pairs. Both are stated in the code as data.
 
-### G12 — Stale legacy `workbench-source.zip` · `OPEN`
+### G12 — Stale legacy `workbench-source.zip` · `RESOLVED`
 
-**Evidence.** `dist/workbench-source.zip` is tracked (`.gitignore` excludes only
-`dist/server/` and `dist/.openai/`). `scripts/build.mjs:12-14` regenerates it
-from explicitly listed inputs, 26 of them as of `96af74e`; the tracked copy
-still has 23 entries and lacks
+**Evidence (before).** `dist/workbench-source.zip` was tracked (`.gitignore`
+excluded only `dist/server/` and `dist/.openai/`). `scripts/build.mjs`
+regenerated it from explicitly listed inputs, 26 of them as of `96af74e`; the
+tracked copy still had 23 entries and lacked
 `studio/backend/application/contracts.mjs`,
 `studio/backend/application/technical-service.mjs` and
-`scripts/bundle-sites-worker.mjs`, so it no longer matches its declared inputs.
+`scripts/bundle-sites-worker.mjs`, so it no longer matched its declared inputs.
 Its latest change, `d8d5307` (2026-09-23), replaced one entry inside the
 archive to remove Railway IDs and deliberately left the rest as it was. It is
-user-visible: `dist/index.html:32` offers it for download and
-`scripts/build.mjs:16-19` base64-embeds it into the legacy Worker bundle.
+user-visible: `dist/index.html:32` offers it for download and the build
+base64-embeds it into the legacy Worker bundle. Studio CI rebuilt it on every
+run, so deployments did not serve the stale committed bytes; the drift was in the
+tracked artifact. The build was also not byte-reproducible: zip recorded each
+input's checkout mtime and mode.
 
-**Mitigating fact.** Studio CI runs `npm run build` on main, which rebuilds the
-zip, so deployments do not serve the stale committed bytes. The drift is in the
-tracked artifact, not in what users receive.
+**Resolution.** Option (a), untrack it and always build. No repository path,
+workflow, image or test read a committed copy: the Railway image allowlist
+admits only `dist/core.js` from `dist/`, and the only reader is the build itself,
+which writes the archive before reading it. The download stays, served from
+the build output.
 
-**Why open.** Requires a strategy choice, not a repair. Candidate options:
-(a) untrack it and always build; (b) keep it committed and add a CI drift check;
-(c) retire the download with the legacy Workbench.
+- The archive is removed from the index and ignored like the other build outputs
+  (`dist/server/`, `dist/.openai/`).
+- Its inputs are declared once, in `scripts/workbench-source.mjs`
+  (`WORKBENCH_SOURCE_FILES`, 27 entries including that module), which also
+  writes it: each input is staged with one fixed timestamp and mode and zipped
+  with `TZ=UTC`, so the archive depends on the inputs' bytes only.
+- `tests/sites-build.test.mjs` builds from the declared inputs alone (no archive
+  present) and asserts that no build output is tracked and all are ignored; the
+  archive holds exactly the declared inputs, byte for byte; it rebuilds itself
+  — archive and Worker bundle — byte for byte from nothing but its own entries,
+  so an input the build reads but the list omits fails; a build that grows an
+  undeclared input is caught by that rebuild (negative control); a different
+  checkout time, file mode and time zone yield the same bytes; and the Worker
+  serves the archive at the page's download link. Each was mutation-checked:
+  re-adding the archive to the index, dropping an input from the list, and
+  reusing a pre-existing archive instead of regenerating it each fail the file.
 
 **Canonical impact.** `NONE`.
 
