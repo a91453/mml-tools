@@ -5,7 +5,7 @@ Contributions are welcome when they keep the project reproducible, source-aware,
 ## Development
 
 1. Use Node.js 22 or newer.
-2. Run `npm install --ignore-scripts --package-lock=false`.
+2. Run `npm ci --ignore-scripts`. It installs exactly the dependency tree in the committed `package-lock.json`. When you change a dependency, change `package.json` and regenerate the lockfile with `npm install --ignore-scripts --package-lock-only`, and commit both.
 3. Run `npm test` before submitting changes.
 4. For Studio Web/PWA changes, also run `npm run build:studio-web` and the browser suite (`npm run test:studio-web`) when available.
 

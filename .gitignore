@@ -12,5 +12,4 @@ __pycache__/
 *.sqlite-shm
 *.sqlite-wal
 .canonical-bootstrap.json
-package-lock.json
 .studio-agent/

@@ -77,7 +77,7 @@ prose.
 | G10 | Source-aware sub-1/64 micro-gap | `RESOLVED` | — | `NONE` |
 | G11 | Drum policy fails closed | `RESOLVED` | — | `NONE` |
 | G12 | Stale `workbench-source.zip` | `RESOLVED` | — | `NONE` |
-| G13 | Lockfile decision | `OPEN` | `NEEDS_PROJECT_DECISION` → `IMPLEMENTATION_WORK` | `NONE` |
+| G13 | Lockfile decision | `RESOLVED` | — | `NONE` |
 | G14 | Per-token caution granularity | `NO_ACTION_REQUIRED` | — | `NONE` |
 | G11-D-R | G11-D residual integrity hardening (Lead identity at the gate, Web revision chain, record envelope, carry-forward) | `RESOLVED` (pending review) | — | `NONE` |
 
@@ -406,20 +406,46 @@ the build output.
 
 **Canonical impact.** `NONE`.
 
-### G13 — Lockfile decision · `OPEN`
+### G13 — Lockfile decision · `RESOLVED`
 
-**Evidence.** No `package-lock.json`, `npm-shrinkwrap.json`, `pnpm-lock.yaml` or
-`yarn.lock` exists. All three `studio-ci.yml` jobs install with
-`npm install --ignore-scripts --package-lock=false`. Direct dependencies are
-exactly pinned (`fast-xml-parser 5.10.1`, `playwright 1.62.1`), so only
-transitive resolution floats. `docs/RELEASE_READINESS_2026-09-13.md` already
-records this as accepted debt: exact direct versions without a committed
+**Evidence (before).** No `package-lock.json`, `npm-shrinkwrap.json`,
+`pnpm-lock.yaml` or `yarn.lock` existed, and `.gitignore` ignored
+`package-lock.json`. All three `studio-ci.yml` jobs and the service-browser
+job installed with `npm install --ignore-scripts --package-lock=false`, and the
+Railway image with `npm install --omit=dev`. Direct dependencies were exactly
+pinned, so only transitive resolution floated. `docs/RELEASE_READINESS_2026-09-13.md`
+recorded this as accepted debt: exact direct versions without a committed
 lockfile, "so transitive install reproducibility can be hardened later."
 
-**Why open.** Deliberately deferred rather than overlooked. It interacts with the
-durable release path, which pins byte-reproducible artifacts
-(`ops/permanent/release-lock.json`, `buildId`), so the lockfile posture and the
-release-workflow intent (M3b) should be decided together.
+**Resolution.** A committed lockfile for current and future builds; the
+archival publisher is left as it is.
+
+- `package-lock.json` (lockfileVersion 3, npm 10 / Node 22) is committed and no
+  longer ignored. It was generated without changing any version: the locked
+  tree is identical to the tree the floating install resolved at
+  `2c6db68`, and every direct dependency keeps its exact version.
+- Studio CI (Node suite and browser suite) and Studio service CI install with
+  `npm ci --ignore-scripts`. The Railway image copies the lockfile and installs
+  with `npm ci --omit=dev`; `.dockerignore` admits it, and
+  `railway/service-settings.json` watches it so a lockfile-only change
+  redeploys. That desired-state change takes effect only when the owner
+  dispatches **Railway production config apply** after merge; until then the
+  post-merge production audit reports `CONFIG_DRIFT` (railway/README.md).
+- `studio-durable-release.yml` is untouched in behaviour. It rebuilds the
+  pinned historical commit `37d59ce`, which carries no lockfile, so `npm ci`
+  cannot run there and the verified `buildId` is that release's identity. It is
+  now marked archival in a comment. M3b is unchanged.
+- The Studio Web artifact identity did not move: two builds from the locked
+  install give `buildId` `55aac2dd…`, the same as the floating install and as
+  the published v10 `release-lock.json`.
+- `tests/dependency-lock-policy.test.mjs`, run in Studio CI's classify job for
+  every change, keeps the lockfile tracked and unignored, in agreement with
+  `package.json` (exact direct versions, registry `resolved`, sha512
+  `integrity`), keeps every current workflow and the Railway image on `npm ci`,
+  and honours the archival exemption only while the commit it rebuilds carries
+  no lockfile. Reverting CI to `--package-lock=false`, re-ignoring the
+  lockfile, drifting `package.json` from it and reverting the image install each
+  fail it.
 
 **Canonical impact.** `NONE`.
 
@@ -756,8 +782,10 @@ exists; between two arbitrary candidates it does not).
 
 ## Dependencies
 
-- **G13 depends on M3b.** The lockfile posture and the durable release intent both
-  govern reproducibility; deciding them separately risks contradictory pins.
+- **G13 was resolved without deciding M3b.** Current builds install the
+  committed lockfile; the archival durable-release publisher keeps the install
+  its pinned historical commit was built with, so no pin moved and M3b stays
+  open as it was.
 - **G8 depends on M5/D3.** The legal/licensing gate for committable source
   material is the same decision in both items.
 - **M5/D7 depends on the G8 guardrail.** The `FIXTURE_PENDING` exit criteria must
@@ -781,7 +809,7 @@ Sequenced so that no PR mixes a decision-bearing change with a mechanical one.
 | **A — documentation + CI topology** | This register; restore `ops/permanent/**` push coverage on `main` (M3a) | None. This is PR #11. |
 | **B — release semantics** | Resolve `studio-durable-release.yml` re-runnability per M3b | M3b decision |
 | **C — G10 enforcement** ✅ | Source-aware micro-gap enforcement with mutation-verified regressions | Delivered across C2A / C2B / C2C |
-| **D — G12 / G13** | Artifact strategy and lockfile posture together | G12 + G13 decisions, after M3b |
+| **D — G12 / G13** ✅ | Artifact strategy and lockfile posture together | Delivered; M3b left open (see G13) |
 | **E — M5 groundwork** | Song History structure documentation only, no schema | D1–D8 decisions |
 | **F — Final MML emitter** ✅ | Canonical-aware Final MML emitter: exact-rational duration decomposition, attack/tie semantics, tempo placement, pitch/octave and character planning, G10 consumption, round-trip Final gate | C. Foundation delivered; no `Nxx` opt-in output |
 | **G — Technical Timing Repair** ✅ | Canonical-aware Technical Timing Repair (G16): consumes `rejectedIntervalKeys`, two exact rest-only operations whose neutrality the IR proves, structured refusal for everything else, opt-in emitter integration | C and F |
