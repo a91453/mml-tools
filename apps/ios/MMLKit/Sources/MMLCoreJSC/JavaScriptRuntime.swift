@@ -72,16 +72,26 @@ final class JavaScriptRuntime {
     /// Calls `function` with `this` bound to `object`.
     func call(_ function: JSObjectRef, on object: JSObjectRef, _ arguments: [Argument]) throws -> JSValueRef {
         var strings: [JSStringRef] = []
-        defer { strings.forEach(JSStringRelease) }
-        let values: [JSValueRef?] = arguments.map { argument in
+        var values: [JSValueRef?] = []
+        // The argument values live in a Swift array on the heap, which the
+        // collector does not scan; each is protected from the moment it is
+        // made until the call has returned.
+        defer {
+            for case let value? in values { JSValueUnprotect(context, value) }
+            strings.forEach(JSStringRelease)
+        }
+        for argument in arguments {
+            let value: JSValueRef
             switch argument {
             case let .string(text):
                 let string = makeString(text)
                 strings.append(string)
-                return JSValueMakeString(context, string)
-            case let .number(value):
-                return JSValueMakeNumber(context, value)
+                value = JSValueMakeString(context, string)
+            case let .number(number):
+                value = JSValueMakeNumber(context, number)
             }
+            JSValueProtect(context, value)
+            values.append(value)
         }
         var exception: JSValueRef?
         let result = values.withUnsafeBufferPointer { buffer in

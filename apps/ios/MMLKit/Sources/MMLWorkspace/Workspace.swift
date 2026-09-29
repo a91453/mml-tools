@@ -31,9 +31,13 @@ public final class Workspace {
     @ObservationIgnored let clock: ProjectClock
     @ObservationIgnored let autosaveDelay: Duration?
     @ObservationIgnored private var engine: (any MMLCoreEngine)?
-    // Sessions still open, so deleting a project can stop them from writing
-    // it back. Weak: a session closes by going away.
-    @ObservationIgnored private var openSessions: [UUID: [WeakSession]] = [:]
+    // The one live session of each open project. Opening a project that still
+    // has one returns it, so two sessions never hold diverging copies (a late
+    // check from an earlier session would otherwise write an older score over
+    // newer edits), and deleting a project can stop it from writing the
+    // project back. Weak: a session closes by going away.
+    @ObservationIgnored private var openSessions: [UUID: WeakSession] = [:]
+    @ObservationIgnored private var coreStart: Task<Void, Never>?
 
     /// `autosaveDelay` is how long after an edit a session saves by itself;
     /// `nil` leaves saving to explicit calls.
@@ -46,7 +50,21 @@ public final class Workspace {
     /// Starts the core off the main actor and records what it runs. A core
     /// that fails to start leaves the library usable: projects still open,
     /// edit and save, and only checking waits for a working core.
+    ///
+    /// The core starts once. A later call (another window's scene, for
+    /// example) waits for that start instead of building a second core; only
+    /// a start that failed is attempted again.
     public func startCore(_ makeEngine: @escaping @Sendable () throws -> any MMLCoreEngine) async {
+        if let coreStart {
+            await coreStart.value
+            guard case .failed = coreState else { return }
+        }
+        let start = Task { await self.loadCore(makeEngine) }
+        coreStart = start
+        await start.value
+    }
+
+    private func loadCore(_ makeEngine: @escaping @Sendable () throws -> any MMLCoreEngine) async {
         coreState = .loading
         do {
             let engine = try await Task.detached(priority: .userInitiated) { try makeEngine() }.value
@@ -80,14 +98,18 @@ public final class Workspace {
         return makeSession(project)
     }
 
+    /// The project's live session if it has one, otherwise a new session over
+    /// the project as saved.
     public func openProject(id: UUID) async throws -> ProjectSession {
-        makeSession(try await store.load(id: id))
+        if let open = liveSession(for: id) { return open }
+        let project = try await store.load(id: id)
+        return liveSession(for: id) ?? makeSession(project)
     }
 
     /// Deletes a project. Any session still open on it is discarded first, so
     /// neither its autosave nor its close can write the project back.
     public func deleteProject(id: UUID) async throws {
-        for box in openSessions.removeValue(forKey: id) ?? [] { box.session?.discard() }
+        openSessions.removeValue(forKey: id)?.session?.discard()
         try await store.delete(id: id)
         await refreshLibrary()
     }
@@ -100,11 +122,23 @@ public final class Workspace {
     }
 
     private func makeSession(_ project: MMLProject) -> ProjectSession {
-        let session = ProjectSession(project: project, store: store, engine: engine, identity: coreState.identity, clock: clock, autosaveDelay: autosaveDelay) { [weak self] in
+        let session = ProjectSession(
+            project: project,
+            store: store,
+            core: { [weak self] in self?.coreState ?? .loading },
+            engine: { [weak self] in self?.engine },
+            clock: clock,
+            autosaveDelay: autosaveDelay
+        ) { [weak self] in
             await self?.refreshLibrary()
         }
-        openSessions[project.id, default: []].removeAll { $0.session == nil }
-        openSessions[project.id, default: []].append(WeakSession(session))
+        openSessions = openSessions.filter { $0.value.session != nil }
+        openSessions[project.id] = WeakSession(session)
+        return session
+    }
+
+    private func liveSession(for id: UUID) -> ProjectSession? {
+        guard let session = openSessions[id]?.session, !session.isDiscarded else { return nil }
         return session
     }
 }

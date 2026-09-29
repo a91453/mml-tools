@@ -17,12 +17,17 @@ public final class ProjectSession: Identifiable {
     public private(set) var isChecking = false
     /// A host fault from the last check (the core could not answer at all).
     public private(set) var checkError: String?
-    /// The last save failure; the edits stay in memory and are retried.
+    /// The last save failure. The edits stay in memory, marked unsaved, and
+    /// are written by the next save: the next edit's autosave, a check, or
+    /// closing the project.
     public private(set) var saveError: String?
 
     @ObservationIgnored private let store: any ProjectStore
-    @ObservationIgnored private let engine: (any MMLCoreEngine)?
-    @ObservationIgnored public let identity: CoreIdentity?
+    // The running core, read when it is needed rather than when the session
+    // was created: a project opened while the core was still loading can be
+    // checked as soon as it loads.
+    @ObservationIgnored private let currentCore: @MainActor () -> CoreState
+    @ObservationIgnored private let currentEngine: @MainActor () -> (any MMLCoreEngine)?
     @ObservationIgnored private let clock: ProjectClock
     @ObservationIgnored private let autosaveDelay: Duration?
     @ObservationIgnored private let onSaved: @MainActor () async -> Void
@@ -33,12 +38,12 @@ public final class ProjectSession: Identifiable {
     public nonisolated var id: UUID { projectID }
     @ObservationIgnored private nonisolated let projectID: UUID
 
-    init(project: MMLProject, store: any ProjectStore, engine: (any MMLCoreEngine)?, identity: CoreIdentity?, clock: ProjectClock, autosaveDelay: Duration?, onSaved: @escaping @MainActor () async -> Void) {
+    init(project: MMLProject, store: any ProjectStore, core: @escaping @MainActor () -> CoreState, engine: @escaping @MainActor () -> (any MMLCoreEngine)?, clock: ProjectClock, autosaveDelay: Duration?, onSaved: @escaping @MainActor () async -> Void) {
         self.project = project
         projectID = project.id
         self.store = store
-        self.engine = identity?.isCanonicalReady == true ? engine : nil
-        self.identity = identity
+        currentCore = core
+        currentEngine = engine
         self.clock = clock
         self.autosaveDelay = autosaveDelay
         self.onSaved = onSaved
@@ -85,6 +90,14 @@ public final class ProjectSession: Identifiable {
     }
 
     // MARK: - Checking
+
+    /// What the running core reports, or `nil` while it loads or after it failed.
+    public var identity: CoreIdentity? { currentCore().identity }
+
+    /// The core, only when it loaded Published Canonical.
+    private var engine: (any MMLCoreEngine)? {
+        identity?.isCanonicalReady == true ? currentEngine() : nil
+    }
 
     /// Whether a check can run: the core loaded Published Canonical.
     public var canCheck: Bool { engine != nil && !isChecking }
