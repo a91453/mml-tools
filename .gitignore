@@ -3,6 +3,7 @@ dist/.openai/
 dist/workbench-source.zip
 node_modules/
 studio/web-build/
+studio/native-build/
 studio/browser-results/
 __pycache__/
 .env

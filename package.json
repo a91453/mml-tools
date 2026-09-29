@@ -18,9 +18,11 @@
     "build": "node scripts/build.mjs",
     "build:studio-web": "node scripts/build-studio-web.mjs",
     "preview:studio-web": "node scripts/serve-studio-web.mjs",
-    "test:studio-web": "node studio/browser-tests/run.mjs"
+    "test:studio-web": "node studio/browser-tests/run.mjs",
+    "build:native-core": "node scripts/build-native-core.mjs"
   },
   "devDependencies": {
+    "esbuild": "0.28.2",
     "playwright": "1.62.1"
   }
 }
