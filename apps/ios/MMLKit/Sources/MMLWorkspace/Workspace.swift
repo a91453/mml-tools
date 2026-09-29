@@ -31,6 +31,9 @@ public final class Workspace {
     @ObservationIgnored let clock: ProjectClock
     @ObservationIgnored let autosaveDelay: Duration?
     @ObservationIgnored private var engine: (any MMLCoreEngine)?
+    // Sessions still open, so deleting a project can stop them from writing
+    // it back. Weak: a session closes by going away.
+    @ObservationIgnored private var openSessions: [UUID: [WeakSession]] = [:]
 
     /// `autosaveDelay` is how long after an edit a session saves by itself;
     /// `nil` leaves saving to explicit calls.
@@ -81,7 +84,10 @@ public final class Workspace {
         makeSession(try await store.load(id: id))
     }
 
+    /// Deletes a project. Any session still open on it is discarded first, so
+    /// neither its autosave nor its close can write the project back.
     public func deleteProject(id: UUID) async throws {
+        for box in openSessions.removeValue(forKey: id) ?? [] { box.session?.discard() }
         try await store.delete(id: id)
         await refreshLibrary()
     }
@@ -94,8 +100,17 @@ public final class Workspace {
     }
 
     private func makeSession(_ project: MMLProject) -> ProjectSession {
-        ProjectSession(project: project, store: store, engine: engine, identity: coreState.identity, clock: clock, autosaveDelay: autosaveDelay) { [weak self] in
+        let session = ProjectSession(project: project, store: store, engine: engine, identity: coreState.identity, clock: clock, autosaveDelay: autosaveDelay) { [weak self] in
             await self?.refreshLibrary()
         }
+        openSessions[project.id, default: []].removeAll { $0.session == nil }
+        openSessions[project.id, default: []].append(WeakSession(session))
+        return session
     }
+}
+
+@MainActor
+private final class WeakSession {
+    weak var session: ProjectSession?
+    init(_ session: ProjectSession) { self.session = session }
 }

@@ -20,6 +20,11 @@ public struct NativeCoreBundle: Sendable {
     public let expectedRuntimePackageDigest: String
     public let expectedCanonicalVersion: String?
 
+    /// The lowercase hex SHA-256 a manifest records for a bundle.
+    public static func digest(of data: Data) -> String {
+        SHA256.hex(data)
+    }
+
     /// Loads the bundle from a directory holding both files.
     public static func load(from directory: URL) throws -> NativeCoreBundle {
         let scriptURL = directory.appendingPathComponent(scriptFileName)

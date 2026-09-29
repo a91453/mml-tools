@@ -38,6 +38,27 @@ public enum NativeCoreFixtures {
         try Data(contentsOf: directory.appendingPathComponent(NativeCoreBundle.manifestFileName))
     }
 
+    /// The built bundle with one published document altered after the build,
+    /// and a manifest rewritten to match the altered bytes: consistent as a
+    /// file pair, but its Canonical package no longer matches the digest it
+    /// was built with, so the core must refuse to load the rules.
+    public static func bundleWithUnverifiableCanonical() throws -> NativeCoreBundle {
+        guard var text = String(data: try scriptData(), encoding: .utf8),
+              let range = text.range(of: "Status: PUBLISHED CANONICAL") else {
+            throw FixtureError("the built bundle does not carry a published document status line")
+        }
+        text.replaceSubrange(range, with: "Status: PUBLISHED CANONICAl")
+        let script = Data(text.utf8)
+        guard var manifest = try JSONSerialization.jsonObject(with: manifestData()) as? [String: Any],
+              var bundle = manifest["bundle"] as? [String: Any] else {
+            throw FixtureError("the manifest is not a JSON object with a bundle entry")
+        }
+        bundle["sha256"] = NativeCoreBundle.digest(of: script)
+        bundle["bytes"] = script.count
+        manifest["bundle"] = bundle
+        return try NativeCoreBundle(scriptData: script, manifestData: JSONSerialization.data(withJSONObject: manifest))
+    }
+
     public static func conformance() throws -> Conformance {
         let data = try Data(contentsOf: directory.appendingPathComponent("conformance.json"))
         return try JSONDecoder().decode(Conformance.self, from: data)

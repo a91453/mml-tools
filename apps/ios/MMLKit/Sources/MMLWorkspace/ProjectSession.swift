@@ -27,6 +27,8 @@ public final class ProjectSession: Identifiable {
     @ObservationIgnored private let autosaveDelay: Duration?
     @ObservationIgnored private let onSaved: @MainActor () async -> Void
     @ObservationIgnored private var autosaveTask: Task<Void, Never>?
+    /// Set when the project was deleted: nothing may write it again.
+    public private(set) var isDiscarded = false
 
     public nonisolated var id: UUID { projectID }
     @ObservationIgnored private nonisolated let projectID: UUID
@@ -88,9 +90,10 @@ public final class ProjectSession: Identifiable {
     public var canCheck: Bool { engine != nil && !isChecking }
 
     /// The stored check against the score as it is now and the running core.
-    /// `nil` when nothing was checked, or no core is running to compare with.
+    /// `nil` when nothing was checked, or when no core with Published Canonical
+    /// is running to compare with: an unloaded core cannot say a result is stale.
     public var freshness: CheckFreshness? {
-        guard let identity else { return nil }
+        guard let identity, identity.isCanonicalReady else { return nil }
         return project.checkFreshness(under: identity.stamp)
     }
 
@@ -122,6 +125,7 @@ public final class ProjectSession: Identifiable {
     public func save() async throws {
         autosaveTask?.cancel()
         autosaveTask = nil
+        guard !isDiscarded else { return }
         let snapshot = project
         try await store.save(snapshot)
         if project == snapshot { hasUnsavedChanges = false }
@@ -136,6 +140,15 @@ public final class ProjectSession: Identifiable {
         autosaveTask = nil
     }
 
+    /// Stops this session from writing its project again, because the project
+    /// was deleted. Pending edits are dropped with it.
+    func discard() {
+        isDiscarded = true
+        hasUnsavedChanges = false
+        autosaveTask?.cancel()
+        autosaveTask = nil
+    }
+
     /// The project file as it is saved, for export.
     public func exportData() throws -> Data {
         try ProjectCoding.encoder().encode(project)
@@ -143,6 +156,7 @@ public final class ProjectSession: Identifiable {
 
     private func edited() {
         project.updatedAt = clock.now()
+        guard !isDiscarded else { return }
         hasUnsavedChanges = true
         guard let autosaveDelay else { return }
         autosaveTask?.cancel()

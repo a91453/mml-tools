@@ -45,6 +45,9 @@ public actor JavaScriptCoreEngine: MMLCoreEngine {
         guard identity.runtimePackageDigest == bundle.expectedRuntimePackageDigest else {
             throw MMLCoreError.bundleCorrupt("core reports runtime package \(identity.runtimePackageDigest ?? "none"), manifest says \(bundle.expectedRuntimePackageDigest)")
         }
+        if identity.canonical.status == "CANONICAL_LOADED", identity.canonical.canonicalVersion != bundle.expectedCanonicalVersion {
+            throw MMLCoreError.bundleCorrupt("core loaded Canonical \(identity.canonical.canonicalVersion ?? "none"), manifest says \(bundle.expectedCanonicalVersion ?? "none")")
+        }
 
         self.runtime = runtime
         self.core = core

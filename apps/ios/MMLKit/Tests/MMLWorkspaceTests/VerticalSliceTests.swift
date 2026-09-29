@@ -125,6 +125,39 @@ final class VerticalSliceTests: XCTestCase {
         XCTAssertEqual(reopened.project.score, session.score)
     }
 
+    func testDeletingAnOpenProjectIsNotUndoneByItsSessionSaving() async throws {
+        let workspace = Workspace(store: FileProjectStore(root: root), autosaveDelay: .milliseconds(30))
+        let session = try await workspace.createProject(title: "doomed")
+        session.score.mml = "MML@t120o4c1,,,,,;"
+        XCTAssertTrue(session.hasUnsavedChanges, "an autosave is pending")
+        try await workspace.deleteProject(id: session.id)
+        XCTAssertTrue(session.isDiscarded)
+        await session.close()
+        try await session.save()
+        session.score.mml = "MML@t120o4d1,,,,,;"
+        try await Task.sleep(for: .milliseconds(150))
+        let listing = try await FileProjectStore(root: root).list()
+        XCTAssertTrue(listing.projects.isEmpty, "the deleted project was written back")
+        XCTAssertTrue(listing.unreadable.isEmpty)
+    }
+
+    func testAStoredResultIsNotCalledStaleByACoreWithoutCanonical() async throws {
+        let workspace = try await launch()
+        let session = try await workspace.createProject(title: "checked")
+        session.score = ScoreInput(mml: "MML@t120o4c1,,,,,;", meterText: "0 4/4")
+        await session.runTechnicalCheck()
+        await session.close()
+
+        // The same library under a core that could not load Published Canonical.
+        let degraded = Workspace(store: FileProjectStore(root: root), autosaveDelay: nil)
+        await degraded.startCore { try JavaScriptCoreEngine(bundle: NativeCoreFixtures.bundleWithUnverifiableCanonical()) }
+        XCTAssertEqual(degraded.coreState.identity?.isCanonicalReady, false)
+        let reopened = try await degraded.openProject(id: session.id)
+        XCTAssertNotNil(reopened.project.lastCheck, "the stored result is kept")
+        XCTAssertNil(reopened.freshness, "a core without Canonical cannot judge whether it is stale")
+        XCTAssertFalse(reopened.canCheck)
+    }
+
     func testAutosaveWritesEditsWithoutAnExplicitSave() async throws {
         let workspace = Workspace(store: FileProjectStore(root: root), autosaveDelay: .milliseconds(50))
         let session = try await workspace.createProject(title: "autosave")

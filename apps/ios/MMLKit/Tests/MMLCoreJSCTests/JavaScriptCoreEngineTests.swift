@@ -128,17 +128,7 @@ final class JavaScriptCoreEngineTests: XCTestCase {
         // matches the digest it was built with: the core refuses to load the
         // rules, and every check is refused with CANONICAL_NOT_LOADED.
         let conformance = try NativeCoreFixtures.conformance()
-        var text = try XCTUnwrap(String(data: NativeCoreFixtures.scriptData(), encoding: .utf8))
-        let range = try XCTUnwrap(text.range(of: "Status: PUBLISHED CANONICAL"))
-        text.replaceSubrange(range, with: "Status: PUBLISHED CANONICAl")
-        let script = Data(text.utf8)
-        let manifest = try rewriteManifest(NativeCoreFixtures.manifestData()) { manifest in
-            var bundle = manifest["bundle"] as? [String: Any] ?? [:]
-            bundle["sha256"] = SHA256.hex(script)
-            bundle["bytes"] = script.count
-            manifest["bundle"] = bundle
-        }
-        let engine = try JavaScriptCoreEngine(bundle: NativeCoreBundle(scriptData: script, manifestData: manifest))
+        let engine = try JavaScriptCoreEngine(bundle: NativeCoreFixtures.bundleWithUnverifiableCanonical())
         let identity = try await engine.identity()
         XCTAssertEqual(identity.canonical.status, CoreRefusal.canonicalNotLoaded)
         XCTAssertFalse(identity.isCanonicalReady)

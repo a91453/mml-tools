@@ -36,11 +36,20 @@ struct RootView: View {
             await current.close()
             session = nil
         }
-        guard let id, session?.id != id else { return }
+        guard let id, session?.id != id else {
+            if id == nil { openError = nil }
+            return
+        }
+        openError = nil
         do {
-            session = try await workspace.openProject(id: id)
+            let opened = try await workspace.openProject(id: id)
+            // The user may have chosen another project while this one loaded;
+            // `.task(id:)` cancels this task then, and a late load is dropped.
+            guard !Task.isCancelled, selection == id else { return }
+            session = opened
             openError = nil
         } catch {
+            guard !Task.isCancelled, selection == id else { return }
             openError = String(describing: error)
         }
     }
