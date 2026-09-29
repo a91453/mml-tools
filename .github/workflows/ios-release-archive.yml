@@ -1,0 +1,146 @@
+name: iOS Release Archive (unsigned)
+
+# Archives the App as a distribution build would be archived: Release
+# configuration, the real iOS device SDK (generic/platform=iOS), and no
+# automatic package resolution (as on Xcode Cloud). Code signing is disabled,
+# so it needs no Apple account. It proves that the Release build compiles and
+# inspects the archived App, including the shared core it carries; it proves
+# nothing about signing, upload to App Store Connect or TestFlight.
+# Same pipeline as a91453/railway-game-ios's Release Archive.
+#
+# Normally started by hand: Actions -> iOS Release Archive (unsigned) -> Run
+# workflow. It also runs on pull requests that change the project settings,
+# the App's resources or this workflow.
+
+on:
+  workflow_dispatch:
+  pull_request:
+    paths:
+      - apps/ios/project.yml
+      - apps/ios/MMLApp.xcodeproj/**
+      - apps/ios/MMLApp/Resources/**
+      - .github/workflows/ios-release-archive.yml
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ios-release-archive-${{ github.ref }}
+  cancel-in-progress: true
+
+defaults:
+  run:
+    shell: bash
+
+jobs:
+  archive:
+    name: Release archive (generic iOS device, unsigned)
+    runs-on: macos-26
+    timeout-minutes: 40
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Toolchain versions
+        run: |
+          echo "ARCHIVE_PATH=$RUNNER_TEMP/MMLApp.xcarchive" >> "$GITHUB_ENV"
+          sw_vers
+          xcodebuild -version
+          echo "iOS SDK: $(xcrun --sdk iphoneos --show-sdk-version)"
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: Build the native core
+        run: |
+          npm ci --ignore-scripts
+          npm run build:native-core
+
+      - name: Release build settings
+        run: |
+          settings="$RUNNER_TEMP/release-build-settings.txt"
+          xcodebuild -showBuildSettings \
+            -project apps/ios/MMLApp.xcodeproj \
+            -target MMLApp \
+            -configuration Release \
+            -sdk iphoneos >"$settings"
+          grep -E '^ +(PRODUCT_BUNDLE_IDENTIFIER|MARKETING_VERSION|CURRENT_PROJECT_VERSION|CODE_SIGN_STYLE|DEVELOPMENT_TEAM|SWIFT_ACTIVE_COMPILATION_CONDITIONS|TARGETED_DEVICE_FAMILY|IPHONEOS_DEPLOYMENT_TARGET|ASSETCATALOG_COMPILER_APPICON_NAME) = ' "$settings" || true
+          # DEBUG would compile in the Debug-only demo projects (DemoProject.swift).
+          if grep -Eq '^ +SWIFT_ACTIVE_COMPILATION_CONDITIONS = .*\bDEBUG\b' "$settings"; then
+            echo "::error::The Release configuration defines DEBUG."
+            exit 1
+          fi
+
+      - name: Archive (Release, generic iOS device, unsigned)
+        run: |
+          xcodebuild archive \
+            -project apps/ios/MMLApp.xcodeproj \
+            -scheme MMLApp \
+            -configuration Release \
+            -destination "generic/platform=iOS" \
+            -archivePath "$ARCHIVE_PATH" \
+            -derivedDataPath "$RUNNER_TEMP/DerivedData" \
+            -disableAutomaticPackageResolution \
+            CODE_SIGNING_ALLOWED=NO
+
+      - name: Inspect the archived App
+        run: |
+          app="$ARCHIVE_PATH/Products/Applications/MMLApp.app"
+          plist="$app/Info.plist"
+          binary="$app/MMLApp"
+          value() { /usr/libexec/PlistBuddy -c "Print :$1" "$plist" 2>/dev/null || echo "(missing)"; }
+          failed=false
+          fail() { echo "::error::$1"; failed=true; }
+
+          bundle_id="$(value CFBundleIdentifier)"
+          platform="$(value DTPlatformName)"
+          icon="$(value CFBundleIcons:CFBundlePrimaryIcon:CFBundleIconName)"
+          core_sha="$(shasum -a 256 "$app/NativeCore/mml-core.js" 2>/dev/null | cut -d' ' -f1)"
+          manifest_sha="$(node -e 'process.stdout.write(require(process.argv[1]).bundle.sha256)' "$app/NativeCore/mml-core.json" 2>/dev/null || true)"
+          canonical="$(node -e 'const m=require(process.argv[1]);process.stdout.write(m.release.canonical.canonical_version+" · "+m.release.canonical.rules_snapshot_sha)' "$app/NativeCore/mml-core.json" 2>/dev/null || true)"
+          {
+            echo "### Unsigned Release archive"
+            echo "Compiles and packages only; says nothing about signing, upload or TestFlight."
+            echo ""
+            echo "| Key | Value |"
+            echo "| --- | --- |"
+            for key in CFBundleIdentifier CFBundleDisplayName CFBundleShortVersionString CFBundleVersion \
+              MinimumOSVersion DTPlatformName DTSDKName; do
+              echo "| $key | $(value "$key") |"
+            done
+            echo "| UIDeviceFamily | $(value UIDeviceFamily | grep -Eo '[0-9]+' | paste -sd, -) |"
+            echo "| Primary icon | $icon |"
+            echo "| Architectures | $(lipo -archs "$binary") |"
+            echo "| Native core SHA-256 | ${core_sha:-(missing)} |"
+            echo "| Published Canonical | ${canonical:-(missing)} |"
+          } | tee -a "$GITHUB_STEP_SUMMARY"
+
+          [[ "$bundle_id" == "io.github.a91453.MMLApp" ]] || fail "Unexpected bundle identifier: $bundle_id"
+          [[ "$platform" == "iphoneos" ]] || fail "Not built for the iOS device SDK: $platform"
+          [[ "$icon" == "AppIcon" ]] || fail "The app icon is not in the archived App's Info.plist."
+          [[ -f "$app/Assets.car" ]] || fail "The compiled asset catalog (Assets.car) is missing."
+          [[ -n "$core_sha" && "$core_sha" == "$manifest_sha" ]] || fail "The archived NativeCore/mml-core.js does not match its manifest."
+          [[ "$core_sha" == "$(shasum -a 256 studio/native-build/mml-core.js | cut -d' ' -f1)" ]] || fail "The archived core is not the core this run built."
+          if grep -qF -- "-demo-project" "$binary"; then
+            fail "The Release binary contains the Debug-only -demo-project argument."
+          fi
+          # Expected to report "not signed at all": this archive is unsigned.
+          codesign --display "$app" 2>&1 || true
+          [[ "$failed" == false ]]
+
+      # Evidence for the privacy and export-compliance answers, not a gate:
+      # which libraries the App links, and whether its binary references any
+      # API that Apple lists as needing a reason in a privacy manifest.
+      - name: Linked libraries and required-reason API references
+        run: |
+          binary="$ARCHIVE_PATH/Products/Applications/MMLApp.app/MMLApp"
+          echo "Linked libraries:"
+          otool -L "$binary"
+          matches="$(nm -u "$binary" | grep -E '_(stat|fstat|fstatat|lstat|getattrlist|getattrlistat|getattrlistbulk|fgetattrlist|statfs|fstatfs|statvfs|fstatvfs|mach_absolute_time)$|UserDefaults|systemUptime|activeInputModes|volumeAvailableCapacity|volumeTotalCapacity|systemFreeSize|systemSize|creationDate|modificationDate' || true)"
+          if [[ -n "$matches" ]]; then
+            echo "::warning::The binary references APIs that may need a privacy manifest (PrivacyInfo.xcprivacy):"
+            echo "$matches"
+          else
+            echo "No required-reason API references found in the App binary."
+          fi
