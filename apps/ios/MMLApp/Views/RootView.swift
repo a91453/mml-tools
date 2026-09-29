@@ -6,7 +6,7 @@ import SwiftUI
 struct RootView: View {
     @Environment(Workspace.self) private var workspace
     @Environment(\.scenePhase) private var scenePhase
-    @State private var selection: UUID?
+    @Binding var selection: UUID?
     @State private var session: ProjectSession?
     @State private var openError: String?
 
@@ -34,6 +34,12 @@ struct RootView: View {
     private func open(_ id: UUID?) async {
         if let current = session, current.id != id {
             await current.close()
+            // Closing could not write the edits (its save error is on screen):
+            // stay on the project rather than drop them.
+            if current.hasUnsavedChanges {
+                selection = current.id
+                return
+            }
             session = nil
         }
         guard let id, session?.id != id else {

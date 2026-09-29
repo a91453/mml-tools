@@ -17,6 +17,17 @@ struct ProjectEditorView: View {
             }
 
             Section {
+                CheckResultView(record: session.project.lastCheck, freshness: session.freshness)
+                if let checkError = session.checkError {
+                    Label(checkError, systemImage: "exclamationmark.triangle").font(.caption).foregroundStyle(.red)
+                }
+            } header: {
+                Text("技術檢查")
+            } footer: {
+                Text("在這台裝置上以 Published Canonical 執行，與 MCP 的 mml_validate 是同一份實作。技術 PASS 不代表來源、聽驗、播放器回讀或實機驗收。")
+            }
+
+            Section {
                 TextField("拍號圖（每行「起拍 拍號」，例：0 4/4）", text: $session.score.meterText, axis: .vertical)
                     .lineLimit(1...6)
                     .font(.body.monospaced())
@@ -44,17 +55,6 @@ struct ProjectEditorView: View {
                 Text("六軌 MML（MML@…;）")
             } footer: {
                 Text("\(session.score.mml.count) 字")
-            }
-
-            Section {
-                CheckResultView(record: session.project.lastCheck, freshness: session.freshness)
-                if let checkError = session.checkError {
-                    Label(checkError, systemImage: "exclamationmark.triangle").font(.caption).foregroundStyle(.red)
-                }
-            } header: {
-                Text("技術檢查")
-            } footer: {
-                Text("在這台裝置上以 Published Canonical 執行，與 MCP 的 mml_validate 是同一份實作。技術 PASS 不代表來源、聽驗、播放器回讀或實機驗收。")
             }
 
             if let error = fileError ?? session.saveError {
@@ -105,13 +105,23 @@ struct ProjectEditorView: View {
         .fileImporter(isPresented: $importing, allowedContentTypes: Self.importTypes, allowsMultipleSelection: false) { result in
             importFile(result)
         }
-        .fileExporter(isPresented: $exporting, document: exportDocument, contentType: .json, defaultFilename: "\(session.title).mmlproj.json") { result in
+        .fileExporter(isPresented: $exporting, document: exportDocument, contentType: .json, defaultFilename: exportFileName) { result in
             if case let .failure(error) = result { fileError = error.localizedDescription }
             exportDocument = nil
         }
         .onDisappear {
             Task { await session.close() }
         }
+    }
+
+    /// The title as a file name: path separators and control characters
+    /// replaced, never hidden, and a name even when the title is blank.
+    private var exportFileName: String {
+        let unsafe = CharacterSet(charactersIn: "/\\:").union(.controlCharacters).union(.newlines)
+        let cleaned = session.title.components(separatedBy: unsafe).joined(separator: "-").trimmingCharacters(in: .whitespaces)
+        // A leading dot would make a hidden file.
+        let visible = String(cleaned.drop { $0 == "." })
+        return "\(visible.isEmpty ? "MML 專案" : visible).mmlproj.json"
     }
 
     // Plain text, and `.mml` files declared as plain text. The core decides

@@ -13,21 +13,31 @@ import SwiftUI
 @main
 struct MMLApp: App {
     @State private var workspace: Workspace
+    @State private var selection: UUID?
 
     init() {
-        let store = (try? FileProjectStore.applicationSupport())
-            ?? FileProjectStore(root: URL.documentsDirectory.appending(path: "Projects", directoryHint: .isDirectory))
-        _workspace = State(initialValue: Workspace(store: store))
+        _workspace = State(initialValue: Workspace(store: Self.makeStore()))
     }
 
     var body: some Scene {
         WindowGroup {
-            RootView()
+            RootView(selection: $selection)
                 .environment(workspace)
                 .task {
                     await workspace.refreshLibrary()
                     await workspace.startCore { try JavaScriptCoreEngine.bundled() }
+                    #if DEBUG
+                    if DemoProject.isRequested { selection = await DemoProject.prepare(in: workspace) }
+                    #endif
                 }
         }
+    }
+
+    private static func makeStore() -> FileProjectStore {
+        #if DEBUG
+        if DemoProject.isRequested { return DemoProject.makeStore() }
+        #endif
+        return (try? FileProjectStore.applicationSupport())
+            ?? FileProjectStore(root: URL.documentsDirectory.appending(path: "Projects", directoryHint: .isDirectory))
     }
 }

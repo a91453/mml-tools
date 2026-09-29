@@ -1,0 +1,24 @@
+name: Set up XcodeGen
+description: >-
+  Installs a pinned, checksum-verified XcodeGen release and adds it to PATH.
+  macOS runners only. To upgrade, change both values below together, update
+  the source build steps in apps/ios/CLAUDE.md, and commit the regenerated project.
+
+runs:
+  using: composite
+  steps:
+    - name: Install XcodeGen
+      shell: bash
+      env:
+        XCODEGEN_VERSION: "2.46.0"
+        XCODEGEN_SHA256: 4d9e34b62172d645eed6457cac13fc222569974098ef4ee9c3368bedf0196806
+      run: |
+        set -euo pipefail
+        dest="$RUNNER_TEMP/xcodegen-$XCODEGEN_VERSION"
+        curl --fail --silent --show-error --location --retry 3 \
+          --output "$dest.zip" \
+          "https://github.com/yonaskolb/XcodeGen/releases/download/$XCODEGEN_VERSION/xcodegen.zip"
+        echo "$XCODEGEN_SHA256  $dest.zip" | shasum --algorithm 256 --check
+        unzip -q "$dest.zip" -d "$dest"
+        echo "$dest/xcodegen/bin" >> "$GITHUB_PATH"
+        "$dest/xcodegen/bin/xcodegen" --version

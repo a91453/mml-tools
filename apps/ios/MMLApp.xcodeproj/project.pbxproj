@@ -7,134 +7,183 @@
 	objects = {
 
 /* Begin PBXBuildFile section */
-		91DCC2157D02AA2A590B381C /* MMLCore in Frameworks */ = {isa = PBXBuildFile; productRef = D3CFC3FD3B8F51A2F86F06E1 /* MMLCore */; };
-		481FFC75F17FDE3356AB1BA3 /* MMLCoreJSC in Frameworks */ = {isa = PBXBuildFile; productRef = 9200EA636976488AE2493C43 /* MMLCoreJSC */; };
-		C19BA86A1401A4BF4D0836EC /* MMLProjects in Frameworks */ = {isa = PBXBuildFile; productRef = E39B0B8BF2D4DD5E352D0E65 /* MMLProjects */; };
-		A6585942617E037785B0F82F /* MMLWorkspace in Frameworks */ = {isa = PBXBuildFile; productRef = FDC2A1C05B59268EBAA2CA22 /* MMLWorkspace */; };
+		126E56A7DB8F2AFA9998EB10 /* MMLWorkspace in Frameworks */ = {isa = PBXBuildFile; productRef = 3A23951F83CCBEAA0D676F69 /* MMLWorkspace */; };
+		382FA5A93A42006B3DABC896 /* RootView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 33471B33FB575B622EFA06E3 /* RootView.swift */; };
+		4191F7CF334DFA4C04E25522 /* ProjectListView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6CF984C590AD4D4A874F9D36 /* ProjectListView.swift */; };
+		57D80F1A965CECB11571839A /* CheckResultView.swift in Sources */ = {isa = PBXBuildFile; fileRef = C3EC7BCAB86CC02BA23A8042 /* CheckResultView.swift */; };
+		651C11BDDFE16482F1CFD3B2 /* DemoProject.swift in Sources */ = {isa = PBXBuildFile; fileRef = A539C336CBB1B9AABD343E12 /* DemoProject.swift */; };
+		80DB65330D9E0DC7819F42ED /* CoreIdentityView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 2B34512B6A28F834D0D34544 /* CoreIdentityView.swift */; };
+		8BD7F5204E8CA8F22B0EBDCB /* MMLProjects in Frameworks */ = {isa = PBXBuildFile; productRef = 7CEDDF6CE62C2CD25CDF34B9 /* MMLProjects */; };
+		8F1F90C0CA7828E4C7573294 /* ProjectEditorView.swift in Sources */ = {isa = PBXBuildFile; fileRef = CACA5251D1E7CE9A862A25CE /* ProjectEditorView.swift */; };
+		B48D41BDF49EA8DBA5428A8D /* MMLCoreJSC in Frameworks */ = {isa = PBXBuildFile; productRef = F49A125314D292DCFFE66855 /* MMLCoreJSC */; };
+		BA7FC7504EDBCB0156E03154 /* Assets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = F2A0AF0D5D76C09B5CA3038C /* Assets.xcassets */; };
+		BFA2D121664E28FC6C5D606A /* MMLApp.swift in Sources */ = {isa = PBXBuildFile; fileRef = A80028E55E10D5E3383A6B86 /* MMLApp.swift */; };
+		F37F88B83B583D7B89003FAF /* MMLCore in Frameworks */ = {isa = PBXBuildFile; productRef = 34C70C4C5A5FAE2D4370E4CF /* MMLCore */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXFileReference section */
-		BB3309975FEEC584ADFD1764 /* MMLApp.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = MMLApp.app; sourceTree = BUILT_PRODUCTS_DIR; };
+		226A8620B147531A3C82C15C /* MMLApp.app */ = {isa = PBXFileReference; includeInIndex = 0; lastKnownFileType = wrapper.application; path = MMLApp.app; sourceTree = BUILT_PRODUCTS_DIR; };
+		2B34512B6A28F834D0D34544 /* CoreIdentityView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CoreIdentityView.swift; sourceTree = "<group>"; };
+		33471B33FB575B622EFA06E3 /* RootView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RootView.swift; sourceTree = "<group>"; };
+		390E3CC19D8681B9A861A7B1 /* MMLKit */ = {isa = PBXFileReference; lastKnownFileType = folder; name = MMLKit; path = MMLKit; sourceTree = SOURCE_ROOT; };
+		6CF984C590AD4D4A874F9D36 /* ProjectListView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ProjectListView.swift; sourceTree = "<group>"; };
+		A539C336CBB1B9AABD343E12 /* DemoProject.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DemoProject.swift; sourceTree = "<group>"; };
+		A80028E55E10D5E3383A6B86 /* MMLApp.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MMLApp.swift; sourceTree = "<group>"; };
+		C3EC7BCAB86CC02BA23A8042 /* CheckResultView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CheckResultView.swift; sourceTree = "<group>"; };
+		CACA5251D1E7CE9A862A25CE /* ProjectEditorView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ProjectEditorView.swift; sourceTree = "<group>"; };
+		F2A0AF0D5D76C09B5CA3038C /* Assets.xcassets */ = {isa = PBXFileReference; lastKnownFileType = folder.assetcatalog; path = Assets.xcassets; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
-/* Begin PBXFileSystemSynchronizedRootGroup section */
-		94A8E70BD9A79F56B4B696AF /* MMLApp */ = {
-			isa = PBXFileSystemSynchronizedRootGroup;
-			path = MMLApp;
-			sourceTree = "<group>";
-		};
-/* End PBXFileSystemSynchronizedRootGroup section */
-
 /* Begin PBXFrameworksBuildPhase section */
-		2ABC465722B61120A31A3BE5 /* Frameworks */ = {
+		4CAC914DCA6C853883C23E01 /* Frameworks */ = {
 			isa = PBXFrameworksBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
-				91DCC2157D02AA2A590B381C /* MMLCore in Frameworks */,
-				481FFC75F17FDE3356AB1BA3 /* MMLCoreJSC in Frameworks */,
-				C19BA86A1401A4BF4D0836EC /* MMLProjects in Frameworks */,
-				A6585942617E037785B0F82F /* MMLWorkspace in Frameworks */,
+				F37F88B83B583D7B89003FAF /* MMLCore in Frameworks */,
+				B48D41BDF49EA8DBA5428A8D /* MMLCoreJSC in Frameworks */,
+				8BD7F5204E8CA8F22B0EBDCB /* MMLProjects in Frameworks */,
+				126E56A7DB8F2AFA9998EB10 /* MMLWorkspace in Frameworks */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
 /* End PBXFrameworksBuildPhase section */
 
 /* Begin PBXGroup section */
-		C475030BAA6737DDC6D0CA39 = {
+		031C091359E901923A13A036 /* Packages */ = {
 			isa = PBXGroup;
 			children = (
-				94A8E70BD9A79F56B4B696AF /* MMLApp */,
-				778346395EC73D287D6DBD90 /* Products */,
+				390E3CC19D8681B9A861A7B1 /* MMLKit */,
+			);
+			name = Packages;
+			sourceTree = "<group>";
+		};
+		22AF5A53A053F691E6B1B7F0 /* Views */ = {
+			isa = PBXGroup;
+			children = (
+				C3EC7BCAB86CC02BA23A8042 /* CheckResultView.swift */,
+				2B34512B6A28F834D0D34544 /* CoreIdentityView.swift */,
+				CACA5251D1E7CE9A862A25CE /* ProjectEditorView.swift */,
+				6CF984C590AD4D4A874F9D36 /* ProjectListView.swift */,
+				33471B33FB575B622EFA06E3 /* RootView.swift */,
+			);
+			name = Views;
+			path = MMLApp/Views;
+			sourceTree = "<group>";
+		};
+		876E6314D636A8D886C0A0C6 /* Resources */ = {
+			isa = PBXGroup;
+			children = (
+				F2A0AF0D5D76C09B5CA3038C /* Assets.xcassets */,
+			);
+			name = Resources;
+			path = MMLApp/Resources;
+			sourceTree = "<group>";
+		};
+		88CC0AEEE07498097889D8E3 = {
+			isa = PBXGroup;
+			children = (
+				F732A03390A55F016BCF1C0E /* App */,
+				031C091359E901923A13A036 /* Packages */,
+				876E6314D636A8D886C0A0C6 /* Resources */,
+				22AF5A53A053F691E6B1B7F0 /* Views */,
+				DFB5B3E1A8D9BA3CA89ED693 /* Products */,
 			);
 			sourceTree = "<group>";
 		};
-		778346395EC73D287D6DBD90 /* Products */ = {
+		DFB5B3E1A8D9BA3CA89ED693 /* Products */ = {
 			isa = PBXGroup;
 			children = (
-				BB3309975FEEC584ADFD1764 /* MMLApp.app */,
+				226A8620B147531A3C82C15C /* MMLApp.app */,
 			);
 			name = Products;
+			sourceTree = "<group>";
+		};
+		F732A03390A55F016BCF1C0E /* App */ = {
+			isa = PBXGroup;
+			children = (
+				A539C336CBB1B9AABD343E12 /* DemoProject.swift */,
+				A80028E55E10D5E3383A6B86 /* MMLApp.swift */,
+			);
+			name = App;
+			path = MMLApp/App;
 			sourceTree = "<group>";
 		};
 /* End PBXGroup section */
 
 /* Begin PBXNativeTarget section */
-		D5F2DEEA8F26E52B36A9C0D5 /* MMLApp */ = {
+		96E47A922C1C90A471013C20 /* MMLApp */ = {
 			isa = PBXNativeTarget;
-			buildConfigurationList = 3AE68FD495FD58C8D3246938 /* Build configuration list for PBXNativeTarget "MMLApp" */;
+			buildConfigurationList = 706CC4300566E5AC10E05326 /* Build configuration list for PBXNativeTarget "MMLApp" */;
 			buildPhases = (
-				881C9928D15512DFA4CBEEA8 /* Sources */,
-				2ABC465722B61120A31A3BE5 /* Frameworks */,
-				C83CF304D0E3B186F4863937 /* Resources */,
-				C91E6D99BCFDDFEB024C1520 /* Bundle shared MML core */,
+				C9301B2FAEC59489EE54EA3C /* Sources */,
+				75D19BBE8501008753FC8220 /* Resources */,
+				4CAC914DCA6C853883C23E01 /* Frameworks */,
+				FF4DDA540F2460521ED7964A /* Bundle shared MML core */,
 			);
 			buildRules = (
 			);
 			dependencies = (
 			);
-			fileSystemSynchronizedGroups = (
-				94A8E70BD9A79F56B4B696AF /* MMLApp */,
-			);
 			name = MMLApp;
 			packageProductDependencies = (
-				D3CFC3FD3B8F51A2F86F06E1 /* MMLCore */,
-				9200EA636976488AE2493C43 /* MMLCoreJSC */,
-				E39B0B8BF2D4DD5E352D0E65 /* MMLProjects */,
-				FDC2A1C05B59268EBAA2CA22 /* MMLWorkspace */,
+				34C70C4C5A5FAE2D4370E4CF /* MMLCore */,
+				F49A125314D292DCFFE66855 /* MMLCoreJSC */,
+				7CEDDF6CE62C2CD25CDF34B9 /* MMLProjects */,
+				3A23951F83CCBEAA0D676F69 /* MMLWorkspace */,
 			);
 			productName = MMLApp;
-			productReference = BB3309975FEEC584ADFD1764 /* MMLApp.app */;
+			productReference = 226A8620B147531A3C82C15C /* MMLApp.app */;
 			productType = "com.apple.product-type.application";
 		};
 /* End PBXNativeTarget section */
 
 /* Begin PBXProject section */
-		1459D23D3A421A52B82922A5 /* Project object */ = {
+		EB5F38E9A89F18173BD34473 /* Project object */ = {
 			isa = PBXProject;
 			attributes = {
-				BuildIndependentTargetsInParallel = 1;
-				LastSwiftUpdateCheck = 1600;
-				LastUpgradeCheck = 1600;
+				BuildIndependentTargetsInParallel = YES;
+				LastUpgradeCheck = 1430;
 				TargetAttributes = {
-					D5F2DEEA8F26E52B36A9C0D5 = {
-						CreatedOnToolsVersion = 16.0;
+					96E47A922C1C90A471013C20 = {
+						ProvisioningStyle = Automatic;
 					};
 				};
 			};
-			buildConfigurationList = EC9101E3A6138AD5EEAD45BA /* Build configuration list for PBXProject "MMLApp" */;
+			buildConfigurationList = 03A44678DEE010355ADF6934 /* Build configuration list for PBXProject "MMLApp" */;
 			developmentRegion = "zh-Hant";
 			hasScannedForEncodings = 0;
 			knownRegions = (
 				Base,
 				"zh-Hant",
 			);
-			mainGroup = C475030BAA6737DDC6D0CA39;
+			mainGroup = 88CC0AEEE07498097889D8E3;
 			minimizedProjectReferenceProxies = 1;
 			packageReferences = (
-				2EB3FBA71CAFC53345686766 /* XCLocalSwiftPackageReference "MMLKit" */,
+				B96F8856C3E2518C23D2720F /* XCLocalSwiftPackageReference "MMLKit" */,
 			);
 			preferredProjectObjectVersion = 77;
-			productRefGroup = 778346395EC73D287D6DBD90 /* Products */;
+			productRefGroup = DFB5B3E1A8D9BA3CA89ED693 /* Products */;
 			projectDirPath = "";
 			projectRoot = "";
 			targets = (
-				D5F2DEEA8F26E52B36A9C0D5 /* MMLApp */,
+				96E47A922C1C90A471013C20 /* MMLApp */,
 			);
 		};
 /* End PBXProject section */
 
 /* Begin PBXResourcesBuildPhase section */
-		C83CF304D0E3B186F4863937 /* Resources */ = {
+		75D19BBE8501008753FC8220 /* Resources */ = {
 			isa = PBXResourcesBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
+				BA7FC7504EDBCB0156E03154 /* Assets.xcassets in Resources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
 /* End PBXResourcesBuildPhase section */
 
 /* Begin PBXShellScriptBuildPhase section */
-		C91E6D99BCFDDFEB024C1520 /* Bundle shared MML core */ = {
+		FF4DDA540F2460521ED7964A /* Bundle shared MML core */ = {
 			isa = PBXShellScriptBuildPhase;
 			alwaysOutOfDate = 1;
 			buildActionMask = 2147483647;
@@ -151,201 +200,260 @@
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 			shellPath = /bin/sh;
-			shellScript = "set -eu\n# The shared MML core, built from this repository by `npm run build:native-core`.\n# It is copied, never generated here, so an Xcode build needs no Node.js.\nSOURCE=\"${SRCROOT}/../../studio/native-build\"\nDESTINATION=\"${TARGET_BUILD_DIR}/${UNLOCALIZED_RESOURCES_FOLDER_PATH}/NativeCore\"\nfor FILE in mml-core.js mml-core.json; do\n  if [ ! -f \"${SOURCE}/${FILE}\" ]; then\n    echo \"error: ${SOURCE}/${FILE} is missing. Run 'npm ci --ignore-scripts && npm run build:native-core' at the repository root, then build again.\" >&2\n    exit 1\n  fi\ndone\nmkdir -p \"${DESTINATION}\"\ncp \"${SOURCE}/mml-core.js\" \"${SOURCE}/mml-core.json\" \"${DESTINATION}/\"\n";
+			shellScript = "set -eu\nSOURCE=\"${SRCROOT}/../../studio/native-build\"\nDESTINATION=\"${TARGET_BUILD_DIR}/${UNLOCALIZED_RESOURCES_FOLDER_PATH}/NativeCore\"\nfor FILE in mml-core.js mml-core.json; do\n  if [ ! -f \"${SOURCE}/${FILE}\" ]; then\n    echo \"error: ${SOURCE}/${FILE} is missing. Run 'npm ci --ignore-scripts && npm run build:native-core' at the repository root, then build again.\" >&2\n    exit 1\n  fi\ndone\nmkdir -p \"${DESTINATION}\"\ncp \"${SOURCE}/mml-core.js\" \"${SOURCE}/mml-core.json\" \"${DESTINATION}/\"\n";
 			showEnvVarsInLog = 0;
 		};
 /* End PBXShellScriptBuildPhase section */
 
 /* Begin PBXSourcesBuildPhase section */
-		881C9928D15512DFA4CBEEA8 /* Sources */ = {
+		C9301B2FAEC59489EE54EA3C /* Sources */ = {
 			isa = PBXSourcesBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
+				57D80F1A965CECB11571839A /* CheckResultView.swift in Sources */,
+				80DB65330D9E0DC7819F42ED /* CoreIdentityView.swift in Sources */,
+				651C11BDDFE16482F1CFD3B2 /* DemoProject.swift in Sources */,
+				BFA2D121664E28FC6C5D606A /* MMLApp.swift in Sources */,
+				8F1F90C0CA7828E4C7573294 /* ProjectEditorView.swift in Sources */,
+				4191F7CF334DFA4C04E25522 /* ProjectListView.swift in Sources */,
+				382FA5A93A42006B3DABC896 /* RootView.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
 /* End PBXSourcesBuildPhase section */
 
 /* Begin XCBuildConfiguration section */
-		6D7075AD75EB755030A3C222 /* Debug */ = {
+		2DD2985F515C3BC66FF1B424 /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
+				CODE_SIGN_IDENTITY = "iPhone Developer";
+				CODE_SIGN_STYLE = Automatic;
+				CURRENT_PROJECT_VERSION = 1;
+				ENABLE_USER_SCRIPT_SANDBOXING = NO;
+				GENERATE_INFOPLIST_FILE = YES;
+				INFOPLIST_KEY_CFBundleDisplayName = MML;
+				INFOPLIST_KEY_ITSAppUsesNonExemptEncryption = NO;
+				INFOPLIST_KEY_LSApplicationCategoryType = "public.app-category.music";
+				INFOPLIST_KEY_UIApplicationSceneManifest_Generation = YES;
+				INFOPLIST_KEY_UIApplicationSupportsIndirectInputEvents = YES;
+				INFOPLIST_KEY_UILaunchScreen_Generation = YES;
+				INFOPLIST_KEY_UISupportedInterfaceOrientations_iPad = "UIInterfaceOrientationPortrait UIInterfaceOrientationPortraitUpsideDown UIInterfaceOrientationLandscapeLeft UIInterfaceOrientationLandscapeRight";
+				INFOPLIST_KEY_UISupportedInterfaceOrientations_iPhone = "UIInterfaceOrientationPortrait UIInterfaceOrientationLandscapeLeft UIInterfaceOrientationLandscapeRight";
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/Frameworks",
+				);
+				MARKETING_VERSION = 0.1.0;
+				PRODUCT_BUNDLE_IDENTIFIER = io.github.a91453.MMLApp;
+				SDKROOT = iphoneos;
+				SUPPORTS_MACCATALYST = NO;
+				SUPPORTS_MAC_DESIGNED_FOR_IPHONE_IPAD = NO;
+				SUPPORTS_XR_DESIGNED_FOR_IPHONE_IPAD = NO;
+				SWIFT_TREAT_WARNINGS_AS_ERRORS = YES;
+				TARGETED_DEVICE_FAMILY = "1,2";
+			};
+			name = Release;
+		};
+		3CE8CCDC3942C059EF061432 /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
+				CODE_SIGN_IDENTITY = "iPhone Developer";
+				CODE_SIGN_STYLE = Automatic;
+				CURRENT_PROJECT_VERSION = 1;
+				ENABLE_USER_SCRIPT_SANDBOXING = NO;
+				GENERATE_INFOPLIST_FILE = YES;
+				INFOPLIST_KEY_CFBundleDisplayName = MML;
+				INFOPLIST_KEY_ITSAppUsesNonExemptEncryption = NO;
+				INFOPLIST_KEY_LSApplicationCategoryType = "public.app-category.music";
+				INFOPLIST_KEY_UIApplicationSceneManifest_Generation = YES;
+				INFOPLIST_KEY_UIApplicationSupportsIndirectInputEvents = YES;
+				INFOPLIST_KEY_UILaunchScreen_Generation = YES;
+				INFOPLIST_KEY_UISupportedInterfaceOrientations_iPad = "UIInterfaceOrientationPortrait UIInterfaceOrientationPortraitUpsideDown UIInterfaceOrientationLandscapeLeft UIInterfaceOrientationLandscapeRight";
+				INFOPLIST_KEY_UISupportedInterfaceOrientations_iPhone = "UIInterfaceOrientationPortrait UIInterfaceOrientationLandscapeLeft UIInterfaceOrientationLandscapeRight";
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/Frameworks",
+				);
+				MARKETING_VERSION = 0.1.0;
+				PRODUCT_BUNDLE_IDENTIFIER = io.github.a91453.MMLApp;
+				SDKROOT = iphoneos;
+				SUPPORTS_MACCATALYST = NO;
+				SUPPORTS_MAC_DESIGNED_FOR_IPHONE_IPAD = NO;
+				SUPPORTS_XR_DESIGNED_FOR_IPHONE_IPAD = NO;
+				SWIFT_TREAT_WARNINGS_AS_ERRORS = YES;
+				TARGETED_DEVICE_FAMILY = "1,2";
+			};
+			name = Debug;
+		};
+		E72AC6066909550BF751FF42 /* Release */ = {
 			isa = XCBuildConfiguration;
 			buildSettings = {
 				ALWAYS_SEARCH_USER_PATHS = NO;
-				ASSETCATALOG_COMPILER_GENERATE_SWIFT_ASSET_SYMBOL_EXTENSIONS = YES;
 				CLANG_ANALYZER_NONNULL = YES;
-				CLANG_CXX_LANGUAGE_STANDARD = "gnu++20";
+				CLANG_ANALYZER_NUMBER_OBJECT_CONVERSION = YES_AGGRESSIVE;
+				CLANG_CXX_LANGUAGE_STANDARD = "gnu++14";
+				CLANG_CXX_LIBRARY = "libc++";
 				CLANG_ENABLE_MODULES = YES;
 				CLANG_ENABLE_OBJC_ARC = YES;
+				CLANG_ENABLE_OBJC_WEAK = YES;
+				CLANG_WARN_BLOCK_CAPTURE_AUTORELEASING = YES;
+				CLANG_WARN_BOOL_CONVERSION = YES;
+				CLANG_WARN_COMMA = YES;
+				CLANG_WARN_CONSTANT_CONVERSION = YES;
+				CLANG_WARN_DEPRECATED_OBJC_IMPLEMENTATIONS = YES;
+				CLANG_WARN_DIRECT_OBJC_ISA_USAGE = YES_ERROR;
 				CLANG_WARN_DOCUMENTATION_COMMENTS = YES;
+				CLANG_WARN_EMPTY_BODY = YES;
+				CLANG_WARN_ENUM_CONVERSION = YES;
+				CLANG_WARN_INFINITE_RECURSION = YES;
+				CLANG_WARN_INT_CONVERSION = YES;
+				CLANG_WARN_NON_LITERAL_NULL_CONVERSION = YES;
+				CLANG_WARN_OBJC_IMPLICIT_RETAIN_SELF = YES;
+				CLANG_WARN_OBJC_LITERAL_CONVERSION = YES;
+				CLANG_WARN_OBJC_ROOT_CLASS = YES_ERROR;
+				CLANG_WARN_QUOTED_INCLUDE_IN_FRAMEWORK_HEADER = YES;
+				CLANG_WARN_RANGE_LOOP_ANALYSIS = YES;
+				CLANG_WARN_STRICT_PROTOTYPES = YES;
+				CLANG_WARN_SUSPICIOUS_MOVE = YES;
 				CLANG_WARN_UNGUARDED_AVAILABILITY = YES_AGGRESSIVE;
+				CLANG_WARN_UNREACHABLE_CODE = YES;
+				CLANG_WARN__DUPLICATE_METHOD_MATCH = YES;
+				COPY_PHASE_STRIP = NO;
+				DEBUG_INFORMATION_FORMAT = "dwarf-with-dsym";
+				ENABLE_NS_ASSERTIONS = NO;
+				ENABLE_STRICT_OBJC_MSGSEND = YES;
+				GCC_C_LANGUAGE_STANDARD = gnu11;
+				GCC_NO_COMMON_BLOCKS = YES;
+				GCC_WARN_64_TO_32_BIT_CONVERSION = YES;
+				GCC_WARN_ABOUT_RETURN_TYPE = YES_ERROR;
+				GCC_WARN_UNDECLARED_SELECTOR = YES;
+				GCC_WARN_UNINITIALIZED_AUTOS = YES_AGGRESSIVE;
+				GCC_WARN_UNUSED_FUNCTION = YES;
+				GCC_WARN_UNUSED_VARIABLE = YES;
+				IPHONEOS_DEPLOYMENT_TARGET = 17.0;
+				MTL_ENABLE_DEBUG_INFO = NO;
+				MTL_FAST_MATH = YES;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SDKROOT = iphoneos;
+				SWIFT_COMPILATION_MODE = wholemodule;
+				SWIFT_OPTIMIZATION_LEVEL = "-O";
+				SWIFT_VERSION = 6.0;
+			};
+			name = Release;
+		};
+		FE9E36C7564B32A0A68D3F6F /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ALWAYS_SEARCH_USER_PATHS = NO;
+				CLANG_ANALYZER_NONNULL = YES;
+				CLANG_ANALYZER_NUMBER_OBJECT_CONVERSION = YES_AGGRESSIVE;
+				CLANG_CXX_LANGUAGE_STANDARD = "gnu++14";
+				CLANG_CXX_LIBRARY = "libc++";
+				CLANG_ENABLE_MODULES = YES;
+				CLANG_ENABLE_OBJC_ARC = YES;
+				CLANG_ENABLE_OBJC_WEAK = YES;
+				CLANG_WARN_BLOCK_CAPTURE_AUTORELEASING = YES;
+				CLANG_WARN_BOOL_CONVERSION = YES;
+				CLANG_WARN_COMMA = YES;
+				CLANG_WARN_CONSTANT_CONVERSION = YES;
+				CLANG_WARN_DEPRECATED_OBJC_IMPLEMENTATIONS = YES;
+				CLANG_WARN_DIRECT_OBJC_ISA_USAGE = YES_ERROR;
+				CLANG_WARN_DOCUMENTATION_COMMENTS = YES;
+				CLANG_WARN_EMPTY_BODY = YES;
+				CLANG_WARN_ENUM_CONVERSION = YES;
+				CLANG_WARN_INFINITE_RECURSION = YES;
+				CLANG_WARN_INT_CONVERSION = YES;
+				CLANG_WARN_NON_LITERAL_NULL_CONVERSION = YES;
+				CLANG_WARN_OBJC_IMPLICIT_RETAIN_SELF = YES;
+				CLANG_WARN_OBJC_LITERAL_CONVERSION = YES;
+				CLANG_WARN_OBJC_ROOT_CLASS = YES_ERROR;
+				CLANG_WARN_QUOTED_INCLUDE_IN_FRAMEWORK_HEADER = YES;
+				CLANG_WARN_RANGE_LOOP_ANALYSIS = YES;
+				CLANG_WARN_STRICT_PROTOTYPES = YES;
+				CLANG_WARN_SUSPICIOUS_MOVE = YES;
+				CLANG_WARN_UNGUARDED_AVAILABILITY = YES_AGGRESSIVE;
+				CLANG_WARN_UNREACHABLE_CODE = YES;
+				CLANG_WARN__DUPLICATE_METHOD_MATCH = YES;
 				COPY_PHASE_STRIP = NO;
 				DEBUG_INFORMATION_FORMAT = dwarf;
 				ENABLE_STRICT_OBJC_MSGSEND = YES;
 				ENABLE_TESTABILITY = YES;
-				ENABLE_USER_SCRIPT_SANDBOXING = NO;
-				GCC_C_LANGUAGE_STANDARD = gnu17;
+				GCC_C_LANGUAGE_STANDARD = gnu11;
 				GCC_DYNAMIC_NO_PIC = NO;
+				GCC_NO_COMMON_BLOCKS = YES;
 				GCC_OPTIMIZATION_LEVEL = 0;
 				GCC_PREPROCESSOR_DEFINITIONS = (
-					"DEBUG=1",
 					"$(inherited)",
+					"DEBUG=1",
 				);
+				GCC_WARN_64_TO_32_BIT_CONVERSION = YES;
+				GCC_WARN_ABOUT_RETURN_TYPE = YES_ERROR;
+				GCC_WARN_UNDECLARED_SELECTOR = YES;
 				GCC_WARN_UNINITIALIZED_AUTOS = YES_AGGRESSIVE;
+				GCC_WARN_UNUSED_FUNCTION = YES;
+				GCC_WARN_UNUSED_VARIABLE = YES;
 				IPHONEOS_DEPLOYMENT_TARGET = 17.0;
-				LOCALIZATION_PREFERS_STRING_CATALOGS = YES;
 				MTL_ENABLE_DEBUG_INFO = INCLUDE_SOURCE;
+				MTL_FAST_MATH = YES;
 				ONLY_ACTIVE_ARCH = YES;
+				PRODUCT_NAME = "$(TARGET_NAME)";
 				SDKROOT = iphoneos;
-				SWIFT_ACTIVE_COMPILATION_CONDITIONS = "DEBUG $(inherited)";
+				SWIFT_ACTIVE_COMPILATION_CONDITIONS = DEBUG;
 				SWIFT_OPTIMIZATION_LEVEL = "-Onone";
 				SWIFT_VERSION = 6.0;
 			};
 			name = Debug;
 		};
-		1305D10BB0C3873DC2F82D84 /* Release */ = {
-			isa = XCBuildConfiguration;
-			buildSettings = {
-				ALWAYS_SEARCH_USER_PATHS = NO;
-				ASSETCATALOG_COMPILER_GENERATE_SWIFT_ASSET_SYMBOL_EXTENSIONS = YES;
-				CLANG_ANALYZER_NONNULL = YES;
-				CLANG_CXX_LANGUAGE_STANDARD = "gnu++20";
-				CLANG_ENABLE_MODULES = YES;
-				CLANG_ENABLE_OBJC_ARC = YES;
-				CLANG_WARN_DOCUMENTATION_COMMENTS = YES;
-				CLANG_WARN_UNGUARDED_AVAILABILITY = YES_AGGRESSIVE;
-				COPY_PHASE_STRIP = NO;
-				DEBUG_INFORMATION_FORMAT = "dwarf-with-dsym";
-				ENABLE_NS_ASSERTIONS = NO;
-				ENABLE_STRICT_OBJC_MSGSEND = YES;
-				ENABLE_USER_SCRIPT_SANDBOXING = NO;
-				GCC_C_LANGUAGE_STANDARD = gnu17;
-				GCC_WARN_UNINITIALIZED_AUTOS = YES_AGGRESSIVE;
-				IPHONEOS_DEPLOYMENT_TARGET = 17.0;
-				LOCALIZATION_PREFERS_STRING_CATALOGS = YES;
-				MTL_ENABLE_DEBUG_INFO = NO;
-				SDKROOT = iphoneos;
-				SWIFT_COMPILATION_MODE = wholemodule;
-				SWIFT_VERSION = 6.0;
-				VALIDATE_PRODUCT = YES;
-			};
-			name = Release;
-		};
-		F09BBBFEF41E690A276F4B0E /* Debug */ = {
-			isa = XCBuildConfiguration;
-			buildSettings = {
-				CODE_SIGN_STYLE = Automatic;
-				CURRENT_PROJECT_VERSION = 1;
-				ENABLE_PREVIEWS = YES;
-				GENERATE_INFOPLIST_FILE = YES;
-				INFOPLIST_KEY_CFBundleDisplayName = MML;
-				INFOPLIST_KEY_ITSAppUsesNonExemptEncryption = NO;
-				INFOPLIST_KEY_LSApplicationCategoryType = "public.app-category.music";
-				INFOPLIST_KEY_UIApplicationSceneManifest_Generation = YES;
-				INFOPLIST_KEY_UIApplicationSupportsIndirectInputEvents = YES;
-				INFOPLIST_KEY_UILaunchScreen_Generation = YES;
-				INFOPLIST_KEY_UISupportedInterfaceOrientations_iPad = "UIInterfaceOrientationPortrait UIInterfaceOrientationPortraitUpsideDown UIInterfaceOrientationLandscapeLeft UIInterfaceOrientationLandscapeRight";
-				INFOPLIST_KEY_UISupportedInterfaceOrientations_iPhone = "UIInterfaceOrientationPortrait UIInterfaceOrientationLandscapeLeft UIInterfaceOrientationLandscapeRight";
-				LD_RUNPATH_SEARCH_PATHS = (
-					"$(inherited)",
-					"@executable_path/Frameworks",
-				);
-				MARKETING_VERSION = 0.1.0;
-				PRODUCT_BUNDLE_IDENTIFIER = "io.github.a91453.mml-tools";
-				PRODUCT_NAME = "$(TARGET_NAME)";
-				SUPPORTED_PLATFORMS = "iphoneos iphonesimulator";
-				SUPPORTS_MACCATALYST = NO;
-				SUPPORTS_MAC_DESIGNED_FOR_IPHONE_IPAD = NO;
-				SUPPORTS_XR_DESIGNED_FOR_IPHONE_IPAD = NO;
-				SWIFT_EMIT_LOC_STRINGS = YES;
-				SWIFT_VERSION = 6.0;
-				TARGETED_DEVICE_FAMILY = "1,2";
-			};
-			name = Debug;
-		};
-		A0FCDBE8D61CE97AFA8B14CA /* Release */ = {
-			isa = XCBuildConfiguration;
-			buildSettings = {
-				CODE_SIGN_STYLE = Automatic;
-				CURRENT_PROJECT_VERSION = 1;
-				ENABLE_PREVIEWS = YES;
-				GENERATE_INFOPLIST_FILE = YES;
-				INFOPLIST_KEY_CFBundleDisplayName = MML;
-				INFOPLIST_KEY_ITSAppUsesNonExemptEncryption = NO;
-				INFOPLIST_KEY_LSApplicationCategoryType = "public.app-category.music";
-				INFOPLIST_KEY_UIApplicationSceneManifest_Generation = YES;
-				INFOPLIST_KEY_UIApplicationSupportsIndirectInputEvents = YES;
-				INFOPLIST_KEY_UILaunchScreen_Generation = YES;
-				INFOPLIST_KEY_UISupportedInterfaceOrientations_iPad = "UIInterfaceOrientationPortrait UIInterfaceOrientationPortraitUpsideDown UIInterfaceOrientationLandscapeLeft UIInterfaceOrientationLandscapeRight";
-				INFOPLIST_KEY_UISupportedInterfaceOrientations_iPhone = "UIInterfaceOrientationPortrait UIInterfaceOrientationLandscapeLeft UIInterfaceOrientationLandscapeRight";
-				LD_RUNPATH_SEARCH_PATHS = (
-					"$(inherited)",
-					"@executable_path/Frameworks",
-				);
-				MARKETING_VERSION = 0.1.0;
-				PRODUCT_BUNDLE_IDENTIFIER = "io.github.a91453.mml-tools";
-				PRODUCT_NAME = "$(TARGET_NAME)";
-				SUPPORTED_PLATFORMS = "iphoneos iphonesimulator";
-				SUPPORTS_MACCATALYST = NO;
-				SUPPORTS_MAC_DESIGNED_FOR_IPHONE_IPAD = NO;
-				SUPPORTS_XR_DESIGNED_FOR_IPHONE_IPAD = NO;
-				SWIFT_EMIT_LOC_STRINGS = YES;
-				SWIFT_VERSION = 6.0;
-				TARGETED_DEVICE_FAMILY = "1,2";
-			};
-			name = Release;
-		};
 /* End XCBuildConfiguration section */
 
 /* Begin XCConfigurationList section */
-		EC9101E3A6138AD5EEAD45BA /* Build configuration list for PBXProject "MMLApp" */ = {
+		03A44678DEE010355ADF6934 /* Build configuration list for PBXProject "MMLApp" */ = {
 			isa = XCConfigurationList;
 			buildConfigurations = (
-				6D7075AD75EB755030A3C222 /* Debug */,
-				1305D10BB0C3873DC2F82D84 /* Release */,
+				FE9E36C7564B32A0A68D3F6F /* Debug */,
+				E72AC6066909550BF751FF42 /* Release */,
 			);
 			defaultConfigurationIsVisible = 0;
-			defaultConfigurationName = Release;
+			defaultConfigurationName = Debug;
 		};
-		3AE68FD495FD58C8D3246938 /* Build configuration list for PBXNativeTarget "MMLApp" */ = {
+		706CC4300566E5AC10E05326 /* Build configuration list for PBXNativeTarget "MMLApp" */ = {
 			isa = XCConfigurationList;
 			buildConfigurations = (
-				F09BBBFEF41E690A276F4B0E /* Debug */,
-				A0FCDBE8D61CE97AFA8B14CA /* Release */,
+				3CE8CCDC3942C059EF061432 /* Debug */,
+				2DD2985F515C3BC66FF1B424 /* Release */,
 			);
 			defaultConfigurationIsVisible = 0;
-			defaultConfigurationName = Release;
+			defaultConfigurationName = Debug;
 		};
 /* End XCConfigurationList section */
 
 /* Begin XCLocalSwiftPackageReference section */
-		2EB3FBA71CAFC53345686766 /* XCLocalSwiftPackageReference "MMLKit" */ = {
+		B96F8856C3E2518C23D2720F /* XCLocalSwiftPackageReference "MMLKit" */ = {
 			isa = XCLocalSwiftPackageReference;
 			relativePath = MMLKit;
 		};
 /* End XCLocalSwiftPackageReference section */
 
 /* Begin XCSwiftPackageProductDependency section */
-		D3CFC3FD3B8F51A2F86F06E1 /* MMLCore */ = {
+		34C70C4C5A5FAE2D4370E4CF /* MMLCore */ = {
 			isa = XCSwiftPackageProductDependency;
-			package = 2EB3FBA71CAFC53345686766 /* XCLocalSwiftPackageReference "MMLKit" */;
 			productName = MMLCore;
 		};
-		9200EA636976488AE2493C43 /* MMLCoreJSC */ = {
+		3A23951F83CCBEAA0D676F69 /* MMLWorkspace */ = {
 			isa = XCSwiftPackageProductDependency;
-			package = 2EB3FBA71CAFC53345686766 /* XCLocalSwiftPackageReference "MMLKit" */;
-			productName = MMLCoreJSC;
+			productName = MMLWorkspace;
 		};
-		E39B0B8BF2D4DD5E352D0E65 /* MMLProjects */ = {
+		7CEDDF6CE62C2CD25CDF34B9 /* MMLProjects */ = {
 			isa = XCSwiftPackageProductDependency;
-			package = 2EB3FBA71CAFC53345686766 /* XCLocalSwiftPackageReference "MMLKit" */;
 			productName = MMLProjects;
 		};
-		FDC2A1C05B59268EBAA2CA22 /* MMLWorkspace */ = {
+		F49A125314D292DCFFE66855 /* MMLCoreJSC */ = {
 			isa = XCSwiftPackageProductDependency;
-			package = 2EB3FBA71CAFC53345686766 /* XCLocalSwiftPackageReference "MMLKit" */;
-			productName = MMLWorkspace;
+			productName = MMLCoreJSC;
 		};
 /* End XCSwiftPackageProductDependency section */
 	};
-	rootObject = 1459D23D3A421A52B82922A5 /* Project object */;
+	rootObject = EB5F38E9A89F18173BD34473 /* Project object */;
 }
