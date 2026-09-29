@@ -1,0 +1,96 @@
+name: iOS App CI
+
+# The native App (apps/ios) and the shared core it runs offline. Everything the
+# App executes comes from studio/backend through the native core bundle, so a
+# change there is an App change too.
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'apps/ios/**'
+      - 'studio/native/**'
+      - 'studio/backend/**'
+      - 'studio/web/canonical-contract.mjs'
+      - 'studio/web/canonical-package.mjs'
+      - 'dist/core.js'
+      - 'docs/CANONICAL_MANIFEST.md'
+      - 'scripts/build-native-core.mjs'
+      - 'scripts/canonical-runtime-package.mjs'
+      - 'package.json'
+      - 'package-lock.json'
+      - '.github/workflows/ios-app-ci.yml'
+  pull_request:
+    paths:
+      - 'apps/ios/**'
+      - 'studio/native/**'
+      - 'studio/backend/**'
+      - 'studio/web/canonical-contract.mjs'
+      - 'studio/web/canonical-package.mjs'
+      - 'dist/core.js'
+      - 'docs/CANONICAL_MANIFEST.md'
+      - 'scripts/build-native-core.mjs'
+      - 'scripts/canonical-runtime-package.mjs'
+      - 'package.json'
+      - 'package-lock.json'
+      - '.github/workflows/ios-app-ci.yml'
+  workflow_dispatch:
+
+concurrency:
+  group: ios-app-ci-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  ios:
+    runs-on: macos-15
+    timeout-minutes: 60
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          # The native core carries the Published Canonical package, which the
+          # build loads from the published main history and rules snapshot.
+          fetch-depth: 0
+      - name: Setup Node 22
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: Install Node dependencies
+        run: npm ci --ignore-scripts
+      - name: Build the native core
+        run: npm run build:native-core
+      - name: Native core regressions (bare JavaScript host, MCP parity)
+        run: node --test tests/native-core.test.mjs
+      - name: Toolchain
+        run: |
+          xcodebuild -version
+          swift --version
+      - name: MMLKit tests on macOS (Apple JavaScriptCore)
+        run: swift test --package-path apps/ios/MMLKit
+      - name: MMLKit tests on the iOS Simulator
+        working-directory: apps/ios/MMLKit
+        env:
+          # xcodebuild passes TEST_RUNNER_-prefixed variables to the test process.
+          TEST_RUNNER_MML_NATIVE_CORE_DIR: ${{ github.workspace }}/studio/native-build
+        run: |
+          set -euo pipefail
+          device="$(xcrun simctl list devices available --json | python3 -c '
+          import json, sys
+          devices = json.load(sys.stdin)["devices"]
+          for runtime in sorted(devices, reverse=True):
+              if ".iOS-" not in runtime:
+                  continue
+              for device in devices[runtime]:
+                  if device["name"].startswith("iPhone"):
+                      print(device["udid"])
+                      raise SystemExit
+          raise SystemExit("no available iPhone simulator")
+          ')"
+          echo "iOS Simulator: ${device}"
+          xcodebuild test -scheme MMLKit-Package -destination "platform=iOS Simulator,id=${device}"
+      - name: Build the App for the iOS Simulator
+        run: xcodebuild build -project apps/ios/MMLApp.xcodeproj -scheme MMLApp -configuration Debug -destination 'generic/platform=iOS Simulator' CODE_SIGNING_ALLOWED=NO
+      - name: Build the App for iOS devices (unsigned)
+        run: xcodebuild build -project apps/ios/MMLApp.xcodeproj -scheme MMLApp -configuration Release -destination 'generic/platform=iOS' CODE_SIGNING_ALLOWED=NO
