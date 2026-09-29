@@ -5,6 +5,7 @@ import { createHash } from 'node:crypto';
 import { loadPublishedCanonical } from '../studio/backend/bootstrap/index.mjs';
 import { SUPPORTED_CANONICAL_VERSIONS } from '../studio/backend/rules/supported-releases.mjs';
 import { SERVICE_WORKER_ASSET, byPath, computeBuildId, computeCacheId, readServiceWorkerTemplate, renderServiceWorker } from './studio-artifact-identity.mjs';
+import { canonicalRuntimePackage } from './canonical-runtime-package.mjs';
 
 const root = fileURLToPath(new URL('../', import.meta.url));
 // Overridable so verification can build into an isolated directory without
@@ -69,10 +70,12 @@ await put('dist/core.js', await readFile(resolve(root, 'dist/core.js')));
 // the Manifest commit) is audit metadata, not runtime content. Embedding it in
 // hashed assets made buildId move whenever main advanced, even with identical
 // sources and an unchanged Canonical release. It ships in build.json instead.
-const { provenance, ...runtimeCanonical } = canonical;
-const data = JSON.stringify(runtimeCanonical);
-await put('studio/backend/bootstrap/index.mjs', `const loaded = ${data};\nfunction freeze(x){for(const v of Object.values(x))if(v&&typeof v==='object')freeze(v);return Object.freeze(x)}\nfreeze(loaded);\nexport function loadPublishedCanonical({supportedCanonicalVersion=null}={}){if(supportedCanonicalVersion&&![].concat(supportedCanonicalVersion).includes(loaded.metadata.canonical_version))throw Error('CANONICAL_NOT_LOADED');return loaded}\n`);
-await put('studio/web/published.mjs', `export const canonical = ${data};\nexport const canonicalDigest = '${digest(data)}';\n`);
+// The package itself is shared with the native App core build, so both hosts
+// carry the same bytes and digest for one release.
+const runtimePackage = canonicalRuntimePackage(canonical);
+const { provenance, data } = runtimePackage;
+await put('studio/backend/bootstrap/index.mjs', runtimePackage.bootstrapModule);
+await put('studio/web/published.mjs', runtimePackage.publishedModule);
 const parserDir = dirname(dirname(fileURLToPath(import.meta.resolve('fast-xml-parser'))));
 const vendor = await readFile(resolve(parserDir, 'lib/fxp.min.js'), 'utf8');
 // Ship the installed package's own browser build, without a CDN or new parser.
@@ -143,7 +146,7 @@ const audit = { note: 'Dynamic Git and build provenance. Audit only: excluded fr
 // Stable release identity defines the artifact; audit provenance never does.
 await put('build.json', JSON.stringify({
   buildId,
-  release: { canonical: canonical.metadata, rules_snapshot_sha: canonical.metadata.rules_snapshot_sha, runtimeBundleDigest: digest(data), cacheId },
+  release: { canonical: canonical.metadata, rules_snapshot_sha: canonical.metadata.rules_snapshot_sha, runtimeBundleDigest: runtimePackage.digest, cacheId },
   audit,
   files: hashes,
 }, null, 2));

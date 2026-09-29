@@ -1,0 +1,170 @@
+name: iOS Visual Smoke
+
+# Builds the App, runs it on an iPhone and an iPad Simulator, and uploads the
+# screenshots plus logs as the "ios-visual-smoke" artifact, so the App can be
+# looked at from a phone without a Mac. Each device is shot twice: a normal
+# launch (the user's empty library), and a launch with the Debug-only
+# -demo-project argument, which creates sample projects in a temporary library
+# through the ordinary Workspace calls and checks them with the local core.
+# Same pipeline as a91453/railway-game-ios's Visual Smoke.
+#
+# Normally started by hand: Actions -> iOS Visual Smoke -> Run workflow.
+# It also runs on pull requests that change this workflow or its script, so
+# edits to the pipeline itself are exercised before they are merged.
+
+on:
+  workflow_dispatch:
+  pull_request:
+    paths:
+      - .github/workflows/ios-visual-smoke.yml
+      - .github/scripts/ios-simulator-screenshot.sh
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ios-visual-smoke-${{ github.ref }}
+  cancel-in-progress: true
+
+defaults:
+  run:
+    shell: bash
+
+# Debug builds write these to stderr when launch work is done or failed
+# (MMLApp/App/DemoProject.swift); the screenshot script waits for them.
+env:
+  READY_MARKER: MML_APP_READY
+  FAILED_MARKER: MML_APP_LAUNCH_FAILED
+
+jobs:
+  screenshots:
+    name: Simulator screenshots
+    runs-on: macos-26
+    # One build plus four screenshot steps of up to 15 minutes each; each
+    # waits for the App's ready marker rather than a fixed delay.
+    timeout-minutes: 75
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          # The native core carries the Published Canonical package, loaded
+          # from the published main history at build time.
+          fetch-depth: 0
+
+      - name: Toolchain versions and Simulator inventory
+        run: |
+          smoke_dir="$RUNNER_TEMP/ios-visual-smoke"
+          mkdir -p "$smoke_dir"
+          echo "SMOKE_DIR=$smoke_dir" >> "$GITHUB_ENV"
+          sw_vers
+          uname -m
+          xcode-select --print-path
+          xcodebuild -version
+          swift --version
+          echo "iOS Simulator SDK: $(xcrun --sdk iphonesimulator --show-sdk-version)"
+          { xcrun simctl list runtimes; xcrun simctl list devices available; } > "$smoke_dir/simulators.txt"
+          {
+            echo "### iOS visual smoke"
+            echo "- **Xcode:** $(xcodebuild -version | head -n 1)"
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: Build the native core
+        run: |
+          npm ci --ignore-scripts
+          npm run build:native-core | tee "$SMOKE_DIR/native-core.json"
+
+      # One Simulator build of the committed project serves both devices. Code
+      # signing is disabled: Simulator builds need no certificate or Apple
+      # Developer account.
+      - name: Build for iOS Simulator
+        run: |
+          xcodebuild build \
+            -project apps/ios/MMLApp.xcodeproj \
+            -scheme MMLApp \
+            -configuration Debug \
+            -destination "generic/platform=iOS Simulator" \
+            -derivedDataPath "$RUNNER_TEMP/DerivedData" \
+            CODE_SIGNING_ALLOWED=NO \
+            2>&1 | tee "$SMOKE_DIR/xcodebuild.log"
+
+      - name: Locate app bundle
+        id: app
+        run: |
+          products="$RUNNER_TEMP/DerivedData/Build/Products/Debug-iphonesimulator"
+          shopt -s nullglob
+          apps=("$products"/*.app)
+          if [[ ${#apps[@]} -ne 1 ]]; then
+            echo "::error::Expected exactly one .app in $products, found ${#apps[@]}."
+            ls -la "$products" || true
+            exit 1
+          fi
+          for file in mml-core.js mml-core.json; do
+            if [[ ! -s "${apps[0]}/NativeCore/$file" ]]; then
+              echo "::error::The App bundle carries no NativeCore/$file."
+              exit 1
+            fi
+          done
+          echo "Found ${apps[0]}"
+          echo "path=${apps[0]}" >> "$GITHUB_OUTPUT"
+
+      - name: iPhone screenshot
+        timeout-minutes: 15
+        env:
+          APP_PATH: ${{ steps.app.outputs.path }}
+        run: |
+          .github/scripts/ios-simulator-screenshot.sh iPhone "$APP_PATH" "$SMOKE_DIR/iphone.png" \
+            2>&1 | tee -a "$SMOKE_DIR/simulator.log"
+
+      # This and the later screenshot steps run even if an earlier one failed,
+      # so one failure does not hide the others.
+      - name: iPhone demo-project screenshot
+        if: ${{ !cancelled() && steps.app.outputs.path != '' }}
+        timeout-minutes: 15
+        env:
+          APP_PATH: ${{ steps.app.outputs.path }}
+        run: |
+          .github/scripts/ios-simulator-screenshot.sh iPhone "$APP_PATH" "$SMOKE_DIR/iphone-demo.png" -demo-project \
+            2>&1 | tee -a "$SMOKE_DIR/simulator.log"
+
+      - name: iPad screenshot
+        if: ${{ !cancelled() && steps.app.outputs.path != '' }}
+        timeout-minutes: 15
+        env:
+          APP_PATH: ${{ steps.app.outputs.path }}
+        run: |
+          .github/scripts/ios-simulator-screenshot.sh iPad "$APP_PATH" "$SMOKE_DIR/ipad.png" \
+            2>&1 | tee -a "$SMOKE_DIR/simulator.log"
+
+      - name: iPad demo-project screenshot
+        if: ${{ !cancelled() && steps.app.outputs.path != '' }}
+        timeout-minutes: 15
+        env:
+          APP_PATH: ${{ steps.app.outputs.path }}
+        run: |
+          .github/scripts/ios-simulator-screenshot.sh iPad "$APP_PATH" "$SMOKE_DIR/ipad-demo.png" -demo-project \
+            2>&1 | tee -a "$SMOKE_DIR/simulator.log"
+
+      - name: Collect crash reports
+        if: failure()
+        env:
+          APP_PATH: ${{ steps.app.outputs.path }}
+        run: |
+          app_name="$(basename "${APP_PATH:-MMLApp.app}" .app)"
+          find "$HOME/Library/Logs/DiagnosticReports" -name "$app_name*" \
+            -exec cp {} "$SMOKE_DIR/" \; 2>/dev/null || true
+
+      - name: Upload screenshots and logs
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: ios-visual-smoke
+          path: ${{ runner.temp }}/ios-visual-smoke
+          retention-days: 7
+          if-no-files-found: warn
+          overwrite: true
+
+      - name: Summary
+        if: always()
+        run: echo "- **Screenshots and logs:** download the \`ios-visual-smoke\` artifact from this run's Summary page." >> "$GITHUB_STEP_SUMMARY"

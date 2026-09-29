@@ -3,6 +3,7 @@ dist/.openai/
 dist/workbench-source.zip
 node_modules/
 studio/web-build/
+studio/native-build/
 studio/browser-results/
 __pycache__/
 .env
@@ -13,3 +14,14 @@ __pycache__/
 *.sqlite-wal
 .canonical-bootstrap.json
 .studio-agent/
+# Swift / Xcode (apps/ios)
+.build/
+.swiftpm/
+xcuserdata/
+DerivedData/
+*.xcuserstate
+# Apple signing material: never commit
+*.p8
+*.p12
+*.cer
+*.mobileprovision

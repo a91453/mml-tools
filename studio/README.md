@@ -42,6 +42,8 @@ studio/
                      Protocol (proposal-service.mjs)
     audio/           Node audio-evidence bridge
   audio-worker/      Python/FFmpeg original-audio alignment
+  native/            native-host adapter: the engines as one offline script for
+                     the iOS App's JavaScriptCore (npm run build:native-core)
   web/               local-first iPhone/iPad UI and PWA sources
   browser-tests/     WebKit and Chromium user-flow regressions
   tests/             Studio regression tests

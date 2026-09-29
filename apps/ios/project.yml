@@ -1,0 +1,105 @@
+# XcodeGen spec for the native iPhone / iPad App.
+#
+# This file is the source of all project settings. The MMLApp.xcodeproj
+# generated from it IS committed (Xcode and Xcode Cloud open the project and
+# its shared scheme straight from the repository). After changing this file or
+# the App's file layout, regenerate from the repository root and commit both:
+#
+#   xcodegen generate --spec apps/ios/project.yml
+#
+# Use the XcodeGen version pinned in .github/actions/setup-xcodegen/action.yml
+# (on Linux, build that release from source as apps/ios/CLAUDE.md describes), in
+# a checkout directory named mml-tools: the directory name ends up in the
+# project. iOS App CI fails if the committed project differs from a fresh
+# generation. Never edit the .xcodeproj by hand or in Xcode's project editor.
+# Paths below are relative to this file.
+name: MMLApp
+
+options:
+  deploymentTarget:
+    iOS: "17.0"
+  developmentLanguage: zh-Hant
+
+settings:
+  base:
+    SWIFT_VERSION: "6.0"
+
+packages:
+  # The App's Swift layers: core contract, JavaScriptCore host, projects,
+  # observable models.
+  MMLKit:
+    path: MMLKit
+
+targets:
+  MMLApp:
+    type: application
+    platform: iOS
+    sources:
+      - path: MMLApp/App
+      - path: MMLApp/Views
+      - path: MMLApp/Resources
+    dependencies:
+      - package: MMLKit
+        product: MMLCore
+      - package: MMLKit
+        product: MMLCoreJSC
+      - package: MMLKit
+        product: MMLProjects
+      - package: MMLKit
+        product: MMLWorkspace
+    postBuildScripts:
+      # The shared MML core, built from this repository by
+      # `npm run build:native-core`. Copied, never generated here, so an Xcode
+      # build needs no Node.js. Runs on every build: the bundle can change
+      # without any App source changing.
+      - name: Bundle shared MML core
+        basedOnDependencyAnalysis: false
+        showEnvVars: false
+        script: |
+          set -eu
+          SOURCE="${SRCROOT}/../../studio/native-build"
+          DESTINATION="${TARGET_BUILD_DIR}/${UNLOCALIZED_RESOURCES_FOLDER_PATH}/NativeCore"
+          for FILE in mml-core.js mml-core.json; do
+            if [ ! -f "${SOURCE}/${FILE}" ]; then
+              echo "error: ${SOURCE}/${FILE} is missing. Run 'npm ci --ignore-scripts && npm run build:native-core' at the repository root, then build again." >&2
+              exit 1
+            fi
+          done
+          mkdir -p "${DESTINATION}"
+          cp "${SOURCE}/mml-core.js" "${SOURCE}/mml-core.json" "${DESTINATION}/"
+    scheme: {}
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: io.github.a91453.MMLApp
+        MARKETING_VERSION: "0.1.0"
+        CURRENT_PROJECT_VERSION: "1"
+        TARGETED_DEVICE_FAMILY: "1,2"
+        # Automatic signing; no certificate or profile is committed.
+        # DEVELOPMENT_TEAM, the Apple Developer Program Team ID (an identifier,
+        # not a secret), stays unset until the owner decides the team: Simulator
+        # builds and the unsigned archive do not need it. To set it, add it here
+        # and regenerate; do not pick the team in Xcode's Signing pane, which
+        # would edit the generated project.
+        CODE_SIGN_STYLE: Automatic
+        SWIFT_TREAT_WARNINGS_AS_ERRORS: "YES"
+        # The core bundle is copied from outside the App's sources.
+        ENABLE_USER_SCRIPT_SANDBOXING: "NO"
+        GENERATE_INFOPLIST_FILE: "YES"
+        INFOPLIST_KEY_CFBundleDisplayName: MML
+        INFOPLIST_KEY_LSApplicationCategoryType: public.app-category.music
+        INFOPLIST_KEY_ITSAppUsesNonExemptEncryption: "NO"
+        INFOPLIST_KEY_UILaunchScreen_Generation: "YES"
+        INFOPLIST_KEY_UIApplicationSceneManifest_Generation: "YES"
+        INFOPLIST_KEY_UIApplicationSupportsIndirectInputEvents: "YES"
+        INFOPLIST_KEY_UISupportedInterfaceOrientations_iPhone: >-
+          UIInterfaceOrientationPortrait
+          UIInterfaceOrientationLandscapeLeft
+          UIInterfaceOrientationLandscapeRight
+        INFOPLIST_KEY_UISupportedInterfaceOrientations_iPad: >-
+          UIInterfaceOrientationPortrait
+          UIInterfaceOrientationPortraitUpsideDown
+          UIInterfaceOrientationLandscapeLeft
+          UIInterfaceOrientationLandscapeRight
+        SUPPORTS_MACCATALYST: "NO"
+        SUPPORTS_MAC_DESIGNED_FOR_IPHONE_IPAD: "NO"
+        SUPPORTS_XR_DESIGNED_FOR_IPHONE_IPAD: "NO"

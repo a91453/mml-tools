@@ -1,0 +1,210 @@
+name: iOS App CI
+
+# The native App (apps/ios) and the shared core it runs offline. Everything the
+# App executes comes from studio/backend through the native core bundle, so a
+# change there is an App change too. The pipeline follows the same owner's
+# a91453/railway-game-ios: MMLKit on Linux across Swift versions, then the
+# committed-project drift check, the MMLKit tests on macOS and the iOS
+# Simulator, and the App builds on the real Apple SDK. Screenshots live in
+# ios-visual-smoke.yml; the unsigned Release archive in ios-release-archive.yml.
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'apps/ios/**'
+      - 'studio/native/**'
+      - 'studio/backend/**'
+      - 'studio/web/canonical-contract.mjs'
+      - 'studio/web/canonical-package.mjs'
+      - 'dist/core.js'
+      - 'docs/CANONICAL_MANIFEST.md'
+      - 'scripts/build-native-core.mjs'
+      - 'scripts/canonical-runtime-package.mjs'
+      - 'package.json'
+      - 'package-lock.json'
+      - '.github/actions/setup-xcodegen/**'
+      - '.github/workflows/ios-app-ci.yml'
+  pull_request:
+    paths:
+      - 'apps/ios/**'
+      - 'studio/native/**'
+      - 'studio/backend/**'
+      - 'studio/web/canonical-contract.mjs'
+      - 'studio/web/canonical-package.mjs'
+      - 'dist/core.js'
+      - 'docs/CANONICAL_MANIFEST.md'
+      - 'scripts/build-native-core.mjs'
+      - 'scripts/canonical-runtime-package.mjs'
+      - 'package.json'
+      - 'package-lock.json'
+      - '.github/actions/setup-xcodegen/**'
+      - '.github/workflows/ios-app-ci.yml'
+  workflow_dispatch:
+
+# Superseded PR runs are cancelled; runs on main are never cancelled mid-build.
+concurrency:
+  group: ios-app-ci-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+permissions:
+  contents: read
+
+defaults:
+  run:
+    shell: bash
+
+jobs:
+  mmlkit-linux:
+    name: MMLKit on Linux (Swift ${{ matrix.swift }}, JavaScriptCoreGTK)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        # 6.0 is the minimum Package.swift declares; 6.4 is the current release.
+        swift: ['6.0', '6.4']
+    container: swift:${{ matrix.swift }}-noble
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          # The native core carries the Published Canonical package, which the
+          # build loads from the published main history and rules snapshot.
+          fetch-depth: 0
+      - name: Install JavaScriptCoreGTK (the JavaScriptCore C API on Linux)
+        run: |
+          apt-get update -qq
+          DEBIAN_FRONTEND=noninteractive apt-get install -y -qq libjavascriptcoregtk-4.1-dev pkg-config
+          pkg-config --modversion javascriptcoregtk-4.1
+      - name: Trust the checkout
+        # The container runs as root over a workspace the runner owns.
+        run: git config --global --add safe.directory "$GITHUB_WORKSPACE"
+      - name: Setup Node 22
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: Build the native core
+        run: |
+          npm ci --ignore-scripts
+          npm run build:native-core
+      - name: Swift version
+        run: swift --version
+      - name: Build (warnings as errors)
+        run: swift build --package-path apps/ios/MMLKit --build-tests -Xswiftc -warnings-as-errors
+      - name: Test
+        run: swift test --package-path apps/ios/MMLKit
+
+  ios:
+    name: Xcode (macOS, iOS Simulator, iOS device)
+    runs-on: macos-26
+    timeout-minutes: 60
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Toolchain versions
+        run: |
+          sw_vers
+          uname -m
+          xcode-select --print-path
+          xcodebuild -version
+          swift --version
+          echo "iOS Simulator SDK: $(xcrun --sdk iphonesimulator --show-sdk-version)"
+
+      - name: Set up XcodeGen
+        uses: ./.github/actions/setup-xcodegen
+
+      # The project is committed so Xcode and Xcode Cloud can open it and its
+      # shared scheme. Regenerating it in place must change nothing; otherwise
+      # it is stale or was edited outside project.yml.
+      - name: Check the committed Xcode project matches project.yml
+        run: |
+          project=apps/ios/MMLApp.xcodeproj
+          scheme="$project/xcshareddata/xcschemes/MMLApp.xcscheme"
+          if ! git ls-files --error-unmatch "$scheme" >/dev/null 2>&1; then
+            echo "::error::The shared scheme $scheme is not committed."
+            exit 1
+          fi
+          xcodegen generate --spec apps/ios/project.yml
+          changes="$(git status --porcelain --untracked-files=all -- apps/ios/MMLApp.xcodeproj)"
+          if [[ -n "$changes" ]]; then
+            echo "::error::$project does not match apps/ios/project.yml. Regenerate it with the pinned XcodeGen from a checkout directory named mml-tools and commit the result (apps/ios/CLAUDE.md)."
+            echo "$changes"
+            git --no-pager diff -- apps/ios/MMLApp.xcodeproj
+            exit 1
+          fi
+          echo "Committed project matches a fresh generation."
+
+      - name: List schemes and archivable products
+        run: |
+          project=apps/ios/MMLApp.xcodeproj
+          xcodebuild -list -project "$project"
+          products="$(xcodebuild -project "$project" -describeAllArchivableProducts -json)"
+          echo "$products"
+          if ! grep -Eq '"bundleIdentifier" *: *"io\.github\.a91453\.MMLApp"' <<<"$products"; then
+            echo "::error::Xcode finds no archivable io.github.a91453.MMLApp app."
+            exit 1
+          fi
+
+      - name: Setup Node 22
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: Build the native core
+        run: |
+          npm ci --ignore-scripts
+          npm run build:native-core
+      - name: Native core regressions (bare JavaScript host, MCP parity)
+        run: node --test tests/native-core.test.mjs
+
+      - name: MMLKit on macOS (Apple JavaScriptCore, warnings as errors)
+        run: |
+          swift build --package-path apps/ios/MMLKit --build-tests -Xswiftc -warnings-as-errors
+          swift test --package-path apps/ios/MMLKit
+
+      - name: MMLKit on the iOS Simulator
+        working-directory: apps/ios/MMLKit
+        env:
+          # xcodebuild passes TEST_RUNNER_-prefixed variables to the test process.
+          TEST_RUNNER_MML_NATIVE_CORE_DIR: ${{ github.workspace }}/studio/native-build
+        run: |
+          set -euo pipefail
+          device="$(xcrun simctl list devices available --json | python3 -c '
+          import json, sys
+          devices = json.load(sys.stdin)["devices"]
+          for runtime in sorted(devices, reverse=True):
+              if ".iOS-" not in runtime:
+                  continue
+              for device in devices[runtime]:
+                  if device["name"].startswith("iPhone"):
+                      print(device["udid"])
+                      raise SystemExit
+          raise SystemExit("no available iPhone simulator")
+          ')"
+          echo "iOS Simulator: ${device}"
+          xcodebuild test -scheme MMLKit-Package -destination "platform=iOS Simulator,id=${device}"
+
+      # A generic destination needs no booted Simulator. Code signing is
+      # disabled: Simulator and unsigned device builds need no Apple account.
+      # Package resolution is disabled as on Xcode Cloud.
+      - name: Build the App for the iOS Simulator
+        run: |
+          xcodebuild build \
+            -project apps/ios/MMLApp.xcodeproj \
+            -scheme MMLApp \
+            -configuration Debug \
+            -destination 'generic/platform=iOS Simulator' \
+            -derivedDataPath "$RUNNER_TEMP/DerivedData" \
+            -disableAutomaticPackageResolution \
+            CODE_SIGNING_ALLOWED=NO
+      - name: Build the App for iOS devices (Release, unsigned)
+        run: |
+          xcodebuild build \
+            -project apps/ios/MMLApp.xcodeproj \
+            -scheme MMLApp \
+            -configuration Release \
+            -destination 'generic/platform=iOS' \
+            -derivedDataPath "$RUNNER_TEMP/DerivedData" \
+            -disableAutomaticPackageResolution \
+            CODE_SIGNING_ALLOWED=NO
