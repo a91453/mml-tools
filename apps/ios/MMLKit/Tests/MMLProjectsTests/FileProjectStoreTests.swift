@@ -44,7 +44,7 @@ final class FileProjectStoreTests: XCTestCase {
         let project = try checkedProject()
         try await store.save(project)
         let json = try XCTUnwrap(JSONSerialization.jsonObject(with: Data(contentsOf: store.packageURL(for: project.id).appendingPathComponent("project.json"))) as? [String: Any])
-        XCTAssertEqual(json["format"] as? String, "tw.mml-tools.app.project")
+        XCTAssertEqual(json["format"] as? String, "io.github.a91453.mml-tools.project")
         XCTAssertEqual(json["schema_version"] as? Int, 1)
         XCTAssertEqual((json["score"] as? [String: Any])?["meter_text"] as? String, "0 4/4")
         let lastCheck = try XCTUnwrap(json["last_check"] as? [String: Any])

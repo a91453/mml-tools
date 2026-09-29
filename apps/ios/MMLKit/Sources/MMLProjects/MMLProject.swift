@@ -8,7 +8,7 @@ import MMLCore
 /// stages can add source files (MIDI, MusicXML, audio) and per-role data
 /// beside `project.json` without changing what exists.
 public struct MMLProject: Codable, Sendable, Equatable, Identifiable {
-    public static let format = "tw.mml-tools.app.project"
+    public static let format = "io.github.a91453.mml-tools.project"
     public static let schemaVersion = 1
 
     public let id: UUID
