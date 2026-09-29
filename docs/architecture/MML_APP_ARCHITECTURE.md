@@ -94,15 +94,15 @@ Infrastructure
 
 | 能力 | 模組 | 分類 | 依賴／阻礙 | 建議邊界 | 驗證 |
 | --- | --- | --- | --- | --- | --- |
-| MML parsing（ingest／Final） | `mml/parser.mjs` | A + F | `dist/core.js`（需 `TextEncoder`） | 原生核心 bundle | Stage 1 已在 JavaScriptCore 執行；15 個 conformance case 與 Node 伺服器路徑逐位元組相同 |
+| MML parsing（ingest／Final） | `mml/parser.mjs` | A + F | `dist/core.js`（需 `TextEncoder`） | 原生核心 bundle | Stage 1 已在 JavaScriptCore 執行；15 個 conformance case 的 JSON 答案與 Node 伺服器路徑完全相同（Node 以 `deepEqual`、Swift 以 `JSONValue` 相等比較） |
 | 技術驗證（`mml_validate`） | `application/technical-service.mjs` | A + F | `contracts.mjs`（需 `structuredClone`） | 同一個 technical service，原生 facade 轉接 | 同上；與 `handleMcp` 的 `mml_validate`／`mml_overlap_details` 報告相同（僅 `service_version` 不同） |
 | Canonical rules | `rules/index.mjs` | B | 求值時載入 Canonical | 以建置時的 runtime package 取代 Git loader | 已實作；runtime package digest 與 Studio Web 相同 |
 | Canonical identity | `bootstrap/` + `canonical-package.mjs` | C | Git（`node:child_process`） | 建置時載入、裝置上驗證 digest；Git provenance 只進 manifest 的 `audit` | 已實作；竄改的套件以 `CANONICAL_NOT_LOADED` 拒絕 |
-| MML transformation／canonicalize | `mml/canonicalize.mjs` | B | 無 Node API | 擴充 facade 操作 | 在裸 context 可求值（見下方實驗） |
+| MML transformation／canonicalize | `mml/canonicalize.mjs` | B | 無 Node API | 擴充 facade 操作 | 在裸 context 可求值（見下方回歸測試） |
 | Final emitter | `final/mml-emitter.mjs` 等 | B | `structuredClone`（已有 host shim） | 擴充 facade 操作 | 可求值；未跑 Final 產出比對 |
 | Source handling／IR | `canonical/*`、`compare/*` | B | `structuredClone` | 擴充 facade 操作 | 可求值 |
-| MIDI import | `source/midi*.mjs` | B | 需要把 bytes 從 Swift 傳入 JS | facade 加入 bytes 傳遞（base64 或 typed array） | 實驗：裸 context 的 `ingestMIDI` 結果與 Node 逐位元組相同 |
-| MusicXML／MXL import | `score/*` | B/C | npm `fast-xml-parser`（純 JS，可 bundle）；inflate 為純 JS | bundle 內含 parser | 實驗：裸 context 的 `ingestMusicXML` 結果與 Node 相同 |
+| MIDI import | `source/midi*.mjs` | B | 需要把 bytes 從 Swift 傳入 JS | facade 加入 bytes 傳遞（base64 或 typed array） | 回歸測試：裸 context 的 `ingestMIDI` 結果序列化後與 Node 逐位元組相同 |
+| MusicXML／MXL import | `score/*` | B/C | npm `fast-xml-parser`（純 JS，可 bundle）；inflate 為純 JS | bundle 內含 parser | 回歸測試：裸 context 的 `ingestMusicXML` 結果序列化後與 Node 逐位元組相同 |
 | 3MLE `.mml`／`.mmi` | `mml/community-formats.mjs` | C | `TextDecoder('big5'／'windows-1252')`、`atob` | Swift 端解碼後傳入，或 host 提供 legacy 編碼 | 未驗證；目前 shim 對非 UTF-8 明確拒絕 |
 | Project persistence | `studio/web/storage.mjs`（IndexedDB）、`application/store.mjs`（fs） | D（對 App） | 瀏覽器／Node 專屬 | App 以 Swift 實作本機儲存（`MMLProjects`），格式各自版本化 | Stage 1 已實作並測試 |
 | Audio preview／playback | `studio/web/preview/*`、`workshop/engine.mjs`（AudioWorklet）、SpessaSynth | G | Web Audio、AudioWorklet | 未來以 AVAudioEngine 原生實作，事件來源仍是核心 | 未做 |
@@ -113,10 +113,11 @@ Infrastructure
 | One-Click Orchestrator、AI Proposal Protocol | `application/run-service.mjs`、`proposal-service.mjs` | D/E | 檔案型 store、跨請求工作狀態、多 agent | 伺服器（Agent Control Plane） | — |
 | MCP operations | `server/mcp*.mjs` | E | AI client 的連線介面 | 保留在伺服器；與 App 共用 technical service | parity 測試 |
 
-**全引擎求值實驗**（未提交，只作為 Stage 2 的依據）：把 `provenance.mjs` 伺服器 gate 會載入的全部 19 個
-Canonical 引擎模組，加上 `fast-xml-parser`，用同一個 native host plugin 打包（約 1.1 MB），在沒有任何
-Node／Web API 的 context 中裝上 host shims 後求值成功。實際的 MIDI intake 與 MusicXML intake
-結果與 Node 逐位元組相同。這證明 Stage 2 的匯入功能是「擴充 bundle 與 facade」，不是重寫。
+**全引擎可攜性回歸測試**（`tests/native-core.test.mjs` 最後一項）：把 `provenance.mjs` 伺服器 gate 的
+`ENGINE_MODULES`（直接讀該清單，不另抄一份）列出的全部 Canonical 引擎模組，加上 `fast-xml-parser`，用出貨核心
+同一個 native host plugin 打包，在沒有任何 Node／Web API 的 context 中裝上 host shims 後求值；MIDI intake 與
+MusicXML intake 的結果序列化後與 Node 逐位元組相同。這證明 Stage 2 的匯入功能是「擴充 bundle 與 facade」，
+不是重寫；日後若有引擎加入 Node 或瀏覽器專屬 API，這項測試會先失敗。
 
 ## 4. 目標架構
 

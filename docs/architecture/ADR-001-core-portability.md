@@ -60,7 +60,7 @@ Published Canonical 驅動，並有約 2,700 項 regression。iPhone／iPad App 
    必須等於 manifest 所記錄的。
 6. **Conformance**：建置時用 Node 伺服器路徑（Git 載入的 Canonical gate + technical service）回答
    `studio/native/conformance-cases.mjs` 的每個 case，寫成 `conformance.json`；Node 裸 context 測試與
-   Swift（JavaScriptCore）測試都要求 bundle 給出完全相同的 JSON。Case 只描述「問什麼」，
+   Swift（JavaScriptCore）測試都要求 bundle 給出完全相同的 JSON 答案（值相等，不比較鍵順序或數字寫法）。Case 只描述「問什麼」，
    答案永遠在建置時由 Canonical 實作產生，所以它們不會變成第二個規則來源。
 
 ## 取捨
@@ -90,4 +90,4 @@ Published Canonical 驅動，並有約 2,700 項 regression。iPhone／iPad App 
 - MML 規則或實作的修正只需在 `studio/backend` 做一次；Studio Web、MCP 與 App 都會得到它。
 - App 的技術檢查與 MCP `mml_validate` 的報告相同（`tests/native-core.test.mjs` 直接比對 `handleMcp`）。
 - Stage 2 起新增的能力（MIDI、MusicXML、drift、審核）以擴充 facade 操作加入，並沿用 conformance 機制。
-  全引擎求值實驗已證明這些模組在裸 context 可執行（見架構文件 §3）。
+  全引擎可攜性回歸測試已證明這些模組在裸 context 可執行，且 MIDI／MusicXML intake 與 Node 相同（見架構文件 §3）。
