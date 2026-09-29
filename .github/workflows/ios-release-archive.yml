@@ -122,9 +122,11 @@ jobs:
           [[ -f "$app/Assets.car" ]] || fail "The compiled asset catalog (Assets.car) is missing."
           [[ -n "$core_sha" && "$core_sha" == "$manifest_sha" ]] || fail "The archived NativeCore/mml-core.js does not match its manifest."
           [[ "$core_sha" == "$(shasum -a 256 studio/native-build/mml-core.js | cut -d' ' -f1)" ]] || fail "The archived core is not the core this run built."
-          if grep -qF -- "-demo-project" "$binary"; then
-            fail "The Release binary contains the Debug-only -demo-project argument."
-          fi
+          for debug_only in -demo-project MML_APP_READY MML_APP_LAUNCH_FAILED; do
+            if grep -qF -- "$debug_only" "$binary"; then
+              fail "The Release binary contains the Debug-only $debug_only (DemoProject.swift)."
+            fi
+          done
           # Expected to report "not signed at all": this archive is unsigned.
           codesign --display "$app" 2>&1 || true
           [[ "$failed" == false ]]

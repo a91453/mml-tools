@@ -96,8 +96,8 @@ What the tests establish:
 | Workflow | When | What it runs |
 | --- | --- | --- |
 | [`ios-app-ci.yml`](../../.github/workflows/ios-app-ci.yml) | Changes to the App, the shared core, the Manifest or the build | MMLKit on Linux (Swift 6.0 and 6.4, warnings as errors); on `macos-26`: committed-project drift check, schemes and archivable products, native core regressions, MMLKit on macOS and the iOS Simulator, App builds for Simulator (Debug) and device (Release, unsigned) |
-| [`ios-visual-smoke.yml`](../../.github/workflows/ios-visual-smoke.yml) | By hand (Actions → iOS Visual Smoke → Run workflow), and PRs that change it | iPhone and iPad Simulator screenshots, plain and `-demo-project`, in the `ios-visual-smoke` artifact: open it from the run's Summary page on a phone |
-| [`ios-release-archive.yml`](../../.github/workflows/ios-release-archive.yml) | By hand, and PRs that change project settings or App resources | Unsigned Release archive for the iOS device SDK; checks bundle id, icon, no `DEBUG`, no demo argument, and that the archived core is the one built and matches its manifest |
+| [`ios-visual-smoke.yml`](../../.github/workflows/ios-visual-smoke.yml) | By hand (Actions → iOS Visual Smoke → Run workflow), and PRs that change it | iPhone and iPad Simulator screenshots, plain and `-demo-project`, each taken once the App reports its launch work done (a Debug-only stderr marker) and failing if it reports a failure or never gets there; in the `ios-visual-smoke` artifact: open it from the run's Summary page on a phone |
+| [`ios-release-archive.yml`](../../.github/workflows/ios-release-archive.yml) | By hand, and PRs that change project settings or App resources | Unsigned Release archive for the iOS device SDK; checks bundle id, icon, no `DEBUG`, no demo argument or launch marker, and that the archived core is the one built and matches its manifest |
 
 None of these proves signing, upload to App Store Connect or TestFlight. The
 TestFlight pipeline (railway-game-ios's `testflight.yml` and its scripts) is the

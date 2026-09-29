@@ -6,7 +6,11 @@
 #
 # macOS + Xcode only; used by .github/workflows/ios-visual-smoke.yml. Adapted
 # from a91453/railway-game-ios (.github/scripts/simulator-screenshot.sh), the
-# same owner's iOS pipeline, unchanged in behavior. The device is
+# same owner's iOS pipeline. One addition: with READY_MARKER set, the script
+# waits until the App writes that marker to its stderr (at most READY_TIMEOUT
+# seconds, default 120) instead of a fixed delay, and fails at once if the App
+# writes FAILED_MARKER; a screenshot is saved either way. The MML App's Debug
+# builds write both (MMLApp/App/DemoProject.swift, LaunchSignal). The device is
 # picked at run time from the Simulators installed on the runner instead of a
 # hard-coded model name, because runner images add and drop models over time.
 # Any arguments after the output path are passed to the app at launch.
@@ -24,6 +28,9 @@ screenshot="$3"
 shift 3
 launch_args=("$@")
 settle_seconds=8
+ready_marker="${READY_MARKER:-}"
+failed_marker="${FAILED_MARKER:-}"
+ready_timeout="${READY_TIMEOUT:-120}"
 
 case "$family" in
   iPhone | iPad) ;;
@@ -115,7 +122,29 @@ echo "$launch_output"
 # simctl prints "<bundle id>: <pid>"; Simulator apps are ordinary host processes.
 pid="${launch_output##*: }"
 
-sleep "$settle_seconds"
+launch_problem=""
+if [[ -n "$ready_marker" ]]; then
+  waited=0
+  until grep -qF -- "$ready_marker" "$stderr_log" 2>/dev/null; do
+    if [[ -n "$failed_marker" ]] && grep -qF -- "$failed_marker" "$stderr_log" 2>/dev/null; then
+      launch_problem="$bundle_id reported a failed launch: $(grep -F -- "$failed_marker" "$stderr_log" | head -n 1)"
+      break
+    fi
+    if (( waited >= ready_timeout )); then
+      launch_problem="$bundle_id did not write $ready_marker within ${ready_timeout}s of launch on $device_name."
+      break
+    fi
+    sleep 1
+    waited=$((waited + 1))
+  done
+  if [[ -z "$launch_problem" ]]; then
+    echo "Ready after ${waited}s: $(grep -F -- "$ready_marker" "$stderr_log" | head -n 1)"
+  fi
+  # Let the interface draw the state that just became ready.
+  sleep 3
+else
+  sleep "$settle_seconds"
+fi
 
 # --- Verify and capture ------------------------------------------------------
 app_running=true
@@ -134,6 +163,10 @@ fi
 echo "Saved $screenshot"
 
 if [[ "$app_running" != true ]]; then
-  echo "::error::$bundle_id exited within ${settle_seconds}s of launch on $device_name; see $name-app-stderr.log and any crash reports."
+  echo "::error::$bundle_id exited after launch on $device_name; see $name-app-stderr.log and any crash reports."
+  exit 1
+fi
+if [[ -n "$launch_problem" ]]; then
+  echo "::error::$launch_problem See $name-app-stderr.log and $name.png."
   exit 1
 fi

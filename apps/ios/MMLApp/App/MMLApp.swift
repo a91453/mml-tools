@@ -27,7 +27,15 @@ struct MMLApp: App {
                     await workspace.refreshLibrary()
                     await workspace.startCore { try JavaScriptCoreEngine.bundled() }
                     #if DEBUG
-                    if DemoProject.isRequested { selection = await DemoProject.prepare(in: workspace) }
+                    do {
+                        guard let identity = workspace.coreState.identity, identity.isCanonicalReady else {
+                            throw DemoProject.DemoError(message: "the core did not load Published Canonical: \(workspace.coreState)")
+                        }
+                        if DemoProject.isRequested { selection = try await DemoProject.prepare(in: workspace) }
+                        LaunchSignal.emit("\(LaunchSignal.ready) canonical=\(identity.canonical.canonicalVersion ?? "?")")
+                    } catch {
+                        LaunchSignal.emit("\(LaunchSignal.failed) \(error)")
+                    }
                     #endif
                 }
         }
