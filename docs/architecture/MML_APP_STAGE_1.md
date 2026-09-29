@@ -1,6 +1,6 @@
 # MML App Stage 1：範圍、實作與驗證紀錄
 
-Status: 實作與驗證紀錄（branch `feature/mml-app-stage-1`，2026-09-29）。**不是 Canonical 規則來源。**
+Status: 實作與驗證紀錄（PR #145，branch `feature/mml-app-stage-1`，2026-09-29）。**不是 Canonical 規則來源。**
 架構：[MML_APP_ARCHITECTURE.md](MML_APP_ARCHITECTURE.md)。決策：[ADR-001](ADR-001-core-portability.md)、
 [ADR-002](ADR-002-offline-server-boundary.md)。App 使用說明：[apps/ios/README.md](../../apps/ios/README.md)。
 
@@ -36,7 +36,8 @@ Branch HEAD 以 PR 為準。本 Stage 沒有修改任何規則文件、Manifest�
 
 ### 已實作的 App 功能
 
-1. 可在 iPhone 與 iPad 啟動的 SwiftUI App（`NavigationSplitView`：iPad 分割、iPhone 堆疊）。
+1. iPhone 與 iPad 的 SwiftUI App（`NavigationSplitView`：iPad 分割、iPhone 堆疊）。啟動只在 iPhone 與 iPad
+   **Simulator** 驗證過（§4.3）；實機執行 UNVERIFIED（§4.5）。
 2. 原生核心邊界：`MMLCoreEngine` 協定；正式實作 `JavaScriptCoreEngine` 執行共用核心。
 3. 專案模型：`MMLProject`（`io.github.a91453.mml-tools.project` schema 1），目錄套件
    `Application Support/Projects/<id>.mmlproj/project.json`，原子寫入，毫秒精度時間戳。
@@ -98,7 +99,7 @@ Branch HEAD 以 PR 為準。本 Stage 沒有修改任何規則文件、Manifest�
 其後的 `ecb208e`（Debug 限定的啟動就緒訊號，以及 Visual Smoke 改為等待該訊號）同樣 12 個 check run 全部通過：
 Xcode job 每個步驟成功（drift、scheme、native core、MMLKit macOS 與 iOS Simulator、兩個 App 建置）；
 Release Archive 的檢查表與上表相同（核心 SHA-256 仍為 `f3e31029…`），並確認 Release binary 不含
-`-demo-project`、`MML_APP_READY`、`MML_APP_LAUNCH_FAILED`。
+`-demo-project`、`MML_APP_READY`、`MML_APP_LAUNCH_FAILED`。只改本文件的 `e592f1a` 也是 12 個 check run 全部通過。
 
 ### 4.3 iOS Visual Smoke（Simulator 截圖）
 
