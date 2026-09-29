@@ -17,7 +17,15 @@ import { DataCloneError, Utf8TextDecoder, Utf8TextEncoder, hostStructuredClone }
 import { NATIVE_SERVICE_VERSION } from '../studio/native/core-facade.mjs';
 import { NATIVE_CONFORMANCE_CASES } from '../studio/native/conformance-cases.mjs';
 import { canonicalRuntimePackage } from '../scripts/canonical-runtime-package.mjs';
-import { buildNativeCore, buildNativeCoreBundle } from '../scripts/build-native-core.mjs';
+import { buildNativeCore, buildNativeCoreBundle, nativeHostPlugin, NATIVE_CORE_TARGET } from '../scripts/build-native-core.mjs';
+import { ENGINE_MODULES } from '../studio/backend/application/provenance.mjs';
+import { ingestMIDI } from '../studio/backend/source/index.mjs';
+import { ingestMusicXML } from '../studio/backend/score/index.mjs';
+import { buildMidi, buildTrack } from '../studio/tests/fixtures/midi-fixtures.mjs';
+import { build as esbuild } from 'esbuild';
+import { fileURLToPath } from 'node:url';
+
+const repositoryRoot = fileURLToPath(new URL('..', import.meta.url));
 
 const canonical = loadPublishedCanonical({ supportedCanonicalVersion: SUPPORTED_CANONICAL_VERSIONS });
 const built = await buildNativeCore({ write: false });
@@ -166,6 +174,9 @@ test('host TextEncoder / TextDecoder agree with the platform for UTF-8', () => {
     try { host = new Utf8TextDecoder('utf-8', { fatal: true }).decode(input); } catch (error) { host = error instanceof TypeError ? TypeError : error; }
     assert.equal(host, platform, `fatal ${bytes}`);
   }
+  for (const label of ['utf-8', 'UTF8', ' unicode-1-1-utf-8 ', 'unicode11utf8', 'unicode20utf8', 'x-unicode20utf8']) {
+    assert.equal(new Utf8TextDecoder(label).encoding, new TextDecoder(label).encoding, label);
+  }
   assert.throws(() => new Utf8TextDecoder('big5'), RangeError, 'other encodings are refused, not approximated');
   assert.throws(() => new Utf8TextDecoder().decode(new Uint8Array(1), { stream: true }), TypeError);
 });
@@ -205,4 +216,49 @@ test('host structuredClone agrees with the platform for data values', () => {
     assert.throws(() => hostStructuredClone(uncloneable), DataCloneError);
     assert.throws(() => structuredClone(uncloneable), { name: 'DataCloneError' });
   }
+});
+
+// The next stages add MIDI and MusicXML intake to the App by growing the
+// facade, not by reimplementing anything. That holds only while every
+// Canonical engine stays evaluable by a bare host. This bundles the engine set
+// the server's Canonical gate loads (application/provenance.mjs ENGINE_MODULES,
+// not a copy of the list) with the same host plugin, fast-xml-parser allowed as
+// the one pure-JavaScript package MusicXML needs, and requires intake in the
+// bare context to answer byte for byte as Node does.
+test('every Canonical engine evaluates in a bare host, and MIDI / MusicXML intake answers as in Node', async () => {
+  const imports = Object.entries(ENGINE_MODULES).map(([name, path]) => `import * as ${name} from '../backend/application/${path}';`);
+  const result = await esbuild({
+    absWorkingDir: repositoryRoot,
+    stdin: {
+      contents: `import './host-globals.mjs';\n${imports.join('\n')}\nglobalThis.ENGINES = { ${Object.keys(ENGINE_MODULES).join(', ')} };\n`,
+      resolveDir: fileURLToPath(new URL('../studio/native/', import.meta.url)),
+      sourcefile: 'engine-portability-entry.mjs',
+      loader: 'js',
+    },
+    bundle: true,
+    write: false,
+    format: 'iife',
+    platform: 'neutral',
+    mainFields: ['module', 'main'],
+    target: [NATIVE_CORE_TARGET],
+    logLevel: 'silent',
+    plugins: [nativeHostPlugin({ root: repositoryRoot, runtimePackage: canonicalRuntimePackage(canonical), allowedPackages: ['fast-xml-parser'] })],
+  });
+  assert.deepEqual(result.warnings.map(warning => warning.text), []);
+  const context = vm.createContext({}, { microtaskMode: 'afterEvaluate' });
+  vm.runInContext(result.outputFiles[0].text, context);
+  assert.deepEqual(JSON.parse(vm.runInContext('JSON.stringify(Object.keys(ENGINES))', context)), Object.keys(ENGINE_MODULES));
+
+  const midi = buildMidi({ tracks: [buildTrack([[0, [0xff, 0x51, 0x03, 0x07, 0xa1, 0x20]], [0, [0x90, 60, 90]], [360, [0x80, 60, 0]], [0, [0x90, 64, 90]], [360, [0x80, 64, 0]]])] });
+  context.MIDI_BYTES = Array.from(midi);
+  assert.equal(
+    vm.runInContext('JSON.stringify(ENGINES.source.ingestMIDI(new Uint8Array(MIDI_BYTES), { name: "portability.mid" }))', context),
+    JSON.stringify(ingestMIDI(midi, { name: 'portability.mid' })),
+  );
+  const xml = '<?xml version="1.0"?><score-partwise version="3.1"><part-list><score-part id="P1"><part-name>M</part-name></score-part></part-list><part id="P1"><measure number="1"><attributes><divisions>1</divisions><time><beats>4</beats><beat-type>4</beat-type></time></attributes><note><pitch><step>C</step><octave>4</octave></pitch><duration>4</duration><voice>1</voice><type>whole</type></note></measure></part></score-partwise>';
+  context.MUSICXML = xml;
+  assert.equal(
+    vm.runInContext('JSON.stringify(ENGINES.score.ingestMusicXML(MUSICXML, { name: "portability.musicxml" }))', context),
+    JSON.stringify(ingestMusicXML(xml, { name: 'portability.musicxml' })),
+  );
 });

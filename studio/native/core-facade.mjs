@@ -133,9 +133,17 @@ export function createNativeCore({ expectedCanonicalDigest, load = null, hostShi
     const ticket = nextTicket++;
     const slot = { settled: false, envelope: null };
     tickets.set(ticket, slot);
+    // Serialized before the slot is marked settled, so `collect` always
+    // returns an envelope: a result that cannot be serialized is a host fault.
     const settle = envelope => {
+      let text;
+      try {
+        text = JSON.stringify(envelope);
+      } catch (error) {
+        text = JSON.stringify(errorEnvelope(error));
+      }
+      slot.envelope = text;
       slot.settled = true;
-      slot.envelope = JSON.stringify(envelope);
     };
     Promise.resolve()
       .then(() => {

@@ -60,8 +60,14 @@ const EXPECTED_WARNINGS = Object.freeze([
   { id: 'unsupported-dynamic-import', file: 'studio/backend/application/provenance.mjs' },
 ]);
 
-function nativeHostPlugin({ root, runtimePackage }) {
+// The esbuild plugin that makes a module graph evaluable by a bare native host.
+// `allowedPackages` names npm packages that may be bundled from node_modules
+// (pure JavaScript, such as fast-xml-parser for MusicXML); the shipped core
+// allows none. Exported for the portability regression in
+// tests/native-core.test.mjs.
+export function nativeHostPlugin({ root, runtimePackage, allowedPackages = [] }) {
   const bootstrapPath = resolve(root, 'studio/backend/bootstrap/index.mjs');
+  const packageName = specifier => specifier.split('/').slice(0, specifier.startsWith('@') ? 2 : 1).join('/');
   return {
     name: 'mml-native-host',
     setup(build) {
@@ -70,7 +76,11 @@ function nativeHostPlugin({ root, runtimePackage }) {
       build.onResolve({ filter: /\/bootstrap\/index\.mjs$/ }, args => (
         resolve(args.resolveDir, args.path) === bootstrapPath ? { path: 'canonical-bootstrap', namespace: 'mml-native' } : undefined
       ));
-      build.onResolve({ filter: /^[^./]/ }, args => ({ errors: [{ text: `Bare specifier ${args.path} cannot be resolved by a native host (imported by ${args.importer})` }] }));
+      build.onResolve({ filter: /^[^./]/ }, args => (
+        allowedPackages.includes(packageName(args.path)) || args.importer.includes('/node_modules/')
+          ? undefined
+          : { errors: [{ text: `Bare specifier ${args.path} cannot be resolved by a native host (imported by ${args.importer})` }] }
+      ));
       build.onLoad({ filter: /.*/, namespace: 'mml-native' }, args => ({
         contents: args.path === 'build'
           ? `export const NATIVE_BUILD = Object.freeze({ canonicalDigest: '${runtimePackage.digest}' });\n`

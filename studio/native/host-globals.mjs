@@ -20,7 +20,9 @@
 
 const REPLACEMENT = 0xfffd;
 
-const labelIsUtf8 = label => ['utf-8', 'utf8', 'unicode-1-1-utf-8'].includes(String(label).trim().toLowerCase());
+// Every label the Encoding Standard maps to UTF-8.
+const UTF8_LABELS = new Set(['unicode-1-1-utf-8', 'unicode11utf8', 'unicode20utf8', 'utf-8', 'utf8', 'x-unicode20utf8']);
+const labelIsUtf8 = label => UTF8_LABELS.has(String(label).trim().toLowerCase());
 
 function toBytes(input) {
   if (input === undefined) return new Uint8Array(0);
@@ -53,8 +55,8 @@ class Utf8TextDecoder {
 
   constructor(label = 'utf-8', options = {}) {
     if (!labelIsUtf8(label)) throw new RangeError(`This host's TextDecoder supports UTF-8 only, not ${label}`);
-    this.#fatal = options?.fatal === true;
-    this.#ignoreBOM = options?.ignoreBOM === true;
+    this.#fatal = Boolean(options?.fatal);
+    this.#ignoreBOM = Boolean(options?.ignoreBOM);
   }
 
   get encoding() { return 'utf-8'; }
